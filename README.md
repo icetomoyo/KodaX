@@ -61,7 +61,8 @@ KodaX opens the provider/model metadata setup. Use `kodax setup` to rerun the
 flow, `kodax setup --custom` for a guided custom provider, and
 `kodax setup --help` (or REPL `/setup --help`) for paths, provider variables,
 commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox once:
-Windows may show a one-time UAC prompt; macOS/Linux report any required
+Windows requests UAC during activation (an existing v2 account rotation may
+require a second confirmation); macOS/Linux report any required
 Seatbelt/bubblewrap dependencies. Declining or missing a dependency does not
 break ordinary permission handling, and normal startup will not keep reminding
 you.
@@ -206,7 +207,7 @@ kodax sandbox setup
 ```
 
 - Windows uses a restricted sandbox account and network policy. A normal
-  terminal is sufficient; approve the one-time UAC prompt.
+  terminal is sufficient; approve the activation UAC confirmation(s).
 - macOS uses Seatbelt/`sandbox-exec` and requires ripgrep
   (`brew install ripgrep`).
 - Linux uses bubblewrap and requires `bubblewrap`, `socat`, and `ripgrep`
@@ -720,6 +721,39 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+**v0.7.96 trusted text and Windows sandbox v2 (in development):** controlled
+text tools and shell containment are separate authorities on every desktop
+platform. `write`, `edit`, `multi_edit`,
+`insert_after_anchor`, and `undo` run in the trusted KodaX Runtime with final
+path/identity policy checks, a cross-Runtime per-file kernel lock, revision
+CAS, metadata-preserving flushed atomic replacement, and a protected native
+state root. They do not enter ASRT, a workspace
+session, shell runner, setup, cleanup, owner, reset, or poison state, and are
+not described as OS-token-sandboxed. Windows shell commands keep ASRT only for
+network/account services and use the KodaX native restricted-token runner with
+a nonce-bound per-policy private desktop, creation-time Job containment, and framed stdio. Native shell commands from
+different policies, Sessions, and Runtime processes do not share a
+command-lifetime filesystem-effect lease. Arbitrary shell writes remain normal
+OS races; only controlled text tools participate in KodaX CAS.
+If Unix cannot prove directory durability after the atomic commit, the tool
+returns `text_mutation_commit_uncertain` with the complete pre/post receipt and
+requires a reread instead of a blind retry. Existing-file edits retain their
+Undo backup; a commit-uncertain Undo is rebound to the observed post-commit
+revision so a later CAS-checked Undo can resolve it. See
+[ADR-066](docs/ADR.md#adr-066-trusted-text-transactions-and-a-native-windows-shell-sandbox-are-separate-authorities).
+This incompatible authority split is fenced by `sandboxRuntime:6`, so a new
+client never silently reuses a daemon that still implements the v0.7.95 graph.
+Existing Windows installations run `kodax sandbox setup` once: the cutover
+waits for old sandbox processes to exit, recreates the dedicated account with
+a new SID, and records the native protocol/SID generation. Missing migration
+state blocks native shell admission, not trusted text tools.
+Linux and macOS use the same trusted-text authority with native no-follow/
+`flock`/CAS/atomic commit, while shell commands remain per-command ASRT
+bubblewrap/Seatbelt invocations with no KodaX workspace-session owner.
+Issue 307 tracks the narrower ASRT-owned runner pre-main creation window that
+also remains in current Codex; final command targets are still placed in their
+Job at process creation, and trusted text tools never enter that boundary.
+
 **v0.7.95 release:** stale learning locks with zero-byte,
 malformed, or truncated owner records self-recover after an unchanged
 bytes/stat check. Same-boot Windows `unconfirmed-owner` cleanup retries until
@@ -1141,7 +1175,7 @@ changes require an explicit server restart. Managed
 A2A contexts default to `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/`.
 Exact Skill scripts require the opt-in isolated policy and a passing
 `kodax sandbox doctor` (`kodax sandbox setup` performs the explicit Windows
-one-time provisioning).
+provisioning or v2 account-SID cutover).
 
 ---
 

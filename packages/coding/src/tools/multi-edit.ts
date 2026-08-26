@@ -19,7 +19,7 @@
 import type { KodaXToolExecutionContext } from '../types.js';
 import { generateDiff, countChanges } from './diff.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
-import { formatDiffPreview } from './truncate.js';
+import { formatDiffPreview } from './_internal/diff-preview.js';
 import {
   detectPreferredLineEnding,
   findUniqueNormalizedBlockMatch,
@@ -78,7 +78,7 @@ export async function toolMultiEdit(
     });
   }
 
-  // FEATURE_131 Part A: serialize same-file mutations.
+  // FEATURE_295: the trusted host commits this batch under canonical-file CAS.
   const result = await withTextFileMutation(filePath, 'multi_edit', input, ctx, async (snapshot) => {
     if (snapshot.state === 'missing') {
       return `[Tool Error] multi_edit: File not found: ${filePath}`;

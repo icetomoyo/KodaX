@@ -290,6 +290,7 @@ async function importMainWithMocks(options: {
       readonly env: NodeJS.ProcessEnv;
     }) => ({ args: [...input.args], env: { ...input.env } }),
     isCurrentProcessWindowsJobContained: vi.fn(() => false),
+    getAgentConfigHome: vi.fn(() => join(tmpdir(), 'kodax-cli-test-home')),
     cleanupRegisteredManagedChildren,
     shutdownTracing,
   }));

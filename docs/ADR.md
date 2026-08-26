@@ -5264,8 +5264,10 @@ silently ignoring background persistence errors.
 
 ## ADR-065: Windows Sandbox Migrates to Token-Carried Capability Scoping over an Append-Only ACL Substrate
 
-**Status**: Accepted (2026-08-25) — implementation gated on a maintainer go
-signal after the v0.7.96 patch line.
+**Status**: Superseded in part by ADR-066 (2026-08-25). The capability-SID
+permission economics remain accepted; the ASRT-session execution substrate,
+dual-mode rollout, and read-confinement assumptions below are replaced by the
+Windows v2 backend and atomic cutover in ADR-066.
 
 **Driver**: the Windows sandbox runs every sandboxed process as one shared
 machine account (`srt-sandbox`). Effective permission is therefore the
@@ -5300,8 +5302,9 @@ revision CAS). Concretely:
    temporary-file-plus-rename writes and a versioned format; concurrent
    writers merge by re-reading and re-appending, never last-writer-wins.
 2. **Token construction** (srt-win, vendored source in-tree): sandboxed
-   processes launch with a restricted token whose enabling-SID set contains
-   exactly the capability SIDs of the current policy's writable roots.
+   processes launch with a `WRITE_RESTRICTED` token whose restricting-SID set
+   contains exactly the capability SIDs of the current policy's writable
+   roots.
    Stale ACEs on disk name SIDs no live token carries, so old grants are
    inert by construction.
 3. **Append-only ACL substrate**: grants become idempotent
@@ -5315,11 +5318,9 @@ revision CAS). Concretely:
    precondition reduce to (a) capability-file locking, (b) the deny-read
    reconciler's short machine-global transaction, and (c) process containment
    (Job objects) — which remain.
-5. **Session model stays**: per-workspace ASRT sessions remain the execution
-   substrate (they amortize policy setup and enable the v0.7.94 concurrent
-   text/shell overlap); only the permission substrate under them changes.
-   The Issue-304 close semantics (defer-before-evict, lease re-check,
-   observability-only watchdog) carry over unchanged.
+5. **Session model stays**: this clause is superseded by ADR-066. ASRT remains
+   the Windows network-session provider, but it is no longer the filesystem or
+   process-execution authority.
 
 **Migration phases** (each independently shippable, each with a rollback):
 
@@ -5381,3 +5382,210 @@ token.rs/spawn_prep.rs restricted-token construction, deny_read_state.rs
 reconciler, job.rs preserve_descendants; four documented holes as above);
 Issue-304 three-way design review (implementation feasibility, safety red
 team, codex cross-check) in this repository's session records.
+
+## ADR-066: Trusted Text Transactions and a Native Windows Shell Sandbox Are Separate Authorities
+
+**Status**: Accepted and implementation authorized (revised 2026-08-26).
+
+**Driver**: the production `write` failure in session
+`20260825_215704_r8107f13f0eec3` exposed two concerns that the legacy design
+incorrectly joined. ASRT `0.0.65` through `0.0.73` consumes its runner stdin as
+control data and does not forward KodaX's text payload, while the shared
+workspace-session ACL lifecycle lets shell setup, cleanup, owner and poison
+state block direct text operations. Fixing only stdin would preserve the
+second failure class. A fresh review of Claude Code's trusted FileWrite/Edit
+boundary and Codex's native Windows process sandbox showed that these are two
+different authorities and should have disjoint production call graphs.
+
+**Decision**: text authority is split from shell containment on every desktop
+platform; Windows v2 additionally replaces the legacy Windows shell backend.
+
+1. **Trusted text transaction**: `write`, `edit`, `multi_edit`,
+   `insert_after_anchor`, and `undo` execute in the trusted KodaX Runtime.
+   They never enter ASRT, a workspace session, the shell runner, or a sandbox
+   text helper. Text mutation is constrained by host policy and final resource
+   identity; it is not described as OS-token sandbox enforcement.
+2. **Cross-platform in-process filesystem primitive**: strict platform path
+   and commit guarantees are provided by a narrow native binding loaded into
+   the trusted Runtime on Windows, Linux, and macOS. The transaction itself
+   starts no process, uses no command IPC, and has no dependency on
+   sandbox setup, runner health, owner, cleanup, reset, or poison state. The
+   binding exposes only no-follow handle walking, namespace/resource
+   identity, a process-owned kernel lock, flush, and atomic replace. Windows
+   uses a host-SID private kernel namespace; Unix uses `openat(O_NOFOLLOW)`, a
+   UID-private lock inode below a fixed per-UID system coordination root, kernel
+   `flock`, `fsync`, rename, and parent `fsync`. The atomic replace is the
+   linearization point: no fallible Windows operation follows it, while a Unix
+   parent-`fsync` or failed escape rollback returns a receipt-bearing
+   `committed_uncertain` result that requires a reread and forbids blind retry.
+   File presence is never
+   ownership state. TypeScript remains
+   responsible for permission policy, content
+   transformation, revision CAS, backups, receipts, and structured errors.
+3. **Final-resource authorization**: local lexical input is screened before
+   filesystem access. Windows UNC/device namespaces, ADS, drive-relative
+   paths, DOS device aliases and trailing dot/space fail closed; Unix rejects
+   non-local and symlinked resolution. Unsupported remote filesystems fail
+   closed everywhere. A host-owned capability binds an authorized root to a canonical
+   handle identity. Every existing component below it is
+   opened without following reparse points or symlinks; the final resource identity and
+   sensitive-directory classification are authorized again inside the lock.
+   Initial v2 rejects links, Windows junctions/other reparse points and multi-link
+   targets rather than silently following them.
+4. **Per-slot transaction and CAS**: one short cross-Runtime kernel lock covers
+   one stable canonical namespace slot, not a process lifetime. Windows uses
+   its volume identity plus an NT-native normalized path. Unix uses the local
+   device plus canonical absolute namespace path; the slot is identical while
+   missing, after parent creation, while present, and after atomic replacement.
+   Device/inode/content identity belongs to the revision, not the lock key.
+   Linux case-insensitive filesystems, ZFS datasets with unproven case/
+   normalization semantics, and per-directory casefold are rejected until a
+   filesystem-native key is available; macOS uses canonical Unicode
+   case folding for its volume semantics. This coalesces every caller based on
+   one observed revision while allowing distinct case-sensitive Unix files to
+   remain parallel. The Windows lock is
+   only an OS handle; Unix retains an inert private inode that carries no owner
+   record. Process death releases ownership automatically and leaves no
+   recovery ticket or persistent-owner state. Inside the lock KodaX reopens the parent/target,
+   revalidates identity and policy, rereads content and revision, applies CAS
+   to the candidate bytes computed by the trusted TypeScript tool, writes an
+   exclusive same-directory temp file, flushes it, and atomically replaces or
+   creates the target. There is no
+   in-place fallback. Diff rendering, LSP work, and presentation occur after
+   releasing the lock.
+5. **Conflict contract**: two KodaX text transactions based on the same
+   revision produce one commit and one structured stale conflict; different
+   canonical slots do not wait for one another. An arbitrary shell does not
+   participate in this lock. A shell change observed by the locked final reread
+   is a conflict, and an incompatible writer handle at that reread is
+   contended. An uncooperative write, replace, or rename after the final reread
+   remains an ordinary OS race. Documentation must not claim that KodaX
+   serializes arbitrary shell filesystem activity.
+6. **Undo receipt**: a backup records canonical slot identity, pre-image and
+   post-commit revision. Undo restores only when the current revision still
+   equals that post-commit revision; otherwise it returns stale instead of
+   overwriting a user or shell change. If Undo itself returns
+   `committed_uncertain`, the retained backup is rebound to the observed
+   post-commit revision so a later Undo remains CAS-checked. New-file
+   uncertainty carries `pre_state: missing` in the error receipt but does not
+   synthesize a legacy delete-style Undo entry.
+7. **Native shell protocol**: shell/process execution uses a separate
+   KodaX-owned host/runner protocol with bounded `Spawn`, `Ready`, `Stdin`,
+   `CloseStdin`, `Stdout`, `Stderr`, `Exit`, `Error`, and `Terminate` frames.
+   EOF is explicit and exactly once; slow consumers impose backpressure;
+   early stdin close retires that stream without crashing the Runtime.
+8. **Containment before execution**: the restricted runner creates the shell
+   target suspended with an explicit handle list and creation-time assignment
+   to a no-breakaway, kill-on-close Job. It reports `Ready` only after proving
+   Job membership and resumes afterward. Any failure or control-channel loss
+   terminates the Job; KodaX never races an already-running PID with a later
+   PowerShell containment probe.
+   The trusted host also creates a nonce-bound private desktop whose access
+   requires both the shared sandbox group and the exact policy capability;
+   another policy's restricted target cannot open it. The target's
+   `lpDesktop` references it so restricted-token loader initialization works
+   without exposing the interactive desktop. The host sets inherited error
+   mode before ASRT launch and runner code sets it again; final-target faults
+   remain structured with their actual exit code and stderr. The
+   ASRT-created trusted runner itself starts before KodaX can assign a Job;
+   its pre-main boundary remains ASRT's dedicated account plus authenticated
+   host teardown, matching the current Codex elevated-runner residual. Only the
+   untrusted final target has creation-time KodaX Job containment.
+9. **Shell permission and network split**: ASRT supplies only its network
+   proxy, WFP, CA and dedicated account. The KodaX runner supplies a
+   `WRITE_RESTRICTED` token whose restricting set carries the immutable policy
+   capability SID plus the dedicated account, logon, and Everyone SIDs used by
+   Codex for Windows subprocess compatibility. The account SID is deliberately
+   absent from the token's default DACL; the default DACL contains only logon,
+   Everyone, and policy capability trustees. Ordinary path access is supplied
+   by the ASRT sandbox group, while policy writes normally require the
+   capability ACE on the restricted write pass. Because an existing exact
+   account/logon/Everyone write ACE can satisfy that compatibility pass,
+   cutover deletes and recreates the dedicated account and requires a new SID.
+   Capability ACEs are append-only; execution-specific deny ACEs use the
+   unique logon SID. This Codex-shaped shell model is ambient-read plus
+   explicit deny, not a strict read whitelist.
+10. **Shell concurrency**: Windows v2 shell invocations explicitly identify
+    native token isolation and bypass the legacy filesystem-effect lease.
+    Different policies, Sessions and Runtime processes may run concurrently.
+    No owner/reset/allow-revoke/cleanup/poison admission gate spans a command
+    lifetime.
+    Linux and macOS likewise prepare an independent ASRT bubblewrap or
+    Seatbelt/`sandbox-exec` invocation for each command and keep no KodaX
+    workspace-session owner or cross-command lifecycle lock. Shell writers on
+    every platform remain ordinary OS writers and do not join text CAS.
+11. **Atomic backend migration**: `sandbox setup` holds a machine coordination
+    lock, proves the old account idle, recovers recorded ACL work, deletes and
+    recreates the account, verifies that its SID changed, then writes a strict
+    protocol/SID machine generation marker by flushed atomic replace. Native
+    sidecars are independently protocol- and SHA-256-verified against an
+    embedded packaged manifest, then materialized into a protected content-
+    addressed store before load or execution. Concurrent Runtime provisioners
+    share read verification of an already executing immutable image; artifact
+    bootstrap is not a cross-Runtime admission lock. A fixed System32 provisioner may
+    run once for that artifact bootstrap; it receives already verified bytes,
+    never text-tool or shell payload data. Missing, malformed or mismatched migration state makes
+    Windows v2 doctor and shell admission fail closed before broker launch.
+    After cutover shell execution never falls back to the legacy Windows
+    backend. Old owner/poison records are migration evidence only.
+    On Unix the binding cache is provisioned under a UID-owned `0700` Agent
+    Home state root, while locks rendezvous in a fixed UID-owned `0700` system
+    coordination root shared across Runtime config homes. Both are denied to
+    sandboxed shell write policy, and the binding is loaded through a verified
+    no-follow file descriptor. The trusted text binding is
+    packaged and integrity-checked independently;
+    its availability and text tools never depend on shell setup or migration.
+
+**Security invariants**: a model cannot mint either a text authorization
+capability or a shell policy SID. Text authorization is repeated against
+handle-derived final identity while the stable ancestor handles and slot lock
+are held. Target files must be regular and single-link. The slot mutex lives
+in a current-host-SID private namespace, so a restricted shell cannot precreate
+the public object name and block text tools. Temp data is flushed; owner,
+group, DACL/protected-DACL state, integrity/resource attributes and basic file
+attributes are preserved. Non-default streams, Central Access Policy state or
+unsupported Windows attributes fail closed; v2 does not claim audit-SACL
+preservation. Unix preserves ownership, mode, extended attributes, Linux
+user-modifiable inode flags, and macOS extended ACL/file flags or fails the replacement.
+Kernel-lock abandonment causes a complete reread and
+CAS, never a blind continuation. Shell DACL changes use only short
+add-and-verify transactions. Agent Home Runtime/daemon/grant state,
+native artifacts, sandbox state, credentials, Git control files and hooks are
+classified on the final identity and cannot be made writable through a path
+alias. The protected native store is excluded from shell write roots; its DACL
+grants the sandbox group read/execute only for the exact shell artifact and no
+write/delete authority.
+
+**Consequences**: on Windows, Linux, and macOS, ASRT/runner/setup failures
+cannot block trusted text tools;
+the text-payload stdin bug disappears by removing that payload path rather
+than forwarding it. Issue 304/305's owner/reset conflict class leaves both
+text and Windows v2 shell production graphs. KodaX owns two small native
+artifacts with intentionally independent health: an in-process filesystem
+primitive and a shell sidecar. The text path is stricter than Claude Code's
+current path-based atomic fallback, while the shell protocol follows Codex's
+explicit-stdio and creation-time containment pattern.
+Issue 307 records the remaining ASRT-owned runner pre-main window: KodaX and
+current Codex both create the final target in its Job at process creation, but
+their shared-account runner is first launched by the external account broker.
+ KodaX does not pretend that a post-spawn hardening step can close that upstream
+ race. The host requests inherited modal-error suppression before ASRT launch,
+ but a loader/pre-main runner fault remains part of the upstream bootstrap
+ residual because ASRT owns the cross-account creation contract; final-target
+ faults are suppressed. The residual cannot affect the ASRT-independent trusted text path.
+
+**Rejected alternatives**: keeping a sandboxed text helper (retains both
+failure classes); forwarding text bytes after ASRT's control frame (stdin-only
+patch); ordinary static lock/ticket files (crash residue and recovery races);
+pure Node `lstat`/`realpath` plus path-based rename (cannot close Windows
+reparse TOCTOU); using target File ID as the lock key (atomic replace ABA);
+serializing arbitrary shell writes (false guarantee and unnecessary global
+coupling); loading the text primitive through the runner or setup lifecycle
+(would let shell health block trusted text); copying Claude Code or Codex
+wholesale (their product boundaries and guarantees differ).
+
+**Evidence base**: KodaX production reproduction and direct stdin probes;
+ASRT `0.0.65`, `0.0.67`, and `0.0.73`; Claude Code FileWrite/Edit and path
+policy source; Codex Windows no-follow, runner, token, capability, pipe, stdio
+and Job source at `2764e836`; independent architecture, security, and
+concurrency/recovery reviews on 2026-08-26.

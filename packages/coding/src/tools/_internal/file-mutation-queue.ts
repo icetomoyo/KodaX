@@ -47,11 +47,19 @@ import {
   readProcessStartIdentity,
 } from '@kodax-ai/agent';
 import {
-  canonicalizeAgentHomePolicyPath,
   isAgentHomeHardMutationTarget,
 } from '../../permissions/agent-home-policy.js';
+import { withPathMutation } from './file-mutation-primitives.js';
 
-const fileMutationQueue = new Map<string, Promise<unknown>>();
+export {
+  _peekFileMutationQueueSizeForTests,
+  _resetFileMutationQueueForTests,
+  normalizePathForKey,
+  recordResolvedFileBackup,
+  resolveFileBackupPath,
+  withPathMutation,
+} from './file-mutation-primitives.js';
+
 // This lock protects only the small state-file transaction. Its wait budget
 // must cover the lock implementation's 30-second stale-owner safety window so
 // a rapid process handoff can recover instead of failing before recovery is
@@ -1300,7 +1308,7 @@ export function withExclusiveFileSystemCleanupLease<T>(
   return Promise.race([workflow, deadline.waitExpired]).finally(deadline.clear);
 }
 
-/** Degraded host fallback only; sandboxed text mutations do not acquire this lease. */
+/** Legacy host fallback only; trusted text transactions do not acquire this lease. */
 export function acquireHostFileSystemMutationLease(): Promise<FileSystemMutationLeaseRelease> {
   return acquireEffectLease('direct');
 }
@@ -1355,106 +1363,6 @@ export async function withHostFileSystemNamespaceMutation<T>(
   );
 }
 
-/** Capture a stable canonical backup key before a concurrent sink commits. */
-export function resolveFileBackupPath(filePath: string): string {
-  const backupPath = canonicalizeAgentHomePolicyPath(filePath);
-  if (backupPath === undefined) throw new Error(`Cannot identify backup path: ${filePath}`);
-  return backupPath;
-}
-
-/** Record against a canonical key captured before the corresponding commit. */
-export function recordResolvedFileBackup(
-  backups: Map<string, string>,
-  backupPath: string,
-  content: string,
-): void {
-  backups.delete(backupPath);
-  backups.set(backupPath, content);
-}
-
-/**
- * Normalize a path so equivalent variants collide on the same queue
- * key. Cross-platform parity per design §FEATURE_131 acceptance #9.
- *
- * On Windows the filesystem is case-insensitive across the entire
- * path, so we lowercase everything once we know we're on win32.
- * POSIX paths are case-sensitive and stay as-is. Detection is via
- * `process.platform`, with `KODAX_PATH_KEY_PLATFORM` as a test-only
- * override so unit tests can exercise both branches regardless of
- * the host OS.
- */
-function isWindowsPathPlatform(): boolean {
-  const override = process.env.KODAX_PATH_KEY_PLATFORM;
-  if (override === 'win32') return true;
-  if (override === 'posix') return false;
-  return process.platform === 'win32';
-}
-
-export function normalizePathForKey(absolutePath: string): string {
-  if (typeof absolutePath !== 'string' || absolutePath.length === 0) {
-    return '';
-  }
-  let normalized = absolutePath.replace(/\\/g, '/');
-  // Collapse repeated separators ("a//b" → "a/b") but not the leading
-  // double-slash on UNC paths.
-  if (normalized.startsWith('//')) {
-    normalized = '//' + normalized.slice(2).replace(/\/+/g, '/');
-  } else {
-    normalized = normalized.replace(/\/+/g, '/');
-  }
-  if (isWindowsPathPlatform()) {
-    // Windows filesystem is case-insensitive end-to-end — lowercase
-    // the entire path so any spelling collides on the same key.
-    normalized = normalized.toLowerCase();
-  } else if (normalized.length >= 2 && /^[A-Za-z]:/.test(normalized)) {
-    // POSIX host but a Windows-style path snuck in (cross-platform
-    // tests, mock data) — at minimum align the drive letter so the
-    // common case of `C:` vs `c:` doesn't split the queue.
-    normalized = normalized[0]!.toLowerCase() + normalized.slice(1);
-  }
-  // Trim trailing slash unless it's the root marker.
-  if (normalized.length > 1 && normalized.endsWith('/')) {
-    normalized = normalized.replace(/\/+$/g, '');
-  }
-  return normalized;
-}
-
-/**
- * Run `fn` serialized against any other in-flight mutations targeting
- * the same `absolutePath`. Returns whatever `fn` returns. The queue
- * tail entry is cleared when this call's work is the current tail —
- * so steady-state behavior is "queue size === count of paths with
- * mutations actively in flight", never growing unboundedly.
- *
- * Errors propagate: if `fn` throws/rejects, the queue still moves on
- * to the next caller (it chains off `previous` not off the failure),
- * but the rejected promise is what `withFileMutation` returns to the
- * caller. Subsequent enqueues see a settled prior tail and proceed.
- */
-export async function withPathMutation<T>(
-  absolutePath: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const key = normalizePathForKey(absolutePath);
-  const previous = fileMutationQueue.get(key) ?? Promise.resolve();
-  // Wrap `fn` so a failure on the prior tail does not poison this
-  // call's chain. We always advance the queue regardless of whether
-  // the prior caller succeeded.
-  const next: Promise<T> = previous
-    .catch(() => undefined)
-    .then(fn);
-  // Track a sibling promise for tail-eviction so `next`'s consumer
-  // sees its real result (success or rejection) without our cleanup
-  // accidentally swallowing it.
-  const trackable: Promise<unknown> = next.catch(() => undefined).finally(() => {
-    if (fileMutationQueue.get(key) === trackable) {
-      fileMutationQueue.delete(key);
-    }
-  });
-  fileMutationQueue.set(key, trackable);
-  return next;
-}
-
 /** Path-local queue plus the ordinary direct-file Agent Home hard boundary. */
 export function withFileMutation<T>(
   absolutePath: string,
@@ -1468,36 +1376,6 @@ export function withFileMutation<T>(
       return fn();
     });
   });
-}
-
-/** Path-local direct mutation whose actual filesystem sink runs inside the OS sandbox. */
-export function withSandboxedFileMutation<T>(
-  absolutePath: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  return withPathMutation(absolutePath, async () => {
-    if (isAgentHomeHardMutationTarget(absolutePath)) {
-      throw new Error(`Mutation targets protected KodaX state: ${absolutePath}`);
-    }
-    return fn();
-  });
-}
-
-/**
- * Test-only helper: snapshot the live queue size. Used by the unit
- * tests to assert "no leak after settle". Production code should not
- * read this — it only exists for verification.
- */
-export function _peekFileMutationQueueSizeForTests(): number {
-  return fileMutationQueue.size;
-}
-
-/**
- * Test-only helper: clear the queue between tests. Production code
- * should never call this — it would orphan in-flight mutations.
- */
-export function _resetFileMutationQueueForTests(): void {
-  fileMutationQueue.clear();
 }
 
 export async function _resetFileSystemEffectLeasesForTests(): Promise<void> {

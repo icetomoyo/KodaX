@@ -3,9 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { setAgentConfigHome } from '@kodax-ai/agent';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { KodaXToolExecutionContext } from '../types.js';
+import type {
+  KodaXToolExecutionContext,
+  KodaXTrustedTextFileSnapshot,
+  KodaXTrustedTextMutationHost,
+} from '../types.js';
 import { toolUndo } from './undo.js';
 import { toolWrite } from './write.js';
 
@@ -23,6 +27,152 @@ function context(backups: Map<string, string>): KodaXToolExecutionContext {
 }
 
 describe('toolUndo Agent Home hard boundary', () => {
+  it('keeps a trusted backup and refuses to overwrite a later shell change', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-trusted-cas-'));
+    roots.push(root);
+    const target = path.join(root, 'target.txt');
+    const canonicalTarget = path.join(root, 'canonical-target.txt');
+    let nextRevision = 2;
+    let current: KodaXTrustedTextFileSnapshot = {
+      state: 'present',
+      content: 'before',
+      revision: 'present:r1',
+      slot: 'slot:target',
+      canonicalPath: canonicalTarget,
+    };
+    const commit = vi.fn<KodaXTrustedTextMutationHost['commit']>(async (input) => {
+      if (input.expectedRevision !== current.revision) {
+        return { status: 'stale', currentRevision: current.revision };
+      }
+      const before = current;
+      current = {
+        ...current,
+        content: input.content,
+        revision: `present:r${nextRevision++}`,
+      };
+      return {
+        status: 'written',
+        before,
+        after: current,
+        recoveredAbandonedLock: false,
+      };
+    });
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: root,
+      trustedTextMutationHost: {
+        snapshot: async () => current,
+        commit,
+      },
+    };
+
+    await toolWrite({ path: target, content: 'kodax-write' }, ctx);
+    current = {
+      ...current,
+      slot: 'slot:replacement',
+    };
+    await expect(toolUndo({}, ctx)).rejects.toMatchObject({
+      name: 'KodaXTrustedTextMutationError',
+      code: 'text_mutation_identity_changed',
+    });
+    expect(commit).toHaveBeenCalledTimes(1);
+
+    current = {
+      ...current,
+      content: 'shell-write',
+      revision: 'present:shell',
+      slot: 'slot:target',
+    };
+
+    await expect(toolUndo({}, ctx)).rejects.toMatchObject({
+      name: 'KodaXTrustedTextMutationError',
+      code: 'text_mutation_stale',
+      expectedRevision: 'present:r2',
+      actualRevision: 'present:shell',
+    });
+    expect(commit).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedRevision: 'present:r2',
+    }));
+    expect(current.content).toBe('shell-write');
+    expect(ctx.backups.has(target)).toBe(false);
+    expect(ctx.backups.get(canonicalTarget)).toBe('before');
+
+    current = {
+      ...current,
+      content: 'kodax-write',
+      revision: 'present:r2',
+    };
+    ctx.backups.set(canonicalTarget, 'corrupted-legacy-backup');
+    await expect(toolUndo({}, ctx)).resolves.toContain('Restored');
+    expect(current.content).toBe('before');
+    expect(ctx.backups.has(canonicalTarget)).toBe(false);
+  });
+
+  it('rebinds an uncertain undo receipt to the committed revision before retry', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-uncertain-'));
+    roots.push(root);
+    const target = path.join(root, 'target.txt');
+    const canonicalTarget = path.join(root, 'canonical-target.txt');
+    const backupKeyTarget = `${path.dirname(canonicalTarget)}${path.sep}${path.sep}${path.basename(canonicalTarget)}`;
+    let nextRevision = 2;
+    let commitCount = 0;
+    let current: KodaXTrustedTextFileSnapshot = {
+      state: 'present',
+      content: 'before',
+      revision: 'present:r1',
+      slot: 'slot:target',
+      canonicalPath: backupKeyTarget,
+    };
+    const commit = vi.fn<KodaXTrustedTextMutationHost['commit']>(async (input) => {
+      if (input.expectedRevision !== current.revision) {
+        return { status: 'stale', currentRevision: current.revision };
+      }
+      const before = current;
+      current = {
+        ...current,
+        content: input.content,
+        revision: `present:r${nextRevision++}`,
+        canonicalPath: canonicalTarget,
+      };
+      commitCount += 1;
+      return commitCount === 2
+        ? {
+            status: 'committed_uncertain',
+            before,
+            after: current,
+            recoveredAbandonedLock: false,
+            reason: 'injected post-commit durability failure',
+          }
+        : {
+            status: 'written',
+            before,
+            after: current,
+            recoveredAbandonedLock: false,
+          };
+    });
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: root,
+      trustedTextMutationHost: {
+        snapshot: async () => current,
+        commit,
+      },
+    };
+
+    await toolWrite({ path: target, content: 'kodax-write' }, ctx);
+    await expect(toolUndo({}, ctx)).rejects.toMatchObject({
+      code: 'text_mutation_commit_uncertain',
+      actualRevision: 'present:r3',
+    });
+    expect(current).toMatchObject({ content: 'before', revision: 'present:r3' });
+    expect(ctx.backups.get(backupKeyTarget)).toBe('before');
+
+    await expect(toolUndo({}, ctx)).resolves.toContain('Restored');
+    expect(commit.mock.calls[1]?.[0].expectedRevision).toBe('present:r2');
+    expect(commit.mock.calls[2]?.[0].expectedRevision).toBe('present:r3');
+    expect(ctx.backups.has(backupKeyTarget)).toBe(false);
+  });
+
   it('restores the most recently modified file after an A, B, A sequence', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-order-'));
     roots.push(root);

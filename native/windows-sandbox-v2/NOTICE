@@ -1,0 +1,8 @@
+KodaX Windows Sandbox v2
+Copyright 2026 KodaX contributors
+
+The process protocol, explicit stdio, restricted-token, and creation-time Job
+design were informed by OpenAI Codex's Apache-2.0 Windows sandbox sources.
+This component is an independent KodaX implementation and contains KodaX
+modifications for ASRT account/WFP interoperability, immutable policy SIDs,
+execution-scoped deny identities, bounded framing, and fail-closed peer loss.

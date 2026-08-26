@@ -164,7 +164,6 @@ export type {
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
-  KodaXFileSystemEffectLease,
   KodaXPreparedShellSandboxInvocation,
   KodaXShellSandboxBackend,
   KodaXShellSandboxObservation,
@@ -173,10 +172,10 @@ export type {
   KodaXShellProfileMode,
   KodaXShellSandbox,
   KodaXShellSandboxPrepareInput,
-  KodaXTextFileMutationRequest,
-  KodaXTextFileMutationSandbox,
-  KodaXTextFileMutationUnavailableReason,
-  KodaXTextFileSnapshot,
+  KodaXTrustedTextCommitInput,
+  KodaXTrustedTextCommitOutcome,
+  KodaXTrustedTextFileSnapshot,
+  KodaXTrustedTextMutationHost,
   KodaXWorkspaceSandboxRootRegistry,
   KodaXSkillScriptInputFile,
   KodaXSkillScriptOutputFile,
@@ -259,6 +258,15 @@ export type {
   TodoList,
   SessionErrorMetadata,
 } from './types.js';
+
+export {
+  assertTrustedTextMutationPolicy,
+  KodaXTrustedTextMutationError,
+} from './trusted-text-mutation.js';
+export type {
+  KodaXTrustedTextCommitUncertainReceipt,
+  KodaXTrustedTextMutationErrorCode,
+} from './trusted-text-mutation.js';
 
 export {
   acquireFileSystemMutationLease,

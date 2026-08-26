@@ -25,7 +25,8 @@ KodaX opens the provider/model metadata setup. Use `kodax setup` to rerun the
 flow, `kodax setup --custom` for a guided custom provider, and
 `kodax setup --help` (or REPL `/setup --help`) for paths, provider variables,
 commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox once:
-Windows may show a one-time UAC prompt; macOS/Linux report any required
+Windows requests UAC during activation (an existing v2 account rotation may
+require a second confirmation); macOS/Linux report any required
 Seatbelt/bubblewrap dependencies. Declining or missing a dependency does not
 break ordinary permission handling, and normal startup will not keep reminding
 you.

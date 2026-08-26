@@ -7,7 +7,6 @@ import {
   createAsrtShellSandbox,
   doctorSandboxRuntime,
   setupSandboxRuntime,
-  shutdownAsrtWorkspaceSessions,
 } from '../../src/sandbox-runtime.ts';
 
 function requiredEnvironment(name: string): string {
@@ -100,12 +99,6 @@ try {
   error = caught instanceof Error ? caught.stack : String(caught);
 } finally {
   restoreDiagnostics();
-  try {
-    await shutdownAsrtWorkspaceSessions();
-  } catch (caught) {
-    const cleanupError = caught instanceof Error ? caught.stack : String(caught);
-    error = error === undefined ? cleanupError : `${error}\nCleanup: ${cleanupError}`;
-  }
 }
 
 await writeFile(resultFile, JSON.stringify({ diagnostics, error, observations, result }), 'utf8');

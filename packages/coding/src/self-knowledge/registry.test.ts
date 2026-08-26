@@ -133,6 +133,24 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('stdin failures stay on the operation Promise');
   });
 
+  it('documents the FEATURE_295 trusted-text and native-shell boundary', () => {
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+
+    expect(sandbox).toContain('trusted text transactions and platform shell containment are');
+    expect(sandbox).toContain('separate authorities on Windows, Linux, and macOS');
+    expect(sandbox).toContain('never enter ASRT');
+    expect(sandbox).toContain('does not describe those\ntext writes as OS-token sandbox enforcement');
+    expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
+    expect(sandbox).toContain('nonce-bound per-policy private desktop');
+    expect(sandbox).toContain('descriptor-verified addon loading');
+    expect(sandbox).toContain('Issue 307 retains');
+    expect(sandbox).toContain('per-command ASRT Seatbelt/bubblewrap');
+    expect(sandbox).toContain('removes it from the v0.7.96');
+    expect(tools).toContain('per-file kernel locking');
+    expect(tools).toContain('Shell writes do not join that lock');
+  });
+
   it('documents the v0.7.95 self-healing cleanup and finalization contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;

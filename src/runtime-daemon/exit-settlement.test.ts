@@ -104,10 +104,6 @@ function dependencies(
     readProcessStartIdentity: vi.fn(() => undefined),
     waitForProcessExit: vi.fn(async () => true),
     killPidTree: vi.fn(async () => 'already-exited'),
-    recoverWindowsSandboxAcls: vi.fn(async () => 1),
-    recoverPreviousBootWindowsSandboxAcls: vi.fn(async () => 1),
-    clearWindowsSandboxAclMarkers: vi.fn(async () => 1),
-    clearPreviousBootWindowsSandboxAclMarkers: vi.fn(async () => 1),
     removeRuntimeExitIntentFile: vi.fn((intentPath) => {
       fs.rmSync(intentPath, { force: true });
     }),
@@ -402,14 +398,13 @@ describe('runtime exit settlement', () => {
     expect(fs.existsSync(ticketPath)).toBe(false);
   });
 
-  it('recovers exact Windows ACL residue only after exact daemon and Job containment exit', async () => {
+  it('recovers the exact Windows process tree', async () => {
     const configHome = tempConfigHome();
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
     const alive = new Set([expectedOwner.pid, expectedOwner.supervisorPid!]);
-    const recover = vi.fn(async () => 2);
     const deps = dependencies({
       isPidAlive: vi.fn((pid) => alive.has(pid)),
       readProcessStartIdentity: vi.fn((pid) => (
@@ -422,7 +417,6 @@ describe('runtime exit settlement', () => {
         alive.clear();
         return 'terminated';
       }),
-      recoverWindowsSandboxAcls: recover,
     });
 
     const result = await settleRuntimeDaemonExitForTest({
@@ -433,13 +427,7 @@ describe('runtime exit settlement', () => {
     }, deps);
 
     expect(result).toMatchObject({ status: 'recovered' });
-    expect(result.repairs).toEqual(['windows_process_tree', 'windows_sandbox_acl']);
-    expect(recover).toHaveBeenCalledWith(
-      configHome,
-      expectedOwner,
-      'windows-boot-100',
-      expect.any(Number),
-    );
+    expect(result.repairs).toEqual(['windows_process_tree']);
     expect(fs.existsSync(paths.lockFile)).toBe(false);
     expect(fs.existsSync(paths.stateFile)).toBe(false);
     expect(readRuntimeOwnerPolicy(paths).mode).toBe('daemon');
@@ -468,7 +456,7 @@ describe('runtime exit settlement', () => {
 
     expect(result).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(kill).not.toHaveBeenCalled();
     expect(waitForProcessExit).toHaveBeenCalledWith(
@@ -504,7 +492,7 @@ describe('runtime exit settlement', () => {
 
     expect(result).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(kill).not.toHaveBeenCalled();
     expect(waitForProcessExit).not.toHaveBeenCalledWith(
@@ -545,7 +533,7 @@ describe('runtime exit settlement', () => {
 
     expect(result).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(waitForProcessExit).toHaveBeenCalledWith(
       expectedOwner.supervisorPid,
@@ -634,7 +622,7 @@ describe('runtime exit settlement', () => {
 
     expect(resumed).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
   });
@@ -662,7 +650,7 @@ describe('runtime exit settlement', () => {
 
     expect(result).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(ownerLivenessChecks).toBe(2);
     expect(kill).not.toHaveBeenCalled();
@@ -799,7 +787,7 @@ describe('runtime exit settlement', () => {
       profile: 'coder',
       runtime: runtime(expectedOwner),
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({ recoverWindowsSandboxAcls: vi.fn(async () => 0) }));
+    }, dependencies());
 
     expect(resumed).toEqual({ status: 'recovered', repairs: [] });
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
@@ -825,7 +813,7 @@ describe('runtime exit settlement', () => {
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
   });
 
-  it('promotes an exact prepared intent when inline policy proves ambiguous stop acceptance', async () => {
+  it('promotes an exact prepared intent', async () => {
     const configHome = tempConfigHome();
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
@@ -841,23 +829,11 @@ describe('runtime exit settlement', () => {
       profile: 'coder',
       runtime: managedRuntime,
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({
-      recoverWindowsSandboxAcls: vi.fn(async () => {
-        throw new Error('pause after acceptance proof');
-      }),
-    }));
-    expect(first).toMatchObject({
-      status: 'blocked',
-      reason: 'cleanup_failed',
-      nextAction: 'retry-automatically',
-    });
-    const accepted = readRuntimeExitSettlementIntent(configHome, 'coder');
-    expect(accepted?.phase).toBe('stop_accepted');
+    }, dependencies());
+    expect(first).toEqual({ status: 'recovered', repairs: [] });
+    expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
     expect(managedRuntime.daemon.stopForInline).toHaveBeenCalledWith(expect.objectContaining({
       operation: { operationId: expect.any(String) },
-    }));
-    expect(managedRuntime.daemon.stopForInline).not.toHaveBeenCalledWith(expect.objectContaining({
-      operation: { operationId: accepted?.settlementId },
     }));
   });
 
@@ -904,7 +880,7 @@ describe('runtime exit settlement', () => {
       profile: 'coder',
       runtime: retryRuntime,
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({ recoverWindowsSandboxAcls: vi.fn(async () => 0) }));
+    }, dependencies());
 
     expect(retried).toEqual({ status: 'recovered', repairs: [] });
     expect(retryRuntime.daemon.stopForInline).toHaveBeenCalledWith(expect.objectContaining({
@@ -930,7 +906,7 @@ describe('runtime exit settlement', () => {
       runtime: managedRuntime,
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
       managementPhaseTimeoutMs: TEST_HUNG_PHASE_TIMEOUT_MS,
-    }, dependencies({ recoverWindowsSandboxAcls: vi.fn(async () => 0) }));
+    }, dependencies());
 
     expect(result).toMatchObject({ status: 'recovered' });
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
@@ -979,9 +955,13 @@ describe('runtime exit settlement', () => {
       profile: 'coder',
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
     }, dependencies({
-      recoverWindowsSandboxAcls: vi.fn(async () => {
-        throw new Error('retain accepted ticket');
-      }),
+      isPidAlive: vi.fn((pid) => pid === expectedOwner.supervisorPid),
+      readProcessStartIdentity: vi.fn((pid) => (
+        pid === expectedOwner.supervisorPid
+          ? expectedOwner.supervisorProcessStartIdentity
+          : undefined
+      )),
+      waitForProcessExit: vi.fn(async () => false),
     }));
     const accepted = readRuntimeExitSettlementIntent(configHome, 'coder');
     expect(accepted?.phase).toBe('stop_accepted');
@@ -993,9 +973,13 @@ describe('runtime exit settlement', () => {
       runtime: managedRuntime,
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
     }, dependencies({
-      recoverWindowsSandboxAcls: vi.fn(async () => {
-        throw new Error('retain accepted ticket again');
-      }),
+      isPidAlive: vi.fn((pid) => pid === expectedOwner.supervisorPid),
+      readProcessStartIdentity: vi.fn((pid) => (
+        pid === expectedOwner.supervisorPid
+          ? expectedOwner.supervisorProcessStartIdentity
+          : undefined
+      )),
+      waitForProcessExit: vi.fn(async () => false),
     }));
 
     expect(managedRuntime.daemon.stopForInline).not.toHaveBeenCalled();
@@ -1117,7 +1101,7 @@ describe('runtime exit settlement', () => {
       profile: 'coder',
       runtime: runtime(expectedOwner),
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({ recoverWindowsSandboxAcls: vi.fn(async () => 0) }));
+    }, dependencies());
 
     expect(result).toEqual({ status: 'recovered', repairs: [] });
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
@@ -1156,7 +1140,6 @@ describe('runtime exit settlement', () => {
         alive.clear();
         return 'terminated';
       }),
-      recoverWindowsSandboxAcls: vi.fn(async () => 0),
     }));
 
     expect(result).toEqual({
@@ -1203,7 +1186,6 @@ describe('runtime exit settlement', () => {
         alive.has(pid) ? new Promise<boolean>(() => undefined) : Promise.resolve(true)
       )),
       killPidTree: kill,
-      recoverWindowsSandboxAcls: vi.fn(async () => 0),
     }));
 
     expect(result).toEqual({
@@ -1328,9 +1310,8 @@ describe('runtime exit settlement', () => {
     commitRuntimeDaemonRollbackPolicy(paths, expectedOwner.runtimeId, 0);
     const first = dependencies({
       readWindowsBootIdentity: vi.fn(() => 'windows-boot-100'),
-      recoverWindowsSandboxAcls: vi.fn(async () => {
-        throw new Error('crash before recovery');
-      }),
+      isPidAlive: vi.fn((pid) => pid === expectedOwner.supervisorPid),
+      waitForProcessExit: vi.fn(async () => false),
     });
     await settleRuntimeDaemonExitForTest({
       configHome,
@@ -1339,14 +1320,6 @@ describe('runtime exit settlement', () => {
     }, first);
 
     const kill = vi.fn(async () => 'terminated' as const);
-    const exactRecover = vi.fn(async () => {
-      throw new Error('exact-owner recovery must not run after a verified reboot');
-    });
-    const previousBootRecover = vi.fn(async () => 2);
-    const exactClear = vi.fn(async () => {
-      throw new Error('exact-owner marker clear must not run after previous-boot recovery');
-    });
-    const previousBootClear = vi.fn(async () => 2);
     const resumed = await settleRuntimeDaemonExitForTest({
       configHome,
       profile: 'coder',
@@ -1356,24 +1329,16 @@ describe('runtime exit settlement', () => {
       isPidAlive: vi.fn(() => true),
       waitForProcessExit: vi.fn(async () => false),
       killPidTree: kill,
-      recoverWindowsSandboxAcls: exactRecover,
-      recoverPreviousBootWindowsSandboxAcls: previousBootRecover,
-      clearWindowsSandboxAclMarkers: exactClear,
-      clearPreviousBootWindowsSandboxAclMarkers: previousBootClear,
     }));
 
     expect(resumed).toEqual({
       status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
+      repairs: [],
     });
     expect(kill).not.toHaveBeenCalled();
-    expect(exactRecover).not.toHaveBeenCalled();
-    expect(previousBootRecover).toHaveBeenCalledOnce();
-    expect(exactClear).not.toHaveBeenCalled();
-    expect(previousBootClear).toHaveBeenCalledOnce();
   });
 
-  it('durably records previous-boot ACL recovery before clearing its marker set', async () => {
+  it('settles a previous-boot intent without a legacy ACL dependency', async () => {
     const configHome = tempConfigHome();
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
@@ -1385,56 +1350,18 @@ describe('runtime exit settlement', () => {
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
     }, dependencies({
       readWindowsBootIdentity: vi.fn(() => 'windows-boot-100'),
-      recoverWindowsSandboxAcls: vi.fn(async () => {
-        throw new Error('crash before recovery');
-      }),
+      isPidAlive: vi.fn((pid) => pid === expectedOwner.supervisorPid),
+      waitForProcessExit: vi.fn(async () => false),
     }));
 
-    const recover = vi.fn(async () => 2);
     const first = await settleRuntimeDaemonExitForTest({
       configHome,
       profile: 'coder',
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({
-      readWindowsBootIdentity: vi.fn(() => 'windows-boot-200'),
-      recoverPreviousBootWindowsSandboxAcls: recover,
-      clearPreviousBootWindowsSandboxAclMarkers: vi.fn(async () => {
-        throw new Error('crash before previous-boot marker clear');
-      }),
-    }));
+    }, dependencies({ readWindowsBootIdentity: vi.fn(() => 'windows-boot-200') }));
 
-    expect(first).toMatchObject({
-      status: 'blocked',
-      reason: 'cleanup_failed',
-      nextAction: 'retry-automatically',
-    });
-    expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toMatchObject({
-      phase: 'recovered',
-      repairs: ['windows_sandbox_acl'],
-      windowsAclRecoveryScope: 'previous-boot',
-      windowsAclRecoveredOnBootIdentity: 'windows-boot-200',
-    });
-
-    const resumed = await settleRuntimeDaemonExitForTest({
-      configHome,
-      profile: 'coder',
-      timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({
-      readWindowsBootIdentity: vi.fn(() => 'windows-boot-300'),
-      recoverPreviousBootWindowsSandboxAcls: recover,
-      clearPreviousBootWindowsSandboxAclMarkers: vi.fn(async () => {
-        expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toMatchObject({
-          windowsAclRecoveredOnBootIdentity: 'windows-boot-300',
-        });
-        return 2;
-      }),
-    }));
-
-    expect(resumed).toEqual({
-      status: 'recovered',
-      repairs: ['windows_sandbox_acl'],
-    });
-    expect(recover).toHaveBeenCalledTimes(2);
+    expect(first).toEqual({ status: 'recovered', repairs: [] });
+    expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
   });
 
   it('uses a changed POSIX boot identity to recover exact retained ownership after reboot', async () => {
@@ -1476,39 +1403,33 @@ describe('runtime exit settlement', () => {
     expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
   });
 
-  it('resumes marker clearing after ACL recovery was durably recorded', async () => {
+  it('accepts and clears a historical recovered ticket', async () => {
     const configHome = tempConfigHome();
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
-    const recover = vi.fn(async () => 2);
-    const first = await settleRuntimeDaemonExitForTest({
-      configHome,
-      profile: 'coder',
-      runtime: runtime(expectedOwner),
-      timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({
-      recoverWindowsSandboxAcls: recover,
-      clearWindowsSandboxAclMarkers: vi.fn(async () => {
-        throw new Error('crash before marker clear');
-      }),
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    commitRuntimeDaemonRollbackPolicy(paths, expectedOwner.runtimeId, 0);
+    fs.writeFileSync(path.join(paths.rootDir, 'exit-settlement.json'), JSON.stringify({
+      version: 1,
+      settlementId: 'historical-recovered-ticket',
+      owner: expectedOwner,
+      windowsBootIdentity: 'windows-boot-100',
+      phase: 'recovered',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:01.000Z',
+      repairs: ['windows_sandbox_acl'],
+      windowsAclRecoveryScope: 'exact-owner',
     }));
-    expect(first).toMatchObject({
-      status: 'blocked',
-      reason: 'cleanup_failed',
-      nextAction: 'retry-automatically',
-    });
-    expect(readRuntimeExitSettlementIntent(configHome, 'coder')?.phase).toBe('recovered');
-
     const resumed = await settleRuntimeDaemonExitForTest({
       configHome,
       profile: 'coder',
       timeoutMs: TEST_TRANSACTION_TIMEOUT_MS,
-    }, dependencies({
-      recoverWindowsSandboxAcls: recover,
-      clearWindowsSandboxAclMarkers: vi.fn(async () => 2),
-    }));
+    }, dependencies());
 
-    expect(resumed.status).toBe('recovered');
-    expect(recover).toHaveBeenCalledTimes(1);
+    expect(resumed).toEqual({
+      status: 'recovered',
+      repairs: ['windows_sandbox_acl'],
+    });
+    expect(readRuntimeExitSettlementIntent(configHome, 'coder')).toBeUndefined();
   });
 });

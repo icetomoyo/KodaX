@@ -1674,28 +1674,18 @@ export interface KodaXShellSandboxPrepareInput {
   readonly reportObservation?: (observation: KodaXShellSandboxObservation) => void;
 }
 
-/** Exclusive host filesystem fence acquired before a sandbox grants temporary ACLs. */
-export interface KodaXFileSystemEffectLease {
-  bindEffectProcess(pid: number, windowsJobContained: boolean): Promise<void>;
-  finishEffectProcess(): Promise<void>;
-  release(): Promise<void>;
-}
-
 export interface KodaXPreparedShellSandboxInvocation {
   readonly executable: string;
   readonly args: readonly string[];
   readonly env: NodeJS.ProcessEnv;
   readonly windowsVerbatimArguments?: boolean;
-  readonly fileSystemEffectLease?: KodaXFileSystemEffectLease;
-  /** Full sandbox policy identity used to coordinate compatible Windows ACL sessions. */
-  readonly fileSystemEffectPolicyKey?: string;
-  /** Final synchronous sandbox-safety check immediately before the effect gate starts the target. */
-  readonly authorizeStart?: () => void;
+  /** Private bootstrap bytes consumed by the native host before target stdin. */
+  readonly stdinPrefix?: Uint8Array;
+  /** The authenticated native runner owns a per-command kill-on-close Job. */
+  readonly processTreeContainment?: 'native-job';
   cleanup(input?: {
     readonly execution: 'not_started' | 'started_or_unknown';
   }): Promise<KodaXShellSandboxObservation | undefined>;
-  /** Evicts a cleanup-requested sandbox session; its safe reset may drain asynchronously. */
-  readonly retire?: () => Promise<void>;
 }
 
 /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
@@ -1711,47 +1701,57 @@ export interface KodaXShellSandbox {
   ): Promise<KodaXPreparedShellSandboxInvocation | undefined>;
 }
 
-export interface KodaXTextFileSnapshot {
+/** Canonical snapshot produced by the trusted main-process text authority. */
+export interface KodaXTrustedTextFileSnapshot {
   readonly state: 'missing' | 'present';
   readonly content: string;
-  /** Opaque identity for an optimistic compare-and-write conflict check. */
   readonly revision: string;
-  /** Canonical backup authority bound to the opened snapshot identity. */
-  readonly backupPath: string;
+  /** Stable canonical namespace slot used by the cross-Runtime kernel lock. */
+  readonly slot: string;
+  readonly canonicalPath: string;
 }
 
-export interface KodaXTextFileMutationRequest {
-  readonly toolCallId?: string;
-  readonly toolName: 'edit' | 'insert_after_anchor' | 'multi_edit' | 'undo' | 'write';
-  readonly toolInput: Readonly<Record<string, unknown>>;
+export interface KodaXTrustedTextCommitInput {
   readonly path: string;
+  readonly expectedRevision: string;
+  readonly content: string;
+  readonly createParentDirectories: boolean;
   readonly signal?: AbortSignal;
 }
 
-/** Why a sandboxed text mutation was unavailable, for structured diagnostics. */
-export type KodaXTextFileMutationUnavailableReason =
-  | 'not_ready'
-  | 'not_selected'
-  | 'session_reset_pending'
-  | 'acl_transition_pending';
+export type KodaXTrustedTextCommitOutcome =
+  | {
+      readonly status: 'written';
+      readonly before: KodaXTrustedTextFileSnapshot;
+      readonly after: KodaXTrustedTextFileSnapshot;
+      /** True when Windows recovered a mutex abandoned by a dead peer. */
+      readonly recoveredAbandonedLock: boolean;
+    }
+  | {
+      readonly status: 'stale';
+      readonly currentRevision: string;
+    }
+  | {
+      /** The replacement linearized, but its durability or rollback could not be proven. */
+      readonly status: 'committed_uncertain';
+      readonly before: KodaXTrustedTextFileSnapshot;
+      readonly after: KodaXTrustedTextFileSnapshot;
+      readonly recoveredAbandonedLock: boolean;
+      readonly reason: string;
+    };
 
-/** Runtime-owned narrow filesystem capability for direct text mutation tools. */
-export interface KodaXTextFileMutationSandbox {
-  /** Whether this capability covers the path; uncovered paths use the legacy host fence. */
-  canHandlePath?(filePath: string): boolean;
-  read(input: KodaXTextFileMutationRequest): Promise<
-    | { readonly status: 'ok'; readonly snapshot: KodaXTextFileSnapshot }
-    | { readonly status: 'unavailable'; readonly reason?: KodaXTextFileMutationUnavailableReason }
-  >;
-  write(input: KodaXTextFileMutationRequest & {
-    readonly content: string;
+/**
+ * Host-owned trusted text authority. It performs final canonical policy
+ * validation, no-follow traversal, cross-Runtime locking, locked CAS, flush,
+ * and atomic replacement without entering the shell sandbox graph.
+ */
+export interface KodaXTrustedTextMutationHost {
+  snapshot(input: {
+    readonly path: string;
     readonly createParentDirectories: boolean;
-    readonly expectedRevision: string;
-  }): Promise<
-    | { readonly status: 'written' }
-    | { readonly status: 'conflict' }
-    | { readonly status: 'unavailable'; readonly reason?: KodaXTextFileMutationUnavailableReason }
-  >;
+    readonly signal?: AbortSignal;
+  }): Promise<KodaXTrustedTextFileSnapshot>;
+  commit(input: KodaXTrustedTextCommitInput): Promise<KodaXTrustedTextCommitOutcome>;
 }
 
 /** Runtime-owned exact workspace roots shared by shell and direct text tools. */
@@ -1829,8 +1829,8 @@ export interface KodaXContextOptions {
   shellExecution?: KodaXShellExecutionContract;
   /** Runtime-owned OS sandbox broker; never accepted from serialized model input. */
   shellSandbox?: KodaXShellSandbox;
-  /** Runtime-owned OS-sandboxed optimistic compare-and-write path for direct text mutations. */
-  textFileMutationSandbox?: KodaXTextFileMutationSandbox;
+  /** Runtime-owned trusted host transaction authority for direct text tools. */
+  trustedTextMutationHost?: KodaXTrustedTextMutationHost;
   /** Runtime-owned linked-worktree roots; never accepted from model input. */
   workspaceSandboxRoots?: KodaXWorkspaceSandboxRootRegistry;
   /** Fail-closed host policy applied to every concrete file a read tool opens. */
@@ -2677,8 +2677,8 @@ export interface KodaXToolExecutionContext {
   sandbox?: KodaXSandboxOptions;
   /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
   shellSandbox?: KodaXShellSandbox;
-  /** Runtime-owned OS-sandboxed read/compare/write path for direct text mutations. */
-  textFileMutationSandbox?: KodaXTextFileMutationSandbox;
+  /** Runtime-owned trusted host transaction authority for direct text tools. */
+  trustedTextMutationHost?: KodaXTrustedTextMutationHost;
   /** Runtime-owned linked-worktree roots shared by shell and direct text tools. */
   workspaceSandboxRoots?: KodaXWorkspaceSandboxRootRegistry;
   /** Structured containment metadata; never model-visible or persisted as conversation text. */

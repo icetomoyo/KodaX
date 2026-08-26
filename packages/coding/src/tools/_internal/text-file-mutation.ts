@@ -3,23 +3,47 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
-  KodaXTextFileMutationRequest,
-  KodaXTextFileMutationSandbox,
-  KodaXTextFileSnapshot,
   KodaXToolExecutionContext,
+  KodaXTrustedTextMutationHost,
 } from '../../types.js';
+import {
+  assertTrustedTextMutationPolicy,
+  KodaXTrustedTextMutationError,
+} from '../../trusted-text-mutation.js';
 import {
   recordResolvedFileBackup,
   resolveFileBackupPath,
   normalizePathForKey,
-  withFileMutation,
   withPathMutation,
-  withSandboxedFileMutation,
-} from './file-mutation-queue.js';
+} from './file-mutation-primitives.js';
 
-export interface TextFileMutationSnapshot extends KodaXTextFileSnapshot {
-  readonly execution: 'host' | 'sandbox';
-  readonly request: KodaXTextFileMutationRequest;
+interface TextFileSnapshot {
+  readonly state: 'missing' | 'present';
+  readonly content: string;
+  readonly revision: string;
+  readonly backupPath: string;
+}
+
+interface TextFileMutationRequest {
+  readonly toolCallId?: string;
+  readonly toolName: 'edit' | 'insert_after_anchor' | 'multi_edit' | 'undo' | 'write';
+  readonly toolInput: Readonly<Record<string, unknown>>;
+  readonly path: string;
+  readonly signal?: AbortSignal;
+}
+
+interface TrustedTextMutationBackupReceipt {
+  readonly canonicalPath: string;
+  readonly slot: string;
+  readonly postRevision: string;
+  readonly preimage: string;
+}
+
+export interface TextFileMutationSnapshot extends TextFileSnapshot {
+  readonly execution: 'host';
+  readonly request: TextFileMutationRequest;
+  readonly trustedHost?: KodaXTrustedTextMutationHost;
+  readonly trustedSlot?: string;
 }
 
 function revision(content: string, device: bigint, inode: bigint, linkCount: bigint): string {
@@ -40,7 +64,7 @@ function assertSingleLink(filePath: string, linkCount: bigint): void {
   }
 }
 
-async function readHostSnapshot(filePath: string): Promise<KodaXTextFileSnapshot> {
+async function readHostSnapshot(filePath: string): Promise<TextFileSnapshot> {
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(filePath, 'r');
@@ -72,38 +96,42 @@ async function readHostSnapshot(filePath: string): Promise<KodaXTextFileSnapshot
   }
 }
 
-/**
- * A Runtime path outside the workspace has no ASRT sink. Keep its established
- * host behavior only when no existing path component is a symlink/junction.
- * Component metadata avoids mistaking case or short-name spelling changes for
- * aliases. This check runs after the direct lease is held.
- */
-async function assertUnaliasedHostMutationPath(filePath: string): Promise<void> {
-  const target = path.resolve(filePath);
-  const root = path.parse(target).root;
-  let candidate = root;
-  for (const component of path.relative(root, target).split(path.sep).filter(Boolean)) {
-    candidate = path.join(candidate, component);
-    try {
-      const stats = await fs.lstat(candidate);
-      if (stats.isSymbolicLink()) {
-        throw new Error(`Runtime host mutation target is redirected through a link: ${filePath}`);
-      }
-      if (candidate === target) {
-        if (stats.isFile() && stats.nlink > 1) {
-          throw new Error(`Runtime host mutation target is a hard link: ${filePath}`);
-        }
-      }
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw error;
-    }
-  }
-}
-
 interface MutationBackup {
   preserveExisting(): void;
-  recordLatest(): void;
+  recordLatest(
+    content?: string,
+    receipt?: TrustedTextMutationBackupReceipt,
+  ): void;
+}
+
+const trustedTextMutationBackupReceipts = new WeakMap<
+  Map<string, string>,
+  Map<string, TrustedTextMutationBackupReceipt>
+>();
+
+function receiptMap(
+  backups: Map<string, string>,
+  create: boolean,
+): Map<string, TrustedTextMutationBackupReceipt> | undefined {
+  const current = trustedTextMutationBackupReceipts.get(backups);
+  if (current !== undefined || !create) return current;
+  const created = new Map<string, TrustedTextMutationBackupReceipt>();
+  trustedTextMutationBackupReceipts.set(backups, created);
+  return created;
+}
+
+export function getTrustedTextMutationBackupReceipt(
+  backups: Map<string, string>,
+  backupPath: string,
+): TrustedTextMutationBackupReceipt | undefined {
+  return receiptMap(backups, false)?.get(backupPath);
+}
+
+export function deleteTrustedTextMutationBackupReceipt(
+  backups: Map<string, string>,
+  backupPath: string,
+): void {
+  receiptMap(backups, false)?.delete(backupPath);
 }
 
 function createMutationBackup(
@@ -117,8 +145,13 @@ function createMutationBackup(
         recordResolvedFileBackup(backups, backupPath, content);
       }
     },
-    recordLatest() {
-      recordResolvedFileBackup(backups, backupPath, content);
+    recordLatest(current = content, receipt) {
+      recordResolvedFileBackup(backups, backupPath, current);
+      if (receipt === undefined) {
+        deleteTrustedTextMutationBackupReceipt(backups, backupPath);
+      } else {
+        receiptMap(backups, true)?.set(backupPath, receipt);
+      }
     },
   };
 }
@@ -136,10 +169,10 @@ async function writeFileHandleFully(handle: fs.FileHandle, content: string): Pro
 
 function textFileMutationRequest(
   filePath: string,
-  toolName: KodaXTextFileMutationRequest['toolName'],
+  toolName: TextFileMutationRequest['toolName'],
   toolInput: Readonly<Record<string, unknown>>,
   ctx: KodaXToolExecutionContext,
-): KodaXTextFileMutationRequest {
+): TextFileMutationRequest {
   return {
     toolCallId: ctx.toolCallId,
     toolName,
@@ -150,59 +183,61 @@ function textFileMutationRequest(
 }
 
 /**
- * Keep the path queue around the complete read/transform/write transaction.
- * A real workspace sandbox capability bypasses the global direct lease for
- * paths it covers. Uncovered paths and standalone execution retain the legacy
- * host shell/namespace fence; covered-path sandbox failure is fail-closed.
+ * Text tools execute in the trusted host and never enter the shell sandbox or
+ * its filesystem-effect lease. On every supported desktop platform the host
+ * snapshots optimistically, then reauthorizes, locks the canonical file slot,
+ * rereads, and commits only when CAS still matches. The local path queue is a
+ * test-only fallback when no Runtime host is bound.
  */
 export function withTextFileMutation<T>(
   filePath: string,
-  toolName: KodaXTextFileMutationRequest['toolName'],
+  toolName: TextFileMutationRequest['toolName'],
   toolInput: Readonly<Record<string, unknown>>,
   ctx: KodaXToolExecutionContext,
   operation: (snapshot: TextFileMutationSnapshot) => Promise<T>,
 ): Promise<T> {
   const request = textFileMutationRequest(filePath, toolName, toolInput, ctx);
-  const sandbox = ctx.textFileMutationSandbox;
-  const uncoveredRuntimePath = sandbox?.canHandlePath?.(filePath) === false;
-  if (sandbox === undefined || uncoveredRuntimePath) {
-    return withFileMutation(filePath, async () => {
-      if (uncoveredRuntimePath) await assertUnaliasedHostMutationPath(filePath);
+  const trustedHost = ctx.trustedTextMutationHost;
+  assertTrustedTextMutationPolicy(
+    filePath,
+    ctx.executionCwd ?? ctx.gitRoot ?? process.cwd(),
+  );
+  if (trustedHost !== undefined) {
+    return trustedHost.snapshot({
+      path: filePath,
+      createParentDirectories: toolName === 'write',
+      signal: ctx.abortSignal,
+    }).then((snapshot) => {
+      assertTrustedTextMutationPolicy(
+        snapshot.canonicalPath,
+        ctx.executionCwd ?? ctx.gitRoot ?? process.cwd(),
+      );
       return operation({
-        ...await readHostSnapshot(filePath),
+        state: snapshot.state,
+        content: snapshot.content,
+        revision: snapshot.revision,
+        backupPath: snapshot.canonicalPath,
         execution: 'host',
         request,
+        trustedHost,
+        trustedSlot: snapshot.slot,
       });
     });
   }
-  return withSandboxedFileMutation(filePath, async () => {
-    const initial = await readSandboxedSnapshot(sandbox, request);
-    const run = (snapshot: KodaXTextFileSnapshot) => operation({
-      ...snapshot,
-      execution: 'sandbox' as const,
+  if (process.env.NODE_ENV !== 'test') {
+    return Promise.reject(new KodaXTrustedTextMutationError({
+      code: 'text_mutation_unsupported_filesystem',
+      path: filePath,
+      message: 'The trusted text transaction host is unavailable.',
+    }));
+  }
+  return withPathMutation(filePath, async () => {
+    return operation({
+      ...await readHostSnapshot(filePath),
+      execution: 'host',
       request,
     });
-    if (normalizePathForKey(filePath) === normalizePathForKey(initial.backupPath)) {
-      return run(initial);
-    }
-    return withPathMutation(initial.backupPath, async () => {
-      const refreshed = await readSandboxedSnapshot(sandbox, request);
-      if (normalizePathForKey(refreshed.backupPath) !== normalizePathForKey(initial.backupPath)) {
-        throw new Error(`File identity changed during mutation: ${filePath}. Re-read and retry.`);
-      }
-      return run(refreshed);
-    });
   });
-}
-
-async function readSandboxedSnapshot(
-  sandbox: KodaXTextFileMutationSandbox,
-  request: KodaXTextFileMutationRequest,
-): Promise<KodaXTextFileSnapshot> {
-  const result = await sandbox.read(request);
-  if (result.status === 'ok') return result.snapshot;
-  const suffix = result.reason === undefined ? '' : ` (${result.reason})`;
-  throw new Error(`The Runtime sandboxed file mutation is unavailable.${suffix}`);
 }
 
 function mutationBackup(
@@ -213,41 +248,11 @@ function mutationBackup(
   if (backupContent === undefined) return undefined;
   return createMutationBackup(
     ctx.backups,
-    snapshot.execution === 'sandbox'
-      ? snapshot.backupPath
-      : resolveFileBackupPath(snapshot.request.path),
+    snapshot.trustedHost === undefined
+      ? resolveFileBackupPath(snapshot.request.path)
+      : snapshot.backupPath,
     backupContent,
   );
-}
-
-async function writeSandboxedTextFile(
-  snapshot: TextFileMutationSnapshot,
-  content: string,
-  createParentDirectories: boolean,
-  sandbox: KodaXTextFileMutationSandbox | undefined,
-  backup: MutationBackup | undefined,
-): Promise<void> {
-  let result: Awaited<ReturnType<KodaXTextFileMutationSandbox['write']>> | undefined;
-  try {
-    result = await sandbox?.write({
-      ...snapshot.request,
-      content,
-      createParentDirectories,
-      expectedRevision: snapshot.revision,
-    });
-  } catch (error: unknown) {
-    backup?.preserveExisting();
-    throw error;
-  }
-  if (result?.status === 'written') {
-    backup?.recordLatest();
-    return;
-  }
-  if (result?.status === 'conflict') {
-    throw new Error(`File changed during mutation: ${snapshot.request.path}. Re-read and retry.`);
-  }
-  const suffix = result?.reason === undefined ? '' : ` (${result.reason})`;
-  throw new Error(`The sandboxed file mutation became unavailable before commit.${suffix}`);
 }
 
 async function writeHostTextFile(
@@ -294,16 +299,95 @@ export async function writeTextFileForMutation(
   createParentDirectories: boolean,
   ctx: KodaXToolExecutionContext,
   backupContent?: string,
+  undoReceipt?: TrustedTextMutationBackupReceipt,
 ): Promise<void> {
   const backup = mutationBackup(snapshot, ctx, backupContent);
-  if (snapshot.execution === 'sandbox') {
-    return writeSandboxedTextFile(
-      snapshot,
+  if (snapshot.trustedHost !== undefined) {
+    const expectedRevision = undoReceipt?.postRevision ?? snapshot.revision;
+    const expectedSlot = undoReceipt?.slot ?? snapshot.trustedSlot;
+    const expectedCanonicalPath = undoReceipt?.canonicalPath ?? snapshot.backupPath;
+    const undoBackupPath = undoReceipt === undefined ? undefined : snapshot.request.path;
+    if (
+      snapshot.trustedSlot !== expectedSlot
+      || normalizePathForKey(snapshot.backupPath) !== normalizePathForKey(expectedCanonicalPath)
+      || (undoBackupPath !== undefined
+        && normalizePathForKey(undoBackupPath) !== normalizePathForKey(expectedCanonicalPath))
+    ) {
+      throw new KodaXTrustedTextMutationError({
+        code: 'text_mutation_identity_changed',
+        path: snapshot.request.path,
+        message: `Trusted text mutation receipt identity changed: ${snapshot.request.path}`,
+      });
+    }
+    const outcome = await snapshot.trustedHost.commit({
+      path: snapshot.request.path,
+      expectedRevision,
       content,
       createParentDirectories,
-      ctx.textFileMutationSandbox,
-      backup,
-    );
+      signal: ctx.abortSignal,
+    });
+    if (outcome.status === 'stale') {
+      throw new KodaXTrustedTextMutationError({
+        code: 'text_mutation_stale',
+        path: snapshot.request.path,
+        message: `File changed during mutation: ${snapshot.request.path}. Re-read and retry.`,
+        expectedRevision,
+        actualRevision: outcome.currentRevision,
+      });
+    }
+    if (
+      outcome.before.revision !== expectedRevision
+      || outcome.before.slot !== expectedSlot
+      || outcome.after.slot !== expectedSlot
+      || normalizePathForKey(outcome.before.canonicalPath)
+        !== normalizePathForKey(expectedCanonicalPath)
+      || normalizePathForKey(outcome.after.canonicalPath)
+        !== normalizePathForKey(expectedCanonicalPath)
+      || outcome.after.content !== content
+    ) {
+      throw new KodaXTrustedTextMutationError({
+        code: 'text_mutation_identity_changed',
+        path: snapshot.request.path,
+        message: `Trusted text mutation receipt identity changed: ${snapshot.request.path}`,
+      });
+    }
+    if (backup !== undefined) {
+      backup.recordLatest(outcome.before.content, {
+        canonicalPath: outcome.after.canonicalPath,
+        slot: outcome.after.slot,
+        postRevision: outcome.after.revision,
+        preimage: outcome.before.content,
+      });
+    }
+    if (outcome.status === 'committed_uncertain') {
+      if (undoReceipt !== undefined && undoBackupPath !== undefined) {
+        receiptMap(ctx.backups, true)?.set(undoBackupPath, {
+          canonicalPath: outcome.after.canonicalPath,
+          slot: outcome.after.slot,
+          postRevision: outcome.after.revision,
+          preimage: undoReceipt.preimage,
+        });
+      }
+      throw new KodaXTrustedTextMutationError({
+        code: 'text_mutation_commit_uncertain',
+        path: snapshot.request.path,
+        message: `Text replacement may have committed, but its durability could not be proven: ${snapshot.request.path}. Re-read before taking any further action. ${outcome.reason}`,
+        expectedRevision: outcome.before.revision,
+        actualRevision: outcome.after.revision,
+        commitReceipt: {
+          before: outcome.before,
+          after: outcome.after,
+        },
+      });
+    }
+    return;
+  }
+  if (undoReceipt !== undefined) {
+    throw new KodaXTrustedTextMutationError({
+      code: 'text_mutation_unsupported_filesystem',
+      path: snapshot.request.path,
+      message: `The trusted text transaction host is unavailable for undo: ${snapshot.request.path}`,
+    });
   }
   return writeHostTextFile(snapshot, content, createParentDirectories, backup);
 }

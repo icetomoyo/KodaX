@@ -1,21 +1,14 @@
 import { ChildProcess, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { cleanupRegisteredManagedChildren, setAgentConfigHome } from '@kodax-ai/agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { KodaXShellSandbox, KodaXTextFileMutationSandbox } from '../types.js';
+import type { KodaXShellSandbox } from '../types.js';
 import { toolBash } from './bash.js';
 import { toolEdit } from './edit.js';
 import { toolWrite } from './write.js';
-import {
-  _resetFileSystemEffectLeasesForTests,
-  acquireExclusiveFileSystemEffectLease,
-  acquireFileSystemMutationLease,
-  withFileMutation,
-  withExclusiveFileSystemCleanupLease,
-} from './_internal/file-mutation-queue.js';
+import { withFileMutation } from './_internal/file-mutation-queue.js';
 
 const windowsEffectJobMock = vi.hoisted(() => ({
   drainFailure: undefined as Error | undefined,
@@ -108,43 +101,6 @@ function passthroughShellSandbox(): KodaXShellSandbox {
           : { windowsVerbatimArguments: input.windowsVerbatimArguments }),
         cleanup: async () => undefined,
       };
-    },
-  };
-}
-
-function passthroughTextFileMutationSandbox(): KodaXTextFileMutationSandbox {
-  const snapshot = async (target: string) => {
-    try {
-      const content = await fs.readFile(target, 'utf8');
-      return {
-        state: 'present' as const,
-        content,
-        revision: createHash('sha256').update(content).digest('hex'),
-        backupPath: await fs.realpath(target),
-      };
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return {
-          state: 'missing' as const,
-          content: '',
-          revision: 'missing',
-          backupPath: path.resolve(target),
-        };
-      }
-      throw error;
-    }
-  };
-  return {
-    read: async (input) => ({ status: 'ok', snapshot: await snapshot(input.path) }),
-    write: async (input) => {
-      if ((await snapshot(input.path)).revision !== input.expectedRevision) {
-        return { status: 'conflict' };
-      }
-      if (input.createParentDirectories) {
-        await fs.mkdir(path.dirname(input.path), { recursive: true });
-      }
-      await fs.writeFile(input.path, input.content, 'utf8');
-      return { status: 'written' };
     },
   };
 }
@@ -254,7 +210,6 @@ describe('toolBash', () => {
     managedRegistrationMock.child = undefined;
     managedRegistrationMock.unrefCalls = 0;
     unregisteredChild?.kill('SIGKILL');
-    await _resetFileSystemEffectLeasesForTests();
     windowsEffectJobMock.drainFailure = undefined;
     windowsEffectJobMock.containFailure = undefined;
     windowsEffectJobMock.containCalls = 0;
@@ -303,637 +258,213 @@ describe('toolBash', () => {
     });
   });
 
-  it('keeps the command effect fenced through sandbox policy-group cleanup', async () => {
-    const order: string[] = [];
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => { order.push('bind'); }),
-      finishEffectProcess: vi.fn(async () => { order.push('finish'); }),
-      release: vi.fn(async () => { order.push('release'); }),
-    };
-    const cleanup = vi.fn(async () => {
-      order.push('cleanup');
-      return undefined;
-    });
-    const prepare = vi.fn(async () => ({
-      executable: process.execPath,
-      args: ['-e', 'process.stdout.write("exclusive")'],
-      env: process.env,
-      fileSystemEffectLease,
-      cleanup,
-    }));
-
-    const result = await toolBash({ command: 'echo unsandboxed' }, {
-      backups: new Map(),
-      toolCallId: 'bash-sandbox-exclusive-lease',
-      shellSandbox: { prepare },
-    });
-
-    expect(completedCommandBody(result)).toContain('exclusive');
-    expect(fileSystemEffectLease.bindEffectProcess).toHaveBeenCalledOnce();
-    expect(fileSystemEffectLease.finishEffectProcess).toHaveBeenCalledOnce();
-    expect(fileSystemEffectLease.release).toHaveBeenCalledOnce();
-    expect(order.indexOf('finish')).toBeLessThan(order.indexOf('cleanup'));
-    expect(order.indexOf('cleanup')).toBeLessThan(order.indexOf('release'));
-  });
-
-  it('surfaces filesystem-effect completion failure as a required sandbox lifecycle error', async () => {
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => undefined),
-      finishEffectProcess: vi.fn(async () => {
-        throw new Error('injected effect completion failure');
+  it('starts a native-Job sandbox directly with immediate stdin EOF and no effect lease', async () => {
+    const forbiddenLease = {
+      bindEffectProcess: vi.fn(async () => {
+        throw new Error('filesystem-effect bind must not run');
       }),
-      release: vi.fn(async () => undefined),
-    };
-
-    const result = await toolBash({ command: 'effect-completion-failure' }, {
-      backups: new Map(),
-      toolCallId: 'bash-effect-completion-failure',
-      shellSandbox: {
-        prepare: async () => ({
-          executable: process.execPath,
-          args: ['-e', "process.stdout.write('target-ran-once')"],
-          env: process.env,
-          fileSystemEffectLease,
-          cleanup: async () => undefined,
-        }),
-      },
-    });
-
-    expect(result).toContain('[Error] Required OS sandbox execution could not be verified');
-    expect(result).toContain('injected effect completion failure');
-    expect(result).toContain('target-ran-once');
-    expect(result).not.toContain('output post-processing failed');
-    expect(fileSystemEffectLease.release).toHaveBeenCalledOnce();
-  });
-
-  it('surfaces filesystem-effect lease release failure instead of reporting command success', async () => {
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => undefined),
-      finishEffectProcess: vi.fn(async () => undefined),
+      finishEffectProcess: vi.fn(async () => {
+        throw new Error('filesystem-effect finish must not run');
+      }),
       release: vi.fn(async () => {
-        throw new Error('injected effect lease release failure');
+        throw new Error('filesystem-effect release must not run');
       }),
     };
+    const script = [
+      'const chunks=[]',
+      "process.stdin.on('data',(chunk)=>chunks.push(chunk))",
+      "process.stdin.on('end',()=>process.stdout.write(JSON.stringify({bytes:Buffer.concat(chunks).length,parent:process.ppid})))",
+    ].join(';');
 
-    const result = await toolBash({ command: 'effect-release-failure' }, {
+    const result = await toolBash({ command: 'native-job-direct' }, {
       backups: new Map(),
-      toolCallId: 'bash-effect-release-failure',
+      toolCallId: 'native-job-direct',
       shellSandbox: {
         prepare: async () => ({
           executable: process.execPath,
-          args: ['-e', "process.stdout.write('target-ran-once')"],
+          args: ['-e', script],
           env: process.env,
-          fileSystemEffectLease,
+          processTreeContainment: 'native-job' as const,
+          fileSystemEffectLease: forbiddenLease,
           cleanup: async () => undefined,
         }),
       },
     });
 
-    expect(result).toContain('[Error] Required OS sandbox execution could not be verified');
-    expect(result).toContain('injected effect lease release failure');
-    expect(result).toContain('target-ran-once');
-    expect(result).not.toContain('output post-processing failed');
+    expect(completedCommandBody(result)).toContain(
+      JSON.stringify({ bytes: 0, parent: process.pid }),
+    );
+    expect(forbiddenLease.bindEffectProcess).not.toHaveBeenCalled();
+    expect(forbiddenLease.finishEffectProcess).not.toHaveBeenCalled();
+    expect(forbiddenLease.release).not.toHaveBeenCalled();
+    expect(windowsEffectJobMock.containCalls).toBe(0);
   });
 
-  it.runIf(process.platform === 'win32')(
-    'reports an explicit lifecycle safety error when a foreground effect Job is not drained',
-    async () => {
-      windowsEffectJobMock.drainFailure = new Error('injected foreground Job drain failure');
-      const releaseEffectLease = vi.fn(async () => undefined);
-      const cleanupSandbox = vi.fn(async () => undefined);
-      const result = await toolBash({ command: 'foreground-undrained' }, {
-        backups: new Map(),
-        toolCallId: 'bash-foreground-undrained',
-        shellSandbox: {
-          prepare: async () => ({
-            executable: process.execPath,
-            args: ['-e', "process.stdout.write('ran-once')"],
-            env: process.env,
-            fileSystemEffectLease: {
-              bindEffectProcess: async () => undefined,
-              finishEffectProcess: async () => undefined,
-              release: releaseEffectLease,
-            },
-            cleanup: cleanupSandbox,
-          }),
-        },
-      });
-
-      expect(result).toContain('[Error] Required OS sandbox execution could not be verified');
-      expect(result).toContain('process tree termination was not confirmed');
-      expect(result).toContain('ran-once');
-      expect(result).not.toContain('Exit: 0');
-      expect(cleanupSandbox).not.toHaveBeenCalled();
-      expect(releaseEffectLease).not.toHaveBeenCalled();
-    },
-  );
-
-  it.runIf(process.platform === 'win32')(
-    'automatically retires a foreground effect lease after a delayed Job drain proof',
-    async () => {
-      windowsEffectJobMock.drainFailure = new Error('injected recoverable Job drain failure');
-      const releaseEffectLease = vi.fn(async () => undefined);
-      const finishEffectProcess = vi.fn(async () => undefined);
-      const cleanupSandbox = vi.fn(async () => undefined);
-
-      const result = await toolBash({ command: 'foreground-delayed-drain' }, {
-        backups: new Map(),
-        toolCallId: 'bash-foreground-delayed-drain',
-        shellSandbox: {
-          prepare: async () => ({
-            executable: process.execPath,
-            args: ['-e', "process.stdout.write('ran-once')"],
-            env: process.env,
-            fileSystemEffectLease: {
-              bindEffectProcess: async () => undefined,
-              finishEffectProcess,
-              release: releaseEffectLease,
-            },
-            cleanup: cleanupSandbox,
-          }),
-        },
-      });
-
-      expect(result).toContain('process tree termination was not confirmed');
-      await vi.waitFor(() => {
-        expect(windowsEffectJobMock.recoveryCalls).toBeGreaterThan(0);
-        expect(finishEffectProcess).toHaveBeenCalledOnce();
-        expect(cleanupSandbox).toHaveBeenCalledWith({ execution: 'started_or_unknown' });
-        expect(releaseEffectLease).toHaveBeenCalledOnce();
-      }, { timeout: 3_000 });
-    },
-  );
-
-  it.runIf(process.platform === 'win32')(
-    'records an explicit lifecycle safety error when a background effect Job is not drained',
-    async () => {
-      windowsEffectJobMock.drainFailure = new Error('injected background Job drain failure');
-      const releaseEffectLease = vi.fn(async () => undefined);
-      const cleanupSandbox = vi.fn(async () => undefined);
-      const result = await toolBash({
-        command: 'background-undrained',
-        run_in_background: true,
-      }, {
-        backups: new Map(),
-        toolCallId: 'bash-background-undrained',
-        shellSandbox: {
-          prepare: async () => ({
-            executable: process.execPath,
-            args: ['-e', "process.stdout.write('ran-once')"],
-            env: process.env,
-            fileSystemEffectLease: {
-              bindEffectProcess: async () => undefined,
-              finishEffectProcess: async () => undefined,
-              release: releaseEffectLease,
-            },
-            cleanup: cleanupSandbox,
-          }),
-        },
-      });
-      const outputPath = parseBackgroundOutputPath(result);
-      await waitForOutputMatch(outputPath, /Required OS sandbox execution could not be verified/);
-      const output = await fs.readFile(outputPath, 'utf8');
-
-      expect(output).toContain('process tree termination was not confirmed');
-      expect(output).toContain('ran-once');
-      expect(output).not.toContain('[Exit: 0]');
-      expect(cleanupSandbox).not.toHaveBeenCalled();
-      expect(releaseEffectLease).not.toHaveBeenCalled();
-      await fs.rm(outputPath, { force: true });
-    },
-  );
-
-  it('merges spawn, lease-release, and sandbox-cleanup failures when no PID was assigned', async () => {
-    const result = await toolBash({ command: 'spawn-error-with-cleanup-errors' }, {
-      backups: new Map(),
-      toolCallId: 'bash-spawn-error-with-cleanup-errors',
-      shellSandbox: {
-        prepare: async () => ({
-          executable: path.join(tempDir, 'missing-shell-executable'),
-          args: [],
-          env: process.env,
-          fileSystemEffectLease: {
-            bindEffectProcess: async () => undefined,
-            finishEffectProcess: async () => undefined,
-            release: async () => {
-              throw new Error('injected spawn-path lease release failure');
-            },
-          },
-          cleanup: async () => {
-            throw new Error('injected spawn-path sandbox cleanup failure');
-          },
-        }),
-      },
-    });
-
-    expect(result).toContain('[Error]');
-    expect(result).toContain('injected spawn-path lease release failure');
-    expect(result).toContain('injected spawn-path sandbox cleanup failure');
-  });
-
-  it.runIf(process.platform === 'win32')(
-    'surfaces sandbox cleanup failure when an incompatible sandbox policy is active',
-    async () => {
-    const sentinel = path.join(tempDir, 'lease-acquisition-target-ran.txt');
-    const releasePolicy = await acquireExclusiveFileSystemEffectLease('policy-b');
-    const cleanup = vi.fn(async () => {
-      throw new Error('injected pre-lease sandbox cleanup failure');
-    });
-    const retire = vi.fn(async () => undefined);
-
-    try {
-      const result = await toolBash({ command: 'must-not-run-with-active-mutation' }, {
-        backups: new Map(),
-        toolCallId: 'bash-lease-acquisition-cleanup-failure',
-        shellSandbox: {
-          prepare: async () => ({
-            executable: process.execPath,
-            args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
-            env: process.env,
-            fileSystemEffectPolicyKey: 'policy-a',
-            cleanup,
-            retire,
-          }),
-        },
-      });
-
-      expect(result).toContain('another filesystem effect is active');
-      expect(result).toContain('Required OS sandbox cleanup failed');
-      expect(result).toContain('injected pre-lease sandbox cleanup failure');
-      expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
-      expect(retire).toHaveBeenCalledOnce();
-      await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      await releasePolicy();
-    }
-  }, 10_000);
-
-  it('falls back once after a proven pre-start filesystem-effect binding failure', async () => {
-    const sentinel = path.join(tempDir, 'binding-target-ran.txt');
-    const cleanup = vi.fn(async () => {
-      throw new Error('injected binding cleanup failure');
-    });
-    const retire = vi.fn(async () => undefined);
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => {
-        throw new Error('persisted effect identity rejected');
-      }),
-      finishEffectProcess: vi.fn(async () => {
-        throw new Error('injected effect finish failure');
-      }),
-      release: vi.fn(async () => undefined),
-    };
-    const prepare = vi.fn(async () => ({
-      executable: process.execPath,
-      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
-      env: process.env,
-      fileSystemEffectLease,
-      cleanup,
-      retire,
-    }));
-
-    const result = await toolBash({ command: 'echo ordinary-binding-fallback' }, {
-      backups: new Map(),
-      toolCallId: 'bash-binding-failure',
-      shellSandbox: { prepare },
-    });
-
-    expect(result).toContain('ordinary-binding-fallback');
-    expect(result).not.toContain('Exit: 4294967295');
-    await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(fileSystemEffectLease.finishEffectProcess).toHaveBeenCalledOnce();
-    expect(fileSystemEffectLease.release).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
-    expect(retire).toHaveBeenCalledOnce();
-  });
-
-  it.runIf(process.platform === 'win32')(
-    'tracks detached descendants without re-entering a failed Windows containment primitive',
-    async () => {
-      const sentinel = path.join(tempDir, 'fallback-detached-child.txt');
-      const childScript = Buffer.from(
-        `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 1500)`,
-        'utf8',
-      ).toString('base64');
-      const rootScript = Buffer.from([
-        "const {spawn}=require('node:child_process')",
-        `const child=spawn(process.execPath,['-e',${JSON.stringify(`eval(Buffer.from('${childScript}','base64').toString())`)}],{detached:true,stdio:'ignore',windowsHide:true})`,
-        'child.unref()',
-      ].join(';'), 'utf8').toString('base64');
-      windowsEffectJobMock.containFailure = new Error('persistent Windows Job failure');
-      windowsEffectJobMock.containCalls = 0;
-      const result = await toolBash({
-        command: `${JSON.stringify(process.execPath)} -e "eval(Buffer.from('${rootScript}','base64').toString())"`,
-      }, {
-        backups: new Map(),
-        toolCallId: 'bash-persistent-containment-failure',
-        shellSandbox: passthroughShellSandbox(),
-      });
-
-      expect(result).toContain('process tree termination was not confirmed');
-      expect(result).toContain('[Safety] The command was not retried');
-      expect(windowsEffectJobMock.containCalls).toBe(1);
-      await expect(withFileMutation(path.join(tempDir, 'after-unsafe-fallback.txt'), async () => 'unsafe'))
-        .rejects.toThrow('filesystem effect is already active');
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-      await expect(fs.readFile(sentinel, 'utf8')).resolves.toBe('alive');
-    },
-    WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS,
-  );
-
-  it('uses ordinary execution when final sandbox authorization rejects before target start', async () => {
-    const sentinel = path.join(tempDir, 'authorization-target-ran.txt');
-    const order: string[] = [];
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => { order.push('bind'); }),
-      finishEffectProcess: vi.fn(async () => undefined),
-      release: vi.fn(async () => undefined),
-    };
-    const authorizeStart = vi.fn(() => {
-      order.push('authorize');
-      throw new Error('sandbox ACL state became unsafe');
-    });
-    const prepare = vi.fn(async () => ({
-      executable: process.execPath,
-      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
-      env: process.env,
-      fileSystemEffectLease,
-      authorizeStart,
-      cleanup: async () => undefined,
-    }));
-
-    const result = await toolBash({ command: 'echo ordinary-authorization-fallback' }, {
-      backups: new Map(),
-      toolCallId: 'bash-authorization-failure',
-      shellSandbox: { prepare },
-    });
-
-    expect(result).toContain('ordinary-authorization-fallback');
-    expect(order).toEqual(['bind', 'authorize']);
-    await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('does not authorize a background target cancelled while effect binding is pending', async () => {
-    const sentinel = path.join(tempDir, 'cancelled-binding-target-ran.txt');
+  it('keeps bootstrap pipe errors observed through close after cancellation', async () => {
+    const marker = path.join(tempDir, 'native-bootstrap-started');
     const controller = new AbortController();
-    let resolveBinding!: () => void;
-    let reportBindingStarted!: () => void;
-    const bindingStarted = new Promise<void>((resolve) => { reportBindingStarted = resolve; });
-    let reportReleaseCompleted!: () => void;
-    const releaseCompleted = new Promise<void>((resolve) => { reportReleaseCompleted = resolve; });
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => {
-        reportBindingStarted();
-        await new Promise<void>((resolve) => { resolveBinding = resolve; });
-      }),
-      finishEffectProcess: vi.fn(async () => undefined),
-      release: vi.fn(async () => { reportReleaseCompleted(); }),
-    };
-    const authorizeStart = vi.fn();
-    const running = toolBash({
-      command: 'must-not-run-after-cancelled-binding',
-      run_in_background: true,
-    }, {
+    const script = [
+      'const fs=require("node:fs")',
+      `fs.writeFileSync(${JSON.stringify(marker)},'ready')`,
+      'setInterval(()=>{},1000)',
+    ].join(';');
+    const running = toolBash({ command: 'cancel-native-bootstrap' }, {
       backups: new Map(),
-      toolCallId: 'bash-cancelled-pending-binding',
       abortSignal: controller.signal,
       shellSandbox: {
         prepare: async () => ({
           executable: process.execPath,
-          args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
+          args: ['-e', script],
           env: process.env,
-          fileSystemEffectLease,
-          authorizeStart,
+          processTreeContainment: 'native-job' as const,
+          stdinPrefix: Buffer.alloc(16 * 1024 * 1024, 0x61),
           cleanup: async () => undefined,
         }),
       },
     });
-
-    await bindingStarted;
+    await vi.waitFor(async () => {
+      expect(await fs.readFile(marker, 'utf8')).toBe('ready');
+    }, { timeout: 5_000 });
     controller.abort();
-    let responseTimer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      running,
-      new Promise<never>((_resolve, reject) => {
-        responseTimer = setTimeout(
-          () => reject(new Error('cancelled pending bind did not return')),
-          5_000,
-        );
-      }),
-    ]).finally(() => {
-      if (responseTimer !== undefined) clearTimeout(responseTimer);
-    });
-    expect(result).toContain('[Cancelled]');
-    expect(result).toContain('binding is still pending');
-    expect(authorizeStart).not.toHaveBeenCalled();
-    await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    resolveBinding();
-    await releaseCompleted;
-  }, 15_000);
 
-  it('does not authorize a foreground target whose deadline expires while effect binding is pending', async () => {
-    const sentinel = path.join(tempDir, 'timed-out-binding-target-ran.txt');
-    let resolveBinding!: () => void;
-    let reportBindingStarted!: () => void;
-    const bindingStarted = new Promise<void>((resolve) => { reportBindingStarted = resolve; });
-    let reportReleaseCompleted!: () => void;
-    const releaseCompleted = new Promise<void>((resolve) => { reportReleaseCompleted = resolve; });
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => {
-        reportBindingStarted();
-        await new Promise<void>((resolve) => { resolveBinding = resolve; });
-      }),
-      finishEffectProcess: vi.fn(async () => undefined),
-      release: vi.fn(async () => { reportReleaseCompleted(); }),
-    };
-    const authorizeStart = vi.fn();
-    const running = toolBash({
-      command: 'must-not-run-after-binding-timeout',
-      timeout: 0.2,
-    }, {
+    await expect(running).resolves.toContain('[Cancelled] Operation cancelled by user');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  });
+
+  it('keeps production shell execution outside the legacy filesystem-effect lifecycle', async () => {
+    const source = await fs.readFile(new URL('./bash.ts', import.meta.url), 'utf8');
+
+    for (const forbidden of [
+      'acquireFileSystemMutationLease',
+      'containWindowsEffectProcess',
+      'prepareJavaScriptChildLaunch',
+      'fileSystemEffectLease',
+      'fileSystemEffectPolicyKey',
+      'authorizeStart',
+    ]) {
+      expect(source).not.toContain(forbidden);
+    }
+    expect(source).not.toContain("'go\\n'");
+    expect(source).toContain('closePreparedShellInput(');
+    expect(source).toContain('sandboxInvocation?.stdinPrefix');
+    expect(source).toContain("stdin.on('error', onError)");
+    expect(source).toContain("stdin.once('close', onClose)");
+  });
+
+  it('keeps sandbox cleanup request-scoped and never retires shared shell state', async () => {
+    const cleanup = vi.fn(async () => {
+      throw new Error('request cleanup failed');
+    });
+    const retire = vi.fn(async () => {
+      throw new Error('shared retirement must not run');
+    });
+
+    const result = await toolBash({ command: 'request-scoped-cleanup' }, {
       backups: new Map(),
-      toolCallId: 'bash-timeout-pending-binding',
       shellSandbox: {
         prepare: async () => ({
           executable: process.execPath,
-          args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
+          args: ['-e', "process.stdout.write('ran-once')"],
           env: process.env,
-          fileSystemEffectLease,
-          authorizeStart,
-          cleanup: async () => undefined,
+          processTreeContainment: 'native-job' as const,
+          cleanup,
+          retire,
         }),
       },
     });
 
-    await bindingStarted;
-    let responseTimer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      running,
-      new Promise<never>((_resolve, reject) => {
-        responseTimer = setTimeout(
-          () => reject(new Error('timed-out pending bind did not return')),
-          5_000,
-        );
-      }),
-    ]).finally(() => {
-      if (responseTimer !== undefined) clearTimeout(responseTimer);
-    });
-    expect(result).toContain('[Timeout]');
-    expect(result).toContain('binding is still pending');
-    expect(authorizeStart).not.toHaveBeenCalled();
-    await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(0);
-    try {
-      resolveBinding();
-      await releaseCompleted;
-      expect(authorizeStart).not.toHaveBeenCalled();
-      await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      clock.mockRestore();
-    }
-  }, 15_000);
+    expect(result).toContain('ran-once');
+    expect(result).toContain('request cleanup failed');
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(retire).not.toHaveBeenCalled();
+  });
 
-  it('runs the next command after a foreground binding failure fully releases its lease', async () => {
+  it('does not leave a command-lifecycle fence after a native-job invocation exits nonzero', async () => {
     let prepareCount = 0;
-    let firstLeaseReleased = false;
+    const cleanup = vi.fn(async () => undefined);
     const shellSandbox: KodaXShellSandbox = {
       prepare: async () => {
         prepareCount += 1;
-        if (prepareCount === 1) {
-          return {
-            executable: process.execPath,
-            args: ['-e', "process.stdout.write('must-not-run')"],
-            env: process.env,
-            fileSystemEffectLease: {
-              bindEffectProcess: async () => {
-                throw new Error('injected first binding failure');
-              },
-              finishEffectProcess: async () => undefined,
-              release: async () => {
-                await new Promise((resolve) => setTimeout(resolve, 25));
-                firstLeaseReleased = true;
-              },
-            },
-            cleanup: async () => undefined,
-          };
-        }
-        if (!firstLeaseReleased) throw new Error('previous effect lease was not released');
         return {
           executable: process.execPath,
-          args: ['-e', "process.stdout.write('recovered-echo-ok')"],
+          args: prepareCount === 1
+            ? ['-e', 'process.exit(23)']
+            : ['-e', "process.stdout.write('second-command-ran')"],
           env: process.env,
-          fileSystemEffectLease: {
-            bindEffectProcess: async () => undefined,
-            finishEffectProcess: async () => undefined,
-            release: async () => undefined,
-          },
-          cleanup: async () => undefined,
+          processTreeContainment: 'native-job',
+          cleanup,
         };
       },
     };
 
-    const failed = await toolBash({ command: 'echo first-binding-fallback' }, {
+    const first = await toolBash({ command: 'runner-crash' }, {
       backups: new Map(),
-      toolCallId: 'bash-binding-recovery-first',
       shellSandbox,
     });
-    const recovered = await toolBash({ command: 'echo ok' }, {
+    const textPath = path.join(tempDir, 'after-native-runner-crash.txt');
+    const write = await toolWrite(
+      { path: textPath, content: 'text-still-available\n' },
+      { backups: new Map(), executionCwd: tempDir },
+    );
+    const second = await toolBash({ command: 'after-runner-crash' }, {
       backups: new Map(),
-      toolCallId: 'bash-binding-recovery-second',
       shellSandbox,
     });
 
-    expect(failed).toContain('first-binding-fallback');
-    expect(failed).not.toContain('must-not-run');
-    expect(completedCommandBody(recovered)).toBe('recovered-echo-ok');
-    expect(prepareCount).toBe(2);
+    expect(first).toContain('Exit: 23');
+    expect(write).toContain('File created');
+    await expect(fs.readFile(textPath, 'utf8')).resolves.toBe('text-still-available\n');
+    expect(completedCommandBody(second)).toContain('second-command-ran');
+    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
-  it('starts one ordinary background job after a proven pre-start binding failure', async () => {
-    const sentinel = path.join(tempDir, 'background-binding-target-ran.txt');
-    const cleanup = vi.fn(async () => {
-      throw new Error('injected background binding cleanup failure');
-    });
-    const retire = vi.fn(async () => undefined);
-    const fileSystemEffectLease = {
-      bindEffectProcess: vi.fn(async () => {
-        throw new Error('background effect identity rejected');
-      }),
-      finishEffectProcess: vi.fn(async () => {
-        throw new Error('injected background effect finish failure');
-      }),
-      release: vi.fn(async () => undefined),
-    };
-    const prepare = vi.fn(async () => ({
-      executable: process.execPath,
-      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`],
-      env: process.env,
-      fileSystemEffectLease,
-      cleanup,
-      retire,
-    }));
-
-    const result = await toolBash({
-      command: 'echo background-binding-fallback',
+  it('runs different native shell policies concurrently without a shared lifecycle lock', async () => {
+    const controller = new AbortController();
+    const background = await toolBash({
+      command: 'policy-a-background',
       run_in_background: true,
     }, {
       backups: new Map(),
-      toolCallId: 'bash-background-binding-failure',
-      shellSandbox: { prepare },
+      toolCallId: 'runtime-a-session-a',
+      abortSignal: controller.signal,
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', "process.stdout.write('a-ready');setInterval(()=>{},1000)"],
+          env: { ...process.env, KODAX_TEST_POLICY: 'a' },
+          processTreeContainment: 'native-job',
+          cleanup: async () => undefined,
+        }),
+      },
     });
+    const backgroundPid = parseBackgroundPid(background);
 
-    expect(result).toContain('Command started in background');
-    await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(fileSystemEffectLease.finishEffectProcess).toHaveBeenCalledOnce();
-    expect(fileSystemEffectLease.release).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
-    expect(retire).toHaveBeenCalledOnce();
-  });
+    try {
+      const second = await Promise.race([
+        toolBash({ command: 'policy-b-foreground' }, {
+          backups: new Map(),
+          toolCallId: 'runtime-b-session-b',
+          shellSandbox: {
+            prepare: async () => ({
+              executable: process.execPath,
+              args: ['-e', "process.stdout.write('policy-b-ran')"],
+              env: { ...process.env, KODAX_TEST_POLICY: 'b' },
+              processTreeContainment: 'native-job',
+              cleanup: async () => undefined,
+            }),
+          },
+        }),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
+      ]);
 
-  it('does not replay an unattested foreground execution', async () => {
-    const executionCount = path.join(tempDir, 'foreground-execution-count.txt');
-    const order: string[] = [];
-    const script = [
-      "const fs=require('node:fs')",
-      `const file=${JSON.stringify(executionCount)}`,
-      "const count=fs.existsSync(file)?Number(fs.readFileSync(file,'utf8')):0",
-      "fs.writeFileSync(file,String(count+1))",
-      "process.stdout.write('foreground-ran-once')",
-      "process.stderr.write('foreground-sandbox-diagnostic')",
-    ].join(';');
-    const shellSandbox: KodaXShellSandbox = {
-      prepare: async () => ({
-        executable: process.execPath,
-        args: ['-e', script],
-        env: process.env,
-        fileSystemEffectLease: {
-          bindEffectProcess: async () => { order.push('bind'); },
-          finishEffectProcess: async () => { order.push('finish'); },
-          release: async () => { order.push('release'); },
-        },
-        cleanup: async () => {
-          order.push('cleanup');
-          throw new Error('foreground sandbox attestation missing');
-        },
-        retire: async () => { order.push('retire'); },
-      }),
-    };
-
-    const result = await toolBash({ command: 'foreground-unattested' }, {
-      backups: new Map(),
-      toolCallId: 'bash-foreground-unattested',
-      shellSandbox,
-    });
-
-    expect(await fs.readFile(executionCount, 'utf8')).toBe('1');
-    expect(result).toContain('Required OS sandbox execution could not be verified');
-    expect(result).toContain('foreground sandbox attestation missing');
-    expect(result).toContain('was not retried');
-    expect(result).toContain('foreground-ran-once');
-    expect(result).toContain('foreground-sandbox-diagnostic');
-    expect(result).not.toContain('Exit: 0');
-    expect(order).toEqual(['bind', 'finish', 'cleanup', 'retire', 'release']);
-  });
+      expect(second).not.toBe('blocked');
+      expect(completedCommandBody(second)).toContain('policy-b-ran');
+      expect(isPidAlive(backgroundPid)).toBe(true);
+    } finally {
+      controller.abort();
+      await waitForPidExit(backgroundPid, WINDOWS_PROCESS_TREE_EXIT_WAIT_MS);
+    }
+  }, WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS);
 
   it('falls back to ordinary execution when sandbox preparation unexpectedly fails', async () => {
     const reportToolSandboxObservation = vi.fn();
@@ -1088,39 +619,6 @@ describe('toolBash', () => {
     controller.abort();
     await expect(running).resolves.toContain('[Cancelled]');
     expect(reportToolSandboxObservation).not.toHaveBeenCalled();
-  });
-
-  it('retires a workspace session when pre-start cleanup fails', async () => {
-    const controller = new AbortController();
-    const cleanup = vi.fn(async () => {
-      throw new Error('pre-start workspace cleanup failed');
-    });
-    const retire = vi.fn(async () => undefined);
-    const shellSandbox: KodaXShellSandbox = {
-      prepare: async () => {
-        controller.abort();
-        return {
-          executable: process.execPath,
-          args: ['--version'],
-          env: process.env,
-          cleanup,
-          retire,
-        };
-      },
-    };
-
-    const result = await toolBash({ command: 'must-not-start' }, {
-      backups: new Map(),
-      toolCallId: 'bash-pre-start-cleanup-failure',
-      shellSandbox,
-      abortSignal: controller.signal,
-    });
-
-    expect(result).toContain('[Cancelled]');
-    expect(result).toContain('Required OS sandbox cleanup failed');
-    expect(result).toContain('pre-start workspace cleanup failed');
-    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
-    expect(retire).toHaveBeenCalledOnce();
   });
 
   it('does not spawn when the command deadline expires during sandbox preparation', async () => {
@@ -1605,7 +1103,6 @@ describe('toolBash', () => {
       const ctx = {
         backups: new Map<string, string>(),
         executionCwd: tempDir,
-        textFileMutationSandbox: passthroughTextFileMutationSandbox(),
       };
       await expect(toolWrite({ path: filePath, content: 'alpha\n' }, ctx))
         .resolves.toContain('File created');
@@ -1662,7 +1159,7 @@ describe('toolBash', () => {
   });
 
   it.runIf(process.platform === 'win32')(
-    'does not leak the effect-gate launch payload into the command environment',
+    'does not leak the retired effect-gate payload into the command environment',
     async () => {
       const command = 'node -e "process.stdout.write(process.env.KODAX_EFFECT_COMMAND_JSON===undefined?\'absent\':\'leaked\')"';
       const result = await toolBash({ command }, {
@@ -1731,36 +1228,7 @@ describe('toolBash', () => {
     WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS,
   );
 
-  it.runIf(process.platform === 'win32')(
-    'keeps a passthrough sandbox inside the per-effect Job until detached descendants drain',
-    async () => {
-      const sentinel = path.join(tempDir, 'passthrough-detached-child.txt');
-      const childScript = Buffer.from(
-        `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'alive'), 2500)`,
-        'utf8',
-      ).toString('base64');
-      const rootScript = Buffer.from([
-        "const {spawn}=require('node:child_process')",
-        `const child=spawn(process.execPath,['-e',${JSON.stringify(`eval(Buffer.from('${childScript}','base64').toString())`)}],{detached:true,stdio:'ignore',windowsHide:true})`,
-        'child.unref()',
-      ].join(';'), 'utf8').toString('base64');
-
-      await toolBash({
-        command: `node -e "eval(Buffer.from('${rootScript}','base64').toString())"`,
-      }, {
-        backups: new Map(),
-        executionCwd: tempDir,
-        shellSandbox: passthroughShellSandbox(),
-      });
-      await expect(withFileMutation(path.join(tempDir, 'after-passthrough.txt'), async () => 'ready'))
-        .resolves.toBe('ready');
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-      await expect(fs.readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    },
-    WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS,
-  );
-
-  it('releases the filesystem-effect lease when background log creation fails', async () => {
+  it('does not block the next shell when background log creation fails', async () => {
     const originalTemp = process.env.TEMP;
     const originalTmp = process.env.TMP;
     const originalTmpdir = process.env.TMPDIR;
@@ -1787,121 +1255,11 @@ describe('toolBash', () => {
       else process.env.TMPDIR = originalTmpdir;
     }
 
-    const result = await toolBash({ command: nodeOutputCommand('lease-released') }, {
+    const result = await toolBash({ command: nodeOutputCommand('next-shell-ran') }, {
       backups: new Map(),
       executionCwd: tempDir,
     });
-    expect(completedCommandBody(result)).toContain('lease-released');
-  });
-
-  it('requests pre-start lease release when effect completion persistence fails', async () => {
-    const finishEffectProcess = vi.fn(async () => {
-      throw new Error('injected pre-start effect completion failure');
-    });
-    const release = vi.fn(async () => undefined);
-    const cleanup = vi.fn(async () => undefined);
-    const originalTemp = process.env.TEMP;
-    const originalTmp = process.env.TMP;
-    const originalTmpdir = process.env.TMPDIR;
-    const blockedTemp = path.join(tempDir, 'pre-start-temp-is-a-file');
-    await fs.writeFile(blockedTemp, 'not a directory', 'utf8');
-    process.env.TEMP = blockedTemp;
-    process.env.TMP = blockedTemp;
-    process.env.TMPDIR = blockedTemp;
-    try {
-      const failed = await toolBash({
-        command: nodeOutputCommand('must-not-start'),
-        run_in_background: true,
-      }, {
-        backups: new Map(),
-        executionCwd: tempDir,
-        shellSandbox: {
-          prepare: async (input) => ({
-            executable: input.executable ?? process.execPath,
-            args: input.args ?? [],
-            env: input.env,
-            fileSystemEffectLease: {
-              bindEffectProcess: async () => undefined,
-              finishEffectProcess,
-              release,
-            },
-            cleanup,
-          }),
-        },
-      });
-      expect(failed).toContain('output file could not be created');
-      expect(failed).toContain('injected pre-start effect completion failure');
-    } finally {
-      if (originalTemp === undefined) delete process.env.TEMP;
-      else process.env.TEMP = originalTemp;
-      if (originalTmp === undefined) delete process.env.TMP;
-      else process.env.TMP = originalTmp;
-      if (originalTmpdir === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = originalTmpdir;
-    }
-
-    expect(finishEffectProcess).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(release).toHaveBeenCalledOnce();
-  });
-
-  it('settles coordinated cleanup when background setup fails before spawn', async () => {
-    const policyKey = 'background-pre-spawn-policy';
-    const shellSandbox: KodaXShellSandbox = {
-      prepare: async (input) => {
-        const effectLease = await acquireFileSystemMutationLease(policyKey);
-        return {
-          executable: input.executable ?? process.execPath,
-          args: input.args ?? [],
-          env: input.env,
-          fileSystemEffectPolicyKey: policyKey,
-          fileSystemEffectLease: {
-            bindEffectProcess: effectLease.bindEffectProcess,
-            finishEffectProcess: effectLease.finishEffectProcess,
-            release: effectLease,
-          },
-          cleanup: async () => {
-            const exitedCleanup = spawnSync(process.execPath, ['-e', '']);
-            if (exitedCleanup.pid === undefined) throw new Error('cleanup PID unavailable');
-            await withExclusiveFileSystemCleanupLease(policyKey, {
-              pid: exitedCleanup.pid,
-              windowsJobContained: false,
-            }, async () => undefined);
-          },
-        };
-      },
-    };
-    const originalTemp = process.env.TEMP;
-    const originalTmp = process.env.TMP;
-    const originalTmpdir = process.env.TMPDIR;
-    const blockedTemp = path.join(tempDir, 'coordinated-temp-is-a-file');
-    await fs.writeFile(blockedTemp, 'not a directory', 'utf8');
-    process.env.TEMP = blockedTemp;
-    process.env.TMP = blockedTemp;
-    process.env.TMPDIR = blockedTemp;
-    try {
-      const operation = toolBash({
-        command: nodeOutputCommand('must-not-start'),
-        run_in_background: true,
-      }, {
-        backups: new Map(),
-        executionCwd: tempDir,
-        shellSandbox,
-      });
-      const result = await Promise.race([
-        operation,
-        new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 10_000)),
-      ]);
-      expect(result).not.toBe('timed_out');
-      expect(result).toContain('output file could not be created');
-    } finally {
-      if (originalTemp === undefined) delete process.env.TEMP;
-      else process.env.TEMP = originalTemp;
-      if (originalTmp === undefined) delete process.env.TMP;
-      else process.env.TMP = originalTmp;
-      if (originalTmpdir === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = originalTmpdir;
-    }
+    expect(completedCommandBody(result)).toContain('next-shell-ran');
   });
 
   it('registers background commands for managed cleanup', async () => {
@@ -1929,9 +1287,8 @@ describe('toolBash', () => {
     ]);
   }, WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS);
 
-  it('settles retained sandbox ownership after an unregistered gate later exits', async () => {
+  it('cleans one sandbox request when durable child registration fails', async () => {
     managedRegistrationMock.failure = new Error('injected durable child registration failure');
-    const releaseEffectLease = vi.fn(async () => undefined);
     const cleanupSandbox = vi.fn(async () => undefined);
     await expect(toolBash({ command: 'registration-failure', run_in_background: true }, {
       backups: new Map(),
@@ -1941,23 +1298,18 @@ describe('toolBash', () => {
           executable: process.execPath,
           args: ['-e', 'setInterval(() => {}, 1000)'],
           env: process.env,
-          fileSystemEffectLease: {
-            bindEffectProcess: async () => undefined,
-            finishEffectProcess: async () => undefined,
-            release: releaseEffectLease,
-          },
+          processTreeContainment: 'native-job',
           cleanup: cleanupSandbox,
         }),
       },
     })).rejects.toThrow('injected durable child registration failure');
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-    expect(managedRegistrationMock.unrefCalls).toBe(1);
+    expect(managedRegistrationMock.unrefCalls).toBe(0);
     const childPid = managedRegistrationMock.child?.pid;
-    if (childPid === undefined) throw new Error('expected unregistered gate PID');
+    if (childPid === undefined) throw new Error('expected unregistered child PID');
     await expect(waitForPidExit(childPid, 5_000)).resolves.toBe(true);
     await expect.poll(() => cleanupSandbox.mock.calls.length).toBe(1);
-    await expect.poll(() => releaseEffectLease.mock.calls.length).toBe(1);
   });
 
   it('stops background commands when the caller aborts', async () => {

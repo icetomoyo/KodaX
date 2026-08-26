@@ -60,7 +60,7 @@ function assertBudgetGuard(entry, source) {
   }
 }
 
-export function auditSidecarTarball(tarballPath) {
+export function auditSidecarTarball(tarballPath, options = {}) {
   const absoluteTarball = resolve(tarballPath);
   if (!existsSync(absoluteTarball)) {
     throw new Error(`Tarball does not exist: ${absoluteTarball}`);
@@ -75,9 +75,15 @@ export function auditSidecarTarball(tarballPath) {
   const tarPath = cwdRelative.includes(':')
     ? absoluteTarball.replaceAll('\\', '/')
     : cwdRelative;
-  const entries = runTar(['-tf', tarPath])
-    .split(/\r?\n/)
-    .filter((entry) => entry.startsWith('package/dist/') && entry.endsWith('.js'));
+  const archiveEntries = runTar(['-tf', tarPath]).split(/\r?\n/);
+  for (const required of options.requiredEntries ?? []) {
+    if (!archiveEntries.includes(required)) {
+      throw new Error(`Tarball is missing required entry: ${required}`);
+    }
+  }
+  const entries = archiveEntries.filter(
+    (entry) => entry.startsWith('package/dist/') && entry.endsWith('.js'),
+  );
   if (entries.length === 0) {
     throw new Error('Tarball contains no package/dist/*.js bundle entries');
   }

@@ -8,21 +8,45 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- FEATURE_295 separates cross-platform trusted text transactions from shell
+  containment. On Windows, Linux, and macOS, `write`, `edit`, `multi_edit`, `insert_after_anchor`, and
+  `undo` no longer enter ASRT/workspace-session/helper state; final identity,
+  per-slot kernel locking, revision CAS, flushed atomic replacement, and
+  stale-safe undo are enforced in the trusted Runtime; Unix uses a fixed
+  per-UID coordination root shared across Runtime config homes, a separate
+  protected addon cache, descriptor-bound loading, no-follow walking,
+  kernel `flock`, file/parent `fsync`, atomic rename, and ownership/mode/xattr/
+  Linux inode-flag and macOS extended-ACL/file-flag preservation.
+  Atomic replacement is now an explicit commit point: Windows performs no
+  fallible cleanup afterward, while Unix post-rename durability/rollback
+  uncertainty carries a complete receipt as `text_mutation_commit_uncertain`
+  and forbids blind retry. Linux ZFS remains fail-closed until its case and
+  normalization semantics can be proven from a descriptor.
+  The Windows native
+  shell runner keeps framed stdin/process containment but drops the
+  command-lifetime filesystem-effect owner, uses a nonce-bound per-policy private desktop,
+  and suppresses final-target modal faults while preserving exit status, allowing independent policies,
+  Sessions, and Runtime processes to execute concurrently. The incompatible
+  authority split advances Windows `sandboxRuntime` to v6 so clients cannot
+  silently reuse a daemon that still implements the v5 graph. Existing
+  installations perform a one-time idle-account SID rotation through
+  `kodax sandbox setup`; native shell admission validates the resulting
+  machine protocol/SID generation before broker launch. Both native artifacts
+  are checked against an embedded manifest and loaded/executed only from a
+  protected content-addressed store whose immutable-image verification remains
+  shareable across concurrent Runtime processes. Linux/macOS shells remain
+  per-command ASRT bubblewrap/Seatbelt calls with no KodaX workspace-session
+  owner (Issues 304–306). The ASRT-owned runner's pre-main creation window is
+  recorded separately as Issue 307; final targets remain creation-time Job
+  contained. Runner loader/pre-main modal faults are part of that same upstream
+  bootstrap residual; it does not reach trusted text tools.
+
 - Bundled Windows binaries (Bun `--compile`) no longer resolve the Windows
   sandbox runtime binary onto Bun's virtual `B:\` drive: the build ships a
   `vendor/srt-win/<arch>/srt-win.exe` sidecar next to the executable,
   `resolveSrtWinSourcePath()` prefers it in bundled builds, and
   `kodax sandbox setup` installs through the prepared runner's resolved
   descriptor instead of the library's module-relative lookup (Issue 303).
-- A long-lived background sandbox command no longer makes every later
-  sandboxed `write` fail as `The Runtime sandboxed file mutation is
-  unavailable`: workspace session closes defer behind live leases instead of
-  parking a reset (and never terminate the live command), cleanups that never
-  started no longer poison the sandbox account across reboots, cleanup RPC
-  timeouts retire only the timed-out request, standalone SDK admission fails
-  structurally behind leased sessions, pending resets are scoped per policy
-  key, and unavailability now carries a structured reason (Issue 304).
-
 ### Added
 
 - Custom providers can opt into image / vision input with a single

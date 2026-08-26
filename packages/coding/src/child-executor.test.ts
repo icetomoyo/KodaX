@@ -213,26 +213,21 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
   });
 
   it.each([['read', true], ['write', false]] as const)(
-    'inherits runtime-owned shell and text sandboxes into %s native children',
+    'inherits the runtime-owned shell sandbox into %s native children',
     async (_kind, readOnly) => {
       mockRunKodaX.mockResolvedValue(okResult('inspected'));
       const shellSandbox = { prepare: vi.fn() };
-      const textFileMutationSandbox = { read: vi.fn(), write: vi.fn() };
 
       await executeChildAgents(
         [createBundle({ readOnly })],
-        { ...createCtx(), shellSandbox, textFileMutationSandbox },
+        { ...createCtx(), shellSandbox },
         createOptions(),
       );
 
       const childOptions = mockRunKodaX.mock.calls[0]?.[0] as {
-        readonly context?: {
-          readonly shellSandbox?: unknown;
-          readonly textFileMutationSandbox?: unknown;
-        };
+        readonly context?: { readonly shellSandbox?: unknown };
       };
       expect(childOptions.context?.shellSandbox).toBe(shellSandbox);
-      expect(childOptions.context?.textFileMutationSandbox).toBe(textFileMutationSandbox);
     },
   );
 

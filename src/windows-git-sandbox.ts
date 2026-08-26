@@ -213,6 +213,101 @@ function gitSafeDirectoryAssignments(
   return assignments;
 }
 
+function validatedEnvironmentEntries(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  label: string,
+): Array<readonly [string, string]> {
+  const entries: Array<readonly [string, string]> = [];
+  const names = new Set<string>();
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined) continue;
+    if (name === '' || name.includes('=') || name.includes('\0') || value.includes('\0')) {
+      throw new Error(`Invalid ${label} environment entry.`);
+    }
+    const normalized = name.toUpperCase();
+    if (names.has(normalized)) {
+      throw new Error(`Ambiguous ${label} environment variable: ${name}.`);
+    }
+    names.add(normalized);
+    entries.push([name, value]);
+  }
+  return entries;
+}
+
+function rewriteWindowsGitSafeDirectoryEnvironment(
+  environment: Readonly<Record<string, string>>,
+  trustRoots: readonly string[],
+): Record<string, string> {
+  const slots = new Map<number, Partial<GitConfigEnvPair>>();
+  const preservedEnvironment: Array<readonly [string, string]> = [];
+  let declaredCount: number | undefined;
+  let sawAny = false;
+  for (const [name, value] of Object.entries(environment)) {
+    const normalized = name.toLowerCase();
+    const kind = gitConfigEnvKind(normalized);
+    if (kind === undefined) {
+      preservedEnvironment.push([name, value]);
+      continue;
+    }
+    sawAny = true;
+    if (kind === 'count') {
+      const parsed = Number.parseInt(value, 10);
+      if (declaredCount !== undefined || !Number.isSafeInteger(parsed)
+        || parsed < 0 || String(parsed) !== value) throwUnexpectedGitConfigShape();
+      declaredCount = parsed;
+      continue;
+    }
+    const slot = Number.parseInt(normalized.slice(`git_config_${kind}_`.length), 10);
+    const pair = slots.get(slot) ?? {};
+    if (!Number.isSafeInteger(slot) || slot < 0 || pair[kind] !== undefined) {
+      throwUnexpectedGitConfigShape();
+    }
+    pair[kind] = value;
+    slots.set(slot, pair);
+  }
+  const parsed = finishParsedGitConfigEnvironment(
+    slots,
+    [],
+    declaredCount,
+    sawAny,
+    throwUnexpectedGitConfigShape,
+  );
+  const preservedGit = parsed.pairs
+    .filter((pair) => pair.key.toLowerCase() !== 'safe.directory')
+    .sort((left, right) => left.slot - right.slot);
+  const result = Object.fromEntries(preservedEnvironment);
+  for (const assignment of gitSafeDirectoryAssignments(trustRoots, preservedGit)) {
+    const separator = assignment.indexOf('=');
+    result[assignment.slice(0, separator)] = assignment.slice(separator + 1);
+  }
+  return result;
+}
+
+/**
+ * Merge the complete target environment without constructing argv-like secret
+ * material. ASRT-owned control variables win, except PATH/PATHEXT, which remain
+ * caller-owned for ordinary shell compatibility.
+ */
+export function mergeWindowsSandboxTargetEnvironment(
+  controlledEnvironment: Readonly<Record<string, string>>,
+  requestedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  gitTrustRoots: readonly string[],
+): Record<string, string> {
+  const controlled = validatedEnvironmentEntries(controlledEnvironment, 'ASRT-controlled');
+  const requested = validatedEnvironmentEntries(requestedEnvironment, 'Windows target');
+  const merged = new Map<string, readonly [string, string]>();
+  for (const entry of controlled) merged.set(entry[0].toUpperCase(), entry);
+  for (const entry of requested) {
+    const normalized = entry[0].toUpperCase();
+    if (merged.has(normalized) && normalized !== 'PATH' && normalized !== 'PATHEXT') continue;
+    merged.set(normalized, entry);
+  }
+  return rewriteWindowsGitSafeDirectoryEnvironment(
+    Object.fromEntries(merged.values()),
+    gitTrustRoots,
+  );
+}
+
 function replaceGitConfigEnvironment(
   argv: readonly string[],
   separator: number,

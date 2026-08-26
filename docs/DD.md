@@ -1,6 +1,6 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-08-23
+> Last updated: 2026-08-26
 >
 > Current published baseline: `v0.7.95`
 > (`@kodax-ai/kodax@0.7.95`; Windows `sandboxRuntime:5`,
@@ -157,25 +157,69 @@ after the Run is no longer active. `src/sdk-runtime.ts` keeps managed
 `onComplete` non-authoritative and requires `sandboxRuntime:5` plus
 `crashOutcomeModel:2` so idle older daemons are replaced.
 
-The v0.7.94 direct-text path narrows this coordinator without deleting it.
-`withFileMutation()` remains the host-sink primitive: normalized-path FIFO plus
-a direct lease that conflicts with shell and namespace effects.
-`withSandboxedFileMutation()` is used only after Runtime supplies a concrete
-text-mutation sandbox. Its read and write run through a fixed helper inside the
-same ASRT workspace policy as Bash, with file identity plus content revision
-checked on the opened handle before writing. This is optimistic
-compare-and-write, not an atomic CAS against an arbitrary external writer.
-Runtime ASRT unavailability for a covered workspace target fails closed;
-non-workspace targets and standalone Coding contexts retain
-`withFileMutation()` semantics. Runtime non-workspace host fallback rechecks
-inside that direct lease that the target (or nearest existing ancestor for a
-new file) is not routed through a symlink/junction, and rejects hard-linked
-existing files.
-Sandbox backups use a canonical path minted from the opened helper identity;
+The v0.7.94 direct-text path used the coordinator plus an ASRT helper. That
+historical path is superseded on all desktop platforms by FEATURE_295 and is not reachable
+from controlled text tools. `withFileMutation()` remains only for legacy and
+non-text filesystem effects; it is not the trusted-text transaction
+primitive.
+
+The v0.7.96 FEATURE_295 path supersedes that implementation on Windows, Linux,
+and macOS. The
+five controlled text tools no longer construct or receive a text sandbox
+capability. Their shared transaction seam performs a preflight, acquires a
+process-death-released kernel lock for one stable canonical namespace slot, reopens
+and reauthorizes the target under that guard, reruns revision/identity CAS,
+checks the candidate content computed by TypeScript, flushes a same-directory temporary file,
+and atomically replaces or creates the target. Diff/LSP/presentation work is
+outside the guard. A receipt carries the complete preimage and post-commit
+revision so undo cannot overwrite an intervening user or shell write. A text
+transaction starts no process and is packaged independently from shell
+doctor/setup. Before first load, a fixed System32 provisioner can place already
+hash-verified binding bytes in the protected content-addressed artifact store;
+no text payload enters that bootstrap. The Windows slot mutex is inside a current-host-SID private namespace;
+the restricted account cannot squat its public name, and process death leaves
+no lockfile or recovery ticket. Unix uses a fixed per-UID system coordination
+ root and private per-slot inode carrying kernel `flock`; the inode is inert
+state, process death releases ownership,
+ and native commit uses `openat(O_NOFOLLOW)`, `fsync`, rename, and parent `fsync`.
+ Rename is the commit point. A later parent-directory flush failure or an
+ unprovable rollback is surfaced as `committed_uncertain` with the complete
+ pre/post receipt; callers reread and never retry blindly. Existing-file edits
+ retain an Undo backup, and an uncertain Undo rebinds its receipt to the
+ observed post-commit revision. New-file uncertainty exposes its missing
+ pre-state in the structured error but creates no legacy delete-style Undo entry.
+Its mode-`0700` Agent Home state root contains content-addressed artifact state;
+the addon is loaded from a verified descriptor, and sandboxed shell policy
+denies writes to both artifact and coordination roots. Unix replacement
+preserves owner, mode, extended attributes, Linux inode flags, and macOS
+extended ACL/file flags or fails closed.
+
+Windows v2 Bash uses a different native sidecar. Bounded frames separate
+control from target stdin and carry explicit close, output, error, terminate,
+ready, and exit events. The runner verifies its host, constructs the restricted
+policy token, creates the target suspended with explicit inherited handles,
+assigns it to the Job before execution, then reports Ready and resumes. The
+trusted host holds a nonce-bound private desktop whose DACL requires the exact
+policy capability, so restricted targets initialize without using the
+interactive desktop or opening a sibling policy's desktop. The
+prepared invocation identifies native token isolation so Coding bypasses the
+legacy effect gate and lease; no owner/reset/cleanup/poison transition spans a
+command lifetime. The restricting set carries policy capability plus the
+account, logon, and Everyone SIDs used by Codex for subprocess compatibility,
+while the token default DACL excludes the account. Setup rotates the old account SID before
+recording a strict v2 protocol/SID machine marker. Linux and macOS prepare one
+ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
+KodaX workspace-session owner or filesystem-effect lease across its lifetime.
+Only the final Windows target is creation-time contained by KodaX. Issue 307
+records the external ASRT runner's shared-account pre-main creation window;
+post-spawn DACL hardening cannot close it, and current Codex retains the same
+`CreateProcessWithLogonW` residual.
+The following v0.7.95 helper lifecycle is historical and does not apply to
+FEATURE_295 trusted text transactions. Sandbox backups used a canonical path minted from the opened helper identity;
 undo rejects a subsequently changed canonical identity. Worktree create/remove additionally keep a per-target queue
 around their namespace lease until the managed Git process tree is proven
 drained.
-Text cleanup recovery is phase-idempotent. It applies to both ordinarily
+Historical text cleanup recovery was phase-idempotent. It applied to both ordinarily
 drained and delayed-drain paths, caches a successfully read execution
 attestation before deleting the broker file, retries a transient
 workspace cleanup or policy reset, and does not repeat finished process-drain,
@@ -184,8 +228,8 @@ After `git worktree add` succeeds, the worktree tool validates and canonicalizes
 the exact root, atomically persists it through the Runtime-owned Session
 registry, and only then returns it. A persistence failure rolls the Git
 worktree and branch back instead of exposing an uncovered path. Both shell and
-text sandbox construction read that same live registry, so their filesystem
-policy keys remain compatible in the creating Run and later Runs. On load, each
+trusted-text authority construction read that same live registry, so their
+authorized roots remain compatible in the creating Run and later Runs. On load, each
 root must again prove bounded `.git`, `gitdir`, `commondir`, `HEAD`, and backlink
 records that resolve to the Session repository's common Git directory. Removal
 captures the canonical root before Git deletes the directory, then removes and

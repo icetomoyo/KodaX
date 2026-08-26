@@ -37,6 +37,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditSidecarTarball } from './audit-sidecar-tarball.mjs';
@@ -112,6 +113,49 @@ function assertNoRawAgentDynamicImport(dir) {
 function assertSemanticWorkerSidecar(dir) {
   if (!existsSync(path.join(dir, 'semantic-worker.js'))) {
     throw new Error('dist/semantic-worker.js missing; repo-intelligence full mode would silently fall back in published builds');
+  }
+}
+
+function assertNativeArtifacts(dir) {
+  const platforms = [
+    ['win32', 'x64', 'kodax-windows-text-transaction.node'],
+    ['linux', 'x64', 'kodax-text-transaction.node'],
+    ['linux', 'arm64', 'kodax-text-transaction.node'],
+    ['darwin', 'x64', 'kodax-text-transaction.node'],
+    ['darwin', 'arm64', 'kodax-text-transaction.node'],
+  ];
+  for (const [platform, arch, textFilename] of platforms) {
+    const nativeDirectory = path.join(dir, 'native', `${platform}-${arch}`);
+    const manifestPath = path.join(nativeDirectory, 'manifest.json');
+    if (!existsSync(manifestPath)) {
+      throw new Error(`${manifestPath} is missing; npm publish requires every supported native text authority`);
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (manifest.version !== 1 || manifest.platform !== platform || manifest.arch !== arch) {
+      throw new Error(`${platform}-${arch} native manifest has an incompatible platform or version`);
+    }
+    const expected = [
+      ['textTransaction', 4, textFilename],
+      ...(platform === 'win32'
+        ? [['shellSandbox', 4, 'kodax-windows-sandbox.exe']]
+        : []),
+    ];
+    for (const [kind, protocol, filename] of expected) {
+      const entry = manifest[kind];
+      const artifact = path.join(nativeDirectory, filename);
+      if (
+        entry?.file !== filename
+        || entry?.protocol !== protocol
+        || !/^[0-9a-f]{64}$/.test(entry?.sha256 ?? '')
+        || !existsSync(artifact)
+      ) {
+        throw new Error(`${platform}-${arch} native ${kind} artifact is missing or incompatible`);
+      }
+      const actual = createHash('sha256').update(readFileSync(artifact)).digest('hex');
+      if (actual !== entry.sha256) {
+        throw new Error(`${platform}-${arch} native ${kind} artifact hash does not match its manifest`);
+      }
+    }
   }
 }
 
@@ -241,7 +285,8 @@ function main() {
   }
   assertNoRawAgentDynamicImport(path.join(repoRoot, 'dist'));
   assertSemanticWorkerSidecar(path.join(repoRoot, 'dist'));
-  log('-- bundle import and worker sidecar guards passed');
+  assertNativeArtifacts(path.join(repoRoot, 'dist'));
+  log('-- bundle import, worker sidecar, and cross-platform native artifact guards passed');
 
   // Step 3: toggle private:true → false (root package.json is already in
   // published shape; this is the only mutation needed).
@@ -257,7 +302,21 @@ function main() {
     // between SDK validation bytes and registry bytes.
     log('-- npm pack (exact candidate bytes)');
     runCmd('npm', ['pack']);
-    auditSidecarTarball(tarballPath);
+    auditSidecarTarball(tarballPath, {
+      requiredEntries: [
+        'package/dist/native/win32-x64/manifest.json',
+        'package/dist/native/win32-x64/kodax-windows-text-transaction.node',
+        'package/dist/native/win32-x64/kodax-windows-sandbox.exe',
+        'package/dist/native/linux-x64/manifest.json',
+        'package/dist/native/linux-x64/kodax-text-transaction.node',
+        'package/dist/native/linux-arm64/manifest.json',
+        'package/dist/native/linux-arm64/kodax-text-transaction.node',
+        'package/dist/native/darwin-x64/manifest.json',
+        'package/dist/native/darwin-x64/kodax-text-transaction.node',
+        'package/dist/native/darwin-arm64/manifest.json',
+        'package/dist/native/darwin-arm64/kodax-text-transaction.node',
+      ],
+    });
     log('-- ✓ npm pack + Sidecar tarball audit succeeded');
 
     if (!packOnly) {

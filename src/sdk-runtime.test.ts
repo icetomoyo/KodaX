@@ -298,13 +298,16 @@ describe("createKodaXRuntime", () => {
       rollback: true,
     });
     expect(runtime.capabilities.sandboxRuntime).toMatchObject({
-      version: 5,
+      version: 6,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
       unavailableBehavior: "structured-no-execution",
       permissionFallback: "normal-permission-policy",
       delayedEffectDrainRecovery: "automatic",
       sameBootAclRecovery: "sandbox-user-process-probe",
+      trustedTextAuthority: "host-transaction",
+      windowsShellAuthority: "native-token-job-v2",
+      commandLifetimeFilesystemLease: false,
     });
     expect(runtime.capabilities.runtimeAutoModeGuardrail).toMatchObject({
       version: 4,
@@ -17455,7 +17458,7 @@ describe("createKodaXRuntime", () => {
       expect(runOptions.context?.shellSandbox?.processTreeContainment).toBe(
         process.platform === "linux" ? "root-exit-drains" : undefined,
       );
-      expect(runOptions.context?.textFileMutationSandbox).toBeDefined();
+      expect(runOptions.context).not.toHaveProperty('textFileMutationSandbox');
     } finally {
       await invocation?.cleanup();
       await runtime.runs.abort(handle.runId);
@@ -17463,7 +17466,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("starts a Run without a text sandbox when the workspace identity is missing", async () => {
+  it("starts a Run when the workspace identity is missing", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const missingWorkspace = path.join(tempRoot, `missing-workspace-${randomUUID()}`);
     const runtime = await createKodaXRuntime({
@@ -17493,7 +17496,7 @@ describe("createKodaXRuntime", () => {
           prompt: "start without a workspace directory",
         })
       ).result;
-      expect(runOptions?.context?.textFileMutationSandbox).toBeUndefined();
+      expect(runOptions?.context).not.toHaveProperty('textFileMutationSandbox');
     } finally {
       await runtime.close();
     }
@@ -17561,8 +17564,8 @@ describe("createKodaXRuntime", () => {
     });
     try {
       await runOptions?.context?.workspaceSandboxRoots?.register(linkedWorktree);
-      expect(runOptions?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-        .toBe(true);
+      expect(runOptions?.context?.workspaceSandboxRoots?.list())
+        .toContain(await fs.realpath(linkedWorktree));
     } finally {
       await runtime.runs.abort(run.runId);
       await runtime.close();
@@ -17673,19 +17676,10 @@ describe("createKodaXRuntime", () => {
       prompt: "edit inside the existing linked worktree",
     });
     const secondOptions = captured[0];
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-      .toBe(true);
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(linkedAliasTarget))
-      .toBe(true);
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(missingLinkedAliasTarget))
-      .toBe(true);
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(arbitraryTarget))
-      .toBe(false);
+    expect(secondOptions?.context?.workspaceSandboxRoots?.list())
+      .toEqual([await fs.realpath(linkedWorktree)]);
     await secondOptions?.context?.workspaceSandboxRoots?.unregister(linkedWorktreeAlias);
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-      .toBe(false);
-    expect(secondOptions?.context?.textFileMutationSandbox?.canHandlePath?.(linkedAliasTarget))
-      .toBe(false);
+    expect(secondOptions?.context?.workspaceSandboxRoots?.list()).toEqual([]);
     const persisted = await new FileSessionStorage({ sessionsDir }).load(session.id);
     expect(persisted?.runtimeInfo?.sandboxWorktreeRoots).toEqual([]);
     await resumedRuntime.runs.abort(secondRun.runId);
@@ -17752,12 +17746,10 @@ describe("createKodaXRuntime", () => {
       sessionId: legacySessionId,
       prompt: "continue in the pre-correction worktree",
     });
-    expect(captured[0]?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-      .toBe(true);
-    expect(captured[0]?.context?.textFileMutationSandbox?.canHandlePath?.(uiLinkedTarget))
-      .toBe(true);
-    expect(captured[0]?.context?.textFileMutationSandbox?.canHandlePath?.(arbitraryTarget))
-      .toBe(false);
+    expect(captured[0]?.context?.workspaceSandboxRoots?.list()).toEqual([
+      await fs.realpath(linkedWorktree),
+      await fs.realpath(uiLinkedWorktree),
+    ].sort((left, right) => left.localeCompare(right)));
     await expect(legacyStorage.load(legacySessionId)).resolves.toMatchObject({
       runtimeInfo: {
         sandboxWorktreeRoots: [
@@ -17826,8 +17818,7 @@ describe("createKodaXRuntime", () => {
       sessionId: removedLegacySessionId,
       prompt: "do not restore a removed worktree",
     });
-    expect(captured[0]?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-      .toBe(false);
+    expect(captured[0]?.context?.workspaceSandboxRoots?.list()).toEqual([]);
     await expect(legacyStorage.load(removedLegacySessionId)).resolves.toMatchObject({
       runtimeInfo: { sandboxWorktreeRoots: [] },
     });
@@ -17908,8 +17899,8 @@ describe("createKodaXRuntime", () => {
       sessionId: recreatedLegacySessionId,
       prompt: "restore the current recreated worktree",
     });
-    expect(captured[0]?.context?.textFileMutationSandbox?.canHandlePath?.(linkedTarget))
-      .toBe(true);
+    expect(captured[0]?.context?.workspaceSandboxRoots?.list())
+      .toEqual([await fs.realpath(linkedWorktree)]);
     await expect(legacyStorage.load(recreatedLegacySessionId)).resolves.toMatchObject({
       runtimeInfo: { sandboxWorktreeRoots: [await fs.realpath(linkedWorktree)] },
     });

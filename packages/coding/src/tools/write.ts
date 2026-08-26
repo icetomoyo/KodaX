@@ -1,8 +1,8 @@
-import { KodaXToolExecutionContext } from '../types.js';
+import type { KodaXToolExecutionContext } from '../types.js';
 import { generateDiff, countChanges } from './diff.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { memoryMutationDenial } from './memory-mutation-guard.js';
-import { formatDiffPreview } from './truncate.js';
+import { formatDiffPreview } from './_internal/diff-preview.js';
 import { buildStaleWriteReason } from '../multi-instance/content-hash-cache.js';
 import { formatActiveFileWarning } from '../multi-instance/active-file-warning.js';
 import { appendLspDiagnostics } from './_internal/lsp-reflux.js';
@@ -14,9 +14,9 @@ export async function toolWrite(input: Record<string, unknown>, ctx: KodaXToolEx
   if (memoryDenial !== undefined) return memoryDenial;
   const content = input.content as string;
 
-  // FEATURE_131 Part A: serialize same-file mutations across the
-  // process so concurrent children (Pattern B fan-out) can't race
-  // the read-modify-write cycle and silently lose one side's changes.
+  // FEATURE_295: the trusted host commit locks the canonical file identity and
+  // checks this snapshot with CAS. Concurrent peers cannot silently overwrite
+  // one another; one succeeds and stale peers must re-read.
   const result = await withTextFileMutation(filePath, 'write', input, ctx, async (snapshot) => {
     const isNewFile = snapshot.state === 'missing';
     const oldContent = snapshot.content;

@@ -24,7 +24,7 @@ concurrency:
 jobs:
   test:
     name: test (node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -40,11 +40,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Linux sandbox dependencies
+        if: matrix.node == '22'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+
       - name: Build packages
         run: npm run build:packages
 
+      - name: Build trusted text native authority
+        run: npm run build:native
+
       - name: Build bundled SDK and Worker sidecars
         run: npm run build:bundle
+
+      - name: Native trusted text transaction tests
+        if: matrix.node == '22'
+        run: npm run test:native
+
+      - name: Trusted text host integration
+        if: matrix.node == '22'
+        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
+
+      - name: Real POSIX per-command sandbox concurrency gate
+        if: matrix.node == '22'
+        env:
+          KODAX_REAL_POSIX_SANDBOX: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
 
       - name: Build type declarations (SDK .d.ts — catches missing exports)
         run: npm run build:dts
@@ -191,23 +212,25 @@ jobs:
       - name: Ensure packaged Electron binary
         run: node .electron-smoke/node_modules/electron/install.js
 
-      - name: Provision Windows sandbox for packaged Electron gate
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-        shell: pwsh
-        run: >-
-          node --input-type=module -e
-          "import { installWindowsSandbox } from '@anthropic-ai/sandbox-runtime';
-          const result = installWindowsSandbox();
-          if (result.cancelled || !result.user.provisioned) throw new Error('Windows sandbox provisioning did not complete.');"
-
       - name: Build packaged Electron gate inputs
         run: npm run build
 
-      - name: Prepare Windows sandbox ACL guards for packaged Electron gate
+      - name: Windows native transaction and runner tests
+        run: npm run test:native
+
+      - name: Windows trusted text integration and dependency boundary
+        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
+
+      - name: Activate Windows v2 sandbox for packaged Electron gate
         env:
           KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
         run: node scripts/prepare-windows-electron-sandbox.mjs
+
+      - name: Windows v2 native policy concurrency gate
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
 
       - name: Packaged Electron daemon gate
         env:
@@ -216,6 +239,49 @@ jobs:
           KODAX_ELECTRON_DIST: ${{ github.workspace }}\.electron-smoke\node_modules\electron\dist
           KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
         run: npm run test:electron-daemon:built
+
+  trusted-text-native-platforms:
+    name: trusted text and POSIX sandbox (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux sandbox dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+
+      - name: Install macOS sandbox dependencies
+        if: runner.os == 'macOS'
+        run: brew install ripgrep socat
+
+      - name: Build and test native trusted text authority
+        run: |
+          npm run build:native
+          npm run test:native
+          node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
+
+      - name: Real POSIX per-command sandbox concurrency gate
+        env:
+          KODAX_REAL_POSIX_SANDBOX: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
 
   shell-contract-windows:
     name: shell execution contract (Windows)

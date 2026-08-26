@@ -22,6 +22,7 @@ import {
   createCircuitBreaker,
   breakerShouldFallback,
   analyzeAutoModeCall,
+  assertTrustedTextMutationPolicy,
   bashSignalCollector,
   CANCELLED_TOOL_RESULT_MESSAGE,
   checkAbsoluteDeny,
@@ -219,10 +220,9 @@ import {
 import {
   createAsrtShellSandbox,
   createAsrtSkillScriptRunner,
-  createAsrtTextFileMutationSandbox,
   sandboxRuntimeCapability,
-  shutdownAsrtWorkspaceSessions,
 } from "./sandbox-runtime.js";
+import { createTrustedTextMutationHost } from "./windows-text-transaction.js";
 import type {
   RuntimeAgentBindingService,
   RuntimeAgentOwnerSession,
@@ -760,7 +760,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   daemonShutdownVerification: 1,
   managedRunDurability: 1,
   runtimeExitSettlement: 2,
-  sandboxRuntime: 5,
+  sandboxRuntime: 6,
   sessionEventJournal: 1,
   runtimeEventCoalescing: 1,
   liveOutputSegments: 1,
@@ -823,7 +823,7 @@ export interface RuntimeCapabilityRequirements {
   readonly integrationConfigResilience?: 1;
   readonly actorControlPlane?: 1;
   /** Require the sandbox-first execution chain and permission fallback revision. */
-  readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5;
+  readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6;
   /** Runtime owns Auto LLM/rules classification before shared permission brokering. */
   readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4;
 }
@@ -3739,7 +3739,7 @@ export async function createKodaXRuntime(
             ...(process.platform === "win32"
               ? {
                   daemonShutdownVerification: 1 as const,
-                  sandboxRuntime: 5 as const,
+                  sandboxRuntime: 6 as const,
                 }
               : {}),
             runtimeAutoModeGuardrail: 4 as const,
@@ -4324,9 +4324,6 @@ export async function createKodaXRuntime(
         await ownerLiveness.close();
         ownerLivenessClosed = true;
       }
-      if (options.sharedDaemonHost) {
-        await shutdownAsrtWorkspaceSessions();
-      }
       if (!busClosed) {
         bus.close();
         busClosed = true;
@@ -4897,7 +4894,7 @@ function daemonCapabilityRequirements(
           crashOutcomeModel: 2,
           managedRunDurability: 1,
           ...(process.platform === "win32"
-            ? { daemonShutdownVerification: 1, sandboxRuntime: 5 }
+            ? { daemonShutdownVerification: 1, sandboxRuntime: 6 }
             : {}),
           runtimeAutoModeGuardrail: 4,
           runtimeEventCoalescing: 1,
@@ -11102,6 +11099,7 @@ function buildRunOptions(input: {
     configHome: _callerConfigHome,
     memoryIdentity: _callerMemoryIdentity,
     shellSandbox: callerShellSandbox,
+    trustedTextMutationHost: _callerTrustedTextMutationHost,
     ...ownerSafeContext
   } = options.context ?? {};
   const runtimeAutoGuardrail = options.guardrails?.find(isRuntimeAutoModeGuardrail);
@@ -11114,6 +11112,15 @@ function buildRunOptions(input: {
     sessionManager,
     workspaceRoot,
   });
+  const runtimeTrustedTextMutationHost = createTrustedTextMutationHost(
+    () => [
+      workspaceRoot,
+      executionCwd,
+      ...workspaceSandboxRoots.list(),
+    ],
+    (canonicalTarget) => assertTrustedTextMutationPolicy(canonicalTarget, executionCwd),
+  );
+  const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
     const autoMode =
       replApi.normalizePermissionMode(record.permissionMode) === "auto";
@@ -11146,19 +11153,6 @@ function buildRunOptions(input: {
     additionalWorkspaceRoots: workspaceSandboxRoots.list,
     shouldSandbox: selectWorkspaceSandbox,
   });
-  let textFileMutationSandbox: ReturnType<typeof createAsrtTextFileMutationSandbox> | undefined;
-  try {
-    textFileMutationSandbox = createAsrtTextFileMutationSandbox({
-      workspaceRoot,
-      additionalWorkspaceRoots: workspaceSandboxRoots.list,
-      shouldSandbox: selectWorkspaceSandbox,
-    });
-  } catch (error: unknown) {
-    // Missing workspace identity cannot be canonicalized yet. Omit the
-    // concurrent sandbox so the Run still starts; covered-path tools then
-    // keep the existing host fence until a resolvable workspace exists.
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
   const shellSandbox =
     runtimeWorkspaceShellSandbox !== undefined && callerShellSandbox !== undefined
       ? {
@@ -11241,7 +11235,7 @@ function buildRunOptions(input: {
       ...ownerSafeContext,
       configHome: input.defaultConfigHome,
       ...(shellSandbox !== undefined ? { shellSandbox } : {}),
-      ...(textFileMutationSandbox === undefined ? {} : { textFileMutationSandbox }),
+      ...(trustedTextMutationHost !== undefined ? { trustedTextMutationHost } : {}),
       workspaceSandboxRoots,
       ...(hideUnwiredExitPlanMode
         ? {

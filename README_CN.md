@@ -58,7 +58,8 @@ kodax
 provider/model 元数据设置。使用 `kodax setup` 重新运行设置，
 使用 `kodax setup --custom` 配置自定义 provider；使用 `kodax setup --help` 或
 REPL `/setup --help` 查看完整路径、环境变量、命令和快捷键。交互式 setup 还会检查
-一次可选 ASRT sandbox：Windows 可能弹出一次 UAC；
+一次可选 ASRT sandbox：Windows 激活时会请求 UAC（已有安装进行 v2 账户 SID
+轮换时可能需要第二次确认）；
 macOS/Linux 会报告 Seatbelt/bubblewrap 所需依赖。拒绝 UAC 或缺少依赖不会破坏普通
 权限管理，日常启动也不会反复提醒。
 
@@ -265,6 +266,31 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 交互加入 owner AbortSignal 和有界 deadline，在 Runtime 边界校验默认答案，提供
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
+
+**v0.7.96 可信文本事务与 Windows sandbox v2（开发中）**：所有桌面平台的受控
+文本工具与 shell containment 拆分为两个独立权威。`write`、`edit`、`multi_edit`、`insert_after_anchor`、
+`undo` 在可信 KodaX Runtime 中完成最终路径/identity 策略校验、跨 Runtime
+逐文件内核锁、revision CAS、元数据保留的 flush 后原子替换与受保护 native 状态根；它们不进入 ASRT、workspace
+session、shell runner、setup、cleanup、owner、reset 或 poison 状态，也不宣称受到
+OS token sandbox enforcement。Windows shell 仅由 ASRT 提供网络/专用账户服务，
+KodaX native runner 负责 restricted token、nonce 绑定且按 policy 隔离的私有 desktop、创建时 Job containment 和 framed stdio；
+不同 policy、Session、Runtime 的 native shell 不共享覆盖命令生命周期的 filesystem-
+effect lease。任意 shell 写文件仍是正常 OS 数据竞争，KodaX CAS 只约束受控文本
+工具。Unix 在原子提交后若无法证明目录 durability，会携带完整的提交前/后 receipt
+返回 `text_mutation_commit_uncertain`，要求先重读，禁止盲目重试。已有文件的修改会
+保留 Undo backup；若 Undo 本身处于提交不确定状态，其 receipt 会重绑定到观测到的
+提交后 revision，之后只能通过 CAS 校验的 Undo 继续收敛。详见
+[ADR-066](docs/ADR.md#adr-066-trusted-text-transactions-and-a-native-windows-shell-sandbox-are-separate-authorities)。
+这次不兼容的权威拆分由 `sandboxRuntime:6` 门禁；新客户端不会静默复用仍执行
+v0.7.95 旧调用图的 daemon。
+现有 Windows 安装需要运行一次 `kodax sandbox setup`：切换流程会等待旧沙箱进程
+退出，使用新 SID 重建专用账户，并记录 native protocol/SID 代际。迁移状态缺失时
+只阻止 native shell 准入，不会阻止可信文本工具。
+Linux/macOS 使用同一可信文本权威及 native no-follow/`flock`/CAS/原子提交；
+shell 仍是逐命令 ASRT bubblewrap/Seatbelt 执行，不保留 KodaX workspace-session owner。
+Issue 307 记录 ASRT 所有的 runner 在 KodaX 代码运行前启动这一更窄的 pre-main
+窗口；当前 Codex 也保留相同边界。最终命令仍在创建时加入 Job，可信文本工具完全
+不经过该边界。
 
 **v0.7.95 发布**：零字节、畸形或截断 owner 的过期 learning lock
 会在字节与 stat 二次确认未变后自动恢复。同一次 Windows 启动内的
@@ -518,8 +544,8 @@ kodax sandbox doctor
 kodax sandbox setup
 ```
 
-- Windows 使用受限 sandbox 账户和网络策略。普通 Terminal 即可，按提示同意一次
-  UAC；不必先以管理员身份启动 Terminal。
+- Windows 使用受限 sandbox 账户和网络策略。普通 Terminal 即可，按提示同意激活
+  所需的 UAC 确认；不必先以管理员身份启动 Terminal。
 - macOS 使用 Seatbelt/`sandbox-exec`，需要 ripgrep：
   `brew install ripgrep`。
 - Linux 使用 bubblewrap，需要 `bubblewrap`、`socat` 和 `ripgrep`，请根据发行版用

@@ -1,6 +1,6 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-08-23
+> Last updated: 2026-08-26
 >
 > Current published baseline: `v0.7.95`
 > (`@kodax-ai/kodax@0.7.95`; Windows `sandboxRuntime:5`,
@@ -114,6 +114,41 @@ submodule derives that common directory only from a byte-bounded
 `.git/modules/.../config` `core.worktree` backlink to the exact workspace;
 candidate roots still have to prove linked-worktree `gitdir` and `commondir`
 backlinks.
+
+FEATURE_295 replaces that coupling in v0.7.96 on Windows, Linux, and macOS. Trusted `write`,
+`edit`, `multi_edit`, `insert_after_anchor`, and `undo` execute in the KodaX
+Runtime through a narrow in-process filesystem primitive. Final handle-derived
+identity, no-follow traversal, a stable per-canonical-namespace kernel lock, locked
+revision CAS, flush, and atomic replace constrain the write. The primitive has
+no dependency on ASRT, shell setup, a runner, workspace sessions, cleanup,
+reset, owner, or poison state; text-tool policy is a trusted-host boundary, not
+OS-token sandbox enforcement. Windows shell/process execution is a separate
+native host/runner protocol: ASRT provides network/account services, the
+runner supplies a restricted policy-capability token (with the dedicated
+account, logon, and Everyone SIDs retained for Codex-compatible subprocess
+startup), uses a nonce-bound policy-capability private desktop, and creates the target suspended
+inside a no-breakaway, kill-on-close Job before `Ready` and resume. Linux and
+macOS shell commands use per-command ASRT bubblewrap/Seatbelt preparation with
+no KodaX workspace-session owner. One-time Windows v2 setup rotates the pre-v2 account SID and records the new
+SID/protocol machine generation before shell admission.
+Packaged native bytes are verified against an embedded manifest and staged in
+a protected content-addressed Agent Home store before load/execution; Unix
+loads its binding through a digest-verified no-follow descriptor below a
+UID-owned mode-`0700` state root, which sandboxed shell policy cannot write. The
+fixed bootstrap provisioner never receives model text or shell stdin.
+Windows uses a host-SID private mutex; Unix uses a fixed per-UID system
+coordination root and private inode carrying kernel `flock`, no-follow
+ descriptor walking, file/parent `fsync`, and rename. Atomic replacement is the
+ commit point; any Unix-only durability/rollback uncertainty after it carries a
+ complete receipt and is surfaced as `text_mutation_commit_uncertain`, never as
+ an ordinary retryable I/O failure.
+Neither platform treats an on-disk file as persistent lock ownership.
+Windows v2 shell invocations do not own a command-lifetime filesystem-effect
+lease. Arbitrary shell writes remain normal OS races and are not serialized by
+the text CAS.
+The final Windows target is creation-time contained. Issue 307 separately
+tracks the ASRT-owned shared-account runner's pre-main window, which also
+exists in current Codex and requires an upstream spawn boundary to eliminate.
 
 The v0.7.94 Runtime recovery boundary does not change
 capability versions. Run finalization owns and observes

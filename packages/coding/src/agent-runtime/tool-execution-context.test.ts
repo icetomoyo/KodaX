@@ -41,20 +41,6 @@ describe('resolveResumeFromRunDir (path-traversal guard)', () => {
 });
 
 describe('F270 actor principal wiring', () => {
-  it('forwards the Runtime-owned text mutation sandbox', () => {
-    const textFileMutationSandbox = {
-      read: async () => ({ status: 'unavailable' as const }),
-      write: async () => ({ status: 'unavailable' as const }),
-    };
-    const ctx = buildToolExecutionContext({
-      options: { context: { textFileMutationSandbox } },
-      runtime: undefined,
-      managedProtocolPayloadRef: { current: undefined },
-    });
-
-    expect(ctx.textFileMutationSandbox).toBe(textFileMutationSandbox);
-  });
-
   it('binds Provider credentials into default-shell filtering', () => {
     const ctx = buildToolExecutionContext({
       options: {

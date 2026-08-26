@@ -2000,11 +2000,6 @@ async function cleanupDaemonServeProcessResources(input: {
     }
   };
 
-  await attempt(
-    'sandbox workspace session',
-    async () => (await loadSandboxRuntimeModule()).shutdownAsrtWorkspaceSessions(),
-    Math.max(0, deadline - Date.now()),
-  );
   await attempt('A2A', input.closeA2A);
   await attempt('integration hot-reload', input.closeHotReload);
   await attempt('extension Runtime', input.disposeExtensions);
@@ -3945,13 +3940,17 @@ async function main() {
     return;
   }
   if (argv[0] === '__asrt-broker') {
+    if (process.platform === 'win32') {
+      throw new Error('Windows legacy ASRT broker execution is retired; use the native v2 shell sandbox.');
+    }
     if (!argv[1]) throw new Error('Missing internal ASRT broker request.');
     process.exitCode = await (await loadSandboxRuntimeModule()).runAsrtBrokerProcess(argv[1]);
     return;
   }
-  if (argv[0] === '__asrt-workspace-session') {
-    if (!argv[1]) throw new Error('Missing internal ASRT workspace session request.');
-    process.exitCode = await (await loadSandboxRuntimeModule()).runAsrtWorkspaceSessionProcess(argv[1]);
+  if (argv[0] === '__asrt-windows-network-broker') {
+    if (!argv[1]) throw new Error('Missing Windows network broker request file.');
+    process.exitCode = await (await loadSandboxRuntimeModule())
+      .runAsrtWindowsNetworkBrokerProcess(argv[1]);
     return;
   }
   if (!isDaemonManagementCommand) {
@@ -4256,9 +4255,14 @@ complete -c kodax -l version -d 'Show version'`);
       '--ping',
       'Live-probe each configured provider (network + small token cost)',
     )
-    .action(async (opts: { json?: boolean; ping?: boolean }) => {
+    .option(
+      '--native-text',
+      'Load and hash-check the trusted text native binding',
+    )
+    .action(async (opts: { json?: boolean; ping?: boolean; nativeText?: boolean }) => {
       await runDoctor(version, Boolean(opts?.json), {
         ping: Boolean(opts?.ping),
+        nativeText: Boolean(opts?.nativeText),
       });
     });
 

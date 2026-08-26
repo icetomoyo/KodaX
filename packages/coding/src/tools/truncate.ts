@@ -33,14 +33,10 @@ export interface TruncationResult {
   maxBytes: number;
 }
 
-export interface DiffPreviewOptions {
-  diff: string;
-  toolName: string;
-  filePath: string;
-  ctx: KodaXToolExecutionContext;
-  maxLines?: number;
-  maxBytes?: number;
-}
+export {
+  formatDiffPreview,
+  type DiffPreviewOptions,
+} from './_internal/diff-preview.js';
 
 function getLimits(options: TruncationOptions): { maxLines: number; maxBytes: number } {
   return {
@@ -268,10 +264,4 @@ export async function persistToolOutput(
   // explicit cleanup helper remains available for operator-controlled sweeps.
 
   return filePath;
-}
-
-export async function formatDiffPreview({
-  diff,
-}: DiffPreviewOptions): Promise<string> {
-  return diff;
 }

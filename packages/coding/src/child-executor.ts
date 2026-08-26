@@ -1393,7 +1393,7 @@ async function runReadChildBody(
           executionCwd: scope.ctx.executionCwd ?? scope.ctx.gitRoot,
           shellExecution: scope.ctx.shellExecution,
           shellSandbox: scope.ctx.shellSandbox,
-          textFileMutationSandbox: scope.ctx.textFileMutationSandbox,
+          trustedTextMutationHost: scope.ctx.trustedTextMutationHost,
           workspaceSandboxRoots: scope.ctx.workspaceSandboxRoots,
           permissionIntent: buildChildPermissionIntent(
             bundle,
@@ -1687,7 +1687,7 @@ async function runWriteChildBody(
           executionCwd: childCtx.executionCwd ?? childCtx.gitRoot,
           shellExecution: childCtx.shellExecution,
           shellSandbox: childCtx.shellSandbox,
-          textFileMutationSandbox: childCtx.textFileMutationSandbox,
+          trustedTextMutationHost: childCtx.trustedTextMutationHost,
           workspaceSandboxRoots: childCtx.workspaceSandboxRoots,
           permissionIntent: buildChildPermissionIntent(
             bundle,

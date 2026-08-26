@@ -28,7 +28,6 @@ import {
   withHostFileSystemMutation,
   withHostFileSystemNamespaceMutation,
   withFileMutation,
-  withSandboxedFileMutation,
   withExclusiveFileSystemCleanupLease,
 } from './file-mutation-queue.js';
 
@@ -285,16 +284,6 @@ describe('withFileMutation — different path concurrency', () => {
 });
 
 describe('cross-process filesystem effect lease', () => {
-  it('keeps a sandboxed file mutation independent from a long-lived shell effect', async () => {
-    const releaseShell = await acquireFileSystemMutationLease();
-    try {
-      await expect(withSandboxedFileMutation('/tmp/a.txt', async () => 'written'))
-        .resolves.toBe('written');
-    } finally {
-      await releaseShell();
-    }
-  });
-
   it('keeps a host file mutation fenced from a long-lived shell effect', async () => {
     const releaseShell = await acquireFileSystemMutationLease();
     try {
@@ -303,22 +292,6 @@ describe('cross-process filesystem effect lease', () => {
     } finally {
       await releaseShell();
     }
-  });
-
-  it('admits a shell effect while a sandboxed mutation is active', async () => {
-    let enterMutation: (() => void) | undefined;
-    const entered = new Promise<void>((resolve) => { enterMutation = resolve; });
-    let finishMutation: (() => void) | undefined;
-    const finished = new Promise<void>((resolve) => { finishMutation = resolve; });
-    const mutation = withSandboxedFileMutation('/tmp/a.txt', async () => {
-      enterMutation?.();
-      await finished;
-    });
-    await entered;
-    const releaseShell = await acquireFileSystemMutationLease();
-    await releaseShell();
-    finishMutation?.();
-    await mutation;
   });
 
   it('removes a crashed process marker before admitting new work', async () => {
@@ -425,38 +398,6 @@ describe('cross-process filesystem effect lease', () => {
 
     await expect(withFileMutation('/tmp/recovered-after-pre-bind-crash.txt', async () => 'safe'))
       .resolves.toBe('safe');
-  });
-
-  it('does not apply a live shell fence to direct file mutations', async () => {
-    const runtimeDirectory = effectRuntimeDirectory();
-    const statePath = path.join(runtimeDirectory, 'model-filesystem-effects.json');
-    const token = 'crashed-owner-live-effect';
-    await fs.promises.mkdir(runtimeDirectory, { recursive: true });
-    await fs.promises.writeFile(
-      statePath,
-      JSON.stringify({
-        direct: [],
-        shells: [{
-          pid: 2_147_483_647,
-          token,
-          effectPid: process.pid,
-          posixProcessGroup: false,
-          windowsJobContained: false,
-        }],
-      }),
-      'utf8',
-    );
-    const encodedToken = Buffer.from(token, 'utf8').toString('base64url');
-    const releaseMarker = `${statePath}.${encodedToken}.released`;
-    await fs.promises.writeFile(releaseMarker, `${token}\n`, 'utf8');
-
-    try {
-      await expect(withSandboxedFileMutation('/tmp/not-globally-fenced.txt', async () => 'safe'))
-        .resolves.toBe('safe');
-    } finally {
-      await fs.promises.rm(statePath, { force: true });
-      await fs.promises.rm(releaseMarker, { force: true });
-    }
   });
 
   it('recovers an abandoned namespace marker after managed cleanup converges', async () => {
@@ -863,20 +804,6 @@ describe('cross-process filesystem effect lease', () => {
     },
   );
 
-  it.runIf(process.platform === 'win32')(
-    'keeps direct file mutations independent across different KODAX_HOME values',
-    async () => {
-      const releaseShell = await acquireFileSystemMutationLease();
-      setAgentConfigHome(path.join(configHome, 'other-home'));
-      try {
-        await expect(withSandboxedFileMutation('/tmp/cross-home.txt', async () => 'safe'))
-          .resolves.toBe('safe');
-      } finally {
-        await releaseShell();
-      }
-    },
-  );
-
   it('keeps different sandbox policies out of the same ACL coordination window', async () => {
     const releaseOtherPolicy = await acquireFileSystemMutationLease('policy-b');
     const startedAt = Date.now();
@@ -893,8 +820,6 @@ describe('cross-process filesystem effect lease', () => {
     const releaseEffect = await acquireFileSystemMutationLease();
     await releaseEffect.bindEffectProcess(process.pid, false);
     await releaseEffect.finishEffectProcess();
-    await expect(withSandboxedFileMutation('/tmp/still-held-between-processes.txt', async () => 'safe'))
-      .resolves.toBe('safe');
     await releaseEffect.bindEffectProcess(process.pid, false);
     await releaseEffect.finishEffectProcess();
 
@@ -966,10 +891,14 @@ describe('cross-process filesystem effect lease', () => {
 
   it('stops deferred finish retries after an unbound lease is released', async () => {
     const releaseEffect = await acquireFileSystemMutationLease();
-    coordinatorFailureMock.remaining = 3;
+    // Other tests intentionally leave unref'd best-effort retries behind. Keep
+    // the failure budget above any stray calls until this operation completes
+    // its three synchronous attempts, then clear it before releasing the lease.
+    coordinatorFailureMock.remaining = 1_000;
 
     await expect(releaseEffect.finishEffectProcess())
       .rejects.toThrow('injected filesystem-effect coordinator failure');
+    coordinatorFailureMock.remaining = 0;
     await releaseEffect();
     const callsAfterRelease = coordinatorFailureMock.calls;
     await new Promise<void>((resolve) => setTimeout(resolve, 400));
@@ -979,10 +908,11 @@ describe('cross-process filesystem effect lease', () => {
 
   it('uses nonblocking coordinator attempts for deferred finish retries', async () => {
     const releaseEffect = await acquireFileSystemMutationLease();
-    coordinatorFailureMock.remaining = 3;
+    coordinatorFailureMock.remaining = 1_000;
 
     await expect(releaseEffect.finishEffectProcess())
       .rejects.toThrow('injected filesystem-effect coordinator failure');
+    coordinatorFailureMock.remaining = 0;
     await expect.poll(() => coordinatorFailureMock.timeouts.filter(
       (timeoutMs) => timeoutMs === 0,
     ).length).toBeGreaterThan(0);

@@ -1,7 +1,9 @@
 # Sandbox
 
-KodaX supports an optional OS-level sandbox (ASRT) that contains file-system and
-network access for model-issued shell commands.
+KodaX supports an optional OS-level sandbox for model-issued shell commands.
+On Windows, ASRT owns network/account setup while the KodaX native runner owns
+the restricted token and process Job; macOS and Linux use ASRT's platform
+backends directly.
 
 ## Activate the sandbox
 
@@ -12,11 +14,16 @@ kodax sandbox setup     # Activate
 
 `kodax setup` and first-run setup also check sandbox readiness once.
 
+Trusted text tools have a separate native diagnostic because they do not use
+the shell sandbox. Run `kodax doctor --native-text` to explicitly load and
+verify the packaged trusted-text addon. This check does not require
+`kodax sandbox setup` and does not change shell sandbox state.
+
 ## Platform backends
 
 | Platform | Backend | Dependencies |
 |---|---|---|
-| **Windows** | Restricted sandbox account + network policy | None (UAC prompt on first activation) |
+| **Windows** | Restricted sandbox account + network policy | None (UAC during activation; an upgrade SID rotation may require a second confirmation) |
 | **macOS** | Seatbelt (`sandbox-exec`) | ripgrep (`brew install ripgrep`) |
 | **Linux** | bubblewrap | `bubblewrap`, `socat`, `ripgrep` |
 
@@ -52,7 +59,7 @@ is exact (case-insensitive on Windows), and execution-control variables such as
 Restart KodaX after changing the host variables or this setting; stop/restart a
 persistent KodaX daemon so it receives the new environment and configuration.
 
-## Windows workspace Shell behavior (v0.7.86)
+## Historical Windows workspace Shell behavior (v0.7.86-v0.7.95)
 
 Windows workspace Shell calls preserve the case-insensitive `PATH`/`Path` and
 `PATHEXT` environment contract across the Runtime and sandbox brokers. KodaX
@@ -70,7 +77,7 @@ toolchain, and network policy can share one Windows policy group across KodaX
 processes. An incompatible policy or sandbox infrastructure failure before
 target start returns the already-authorized command to normal permission
 execution. Runtime sandbox capability v3 first fenced older daemon policy
-revisions in v0.7.86. The current contract is `sandboxRuntime:5`: auto-start
+revisions in v0.7.86. The v0.7.95 contract was `sandboxRuntime:5`: auto-start
 replaces an idle v4-or-older Windows daemon and fails closed while it is busy.
 The v5 advance marks self-healing Windows cleanup
 (`delayedEffectDrainRecovery: 'automatic'`,
@@ -81,47 +88,92 @@ process generations. Do not
 delete `model-filesystem-effects.lock` by hand; on Windows the coordinator
 state lives under `C:\ProgramData\KodaX\sandbox-runtime\runtime\`.
 
-## Concurrent text tools (v0.7.94)
+## Trusted text tools (v0.7.96)
 
-Runtime `write`, `edit`, `multi_edit`, `insert_after_anchor`, and `undo` may
-overlap a compatible live Bash lease. Snapshot and commit use the same ASRT
-workspace policy, with same-path FIFO. A covered workspace target fails closed
-when that sandbox is unavailable. Hard-linked workspace targets are rejected.
-Windows sandboxed git trusts authorized repo roots only
-(`gitSafeDirectory: authorized-repo-roots`) and never emits `safe.directory=*`.
-Linked-worktree and submodule relationship files are read through strict byte
-bounds before that trust. Sandboxed text-helper stdin failures stay on the
-operation Promise. A missing workspace directory omits the concurrent text
-sandbox at Run start instead of aborting the Run.
+On Windows, Linux, and macOS, Runtime `write`, `edit`, `multi_edit`,
+`insert_after_anchor`, and `undo` are trusted KodaX host operations. They do not enter ASRT, a
+workspace session, the native shell runner, or a sandbox helper. The host
+authorizes the final canonical local path and uses a short cross-Runtime
+per-file kernel lock, locked reread, revision/content CAS, a flushed
+same-directory temporary file, and atomic replacement. Symlink/reparse and
+multi-link targets, remote filesystems, and sensitive KodaX/Git control
+locations fail closed; Windows additionally rejects UNC/device/ADS and other
+alias namespaces. These tools are host-policy
+constrained; they are not advertised as OS-token-sandboxed writes.
+
+Atomic replacement is the commit point. If a Unix parent-directory flush or
+escape rollback cannot be proven after that point, the tool returns
+`text_mutation_commit_uncertain` with the complete pre/post receipt and tells
+the caller to reread; do not retry the same edit blindly. Existing-file edits
+retain their Undo backup. An uncertain Undo rebinds that backup to the observed
+post-commit revision for a later CAS-checked resolution. A newly created file
+still reports `before.state: missing` in the error receipt, but this does not
+create a legacy Undo entry that deletes the file. Linux ZFS and casefold directories
+are currently rejected because their namespace case/normalization semantics are
+not yet proven by the native descriptor path.
+
+Arbitrary shell programs do not participate in the text-tool lock. If the
+locked final reread observes a shell change, the text operation returns a
+structured stale conflict and does not overwrite the newer bytes; an
+incompatible writer handle at that reread returns contention. An uncooperative
+write, replace, or rename after the final reread remains an ordinary
+operating-system race.
+Different canonical files do not share a transaction lock.
+
+On Windows the kernel lock lives in a private namespace bound to the trusted
+host user, so the restricted shell account cannot precreate its name. On Unix,
+a fixed per-UID system coordination root is host-owned with mode `0700` and is
+shared across Runtime config homes; its per-resource inode carries kernel
+`flock`. The native binding is stored separately below
+`KODAX_HOME/native-text-state-v1` and loaded through a no-follow descriptor
+whose digest matches its content-addressed directory. Sandboxed shell policy
+cannot read or write either root, and symlinked Agent Home state fails closed. File presence
+does not mean the lock is held. Process death releases either lock
+automatically and no PID/ticket recovery protocol is required. Unix atomic
+replacement preserves ownership, mode, extended attributes, Linux
+user-modifiable inode flags, and macOS extended ACL/file flags or fails closed.
 
 ## Background commands and session reuse (v0.7.96)
 
-Within one Runtime process, a long-lived background command (for example a dev
-server started through the `bash` tool) no longer interferes with later
-sandboxed tool calls on Windows:
+Windows v2 shell commands use a separate native host/runner protocol. ASRT
+supplies the network proxy, WFP/CA integration, and the dedicated account;
+KodaX supplies a restricted policy token, framed stdin/stdout/stderr, and a
+no-breakaway, kill-on-close Job. The target is created suspended and assigned
+to that Job before it may run, and a nonce-bound private desktop whose access
+requires the exact policy capability avoids both
+the known null-desktop loader failure and exposure to the interactive desktop. No filesystem-effect fence, workspace-session
+owner, reset, cleanup, or poison gate spans the command lifetime, so shell
+commands from different policies, Sessions, and Runtime processes may overlap.
+A long-running shell therefore cannot make a trusted text tool unavailable.
+This authority split is advertised as `sandboxRuntime:6`; auto-started clients
+replace an idle older daemon and fail closed instead of joining a busy one.
+Upgrading an existing Windows installation requires one `kodax sandbox setup`
+cutover. Setup waits for old sandbox processes to exit, recovers recorded ACL
+work, recreates the dedicated account with a new SID, and records that SID and
+the native protocol in machine state. Doctor and native shell admission remain
+fail-closed if that state is missing or mismatched; trusted text tools remain
+available throughout. Native artifacts are independently checked against the
+embedded packaged protocol/SHA-256 manifest and staged in a protected content-
+addressed Agent Home store. The restricted account receives read/execute, but
+not write/delete, access to its exact runner artifact. A fixed System32
+provisioner may run during this artifact bootstrap; text content and shell
+stdin never enter it.
 
-- The workspace session it shares stays cached and reusable, so subsequent
-  `write`/`edit` calls execute sandboxed instead of failing or falling back.
-- Session cleanup defers behind live leases and never terminates a running
-  background command; cleanup converges automatically after the command exits,
-  and a deferred close that waits on a leaked lease is reported through
-  diagnostics rather than killed.
-- Cleanups that never started no longer poison the Windows sandbox account, so
-  the "unavailable until reboot" lockout this produced in v0.7.95 is gone.
-- Standalone SDK admission (see below) fails with a structured contention
-  error while a leased session is active instead of terminating it.
+The final target is in its Job at process creation. ASRT still creates the
+shared-account runner before KodaX code can apply runner-process hardening;
+Issue 307 tracks that narrow upstream pre-main window, which current Codex also
+retains. The KodaX host requests inherited error-mode suppression before ASRT
+launch and runner code repeats it after entry, but the ASRT-owned cross-account
+creation contract still controls loader faults before runner `main`; final target
+faults are suppressed. It does not affect trusted text tools. Closing it requires an ASRT
+creation-time process/thread security contract or privileged spawn service,
+not another post-spawn patch.
 
-Known limit: with TWO Runtime processes sharing one machine home, an idle
-close in one Runtime can still queue a machine-wide cleanup transition that
-briefly blocks same-policy writes in that Runtime until the other Runtime's
-command completes (Issue 305; the structural fix is the ADR-065 migration).
-
-When a sandboxed text mutation is unavailable, the error carries a structured
-reason: `not_ready` (setup or readiness), `not_selected` (the call was not
-admitted to the sandbox policy), `session_reset_pending`, or
-`acl_transition_pending` (a same-policy reset or an account-wide ACL
-transition is in flight; retry after it settles). Runtime event consumers see
-the same reasons on `tool.sandbox` fallback observations.
+Linux and macOS shell calls remain ASRT-contained per command through
+bubblewrap or Seatbelt/`sandbox-exec`. They do not keep a KodaX workspace-
+session owner, reset/poison state, or filesystem-effect lease across the shell
+lifetime. On every platform, an arbitrary shell writer is an ordinary OS race
+and does not join trusted-text CAS.
 
 ## SDK sandbox
 
@@ -135,13 +187,10 @@ await runKodaX({
 }, 'Inspect the authenticated repository.');
 ```
 
-SDK embedders can also use the standalone sandbox capability independently
-through `@kodax-ai/kodax/sandbox`. Since v0.7.96, a standalone sandboxed run
-does not terminate a live workspace session: while a leased session is active
-(typically a long-running background command inside a Runtime), standalone
-admission rejects with a structured contention error after a short grace
-period — retry once the background command completes. Other `unavailable`
-results keep carrying the doctor snapshot for setup guidance.
+SDK embedders can also use the standalone shell sandbox capability
+independently through `@kodax-ai/kodax/sandbox`. Its readiness and setup state
+apply to shell/process containment only. A failed or unavailable shell runner
+does not change the trusted text-tool path.
 
 ## See also
 

@@ -1,19 +1,14 @@
 import { spawn } from 'child_process';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join as pathJoin } from 'node:path';
+import { delimiter as pathDelimiter, dirname, join as pathJoin } from 'node:path';
 import iconv from 'iconv-lite';
 import {
-  containWindowsEffectProcess,
   emitKodaXDiagnostic,
   isCurrentProcessWindowsJobContained,
-  KodaXFileLockTimeoutError,
   killChildProcessTree,
   killChildProcessTreeSync,
-  prepareJavaScriptChildLaunch,
   registerManagedChildProcess,
-  terminateWindowsEffectJob,
-  type WindowsEffectJob,
 } from '@kodax-ai/agent';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -45,30 +40,9 @@ import {
   normalizeSandboxEnvironmentPass,
   parseSandboxEnvironmentPass,
 } from '../shell-execution/environment.js';
-import {
-  acquireFileSystemMutationLease,
-  scheduleUnrefBackgroundRetry,
-  type FileSystemMutationLeaseRelease,
-} from './_internal/file-mutation-queue.js';
 
 const BACKGROUND_ABORT_KILL_MS = process.platform === 'win32' ? 5_000 : 2_000;
 const FOREGROUND_CLOSE_DRAIN_MS = process.platform === 'win32' ? 2_000 : 1_000;
-const POSIX_EFFECT_GATE = 'IFS= read -r gate && [ "$gate" = go ] && exec "$@"';
-const WINDOWS_EFFECT_GATE = [
-  "const readline=require('node:readline')",
-  "const {spawn}=require('node:child_process')",
-  "const input=readline.createInterface({input:process.stdin,terminal:false})",
-  "input.once('line',(gate)=>{",
-  "input.close()",
-  "if(gate!=='go'){process.exit(125);return}",
-  "const payload=JSON.parse(process.env.KODAX_EFFECT_COMMAND_JSON||'{}')",
-  "delete process.env.KODAX_EFFECT_COMMAND_JSON",
-  "if(payload.electronRunAsNode===true)process.env.ELECTRON_RUN_AS_NODE='1'",
-  "const child=spawn(payload.executable,payload.args,{stdio:'inherit',shell:false,windowsHide:true,windowsVerbatimArguments:payload.windowsVerbatimArguments===true})",
-  "child.once('error',(error)=>{process.stderr.write(String(error&&error.message||error));process.exitCode=1})",
-  "child.once('close',(code)=>setTimeout(()=>process.exit(Number.isInteger(code)?code:1),150))",
-  "})",
-].join(';');
 
 type ManagedChildProcess = Parameters<typeof killChildProcessTree>[0];
 type KillChildProcessTreeOptions = NonNullable<Parameters<typeof killChildProcessTree>[1]>;
@@ -83,6 +57,72 @@ interface ForegroundOutputRecovery {
   readonly stderr: StreamRecovery;
 }
 
+function closePreparedShellInput(
+  proc: ManagedChildProcess,
+  prefix: Uint8Array | undefined,
+  signal: AbortSignal | undefined,
+  deadlineAt: number,
+): Promise<void> {
+  const stdin = proc.stdin;
+  if (stdin === null) {
+    return prefix === undefined
+      ? Promise.resolve()
+      : Promise.reject(new Error('Native shell bootstrap pipe was not created.'));
+  }
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Operation aborted', 'AbortError'));
+  }
+  if (prefix === undefined) {
+    // Ordinary shells do not receive a bootstrap payload. Closing their input is
+    // therefore not a delivery phase that may fail the command: under a busy
+    // host the command deadline can expire after spawn but before Node reports
+    // the writable-side `finish` event. Keep a listener through `close` so a
+    // delayed EPIPE remains observed, then let the command timeout path collect
+    // any stdout/stderr and stop the already-started process.
+    const observeCloseError = (): void => undefined;
+    const releaseCloseErrorObserver = (): void => {
+      stdin.off('error', observeCloseError);
+    };
+    stdin.on('error', observeCloseError);
+    stdin.once('close', releaseCloseErrorObserver);
+    stdin.end();
+    return Promise.resolve();
+  }
+  if (Date.now() >= deadlineAt) {
+    return Promise.reject(new Error('Native shell bootstrap delivery timed out.'));
+  }
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(
+      () => finish(new Error('Native shell bootstrap delivery timed out.')),
+      Math.max(0, deadlineAt - Date.now()),
+    );
+    timer.unref();
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const onError = (): void => finish(new Error('Native shell bootstrap delivery failed.'));
+    const onAbort = (): void => finish(new DOMException('Operation aborted', 'AbortError'));
+    const onClose = (): void => {
+      stdin.off('error', onError);
+      if (!settled) finish(new Error('Native shell bootstrap pipe closed before delivery completed.'));
+    };
+    // The end callback can precede a delayed EPIPE from the final flush. Keep
+    // observing stream errors until close so a request failure cannot escape as
+    // an uncaught process-level exception.
+    stdin.on('error', onError);
+    stdin.once('close', onClose);
+    stdin.once('finish', () => finish());
+    signal?.addEventListener('abort', onAbort, { once: true });
+    stdin.end(prefix);
+  });
+}
+
 function sandboxLifecycleErrorDetail(error: unknown): string {
   if (error instanceof AggregateError) {
     const details = error.errors.map(sandboxLifecycleErrorDetail).filter(Boolean);
@@ -95,53 +135,36 @@ function sandboxLifecycleErrorDetail(error: unknown): string {
   return String(error);
 }
 
-function gatedShellInvocation(
-  executable: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv,
-  windowsVerbatimArguments?: boolean,
-): {
-  readonly executable: string;
-  readonly args: readonly string[];
-  readonly env: NodeJS.ProcessEnv;
-  readonly windowsVerbatimArguments?: boolean;
-} {
-  if (process.platform !== 'win32') {
-    return {
-      executable: '/bin/sh',
-      args: ['-c', POSIX_EFFECT_GATE, 'kodax-shell-effect', executable, ...args],
-      env,
-    };
-  }
-  const launch = prepareJavaScriptChildLaunch({
-    args: ['-e', WINDOWS_EFFECT_GATE],
-    env: {
-      ...env,
-      KODAX_EFFECT_COMMAND_JSON: JSON.stringify({
-        executable,
-        args,
-        windowsVerbatimArguments: windowsVerbatimArguments === true,
-        electronRunAsNode:
-          process.versions.electron !== undefined
-          && env.ELECTRON_RUN_AS_NODE === '1'
-          && executable.toLowerCase() === process.execPath.toLowerCase(),
-      }),
-    },
-    isElectron: process.versions.electron !== undefined,
-  });
-  return {
-    executable: launch.command,
-    args: launch.args,
-    env: launch.env,
-  };
-}
-
 function cancelledCommandResult(command: string): string {
   return `Command: ${command}\n[Cancelled] Operation cancelled by user`;
 }
 
 function commandPreparationTimeoutResult(command: string, timeout: number): string {
   return `Command: ${command}\n[Timeout] Command was not started because preparation exceeded ${timeout}s`;
+}
+
+function exposeCurrentRuntimeOnPath(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result = { ...environment };
+  const pathName = Object.keys(result).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+  const runtimeDirectory = dirname(process.execPath);
+  const entries = (result[pathName] ?? '').split(pathDelimiter).filter(Boolean);
+  if (!entries.some((entry) => entry.toLowerCase() === runtimeDirectory.toLowerCase())) {
+    result[pathName] = [runtimeDirectory, ...entries].join(pathDelimiter);
+  }
+  return result;
+}
+
+function directShellEnvironment(
+  executable: string,
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const result = { ...environment };
+  const isCurrentRuntime = process.platform === 'win32'
+    ? executable.toLowerCase() === process.execPath.toLowerCase()
+    : executable === process.execPath;
+  if (!isCurrentRuntime) delete result.ELECTRON_RUN_AS_NODE;
+  delete result.KODAX_EFFECT_COMMAND_JSON;
+  return result;
 }
 
 function startStreamRecovery(collector: BashOutputCollector): StreamRecovery {
@@ -330,21 +353,16 @@ function detectWindowsCmdGotchas(
   return hints;
 }
 
-interface ToolBashInternalOptions {
-  readonly bypassEffectContainment?: boolean;
-}
-
 export function toolBash(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
-  return executeToolBash(input, ctx, {});
+  return executeToolBash(input, ctx);
 }
 
 async function executeToolBash(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-  internal: ToolBashInternalOptions,
 ): Promise<string> {
   const command = input.command as string;
   const memoryDenial = shellMemoryMutationDenial(command);
@@ -367,13 +385,15 @@ async function executeToolBash(
   const environmentPass = ctx.sandbox === undefined
     ? parseSandboxEnvironmentPass(process.env.KODAX_SANDBOX_ENV_PASS)
     : normalizeSandboxEnvironmentPass(ctx.sandbox.envPass);
-  const legacyEnv = hardenShellCommandEnvironment(
-    legacyEnvSource,
-    usesWindowsCmd ? 'cmd' : 'bash',
-    process.platform,
-    ctx.providerCredentialEnvironmentNames,
-    cwd,
-    environmentPass,
+  const legacyEnv = exposeCurrentRuntimeOnPath(
+    hardenShellCommandEnvironment(
+      legacyEnvSource,
+      usesWindowsCmd ? 'cmd' : 'bash',
+      process.platform,
+      ctx.providerCredentialEnvironmentNames,
+      cwd,
+      environmentPass,
+    ),
   );
   const legacyCommandInvocation = usesWindowsCmd
     ? {
@@ -447,50 +467,26 @@ async function executeToolBash(
     | Promise<Awaited<ReturnType<NonNullable<typeof sandboxInvocation>['cleanup']>>>
     | undefined;
   let sandboxCleanupError: unknown;
-  let sandboxRetirement: Promise<void> | undefined;
-  const retireFailedSandbox = async (): Promise<void> => {
-    if (!sandboxInvocation?.retire) return;
-    sandboxRetirement ??= sandboxInvocation.retire();
-    try {
-      await sandboxRetirement;
-    } catch (error: unknown) {
-      sandboxCleanupError = new AggregateError(
-        [sandboxCleanupError, error],
-        'Sandbox cleanup and workspace-session retirement both failed.',
-      );
-      emitKodaXDiagnostic({
-        source: 'coding:bash-sandbox',
-        level: 'warn',
-        message: 'Workspace sandbox session retirement failed.',
-        detail: error,
-      });
-    }
-  };
   const cleanupSandbox = async (
     execution: 'not_started' | 'started_or_unknown' = 'not_started',
   ): Promise<void> => {
     if (!sandboxInvocation) return;
-    sandboxCleanup ??= sandboxInvocation.cleanup({ execution }).then((observation) => {
-      if (observation) ctx.reportToolSandboxObservation?.(observation);
-      return observation;
-    });
-    try {
-      await sandboxCleanup;
-    } catch (error: unknown) {
-      sandboxCleanupError = sandboxCleanupError === undefined
-        ? error
-        : new AggregateError(
-            [sandboxCleanupError, error],
-            'Multiple required OS sandbox cleanup operations failed.',
-          );
-      emitKodaXDiagnostic({
-        source: 'coding:bash-sandbox',
-        level: 'warn',
-        message: 'Workspace sandbox diagnostics cleanup failed.',
-        detail: error,
+    sandboxCleanup ??= sandboxInvocation.cleanup({ execution })
+      .then((observation) => {
+        if (observation) ctx.reportToolSandboxObservation?.(observation);
+        return observation;
+      })
+      .catch((error: unknown) => {
+        sandboxCleanupError = error;
+        emitKodaXDiagnostic({
+          source: 'coding:bash-sandbox',
+          level: 'warn',
+          message: 'Request-scoped shell sandbox cleanup failed.',
+          detail: error,
+        });
+        return undefined;
       });
-      await retireFailedSandbox();
-    }
+    await sandboxCleanup;
   };
   const withSandboxCleanupFailure = (result: string): string => {
     if (sandboxCleanupError === undefined) return result;
@@ -524,217 +520,33 @@ async function executeToolBash(
         }
       : { executable: '/bin/sh', args: ['-c', command], env: legacyEnv });
   const resolvedInvocation = sandboxInvocation ?? ordinaryInvocation;
-  const gatedInvocation = gatedShellInvocation(
+  const directEnvironment = directShellEnvironment(
     resolvedInvocation.executable,
-    resolvedInvocation.args,
     resolvedInvocation.env,
-    resolvedInvocation.windowsVerbatimArguments,
   );
   const spawnCommand = () => spawn(
-    gatedInvocation.executable,
-    [...gatedInvocation.args],
+    resolvedInvocation.executable,
+    [...resolvedInvocation.args],
     {
       shell: false,
       windowsHide: true,
       cwd,
-      env: gatedInvocation.env,
+      env: directEnvironment,
       detached: process.platform !== 'win32',
-      windowsVerbatimArguments: gatedInvocation.windowsVerbatimArguments,
+      windowsVerbatimArguments: resolvedInvocation.windowsVerbatimArguments,
     },
   );
 
-  const preparedEffectLease = sandboxInvocation?.fileSystemEffectLease;
-  let releaseMutationLease: FileSystemMutationLeaseRelease;
-  try {
-    if (preparedEffectLease !== undefined) {
-      let reportReleased!: () => void;
-      const released = new Promise<void>((resolve) => { reportReleased = resolve; });
-      releaseMutationLease = Object.assign(
-          async () => {
-            await preparedEffectLease.release();
-            reportReleased();
-          },
-          {
-            bindEffectProcess: (
-              pid: number,
-              windowsJobContained: boolean,
-            ) => preparedEffectLease.bindEffectProcess(pid, windowsJobContained),
-            finishEffectProcess: () => preparedEffectLease.finishEffectProcess(),
-            released,
-          },
-        );
-    } else {
-      releaseMutationLease = await acquireFileSystemMutationLease(
-        sandboxInvocation?.fileSystemEffectPolicyKey,
-      );
-    }
-  } catch (error) {
-    await cleanupSandbox();
-    const message = error instanceof Error ? error.message : String(error);
-    const reason = error instanceof KodaXFileLockTimeoutError
-      ? 'the filesystem-effect coordinator was unavailable'
-      : 'another filesystem effect is active';
-    return withSandboxCleanupFailure(
-      `[Error] Command was not started because ${reason}: ${message}`,
-    );
-  }
-  let mutationLeaseReleased = false;
-  let mutationLeaseRelease: Promise<void> | undefined;
-  let mutationProcessBinding: Promise<void> = Promise.resolve();
-  let mutationProcessBindingSettled = true;
-  let mutationProcessBindingFailed = false;
-  let mutationProcessBindingError: unknown;
-  let mutationStartCommitted = false;
-  let mutationStartBlockedReason: 'cancelled' | 'timeout' | undefined;
-  let windowsEffectJob: WindowsEffectJob | undefined;
-  const recordEffectLifecycleFailure = (error: unknown): void => {
-    sandboxCleanupError = sandboxCleanupError === undefined
-      ? error
-      : new AggregateError(
-          [sandboxCleanupError, error],
-          'Multiple required OS sandbox lifecycle operations failed.',
-        );
-  };
-  const releaseMutation = (): Promise<void> => {
-    if (mutationLeaseReleased) return Promise.resolve();
-    mutationLeaseRelease ??= mutationProcessBinding
-      .then(() => undefined, () => undefined)
-      .then(() => releaseMutationLease())
-      .then(() => {
-        mutationLeaseReleased = true;
-      })
-      .catch((error: unknown) => {
-        recordEffectLifecycleFailure(error);
-        emitKodaXDiagnostic({
-          source: 'coding:bash-filesystem-effect',
-          level: 'warn',
-          message: 'Filesystem effect lock cleanup failed; a later lifecycle event may retry it.',
-          detail: error,
-        });
-      })
-      .finally(() => {
-        mutationLeaseRelease = undefined;
-      });
-    return mutationLeaseRelease;
-  };
-  const finishUnstartedMutation = async (): Promise<boolean> => {
-    try {
-      await releaseMutationLease.finishEffectProcess();
-    } catch (error: unknown) {
-      recordEffectLifecycleFailure(error);
-    }
-    await cleanupSandbox();
-    await releaseMutation();
-    return true;
-  };
-  const bindMutationProcess = async (proc: ManagedChildProcess): Promise<void> => {
-    if (proc.pid === undefined || proc.stdin === null) {
-      throw new Error('Shell effect gate did not expose a managed process and stdin.');
-    }
-    mutationProcessBindingSettled = false;
-    mutationProcessBinding = (async () => {
-      if (process.platform === 'win32' && !internal.bypassEffectContainment) {
-        windowsEffectJob = await containWindowsEffectProcess(proc.pid!);
-      }
-      await releaseMutationLease.bindEffectProcess(
-        windowsEffectJob?.supervisorPid ?? proc.pid!,
-        windowsEffectJob !== undefined || isCurrentProcessWindowsJobContained(),
-      );
-      if (mutationStartBlockedReason === 'cancelled' || ctx.abortSignal?.aborted) {
-        mutationStartBlockedReason = 'cancelled';
-        throw new DOMException('Operation aborted', 'AbortError');
-      }
-      if (mutationStartBlockedReason === 'timeout' || Date.now() >= deadlineAt) {
-        mutationStartBlockedReason = 'timeout';
-        throw new Error('Command deadline expired before the effect gate was authorized.');
-      }
-      sandboxInvocation?.authorizeStart?.();
-      mutationStartCommitted = true;
-      proc.stdin!.end('go\n');
-    })().catch(async (error: unknown) => {
-      mutationProcessBindingFailed = true;
-      mutationProcessBindingError = error;
-      await killChildProcessTree(proc);
-      await windowsEffectJob?.drained.catch(() => undefined);
-      emitKodaXDiagnostic({
-        source: 'coding:bash-filesystem-effect',
-        level: 'warn',
-        message: 'Filesystem effect process identity could not be persisted; crash recovery stays fail-closed.',
-        detail: error,
-      });
-      throw error;
-    }).finally(() => {
-      mutationProcessBindingSettled = true;
-    });
-    let stopWait: ((reason: 'cancelled' | 'timeout') => void) | undefined;
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    const stopped = new Promise<void>((_resolve, reject) => {
-      let stoppedOnce = false;
-      stopWait = (reason) => {
-        if (stoppedOnce) return;
-        stoppedOnce = true;
-        mutationStartBlockedReason = reason;
-        killChildProcessTreeBestEffort(proc, { forceMs: 500, taskkillMs: 500 });
-        reject(reason === 'cancelled'
-          ? new DOMException('Operation aborted', 'AbortError')
-          : new Error('Command deadline expired while effect binding was pending.'));
-      };
-      const remaining = deadlineAt - Date.now();
-      if (remaining <= 0) stopWait('timeout');
-      else {
-        deadlineTimer = setTimeout(() => stopWait?.('timeout'), remaining);
-        deadlineTimer.unref();
-      }
-    });
-    const onAbort = (): void => stopWait?.('cancelled');
-    ctx.abortSignal?.addEventListener('abort', onAbort, { once: true });
-    if (ctx.abortSignal?.aborted) onAbort();
-    try {
-      await Promise.race([mutationProcessBinding, stopped]);
-    } finally {
-      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-      ctx.abortSignal?.removeEventListener('abort', onAbort);
-    }
-  };
-  const spawnWithMutationLease = async (): Promise<ManagedChildProcess> => {
-    try {
-      return spawnCommand();
-    } catch (error) {
-      await finishUnstartedMutation();
-      throw error;
-    }
-  };
-  const detachUnregisteredEffectGate = (proc: ManagedChildProcess): void => {
-    proc.stdin?.destroy();
-    const stdout = proc.stdout as (NodeJS.ReadableStream & { unref?: () => void }) | null;
-    const stderr = proc.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null;
-    stdout?.unref?.();
-    stderr?.unref?.();
-    proc.unref();
-  };
-  const settleUnregisteredEffectGateAfterClose = (proc: ManagedChildProcess): void => {
-    let settlementStarted = false;
-    const settle = (): void => {
-      if (settlementStarted) return;
-      settlementStarted = true;
-      void finishUnstartedMutation().catch((error: unknown) => {
-        emitKodaXDiagnostic({
-          source: 'coding:bash-filesystem-effect',
-          level: 'warn',
-          message: 'Unregistered shell effect gate exited but cleanup did not converge.',
-          detail: error,
-        });
-      });
-    };
-    proc.once('close', settle);
-    if (proc.exitCode !== null || proc.signalCode !== null) queueMicrotask(settle);
-  };
-  const registerMutationProcess = async (
-    proc: ManagedChildProcess,
+  const spawnManagedCommand = async (
     kind: 'bash' | 'bash-background',
-  ): Promise<() => void> => {
+  ): Promise<{
+    readonly proc: ManagedChildProcess;
+    readonly unregister: () => void;
+  }> => {
+    const proc = spawnCommand();
+    let unregister: (() => void) | undefined;
     try {
-      return registerManagedChildProcess(proc, { kind, command, cwd }, {
+      unregister = registerManagedChildProcess(proc, { kind, command, cwd }, {
         manualUnregister: true,
         requireDurableRecord: true,
       });
@@ -748,152 +560,54 @@ async function executeToolBash(
           });
         } catch (terminationError: unknown) {
           emitKodaXDiagnostic({
-            source: 'coding:bash-filesystem-effect',
+            source: 'coding:bash-sandbox',
             level: 'warn',
-            message: 'Async cleanup failed after durable child registration was rejected.',
+            message: 'Process cleanup failed after durable child registration was rejected.',
             detail: terminationError,
           });
         }
       }
-      if (termination.status === 'unknown') {
-        recordEffectLifecycleFailure(new Error(
-          'Shell effect process tree termination was not confirmed after durable registration failed; '
-          + 'its sandbox owner and filesystem fence remain closed.',
-        ));
-        settleUnregisteredEffectGateAfterClose(proc);
-        detachUnregisteredEffectGate(proc);
-      } else {
-        await finishUnstartedMutation();
-      }
+      if (termination.status === 'unknown') proc.kill('SIGKILL');
+      await cleanupSandbox(proc.pid === undefined ? 'not_started' : 'started_or_unknown');
       throw error;
     }
-  };
-  const finishBoundMutationProcess = async (
-    proc: ManagedChildProcess,
-    onRecovered: () => void,
-  ): Promise<boolean> => {
-    let drained = false;
+    // Shell tools are non-interactive. In particular, the native runner host must
+    // see EOF immediately; stdin is framed by that host without a model-side gate.
     try {
-      await mutationProcessBinding;
-    } catch (error: unknown) {
-      mutationProcessBindingFailed = true;
-      mutationProcessBindingError ??= error;
-    }
-    if (windowsEffectJob !== undefined) {
-      try {
-        await windowsEffectJob.drained;
-        drained = true;
-      } catch (error: unknown) {
-        emitKodaXDiagnostic({
-          source: 'coding:bash-filesystem-effect',
-          level: 'warn',
-          message: 'Windows effect Job did not prove an empty process tree.',
-          detail: error,
-        });
-      }
-    } else {
-      try {
-        drained = (await killChildProcessTree(proc, {
-          forceMs: 500,
-          taskkillMs: 500,
-        })).status !== 'unknown';
-      } catch (error: unknown) {
-        emitKodaXDiagnostic({
-          source: 'coding:bash-filesystem-effect',
-          level: 'warn',
-          message: 'Shell effect tree cleanup attempt failed.',
-          detail: error,
-        });
-      }
-    }
-    if (!drained) {
-      recordEffectLifecycleFailure(new Error(
-        'Shell effect process tree termination was not confirmed; '
-        + 'later filesystem effects remain fenced.',
-      ));
-      emitKodaXDiagnostic({
-        source: 'coding:bash-filesystem-effect',
-        level: 'warn',
-        message: 'Shell effect tree could not be proven drained; its sandbox owner and filesystem fence remain closed.',
-      });
-      scheduleUnrefBackgroundRetry(
-        async () => {
-          if (windowsEffectJob !== undefined) {
-            await terminateWindowsEffectJob(windowsEffectJob.jobName);
-          } else {
-            const result = await killChildProcessTree(proc, {
-              forceMs: 500,
-              taskkillMs: 500,
-            });
-            if (result.status === 'unknown') {
-              throw new Error('Shell effect process tree is still not proven drained.');
-            }
-          }
-          await releaseMutationLease.finishEffectProcess();
-          await cleanupSandbox('started_or_unknown');
-          await releaseMutation();
-          if (!mutationLeaseReleased) {
-            throw new Error('Shell effect lease release is still pending.');
-          }
-        },
-        onRecovered,
-        (error, attempt) => {
-          if (attempt % 10 !== 0) return;
-          emitKodaXDiagnostic({
-            source: 'coding:bash-filesystem-effect',
-            level: 'warn',
-            message: 'Automatic shell process-tree drain recovery is still pending; its sandbox owner and filesystem fence remain closed.',
-            detail: error,
-          });
-        },
+      await closePreparedShellInput(
+        proc,
+        sandboxInvocation?.stdinPrefix,
+        ctx.abortSignal,
+        deadlineAt,
       );
-      return false;
-    }
-    try {
-      await releaseMutationLease.finishEffectProcess();
     } catch (error: unknown) {
-      recordEffectLifecycleFailure(error);
-      emitKodaXDiagnostic({
-        source: 'coding:bash-filesystem-effect',
-        level: 'warn',
-        message: 'Filesystem effect completion could not be persisted.',
-        detail: error,
-      });
+      killChildProcessTreeSync(proc);
+      await cleanupSandbox('started_or_unknown');
+      unregister();
+      throw error;
     }
-    await cleanupSandbox(
-      mutationProcessBindingFailed ? 'not_started' : 'started_or_unknown',
-    );
-    await releaseMutation();
-    return true;
+    return { proc, unregister };
   };
-  const executeNormalPermissionFallback = async (): Promise<string | undefined> => {
-    if (
-      sandboxInvocation === undefined
-      || mutationStartCommitted
-      || !mutationLeaseReleased
-    ) return undefined;
-    const remainingMs = deadlineAt - Date.now();
-    if (remainingMs <= 0) return commandPreparationTimeoutResult(command, timeout);
-    ctx.reportToolSandboxObservation?.({
-      version: 1,
-      state: 'fallback',
-      reason: 'backend_failed',
-      execution: 'normal_permission_policy',
-    });
-    return withSandboxCleanupFailure(await executeToolBash(
-      { ...input, timeout: remainingMs / 1_000 },
-      { ...ctx, shellSandbox: undefined },
-      { bypassEffectContainment: true },
-    ));
+
+  const cleanupStartedCommand = async (
+    proc: ManagedChildProcess,
+    unregister: () => void,
+  ): Promise<void> => {
+    if (sandboxInvocation?.processTreeContainment !== 'native-job') {
+      try {
+        await killChildProcessTree(proc, { forceMs: 500, taskkillMs: 500 });
+      } catch (error: unknown) {
+        emitKodaXDiagnostic({
+          source: 'coding:bash-sandbox',
+          level: 'warn',
+          message: 'Settled shell process-tree cleanup could not be confirmed.',
+          detail: error,
+        });
+      }
+    }
+    await cleanupSandbox('started_or_unknown');
+    unregister();
   };
-  if (ctx.abortSignal?.aborted) {
-    await finishUnstartedMutation();
-    return withSandboxCleanupFailure(cancelledCommandResult(command));
-  }
-  if (Date.now() >= deadlineAt) {
-    await finishUnstartedMutation();
-    return withSandboxCleanupFailure(commandPreparationTimeoutResult(command, timeout));
-  }
 
   if (runInBackground) {
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -902,22 +616,25 @@ async function executeToolBash(
     try {
       logStream = await openBackgroundLog(outputFile);
     } catch (error) {
-      await finishUnstartedMutation();
+      await cleanupSandbox();
       const message = error instanceof Error ? error.message : String(error);
       return withSandboxCleanupFailure(
         `[Error] Background command was not started because its output file could not be created: ${message}`,
       );
     }
 
-    // POSIX background jobs get a process group so cleanup can signal -pid and
-    // reap shell descendants.
     let proc: ManagedChildProcess;
     let unregisterManagedChild: () => void;
     try {
-      proc = await spawnWithMutationLease();
-      unregisterManagedChild = await registerMutationProcess(proc, 'bash-background');
+      ({ proc, unregister: unregisterManagedChild } = await spawnManagedCommand(
+        'bash-background',
+      ));
     } catch (error) {
       logStream.destroy();
+      await cleanupSandbox();
+      if (error instanceof Error && error.name === 'AbortError') {
+        return withSandboxCleanupFailure(cancelledCommandResult(command));
+      }
       throw error;
     }
     const cleanupOnProcessExit = (): void => {
@@ -925,22 +642,13 @@ async function executeToolBash(
     };
     if (!isCurrentProcessWindowsJobContained()) process.once('exit', cleanupOnProcessExit);
     const abortSignal = ctx.abortSignal;
-    let cleaned = false;
-    let managedChildUnregistered = false;
+    let hooksCleared = false;
     let onAbort: (() => void) | undefined;
     const clearProcessHooks = (): void => {
-      if (cleaned) return;
-      cleaned = true;
+      if (hooksCleared) return;
+      hooksCleared = true;
       process.off('exit', cleanupOnProcessExit);
-      if (onAbort) {
-        abortSignal?.removeEventListener('abort', onAbort);
-      }
-    };
-    const cleanupProcessHooks = (): void => {
-      clearProcessHooks();
-      if (managedChildUnregistered) return;
-      managedChildUnregistered = true;
-      unregisterManagedChild();
+      if (onAbort) abortSignal?.removeEventListener('abort', onAbort);
     };
     const stopBackgroundProcess = (): void => {
       killChildProcessTreeBestEffort(proc, {
@@ -948,12 +656,11 @@ async function executeToolBash(
         taskkillMs: BACKGROUND_ABORT_KILL_MS,
       });
     };
-    let finishBackgroundEffect: Promise<boolean> | undefined;
-    const finishBackground = (): Promise<boolean> => {
-      finishBackgroundEffect ??= proc.pid === undefined
-        ? finishUnstartedMutation()
-        : finishBoundMutationProcess(proc, cleanupProcessHooks);
-      return finishBackgroundEffect;
+    let backgroundCleanup: Promise<void> | undefined;
+    const finishBackground = (): Promise<void> => {
+      backgroundCleanup ??= cleanupStartedCommand(proc, unregisterManagedChild)
+        .finally(clearProcessHooks);
+      return backgroundCleanup;
     };
     logStream.on('error', (error) => {
       try {
@@ -968,9 +675,9 @@ async function executeToolBash(
     proc.stderr?.pipe(logStream, { end: false });
     const reportBackgroundCleanupFailure = (error: unknown): void => {
       emitKodaXDiagnostic({
-        source: 'coding:bash-filesystem-effect',
+        source: 'coding:bash-sandbox',
         level: 'warn',
-        message: 'Background shell effect cleanup remains fenced after its process settled.',
+        message: 'Background request cleanup failed after its process settled.',
         detail: error,
       });
       clearProcessHooks();
@@ -983,65 +690,23 @@ async function executeToolBash(
         + '[Safety] The command was not retried because it may have started.\n';
     };
     proc.on('close', (code) => {
-      void (async () => {
-        if (await finishBackground()) cleanupProcessHooks();
-        else clearProcessHooks();
+      void finishBackground().then(() => {
         if (!logStream.destroyed) {
           logStream.write(backgroundSandboxFailure() ?? `\n[Exit: ${code}]\n`);
           logStream.end();
         }
-      })().catch(reportBackgroundCleanupFailure);
+      }).catch(reportBackgroundCleanupFailure);
     });
-    proc.on('error', (err) => {
-      void (async () => {
-        if (await finishBackground()) cleanupProcessHooks();
-        else clearProcessHooks();
+    proc.on('error', (error) => {
+      void finishBackground().then(() => {
         if (!logStream.destroyed) {
           logStream.write(
-            backgroundSandboxFailure() ?? `\n[Error: ${err.message}]\n`,
+            backgroundSandboxFailure() ?? `\n[Error: ${error.message}]\n`,
           );
           logStream.end();
         }
-      })().catch(reportBackgroundCleanupFailure);
+      }).catch(reportBackgroundCleanupFailure);
     });
-    try {
-      await bindMutationProcess(proc);
-    } catch (error: unknown) {
-      if (mutationStartBlockedReason !== undefined && !mutationProcessBindingSettled) {
-        void finishBackground().then(
-          (drained) => drained ? cleanupProcessHooks() : clearProcessHooks(),
-          reportBackgroundCleanupFailure,
-        );
-        const pending = mutationStartBlockedReason === 'cancelled'
-          ? cancelledCommandResult(command)
-          : commandPreparationTimeoutResult(command, timeout);
-        return `${pending}\n[Safety] Filesystem-effect binding is still pending; later effects remain fenced.`;
-      }
-      let drained = false;
-      try {
-        drained = await finishBackground();
-        if (drained) cleanupProcessHooks();
-      } catch (cleanupError: unknown) {
-        emitKodaXDiagnostic({
-          source: 'coding:bash-filesystem-effect',
-          level: 'warn',
-          message: 'Failed background binding cleanup remains fenced.',
-          detail: cleanupError,
-        });
-      }
-      if (mutationStartBlockedReason === 'cancelled') {
-        return withSandboxCleanupFailure(cancelledCommandResult(command));
-      }
-      if (mutationStartBlockedReason === 'timeout') {
-        return withSandboxCleanupFailure(commandPreparationTimeoutResult(command, timeout));
-      }
-      if (drained) {
-        const fallback = await executeNormalPermissionFallback();
-        if (fallback !== undefined) return fallback;
-      }
-      const detail = error instanceof Error ? error.message : String(error);
-      return `Command: ${command}\n[Error] Command was not started because filesystem-effect binding failed: ${detail}`;
-    }
     if (abortSignal?.aborted) {
       stopBackgroundProcess();
     } else if (abortSignal) {
@@ -1052,13 +717,17 @@ async function executeToolBash(
     return `Command started in background.\nPID: ${proc.pid}\nOutput: ${outputFile}\n\nUse the read tool to check output when done. A final [Exit: ...] footer confirms capture completed; if it is absent, the command is still running or capture failed.`;
   }
 
-  const proc = await spawnWithMutationLease();
-  const unregisterManagedChild = await registerMutationProcess(proc, 'bash');
+  let proc: ManagedChildProcess;
+  let unregisterManagedChild: () => void;
+  try {
+    ({ proc, unregister: unregisterManagedChild } = await spawnManagedCommand('bash'));
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return withSandboxCleanupFailure(cancelledCommandResult(command));
+    }
+    throw error;
+  }
   return new Promise(resolve => {
-    void bindMutationProcess(proc).catch((error: unknown) => {
-      mutationProcessBindingFailed = true;
-      mutationProcessBindingError ??= error;
-    });
     const cleanupOnProcessExit = (): void => {
       killChildProcessTreeSync(proc);
     };
@@ -1070,16 +739,15 @@ async function executeToolBash(
       process.off('exit', cleanupOnProcessExit);
       unregisterManagedChild();
     };
-    let finishForegroundEffect: Promise<boolean> | undefined;
-    const finishForeground = (): Promise<boolean> => {
-      finishForegroundEffect ??= proc.pid === undefined
-        ? finishUnstartedMutation()
-        : finishBoundMutationProcess(proc, unregisterForegroundCommand);
-      return finishForegroundEffect.then((drained) => {
+    let finishForegroundRequest: Promise<void> | undefined;
+    const finishForeground = (): Promise<void> => {
+      finishForegroundRequest ??= cleanupStartedCommand(
+        proc,
+        unregisterForegroundCommand,
+      ).finally(() => {
         process.off('exit', cleanupOnProcessExit);
-        if (drained) unregisterForegroundCommand();
-        return drained;
       });
+      return finishForegroundRequest;
     };
     const bashOutputPolicy = getToolResultPolicy('bash');
     const collectorOptions = {
@@ -1208,13 +876,7 @@ async function executeToolBash(
         return;
       }
 
-      if (!mutationProcessBindingSettled) {
-        lifecycleWarnings.push(
-          '[Safety] Filesystem-effect binding is still pending; later effects remain fenced.',
-        );
-      } else if (!await finishForeground()) {
-        lifecycleWarnings.push('[warn] Process tree was not proven drained; later filesystem effects remain fenced.');
-      }
+      await finishForeground();
       if (sandboxCleanupError !== undefined) {
         const detail = sandboxLifecycleErrorDetail(sandboxCleanupError);
         lifecycleWarnings.push(`[warn] Required OS sandbox cleanup failed: ${detail}`);
@@ -1240,7 +902,6 @@ async function executeToolBash(
     const requestStop = (reason: 'cancelled' | 'timeout'): void => {
       if (settled || stopReason) return;
       stopReason = reason;
-      if (!mutationProcessBindingSettled) mutationStartBlockedReason ??= reason;
       if (timer) clearTimeout(timer);
       void settleStoppedCommand(reason).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -1254,8 +915,7 @@ async function executeToolBash(
         }
         disposeCollectors();
         settle(
-          `Command: ${command}\n[warn] Failed to settle stopped command: ${message}\n`
-          + '[warn] Later filesystem effects remain fenced until process-tree cleanup succeeds.',
+          `Command: ${command}\n[warn] Failed to settle stopped command: ${message}`,
         );
       });
     };
@@ -1337,55 +997,11 @@ async function executeToolBash(
         let stderrDecoded: DecodeResult | undefined;
         try {
           if (timer) clearTimeout(timer);
-          if (mutationStartBlockedReason !== undefined && !mutationProcessBindingSettled) {
-            void finishForeground().catch((error: unknown) => {
-              emitKodaXDiagnostic({
-                source: 'coding:bash-filesystem-effect',
-                level: 'warn',
-                message: 'Deferred foreground binding cleanup remains fenced.',
-                detail: error,
-              });
-            });
-            disposeCollectors();
-            const pending = mutationStartBlockedReason === 'cancelled'
-              ? cancelledCommandResult(command)
-              : commandPreparationTimeoutResult(command, timeout);
-            settle(
-              `${withSandboxCleanupFailure(pending)}\n` +
-              '[Safety] Filesystem-effect binding is still pending; later effects remain fenced.',
-            );
-            return;
-          }
           await finishForeground();
           if (stopReason) {
             if (stoppedOutputRecovery) {
               finishForegroundOutputRecovery(stoppedOutputRecovery, stdout, stderr);
             }
-            return;
-          }
-          if (mutationStartBlockedReason !== undefined) {
-            disposeCollectors();
-            settle(withSandboxCleanupFailure(
-              mutationStartBlockedReason === 'cancelled'
-                ? cancelledCommandResult(command)
-                : commandPreparationTimeoutResult(command, timeout),
-            ));
-            return;
-          }
-          if (mutationProcessBindingFailed) {
-            const fallback = await executeNormalPermissionFallback();
-            if (fallback !== undefined) {
-              disposeCollectors();
-              settle(fallback);
-              return;
-            }
-            const detail = mutationProcessBindingError instanceof Error
-              ? mutationProcessBindingError.message
-              : String(mutationProcessBindingError);
-            disposeCollectors();
-            settle(
-              `Command: ${command}\n[Error] Command was not started because filesystem-effect binding failed: ${detail}`,
-            );
             return;
           }
           if (sandboxCleanupError !== undefined) {
@@ -1497,7 +1113,7 @@ async function executeToolBash(
         if (timer) clearTimeout(timer);
         if (proc.pid === undefined) {
           unregisterForegroundCommand();
-          await finishUnstartedMutation();
+          await cleanupSandbox();
         } else {
           await finishForeground();
         }

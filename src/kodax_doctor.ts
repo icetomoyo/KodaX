@@ -14,6 +14,10 @@ import path from 'node:path';
 import { getAgentConfigHome } from '@kodax-ai/agent';
 import { KODAX_PROVIDER_SNAPSHOTS } from '@kodax-ai/coding';
 import { resolveProvider, sideQuery } from '@kodax-ai/llm';
+import {
+  probeTrustedTextNativeBinding,
+  type TrustedTextNativeBindingProbe,
+} from './windows-text-transaction.js';
 
 interface DirSummary {
   readonly count: number;
@@ -52,6 +56,8 @@ interface DoctorReport {
   readonly configHome: string;
   readonly sessions: DirSummary | null;
   readonly traces: DirSummary | null;
+  /** Present only when `--native-text` explicitly loads the verified addon. */
+  readonly trustedTextNative?: TrustedTextNativeBindingProbe;
   /** Present only when `--ping` ran. Live reachability per configured provider. */
   readonly providersPing?: readonly ProviderPing[];
 }
@@ -172,11 +178,16 @@ function summaryLine(label: string, summary: DirSummary | null): string {
 export async function runDoctor(
   version: string,
   asJson: boolean,
-  opts: { readonly ping?: boolean } = {},
+  opts: { readonly ping?: boolean; readonly nativeText?: boolean } = {},
 ): Promise<void> {
   const base = buildReport(version);
   const providersPing = opts.ping ? await pingConfiguredProviders(base.providers) : undefined;
-  const report: DoctorReport = providersPing ? { ...base, providersPing } : base;
+  const trustedTextNative = opts.nativeText ? probeTrustedTextNativeBinding() : undefined;
+  const report: DoctorReport = {
+    ...base,
+    ...(providersPing === undefined ? {} : { providersPing }),
+    ...(trustedTextNative === undefined ? {} : { trustedTextNative }),
+  };
 
   if (asJson) {
     console.log(JSON.stringify(report, null, 2));
@@ -215,6 +226,15 @@ export async function runDoctor(
               ? `  ✓ ${p.name.padEnd(16)} ${p.detail} (${p.latencyMs}ms)`
               : `  ✗ ${p.name.padEnd(16)} ${p.detail}`,
           )),
+    );
+  }
+  if (report.trustedTextNative) {
+    lines.push(
+      '',
+      'Trusted text native binding (explicit load/hash check)',
+      report.trustedTextNative.ready
+        ? `  ✓ protocol ${report.trustedTextNative.protocol}`
+        : `  ✗ ${report.trustedTextNative.error}`,
     );
   }
   console.log(lines.join('\n'));

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-08-23_
+_Last Updated: 2026-08-26_
 
 ---
 
@@ -151,7 +151,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 305 | Medium | Open | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | — | 2026-08-25 | — |
+| 307 | High | Open | ASRT launches the shared-account Windows shell runner before KodaX can attach a creation-time process DACL or Job | Windows v2 ASRT runner bootstrap | - | 2026-08-26 | - |
+| 306 | High | Resolved | ASRT Windows consumes runner stdin as control data, so sandboxed text helpers inherit EOF and every real write fails | Windows ASRT process backend through 0.0.73 | v0.7.96 development | 2026-08-25 | 2026-08-26 |
+| 305 | Medium | Resolved | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | v0.7.96 development | 2026-08-25 | 2026-08-26 |
 | 304 | High | Resolved | A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable | v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5) | v0.7.96 development | 2026-08-24 | 2026-08-25 |
 | 303 | High | Resolved | Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable | bundled (Bun `--compile`) Windows builds | v0.7.96 development | 2026-08-24 | 2026-08-24 |
 | 302 | High | Resolved | Runtime completion fallback could publish an empty A2A answer before the coding result settled | v0.7.79 Runtime completion fallback | v0.7.95 release | 2026-08-23 | 2026-08-23 |
@@ -348,9 +350,11 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ### 305: A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes
 
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review)
+- **Fixed**: v0.7.96 development
 - **Created**: 2026-08-25
+- **Resolved**: 2026-08-26
 
 #### Original Problem
 
@@ -367,14 +371,49 @@ finishes` until B's command completes. In-process (single Runtime) the
 Issue-304 fix prevents the idle close from even starting behind a live lease;
 only cross-process leases are invisible to that check.
 
-#### Resolution Direction
+#### Resolution
 
-Narrow fix (candidate for the next patch line): probe the durable fence
-before committing a lifecycle close — if cleanup admission would be blocked by
-a foreign lease, defer the close (session stays cached and servable, re-armed
-by retry) instead of queueing the account-wide transition. Structural fix:
-ADR-065 P0/P2 removes the teardown transaction (and with it the queued
-cleanup-transition class entirely).
+FEATURE_295 / ADR-066 removes trusted text mutation from the workspace-session
+and filesystem-effect graph, while the Windows v2 shell runner bypasses the
+legacy owner/reset/cleanup lease graph. POSIX shell preparation is per-command
+and also keeps no KodaX workspace-session owner. A real two-Runtime Windows
+acceptance test reaches both targets concurrently; protected sidecar
+verification shares an already executing immutable image, so artifact
+provisioning cannot recreate a cross-Runtime admission lock.
+
+### 306: ASRT Windows consumes runner stdin as control data, so sandboxed text helpers inherit EOF and every real write fails
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: Windows ASRT process backend through 0.0.73
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-25
+- **Resolved**: 2026-08-26
+
+#### Problem and evidence
+
+Session `20260825_215704_r8107f13f0eec3` failed a trivial `write` with
+`Sandboxed text mutation and cleanup both failed`, while shell redirection
+succeeded. A direct real-backend probe reproduced it deterministically. The
+request file remained intact and the ASRT broker lived long enough to parse
+and delete it. The final text helper then emitted `Unexpected end of JSON
+input` because it received immediate EOF. Win32 87 occurred later when the
+PowerShell containment probe attempted to reopen the already-exited broker.
+
+ASRT writes its length-prefixed `RunnerCmd` into the restricted runner's stdin
+and closes that pipe; the final target inherits the same closed stream. KodaX's
+payload was written to the outer ASRT process stdin, which ASRT never forwards.
+The same design remains in ASRT 0.0.67 and current 0.0.73.
+
+#### Resolution
+
+FEATURE_295 / ADR-066 deletes the text-payload runner path instead of repairing
+it. Trusted `write` / `edit` transactions run directly in the KodaX Runtime
+through a separately packaged in-process filesystem primitive and cannot be
+blocked by ASRT, runner, setup, owner, cleanup, reset, or poison state. The
+native runner retains framed stdin only for general shell/process execution;
+control and target streams are independent, and no text helper or payload-file
+fallback remains.
 
 ### 304: A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable
 
@@ -456,15 +495,13 @@ Acceptance tests: fence-held session reuse, cleanup-timeout survival,
 structured standalone contention, global blocking of forced resets, plus the
 retained regression pinning fail-closed admission during a mid-action reset.
 
-Residuals, deliberately accepted: standalone's idle/leased partition keeps a
-few-instruction TOCTOU that fails safe through the durable owner layer, a
-cross-policy cold bootstrap can still be unavailable while a foreign owner is
-live (structured, retryable), and a cross-Runtime idle close can still queue
-the account-wide cleanup transition tracked as Issue 305. These residuals —
-and the owner-exclusivity protocol they belong to — are resolved structurally
-by
-[ADR-065](ADR.md#adr-065-windows-sandbox-migrates-to-token-carried-capability-scoping-over-an-append-only-acl-substrate)
-(token-carried capability scoping over an append-only ACL substrate).
+Residuals in the legacy backend remain documented by Issue 305. FEATURE_295
+does not add another patch to that lifecycle. Instead,
+[ADR-066](ADR.md#adr-066-trusted-text-transactions-and-a-native-windows-shell-sandbox-are-separate-authorities)
+removes trusted text mutation from the graph and makes the Windows v2 shell
+runner bypass owner/reset/cleanup admission entirely. ADR-065's capability-SID
+permission economics remain part of the shell design; its ASRT workspace-
+session execution model is superseded.
 
 ### 303: Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable
 
@@ -13206,11 +13243,29 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 184 (28 Open, 156 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 186 (28 Open, 158 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-26: Issue 307 recorded (Windows v2 upstream bootstrap boundary)
+- KodaX creates every final shell target in its no-breakaway Job through the
+  creation-time Job attribute, and it hardens/authenticates the ASRT-created
+  runner before accepting target work. ASRT itself still starts that runner
+  under the shared sandbox account before KodaX code executes, so KodaX cannot
+  atomically apply a runner process DACL or Job at creation. A concurrently
+  compromised process under that account therefore retains a narrow pre-main
+  race against the runner. Closing it requires ASRT to accept creation-time
+  process/thread security descriptors or a privileged spawn service; adding a
+  post-spawn KodaX patch would only disguise the same race. Current Codex
+  `2764e836` has the same `CreateProcessWithLogonW` runner-bootstrap residual,
+  while assigning the final target Job at process creation. KodaX sets inherited
+  error mode in its host before ASRT launch and again in runner `main`, which
+  covers final-target faults. An image loader failure before runner `main`
+  still depends on ASRT preserving that inherited mode and is therefore inside
+  this same upstream bootstrap window. FEATURE_295 does
+  not broaden this residual to trusted text tools, which never use ASRT.
 
 ### 2026-08-25: Issue 304 resolved (v0.7.96 development)
 - Workspace session closes now defer behind live leases (defer-before-evict,

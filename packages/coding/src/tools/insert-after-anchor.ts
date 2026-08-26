@@ -2,7 +2,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 import { generateDiff, countChanges } from './diff.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { memoryMutationDenial } from './memory-mutation-guard.js';
-import { formatDiffPreview } from './truncate.js';
+import { formatDiffPreview } from './_internal/diff-preview.js';
 import {
   detectPreferredLineEnding,
   findSingleLineAnchorMatch,
@@ -25,7 +25,7 @@ export async function toolInsertAfterAnchor(
   const anchor = String(input.anchor ?? '');
   const contentToInsert = String(input.content ?? '');
 
-  // FEATURE_131 Part A: serialize same-file mutations.
+  // FEATURE_295: the trusted host commits this insertion under canonical-file CAS.
   return withTextFileMutation(
     filePath,
     'insert_after_anchor',

@@ -11,7 +11,7 @@ describe('@kodax-ai/kodax/sandbox public surface', () => {
   it('exposes generic containment independently from Auto[LLM]', () => {
     const capability = getKodaXSandboxCapability();
     expect(capability).toMatchObject({
-      version: 5,
+      version: 6,
       asrtVersion: KODAX_ASRT_VERSION,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
@@ -19,6 +19,9 @@ describe('@kodax-ai/kodax/sandbox public surface', () => {
       permissionFallback: 'normal-permission-policy',
       delayedEffectDrainRecovery: 'automatic',
       sameBootAclRecovery: 'sandbox-user-process-probe',
+      trustedTextAuthority: 'host-transaction',
+      windowsShellAuthority: 'native-token-job-v2',
+      commandLifetimeFilesystemLease: false,
     });
     expect(capability.controls).toEqual([
       'filesystem',

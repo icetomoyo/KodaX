@@ -205,8 +205,36 @@ log(`External packages: ${external.length} third-party + node built-ins`);
 
 const distDir = path.join(repoRoot, 'dist');
 log(`Cleaning ${path.relative(repoRoot, distDir)}`);
-rmSync(distDir, { recursive: true, force: true });
 mkdirSync(distDir, { recursive: true });
+for (const entry of readdirSync(distDir)) {
+  if (entry === 'native') continue;
+  rmSync(path.join(distDir, entry), { recursive: true, force: true });
+}
+
+const nativeBuildArch = process.env.KODAX_NATIVE_TARGET_ARCH ?? process.arch;
+const nativeManifestPath = path.join(
+  distDir,
+  'native',
+  `${process.platform}-${nativeBuildArch}`,
+  'manifest.json',
+);
+const nativeManifestJson = existsSync(nativeManifestPath)
+  ? readFileSync(nativeManifestPath, 'utf8')
+  : undefined;
+const nativeManifestMap = {};
+const nativeRoot = path.join(distDir, 'native');
+if (existsSync(nativeRoot)) {
+  for (const entry of readdirSync(nativeRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifestPath = path.join(nativeRoot, entry.name, 'manifest.json');
+    if (existsSync(manifestPath)) {
+      nativeManifestMap[entry.name] = readFileSync(manifestPath, 'utf8');
+    }
+  }
+}
+const nativeManifestsJson = Object.keys(nativeManifestMap).length === 0
+  ? undefined
+  : JSON.stringify(nativeManifestMap);
 
 // Sub-packages must be built first so esbuild can resolve their dist/.
 // We rely on `npm run build:packages` having been run upstream; check
@@ -318,6 +346,15 @@ const commonOptions = {
   // to '0.0.0' in the banner). Same mechanism Bun --compile uses for the
   // standalone binary build (see packages/repl/src/common/utils.ts:265).
   define: {
+    KODAX_NATIVE_MANIFESTS_JSON: nativeManifestsJson === undefined
+      ? 'undefined'
+      : JSON.stringify(nativeManifestsJson),
+    KODAX_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+      ? 'undefined'
+      : JSON.stringify(nativeManifestJson),
+    KODAX_WINDOWS_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+      ? 'undefined'
+      : JSON.stringify(nativeManifestJson),
     'process.env.DEV': '"false"',
     'process.env.NODE_ENV': '"production"',
     'process.env.KODAX_VERSION': JSON.stringify(rootPkg.version),
@@ -467,18 +504,18 @@ log(
   + `${runtimeWindowsAudit.exceptions.length} intentional exceptions`,
 );
 
-log('Building dist/sandbox-workspace-session.js (ASRT workspace sidecar)...');
+log('Building dist/sandbox-network-broker.js (Windows ASRT network sidecar)...');
 await build({
   ...commonOptions,
-  entryPoints: [path.join(repoRoot, 'src/sandbox-workspace-session-entry.ts')],
-  outfile: path.join(distDir, 'sandbox-workspace-session.js'),
+  entryPoints: [path.join(repoRoot, 'src/sandbox-network-broker-entry.ts')],
+  outfile: path.join(distDir, 'sandbox-network-broker.js'),
 });
-const sandboxSessionBytes = statSync(
-  path.join(distDir, 'sandbox-workspace-session.js'),
+const sandboxNetworkBrokerBytes = statSync(
+  path.join(distDir, 'sandbox-network-broker.js'),
 ).size;
 log(
-  `  OK dist/sandbox-workspace-session.js ` +
-  `(${(sandboxSessionBytes / 1024).toFixed(0)} kB)`,
+  `  OK dist/sandbox-network-broker.js `
+  + `(${(sandboxNetworkBrokerBytes / 1024).toFixed(0)} kB)`,
 );
 
 log('Building dist/constructed-handler-worker.js (constructed tool sidecar)...');
@@ -598,10 +635,10 @@ if (!existsSync(path.join(distDir, 'runtime-worker.js'))) {
   throw new Error('[build-bundle] runtime-worker.js sidecar is missing.');
 }
 log(`  OK worker sidecar guard: dist/runtime-worker.js present`);
-if (!existsSync(path.join(distDir, 'sandbox-workspace-session.js'))) {
-  throw new Error('[build-bundle] sandbox-workspace-session.js sidecar is missing.');
+if (!existsSync(path.join(distDir, 'sandbox-network-broker.js'))) {
+  throw new Error('[build-bundle] sandbox-network-broker.js sidecar is missing.');
 }
-log(`  OK worker sidecar guard: dist/sandbox-workspace-session.js present`);
+log('  OK worker sidecar guard: dist/sandbox-network-broker.js present');
 if (!existsSync(path.join(distDir, 'constructed-handler-worker.js'))) {
   throw new Error('[build-bundle] constructed-handler-worker.js sidecar is missing.');
 }
@@ -621,7 +658,6 @@ for (const name of sdkEntryNames) {
 log(`  Builtin skills: dist/builtin/`);
 log(`  Worker:         dist/semantic-worker.js`);
 log(`  Runtime worker: dist/runtime-worker.js`);
-log(`  ASRT session:   dist/sandbox-workspace-session.js`);
 log(`  Handler worker: dist/constructed-handler-worker.js`);
 log(`  Shared chunks:  dist/chunks/`);
 log('');

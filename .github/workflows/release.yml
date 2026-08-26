@@ -39,22 +39,32 @@ jobs:
         include:
           - target: win-x64
             runner: windows-latest
+            native_arch: x64
+            native_dir: win32-x64
             archive: zip
             smoke: true
           - target: linux-x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
+            native_arch: x64
+            native_dir: linux-x64
             archive: tar.gz
             smoke: true
           - target: linux-arm64
-            runner: ubuntu-latest      # cross-compile via Bun --target=bun-linux-arm64
+            runner: ubuntu-24.04-arm
+            native_arch: arm64
+            native_dir: linux-arm64
             archive: tar.gz
-            smoke: false               # cannot exec arm64 binary on x64 runner
+            smoke: true
           - target: darwin-x64
-            runner: macos-14            # cross-compile via Bun --target=bun-darwin-x64
-            archive: tar.gz             # macos-13 was deprecated by GitHub Actions and queues indefinitely
-            smoke: false                # Apple Silicon host running x64 needs Rosetta; skip to keep CI deterministic
+            runner: macos-15-intel
+            native_arch: x64
+            native_dir: darwin-x64
+            archive: tar.gz
+            smoke: true
           - target: darwin-arm64
-            runner: macos-14
+            runner: macos-15
+            native_arch: arm64
+            native_dir: darwin-arm64
             archive: tar.gz
             smoke: true
 
@@ -92,6 +102,26 @@ jobs:
         if: steps.filter.outputs.skip == 'false'
         run: npm ci
 
+      - name: Install Linux sandbox dependencies
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+
+      - name: Install macOS sandbox dependencies
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'macOS'
+        run: brew install ripgrep socat
+
+      - name: Install Rust native target
+        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            linux-x64) triple=x86_64-unknown-linux-gnu ;;
+            linux-arm64) triple=aarch64-unknown-linux-gnu ;;
+            darwin-x64) triple=x86_64-apple-darwin ;;
+            darwin-arm64) triple=aarch64-apple-darwin ;;
+          esac
+          rustup target add "$triple"
+
       - name: Cache packaged Electron smoke toolchain
         if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
         id: electron-smoke-cache
@@ -108,26 +138,38 @@ jobs:
         if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
         run: node .electron-smoke/node_modules/electron/install.js
 
-      - name: Provision Windows sandbox for packaged Electron release gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-        shell: pwsh
-        run: >-
-          node --input-type=module -e
-          "import { installWindowsSandbox } from '@anthropic-ai/sandbox-runtime';
-          const result = installWindowsSandbox();
-          if (result.cancelled || !result.user.provisioned) throw new Error('Windows sandbox provisioning did not complete.');"
-
       - name: Build
         if: steps.filter.outputs.skip == 'false'
+        env:
+          KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
         run: npm run build
 
-      - name: Prepare Windows sandbox ACL guards for packaged Electron release gate
+      - name: Native trusted text transaction tests
+        if: steps.filter.outputs.skip == 'false' && matrix.smoke
+        run: npm run test:native
+
+      - name: Real POSIX per-command sandbox concurrency gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
+        env:
+          KODAX_REAL_POSIX_SANDBOX: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
+
+      - name: Windows trusted text integration and dependency boundary
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
+
+      - name: Activate Windows v2 sandbox for packaged Electron release gate
         if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
         env:
           KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
         run: node scripts/prepare-windows-electron-sandbox.mjs
+
+      - name: Windows v2 native policy concurrency gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
 
       - name: Packaged Electron daemon release gate
         if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
@@ -235,9 +277,84 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload native authority for universal npm package
+        if: steps.filter.outputs.skip == 'false'
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-authority-${{ matrix.target }}
+          path: dist/native/${{ matrix.native_dir }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  npm-package:
+    name: Build universal npm package
+    needs: build
+    if: >-
+      github.event_name == 'push'
+      || github.event.inputs.target == 'all'
+      || github.event.inputs.target == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: native-authority-win-x64
+          path: dist/native/win32-x64
+      - uses: actions/download-artifact@v7
+        with:
+          name: native-authority-linux-x64
+          path: dist/native/linux-x64
+      - uses: actions/download-artifact@v7
+        with:
+          name: native-authority-linux-arm64
+          path: dist/native/linux-arm64
+      - uses: actions/download-artifact@v7
+        with:
+          name: native-authority-darwin-x64
+          path: dist/native/darwin-x64
+      - uses: actions/download-artifact@v7
+        with:
+          name: native-authority-darwin-arm64
+          path: dist/native/darwin-arm64
+
+      - name: Build platform-neutral bundles around all native authorities
+        run: |
+          npm run build:packages
+          npm run build:bundle
+          npm run build:dts
+
+      - name: Pack and audit universal npm package
+        run: node scripts/release.mjs --skip-build --pack-only
+
+      - name: Installed npm trusted text native gate
+        run: node scripts/test-packed-native.mjs
+
+      - name: Hash npm package
+        shell: bash
+        run: sha256sum kodax-ai-kodax-*.tgz > kodax-ai-kodax-npm.sha256
+
+      - name: Upload universal npm package
+        uses: actions/upload-artifact@v6
+        with:
+          name: kodax-npm-package
+          path: |
+            kodax-ai-kodax-*.tgz
+            kodax-ai-kodax-npm.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, npm-package]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -252,6 +369,7 @@ jobs:
         # the v5 single-artifact path-behavior breaking change does not apply.
         uses: actions/download-artifact@v7
         with:
+          pattern: kodax-*
           path: dist/release
           merge-multiple: true
 
@@ -305,6 +423,7 @@ jobs:
           files: |
             dist/release/*.tar.gz
             dist/release/*.zip
+            dist/release/*.tgz
             dist/release/*.sha256
             dist/release/SHA256SUMS
           body: ${{ steps.notes.outputs.body }}

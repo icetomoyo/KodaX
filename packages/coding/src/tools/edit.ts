@@ -1,7 +1,7 @@
 import type { KodaXToolExecutionContext } from '../types.js';
 import { generateDiff, countChanges } from './diff.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
-import { formatDiffPreview } from './truncate.js';
+import { formatDiffPreview } from './_internal/diff-preview.js';
 import {
   collectAnchorCandidates,
   detectPreferredLineEnding,
@@ -51,9 +51,8 @@ export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExe
     return sizeCheck;
   }
 
-  // FEATURE_131 Part A: serialize same-file mutations so concurrent
-  // children can't race the read-modify-write cycle. Different files
-  // still proceed in parallel.
+  // FEATURE_295: the trusted host uses a canonical file lock plus CAS at
+  // commit. Different files proceed independently; stale same-file peers fail.
   const result = await withTextFileMutation(filePath, 'edit', input, ctx, async (snapshot) => {
     if (snapshot.state === 'missing') {
       return `[Tool Error] edit: File not found: ${filePath}`;

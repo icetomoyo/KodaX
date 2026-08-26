@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+native/**/target/
 *.tsbuildinfo
 
 # npm pack tarballs (produced by `node scripts/release.mjs --pack-only`).

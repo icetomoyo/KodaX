@@ -5,13 +5,7 @@ import path from 'node:path';
 
 import { killPidTree, readProcessStartIdentity, withKodaXFileLock } from '@kodax-ai/agent';
 
-import {
-  clearPreviousBootWindowsSandboxAclMarkers,
-  clearWindowsSandboxAclMarkersForRuntimeOwner,
-  readWindowsSandboxBootIdentity,
-  recoverPreviousBootWindowsSandboxAcls,
-  recoverWindowsSandboxAclsForRuntimeOwner,
-} from '../sandbox-runtime.js';
+import { readWindowsSandboxBootIdentity } from '../sandbox-runtime.js';
 import { isRuntimeDaemonPidAlive } from './lifecycle.js';
 import {
   enableRuntimeDaemonOwner,
@@ -119,26 +113,6 @@ export interface RuntimeExitSettlementDependencies {
     expectedProcessStartIdentity: string,
     timeoutMs: number,
   ) => Promise<'already-exited' | 'terminated' | 'unknown'>;
-  readonly recoverWindowsSandboxAcls: (
-    configHome: string,
-    owner: RuntimeDaemonLockOwner,
-    windowsBootIdentity: string,
-    timeoutMs: number,
-  ) => Promise<number>;
-  readonly recoverPreviousBootWindowsSandboxAcls: (
-    configHome: string,
-    timeoutMs: number,
-  ) => Promise<number>;
-  readonly clearWindowsSandboxAclMarkers: (
-    configHome: string,
-    owner: RuntimeDaemonLockOwner,
-    windowsBootIdentity: string,
-    timeoutMs: number,
-  ) => Promise<number>;
-  readonly clearPreviousBootWindowsSandboxAclMarkers: (
-    configHome: string,
-    timeoutMs: number,
-  ) => Promise<number>;
   readonly removeRuntimeExitIntentFile: (intentPath: string, rootDir: string) => void;
 }
 
@@ -157,8 +131,8 @@ export interface RuntimeExitSettlementIntent {
   readonly windowsAclRecoveredOnBootIdentity?: string;
 }
 
-// The daemon's orderly cleanup contract includes a 130-second ASRT workspace
-// reset plus the memory-review durability window and bounded child cleanup.
+// The daemon's orderly cleanup contract includes memory-review durability and
+// bounded child-process cleanup. Sandbox commands own only per-command state.
 const ORDERLY_DAEMON_EXIT_TIMEOUT_MS = 170_000;
 const PUBLIC_EXIT_TRANSACTION_TIMEOUT_MS = 480_000;
 const MANAGEMENT_PHASE_TIMEOUT_MS = 10_000;
@@ -166,8 +140,6 @@ const RUNTIME_CLOSE_TIMEOUT_MS = 5_000;
 const WINDOWS_JOB_EXIT_RESERVE_MS = 10_000;
 const WINDOWS_SUPERVISOR_GENERATION_POLL_MS = 250;
 const WINDOWS_PROCESS_TREE_RECOVERY_TIMEOUT_MS = 80_000;
-const WINDOWS_ACL_RECOVERY_TIMEOUT_MS = 70_000;
-const WINDOWS_MARKER_CLEAR_TIMEOUT_MS = 40_000;
 
 const defaultDependencies: RuntimeExitSettlementDependencies = {
   platform: process.platform,
@@ -185,10 +157,6 @@ const defaultDependencies: RuntimeExitSettlementDependencies = {
     });
     return result.status;
   },
-  recoverWindowsSandboxAcls: recoverWindowsSandboxAclsForRuntimeOwner,
-  recoverPreviousBootWindowsSandboxAcls,
-  clearWindowsSandboxAclMarkers: clearWindowsSandboxAclMarkersForRuntimeOwner,
-  clearPreviousBootWindowsSandboxAclMarkers,
   removeRuntimeExitIntentFile(intentPath, rootDir) {
     fs.rmSync(intentPath, { force: true });
     fsyncDirectory(rootDir);
@@ -678,14 +646,7 @@ async function settleAcceptedRuntimeExit(
     }
     const ownerValidation = validateWindowsOwner(intent, 'retry-automatically');
     if (ownerValidation !== undefined) return ownerValidation;
-    const refreshed = await refreshPreviousBootAclRecovery(
-      paths,
-      intent,
-      deadline,
-      dependencies,
-    );
-    if ('status' in refreshed) return refreshed;
-    return finalizeRecoveredExit(paths, refreshed, deadline, dependencies);
+    return finalizeRecoveredExit(paths, intent, dependencies);
   }
 
   if (dependencies.platform === 'win32') {
@@ -844,43 +805,18 @@ async function settleAcceptedRuntimeExit(
     );
   }
 
-  let recoveredMarkers: number;
-  try {
-    const recoveryBudgetMs = Math.min(
-      WINDOWS_ACL_RECOVERY_TIMEOUT_MS,
-      remainingTimeoutMs(deadline),
-    );
-    if (recoveryBudgetMs <= 0) return settlementDeadlineBlocked(dependencies.platform);
-    recoveredMarkers = previousWindowsBoot
-      ? await dependencies.recoverPreviousBootWindowsSandboxAcls(
-        paths.configHome,
-        recoveryBudgetMs,
-      )
-      : await dependencies.recoverWindowsSandboxAcls(
-        paths.configHome,
-        owner,
-        intent.windowsBootIdentity!,
-        recoveryBudgetMs,
-      );
-  } catch (error: unknown) {
-    return blocked(
-      'cleanup_failed',
-      windowsAclRecoveryNextAction(error),
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  if (recoveredMarkers > 0) repairs.push('windows_sandbox_acl');
+  // Windows v2 grants filesystem authority only through each target's
+  // restricted token/capability SID. Pre-v2 ACL owner and poison records are
+  // historical diagnostics and never authorize, block, repair, or clear a v2
+  // Runtime exit. Exact process-generation and Job-drain evidence above remain
+  // the authoritative crash-recovery boundary.
   const recovered = writeRuntimeExitIntent(paths, {
     ...intent,
     phase: 'recovered',
     updatedAt: new Date().toISOString(),
     repairs,
-    windowsAclRecoveryScope: previousWindowsBoot ? 'previous-boot' : 'exact-owner',
-    ...(previousWindowsBoot
-      ? { windowsAclRecoveredOnBootIdentity: currentBootIdentity! }
-      : {}),
   });
-  return finalizeRecoveredExit(paths, recovered, deadline, dependencies, repairs);
+  return finalizeRecoveredExit(paths, recovered, dependencies, repairs);
 }
 
 async function waitForWindowsSupervisorGenerationExit(
@@ -926,9 +862,7 @@ function daemonExitBudgetMs(deadline: number, platform: NodeJS.Platform): number
   const remaining = remainingTimeoutMs(deadline);
   if (platform !== 'win32') return remaining;
   const recoveryReserveMs = WINDOWS_JOB_EXIT_RESERVE_MS
-    + WINDOWS_PROCESS_TREE_RECOVERY_TIMEOUT_MS
-    + WINDOWS_ACL_RECOVERY_TIMEOUT_MS
-    + WINDOWS_MARKER_CLEAR_TIMEOUT_MS;
+    + WINDOWS_PROCESS_TREE_RECOVERY_TIMEOUT_MS;
   return Math.max(1, remaining - Math.min(recoveryReserveMs, Math.max(0, remaining - 1)));
 }
 
@@ -936,79 +870,12 @@ function remainingTimeoutMs(deadline: number): number {
   return Math.max(0, deadline - Date.now());
 }
 
-async function refreshPreviousBootAclRecovery(
-  paths: RuntimeDaemonPaths,
-  intent: RuntimeExitSettlementIntent,
-  deadline: number,
-  dependencies: RuntimeExitSettlementDependencies,
-): Promise<RuntimeExitSettlementIntent | RuntimeExitSettlement> {
-  if (intent.windowsAclRecoveryScope !== 'previous-boot') return intent;
-  const currentBootIdentity = dependencies.readWindowsBootIdentity();
-  if (currentBootIdentity === undefined) {
-    return blocked(
-      'containment_unavailable',
-      'retry-automatically',
-      'The current Windows boot identity could not be verified.',
-    );
-  }
-  if (currentBootIdentity === intent.windowsAclRecoveredOnBootIdentity) return intent;
-  const recoveryBudgetMs = Math.min(
-    WINDOWS_ACL_RECOVERY_TIMEOUT_MS,
-    remainingTimeoutMs(deadline),
-  );
-  if (recoveryBudgetMs <= 0) return settlementDeadlineBlocked(dependencies.platform);
-  try {
-    await dependencies.recoverPreviousBootWindowsSandboxAcls(
-      paths.configHome,
-      recoveryBudgetMs,
-    );
-  } catch (error: unknown) {
-    return blocked(
-      'cleanup_failed',
-      windowsAclRecoveryNextAction(error),
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  return writeRuntimeExitIntent(paths, {
-    ...intent,
-    updatedAt: new Date().toISOString(),
-    windowsAclRecoveredOnBootIdentity: currentBootIdentity,
-  });
-}
-
 async function finalizeRecoveredExit(
   paths: RuntimeDaemonPaths,
   intent: RuntimeExitSettlementIntent,
-  deadline: number,
   dependencies: RuntimeExitSettlementDependencies,
   repairs: readonly ('windows_process_tree' | 'windows_sandbox_acl')[] = intent.repairs ?? [],
 ): Promise<RuntimeExitSettlement> {
-  try {
-    const clearBudgetMs = Math.min(
-      WINDOWS_MARKER_CLEAR_TIMEOUT_MS,
-      remainingTimeoutMs(deadline),
-    );
-    if (clearBudgetMs <= 0) return settlementDeadlineBlocked(dependencies.platform);
-    if (intent.windowsAclRecoveryScope === 'previous-boot') {
-      await dependencies.clearPreviousBootWindowsSandboxAclMarkers(
-        paths.configHome,
-        clearBudgetMs,
-      );
-    } else {
-      await dependencies.clearWindowsSandboxAclMarkers(
-        paths.configHome,
-        intent.owner,
-        intent.windowsBootIdentity!,
-        clearBudgetMs,
-      );
-    }
-  } catch (error: unknown) {
-    return blocked(
-      'cleanup_failed',
-      windowsAclRecoveryNextAction(error),
-      error instanceof Error ? error.message : String(error),
-    );
-  }
   if (!removeExactOwnership(paths, intent.owner)) {
     return blocked('owner_changed', 'relaunch-space', 'Runtime ownership changed during recovery.');
   }
@@ -1023,14 +890,6 @@ async function finalizeRecoveredExit(
   }
   clearRuntimeExitIntent(paths, intent, dependencies);
   return { status: 'recovered', repairs };
-}
-
-function windowsAclRecoveryNextAction(
-  error: unknown,
-): 'retry-automatically' | 'manual-recovery' {
-  if (error === null || typeof error !== 'object') return 'retry-automatically';
-  const recoveryAction = Reflect.get(error, 'recoveryAction');
-  return recoveryAction === 'manual-recovery' ? 'manual-recovery' : 'retry-automatically';
 }
 
 function removeExactOwnership(paths: RuntimeDaemonPaths, owner: RuntimeDaemonLockOwner): boolean {

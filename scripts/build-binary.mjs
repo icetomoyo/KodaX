@@ -377,6 +377,43 @@ function buildOne(target, version) {
     const srtWinDir = join(outDir, 'vendor', 'srt-win', srtWinArch);
     mkdirSync(srtWinDir, { recursive: true });
     cpSync(srtWinSrc, join(srtWinDir, 'srt-win.exe'));
+
+    const nativeArch = target.endsWith('x64') ? 'x64' : 'arm64';
+    const nativeSrc = join(ROOT, 'dist', 'native', `win32-${nativeArch}`);
+    if (!existsSync(nativeSrc)) {
+      throw new Error(
+        `Missing ${nativeSrc}. Windows binaries must be built on the matching `
+        + 'Windows architecture with `npm run build:native` before packaging.',
+      );
+    }
+    for (const artifact of [
+      'manifest.json',
+      'kodax-windows-text-transaction.node',
+      'kodax-windows-sandbox.exe',
+    ]) {
+      if (!existsSync(join(nativeSrc, artifact))) {
+        throw new Error(`Missing Windows native artifact: ${join(nativeSrc, artifact)}.`);
+      }
+    }
+    const nativeDst = join(outDir, 'vendor', 'kodax-native', `win32-${nativeArch}`);
+    mkdirSync(nativeDst, { recursive: true });
+    cpSync(nativeSrc, nativeDst, { recursive: true });
+  } else {
+    const nativePlatform = target.startsWith('linux-') ? 'linux' : 'darwin';
+    const nativeArch = target.endsWith('x64') ? 'x64' : 'arm64';
+    const nativeDirectory = `${nativePlatform}-${nativeArch}`;
+    const nativeSrc = join(ROOT, 'dist', 'native', nativeDirectory);
+    for (const artifact of ['manifest.json', 'kodax-text-transaction.node']) {
+      if (!existsSync(join(nativeSrc, artifact))) {
+        throw new Error(
+          `Missing ${join(nativeSrc, artifact)}. Build the trusted text native `
+          + `artifact for ${nativeDirectory} before packaging.`,
+        );
+      }
+    }
+    const nativeDst = join(outDir, 'vendor', 'kodax-native', nativeDirectory);
+    mkdirSync(nativeDst, { recursive: true });
+    cpSync(nativeSrc, nativeDst, { recursive: true });
   }
 
   console.log(`    ✓ ${target}: ${binaryPath}`);
@@ -424,6 +461,40 @@ async function verifyHostBinary(binaryPath) {
       throw new Error('Standalone smoke emitted an invalid A2A list document.');
     }
     console.log(`    ✓ standalone smoke: one A2A v2 document`);
+
+    const nativeTextResult = spawnSync(
+      smokeBinaryPath,
+      ['doctor', '--json', '--native-text'],
+      {
+        cwd: packageDir,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          KODAX_HOME: smokeHome,
+          KODAX_TRACING: '0',
+        },
+        timeout: 60_000,
+        windowsHide: true,
+      },
+    );
+    if (nativeTextResult.error) throw nativeTextResult.error;
+    let nativeTextReport;
+    try {
+      nativeTextReport = JSON.parse(nativeTextResult.stdout.trim());
+    } catch {
+      throw new Error('Standalone native text smoke must emit one JSON doctor report.');
+    }
+    if (
+      nativeTextResult.status !== 0
+      || nativeTextReport?.trustedTextNative?.ready !== true
+      || nativeTextReport.trustedTextNative.protocol !== 4
+    ) {
+      throw new Error(
+        `Standalone trusted text native smoke failed (exit ${nativeTextResult.status}): `
+        + `${nativeTextResult.stderr.trim()}\n${nativeTextResult.stdout.trim()}`,
+      );
+    }
+    console.log('    ✓ standalone smoke: packaged trusted text native binding');
 
     const bunChildResult = spawnSync(smokeBinaryPath, [
       '-e',
