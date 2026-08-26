@@ -463,6 +463,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             child.signalCode = 'SIGKILL';
             child.stdout.end();
             child.stderr.end();
+            control.end();
             child.emit('close', null, 'SIGKILL');
             child.emit('exit', null, 'SIGKILL');
           });
@@ -682,15 +683,22 @@ vi.mock('node:child_process', async (importOriginal) => {
           )
         );
       let brokerRequest: Readonly<Record<string, unknown>> | undefined;
-      const captureRequest = (): void => {
-        if (typeof requestFile !== 'string' || !requestFile.endsWith('.json')) return;
-        const request = JSON.parse(readFileSync(requestFile, 'utf8')) as { readonly cwd?: string };
+      const recordBrokerRequest = (request: Readonly<Record<string, unknown>>): void => {
         brokerRequest = request;
         capturedBrokerRequests.push(request);
-        if (request.cwd) {
+        if (
+          typeof request.cwd === 'string'
+          && path.basename(path.dirname(request.cwd)) === '.kodax-a2a-script'
+        ) {
           mkdirSync(path.join(request.cwd, 'outputs'), { recursive: true });
           writeFileSync(path.join(request.cwd, 'outputs', 'report.txt'), 'report');
         }
+      };
+      const captureRequest = (): void => {
+        if (typeof requestFile !== 'string' || !requestFile.endsWith('.json')) return;
+        recordBrokerRequest(
+          JSON.parse(readFileSync(requestFile, 'utf8')) as Readonly<Record<string, unknown>>,
+        );
       };
       const complete = (): void => {
         const writeControl = (observation: Readonly<Record<string, unknown>>): void => {
@@ -802,10 +810,9 @@ vi.mock('node:child_process', async (importOriginal) => {
         const chunks: Buffer[] = [];
         child.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
         child.stdin.once('finish', () => {
-          brokerRequest = JSON.parse(
+          recordBrokerRequest(JSON.parse(
             Buffer.concat(chunks).toString('utf8'),
-          ) as Readonly<Record<string, unknown>>;
-          capturedBrokerRequests.push(brokerRequest);
+          ) as Readonly<Record<string, unknown>>);
           if (stubbornBroker.mode !== 'none') {
             queueMicrotask(() => child.emit('spawn'));
             if (stubbornBroker.mode === 'overflow') {
@@ -1221,6 +1228,7 @@ beforeEach(async () => {
   windowsSandboxMock.runnerSource = source;
   vi.stubEnv('ProgramData', path.join(root, 'program-data'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+  await mkdir(process.env.KODAX_HOME!, { recursive: true });
   const markerDirectory = path.join(
     path.resolve(process.env.ProgramData!),
     'KodaX',
@@ -2521,7 +2529,7 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
       }), 'utf8');
       sandboxWrapper.mode = 'missing';
 
-      await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(1);
+      await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(125);
       expect(capturedSpawnArgv.filter(
         (argv) => JSON.stringify(argv) === JSON.stringify([process.execPath, '--version']),
       )).toHaveLength(0);

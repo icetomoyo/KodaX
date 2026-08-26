@@ -26,6 +26,7 @@ use crate::{
 const MAX_TEXT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_XATTR_BYTES: usize = 64 * 1024 * 1024;
 const LOCK_DIRECTORY_NAME: &str = "locks-v1";
+const NAMESPACE_CONVERGENCE_ATTEMPTS: usize = 16;
 
 #[cfg(test)]
 thread_local! {
@@ -204,11 +205,11 @@ impl SlotLock {
     ) -> Result<Self, TextTransactionError> {
         revalidate_directory_path(directory_path, directory_identity)?;
         let slot_name = format!("{slot_id}.lock");
-        let file = openat(
-            directory.as_raw_fd(),
+        let file = open_or_create_coordination_slot(
+            directory,
+            directory_path,
+            directory_identity,
             &slot_name,
-            libc::O_RDWR | libc::O_CREAT,
-            0o600,
         )?;
         let metadata = file
             .metadata()
@@ -698,18 +699,13 @@ impl TrustedRoot {
         let mut parents = Vec::with_capacity(directories.len());
         for directory in directories {
             let parent_fd = parents.last().unwrap_or(&self.root).as_raw_fd();
+            if create {
+                parents.push(open_or_create_parent_directory(parent_fd, directory)?);
+                continue;
+            }
             match openat_directory(parent_fd, directory) {
                 Ok(opened) => parents.push(opened),
-                Err(error)
-                    if error.code == TextTransactionErrorCode::Io
-                        && error.os_code == Some(libc::ENOENT as u32) =>
-                {
-                    if !create {
-                        return Ok(None);
-                    }
-                    mkdirat(parent_fd, directory)?;
-                    parents.push(openat_directory(parent_fd, directory)?);
-                }
+                Err(error) if is_os_error(&error, libc::ENOENT) => return Ok(None),
                 Err(error) => return Err(error),
             }
         }
@@ -837,7 +833,13 @@ fn open_path_no_follow(path: &Path, flags: i32) -> Result<File, TextTransactionE
 }
 
 fn openat_directory(parent: RawFd, name: &str) -> Result<File, TextTransactionError> {
-    openat(parent, name, libc::O_RDONLY | libc::O_DIRECTORY, 0)
+    openat(
+        parent,
+        name,
+        libc::O_RDONLY | libc::O_DIRECTORY,
+        0,
+        "cannot open trusted Unix parent directory",
+    )
 }
 
 fn openat_directory_optional(
@@ -846,12 +848,7 @@ fn openat_directory_optional(
 ) -> Result<Option<File>, TextTransactionError> {
     match openat_directory(parent, name) {
         Ok(file) => Ok(Some(file)),
-        Err(error)
-            if error.code == TextTransactionErrorCode::Io
-                && error.os_code == Some(libc::ENOENT as u32) =>
-        {
-            Ok(None)
-        }
+        Err(error) if is_os_error(&error, libc::ENOENT) => Ok(None),
         Err(error)
             if error.code == TextTransactionErrorCode::ReparsePoint
                 && error.os_code == Some(libc::ENOTDIR as u32) =>
@@ -863,14 +860,15 @@ fn openat_directory_optional(
 }
 
 fn openat_file(parent: RawFd, name: &str) -> Result<Option<File>, TextTransactionError> {
-    match openat(parent, name, libc::O_RDONLY, 0) {
+    match openat(
+        parent,
+        name,
+        libc::O_RDONLY,
+        0,
+        "cannot open trusted Unix text file",
+    ) {
         Ok(file) => Ok(Some(file)),
-        Err(error)
-            if error.code == TextTransactionErrorCode::Io
-                && error.os_code == Some(libc::ENOENT as u32) =>
-        {
-            Ok(None)
-        }
+        Err(error) if is_os_error(&error, libc::ENOENT) => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -881,7 +879,72 @@ fn openat_create_exclusive(parent: RawFd, name: &str) -> Result<File, TextTransa
         name,
         libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
         0o600,
+        "cannot create trusted text temporary file",
     )
+}
+
+fn open_or_create_parent_directory(
+    parent: RawFd,
+    name: &str,
+) -> Result<File, TextTransactionError> {
+    for _ in 0..NAMESPACE_CONVERGENCE_ATTEMPTS {
+        match openat_directory(parent, name) {
+            Ok(directory) => return Ok(directory),
+            Err(error) if is_os_error(&error, libc::ENOENT) => {}
+            Err(error) => return Err(error),
+        }
+        mkdirat(parent, name)?;
+        match openat_directory(parent, name) {
+            Ok(directory) => return Ok(directory),
+            Err(error) if is_os_error(&error, libc::ENOENT) => thread::yield_now(),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(TextTransactionError::new(
+        TextTransactionErrorCode::Contended,
+        "trusted text parent namespace did not stabilize",
+    ))
+}
+
+fn open_or_create_coordination_slot(
+    directory: &File,
+    directory_path: &Path,
+    directory_identity: FileIdentity,
+    slot_name: &str,
+) -> Result<File, TextTransactionError> {
+    for _ in 0..NAMESPACE_CONVERGENCE_ATTEMPTS {
+        revalidate_directory_path(directory_path, directory_identity)?;
+        match openat(
+            directory.as_raw_fd(),
+            slot_name,
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+            "cannot create trusted text coordination slot",
+        ) {
+            Ok(file) => return Ok(file),
+            Err(error) if is_os_error(&error, libc::EEXIST) => {}
+            Err(error) if is_os_error(&error, libc::ENOENT) => {
+                thread::yield_now();
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+        match openat(
+            directory.as_raw_fd(),
+            slot_name,
+            libc::O_RDWR,
+            0,
+            "cannot open trusted text coordination slot",
+        ) {
+            Ok(file) => return Ok(file),
+            Err(error) if is_os_error(&error, libc::ENOENT) => thread::yield_now(),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(TextTransactionError::new(
+        TextTransactionErrorCode::Contended,
+        "trusted text coordination slot did not stabilize",
+    ))
 }
 
 fn openat(
@@ -889,6 +952,7 @@ fn openat(
     name: &str,
     flags: i32,
     mode: libc::mode_t,
+    error_message: &str,
 ) -> Result<File, TextTransactionError> {
     let name = c_string(name)?;
     let fd = unsafe {
@@ -901,11 +965,15 @@ fn openat(
     };
     if fd < 0 {
         return Err(no_follow_error(
-            "cannot open trusted Unix path component",
+            error_message,
             std::io::Error::last_os_error(),
         ));
     }
     Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+fn is_os_error(error: &TextTransactionError, code: i32) -> bool {
+    error.code == TextTransactionErrorCode::Io && error.os_code == Some(code as u32)
 }
 
 fn mkdirat(parent: RawFd, name: &str) -> Result<(), TextTransactionError> {

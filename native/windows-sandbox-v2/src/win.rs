@@ -3,6 +3,7 @@ use std::ffi::c_void;
 use std::io::{self, Write};
 use std::mem::{size_of, zeroed};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::{Mutex, OnceLock};
 
@@ -1432,7 +1433,7 @@ pub fn spawn_target_suspended(
     startup.StartupInfo.lpDesktop = PWSTR(desktop_name.as_mut_ptr());
     let mut information: PROCESS_INFORMATION = unsafe { zeroed() };
     let executable_wide = wide(executable);
-    let mut command_line = wide(&command_line(argv));
+    let mut command_line = wide(&target_command_line(argv));
     let cwd_wide = wide(cwd);
     let environment = target_environment_block(environment_overrides)?;
     // Keep the process and primary thread controllable only by trusted
@@ -1535,6 +1536,41 @@ pub fn command_line(argv: &[String]) -> String {
         .map(|value| quote_windows_arg(value))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn target_command_line(argv: &[String]) -> String {
+    let Some(executable) = argv.first() else {
+        return String::new();
+    };
+    let is_cmd = Path::new(executable)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("cmd.exe") || name.eq_ignore_ascii_case("cmd")
+        });
+    let has_strip_semantics = argv
+        .iter()
+        .skip(1)
+        .any(|argument| argument.eq_ignore_ascii_case("/s"));
+    if is_cmd
+        && has_strip_semantics
+        && let Some(command_index) =
+            argv.iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(index, argument)| {
+                    ((argument.eq_ignore_ascii_case("/c") || argument.eq_ignore_ascii_case("/k"))
+                        && index + 2 == argv.len())
+                    .then_some(index)
+                })
+    {
+        return format!(
+            "{} \"{}\"",
+            command_line(&argv[..=command_index]),
+            argv[command_index + 1],
+        );
+    }
+    command_line(argv)
 }
 
 fn quote_windows_arg(value: &str) -> String {
@@ -1729,6 +1765,52 @@ mod tests {
             ]),
             r#""C:\Program Files\node.exe" plain "say \"hi\"" C:\tail\ """#,
         );
+    }
+
+    #[test]
+    fn cmd_target_keeps_the_command_tail_raw_inside_outer_quotes() {
+        assert_eq!(
+            target_command_line(&[
+                r"C:\Windows\System32\cmd.exe".into(),
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                r#"node "C:\Program Files\fixture.cjs" "participant a" 2"#.into(),
+            ]),
+            r#"C:\Windows\System32\cmd.exe /d /s /c "node "C:\Program Files\fixture.cjs" "participant a" 2""#,
+        );
+    }
+
+    #[test]
+    fn cmd_strip_semantics_preserve_empty_quoted_and_metacharacter_tails() {
+        assert_eq!(
+            target_command_line(&[
+                r"C:\Program Files\cmd.exe".into(),
+                "/s".into(),
+                "/c".into(),
+                String::new(),
+            ]),
+            r#""C:\Program Files\cmd.exe" /s /c """#,
+        );
+        assert_eq!(
+            target_command_line(&[
+                "cmd.exe".into(),
+                "/s".into(),
+                "/c".into(),
+                r#""C:\Program Files\node.exe" "fixture a.cjs" & echo done"#.into(),
+            ]),
+            r#"cmd.exe /s /c ""C:\Program Files\node.exe" "fixture a.cjs" & echo done""#,
+        );
+    }
+
+    #[test]
+    fn cmd_without_strip_semantics_keeps_regular_windows_argv_quoting() {
+        let argv = [
+            "cmd.exe".into(),
+            "/c".into(),
+            r#"node "C:\Program Files\fixture.cjs""#.into(),
+        ];
+        assert_eq!(target_command_line(&argv), command_line(&argv));
     }
 
     #[test]

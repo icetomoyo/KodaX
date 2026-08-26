@@ -75,13 +75,15 @@ async function crossProcessCas(root, rootPath, statePath) {
     stdio: 'inherit',
     windowsHide: true,
   }));
-  const statuses = await Promise.all(children.map((child) => new Promise((resolve, reject) => {
+  const statuses = await Promise.allSettled(children.map((child) => new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code) => code === 0
       ? resolve(undefined)
       : reject(new Error(`native smoke worker exited ${code}`)));
   })));
   assert.equal(statuses.length, 2);
+  const failed = statuses.find((status) => status.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
   const outcomes = (await Promise.all(results.map((result) => readFile(result, 'utf8')))).sort();
   assert.deepEqual(outcomes, ['stale', 'written']);
 }

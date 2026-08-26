@@ -208,9 +208,13 @@ fn two_processes_create_one_missing_revision_once() {
     let executable = std::env::current_exe().unwrap();
     let mut children = Vec::new();
     let mut results = Vec::new();
+    let mut readiness = Vec::new();
+    let go = state.path().join("missing-commit-go");
     for index in 0..2 {
         let result = state.path().join(format!("missing-result-{index}"));
+        let ready = state.path().join(format!("missing-ready-{index}"));
         results.push(result.clone());
+        readiness.push(ready.clone());
         children.push(
             Command::new(&executable)
                 .args([
@@ -227,10 +231,16 @@ fn two_processes_create_one_missing_revision_once() {
                 .env("KODAX_UNIX_TX_CONTENT", format!("created-{index}"))
                 .env("KODAX_UNIX_TX_RESULT", result)
                 .env("KODAX_UNIX_TX_CREATE_PARENTS", "1")
+                .env("KODAX_UNIX_TX_READY", ready)
+                .env("KODAX_UNIX_TX_GO", &go)
                 .spawn()
                 .unwrap(),
         );
     }
+    for ready in &readiness {
+        wait_for_file(ready);
+    }
+    fs::write(go, "go").unwrap();
     for mut child in children {
         assert!(child.wait().unwrap().success());
     }
