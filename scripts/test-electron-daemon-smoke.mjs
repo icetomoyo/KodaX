@@ -12,9 +12,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const electronDist = requirePath('KODAX_ELECTRON_DIST');
 const electronBuilderCli = requirePath('KODAX_ELECTRON_BUILDER_CLI');
 const electronPackage = JSON.parse(await readFile(path.join(electronDist, '..', 'package.json'), 'utf8'));
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-electron-daemon-smoke-'));
+const temporaryBase = process.env.KODAX_NATIVE_TEST_TEMP
+  ?? process.env.RUNNER_TEMP
+  ?? os.tmpdir();
+await mkdir(temporaryBase, { recursive: true });
+const temporaryRoot = await mkdtemp(path.join(temporaryBase, 'kodax-electron-daemon-smoke-'));
 const appDir = path.join(temporaryRoot, 'app');
-const programDataDir = path.join(temporaryRoot, 'program-data');
+const programDataDir = path.resolve(
+  process.env.ProgramData ?? process.env.PROGRAMDATA ?? 'C:\\ProgramData',
+);
 const homeDir = process.env.KODAX_ELECTRON_SMOKE_HOME
   ?? path.join(temporaryRoot, 'home');
 const externalHomeDir = process.env.KODAX_ELECTRON_SMOKE_HOME !== undefined;

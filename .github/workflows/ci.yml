@@ -41,11 +41,9 @@ jobs:
         run: npm ci
 
       - name: Install Linux sandbox dependencies
-        if: matrix.node == '22'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Verify Linux sandbox namespaces
-        if: matrix.node == '22'
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w kernel.unprivileged_userns_clone=1
