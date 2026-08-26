@@ -158,6 +158,8 @@ async function run() {
         sandboxedRuns.add(event.runId);
       }
     }));
+  await Promise.all([...permissionSubscriptions, ...sandboxSubscriptions]
+    .map((subscription) => subscription.ready));
   let appliedSandboxCount = 0;
   try {
     const runQuery = async (index) => {

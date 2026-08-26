@@ -166,6 +166,16 @@ afterEach(() => {
 });
 
 describe('packaged Electron daemon environment probe', () => {
+  it('awaits event subscription readiness before launching parallel Runtime runs', () => {
+    const subscriptionBarrier = fixtureSource.indexOf(
+      'await Promise.all([...permissionSubscriptions, ...sandboxSubscriptions]',
+    );
+    const parallelRunStart = fixtureSource.indexOf('const runQuery = async (index) =>');
+
+    expect(subscriptionBarrier).toBeGreaterThan(0);
+    expect(parallelRunStart).toBeGreaterThan(subscriptionBarrier);
+  });
+
   it('requires preconfigured setup and carries cancellable signals', () => {
     expect(fixtureSource).not.toContain('setupKodaXSandbox');
     expect(fixtureSource).not.toContain('Promise.race');
