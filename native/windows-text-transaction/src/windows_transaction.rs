@@ -1567,9 +1567,18 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    use tempfile::tempdir;
-
     use super::*;
+
+    fn test_tempdir() -> tempfile::TempDir {
+        let base = std::env::var_os("KODAX_NATIVE_TEST_TEMP")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().expect("native test current directory"));
+        fs::create_dir_all(&base).expect("native test temporary base");
+        tempfile::Builder::new()
+            .prefix("kodax-text-")
+            .tempdir_in(base)
+            .expect("native test temporary directory")
+    }
 
     fn test_dacl(path: &std::path::Path) -> Vec<u8> {
         use windows_sys::Win32::Security::GetFileSecurityW;
@@ -1752,7 +1761,7 @@ mod tests {
 
     #[test]
     fn private_mutex_is_abandoned_when_its_owner_process_dies() {
-        let directory = tempdir().unwrap();
+        let directory = test_tempdir();
         let ready = directory.path().join("ready");
         let slot_id = format!("crash-{}", Uuid::new_v4().simple());
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1797,7 +1806,7 @@ mod tests {
 
     #[test]
     fn public_commit_rereads_after_a_mutex_owner_process_dies() {
-        let directory = tempdir().unwrap();
+        let directory = test_tempdir();
         let target = directory.path().join("after-crash.txt");
         let root = TrustedRoot::open(&directory.path().to_string_lossy()).unwrap();
         let snapshot = root.snapshot(&target.to_string_lossy()).unwrap();
@@ -1848,7 +1857,7 @@ mod tests {
 
     #[test]
     fn failure_after_atomic_rename_never_deletes_the_committed_target() {
-        let directory = tempdir().unwrap();
+        let directory = test_tempdir();
         let target = directory.path().join("post-commit-failure.txt");
         fs::write(&target, "before").unwrap();
         let root = TrustedRoot::open(&directory.path().to_string_lossy()).unwrap();
@@ -1892,7 +1901,7 @@ mod tests {
         // phase observes an already renamed, pre-flushed complete file.
         for target_existed in [false, true] {
             for (stage, expected) in [("before-rename", "old"), ("after-rename", "new")] {
-                let directory = tempdir().unwrap();
+                let directory = test_tempdir();
                 let target = directory.path().join("atomic-crash.txt");
                 if target_existed {
                     fs::write(&target, "old").unwrap();
@@ -1952,7 +1961,7 @@ mod tests {
 
     #[test]
     fn rwh_oplock_blocks_an_ancestor_rename_until_the_temp_handle_closes() {
-        let directory = tempdir().unwrap();
+        let directory = test_tempdir();
         let authorized = directory.path().join("authorized");
         let moved = directory.path().join("moved");
         fs::create_dir(&authorized).unwrap();

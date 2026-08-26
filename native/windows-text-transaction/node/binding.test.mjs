@@ -27,10 +27,11 @@ if (process.env.KODAX_NATIVE_TEXT_SMOKE_WORKER === '1') {
 
 async function runSmoke() {
 
-const rootPath = await mkdtemp(join(tmpdir(), 'kodax-native-text-'));
+const nativeTestBase = process.env.KODAX_NATIVE_TEST_TEMP ?? tmpdir();
+const rootPath = await mkdtemp(join(nativeTestBase, 'kodax-native-text-'));
 const statePath = process.platform === 'win32'
   ? undefined
-  : await mkdtemp(join(tmpdir(), 'kodax-native-text-state-'));
+  : await mkdtemp(join(nativeTestBase, 'kodax-native-text-state-'));
 try {
   const root = new TrustedTextTransactionRoot(rootPath, statePath);
   const target = join(rootPath, 'hello.md');

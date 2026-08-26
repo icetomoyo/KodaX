@@ -997,11 +997,13 @@ async function executeToolBash(
         let stderrDecoded: DecodeResult | undefined;
         try {
           if (timer) clearTimeout(timer);
+          if (stopReason && stoppedOutputRecovery) {
+            const recovery = stoppedOutputRecovery;
+            stoppedOutputRecovery = undefined;
+            finishForegroundOutputRecovery(recovery, stdout, stderr);
+          }
           await finishForeground();
           if (stopReason) {
-            if (stoppedOutputRecovery) {
-              finishForegroundOutputRecovery(stoppedOutputRecovery, stdout, stderr);
-            }
             return;
           }
           if (sandboxCleanupError !== undefined) {

@@ -9,7 +9,6 @@ import {
   _internalWindowsNativeArtifacts,
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
   ensureUnixTrustedTextStateRoot,
-  resolveWindowsNativeArtifact,
   unixTrustedTextCoordinationRoot,
   windowsNativeArtifactCacheRoot,
 } from './windows-native-artifacts.js';
@@ -22,11 +21,9 @@ describe('Windows native artifact trust boundary', () => {
   it('rejects a development artifact source that overlaps an untrusted write root', () => {
     const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-    expect(() => resolveWindowsNativeArtifact(
-      import.meta.url,
-      'textTransaction',
-      1,
-      { untrustedWriteRoots: [repositoryRoot] },
+    expect(() => _internalWindowsNativeArtifacts.assertDevelopmentSourceIsOutsideWriteRoots(
+      repositoryRoot,
+      [repositoryRoot],
     )).toThrow(/native artifact source overlaps a writable Runtime root/);
   });
 

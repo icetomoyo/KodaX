@@ -1,10 +1,21 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import os from 'node:os';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const nativeTestBase = path.join(
+  root,
+  'native',
+  'windows-text-transaction',
+  'target',
+  'test-runtime',
+);
+mkdirSync(nativeTestBase, { recursive: true });
+const nativeTestEnvironment = {
+  ...process.env,
+  KODAX_NATIVE_TEST_TEMP: nativeTestBase,
+};
 
 const crates = [
   'windows-text-transaction',
@@ -17,9 +28,10 @@ for (const crate of crates) {
     '--manifest-path',
     manifest,
     '--locked',
+    '--no-default-features',
   ], {
     cwd: root,
-    env: process.env,
+    env: nativeTestEnvironment,
     stdio: 'inherit',
     windowsHide: true,
   });
@@ -34,7 +46,7 @@ const manifest = JSON.parse(readFileSync(path.join(nativeDirectory, 'manifest.js
 if (manifest.textTransaction?.protocol !== 4) {
   throw new Error('Staged native text transaction protocol is not 4');
 }
-const smokeDirectory = mkdtempSync(path.join(os.tmpdir(), 'kodax-native-binding-smoke-'));
+const smokeDirectory = mkdtempSync(path.join(nativeTestBase, 'binding-smoke-'));
 try {
   const nodeDirectory = path.join(root, 'native', 'windows-text-transaction', 'node');
   copyFileSync(path.join(nodeDirectory, 'index.mjs'), path.join(smokeDirectory, 'index.mjs'));
@@ -48,7 +60,7 @@ try {
   );
   const smoke = spawnSync(process.execPath, [path.join(smokeDirectory, 'binding.test.mjs')], {
     cwd: smokeDirectory,
-    env: process.env,
+    env: nativeTestEnvironment,
     stdio: 'inherit',
     windowsHide: true,
   });

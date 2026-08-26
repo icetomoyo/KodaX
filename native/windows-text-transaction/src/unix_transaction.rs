@@ -1397,18 +1397,23 @@ fn copy_platform_flags(source: &File, destination: &File) -> Result<(), TextTran
             ));
         }
     };
-    if unsafe {
-        libc::ioctl(
-            destination.as_raw_fd(),
-            libc::FS_IOC_SETFLAGS,
-            &source_flags,
-        )
-    } != 0
-    {
-        return Err(metadata_error(
-            "cannot preserve trusted text file flags",
-            std::io::Error::last_os_error(),
-        ));
+    let destination_flags = linux_file_flags(destination)
+        .map_err(|error| metadata_error("cannot inspect replacement text file flags", error))?
+        & FS_FL_USER_MODIFIABLE;
+    if destination_flags != source_flags {
+        if unsafe {
+            libc::ioctl(
+                destination.as_raw_fd(),
+                libc::FS_IOC_SETFLAGS,
+                &source_flags,
+            )
+        } != 0
+        {
+            return Err(metadata_error(
+                "cannot preserve trusted text file flags",
+                std::io::Error::last_os_error(),
+            ));
+        }
     }
     let observed = linux_file_flags(destination)
         .map_err(|error| metadata_error("cannot verify trusted text file flags", error))?

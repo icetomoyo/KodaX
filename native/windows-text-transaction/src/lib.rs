@@ -2,7 +2,7 @@ mod error;
 mod model;
 mod path_policy;
 
-#[cfg(any(windows, unix))]
+#[cfg(all(any(windows, unix), feature = "node-api"))]
 mod node_api;
 #[cfg(unix)]
 mod unix_transaction;
