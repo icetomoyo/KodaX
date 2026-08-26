@@ -58,6 +58,14 @@ const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => 
   setTimeout(resolve, milliseconds);
 });
 
+async function createWindowsV2TestRoot(prefix: string): Promise<string> {
+  const base = process.env.KODAX_NATIVE_TEST_TEMP
+    ?? process.env.RUNNER_TEMP
+    ?? os.tmpdir();
+  await mkdir(base, { recursive: true });
+  return mkdtemp(path.join(base, prefix));
+}
+
 function assertExpectedWindowsPolicyWriteDenial(
   result: KodaXSandboxRunResult,
   expectedSentinel: string,
@@ -393,7 +401,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   });
 
   it('starts an inbox Windows command under the restricted target token', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-loader-'));
+    const root = await createWindowsV2TestRoot('kodax-v2-loader-');
     roots.push(root);
     const command = process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe';
     const result = await runKodaXSandboxed({
@@ -413,7 +421,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   }, 45_000);
 
   it('allows policy A in A but denies policy B from writing A', async () => {
-    const parent = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-policy-ab-'));
+    const parent = await createWindowsV2TestRoot('kodax-v2-policy-ab-');
     roots.push(parent);
     const rootA = path.join(parent, 'A');
     const rootB = path.join(parent, 'B');
@@ -478,7 +486,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   }, 45_000);
 
   it('lets different Runtime processes and policies reach the target concurrently', async () => {
-    const parent = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-policy-concurrent-'));
+    const parent = await createWindowsV2TestRoot('kodax-v2-policy-concurrent-');
     roots.push(parent);
     const rootA = path.join(parent, 'A');
     const rootB = path.join(parent, 'B');
@@ -549,7 +557,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   }, 60_000);
 
   it('keeps trusted Write available while a different-file shell stays alive', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-shell-write-'));
+    const root = await createWindowsV2TestRoot('kodax-v2-shell-write-');
     roots.push(root);
     const ready = path.join(root, 'shell.ready');
     const stop = path.join(root, 'shell.stop');
@@ -618,7 +626,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   it.each(['target', 'runner', 'host'] as const)(
     'drains the real sandbox Job after terminating its %s and keeps trusted Write available',
     async (terminatedRole) => {
-      const root = await mkdtemp(path.join(os.tmpdir(), `kodax-v2-kill-${terminatedRole}-`));
+      const root = await createWindowsV2TestRoot(`kodax-v2-kill-${terminatedRole}-`);
       roots.push(root);
       const markerPath = path.join(root, 'processes.json');
       const written = path.join(root, `after-${terminatedRole}.md`);
@@ -690,7 +698,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   );
 
   it('does not let a restricted shell open host text or ACL namespaces', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-private-namespace-'));
+    const root = await createWindowsV2TestRoot('kodax-v2-private-namespace-');
     roots.push(root);
     const target = path.join(root, 'initialize.txt');
     const textHost = createWindowsTrustedTextMutationHost(
@@ -754,7 +762,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   }, 60_000);
 
   it('does not let one policy open another policy private desktop', async () => {
-    const parent = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-desktop-policy-'));
+    const parent = await createWindowsV2TestRoot('kodax-v2-desktop-policy-');
     roots.push(parent);
     const rootA = path.join(parent, 'A');
     const rootB = path.join(parent, 'B');
