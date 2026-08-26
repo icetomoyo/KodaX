@@ -2763,6 +2763,12 @@ export function resetSandboxRuntimeForTest(): void {
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
 }
 
+function sandboxAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Operation aborted', 'AbortError');
+}
+
 function closeNativeSandboxInput(
   child: ReturnType<typeof spawn>,
   prefix: Uint8Array | undefined,
@@ -2773,9 +2779,7 @@ function closeNativeSandboxInput(
   if (stdin === null) {
     return Promise.reject(new Error('Native sandbox bootstrap pipe was not created.'));
   }
-  if (signal?.aborted) {
-    return Promise.reject(new DOMException('Operation aborted', 'AbortError'));
-  }
+  if (signal?.aborted) return Promise.reject(sandboxAbortError(signal));
   if (Date.now() >= deadlineAt) {
     return Promise.reject(new Error('Native sandbox bootstrap delivery timed out.'));
   }
@@ -2795,7 +2799,9 @@ function closeNativeSandboxInput(
       else reject(error);
     };
     const onError = (): void => finish(new Error('Native sandbox bootstrap delivery failed.'));
-    const onAbort = (): void => finish(new DOMException('Operation aborted', 'AbortError'));
+    const onAbort = (): void => {
+      if (signal !== undefined) finish(sandboxAbortError(signal));
+    };
     const onClose = (): void => {
       stdin.off('error', onError);
       if (!settled) finish(new Error('Native sandbox bootstrap pipe closed before delivery completed.'));

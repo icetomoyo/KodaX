@@ -65,6 +65,12 @@ async function run() {
   });
   await waitForFile(environmentProofFile, 120_000);
   const environmentProof = JSON.parse(fs.readFileSync(environmentProofFile, 'utf8'));
+  if (environmentProof.probeError !== undefined) {
+    throw new Error(
+      'Packaged daemon environment probe failed: '
+      + JSON.stringify(environmentProof.probeError),
+    );
+  }
   if (environmentProof.sandboxDoctor?.ready !== true) {
     throw new Error(
       'Packaged daemon OS sandbox is unavailable: '
@@ -346,19 +352,45 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
   }
 }
 
+async function publishEnvironmentProof() {
+let phase = 'external-child';
+const deadlineAt = Date.now() + 105_000;
+const runPhase = async (nextPhase, operation) => {
+  phase = nextPhase;
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new Error('Environment probe deadline expired.');
+  let timer;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Environment probe deadline expired.')),
+          remainingMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+try {
 const child = spawnSync(process.env.ComSpec ?? 'cmd.exe', [
   '/d', '/s', '/c',
   'if defined ELECTRON_RUN_AS_NODE (echo present) else (echo absent)',
 ], { encoding: 'utf8', windowsHide: true });
-let sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
+let sandboxDoctor = await runPhase(
+  'sandbox-doctor',
+  () => doctorKodaXSandbox({ refresh: true }),
+);
 if (
   !sandboxDoctor.ready
   && sandboxDoctor.diagnostics.length > 0
   && sandboxDoctor.diagnostics.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'))
 ) {
-  sandboxDoctor = await setupKodaXSandbox();
+  sandboxDoctor = await runPhase('sandbox-setup', () => setupKodaXSandbox());
 }
-const shellProbe = await toolBash(
+const shellProbe = await runPhase('shell-probe', () => toolBash(
   {
     command:
       "Write-Output 'shell-probe-ok'; "
@@ -387,7 +419,7 @@ const shellProbe = await toolBash(
       probeTimeoutMs: 10_000,
     },
   },
-);
+));
 const shellProbeLines = shellProbe.trim().split(/\\r?\\n/);
 const shellProbeExitIndex = shellProbeLines.findIndex((line) => /^Exit: -?\\d+$/.test(line));
 const shellProbeExitCode =
@@ -396,7 +428,7 @@ const shellProbeExitCode =
     : null;
 const shellProbeOutput = shellProbeLines.slice(shellProbeExitIndex + 1);
 const directSandboxProbe = sandboxDoctor.ready
-  ? await runKodaXSandboxed({
+  ? await runPhase('direct-node-probe', () => runKodaXSandboxed({
       command: process.execPath,
       args: [
         '-e',
@@ -409,10 +441,10 @@ const directSandboxProbe = sandboxDoctor.ready
       },
       env: { ELECTRON_RUN_AS_NODE: '1' },
       timeoutMs: 15_000,
-    })
+    }))
   : undefined;
 const directPowerShellProbe = sandboxDoctor.ready
-  ? await runKodaXSandboxed({
+  ? await runPhase('direct-powershell-probe', () => runKodaXSandboxed({
       // Keep the external PowerShell child under the Electron Node target
       // already proven above. This avoids making Electron itself the outer
       // PowerShell target in the packaged smoke broker.
@@ -428,8 +460,9 @@ const directPowerShellProbe = sandboxDoctor.ready
       },
       env: { ELECTRON_RUN_AS_NODE: '1' },
       timeoutMs: 15_000,
-    })
+    }))
   : undefined;
+phase = 'publish';
 writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
   daemon: process.env.ELECTRON_RUN_AS_NODE ?? 'absent',
   externalChild: child.stdout.trim(),
@@ -443,6 +476,16 @@ writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
   directSandboxProbe,
   directPowerShellProbe,
 }), 'utf8');
+} catch (error) {
+  writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
+    probeError: {
+      phase,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    },
+  }), 'utf8');
+}
+}
 
 export default function(api) {
   api.registerModelProvider({
@@ -455,6 +498,9 @@ export default function(api) {
     input_schema: { type: 'object', properties: {} },
     handler: async () => 'ok',
   });
+  // Extension activation must not block Runtime startup on shell/sandbox
+  // probes that themselves require the fully activated daemon services.
+  void publishEnvironmentProof();
 }
 `, 'utf8');
   fs.writeFileSync(
