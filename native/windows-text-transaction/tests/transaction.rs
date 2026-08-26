@@ -7,7 +7,18 @@ use std::os::windows::fs::symlink_dir;
 use kodax_windows_text_transaction::{
     CommitOutcome, ResourceState, TextTransactionErrorCode, TrustedRoot,
 };
-use tempfile::tempdir;
+use tempfile::TempDir;
+
+fn tempdir() -> std::io::Result<TempDir> {
+    let base = match std::env::var_os("KODAX_NATIVE_TEST_TEMP") {
+        Some(base) => std::path::PathBuf::from(base),
+        None => std::env::current_dir()?,
+    };
+    fs::create_dir_all(&base)?;
+    tempfile::Builder::new()
+        .prefix("kodax-text-integration-")
+        .tempdir_in(base)
+}
 
 fn as_text(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
