@@ -1577,12 +1577,20 @@ fn metadata_error(message: &str, error: std::io::Error) -> TextTransactionError 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
+
+    fn private_tempdir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap()
+    }
 
     #[test]
     fn same_revision_is_committed_once() {
         let directory = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let root = TrustedRoot::open(
             directory.path().to_str().unwrap(),
             state.path().to_str().unwrap(),
@@ -1614,7 +1622,7 @@ mod tests {
     #[test]
     fn atomic_replace_keeps_the_namespace_slot() {
         let directory = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let target = directory.path().join("existing.md");
         fs::write(&target, "before").unwrap();
         let root = TrustedRoot::open(
@@ -1648,7 +1656,7 @@ mod tests {
     #[test]
     fn missing_parents_and_overlapping_roots_keep_one_namespace_slot() {
         let directory = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let nested_root = directory.path().join("nested");
         fs::create_dir(&nested_root).unwrap();
         let broad = TrustedRoot::open(
@@ -1688,7 +1696,7 @@ mod tests {
         use std::process::Command;
 
         let directory = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let target = directory.path().join("acl.md");
         fs::write(&target, "before").unwrap();
         assert!(
@@ -1728,7 +1736,7 @@ mod tests {
     #[test]
     fn directory_sync_failure_preserves_the_commit_and_its_receipt() {
         let directory = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let target = directory.path().join("post-commit-failure.txt");
         fs::write(&target, "before").unwrap();
         let root = TrustedRoot::open(
@@ -1818,7 +1826,7 @@ mod tests {
 
         let directory = tempdir().unwrap();
         let outside = tempdir().unwrap();
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         symlink(outside.path(), directory.path().join("escape")).unwrap();
         let root = TrustedRoot::open(
             directory.path().to_str().unwrap(),
@@ -1843,7 +1851,7 @@ mod tests {
 
     #[test]
     fn replaced_coordination_directory_invalidates_the_old_lock_generation() {
-        let state = tempdir().unwrap();
+        let state = private_tempdir();
         let (old_directory, path, identity) =
             open_lock_directory(state.path().to_str().unwrap()).unwrap();
         let old_lock = SlotLock::acquire(&old_directory, &path, identity, "same", 1_000).unwrap();

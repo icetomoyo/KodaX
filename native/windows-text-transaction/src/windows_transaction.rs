@@ -30,7 +30,7 @@ use windows_sys::Win32::Security::{
     GetSecurityDescriptorControl, GetTokenInformation, LABEL_SECURITY_INFORMATION,
     OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
     SCOPE_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-    TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
+    TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
@@ -1141,11 +1141,14 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
             return Err(error);
         }
     };
+    // A newly created sibling is already unprotected. Asking Windows to
+    // "unprotect" it would merge parent ACEs and change the source ACL's
+    // explicit/inherited provenance. Only protection needs an explicit flag.
     let set_information = security_information
         | if dacl_protected {
             PROTECTED_DACL_SECURITY_INFORMATION
         } else {
-            UNPROTECTED_DACL_SECURITY_INFORMATION
+            0
         };
     let set_status = unsafe {
         SetSecurityInfo(

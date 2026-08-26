@@ -2,8 +2,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,6 +10,13 @@ use std::time::{Duration, Instant};
 use kodax_windows_text_transaction::{CommitOutcome, TrustedRoot};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
+
+fn private_tempdir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap()
+}
 
 fn text(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
@@ -119,7 +125,7 @@ fn coordination_slot(target: &std::path::Path) -> String {
 #[test]
 fn two_processes_commit_one_revision_once() {
     let workspace = tempdir().unwrap();
-    let state = tempdir().unwrap();
+    let state = private_tempdir();
     let target = workspace.path().join("same.md");
     fs::write(&target, "before").unwrap();
     let root = TrustedRoot::open(&text(workspace.path()), &text(state.path())).unwrap();
@@ -195,7 +201,7 @@ fn two_processes_commit_one_revision_once() {
 #[test]
 fn two_processes_create_one_missing_revision_once() {
     let workspace = tempdir().unwrap();
-    let state = tempdir().unwrap();
+    let state = private_tempdir();
     let target = workspace.path().join("missing").join("same.md");
     let root = TrustedRoot::open(&text(workspace.path()), &text(state.path())).unwrap();
     let revision = root.snapshot(&text(&target)).unwrap().revision;
@@ -239,7 +245,7 @@ fn two_processes_create_one_missing_revision_once() {
 #[test]
 fn different_slots_do_not_wait_and_dead_owner_releases_the_lock() {
     let workspace = tempdir().unwrap();
-    let state = tempdir().unwrap();
+    let state = private_tempdir();
     let first = workspace.path().join("first.md");
     let second = workspace.path().join("second.md");
     let root = TrustedRoot::open(&text(workspace.path()), &text(state.path())).unwrap();
