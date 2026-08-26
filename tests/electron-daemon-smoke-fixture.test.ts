@@ -176,6 +176,18 @@ describe('packaged Electron daemon environment probe', () => {
     expect(parallelRunStart).toBeGreaterThan(subscriptionBarrier);
   });
 
+  it('waits for the exact sandbox observation after each parallel Run result', () => {
+    const resultSettlement = fixtureSource.indexOf('const completed = await handle.result;');
+    const observationSettlement = fixtureSource.indexOf(
+      'await waitForAppliedSandboxObservation(handle.runId);',
+    );
+
+    expect(resultSettlement).toBeGreaterThan(0);
+    expect(observationSettlement).toBeGreaterThan(resultSettlement);
+    expect(fixtureSource).toContain("observation.state !== 'applied'");
+    expect(fixtureSource).toContain("observation.backend !== 'windows-restricted-user'");
+  });
+
   it('requires preconfigured setup and carries cancellable signals', () => {
     expect(fixtureSource).not.toContain('setupKodaXSandbox');
     expect(fixtureSource).not.toContain('Promise.race');

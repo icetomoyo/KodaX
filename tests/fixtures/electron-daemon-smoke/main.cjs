@@ -145,21 +145,37 @@ async function run() {
         runId: request.runId,
       });
     }));
-  const sandboxedRuns = new Set();
+  const sandboxObservations = new Map();
   const sandboxSubscriptions = sessions.map((session) => runtime.events.subscribe({
       sessionId: session.id,
       type: 'tool.sandbox',
     }, (event) => {
-      if (
-        typeof event.runId === 'string'
-        && event.payload?.update?.observation?.state === 'applied'
-        && event.payload.update.observation.backend === 'windows-restricted-user'
-      ) {
-        sandboxedRuns.add(event.runId);
+      const observation = event.payload?.update?.observation;
+      if (typeof event.runId === 'string' && observation && typeof observation === 'object') {
+        sandboxObservations.set(event.runId, observation);
       }
     }));
   await Promise.all([...permissionSubscriptions, ...sandboxSubscriptions]
     .map((subscription) => subscription.ready));
+  const waitForAppliedSandboxObservation = async (runId) => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() <= deadline) {
+      const observation = sandboxObservations.get(runId);
+      if (observation !== undefined) {
+        if (
+          observation.state !== 'applied'
+          || observation.backend !== 'windows-restricted-user'
+        ) {
+          throw new Error(
+            `Run ${runId} reported a non-applied Windows sandbox: ${JSON.stringify(observation)}`,
+          );
+        }
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`Run ${runId} did not publish a sandbox observation within 30 seconds.`);
+  };
   let appliedSandboxCount = 0;
   try {
     const runQuery = async (index) => {
@@ -175,9 +191,7 @@ async function run() {
         if (completed.phase !== 'completed') {
           throw completed.error ?? new Error(`Runtime shell query ended in phase ${completed.phase}.`);
         }
-        if (!sandboxedRuns.has(handle.runId)) {
-          throw new Error(`Ordinary query ${index} did not report an applied Windows sandbox.`);
-        }
+        await waitForAppliedSandboxObservation(handle.runId);
         appliedSandboxCount += 1;
       } catch (error) {
         const detail = error instanceof Error ? error.stack : String(error);
