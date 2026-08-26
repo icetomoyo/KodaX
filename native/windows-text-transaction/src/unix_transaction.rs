@@ -1881,16 +1881,13 @@ mod tests {
             TrustedRoot::open(alias.to_str().unwrap(), state.path().to_str().unwrap()).unwrap();
         let target = alias.join("hello.md");
         let snapshot = root.snapshot(target.to_str().unwrap()).unwrap();
+        let canonical_actual = fs::canonicalize(&actual).unwrap();
         assert_eq!(
             snapshot.canonical_path,
-            fs::canonicalize(&actual)
-                .unwrap()
-                .join("hello.md")
-                .to_str()
-                .unwrap()
+            canonical_actual.join("hello.md").to_str().unwrap()
         );
         let canonical_snapshot = root
-            .snapshot(actual.join("hello.md").to_str().unwrap())
+            .snapshot(canonical_actual.join("hello.md").to_str().unwrap())
             .unwrap();
         assert_eq!(canonical_snapshot.slot_id, snapshot.slot_id);
         assert_eq!(canonical_snapshot.revision, snapshot.revision);
