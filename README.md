@@ -736,7 +736,15 @@ network/account services and use the KodaX native restricted-token runner with
 a nonce-bound per-policy private desktop, creation-time Job containment, and framed stdio. Native shell commands from
 different policies, Sessions, and Runtime processes do not share a
 command-lifetime filesystem-effect lease. Arbitrary shell writes remain normal
-OS races; only controlled text tools participate in KodaX CAS.
+OS races; only controlled text tools participate in KodaX CAS. Target stdin EOF
+does not close the native control stream. Authenticated directional pipes keep
+control and events independent; timeout/cancel validates a nonce-bound runner
+Job-drain record before returning the original stop reason.
+Native request/terminal state is kept in a no-reparse, host/SYSTEM-only control
+directory; both SDK policy validation and the native host reject overlapping
+allow roots and deny roots at/below it before target launch. Doctor only
+verifies; explicit setup can create or narrowly repair empty host-owned state
+after the sandbox account is proven idle.
 If Unix cannot prove directory durability after the atomic commit, the tool
 returns `text_mutation_commit_uncertain` with the complete pre/post receipt and
 requires a reread instead of a blind retry. Existing-file edits retain their

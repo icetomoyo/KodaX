@@ -14,7 +14,7 @@ use crate::protocol::{
     Frame, FrameKind, MAX_STREAM_BYTES, PROTOCOL_VERSION, read_frame, write_frame,
 };
 use crate::win::{
-    connect_named_pipe, current_logon_sid, current_token, named_pipe_available_bytes,
+    connect_named_pipe_reader, connect_named_pipe_writer, current_logon_sid, current_token,
     protect_current_process, restricted_policy_token, spawn_target_suspended,
     suppress_system_error_dialogs, token_user_sid,
 };
@@ -74,21 +74,10 @@ fn pump_output_stream(
 }
 
 fn start_control_pump(reader: File, target_stdin: File, events: SyncSender<RunnerEvent>) {
-    let readiness = match reader.try_clone() {
-        Ok(readiness) => readiness,
-        Err(error) => {
-            let _ = events.send(RunnerEvent::Failure(
-                "control".into(),
-                format!("clone Windows sandbox control pipe readiness handle: {error}"),
-            ));
-            return;
-        }
-    };
     std::thread::spawn(move || {
         run_control_pump(
             reader,
             target_stdin,
-            || wait_until_pipe_readable(&readiness),
             || {
                 let _ = events.send(RunnerEvent::TerminateRequested);
             },
@@ -99,31 +88,15 @@ fn start_control_pump(reader: File, target_stdin: File, events: SyncSender<Runne
     });
 }
 
-fn wait_until_pipe_readable(pipe: &File) -> Result<()> {
-    loop {
-        match named_pipe_available_bytes(pipe) {
-            Ok(0) => std::thread::sleep(Duration::from_millis(10)),
-            Ok(_) => return Ok(()),
-            Err(error) => return Err(error).context("inspect Windows sandbox control pipe"),
-        }
-    }
-}
-
 fn run_control_pump(
     mut reader: impl Read,
     target_stdin: impl Write,
-    mut wait_until_readable: impl FnMut() -> Result<()>,
     mut terminate_target: impl FnMut(),
     mut report_error: impl FnMut(&str, &anyhow::Error),
 ) {
     let mut target_stdin = Some(target_stdin);
     let mut close_received = false;
     loop {
-        if let Err(error) = wait_until_readable() {
-            report_error("control", &error);
-            terminate_target();
-            return;
-        }
         let frame = match read_frame(&mut reader) {
             Ok(Some(frame)) => frame,
             Ok(None) => {
@@ -209,11 +182,14 @@ fn announce_ready_resume_then_started(
     })
 }
 
-fn pipe_server_identity(pipe_name: &str) -> Result<(u32, String)> {
+fn pipe_server_identity(pipe_name: &str, role: &str) -> Result<(u32, String)> {
     let suffix = pipe_name
         .strip_prefix(r"\\.\pipe\kodax-sandbox-v2-")
         .ok_or_else(|| anyhow!("Windows sandbox runner pipe name was not trusted"))?;
-    let (pid, nonce) = suffix
+    let identity = suffix
+        .strip_suffix(&format!("-{role}"))
+        .ok_or_else(|| anyhow!("Windows sandbox runner pipe role was not trusted"))?;
+    let (pid, nonce) = identity
         .split_once('-')
         .ok_or_else(|| anyhow!("Windows sandbox runner pipe identity was incomplete"))?;
     if nonce.len() != 32 || !nonce.bytes().all(|value| value.is_ascii_hexdigit()) {
@@ -228,7 +204,7 @@ fn pipe_server_identity(pipe_name: &str) -> Result<(u32, String)> {
     Ok((pid, nonce.to_ascii_lowercase()))
 }
 
-pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
+pub fn run(control_pipe_name: &str, event_pipe_name: &str, host_sid: &str) -> Result<()> {
     // This must be the first fallible operation: the ASRT account owns the
     // just-created process object, so OWNER RIGHTS must be denied before any
     // untrusted target can obtain process-control rights through that owner.
@@ -244,14 +220,23 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
     // name before ASRT launches this runner. The host authenticates this client by PID,
     // account/logon SID, exact ASRT ancestry and nonce. The runner authenticates the server
     // PID and echoed nonce without reopening a cross-account process.
-    let (expected_server_pid, session_nonce) = pipe_server_identity(pipe_name)?;
-    let (mut pipe, actual_server_pid) = connect_named_pipe(pipe_name)?;
-    if actual_server_pid != expected_server_pid {
+    let (control_server_pid, control_nonce) = pipe_server_identity(control_pipe_name, "h2r")?;
+    let (event_server_pid, event_nonce) = pipe_server_identity(event_pipe_name, "r2h")?;
+    if control_server_pid != event_server_pid || control_nonce != event_nonce {
+        bail!("Windows sandbox runner pipes did not share one authenticated identity");
+    }
+    let (mut control_pipe, actual_control_server_pid) =
+        connect_named_pipe_reader(control_pipe_name)?;
+    let (mut event_pipe, actual_event_server_pid) = connect_named_pipe_writer(event_pipe_name)?;
+    if actual_control_server_pid != control_server_pid
+        || actual_event_server_pid != event_server_pid
+    {
         bail!("Windows sandbox pipe server PID did not match its authenticated name");
     }
+    let session_nonce = control_nonce;
 
     write_json(
-        &mut pipe,
+        &mut event_pipe,
         FrameKind::Hello,
         &HelloMessage {
             protocol: PROTOCOL_VERSION,
@@ -260,7 +245,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
             session_nonce: session_nonce.clone(),
         },
     )?;
-    let spawn_frame = read_frame(&mut pipe)?
+    let spawn_frame = read_frame(&mut control_pipe)?
         .ok_or_else(|| anyhow!("Windows sandbox host disconnected before Spawn"))?;
     if spawn_frame.kind == FrameKind::Error {
         let error: ErrorMessage = serde_json::from_slice(&spawn_frame.payload)
@@ -289,7 +274,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
         Ok(token) => token,
         Err(error) => {
             write_json(
-                &mut pipe,
+                &mut event_pipe,
                 FrameKind::Error,
                 &ErrorMessage {
                     protocol: PROTOCOL_VERSION,
@@ -313,7 +298,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
         Ok(target) => target,
         Err(error) => {
             write_json(
-                &mut pipe,
+                &mut event_pipe,
                 FrameKind::Error,
                 &ErrorMessage {
                     protocol: PROTOCOL_VERSION,
@@ -329,15 +314,13 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
             target.take_stdin()?,
             target.take_stdout()?,
             target.take_stderr()?,
-            pipe.try_clone()
-                .context("clone Windows sandbox runner writer")?,
         ))
     })();
-    let (target_stdin, target_stdout, target_stderr, writer_file) = match prepared_streams {
+    let (target_stdin, target_stdout, target_stderr) = match prepared_streams {
         Ok(streams) => streams,
         Err(error) => {
             write_json(
-                &mut pipe,
+                &mut event_pipe,
                 FrameKind::Error,
                 &ErrorMessage {
                     protocol: PROTOCOL_VERSION,
@@ -348,7 +331,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
             return Err(error);
         }
     };
-    let mut writer_file = writer_file;
+    let mut writer_file = event_pipe;
     let ready = ReadyMessage {
         protocol: PROTOCOL_VERSION,
         pid: target.pid,
@@ -359,7 +342,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
             bail!("sandbox target must be Job-contained before Ready");
         }
         write_json(&mut writer_file, FrameKind::Ready, &ready)?;
-        let resume = read_frame(&mut pipe)?
+        let resume = read_frame(&mut control_pipe)?
             .ok_or_else(|| anyhow!("Windows sandbox host disconnected before Resume"))?;
         if resume.kind != FrameKind::Resume || !resume.payload.is_empty() {
             bail!("Windows sandbox host did not authorize Resume");
@@ -389,7 +372,7 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
     let (events_tx, events_rx) = sync_channel(8);
     let _stdout = pump_output(target_stdout, events_tx.clone(), FrameKind::Stdout);
     let _stderr = pump_output(target_stderr, events_tx.clone(), FrameKind::Stderr);
-    start_control_pump(pipe, target_stdin, events_tx);
+    start_control_pump(control_pipe, target_stdin, events_tx);
 
     let mut exit: Option<u32> = None;
     let mut stream_drain_deadline: Option<Instant> = None;
@@ -428,8 +411,16 @@ pub fn run(pipe_name: &str, host_sid: &str) -> Result<()> {
                     stage,
                     message,
                 };
-                write_json(&mut writer_file, FrameKind::Error, &error)?;
-                target.terminate_and_drain(1, Duration::from_secs(5))?;
+                let report_failure = write_json(&mut writer_file, FrameKind::Error, &error).err();
+                let drain_failure = target.terminate_and_drain(1, Duration::from_secs(5)).err();
+                match (report_failure, drain_failure) {
+                    (Some(report), Some(drain)) => bail!(
+                        "Windows sandbox runner stream failed; reporting failed: {report:#}; Job drain failed: {drain:#}"
+                    ),
+                    (Some(report), None) => return Err(report),
+                    (None, Some(drain)) => return Err(drain),
+                    (None, None) => {}
+                }
                 bail!("Windows sandbox runner stream failed");
             }
             Ok(RunnerEvent::TerminateRequested) => {
@@ -466,6 +457,26 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn directional_pipe_names_must_share_one_pid_and_nonce() {
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let control = format!(r"\\.\pipe\kodax-sandbox-v2-1234-{nonce}-h2r");
+        let events = format!(r"\\.\pipe\kodax-sandbox-v2-1234-{nonce}-r2h");
+        assert_eq!(
+            pipe_server_identity(&control, "h2r").unwrap(),
+            pipe_server_identity(&events, "r2h").unwrap(),
+        );
+        assert!(pipe_server_identity(&control, "r2h").is_err());
+        assert!(
+            pipe_server_identity(
+                r"\\.\pipe\kodax-sandbox-v2-1235-fedcba9876543210fedcba9876543210-r2h",
+                "r2h",
+            )
+            .unwrap()
+                != pipe_server_identity(&control, "h2r").unwrap()
+        );
+    }
 
     fn encoded_frames(frames: &[(FrameKind, &[u8])]) -> Vec<u8> {
         let mut encoded = Vec::new();
@@ -518,7 +529,6 @@ mod tests {
         run_control_pump(
             Cursor::new(encoded),
             RecordingSink(Rc::clone(&output)),
-            || Ok(()),
             || terminated.set(terminated.get() + 1),
             |stage, error| errors.borrow_mut().push(format!("{stage}: {error:#}")),
         );
@@ -608,7 +618,6 @@ mod tests {
         run_control_pump(
             Cursor::new(encoded),
             BrokenSink,
-            || Ok(()),
             || terminated.set(terminated.get() + 1),
             |stage, error| errors.borrow_mut().push(format!("{stage}: {error:#}")),
         );
@@ -626,7 +635,6 @@ mod tests {
         run_control_pump(
             Cursor::new(encoded),
             io::sink(),
-            || Ok(()),
             || terminated.set(terminated.get() + 1),
             |stage, error| errors.borrow_mut().push(format!("{stage}: {error:#}")),
         );
@@ -644,7 +652,6 @@ mod tests {
         run_control_pump(
             Cursor::new(Vec::<u8>::new()),
             io::sink(),
-            || Ok(()),
             || terminated.set(terminated.get() + 1),
             |stage, error| errors.borrow_mut().push(format!("{stage}: {error:#}")),
         );

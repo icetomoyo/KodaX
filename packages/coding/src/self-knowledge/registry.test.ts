@@ -143,6 +143,12 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('does not describe those\ntext writes as OS-token sandbox enforcement');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
+    expect(sandbox).toContain('native shell protocol is version 5');
+    expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
+    expect(sandbox).toContain('nonce-bound terminal record');
+    expect(sandbox).toContain('protected host/SYSTEM-only control directory');
+    expect(sandbox).toContain('Doctor only verifies it');
+    expect(sandbox).toContain('sandboxRuntime:6');
     expect(sandbox).toContain('descriptor-verified addon loading');
     expect(sandbox).toContain('Issue 307 retains');
     expect(sandbox).toContain('per-command ASRT Seatbelt/bubblewrap');

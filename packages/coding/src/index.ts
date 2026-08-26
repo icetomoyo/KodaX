@@ -165,6 +165,7 @@ export type {
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
   KodaXPreparedShellSandboxInvocation,
+  KodaXShellSandboxProcessControl,
   KodaXShellSandboxBackend,
   KodaXShellSandboxObservation,
   KodaXShellExecutionContract,

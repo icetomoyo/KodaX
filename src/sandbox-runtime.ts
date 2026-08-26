@@ -66,6 +66,7 @@ import {
   KodaXShellSandbox,
   KodaXShellSandboxBackend,
   KodaXShellSandboxObservation,
+  KodaXShellSandboxProcessControl,
   KodaXSkillScriptRunInput,
   KodaXSkillScriptRunner,
 } from '@kodax-ai/coding';
@@ -79,17 +80,23 @@ import {
   asrtWindowsNetworkOnlyConfig,
   createWindowsSandboxV2RunRequest,
   encodeWindowsSandboxV2Bootstrap,
+  encodeWindowsSandboxV2ControlFrame,
   resolveWindowsSandboxV2Executable,
   splitAsrtWindowsInvocation,
   WINDOWS_SANDBOX_V2_PROTOCOL,
   windowsSandboxV2Generation,
 } from './windows-sandbox-v2.js';
 import {
+  assertWindowsSandboxControlStateNotDirectlyAccessible,
   assertTrustedTextNativeStateNotDirectlyReadable,
   assertTrustedTextNativeStateNotDirectlyWritable,
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
+  ensureWindowsSandboxControlDirectory,
+  repairWindowsSandboxControlDirectory,
   trustedTextNativeArtifactStateRoots,
+  verifyWindowsSandboxControlDirectory,
   windowsNativeArtifactCacheRoot,
+  windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
 export { rewriteWindowsGitSafeDirectoryArgv, windowsGitTrustRoots };
@@ -2217,6 +2224,7 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
         diagnostics.push(...accountDiagnostics);
       } else {
         resolveWindowsSandboxV2Executable();
+        verifyWindowsSandboxControlDirectory();
         try {
           assertWindowsSandboxV2Cutover(user);
           verifyWindowsV2AccountCompatibility(user.sid);
@@ -2324,7 +2332,44 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
   if (initial.ready) return initial;
   if (!initial.setupRequired) return initial;
   const runner = await prepareWindowsSandboxRunner();
+  // Explicit setup owns first-run native cache provisioning. Doctor remains
+  // verify-only when the sandbox account is absent and therefore may leave the
+  // cache root uninitialized.
+  resolveWindowsSandboxV2Executable();
   const oldUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
+  let controlStateFailure: unknown;
+  try {
+    verifyWindowsSandboxControlDirectory();
+  } catch (error: unknown) {
+    controlStateFailure = error;
+  }
+  if (controlStateFailure !== undefined) {
+    if (existsSync(windowsSandboxControlDirectory())) {
+      if (oldUser.sid === undefined && oldUser.provisioned !== false) {
+        throw new Error(
+          '[windows_control_repair_sid_unavailable] The native shell control directory needs '
+          + 'repair, but the provisioned sandbox account SID is unavailable; repair cannot '
+          + 'safely prove that no sandbox process still holds a control-state handle.',
+        );
+      }
+      if (oldUser.sid !== undefined && !await windowsSandboxSidIsIdle(oldUser.sid)) {
+        throw new Error(
+          'The native shell control directory needs repair while the sandbox account still has '
+          + 'a live process; close sandboxed shells and retry "kodax sandbox setup".',
+        );
+      }
+    }
+    try {
+      repairWindowsSandboxControlDirectory();
+    } catch (repairError: unknown) {
+      throw new AggregateError(
+        [controlStateFailure, repairError],
+        'Windows native shell control state verification and setup repair both failed.',
+      );
+    }
+    const repaired = await doctorSandboxRuntime({ refresh: true });
+    if (repaired.ready) return repaired;
+  }
   let markerMatchesCurrentUser = false;
   if (windowsSandboxAccountDiagnostics(oldUser).length === 0 && oldUser.sid !== undefined) {
     try {
@@ -2629,6 +2674,7 @@ interface SandboxProcessResult {
 
 const SANDBOX_TERMINATION_FORCE_MS = 250;
 const SANDBOX_TERMINATION_HARD_MS = 1_500;
+const WINDOWS_V2_TERMINATION_ATTESTATION_MS = 12_000;
 
 async function collectProcess(
   child: ReturnType<typeof spawn>,
@@ -2636,10 +2682,11 @@ async function collectProcess(
   timeoutMs = SCRIPT_TIMEOUT_MS,
   maxOutputBytes = MAX_OUTPUT_BYTES,
   nativeJobContained = false,
+  nativeProcessControl?: KodaXShellSandboxProcessControl,
 ): Promise<SandboxProcessResult> {
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
-  const childProcessStartIdentity = child.pid === undefined
+  const childProcessStartIdentity = nativeProcessControl !== undefined || child.pid === undefined
     ? undefined
     : readProcessStartIdentity(child.pid);
   let bytes = 0;
@@ -2662,6 +2709,12 @@ async function collectProcess(
       rejectTermination = reject;
     });
     void terminationProof.catch(() => undefined);
+    if (nativeProcessControl !== undefined) {
+      void nativeProcessControl.terminate(child).then(resolveTermination, (failure: unknown) => {
+        rejectTermination(failure instanceof Error ? failure : new Error(String(failure)));
+      });
+      return;
+    }
     const unconfirmedTermination = async (cause?: unknown): Promise<Error> => {
       const terminationError = nativeJobContained
         ? new Error('Native Windows sandbox host termination was not confirmed.')
@@ -2728,8 +2781,23 @@ async function collectProcess(
     });
     const exitCode = await Promise.race([completed, stopRequested.then(() => 1)]);
     if (stopError !== undefined) {
-      await terminationProof;
-      throw stopError;
+      const originalStopError = stopError;
+      try {
+        await terminationProof;
+      } catch (terminationError: unknown) {
+        const nativeDiagnostic = Buffer.concat(stderrChunks).toString('utf8').trim();
+        throw new AggregateError(
+          [
+            originalStopError,
+            terminationError,
+            ...(nativeDiagnostic === ''
+              ? []
+              : [new Error(`Native sandbox stderr: ${nativeDiagnostic.slice(0, 4_096)}`)]),
+          ],
+          'Sandboxed command failed and native termination was not confirmed.',
+        );
+      }
+      throw originalStopError;
     }
     return {
       exitCode,
@@ -2767,6 +2835,214 @@ function sandboxAbortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
     : new DOMException('Operation aborted', 'AbortError');
+}
+
+interface WindowsV2ProcessControl extends KodaXShellSandboxProcessControl {
+  waitForTerminalObservation(): Promise<void>;
+}
+
+function createWindowsV2ProcessControl(
+  bootstrap: Uint8Array,
+  terminalRecordPath: string,
+  terminalNonce: string,
+): WindowsV2ProcessControl {
+  type ControlPhase = 'bootstrap-pending' | 'control-open' | 'terminal';
+  const terminations = new WeakMap<ReturnType<typeof spawn>, Promise<void>>();
+  const phases = new WeakMap<ReturnType<typeof spawn>, ControlPhase>();
+  let terminalObservation: Promise<void> | undefined;
+  const initialInput = Buffer.concat([
+    Buffer.from(bootstrap),
+    encodeWindowsSandboxV2ControlFrame('close-stdin'),
+  ]);
+
+  const closeInput: KodaXShellSandboxProcessControl['closeInput'] = (
+    child,
+    signal,
+    deadlineAt,
+  ) => {
+    const stdin = child.stdin;
+    if (stdin === null) {
+      return Promise.reject(new Error('Native sandbox bootstrap pipe was not created.'));
+    }
+    if (signal?.aborted) return Promise.reject(sandboxAbortError(signal));
+    if (Date.now() >= deadlineAt) {
+      return Promise.reject(new Error('Native sandbox bootstrap delivery timed out.'));
+    }
+    phases.set(child, 'bootstrap-pending');
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(
+        () => finish(new Error('Native sandbox bootstrap delivery timed out.')),
+        Math.max(1, deadlineAt - Date.now()),
+      );
+      timer.unref();
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const onError = (error: Error): void => {
+        finish(new Error('Native sandbox bootstrap delivery failed.', { cause: error }));
+      };
+      const onClose = (): void => {
+        stdin.off('error', onError);
+        if (!settled) {
+          finish(new Error('Native sandbox bootstrap pipe closed before delivery completed.'));
+        }
+      };
+      const onAbort = (): void => {
+        if (signal !== undefined) finish(sandboxAbortError(signal));
+      };
+      // Keep observing late EPIPE until close. The write callback only proves that
+      // bootstrap + CloseStdin entered the persistent native control stream.
+      stdin.on('error', onError);
+      stdin.once('close', onClose);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      stdin.write(initialInput, (error) => {
+        if (error === null || error === undefined) {
+          if (!settled) phases.set(child, 'control-open');
+          finish();
+        } else {
+          finish(new Error('Native sandbox bootstrap delivery failed.', { cause: error }));
+        }
+      });
+    });
+  };
+
+  const verifyTerminalRecord = async (): Promise<void> => {
+    const raw = await readFile(terminalRecordPath, 'utf8');
+    const value = JSON.parse(raw) as unknown;
+    if (
+      typeof value !== 'object'
+      || value === null
+      || Reflect.get(value, 'protocol') !== WINDOWS_SANDBOX_V2_PROTOCOL
+      || Reflect.get(value, 'nonce') !== terminalNonce.toLowerCase()
+      || Reflect.get(value, 'jobDrained') !== true
+      || !Number.isSafeInteger(Reflect.get(value, 'targetExitCode'))
+      || typeof Reflect.get(value, 'terminationRequested') !== 'boolean'
+    ) {
+      throw new Error('Native sandbox terminal record was invalid.');
+    }
+  };
+
+  const terminate: KodaXShellSandboxProcessControl['terminate'] = (child) => {
+    const existing = terminations.get(child);
+    if (existing !== undefined) return existing;
+    const termination = new Promise<void>((resolve, reject) => {
+      const preBootstrap = phases.get(child) === undefined;
+      const stdin = child.stdin;
+      if (stdin === null) {
+        reject(new Error('Native sandbox control pipe was not created.'));
+        return;
+      }
+      if (child.exitCode !== null || child.signalCode !== null) {
+        phases.set(child, 'terminal');
+        if (preBootstrap) resolve();
+        else void verifyTerminalRecord().then(resolve, reject);
+        return;
+      }
+      let settled = false;
+      let emergencyStarted = false;
+      let deliveryFailure: Error | undefined;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off('close', onClose);
+        child.off('error', onChildError);
+        stdin.off('error', onStdinError);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const onClose = (code: number | null, closeSignal: NodeJS.Signals | null): void => {
+        if (emergencyStarted) return;
+        phases.set(child, 'terminal');
+        if (preBootstrap) {
+          finish();
+          return;
+        }
+        void verifyTerminalRecord().then(
+          () => finish(),
+          (recordError: unknown) => finish(new Error(
+            `Native sandbox closed without a Job-drain attestation (code ${String(code)}, `
+            + `signal ${String(closeSignal)}).`,
+            {
+              cause: new AggregateError(
+                [recordError, ...(deliveryFailure === undefined ? [] : [deliveryFailure])],
+                'Native sandbox terminal record verification failed.',
+              ),
+            },
+          )),
+        );
+      };
+      const onChildError = (error: Error): void => {
+        deliveryFailure ??= error;
+      };
+      const onStdinError = (error: Error): void => {
+        deliveryFailure ??= error;
+      };
+      const timer = setTimeout(() => {
+        emergencyStarted = true;
+        void killChildProcessTree(child, { forceMs: 500, taskkillMs: 500 }).then(
+          (result) => finish(new AggregateError(
+            [
+              new Error(
+                `Native sandbox did not attest Job drain within `
+                + `${WINDOWS_V2_TERMINATION_ATTESTATION_MS} ms.`,
+              ),
+              ...(deliveryFailure === undefined ? [] : [deliveryFailure]),
+              ...(result.status === 'unknown'
+                ? [new Error('Emergency process-tree termination was not confirmed.')]
+                : []),
+            ],
+            'Native sandbox termination was not confirmed by its runner.',
+          )),
+          (error: unknown) => finish(new AggregateError(
+            [
+              new Error(
+                `Native sandbox did not attest Job drain within `
+                + `${WINDOWS_V2_TERMINATION_ATTESTATION_MS} ms.`,
+              ),
+              ...(deliveryFailure === undefined ? [] : [deliveryFailure]),
+              error,
+            ],
+            'Native sandbox termination and emergency cleanup both failed.',
+          )),
+        );
+      }, WINDOWS_V2_TERMINATION_ATTESTATION_MS);
+      timer.unref();
+      child.once('close', onClose);
+      child.once('error', onChildError);
+      stdin.on('error', onStdinError);
+      stdin.end(preBootstrap ? undefined : encodeWindowsSandboxV2ControlFrame('terminate'), (error) => {
+        if (error !== null && error !== undefined) deliveryFailure ??= error;
+      });
+    });
+    terminations.set(child, termination);
+    terminalObservation = termination;
+    void termination.catch(() => undefined);
+    return termination;
+  };
+
+  return {
+    closeInput,
+    terminate,
+    async waitForTerminalObservation() {
+      const active = terminalObservation;
+      if (active === undefined) return;
+      await active.then(
+        () => undefined,
+        () => undefined,
+      );
+    },
+  };
 }
 
 function closeNativeSandboxInput(
@@ -2964,6 +3240,10 @@ async function runBroker(request: SandboxBrokerRequest, signal?: AbortSignal): P
       deadlineAt,
     });
     if (prepared === undefined) throw new Error('Windows native sandbox invocation was not prepared.');
+    if (prepared.processControl === undefined) {
+      throw new Error('Windows native sandbox invocation has no persistent process control.');
+    }
+    const processControl = prepared.processControl;
     const child = spawn(prepared.executable, [...prepared.args], {
       cwd: request.cwd,
       env: prepared.env,
@@ -2980,11 +3260,24 @@ async function runBroker(request: SandboxBrokerRequest, signal?: AbortSignal): P
         Math.max(1, deadlineAt - Date.now()),
         MAX_OUTPUT_BYTES,
         true,
+        processControl,
       );
-      const [, collected] = await Promise.all([
-        closeNativeSandboxInput(child, prepared.stdinPrefix, signal, deadlineAt),
-        collecting,
-      ]);
+      try {
+        await processControl.closeInput(child, signal, deadlineAt);
+      } catch (deliveryError: unknown) {
+        let finalError = deliveryError;
+        try {
+          await processControl.terminate(child);
+        } catch (terminationError: unknown) {
+          finalError = new AggregateError(
+            [deliveryError, terminationError],
+            'Native sandbox bootstrap and termination both failed.',
+          );
+        }
+        await collecting.catch(() => undefined);
+        throw finalError;
+      }
+      const collected = await collecting;
       result = collected;
     } catch (error: unknown) {
       executionFailure = error;
@@ -3929,6 +4222,13 @@ async function runWindowsV2Sandboxed(
   endpoints: readonly SandboxEndpoint[],
 ): Promise<SandboxProcessResult> {
   const deadlineAt = Date.now() + (input.timeoutMs ?? SCRIPT_TIMEOUT_MS);
+  const targetLaunch = input.command === process.execPath
+    ? prepareInternalNodeLaunch({
+        args: input.args ?? [],
+        env,
+        isElectron: process.versions.electron !== undefined,
+      })
+    : { args: [...(input.args ?? [])], env };
   const shellPolicy = withPreparedWindowsRunner({
     network: {
       allowedDomains: [],
@@ -3948,15 +4248,19 @@ async function runWindowsV2Sandboxed(
   const prepared = await prepareWindowsV2Invocation({
     shellPolicy,
     executable: input.command,
-    args: input.args ?? [],
+    args: targetLaunch.args,
     cwd,
-    env,
+    env: targetLaunch.env,
     endpoints,
     allowAllNetwork: network.mode === 'allow',
     signal: input.signal,
     deadlineAt,
   });
   if (prepared === undefined) throw new Error('Windows native sandbox invocation was not prepared.');
+  if (prepared.processControl === undefined) {
+    throw new Error('Windows native sandbox invocation has no persistent process control.');
+  }
+  const processControl = prepared.processControl;
   const child = spawn(prepared.executable, [...prepared.args], {
     cwd,
     env: prepared.env,
@@ -3974,11 +4278,24 @@ async function runWindowsV2Sandboxed(
       Math.max(1, deadlineAt - Date.now()),
       input.maxOutputBytes ?? MAX_OUTPUT_BYTES,
       true,
+      processControl,
     );
-    const [, collected] = await Promise.all([
-      closeNativeSandboxInput(child, prepared.stdinPrefix, input.signal, deadlineAt),
-      result,
-    ]);
+    try {
+      await processControl.closeInput(child, input.signal, deadlineAt);
+    } catch (deliveryError: unknown) {
+      let finalError = deliveryError;
+      try {
+        await processControl.terminate(child);
+      } catch (terminationError: unknown) {
+        finalError = new AggregateError(
+          [deliveryError, terminationError],
+          'Native sandbox bootstrap and termination both failed.',
+        );
+      }
+      await result.catch(() => undefined);
+      throw finalError;
+    }
+    const collected = await result;
     return collected;
   } catch (error: unknown) {
     executionFailure = error;
@@ -4023,6 +4340,9 @@ export async function runKodaXSandboxed(
     denyRead: normalizedSandboxPaths(input.filesystem.denyRead, cwd),
     denyWrite: normalizedSandboxPaths(input.filesystem.denyWrite, cwd),
   };
+  if (process.platform === 'win32') {
+    assertWindowsSandboxControlStateNotDirectlyAccessible(normalizedFilesystem);
+  }
   if (process.platform !== 'win32') {
     assertTrustedTextNativeStateNotDirectlyReadable(normalizedFilesystem.allowRead);
   }
@@ -4212,9 +4532,7 @@ function waitForSandboxRunnerPreparation<T>(
 }
 
 async function sandboxControlDirectory(): Promise<string> {
-  const directory = path.join(getAgentConfigHome(), 'sandbox-runtime');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  return directory;
+  return ensureWindowsSandboxControlDirectory();
 }
 
 function windowsNetworkBrokerEntryArgs(initFile: string): string[] {
@@ -4385,6 +4703,12 @@ async function prepareWindowsV2Invocation(input: {
     getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
   );
   const shellPolicy = input.shellPolicy;
+  assertWindowsSandboxControlStateNotDirectlyAccessible({
+    allowRead: shellPolicy.filesystem.allowRead,
+    allowWrite: shellPolicy.filesystem.allowWrite,
+    denyRead: shellPolicy.filesystem.denyRead,
+    denyWrite: shellPolicy.filesystem.denyWrite,
+  });
   assertWindowsNativeArtifactStoreNotDirectlyWritable(shellPolicy.filesystem.allowWrite);
   const nativeArtifactRoot = windowsNativeArtifactCacheRoot();
   const shellArtifact = resolveWindowsSandboxV2Executable({
@@ -4392,6 +4716,9 @@ async function prepareWindowsV2Invocation(input: {
     untrustedWriteRoots: shellPolicy.filesystem.allowWrite,
   });
   const controlDirectory = await sandboxControlDirectory();
+  if (controlDirectory.toLowerCase() !== windowsSandboxControlDirectory().toLowerCase()) {
+    throw new Error('Windows native shell control state resolved to an unexpected path.');
+  }
   const brokerRequestFile = path.join(
     controlDirectory,
     `windows-network-${process.pid}-${randomUUID()}.json`,
@@ -4412,6 +4739,7 @@ async function prepareWindowsV2Invocation(input: {
   });
   let broker: ReturnType<typeof spawn> | undefined;
   let nativeRequestFile: string | undefined;
+  let nativeTerminalRecordFile: string | undefined;
   try {
     broker = spawn(process.execPath, launch.args, {
       cwd: controlDirectory,
@@ -4448,6 +4776,11 @@ async function prepareWindowsV2Invocation(input: {
       controlDirectory,
       `windows-shell-${process.pid}-${randomUUID()}.json`,
     );
+    nativeTerminalRecordFile = path.join(
+      controlDirectory,
+      `windows-terminal-${process.pid}-${randomUUID()}.json`,
+    );
+    const terminalNonce = randomUUID();
     const targetEnvironment = mergeWindowsSandboxTargetEnvironment(
       ready.asrtChildEnvironment,
       input.env,
@@ -4477,23 +4810,35 @@ async function prepareWindowsV2Invocation(input: {
         nativeArtifactRoot,
       ])],
       controllerPipe: ready.controllerPipe,
+      terminalRecordPath: nativeTerminalRecordFile,
+      terminalNonce,
       launchDeadlineUnixMs,
     });
     await writeFile(nativeRequestFile, JSON.stringify(nativeRequest), { flag: 'wx', mode: 0o600 });
     let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
     const ownedBroker = broker;
     const ownedRequestFile = nativeRequestFile;
+    const ownedTerminalRecordFile = nativeTerminalRecordFile;
+    const bootstrap = encodeWindowsSandboxV2Bootstrap(targetEnvironment);
+    const processControl = createWindowsV2ProcessControl(
+      bootstrap,
+      ownedTerminalRecordFile,
+      terminalNonce,
+    );
     return {
       executable: shellArtifact.path,
       args: ['__host', ownedRequestFile],
       env: sanitizedEnvironment(),
-      stdinPrefix: encodeWindowsSandboxV2Bootstrap(targetEnvironment),
+      stdinPrefix: bootstrap,
       processTreeContainment: 'native-job',
+      processControl,
       cleanup() {
         cleanupPromise ??= (async () => {
+          await processControl.waitForTerminalObservation();
           const results = await Promise.allSettled([
             stopWindowsNetworkBroker(ownedBroker),
             rm(ownedRequestFile, { force: true }),
+            rm(ownedTerminalRecordFile, { force: true }),
           ]);
           const failures = results.flatMap((result) => (
             result.status === 'rejected' ? [result.reason] : []
@@ -4516,6 +4861,9 @@ async function prepareWindowsV2Invocation(input: {
       ...(broker === undefined ? [] : [stopWindowsNetworkBroker(broker)]),
       rm(brokerRequestFile, { force: true }),
       ...(nativeRequestFile === undefined ? [] : [rm(nativeRequestFile, { force: true })]),
+      ...(nativeTerminalRecordFile === undefined
+        ? []
+        : [rm(nativeTerminalRecordFile, { force: true })]),
     ]);
     const failures = [
       error,

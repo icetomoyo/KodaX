@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,23 +15,27 @@ use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_READ,
 };
 
-use crate::acl::{ensure_allow_aces, ensure_execution_denies};
+use crate::acl::{ensure_allow_aces, ensure_execution_denies, verify_control_directory_boundary};
 use crate::model::{
     BootstrapRequest, ErrorMessage, ExitMessage, HelloMessage, ReadyMessage, RunRequest,
-    SpawnMessage, StartedMessage, controller_pipe_server_pid,
+    SpawnMessage, StartedMessage, TerminalRecord, controller_pipe_server_pid,
 };
-use crate::protocol::{
-    Frame, FrameKind, MAX_STREAM_BYTES, PROTOCOL_VERSION, read_frame, write_frame,
-};
+#[cfg(test)]
+use crate::protocol::MAX_STREAM_BYTES;
+use crate::protocol::{Frame, FrameKind, PROTOCOL_VERSION, read_frame, write_frame};
 use crate::win::{
-    NamedPipeServer, OwnedHandle, PrivateDesktop, SpawnedHostChild, connect_controller_pipe,
-    current_token, disconnect_named_pipe, named_pipe_available_bytes, named_pipe_client_identity,
-    process_is_descendant_of, spawn_asrt_launcher, terminate_process, token_user_sid,
-    verify_protected_runner_process,
+    NamedPipeServer, NamedPipeServers, OwnedHandle, PrivateDesktop, SpawnedHostChild,
+    connect_controller_pipe, current_token, disconnect_named_pipe, named_pipe_available_bytes,
+    named_pipe_client_identity, process_is_descendant_of, spawn_asrt_launcher, terminate_process,
+    token_user_sid, verify_protected_runner_process,
 };
 
 const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
 const MAX_BOOTSTRAP_BYTES: usize = 512 * 1024;
+pub const TERMINATION_CONFIRMED_EXIT_CODE: u32 = 254;
+const CONTROL_OPEN: u8 = 0;
+const CONTROL_TERMINATION_REQUESTED: u8 = 1;
+const CONTROL_LOST: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ControllerOutcome {
@@ -244,6 +248,33 @@ fn read_request(path: &Path) -> Result<RunRequest> {
     Ok(request)
 }
 
+fn validate_terminal_record_path(request_path: &Path, terminal_path: &Path) -> Result<()> {
+    if !terminal_path.is_absolute() || terminal_path.parent() != request_path.parent() {
+        bail!("Windows sandbox terminal record must share the request directory");
+    }
+    let name = terminal_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("Windows sandbox terminal record name is not Unicode"))?;
+    if !name.starts_with("windows-terminal-") || !name.ends_with(".json") {
+        bail!("Windows sandbox terminal record name is invalid");
+    }
+    Ok(())
+}
+
+fn write_terminal_record(path: &Path, record: &TerminalRecord) -> Result<()> {
+    let payload = serde_json::to_vec(record).context("encode Windows sandbox terminal record")?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .context("create Windows sandbox terminal record")?;
+    file.write_all(&payload)
+        .context("write Windows sandbox terminal record")?;
+    file.sync_all()
+        .context("flush Windows sandbox terminal record")
+}
+
 fn read_bootstrap(mut reader: impl Read) -> Result<BootstrapRequest> {
     let mut header = [0u8; 4];
     reader
@@ -340,44 +371,57 @@ fn connect_runner(
     }
 }
 
-fn write_locked(writer: &Arc<Mutex<File>>, kind: FrameKind, payload: &[u8]) -> Result<()> {
-    let mut writer = writer
-        .lock()
-        .map_err(|_| anyhow!("Windows sandbox protocol writer lock was poisoned"))?;
-    write_frame(&mut *writer, kind, payload)
-}
-
-fn pump_stdin(mut input: impl Read, mut send: impl FnMut(FrameKind, &[u8]) -> Result<()>) {
-    let mut buffer = vec![0u8; MAX_STREAM_BYTES];
+fn pump_control(
+    mut input: impl Read,
+    outcome: &AtomicU8,
+    mut send: impl FnMut(FrameKind, &[u8]) -> Result<()>,
+) {
     loop {
-        let count = match input.read(&mut buffer) {
-            Ok(0) => {
-                let _ = send(FrameKind::CloseStdin, &[]);
+        match read_frame(&mut input) {
+            Ok(Some(frame)) if matches!(frame.kind, FrameKind::Stdin | FrameKind::CloseStdin) => {
+                if send(frame.kind, &frame.payload).is_err() {
+                    outcome.store(CONTROL_LOST, Ordering::Release);
+                    return;
+                }
+            }
+            Ok(Some(frame)) if frame.kind == FrameKind::Terminate => {
+                outcome.store(CONTROL_TERMINATION_REQUESTED, Ordering::Release);
+                if send(FrameKind::Terminate, &[]).is_err() {
+                    outcome.store(CONTROL_LOST, Ordering::Release);
+                }
                 return;
             }
-            Ok(count) => count,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => {
+            Ok(Some(_)) | Ok(None) | Err(_) => {
+                outcome.store(CONTROL_LOST, Ordering::Release);
                 let _ = send(FrameKind::Terminate, &[]);
                 return;
             }
-        };
-        if send(FrameKind::Stdin, &buffer[..count]).is_err() {
-            return;
         }
     }
 }
 
-fn start_stdin_pump(writer: Arc<Mutex<File>>) {
+fn start_control_pump(mut writer: File, outcome: Arc<AtomicU8>) {
     std::thread::spawn(move || {
         let input = std::io::stdin().lock();
-        pump_stdin(input, |kind, payload| write_locked(&writer, kind, payload));
+        pump_control(input, &outcome, |kind, payload| {
+            write_frame(&mut writer, kind, payload)
+        });
     });
 }
 
 pub fn run(request_path: &Path) -> Result<u32> {
     let request = read_request(request_path)?;
+    validate_terminal_record_path(request_path, Path::new(&request.terminal_record_path))?;
     let deadline = LaunchDeadline::from_unix_ms(request.launch_deadline_unix_ms)?;
+    let current = current_token()?;
+    let host_sid = token_user_sid(current.raw())?;
+    let control_directory = request_path
+        .parent()
+        .ok_or_else(|| anyhow!("Windows sandbox request has no control directory"))?;
+    verify_control_directory_boundary(&request, control_directory, &host_sid)?;
+    if host_sid == request.sandbox_user_sid {
+        bail!("Windows sandbox host must not run as the restricted account");
+    }
     let bootstrap = read_bootstrap(std::io::stdin().lock())?;
     deadline.ensure("bootstrap")?;
     let (controller, controller_pid) = connect_controller_pipe(&request.controller_pipe)?;
@@ -385,11 +429,6 @@ pub fn run(request_path: &Path) -> Result<u32> {
         bail!("Windows sandbox controller pipe server PID did not match its authenticated name");
     }
     deadline.ensure("controller authentication")?;
-    let current = current_token()?;
-    let host_sid = token_user_sid(current.raw())?;
-    if host_sid == request.sandbox_user_sid {
-        bail!("Windows sandbox host must not run as the restricted account");
-    }
     let executable = std::env::current_exe().context("resolve Windows sandbox executable")?;
     let runner_directory = executable
         .parent()
@@ -398,8 +437,8 @@ pub fn run(request_path: &Path) -> Result<u32> {
     ensure_allow_aces(&request, runner_directory)?;
     deadline.ensure("ACL authorization")?;
 
-    let server = NamedPipeServer::create(&host_sid, &request.sandbox_user_sid)?;
-    let session_nonce = server.session_nonce.clone();
+    let servers = NamedPipeServers::create(&host_sid, &request.sandbox_user_sid)?;
+    let session_nonce = servers.session_nonce.clone();
     let desktop = PrivateDesktop::create(
         &host_sid,
         &request.sandbox_group_sid,
@@ -409,7 +448,8 @@ pub fn run(request_path: &Path) -> Result<u32> {
     let mut asrt_args = request.asrt_prefix_args.clone();
     asrt_args.push(executable.to_string_lossy().into_owned());
     asrt_args.push("__runner".into());
-    asrt_args.push(server.name.clone());
+    asrt_args.push(servers.runner_control.name.clone());
+    asrt_args.push(servers.runner_events.name.clone());
     asrt_args.push(host_sid.clone());
     deadline.ensure("ASRT creation")?;
     let mut child = spawn_asrt_launcher(&request.asrt_executable, &asrt_args, &request.cwd)?;
@@ -419,24 +459,28 @@ pub fn run(request_path: &Path) -> Result<u32> {
     deadline.ensure("ASRT resume")?;
     child.resume()?;
     child.start_diagnostic_pump();
-    let (pipe, client_pid) = connect_runner(server, &child, deadline)?;
+    let (control_pipe, control_client_pid) =
+        connect_runner(servers.runner_control, &child, deadline)?;
+    let (mut event_pipe, event_client_pid) =
+        connect_runner(servers.runner_events, &child, deadline)?;
+    if control_client_pid != event_client_pid {
+        bail!("Windows sandbox runner pipe endpoints used different client processes");
+    }
+    let client_pid = event_client_pid;
     if !process_is_descendant_of(client_pid, child.pid)? {
         bail!(
             "Windows sandbox runner did not descend from the exact ASRT launcher {}",
             child.pid,
         );
     }
-    let mut hello_reader = pipe
-        .try_clone()
-        .context("clone pipe for runner authentication")?;
     let hello: HelloMessage = decode_json(
-        next_frame(&mut hello_reader, FrameKind::Hello)?,
+        next_frame(&mut event_pipe, FrameKind::Hello)?,
         FrameKind::Hello,
     )?;
-    drop(hello_reader);
     // Windows permits named-pipe client impersonation only after the server has read
     // client data. The authenticated Hello above establishes that ordering.
-    let (client_sid, client_logon_sid, client_restricted) = named_pipe_client_identity(&pipe)?;
+    let (client_sid, client_logon_sid, client_restricted) =
+        named_pipe_client_identity(&event_pipe)?;
     if client_sid != request.sandbox_user_sid {
         bail!("Windows sandbox pipe client did not run as the restricted account");
     }
@@ -451,17 +495,15 @@ pub fn run(request_path: &Path) -> Result<u32> {
     }
     verify_protected_runner_process(client_pid, &host_sid, &request.sandbox_user_sid)?;
     abort.attach_runner(
-        pipe.try_clone()
+        control_pipe
+            .try_clone()
             .context("clone authenticated Windows sandbox abort pipe")?,
     )?;
     child.close_launch_stdin();
 
-    // relay() owns the protocol read cursor. Re-open its first message by passing the
-    // authenticated Hello explicitly would add a second state machine, so authentication
-    // above reads from a clone only for identity and relay starts at the shared cursor.
-    // Named-pipe handles share their file position; the next frame is Spawn/Ready traffic.
     relay_after_hello(
-        pipe,
+        event_pipe,
+        control_pipe,
         &request,
         hello,
         bootstrap,
@@ -475,7 +517,8 @@ pub fn run(request_path: &Path) -> Result<u32> {
 
 #[allow(clippy::too_many_arguments)] // Own all authenticated launch guards until Exit.
 fn relay_after_hello(
-    mut pipe: File,
+    mut event_pipe: File,
+    mut control_pipe: File,
     request: &RunRequest,
     hello: HelloMessage,
     bootstrap: BootstrapRequest,
@@ -496,11 +539,8 @@ fn relay_after_hello(
         &hello.logon_sid,
     )?;
     deadline.ensure("execution deny verification")?;
-    let mut writer_file = pipe
-        .try_clone()
-        .context("clone Windows sandbox pipe writer")?;
     write_json(
-        &mut writer_file,
+        &mut control_pipe,
         FrameKind::Spawn,
         &SpawnMessage {
             protocol: PROTOCOL_VERSION,
@@ -511,25 +551,27 @@ fn relay_after_hello(
             target_environment: bootstrap.target_environment,
         },
     )?;
-    let ready: ReadyMessage =
-        decode_json(next_frame(&mut pipe, FrameKind::Ready)?, FrameKind::Ready)?;
+    let ready: ReadyMessage = decode_json(
+        next_frame(&mut event_pipe, FrameKind::Ready)?,
+        FrameKind::Ready,
+    )?;
     deadline.ensure("Ready")?;
     if ready.protocol != PROTOCOL_VERSION || !ready.job_contained {
         bail!("Windows sandbox target was not proven contained before resume");
     }
     deadline.ensure("target resume")?;
-    write_frame(&mut writer_file, FrameKind::Resume, &[])?;
+    write_frame(&mut control_pipe, FrameKind::Resume, &[])?;
     let started: StartedMessage = decode_json(
-        next_frame(&mut pipe, FrameKind::Started)?,
+        next_frame(&mut event_pipe, FrameKind::Started)?,
         FrameKind::Started,
     )?;
     validate_started(&ready, &started)?;
     deadline.ensure("Started")?;
     launch_watchdog.finish()?;
-    let writer = Arc::new(Mutex::new(writer_file));
-    start_stdin_pump(Arc::clone(&writer));
+    let control_outcome = Arc::new(AtomicU8::new(CONTROL_OPEN));
+    start_control_pump(control_pipe, Arc::clone(&control_outcome));
     loop {
-        let frame = read_frame(&mut pipe)?
+        let frame = read_frame(&mut event_pipe)?
             .ok_or_else(|| anyhow!("Windows sandbox runner disconnected before Exit"))?;
         match frame.kind {
             FrameKind::Stdout => {
@@ -550,7 +592,26 @@ fn relay_after_hello(
                 if controller_monitor.finish()? == ControllerOutcome::Lost {
                     bail!("Windows sandbox controller disconnected before Exit settled");
                 }
-                return Ok(exit.code);
+                let control_state = control_outcome.load(Ordering::Acquire);
+                let termination_requested = control_state == CONTROL_TERMINATION_REQUESTED;
+                write_terminal_record(
+                    Path::new(&request.terminal_record_path),
+                    &TerminalRecord {
+                        protocol: PROTOCOL_VERSION,
+                        nonce: request.terminal_nonce.clone(),
+                        job_drained: true,
+                        target_exit_code: exit.code,
+                        termination_requested,
+                    },
+                )?;
+                return match control_state {
+                    CONTROL_OPEN => Ok(exit.code),
+                    CONTROL_TERMINATION_REQUESTED => Ok(TERMINATION_CONFIRMED_EXIT_CODE),
+                    CONTROL_LOST => {
+                        bail!("Windows sandbox host control stream was lost before Exit settled")
+                    }
+                    _ => bail!("Windows sandbox host control state was invalid"),
+                };
             }
             FrameKind::Error => {
                 let error: ErrorMessage = serde_json::from_slice(&frame.payload)?;
@@ -574,9 +635,7 @@ fn validate_started(ready: &ReadyMessage, started: &StartedMessage) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-    use std::io::{self, Cursor, Read};
-    use std::rc::Rc;
+    use std::io::Cursor;
 
     use super::*;
 
@@ -658,107 +717,97 @@ mod tests {
     }
 
     #[test]
-    fn empty_stdin_emits_exactly_one_close_frame() {
+    fn close_stdin_keeps_control_open_until_terminate() {
+        let mut input = Vec::new();
+        write_frame(&mut input, FrameKind::CloseStdin, &[]).unwrap();
+        write_frame(&mut input, FrameKind::Terminate, &[]).unwrap();
         let mut frames = Vec::new();
-        pump_stdin(Cursor::new(Vec::<u8>::new()), |kind, payload| {
+        let outcome = AtomicU8::new(CONTROL_OPEN);
+        pump_control(Cursor::new(input), &outcome, |kind, payload| {
+            if kind == FrameKind::Terminate {
+                assert_eq!(
+                    outcome.load(Ordering::Acquire),
+                    CONTROL_TERMINATION_REQUESTED,
+                );
+            }
             frames.push((kind, payload.to_vec()));
             Ok(())
         });
 
-        assert_eq!(frames, vec![(FrameKind::CloseStdin, Vec::new())]);
+        assert_eq!(
+            frames,
+            vec![
+                (FrameKind::CloseStdin, Vec::new()),
+                (FrameKind::Terminate, Vec::new()),
+            ]
+        );
+        assert_eq!(
+            outcome.load(Ordering::Acquire),
+            CONTROL_TERMINATION_REQUESTED
+        );
     }
 
     #[test]
-    fn binary_and_large_stdin_are_lossless_and_bounded() {
+    fn binary_and_large_control_stdin_are_lossless_and_bounded() {
         let input = (0..(4 * 1024 * 1024 + 17))
             .map(|index| (index % 256) as u8)
             .collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+        for chunk in input.chunks(MAX_STREAM_BYTES) {
+            write_frame(&mut encoded, FrameKind::Stdin, chunk).unwrap();
+        }
+        write_frame(&mut encoded, FrameKind::CloseStdin, &[]).unwrap();
+        write_frame(&mut encoded, FrameKind::Terminate, &[]).unwrap();
         let mut frames = Vec::new();
-        pump_stdin(Cursor::new(input.clone()), |kind, payload| {
+        let outcome = AtomicU8::new(CONTROL_OPEN);
+        pump_control(Cursor::new(encoded), &outcome, |kind, payload| {
             frames.push((kind, payload.to_vec()));
             Ok(())
         });
 
-        assert_eq!(frames.last(), Some(&(FrameKind::CloseStdin, Vec::new())));
+        assert_eq!(frames.last(), Some(&(FrameKind::Terminate, Vec::new())));
         assert!(
-            frames[..frames.len() - 1]
+            frames[..frames.len() - 2]
                 .iter()
                 .all(|(kind, payload)| *kind == FrameKind::Stdin
                     && payload.len() <= MAX_STREAM_BYTES)
         );
-        let output = frames[..frames.len() - 1]
+        let output = frames[..frames.len() - 2]
             .iter()
             .flat_map(|(_, payload)| payload.iter().copied())
             .collect::<Vec<_>>();
         assert_eq!(output, input);
-    }
-
-    #[test]
-    fn stdin_pump_applies_synchronous_backpressure_to_a_slow_peer() {
-        struct CountingReader {
-            reads: Rc<Cell<usize>>,
-            remaining: usize,
-        }
-
-        impl Read for CountingReader {
-            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-                self.reads.set(self.reads.get() + 1);
-                if self.remaining == 0 {
-                    return Ok(0);
-                }
-                let count = self.remaining.min(buffer.len()).min(3);
-                buffer[..count].fill(b'x');
-                self.remaining -= count;
-                Ok(count)
-            }
-        }
-
-        let reads = Rc::new(Cell::new(0));
-        let mut sent = 0usize;
-        pump_stdin(
-            CountingReader {
-                reads: Rc::clone(&reads),
-                remaining: 9,
-            },
-            |kind, _| {
-                if kind == FrameKind::Stdin {
-                    sent += 1;
-                    assert_eq!(reads.get(), sent);
-                }
-                Ok(())
-            },
+        assert_eq!(
+            outcome.load(Ordering::Acquire),
+            CONTROL_TERMINATION_REQUESTED
         );
-        assert_eq!(sent, 3);
-        assert_eq!(reads.get(), 4);
     }
 
     #[test]
-    fn peer_write_failure_stops_without_sending_a_late_close() {
+    fn peer_write_failure_marks_control_lost() {
+        let mut input = Vec::new();
+        write_frame(&mut input, FrameKind::Stdin, b"input").unwrap();
         let mut kinds = Vec::new();
-        pump_stdin(Cursor::new(b"input"), |kind, _| {
+        let outcome = AtomicU8::new(CONTROL_OPEN);
+        pump_control(Cursor::new(input), &outcome, |kind, _| {
             kinds.push(kind);
             Err(anyhow!("peer disconnected"))
         });
 
         assert_eq!(kinds, vec![FrameKind::Stdin]);
+        assert_eq!(outcome.load(Ordering::Acquire), CONTROL_LOST);
     }
 
     #[test]
-    fn stdin_read_failure_requests_termination_once() {
-        struct FailedInput;
-
-        impl Read for FailedInput {
-            fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::other("stdin failed"))
-            }
-        }
-
+    fn control_eof_requests_fail_closed_termination_once() {
         let mut kinds = Vec::new();
-        pump_stdin(FailedInput, |kind, _| {
+        let outcome = AtomicU8::new(CONTROL_OPEN);
+        pump_control(Cursor::new(Vec::<u8>::new()), &outcome, |kind, _| {
             kinds.push(kind);
             Ok(())
         });
 
         assert_eq!(kinds, vec![FrameKind::Terminate]);
+        assert_eq!(outcome.load(Ordering::Acquire), CONTROL_LOST);
     }
 }

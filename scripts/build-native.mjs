@@ -94,7 +94,7 @@ if (process.platform === 'win32') {
   );
   manifest.shellSandbox = {
     file: path.basename(shellOutput),
-    protocol: 4,
+    protocol: 5,
     sha256: sha256(shellOutput),
   };
 }

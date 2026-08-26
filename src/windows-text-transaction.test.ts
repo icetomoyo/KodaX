@@ -60,8 +60,9 @@ describe('Windows trusted text transaction integration', () => {
   });
 
   portableIt('keeps every controlled text tool usable without consulting a failed shell provider', async () => {
-    const failedShellPreparation = Promise.reject(new Error('injected shell setup failure'));
-    await expect(failedShellPreparation).rejects.toThrow('injected shell setup failure');
+    const failedShellPreparation = vi.fn(async () => {
+      throw new Error('injected shell setup failure');
+    });
 
     const target = path.join(root, 'hello.md');
     const host = createWindowsTrustedTextMutationHost(
@@ -73,6 +74,7 @@ describe('Windows trusted text transaction integration', () => {
       executionCwd: root,
       gitRoot: root,
       trustedTextMutationHost: host,
+      shellSandbox: { prepare: failedShellPreparation },
     };
 
     await expect(toolWrite({ path: target, content: 'hello' }, ctx))
@@ -94,6 +96,7 @@ describe('Windows trusted text transaction integration', () => {
     await expect(fs.readFile(target, 'utf8')).resolves.toBe('anchor\ninserted');
     await expect(toolUndo({}, ctx)).resolves.toContain('Restored');
     await expect(fs.readFile(target, 'utf8')).resolves.toBe('anchor');
+    expect(failedShellPreparation).not.toHaveBeenCalled();
   });
 
   portableIt('lets only one Runtime commit the same observed revision', async () => {

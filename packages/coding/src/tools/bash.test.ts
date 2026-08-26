@@ -20,6 +20,8 @@ const managedRegistrationMock = vi.hoisted(() => ({
   failure: undefined as Error | undefined,
   child: undefined as ChildProcess | undefined,
   unrefCalls: 0,
+  killCalls: 0,
+  killSyncCalls: 0,
 }));
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => {
@@ -66,14 +68,20 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
     },
     killChildProcessTree: (
       ...args: Parameters<typeof actual.killChildProcessTree>
-    ) => managedRegistrationMock.failure === undefined
-      ? actual.killChildProcessTree(...args)
-      : Promise.resolve({ status: 'unknown' as const }),
+    ) => {
+      managedRegistrationMock.killCalls += 1;
+      return managedRegistrationMock.failure === undefined
+        ? actual.killChildProcessTree(...args)
+        : Promise.resolve({ status: 'unknown' as const });
+    },
     killChildProcessTreeSync: (
       child: Parameters<typeof actual.killChildProcessTreeSync>[0],
-    ) => managedRegistrationMock.failure === undefined
-      ? actual.killChildProcessTreeSync(child)
-      : { status: 'unknown' as const },
+    ) => {
+      managedRegistrationMock.killSyncCalls += 1;
+      return managedRegistrationMock.failure === undefined
+        ? actual.killChildProcessTreeSync(child)
+        : { status: 'unknown' as const };
+    },
   };
 });
 
@@ -209,6 +217,8 @@ describe('toolBash', () => {
     managedRegistrationMock.failure = undefined;
     managedRegistrationMock.child = undefined;
     managedRegistrationMock.unrefCalls = 0;
+    managedRegistrationMock.killCalls = 0;
+    managedRegistrationMock.killSyncCalls = 0;
     unregisteredChild?.kill('SIGKILL');
     windowsEffectJobMock.drainFailure = undefined;
     windowsEffectJobMock.containFailure = undefined;
@@ -300,6 +310,38 @@ describe('toolBash', () => {
     expect(windowsEffectJobMock.containCalls).toBe(0);
   });
 
+  it('uses persistent native control for timeout without invoking generic process-tree cleanup', async () => {
+    const closeInput = vi.fn(async (child: ChildProcess) => {
+      child.stdin?.end();
+    });
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
+
+    const result = await toolBash({ command: 'native-timeout', timeout: 0.05 }, {
+      backups: new Map(),
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(()=>{},1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: { closeInput, terminate },
+          cleanup: async () => undefined,
+        }),
+      },
+    });
+
+    expect(result).toContain('[Timeout] Command interrupted');
+    expect(closeInput).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(managedRegistrationMock.killCalls).toBe(0);
+    expect(managedRegistrationMock.killSyncCalls).toBe(0);
+  });
+
   it('delivers broker-only control output to request-scoped cleanup', async () => {
     const cleanup = vi.fn(async (input?: {
       readonly execution: 'not_started' | 'started_or_unknown';
@@ -342,6 +384,20 @@ describe('toolBash', () => {
       `fs.writeFileSync(${JSON.stringify(marker)},'ready')`,
       'setInterval(()=>{},1000)',
     ].join(';');
+    const closeInput = vi.fn((
+      _child: ChildProcess,
+      signal: AbortSignal | undefined,
+    ) => new Promise<void>((_resolve, reject) => {
+      const abort = (): void => reject(new DOMException('Operation aborted', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    }));
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
     const running = toolBash({ command: 'cancel-native-bootstrap' }, {
       backups: new Map(),
       abortSignal: controller.signal,
@@ -351,7 +407,7 @@ describe('toolBash', () => {
           args: ['-e', script],
           env: process.env,
           processTreeContainment: 'native-job' as const,
-          stdinPrefix: Buffer.alloc(16 * 1024 * 1024, 0x61),
+          processControl: { closeInput, terminate },
           cleanup: async () => undefined,
         }),
       },
@@ -362,6 +418,10 @@ describe('toolBash', () => {
     controller.abort();
 
     await expect(running).resolves.toContain('[Cancelled] Operation cancelled by user');
+    expect(closeInput).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(managedRegistrationMock.killCalls).toBe(0);
+    expect(managedRegistrationMock.killSyncCalls).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 150));
   });
 
@@ -1324,6 +1384,12 @@ describe('toolBash', () => {
   it('cleans one sandbox request when durable child registration fails', async () => {
     managedRegistrationMock.failure = new Error('injected durable child registration failure');
     const cleanupSandbox = vi.fn(async () => undefined);
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
     await expect(toolBash({ command: 'registration-failure', run_in_background: true }, {
       backups: new Map(),
       toolCallId: 'bash-registration-failure',
@@ -1333,6 +1399,10 @@ describe('toolBash', () => {
           args: ['-e', 'setInterval(() => {}, 1000)'],
           env: process.env,
           processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async () => undefined,
+            terminate,
+          },
           cleanup: cleanupSandbox,
         }),
       },
@@ -1340,10 +1410,48 @@ describe('toolBash', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
     expect(managedRegistrationMock.unrefCalls).toBe(0);
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(managedRegistrationMock.killCalls).toBe(0);
+    expect(managedRegistrationMock.killSyncCalls).toBe(0);
     const childPid = managedRegistrationMock.child?.pid;
     if (childPid === undefined) throw new Error('expected unregistered child PID');
     await expect(waitForPidExit(childPid, 5_000)).resolves.toBe(true);
     await expect.poll(() => cleanupSandbox.mock.calls.length).toBe(1);
+  });
+
+  it('uses native process control when aborting a background command', async () => {
+    const controller = new AbortController();
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
+    const result = await toolBash({ command: 'native-background', run_in_background: true }, {
+      backups: new Map(),
+      executionCwd: process.cwd(),
+      abortSignal: controller.signal,
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(() => {}, 1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async (child) => { child.stdin?.end(); },
+            terminate,
+          },
+          cleanup: async () => undefined,
+        }),
+      },
+    });
+    const pid = parseBackgroundPid(result);
+    controller.abort();
+
+    await expect(waitForPidExit(pid, 5_000)).resolves.toBe(true);
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(managedRegistrationMock.killCalls).toBe(0);
+    expect(managedRegistrationMock.killSyncCalls).toBe(0);
   });
 
   it('stops background commands when the caller aborts', async () => {

@@ -28,7 +28,20 @@ All notable changes to this project will be documented in this file.
   shell runner keeps framed stdin/process containment but drops the
   command-lifetime filesystem-effect owner, uses a nonce-bound per-policy private desktop,
   and suppresses final-target modal faults while preserving exit status, allowing independent policies,
-  Sessions, and Runtime processes to execute concurrently. The incompatible
+  Sessions, and Runtime processes to execute concurrently. `CloseStdin` no
+  longer closes the host control stream: cancellation and timeout send a
+  distinct `Terminate` frame over authenticated directional control/event
+  pipes, wait for the runner to prove the Job empty through a nonce-bound
+  terminal record, and preserve the original stop reason; generic PID-tree
+  cleanup is emergency-only. The incompatible native shell protocol advances
+  to v5. Request and terminal state now lives under a verified no-reparse,
+  protected host/SYSTEM-only control directory. SDK policy validation and the
+  native host independently reject overlapping allow roots and deny roots at or
+  below this boundary before ACL authorization or target creation. Doctor is
+  verify-only; explicit setup creates missing state or repairs only an empty,
+  no-reparse, host-owned direct child after proving the sandbox SID idle.
+  Packaged Electron Node targets consume and scrub `ELECTRON_RUN_AS_NODE` before
+  target or descendant code loads. The incompatible
   authority split advances Windows `sandboxRuntime` to v6 so clients cannot
   silently reuse a daemon that still implements the v5 graph. Existing
   installations perform a one-time idle-account SID rotation through

@@ -276,8 +276,13 @@ OS token sandbox enforcement。Windows shell 仅由 ASRT 提供网络/专用账�
 KodaX native runner 负责 restricted token、nonce 绑定且按 policy 隔离的私有 desktop、创建时 Job containment 和 framed stdio；
 不同 policy、Session、Runtime 的 native shell 不共享覆盖命令生命周期的 filesystem-
 effect lease。任意 shell 写文件仍是正常 OS 数据竞争，KodaX CAS 只约束受控文本
-工具。Unix 在原子提交后若无法证明目录 durability，会携带完整的提交前/后 receipt
-返回 `text_mutation_commit_uncertain`，要求先重读，禁止盲目重试。已有文件的修改会
+工具。目标 stdin EOF 不会关闭 native 控制流；控制与事件使用相互独立且认证过的
+单向管道。timeout/cancel 只有在校验 nonce 绑定的 runner 终态记录、确认整个 Job
+已排空后才返回原始停止原因。native 请求与终态记录位于无 reparse、仅 host/SYSTEM
+可访问的控制目录；SDK policy 校验和 native host 都会在目标启动前拒绝与该目录
+祖先或子孙重叠的 allow root，以及指向该目录或其子项的 deny root。doctor 只验证；
+显式 setup 仅在 sandbox 账户已空闲时创建或收窄修复空的 host-owned 状态。Unix 在原子提交后若无法证明目录 durability，会携带
+完整的提交前/后 receipt 返回 `text_mutation_commit_uncertain`，要求先重读，禁止盲目重试。已有文件的修改会
 保留 Undo backup；若 Undo 本身处于提交不确定状态，其 receipt 会重绑定到观测到的
 提交后 revision，之后只能通过 CAS 校验的 Undo 继续收敛。详见
 [ADR-066](docs/ADR.md#adr-066-trusted-text-transactions-and-a-native-windows-shell-sandbox-are-separate-authorities)。

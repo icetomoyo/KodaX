@@ -17,8 +17,9 @@ use windows::Win32::Security::Authorization::{
 use windows::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
     CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, GENERIC_MAPPING, GetAce, GetAclInformation,
-    GetLengthSid, INHERIT_ONLY_ACE, INHERITED_ACE, IsValidSid, MapGenericMask,
-    NO_PROPAGATE_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID,
+    GetLengthSid, GetSecurityDescriptorControl, INHERIT_ONLY_ACE, INHERITED_ACE, IsValidSid,
+    MapGenericMask, NO_PROPAGATE_INHERIT_ACE, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
 };
 use windows::Win32::Storage::FileSystem::{
     DELETE, FILE_ALL_ACCESS, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
@@ -144,6 +145,7 @@ struct AceSnapshot {
 struct RawDacl {
     descriptor: PSECURITY_DESCRIPTOR,
     dacl: *mut ACL,
+    owner: PSID,
 }
 
 struct LocalAcl(*mut ACL);
@@ -523,12 +525,13 @@ fn open_acl_target(path: &Path) -> Result<AclTarget> {
 fn raw_dacl(handle: HANDLE) -> Result<RawDacl> {
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     let mut dacl = null_mut();
+    let mut owner = PSID::default();
     let code = unsafe {
         GetSecurityInfo(
             handle,
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            None,
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
             None,
             Some(&mut dacl),
             None,
@@ -547,10 +550,18 @@ fn raw_dacl(handle: HANDLE) -> Result<RawDacl> {
         !descriptor.0.is_null(),
         "GetSecurityInfo returned no descriptor"
     );
-    let result = RawDacl { descriptor, dacl };
+    let result = RawDacl {
+        descriptor,
+        dacl,
+        owner,
+    };
     ensure!(
         !result.dacl.is_null(),
         "null DACL is unsupported for sandbox ACL targets"
+    );
+    ensure!(
+        !result.owner.0.is_null(),
+        "Windows sandbox ACL target returned no owner"
     );
     Ok(result)
 }
@@ -767,6 +778,100 @@ fn apply_operations(operations: Vec<AclOperation>, sandbox_user_sid: &str) -> Re
     Ok(())
 }
 
+fn canonical_path_is_same_or_inside(parent: &str, candidate: &str) -> bool {
+    if parent.eq_ignore_ascii_case(candidate) {
+        return true;
+    }
+    let mut prefix = parent.trim_end_matches('\\').to_owned();
+    prefix.push('\\');
+    candidate
+        .get(..prefix.len())
+        .is_some_and(|value| value.eq_ignore_ascii_case(&prefix))
+}
+
+fn canonical_paths_overlap(left: &str, right: &str) -> bool {
+    canonical_path_is_same_or_inside(left, right) || canonical_path_is_same_or_inside(right, left)
+}
+
+pub fn verify_control_directory_boundary(
+    request: &RunRequest,
+    control_directory: &Path,
+    host_sid: &str,
+) -> Result<()> {
+    let control = open_acl_target(control_directory)
+        .context("open protected Windows sandbox control directory")?;
+    ensure!(
+        control.directory,
+        "Windows sandbox control state is not a directory"
+    );
+    {
+        let raw = raw_dacl(control.handle.raw())?;
+        let owner = sid_to_string(raw.owner)?;
+        ensure!(
+            owner.eq_ignore_ascii_case(host_sid),
+            "Windows sandbox control directory is not host-owned"
+        );
+        let mut descriptor_control = 0u16;
+        let mut revision = 0u32;
+        unsafe {
+            GetSecurityDescriptorControl(raw.descriptor, &mut descriptor_control, &mut revision)
+                .context("read Windows sandbox control directory protection")?;
+        }
+        ensure!(
+            descriptor_control & SE_DACL_PROTECTED.0 != 0,
+            "Windows sandbox control directory DACL is not protected"
+        );
+        let ace_count = unsafe { (*raw.dacl).AceCount };
+        ensure!(
+            ace_count == 2,
+            "Windows sandbox control directory DACL is not host/SYSTEM-only"
+        );
+    }
+    let snapshot = control.read_aces()?;
+    let inheritance = (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0 as u8;
+    ensure!(
+        snapshot.aces.len() == 2
+            && snapshot.aces.iter().all(|ace| {
+                ace.mode == AclMode::Grant
+                    && (ace.sid.eq_ignore_ascii_case(host_sid) || ace.sid == "S-1-5-18")
+                    && ace.mask == FILE_ALL_ACCESS.0
+                    && ace.flags == inheritance
+            })
+            && snapshot
+                .aces
+                .iter()
+                .filter(|ace| ace.sid.eq_ignore_ascii_case(host_sid))
+                .count()
+                == 1
+            && snapshot
+                .aces
+                .iter()
+                .filter(|ace| ace.sid == "S-1-5-18")
+                .count()
+                == 1,
+        "Windows sandbox control directory DACL is not the exact host/SYSTEM boundary"
+    );
+    for policy_root in request.allow_read.iter().chain(&request.allow_write) {
+        let target = open_acl_target(Path::new(policy_root))
+            .with_context(|| format!("validate Windows sandbox allow root {policy_root}"))?;
+        ensure!(
+            !canonical_paths_overlap(&control.canonical_path, &target.canonical_path),
+            "Windows sandbox allow policy overlaps protected native shell control state: {}",
+            target.canonical_path,
+        );
+    }
+    for policy_root in request.deny_read.iter().chain(&request.deny_write) {
+        let target = open_acl_target(Path::new(policy_root))
+            .with_context(|| format!("validate Windows sandbox deny root {policy_root}"))?;
+        ensure!(
+            !canonical_path_is_same_or_inside(&control.canonical_path, &target.canonical_path),
+            "Windows sandbox deny policy targets protected native shell control state: {}",
+            target.canonical_path,
+        );
+    }
+    Ok(())
+}
+
 pub fn ensure_allow_aces(request: &RunRequest, runner_directory: &Path) -> Result<()> {
     let _transaction = NamedMutex::acquire(ACL_MUTEX, ACL_MUTEX_TIMEOUT_MS)?;
     apply_operations(
@@ -804,6 +909,22 @@ mod tests {
     use super::*;
     use crate::model::capability_sid;
 
+    #[test]
+    fn canonical_control_path_overlap_is_bidirectional_and_component_bounded() {
+        assert!(canonical_paths_overlap(
+            r"C:\Users\host\AppData\Local\KodaXNativeArtifactsV3\control-v1",
+            r"c:\users\HOST\AppData\Local\KodaXNativeArtifactsV3",
+        ));
+        assert!(canonical_paths_overlap(
+            r"C:\Users\host\AppData\Local\KodaXNativeArtifactsV3\control-v1",
+            r"C:\Users\host\AppData\Local\KodaXNativeArtifactsV3\control-v1\request.json",
+        ));
+        assert!(!canonical_paths_overlap(
+            r"C:\state\control-v1",
+            r"C:\state\control-v10",
+        ));
+    }
+
     fn request(root: &Path) -> RunRequest {
         let fingerprint = "0".repeat(64);
         RunRequest {
@@ -822,6 +943,8 @@ mod tests {
             deny_read: vec![root.to_string_lossy().into_owned()],
             deny_write: vec![root.to_string_lossy().into_owned()],
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
+            terminal_record_path: root.join("terminal.json").to_string_lossy().into_owned(),
+            terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             launch_deadline_unix_ms: 1,
         }
     }

@@ -5472,8 +5472,21 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
 7. **Native shell protocol**: shell/process execution uses a separate
    KodaX-owned host/runner protocol with bounded `Spawn`, `Ready`, `Stdin`,
    `CloseStdin`, `Stdout`, `Stderr`, `Exit`, `Error`, and `Terminate` frames.
-   EOF is explicit and exactly once; slow consumers impose backpressure;
-   early stdin close retires that stream without crashing the Runtime.
+   Target EOF is explicit and exactly once but does not close the control
+   stream. Slow consumers impose backpressure; early stdin close retires only
+   that stream. Cancellation and timeout send `Terminate`, then wait for the
+   runner to drain the complete Job before returning the original stop reason.
+   Control and events use two nonce-bound, account-ACL-protected pipes with
+    opposite protocol directions whose peer PID must match; termination additionally requires a validated host-only,
+    nonce-bound terminal record rather than trusting a process exit code. Request
+    and terminal state is created below a no-reparse directory with an exact
+    protected host/SYSTEM-only DACL. Both the SDK policy boundary and native host
+    reject allow roots overlapping that directory in either direction, and
+    deny roots at or below it, before ACL authorization or target creation.
+    Ancestor denies remain permitted because the child DACL is protected.
+    Doctor only verifies this state; explicit setup may create or repair only
+    an empty, no-reparse, host-owned direct child after the sandbox SID is idle.
+    Unknown owner, non-empty state, or live sandbox processes remain fail-closed.
 8. **Containment before execution**: the restricted runner creates the shell
    target suspended with an explicit handle list and creation-time assignment
    to a no-breakaway, kill-on-close Job. It reports `Ready` only after proving

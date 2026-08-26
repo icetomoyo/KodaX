@@ -8,7 +8,7 @@ import {
   type ResolveWindowsNativeArtifactOptions,
 } from './windows-native-artifacts.js';
 
-export const WINDOWS_SANDBOX_V2_PROTOCOL = 4;
+export const WINDOWS_SANDBOX_V2_PROTOCOL = 5;
 
 export interface AsrtWindowsInvocation {
   readonly executable: string;
@@ -44,6 +44,8 @@ export interface WindowsSandboxV2RunRequest {
   readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
   readonly controllerPipe: string;
+  readonly terminalRecordPath: string;
+  readonly terminalNonce: string;
   readonly launchDeadlineUnixMs: number;
 }
 
@@ -59,6 +61,8 @@ export interface WindowsSandboxV2RunRequestInput {
   readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
   readonly controllerPipe: string;
+  readonly terminalRecordPath: string;
+  readonly terminalNonce: string;
   readonly launchDeadlineUnixMs: number;
 }
 
@@ -253,6 +257,18 @@ export function encodeWindowsSandboxV2Bootstrap(
   return frame;
 }
 
+export type WindowsSandboxV2ControlFrame = 'close-stdin' | 'terminate';
+
+/** Encode a post-bootstrap command for the persistent host control stream. */
+export function encodeWindowsSandboxV2ControlFrame(
+  command: WindowsSandboxV2ControlFrame,
+): Buffer {
+  const frame = Buffer.allocUnsafe(5);
+  frame.writeUInt32LE(1, 0);
+  frame[4] = command === 'close-stdin' ? 5 : 10;
+  return frame;
+}
+
 export function createWindowsSandboxV2RunRequest(
   input: WindowsSandboxV2RunRequestInput,
 ): WindowsSandboxV2RunRequest {
@@ -274,6 +290,12 @@ export function createWindowsSandboxV2RunRequest(
   }
   if (!Number.isSafeInteger(input.launchDeadlineUnixMs) || input.launchDeadlineUnixMs <= 0) {
     throw new Error('Windows sandbox v2 launch deadline is invalid.');
+  }
+  if (!path.win32.isAbsolute(input.terminalRecordPath) || input.terminalRecordPath.includes('\0')) {
+    throw new Error('Windows sandbox v2 terminal record path is invalid.');
+  }
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.terminalNonce)) {
+    throw new Error('Windows sandbox v2 terminal nonce is invalid.');
   }
   if (!/^S-1-(?:\d+-)+\d+$/.test(input.sandboxUserSid)) {
     throw new Error('Windows sandbox v2 account SID is invalid.');
@@ -309,6 +331,8 @@ export function createWindowsSandboxV2RunRequest(
     denyRead: input.denyRead,
     denyWrite: input.denyWrite,
     controllerPipe: input.controllerPipe,
+    terminalRecordPath: input.terminalRecordPath,
+    terminalNonce: input.terminalNonce.toLowerCase(),
     launchDeadlineUnixMs: input.launchDeadlineUnixMs,
   };
 }

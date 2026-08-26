@@ -18,9 +18,21 @@ import {
 } from '@kodax-ai/coding';
 
 import {
+  doctorSandboxRuntime,
   runKodaXSandboxed,
+  setupSandboxRuntime,
   type KodaXSandboxRunResult,
 } from '../src/sandbox-runtime.js';
+import {
+  ensureWindowsSandboxControlDirectory,
+  repairWindowsSandboxControlDirectory,
+  verifyWindowsSandboxControlDirectory,
+  windowsSandboxControlDirectory,
+} from '../src/windows-native-artifacts.js';
+import {
+  createWindowsSandboxV2RunRequest,
+  resolveWindowsSandboxV2Executable,
+} from '../src/windows-sandbox-v2.js';
 import { createWindowsTrustedTextMutationHost } from '../src/windows-text-transaction.js';
 
 const execFile = promisify(execFileCallback);
@@ -111,6 +123,46 @@ describe('FEATURE_295 Windows policy smoke verdict', () => {
       stderr: `${sentinel}\n`,
     }, sentinel)).not.toThrow();
   });
+
+  it('does not invoke the synchronous PID identity probe on native Job control', async () => {
+    const source = await readFile(
+      new URL('../src/sandbox-runtime.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain(
+      'nativeProcessControl !== undefined || child.pid === undefined',
+    );
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'rejects SDK grants overlapping native shell control state before doctor or target launch',
+    async () => {
+      await expect(runKodaXSandboxed({
+        command: process.env.ComSpec ?? String.raw`C:\Windows\System32\cmd.exe`,
+        args: ['/d', '/s', '/c', 'exit 0'],
+        cwd: process.cwd(),
+        filesystem: {
+          allowRead: [path.dirname(windowsSandboxControlDirectory())],
+          allowWrite: [],
+          denyRead: [],
+          denyWrite: [],
+        },
+        network: { mode: 'deny' },
+      })).rejects.toThrow(/protected native shell control state/);
+      await expect(runKodaXSandboxed({
+        command: process.env.ComSpec ?? String.raw`C:\Windows\System32\cmd.exe`,
+        args: ['/d', '/s', '/c', 'exit 0'],
+        cwd: process.cwd(),
+        filesystem: {
+          allowRead: [],
+          allowWrite: [],
+          denyRead: [],
+          denyWrite: [windowsSandboxControlDirectory()],
+        },
+        network: { mode: 'deny' },
+      })).rejects.toThrow(/deny policy targets protected native shell control state/);
+    },
+  );
 });
 
 function windowsPowerShell(): string {
@@ -419,6 +471,279 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     }
     expect(result).toMatchObject({ status: 'completed', sandboxed: true, exitCode: 0 });
   }, 45_000);
+
+  it('keeps control state host-only and native host rejects a forged overlapping grant', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-control-boundary-');
+    roots.push(root);
+    const shell = resolveWindowsSandboxV2Executable();
+    const control = ensureWindowsSandboxControlDirectory();
+    const secret = path.join(control, `host-secret-${randomUUID()}.txt`);
+    const marker = path.join(root, 'target-started.txt');
+    const requestPath = path.join(control, `windows-shell-${process.pid}-${randomUUID()}.json`);
+    const terminalPath = path.join(control, `windows-terminal-${process.pid}-${randomUUID()}.json`);
+    const denyRequestPath = path.join(control, `windows-shell-${process.pid}-${randomUUID()}.json`);
+    const denyTerminalPath = path.join(control, `windows-terminal-${process.pid}-${randomUUID()}.json`);
+    await writeFile(secret, 'host-only-secret', { flag: 'wx' });
+    try {
+      const denied = await runKodaXSandboxed({
+        command: process.execPath,
+        args: ['-e', 'require("node:fs").readFileSync(process.argv[1])', secret],
+        cwd: root,
+        filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+        network: { mode: 'deny' },
+        timeoutMs: 30_000,
+        inheritEnvironment: true,
+      });
+      expect(denied).toMatchObject({ status: 'completed', sandboxed: true });
+      if (denied.status !== 'completed') throw new Error('Expected a completed access-denied probe.');
+      expect(denied.exitCode).not.toBe(0);
+      expect(denied.stdout).not.toContain('host-only-secret');
+
+      const request = createWindowsSandboxV2RunRequest({
+        generation: 'control-boundary-test',
+        sandboxUserSid: 'S-1-5-21-1-2-3-1001',
+        sandboxGroupSid: 'S-1-5-21-1-2-3-1002',
+        asrtInvocation: {
+          executable: process.env.ComSpec ?? String.raw`C:\Windows\System32\cmd.exe`,
+          prefixArgs: ['exec', '--'],
+          targetArgv: [],
+          childEnvironment: {},
+        },
+        targetArgv: [
+          process.execPath,
+          '-e',
+          'require("node:fs").writeFileSync(process.argv[1],"started")',
+          marker,
+        ],
+        cwd: root,
+        allowRead: [path.dirname(control)],
+        allowWrite: [root],
+        denyRead: [],
+        denyWrite: [],
+        controllerPipe: String.raw`\\.\pipe\kodax-v2-${process.pid}-${randomUUID()}`,
+        terminalRecordPath: terminalPath,
+        terminalNonce: randomUUID(),
+        launchDeadlineUnixMs: Date.now() + 30_000,
+      });
+      await writeFile(requestPath, JSON.stringify(request), { flag: 'wx' });
+      let nativeFailure: unknown;
+      try {
+        await execFile(shell.path, ['__host', requestPath], {
+          cwd: control,
+          timeout: 30_000,
+          windowsHide: true,
+        });
+      } catch (error: unknown) {
+        nativeFailure = error;
+      }
+      expect(nativeFailure).toBeDefined();
+      expect(String((nativeFailure as { readonly stderr?: unknown }).stderr ?? nativeFailure))
+        .toMatch(/overlaps protected native shell control state/);
+      await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const denyRequest = createWindowsSandboxV2RunRequest({
+        generation: 'control-deny-boundary-test',
+        sandboxUserSid: 'S-1-5-21-1-2-3-1001',
+        sandboxGroupSid: 'S-1-5-21-1-2-3-1002',
+        asrtInvocation: {
+          executable: process.env.ComSpec ?? String.raw`C:\Windows\System32\cmd.exe`,
+          prefixArgs: ['exec', '--'],
+          targetArgv: [],
+          childEnvironment: {},
+        },
+        targetArgv: [process.execPath, '-e', 'process.exit(91)'],
+        cwd: root,
+        allowRead: [root],
+        allowWrite: [root],
+        denyRead: [],
+        denyWrite: [control],
+        controllerPipe: String.raw`\\.\pipe\kodax-v2-${process.pid}-${randomUUID()}`,
+        terminalRecordPath: denyTerminalPath,
+        terminalNonce: randomUUID(),
+        launchDeadlineUnixMs: Date.now() + 30_000,
+      });
+      await writeFile(denyRequestPath, JSON.stringify(denyRequest), { flag: 'wx' });
+      let denyFailure: unknown;
+      try {
+        await execFile(shell.path, ['__host', denyRequestPath], {
+          cwd: control,
+          timeout: 30_000,
+          windowsHide: true,
+        });
+      } catch (error: unknown) {
+        denyFailure = error;
+      }
+      expect(String((denyFailure as { readonly stderr?: unknown }).stderr ?? denyFailure))
+        .toMatch(/deny policy targets protected native shell control state/);
+      expect(verifyWindowsSandboxControlDirectory()).toBe(control);
+      const subsequent = await runKodaXSandboxed({
+        command: process.execPath,
+        args: ['-e', 'process.stdout.write("after-control-deny-ok")'],
+        cwd: root,
+        filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+        network: { mode: 'deny' },
+        timeoutMs: 30_000,
+        inheritEnvironment: true,
+      });
+      expect(subsequent).toMatchObject({
+        status: 'completed', sandboxed: true, exitCode: 0, stdout: 'after-control-deny-ok',
+      });
+    } finally {
+      await Promise.all([
+        rm(secret, { force: true }),
+        rm(requestPath, { force: true }),
+        rm(terminalPath, { force: true }),
+        rm(denyRequestPath, { force: true }),
+        rm(denyTerminalPath, { force: true }),
+      ]);
+    }
+  }, 90_000);
+
+  it('keeps doctor verify-only and setup repairs an empty host-owned control DACL', async () => {
+    const control = ensureWindowsSandboxControlDirectory();
+    const corruption = String.raw`
+$ErrorActionPreference = 'Stop'
+$path = $env:KODAX_CONTROL_TEST_PATH
+$acl = [IO.Directory]::GetAccessControl($path)
+$users = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+[void]$acl.AddAccessRule($rule)
+[IO.Directory]::SetAccessControl($path, $acl)
+`;
+    try {
+      await execFile(windowsPowerShell(), [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-EncodedCommand', Buffer.from(corruption, 'utf16le').toString('base64'),
+      ], {
+        env: { ...process.env, KODAX_CONTROL_TEST_PATH: control },
+        windowsHide: true,
+      });
+      const before = await doctorSandboxRuntime({ refresh: true });
+      expect(before).toMatchObject({ ready: false, setupRequired: true });
+      expect(() => verifyWindowsSandboxControlDirectory()).toThrow(/exact|unexpected|host\/SYSTEM/i);
+
+      const repaired = await setupSandboxRuntime();
+      expect(repaired).toMatchObject({ ready: true, setupRequired: false });
+      expect(verifyWindowsSandboxControlDirectory()).toBe(control);
+    } finally {
+      try {
+        verifyWindowsSandboxControlDirectory();
+      } catch {
+        repairWindowsSandboxControlDirectory();
+      }
+    }
+  }, 90_000);
+
+  it('returns the original timeout only after the native Job and descendants drain', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-timeout-drain-');
+    roots.push(root);
+    const markerPath = path.join(root, 'processes.json');
+    const targetScript = [
+      'const fs=require("node:fs")',
+      'const {spawn}=require("node:child_process")',
+      'const descendant=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true})',
+      'if(!descendant.pid) process.exit(71)',
+      'fs.writeFileSync(process.argv[1],JSON.stringify({targetPid:process.pid,runnerPid:process.ppid,descendantPid:descendant.pid}))',
+      'setInterval(()=>{},1000)',
+    ].join(';');
+    const running = runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', targetScript, markerPath],
+      cwd: root,
+      filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+      network: { mode: 'allow' },
+      timeoutMs: 10_000,
+      inheritEnvironment: true,
+    });
+    void running.catch(() => undefined);
+
+    const markerDeadline = Date.now() + 20_000;
+    let marker: SandboxProcessMarker | undefined;
+    while (marker === undefined && Date.now() < markerDeadline) {
+      try {
+        marker = parseSandboxProcessMarker(JSON.parse(await readFile(markerPath, 'utf8')) as unknown);
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) {
+          throw error;
+        }
+        await delay(50);
+      }
+    }
+    if (marker === undefined) throw new Error('Timed sandbox target did not publish its process marker.');
+    const identities = await queryWindowsProcessIds([
+      marker.targetPid,
+      marker.runnerPid,
+      marker.descendantPid,
+    ]);
+    expect(identities).toHaveLength(3);
+
+    await expect(running).rejects.toThrow(/exceeded its .* ms timeout/i);
+    await waitForExactProcessesToExit(identities);
+
+    const subsequent = await runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write("after-timeout-ok")'],
+      cwd: root,
+      filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+      network: { mode: 'allow' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+    });
+    expect(subsequent).toMatchObject({
+      status: 'completed', sandboxed: true, exitCode: 0, stdout: 'after-timeout-ok',
+    });
+  }, 60_000);
+
+  it('returns the original cancellation only after the native Job and descendants drain', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-cancel-drain-');
+    roots.push(root);
+    const markerPath = path.join(root, 'processes.json');
+    const targetScript = [
+      'const fs=require("node:fs")',
+      'const {spawn}=require("node:child_process")',
+      'const descendant=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true})',
+      'if(!descendant.pid) process.exit(71)',
+      'fs.writeFileSync(process.argv[1],JSON.stringify({targetPid:process.pid,runnerPid:process.ppid,descendantPid:descendant.pid}))',
+      'setInterval(()=>{},1000)',
+    ].join(';');
+    const controller = new AbortController();
+    const running = runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', targetScript, markerPath],
+      cwd: root,
+      filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+      network: { mode: 'allow' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+      signal: controller.signal,
+    });
+    void running.catch(() => undefined);
+
+    const markerDeadline = Date.now() + 20_000;
+    let marker: SandboxProcessMarker | undefined;
+    while (marker === undefined && Date.now() < markerDeadline) {
+      try {
+        marker = parseSandboxProcessMarker(JSON.parse(await readFile(markerPath, 'utf8')) as unknown);
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) {
+          throw error;
+        }
+        await delay(50);
+      }
+    }
+    if (marker === undefined) throw new Error('Cancelled sandbox target did not publish its process marker.');
+    const identities = await queryWindowsProcessIds([
+      marker.targetPid,
+      marker.runnerPid,
+      marker.descendantPid,
+    ]);
+    expect(identities).toHaveLength(3);
+
+    controller.abort(new Error('injected native cancellation'));
+    await expect(running).rejects.toThrow('injected native cancellation');
+    await waitForExactProcessesToExit(identities);
+  }, 60_000);
 
   it('allows policy A in A but denies policy B from writing A', async () => {
     const parent = await createWindowsV2TestRoot('kodax-v2-policy-ab-');

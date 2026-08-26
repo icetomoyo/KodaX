@@ -10,9 +10,9 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result, anyhow, bail};
 use windows::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, ERROR_NO_DATA,
-    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SUCCESS, GENERIC_ALL, GetLastError, HANDLE,
-    HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
-    SetLastError, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ,
+    GENERIC_WRITE, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE,
+    LocalFree, SetHandleInformation, SetLastError, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -33,7 +33,7 @@ use windows::Win32::Security::{
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, READ_CONTROL, WRITE_DAC,
+    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, READ_CONTROL, WRITE_DAC,
 };
 use windows::Win32::System::Console::GetStdHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -708,18 +708,62 @@ pub fn verify_null_device_access(sandbox_sid: &str) -> Result<()> {
 
 pub struct NamedPipeServer {
     pub name: String,
-    pub session_nonce: String,
     handle: OwnedHandle,
     _descriptor: LocalSecurityDescriptor,
 }
 
-impl NamedPipeServer {
+pub struct NamedPipeServers {
+    pub runner_events: NamedPipeServer,
+    pub runner_control: NamedPipeServer,
+    pub session_nonce: String,
+}
+
+impl NamedPipeServers {
     pub fn create(host_sid: &str, sandbox_sid: &str) -> Result<Self> {
         let session_nonce = uuid::Uuid::new_v4().simple().to_string();
         let unique = format!("{}-{session_nonce}", unsafe { GetCurrentProcessId() });
-        let name = format!(r"\\.\pipe\kodax-sandbox-v2-{unique}");
+        let runner_events = NamedPipeServer::create(
+            format!(r"\\.\pipe\kodax-sandbox-v2-{unique}-r2h"),
+            host_sid,
+            sandbox_sid,
+            // SetNamedPipeHandleState requires write access even when changing
+            // the read-side wait mode. Keep this dedicated transport logically
+            // runner-to-host; no production code writes through the server end.
+            PIPE_ACCESS_DUPLEX,
+            "GRGW",
+            0,
+            256 * 1024,
+        )?;
+        let runner_control = NamedPipeServer::create(
+            format!(r"\\.\pipe\kodax-sandbox-v2-{unique}-h2r"),
+            host_sid,
+            sandbox_sid,
+            PIPE_ACCESS_OUTBOUND,
+            "GRGW",
+            256 * 1024,
+            0,
+        )?;
+        Ok(Self {
+            runner_events,
+            runner_control,
+            session_nonce,
+        })
+    }
+}
+
+impl NamedPipeServer {
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        name: String,
+        host_sid: &str,
+        sandbox_sid: &str,
+        access: windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES,
+        sandbox_access: &str,
+        output_buffer_bytes: u32,
+        input_buffer_bytes: u32,
+    ) -> Result<Self> {
         let descriptor = LocalSecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;GA;;;SY)(A;;GA;;;{host_sid})(A;;GRGW;;;{sandbox_sid})"
+            "D:P(A;;GA;;;SY)(A;;GA;;;{host_sid})(A;;{sandbox_access};;;{sandbox_sid})"
         ))?;
         let security = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -730,18 +774,17 @@ impl NamedPipeServer {
         let handle = unsafe {
             CreateNamedPipeW(
                 PCWSTR(wide_name.as_ptr()),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                access | FILE_FLAG_FIRST_PIPE_INSTANCE,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 1,
-                256 * 1024,
-                256 * 1024,
+                output_buffer_bytes,
+                input_buffer_bytes,
                 0,
                 Some(&security),
             )
         };
         Ok(Self {
             name,
-            session_nonce,
             handle: OwnedHandle::new(handle, "CreateNamedPipeW")?,
             _descriptor: descriptor,
         })
@@ -772,12 +815,12 @@ impl NamedPipeServer {
     }
 }
 
-pub fn connect_named_pipe(name: &str) -> Result<(std::fs::File, u32)> {
+fn connect_named_pipe(name: &str, access: u32, label: &str) -> Result<(std::fs::File, u32)> {
     let wide_name = wide(name);
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide_name.as_ptr()),
-            FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
+            access,
             FILE_SHARE_MODE(0),
             None,
             OPEN_EXISTING,
@@ -786,13 +829,21 @@ pub fn connect_named_pipe(name: &str) -> Result<(std::fs::File, u32)> {
         )
     }
     .with_context(|| format!("connect named pipe {name}"))?;
-    let handle = OwnedHandle::new(handle, "named pipe client")?;
+    let handle = OwnedHandle::new(handle, label)?;
     let mut server_pid = 0u32;
     unsafe {
         windows::Win32::System::Pipes::GetNamedPipeServerProcessId(handle.raw(), &mut server_pid)
             .context("GetNamedPipeServerProcessId")?;
     }
     Ok((handle.into_file(), server_pid))
+}
+
+pub fn connect_named_pipe_reader(name: &str) -> Result<(std::fs::File, u32)> {
+    connect_named_pipe(name, GENERIC_READ.0, "named pipe reader")
+}
+
+pub fn connect_named_pipe_writer(name: &str) -> Result<(std::fs::File, u32)> {
+    connect_named_pipe(name, GENERIC_WRITE.0, "named pipe writer")
 }
 
 pub fn connect_controller_pipe(name: &str) -> Result<(std::fs::File, u32)> {

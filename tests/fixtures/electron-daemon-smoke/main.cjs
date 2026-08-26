@@ -16,6 +16,12 @@ const nodeExecutable = requireEnvironment('KODAX_SMOKE_NODE_EXECUTABLE');
 const profileToolchainRoot = requireEnvironment('KODAX_SMOKE_PROFILE_TOOLCHAIN');
 const ordinaryQueryCount = Number(requireEnvironment('KODAX_SMOKE_QUERY_COUNT'));
 const sessionId = requireEnvironment('KODAX_SMOKE_SESSION_ID');
+const environmentProofDeadlineMs = Number(
+  process.env.KODAX_SMOKE_ENV_PROOF_DEADLINE_MS ?? '240000',
+);
+if (!Number.isSafeInteger(environmentProofDeadlineMs) || environmentProofDeadlineMs <= 0) {
+  throw new Error('KODAX_SMOKE_ENV_PROOF_DEADLINE_MS must be a positive safe integer.');
+}
 const workspaceDir = path.join(homeDir, 'workspace');
 const standaloneProbeDir = path.join(homeDir, 'standalone-probe');
 const profileToolchainVersion = path.join(profileToolchainRoot, 'versions', 'v1');
@@ -63,7 +69,7 @@ async function run() {
     clientInfo: { name: 'packaged-electron-smoke', instanceId: 'packaged-electron-smoke' },
     requirements: { daemonManagement: 1 },
   });
-  await waitForFile(environmentProofFile, 120_000);
+  await waitForFile(environmentProofFile, 270_000);
   const environmentProof = JSON.parse(fs.readFileSync(environmentProofFile, 'utf8'));
   if (environmentProof.probeError !== undefined) {
     throw new Error(
@@ -260,11 +266,11 @@ function prepareEnvironmentProbeExtension() {
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(extensionPath, `
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { KodaXBaseProvider } from ${JSON.stringify(llmUrl)};
 import { toolBash } from ${JSON.stringify(codingUrl)};
-import { doctorKodaXSandbox, runKodaXSandboxed, setupKodaXSandbox } from ${JSON.stringify(sandboxUrl)};
+import { doctorKodaXSandbox, runKodaXSandboxed } from ${JSON.stringify(sandboxUrl)};
 
 class WindowsHideSmokeProvider extends KodaXBaseProvider {
   name = 'windows-hide-smoke';
@@ -354,43 +360,48 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
 
 async function publishEnvironmentProof() {
 let phase = 'external-child';
-const deadlineAt = Date.now() + 105_000;
+const deadlineAt = Date.now() + ${environmentProofDeadlineMs};
 const runPhase = async (nextPhase, operation) => {
   phase = nextPhase;
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) throw new Error('Environment probe deadline expired.');
-  let timer;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error('Environment probe deadline expired.'));
+  }, remainingMs);
   try {
-    return await Promise.race([
-      operation(),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('Environment probe deadline expired.')),
-          remainingMs,
-        );
-      }),
-    ]);
+    const result = await operation(controller.signal);
+    if (controller.signal.aborted) throw controller.signal.reason;
+    return result;
   } finally {
     clearTimeout(timer);
   }
+};
+let proofSequence = 0;
+const writeEnvironmentProof = (value) => {
+  const proofPath = ${JSON.stringify(environmentProofFile)};
+  proofSequence += 1;
+  const temporary = proofPath + '.' + process.pid + '.' + proofSequence + '.tmp';
+  writeFileSync(temporary, JSON.stringify(value), {
+    encoding: 'utf8',
+    flag: 'wx', flush: true,
+  });
+  renameSync(temporary, proofPath);
 };
 try {
 const child = spawnSync(process.env.ComSpec ?? 'cmd.exe', [
   '/d', '/s', '/c',
   'if defined ELECTRON_RUN_AS_NODE (echo present) else (echo absent)',
 ], { encoding: 'utf8', windowsHide: true });
-let sandboxDoctor = await runPhase(
-  'sandbox-doctor',
-  () => doctorKodaXSandbox({ refresh: true }),
-);
-if (
-  !sandboxDoctor.ready
-  && sandboxDoctor.diagnostics.length > 0
-  && sandboxDoctor.diagnostics.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'))
-) {
-  sandboxDoctor = await runPhase('sandbox-setup', () => setupKodaXSandbox());
+phase = 'sandbox-doctor';
+const sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
+if (!sandboxDoctor.ready) {
+  throw new Error(
+    'Packaged Electron release gate requires a preconfigured Windows sandbox: '
+      + JSON.stringify(sandboxDoctor),
+  );
 }
-const shellProbe = await runPhase('shell-probe', () => toolBash(
+const shellProbe = await runPhase('shell-probe', (signal) => toolBash(
   {
     command:
       "Write-Output 'shell-probe-ok'; "
@@ -400,6 +411,7 @@ const shellProbe = await runPhase('shell-probe', () => toolBash(
   },
   {
     backups: new Map(),
+    abortSignal: signal,
     executionCwd: ${JSON.stringify(homeDir)},
     shellExecution: {
       version: 1,
@@ -427,8 +439,7 @@ const shellProbeExitCode =
     ? Number.parseInt(shellProbeLines[shellProbeExitIndex].slice('Exit: '.length), 10)
     : null;
 const shellProbeOutput = shellProbeLines.slice(shellProbeExitIndex + 1);
-const directSandboxProbe = sandboxDoctor.ready
-  ? await runPhase('direct-node-probe', () => runKodaXSandboxed({
+const directSandboxProbe = await runPhase('direct-node-probe', (signal) => runKodaXSandboxed({
       command: process.execPath,
       args: [
         '-e',
@@ -440,11 +451,10 @@ const directSandboxProbe = sandboxDoctor.ready
         allowWrite: [],
       },
       env: { ELECTRON_RUN_AS_NODE: '1' },
-      timeoutMs: 15_000,
-    }))
-  : undefined;
-const directPowerShellProbe = sandboxDoctor.ready
-  ? await runPhase('direct-powershell-probe', () => runKodaXSandboxed({
+      timeoutMs: 60_000,
+      signal,
+    }));
+const directPowerShellProbe = await runPhase('direct-powershell-probe', (signal) => runKodaXSandboxed({
       // Keep the external PowerShell child under the Electron Node target
       // already proven above. This avoids making Electron itself the outer
       // PowerShell target in the packaged smoke broker.
@@ -459,11 +469,11 @@ const directPowerShellProbe = sandboxDoctor.ready
         allowWrite: [],
       },
       env: { ELECTRON_RUN_AS_NODE: '1' },
-      timeoutMs: 15_000,
-    }))
-  : undefined;
+      timeoutMs: 60_000,
+      signal,
+    }));
 phase = 'publish';
-writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
+writeEnvironmentProof({
   daemon: process.env.ELECTRON_RUN_AS_NODE ?? 'absent',
   externalChild: child.stdout.trim(),
   externalChildStatus: child.status,
@@ -475,15 +485,15 @@ writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
   sandboxDoctor,
   directSandboxProbe,
   directPowerShellProbe,
-}), 'utf8');
+});
 } catch (error) {
-  writeFileSync(${JSON.stringify(environmentProofFile)}, JSON.stringify({
+  writeEnvironmentProof({
     probeError: {
       phase,
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     },
-  }), 'utf8');
+  });
 }
 }
 
@@ -500,7 +510,12 @@ export default function(api) {
   });
   // Extension activation must not block Runtime startup on shell/sandbox
   // probes that themselves require the fully activated daemon services.
-  void publishEnvironmentProof();
+  publishEnvironmentProof().catch((error) => {
+    process.stderr.write(
+      '[electron-daemon-smoke] environment proof publication failed: '
+        + (error instanceof Error ? error.stack : String(error)) + '\\n',
+    );
+  });
 }
 `, 'utf8');
   fs.writeFileSync(

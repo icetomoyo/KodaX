@@ -11,7 +11,10 @@ import {
   registerManagedChildProcess,
 } from '@kodax-ai/agent';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
-import type { KodaXToolExecutionContext } from '../types.js';
+import type {
+  KodaXPreparedShellSandboxInvocation,
+  KodaXToolExecutionContext,
+} from '../types.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import {
   BASH_CAPTURE_COMPLETE_MARKER,
@@ -62,7 +65,11 @@ function closePreparedShellInput(
   prefix: Uint8Array | undefined,
   signal: AbortSignal | undefined,
   deadlineAt: number,
+  processControl: KodaXPreparedShellSandboxInvocation['processControl'],
 ): Promise<void> {
+  if (processControl !== undefined) {
+    return processControl.closeInput(proc, signal, deadlineAt);
+  }
   const stdin = proc.stdin;
   if (stdin === null) {
     return prefix === undefined
@@ -594,13 +601,9 @@ async function executeToolBash(
         requireDurableRecord: true,
       });
     } catch (error) {
-      let termination = killChildProcessTreeSync(proc);
-      if (termination.status === 'unknown') {
+      if (sandboxInvocation?.processControl !== undefined) {
         try {
-          termination = await killChildProcessTree(proc, {
-            forceMs: 500,
-            taskkillMs: 500,
-          });
+          await sandboxInvocation.processControl.terminate(proc);
         } catch (terminationError: unknown) {
           emitKodaXDiagnostic({
             source: 'coding:bash-sandbox',
@@ -609,8 +612,25 @@ async function executeToolBash(
             detail: terminationError,
           });
         }
+      } else {
+        let termination = killChildProcessTreeSync(proc);
+        if (termination.status === 'unknown') {
+          try {
+            termination = await killChildProcessTree(proc, {
+              forceMs: 500,
+              taskkillMs: 500,
+            });
+          } catch (terminationError: unknown) {
+            emitKodaXDiagnostic({
+              source: 'coding:bash-sandbox',
+              level: 'warn',
+              message: 'Process cleanup failed after durable child registration was rejected.',
+              detail: terminationError,
+            });
+          }
+        }
+        if (termination.status === 'unknown') proc.kill('SIGKILL');
       }
-      if (termination.status === 'unknown') proc.kill('SIGKILL');
       await cleanupSandbox(proc.pid === undefined ? 'not_started' : 'started_or_unknown');
       throw error;
     }
@@ -622,12 +642,33 @@ async function executeToolBash(
         sandboxInvocation?.stdinPrefix,
         ctx.abortSignal,
         deadlineAt,
+        sandboxInvocation?.processControl,
       );
     } catch (error: unknown) {
-      killChildProcessTreeSync(proc);
-      await cleanupSandbox('started_or_unknown');
-      unregister();
-      throw error;
+      let inputFailure = error;
+      if (sandboxInvocation?.processControl !== undefined) {
+        try {
+          await sandboxInvocation.processControl.terminate(proc);
+        } catch (terminationError: unknown) {
+          inputFailure = new AggregateError(
+            [error, terminationError],
+            'Native shell bootstrap and termination both failed.',
+          );
+        }
+      } else {
+        killChildProcessTreeSync(proc);
+      }
+      try {
+        await cleanupSandbox('started_or_unknown');
+      } catch (cleanupError: unknown) {
+        inputFailure = new AggregateError(
+          [inputFailure, cleanupError],
+          'Shell input, termination, and sandbox cleanup did not all settle cleanly.',
+        );
+      } finally {
+        unregister();
+      }
+      throw inputFailure;
     }
     return { proc, unregister };
   };
@@ -680,10 +721,11 @@ async function executeToolBash(
       }
       throw error;
     }
-    const cleanupOnProcessExit = (): void => {
-      killChildProcessTreeSync(proc);
-    };
-    if (!isCurrentProcessWindowsJobContained()) process.once('exit', cleanupOnProcessExit);
+    const cleanupOnProcessExit = (): void => { killChildProcessTreeSync(proc); };
+    if (
+      sandboxInvocation?.processControl === undefined
+      && !isCurrentProcessWindowsJobContained()
+    ) process.once('exit', cleanupOnProcessExit);
     const abortSignal = ctx.abortSignal;
     let hooksCleared = false;
     let onAbort: (() => void) | undefined;
@@ -694,10 +736,21 @@ async function executeToolBash(
       if (onAbort) abortSignal?.removeEventListener('abort', onAbort);
     };
     const stopBackgroundProcess = (): void => {
-      killChildProcessTreeBestEffort(proc, {
-        forceMs: BACKGROUND_ABORT_KILL_MS,
-        taskkillMs: BACKGROUND_ABORT_KILL_MS,
-      });
+      if (sandboxInvocation?.processControl !== undefined) {
+        void sandboxInvocation.processControl.terminate(proc).catch((error: unknown) => {
+          emitKodaXDiagnostic({
+            source: 'coding:bash-sandbox',
+            level: 'warn',
+            message: 'Native background command termination was not attested.',
+            detail: error,
+          });
+        });
+      } else {
+        killChildProcessTreeBestEffort(proc, {
+          forceMs: BACKGROUND_ABORT_KILL_MS,
+          taskkillMs: BACKGROUND_ABORT_KILL_MS,
+        });
+      }
     };
     let backgroundCleanup: Promise<void> | undefined;
     const finishBackground = (): Promise<void> => {
@@ -771,10 +824,11 @@ async function executeToolBash(
     throw error;
   }
   return new Promise(resolve => {
-    const cleanupOnProcessExit = (): void => {
-      killChildProcessTreeSync(proc);
-    };
-    if (!isCurrentProcessWindowsJobContained()) process.once('exit', cleanupOnProcessExit);
+    const cleanupOnProcessExit = (): void => { killChildProcessTreeSync(proc); };
+    if (
+      sandboxInvocation?.processControl === undefined
+      && !isCurrentProcessWindowsJobContained()
+    ) process.once('exit', cleanupOnProcessExit);
     let foregroundCommandRegistered = true;
     const unregisterForegroundCommand = (): void => {
       if (!foregroundCommandRegistered) return;
@@ -902,7 +956,11 @@ async function executeToolBash(
     const settleStoppedCommand = async (reason: 'cancelled' | 'timeout'): Promise<void> => {
       let killWarning: string | undefined;
       try {
-        await killChildProcessTree(proc, { forceMs: 500, taskkillMs: 500 });
+        if (sandboxInvocation?.processControl !== undefined) {
+          await sandboxInvocation.processControl.terminate(proc);
+        } else {
+          await killChildProcessTree(proc, { forceMs: 500, taskkillMs: 500 });
+        }
       } catch (error) {
         killWarning = error instanceof Error ? error.message : String(error);
       }

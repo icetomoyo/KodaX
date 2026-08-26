@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_STREAM_BYTES: usize = 64 * 1024;
 
@@ -106,7 +106,9 @@ pub fn write_frame(writer: &mut impl Write, kind: FrameKind, payload: &[u8]) -> 
     writer
         .write_all(payload)
         .with_context(|| format!("write sandbox protocol {kind:?} payload"))?;
-    writer.flush().context("flush sandbox protocol frame")?;
+    // The production transport uses unbuffered directional named-pipe files.
+    // Calling File::flush invokes FlushFileBuffers and waits for the peer to
+    // consume the frame, so protocol progress must not depend on it.
     Ok(())
 }
 

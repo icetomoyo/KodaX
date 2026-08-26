@@ -8,9 +8,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   _internalWindowsNativeArtifacts,
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
+  assertWindowsSandboxControlStateNotDirectlyAccessible,
   ensureUnixTrustedTextStateRoot,
   unixTrustedTextCoordinationRoot,
   windowsNativeArtifactCacheRoot,
+  windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
 describe('Windows native artifact trust boundary', () => {
@@ -64,6 +66,42 @@ describe('Windows native artifact trust boundary', () => {
     expect(() => check(source, [path.resolve('C:/workspace')])).toThrow(/overlaps/);
     expect(() => check(source, [path.join(source, 'nested')])).toThrow(/overlaps/);
     expect(() => check(source, [path.resolve('C:/other-workspace')])).not.toThrow();
+  });
+
+  it('rejects read or write grants on either side of the native control boundary', () => {
+    vi.stubEnv('LOCALAPPDATA', path.resolve('C:/kodax-control-test-local'));
+    const control = windowsSandboxControlDirectory();
+
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [path.dirname(control)],
+      allowWrite: [],
+      denyRead: [],
+      denyWrite: [],
+    })).toThrow(/native shell control state/);
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [],
+      allowWrite: [path.join(control, 'nested')],
+      denyRead: [],
+      denyWrite: [],
+    })).toThrow(/native shell control state/);
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [],
+      allowWrite: [],
+      denyRead: [],
+      denyWrite: [control],
+    })).toThrow(/deny policy targets protected native shell control state/);
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [],
+      allowWrite: [],
+      denyRead: [path.dirname(control)],
+      denyWrite: [],
+    })).not.toThrow();
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [path.resolve('C:/other-readable-root')],
+      allowWrite: [path.resolve('C:/other-writable-root')],
+      denyRead: [],
+      denyWrite: [],
+    })).not.toThrow();
   });
 });
 

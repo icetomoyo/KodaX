@@ -65,19 +65,25 @@ fn run() -> anyhow::Result<u32> {
             host::run(std::path::Path::new(&value))
         }
         "__runner" => {
-            let pipe_name = args
+            let control_pipe_name = args.next().ok_or_else(|| {
+                anyhow::anyhow!("Windows sandbox runner control pipe is required")
+            })?;
+            let event_pipe_name = args
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("Windows sandbox runner pipe is required"))?;
+                .ok_or_else(|| anyhow::anyhow!("Windows sandbox runner event pipe is required"))?;
             let host_sid = args
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Windows sandbox runner host SID is required"))?;
             if args.next().is_some() {
-                anyhow::bail!("Windows sandbox runner accepts one pipe name and host SID");
+                anyhow::bail!("Windows sandbox runner accepts two pipe names and host SID");
             }
             runner::run(
-                pipe_name
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("Windows sandbox pipe name is not Unicode"))?,
+                control_pipe_name.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("Windows sandbox control pipe name is not Unicode")
+                })?,
+                event_pipe_name.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("Windows sandbox event pipe name is not Unicode")
+                })?,
                 host_sid
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("Windows sandbox host SID is not Unicode"))?,

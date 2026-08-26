@@ -77,7 +77,12 @@ shell lifetime.
 2. Exercise stdin with empty input, binary data including NUL, multi-megabyte
    input, and a slow consumer. Verify explicit EOF exactly once, bounded
    backpressure, harmless early EPIPE, cancellation, peer loss, and one terminal
-   exit frame.
+   exit frame. Keep the control stream open after `CloseStdin`; a timed command
+   must receive `Terminate`, drain its target and descendants, publish and
+   validate the nonce-bound terminal record, return the original timeout, and
+   allow the next command to run immediately. Verify control/events use separate
+   account-ACL-protected pipes with opposite protocol directions,
+   connected to the same authenticated runner PID.
 3. For every target, prove it is created suspended and belongs to a
    no-breakaway, kill-on-close Job before `Ready` and resume.
 4. Kill the target, runner, then host in separate runs. Descendants must drain.
@@ -101,7 +106,22 @@ shell lifetime.
    `execution_uncertain`, must warn against retry, and must never claim the
    command did not run. Confirm the sandbox/fallback target cannot write to the
    broker control channel (regardless of unrelated descriptor-number reuse) and
-   no request/observation file can alter authority.
+    no request/observation file can alter authority.
+9. Verify the Windows request/terminal directory has no reparse point, is
+   host-owned, uses a protected DACL with exactly host and SYSTEM full-control
+   ACEs, and cannot be read by a restricted target. Submit public read/write
+   allow grants at the directory, its parent, and a child; each must fail before
+   doctor or target launch. Exact/descendant deny roots must also fail, while the
+   normal native-cache ancestor deny remains accepted. Then bypass the SDK
+   policy check with forged allow-overlap and exact-control-deny native requests;
+   confirm native read-back rejects both before the target can publish a marker,
+   the control DACL remains exact, and a subsequent shell succeeds.
+10. Add an extra inheritable Users ACE to an otherwise empty, host-owned control
+    directory. Doctor must report setup required without changing the DACL.
+    Explicit setup must first prove the sandbox SID idle, restore the exact
+    host/SYSTEM-only DACL, and make doctor ready. Repeat with a live sandbox
+    process, unknown owner, and non-empty directory; setup must fail closed with
+    precise recovery guidance rather than deleting or recursively traversing it.
 
 ## Packaging and regression gates
 

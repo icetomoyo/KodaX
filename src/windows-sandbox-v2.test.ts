@@ -4,6 +4,7 @@ import {
   asrtWindowsNetworkOnlyConfig,
   createWindowsSandboxV2RunRequest,
   encodeWindowsSandboxV2Bootstrap,
+  encodeWindowsSandboxV2ControlFrame,
   splitAsrtWindowsInvocation,
   windowsSandboxV2PolicyCapabilitySid,
   windowsSandboxV2PolicyFingerprint,
@@ -12,6 +13,13 @@ import {
 import { mergeWindowsSandboxTargetEnvironment } from './windows-git-sandbox.js';
 
 describe('Windows sandbox v2 policy and ASRT boundary', () => {
+  it('keeps target EOF and command termination as distinct control frames', () => {
+    expect([...encodeWindowsSandboxV2ControlFrame('close-stdin')])
+      .toEqual([1, 0, 0, 0, 5]);
+    expect([...encodeWindowsSandboxV2ControlFrame('terminate')])
+      .toEqual([1, 0, 0, 0, 10]);
+  });
+
   it('keeps ASRT network policy while disabling its filesystem authority', () => {
     const original = {
       network: {
@@ -173,11 +181,13 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       denyRead: ['C:\\secret'],
       denyWrite: ['C:\\work\\.git'],
       controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
+      terminalRecordPath: 'C:\\control\\windows-terminal.json',
+      terminalNonce: '12345678-1234-1234-1234-123456789abc',
       launchDeadlineUnixMs: 123_456,
     });
 
     expect(request).toMatchObject({
-      protocol: 4,
+      protocol: 5,
       generation,
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
@@ -204,6 +214,8 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       allowWrite: ['C:\\work'],
       denyRead: [],
       denyWrite: [],
+      terminalRecordPath: 'C:\\control\\windows-terminal.json',
+      terminalNonce: '12345678-1234-1234-1234-123456789abc',
       launchDeadlineUnixMs: 123_456,
     } as const;
     expect(() => createWindowsSandboxV2RunRequest({
@@ -238,7 +250,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     };
     expect(length).toBe(frame.byteLength - 4);
     expect(message).toEqual({
-      protocol: 4,
+      protocol: 5,
       targetEnvironment: [
         { name: 'Path', value: 'C:\\bin' },
         { name: 'SECRET', value: 'sentinel' },

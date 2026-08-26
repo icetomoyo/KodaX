@@ -186,6 +186,31 @@ export function windowsNativeArtifactCacheRoot(): string {
   return path.join(path.resolve(localAppData), 'KodaXNativeArtifactsV3');
 }
 
+export function windowsSandboxControlDirectory(): string {
+  return path.join(windowsNativeArtifactCacheRoot(), 'control-v1');
+}
+
+export function assertWindowsSandboxControlStateNotDirectlyAccessible(input: {
+  readonly allowRead: readonly string[];
+  readonly allowWrite: readonly string[];
+  readonly denyRead: readonly string[];
+  readonly denyWrite: readonly string[];
+}): void {
+  const controlRoot = windowsSandboxControlDirectory();
+  const allowConflict = [...input.allowRead, ...input.allowWrite].find((root) => (
+    sameOrInside(controlRoot, root) || sameOrInside(root, controlRoot)
+  ));
+  if (allowConflict !== undefined) {
+    throw new Error(`Windows policy overlaps protected native shell control state: ${allowConflict}`);
+  }
+  const denyConflict = [...input.denyRead, ...input.denyWrite].find((root) => (
+    sameOrInside(controlRoot, root)
+  ));
+  if (denyConflict !== undefined) {
+    throw new Error(`Windows deny policy targets protected native shell control state: ${denyConflict}`);
+  }
+}
+
 export function assertWindowsNativeArtifactStoreNotDirectlyWritable(
   roots: readonly string[],
 ): void {
@@ -625,6 +650,133 @@ try {
   if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
 }
 `;
+
+const ENSURE_PROTECTED_CONTROL_DIRECTORY = String.raw`
+$ErrorActionPreference = 'Stop'
+$payload = ([Console]::In.ReadToEnd() | ConvertFrom-Json)
+$hostSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$none = [Security.AccessControl.PropagationFlags]::None
+$allow = [Security.AccessControl.AccessControlType]::Allow
+function Assert-NoReparse([string]$candidate) {
+  $item = Get-Item -LiteralPath $candidate -Force
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse control path: $candidate" }
+}
+function New-ControlSecurity {
+  $security = [Security.AccessControl.DirectorySecurity]::new()
+  $security.SetAccessRuleProtection($true, $false)
+  $security.SetOwner($hostSid)
+  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($hostSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
+  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
+  return $security
+}
+function Assert-ControlSecurity([string]$candidate) {
+  $acl = [IO.Directory]::GetAccessControl($candidate)
+  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) {
+    throw 'control directory ACL is not protected and host-owned'
+  }
+  $expected = @{}
+  $expected[$hostSid.Value] = $true
+  $expected[$systemSid.Value] = $true
+  $observed = @{}
+  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    if ($rule.IsInherited -or $rule.AccessControlType -ne $allow) { throw 'control directory ACL contains an unexpected rule' }
+    $sid = $rule.IdentityReference.Value
+    if (-not $expected.ContainsKey($sid) -or $observed.ContainsKey($sid)) { throw 'control directory ACL contains an unexpected principal' }
+    if ($rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or $rule.InheritanceFlags -ne $inherit -or $rule.PropagationFlags -ne $none) {
+      throw 'control directory ACL rule shape is invalid'
+    }
+    $observed[$sid] = $true
+  }
+  foreach ($sid in $expected.Keys) { if (-not $observed.ContainsKey($sid)) { throw 'control directory ACL is missing a required principal' } }
+}
+$cacheRoot = [IO.Path]::GetFullPath([string]$payload.cacheRoot)
+$controlRoot = [IO.Path]::GetFullPath([string]$payload.controlRoot)
+$action = [string]$payload.action
+if ([IO.Path]::GetDirectoryName($controlRoot) -ne $cacheRoot) { throw 'control directory escaped native cache root' }
+if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) { throw 'protected native cache root is unavailable' }
+Assert-NoReparse $cacheRoot
+if ($action -eq 'verify') {
+  if (-not (Test-Path -LiteralPath $controlRoot -PathType Container)) { throw 'protected native shell control state is not initialized; run kodax sandbox setup' }
+  Assert-NoReparse $controlRoot
+} elseif ($action -eq 'ensure') {
+  if (Test-Path -LiteralPath $controlRoot) {
+    Assert-NoReparse $controlRoot
+  } else {
+    [void][IO.Directory]::CreateDirectory($controlRoot, (New-ControlSecurity))
+    Assert-NoReparse $controlRoot
+  }
+} elseif ($action -eq 'repair') {
+  if (Test-Path -LiteralPath $controlRoot) {
+    Assert-NoReparse $controlRoot
+    $existing = [IO.Directory]::GetAccessControl($controlRoot)
+    if ($existing.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) { throw 'refusing to repair native shell control state not owned by the host' }
+    $entries = [IO.Directory]::EnumerateFileSystemEntries($controlRoot).GetEnumerator()
+    try { $notEmpty = $entries.MoveNext() } finally { $entries.Dispose() }
+    if ($notEmpty) { throw 'refusing to repair non-empty native shell control state; close KodaX and remove the directory manually' }
+    [IO.Directory]::SetAccessControl($controlRoot, (New-ControlSecurity))
+  } else {
+    [void][IO.Directory]::CreateDirectory($controlRoot, (New-ControlSecurity))
+  }
+  Assert-NoReparse $controlRoot
+} else {
+  throw 'invalid native shell control state action'
+}
+Assert-ControlSecurity $controlRoot
+[Console]::Out.Write($controlRoot)
+`;
+
+function runWindowsSandboxControlDirectoryAction(
+  action: 'verify' | 'ensure' | 'repair',
+): string {
+  if (process.platform !== 'win32') {
+    throw new Error('KodaX Windows native shell control state is unavailable on this platform.');
+  }
+  const cacheRoot = windowsNativeArtifactCacheRoot();
+  const controlRoot = windowsSandboxControlDirectory();
+  const powershell = path.join(
+    process.env.SystemRoot ?? String.raw`C:\Windows`,
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  );
+  const result = spawnSync(powershell, [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', Buffer.from(ENSURE_PROTECTED_CONTROL_DIRECTORY, 'utf16le').toString('base64'),
+  ], {
+    input: JSON.stringify({ action, cacheRoot, controlRoot }),
+    encoding: 'utf8',
+    env: process.env,
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
+    throw new Error(`Cannot ${action} protected KodaX native shell control state: ${reason}`);
+  }
+  if (result.stdout.trim().toLowerCase() !== controlRoot.toLowerCase()) {
+    throw new Error('Native shell control verifier returned an unexpected path.');
+  }
+  const canonicalCache = fs.realpathSync.native(cacheRoot);
+  const canonicalControl = fs.realpathSync.native(controlRoot);
+  if (!sameOrInside(canonicalCache, canonicalControl)) {
+    throw new Error('Native shell control state escaped its physical cache root.');
+  }
+  return canonicalControl;
+}
+
+export function verifyWindowsSandboxControlDirectory(): string {
+  return runWindowsSandboxControlDirectoryAction('verify');
+}
+
+export function ensureWindowsSandboxControlDirectory(): string {
+  return runWindowsSandboxControlDirectoryAction('ensure');
+}
+
+export function repairWindowsSandboxControlDirectory(): string {
+  return runWindowsSandboxControlDirectoryAction('repair');
+}
 
 function provisionProtectedArtifact(input: {
   readonly kind: WindowsNativeArtifactKind;

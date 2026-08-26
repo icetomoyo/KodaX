@@ -38,6 +38,8 @@ pub struct RunRequest {
     pub deny_read: Vec<String>,
     pub deny_write: Vec<String>,
     pub controller_pipe: String,
+    pub terminal_record_path: String,
+    pub terminal_nonce: String,
     pub launch_deadline_unix_ms: u64,
 }
 
@@ -72,6 +74,11 @@ impl RunRequest {
             bail!("ASRT prefix must not carry target environment entries");
         }
         controller_pipe_server_pid(&self.controller_pipe)?;
+        if self.terminal_record_path.is_empty() || self.terminal_record_path.contains('\0') {
+            bail!("Invalid Windows sandbox terminal record path");
+        }
+        uuid::Uuid::parse_str(&self.terminal_nonce)
+            .map_err(|_| anyhow::anyhow!("Invalid Windows sandbox terminal nonce"))?;
         let valid_sid = |value: &str| {
             value.starts_with("S-1-")
                 && value[2..]
@@ -204,6 +211,16 @@ pub struct ExitMessage {
     pub code: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalRecord {
+    pub protocol: u16,
+    pub nonce: String,
+    pub job_drained: bool,
+    pub target_exit_code: u32,
+    pub termination_requested: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ErrorMessage {
@@ -266,6 +283,8 @@ mod tests {
             deny_read: vec![],
             deny_write: vec![],
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
+            terminal_record_path: r"C:\control\terminal.json".into(),
+            terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             launch_deadline_unix_ms: 1,
         };
         assert!(request.validate().is_err());
@@ -290,6 +309,8 @@ mod tests {
             deny_read: vec![],
             deny_write: vec![],
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
+            terminal_record_path: r"C:\control\terminal.json".into(),
+            terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             launch_deadline_unix_ms: 1,
         };
         request.validate().unwrap();
@@ -315,6 +336,8 @@ mod tests {
             deny_read: vec![],
             deny_write: vec![],
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
+            terminal_record_path: r"C:\control\terminal.json".into(),
+            terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             launch_deadline_unix_ms: 1,
         };
 
@@ -346,6 +369,8 @@ mod tests {
             deny_read: vec![],
             deny_write: vec![],
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
+            terminal_record_path: r"C:\control\terminal.json".into(),
+            terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             launch_deadline_unix_ms: 1,
         };
         assert!(request.validate().is_err());

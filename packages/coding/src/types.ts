@@ -1688,6 +1688,7 @@ export interface KodaXPreparedShellSandboxInvocation {
   };
   /** The authenticated native runner owns a per-command kill-on-close Job. */
   readonly processTreeContainment?: 'native-job';
+  readonly processControl?: KodaXShellSandboxProcessControl;
   cleanup(input?: {
     readonly execution: 'not_started' | 'started_or_unknown';
     readonly controlOutput?: Uint8Array;
@@ -1695,6 +1696,17 @@ export interface KodaXPreparedShellSandboxInvocation {
 }
 
 /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
+export interface KodaXShellSandboxProcessControl {
+  /** Deliver target stdin and keep the native command channel alive. */
+  closeInput(
+    child: import('node:child_process').ChildProcess,
+    signal: AbortSignal | undefined,
+    deadlineAt: number,
+  ): Promise<void>;
+  /** Request native Job termination and wait for its drain attestation. */
+  terminate(child: import('node:child_process').ChildProcess): Promise<void>;
+}
+
 export interface KodaXShellSandbox {
   /**
    * Host-trusted proof that the prepared root cannot settle while one of its

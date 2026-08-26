@@ -1,6 +1,8 @@
 import { EventEmitter, once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -25,7 +27,13 @@ import {
   acquireFileSystemMutationLease,
   acquireHostFileSystemMutationLease,
 } from '../packages/coding/src/tools/_internal/file-mutation-queue.js';
-import { trustedTextNativeArtifactStateRoots } from './windows-native-artifacts.js';
+import {
+  ensureWindowsSandboxControlDirectory,
+  trustedTextNativeArtifactStateRoots,
+  verifyWindowsSandboxControlDirectory,
+  windowsNativeArtifactCacheRoot,
+  windowsSandboxControlDirectory,
+} from './windows-native-artifacts.js';
 
 const capturedBrokerRequests = vi.hoisted(
   () => [] as Array<Readonly<Record<string, unknown>>>,
@@ -1239,7 +1247,7 @@ beforeEach(async () => {
     path.join(markerDirectory, 'windows-v2-cutover.json'),
     JSON.stringify({
       version: 3,
-      protocol: 4,
+      protocol: 5,
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
@@ -2009,6 +2017,78 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       restore();
     }
+  });
+
+  it('provisions a fresh native cache before first-account control setup', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'fresh-local-app-data');
+    await mkdir(freshLocalAppData);
+    vi.stubEnv('LOCALAPPDATA', freshLocalAppData);
+    windowsSandboxMock.user = {
+      ...windowsSandboxMock.user,
+      provisioned: false,
+      sid: undefined,
+      credPresent: false,
+    };
+    windowsSandboxMock.sidProcessesActive = false;
+    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
+
+    expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(false);
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    if (outcome.status !== 'ready') {
+      throw new Error(`Fresh Windows sandbox setup failed: ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(true);
+    expect(existsSync(windowsSandboxControlDirectory())).toBe(true);
+  });
+
+  it('does not repair an existing control DACL when a provisioned account SID is unavailable', async () => {
+    const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'sid-unavailable-local-app-data');
+    await mkdir(freshLocalAppData);
+    vi.stubEnv('LOCALAPPDATA', freshLocalAppData);
+    const initialized = await prepareSandboxRuntimeForSetup();
+    expect(initialized).toMatchObject({ status: 'ready', attempted: true });
+    const control = ensureWindowsSandboxControlDirectory();
+    const corruption = String.raw`
+$ErrorActionPreference = 'Stop'
+$path = $env:KODAX_CONTROL_TEST_PATH
+$acl = [IO.Directory]::GetAccessControl($path)
+$users = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+[void]$acl.AddAccessRule($rule)
+[IO.Directory]::SetAccessControl($path, $acl)
+`;
+    const powershell = path.join(
+      process.env.SystemRoot ?? String.raw`C:\Windows`,
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    );
+    const corrupted = spawnSync(powershell, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', Buffer.from(corruption, 'utf16le').toString('base64'),
+    ], {
+      env: { ...process.env, KODAX_CONTROL_TEST_PATH: control },
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    expect(corrupted.status).toBe(0);
+    expect(() => verifyWindowsSandboxControlDirectory()).toThrow(/exact|unexpected|host\/SYSTEM/i);
+    windowsSandboxMock.user = {
+      ...windowsSandboxMock.user,
+      provisioned: true,
+      sid: undefined,
+    };
+    resetSandboxRuntimeForTest();
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
+    expect(outcome.error).toContain('SID is unavailable');
+    expect(() => verifyWindowsSandboxControlDirectory()).toThrow(/exact|unexpected|host\/SYSTEM/i);
+    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
   });
 
   it('rotates an existing account SID before recording the v2 cutover', async () => {

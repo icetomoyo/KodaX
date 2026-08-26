@@ -6199,6 +6199,18 @@ Windows, Linux, and macOS:
   initialization off the interactive desktop. The target is created suspended,
   attached to a no-breakaway/kill-on-close Job, and only then resumed. Framed
   IPC carries stdin, stdout, stderr, EOF, termination, and exit state.
+  `CloseStdin` closes only target input and leaves the control stream alive;
+  control and events use independent authenticated directional pipes, and
+  cancellation/timeout sends `Terminate` and resolves only after validating a
+  nonce-bound record proving the command Job empty. A packaged Electron target receives Node mode
+  only at exec and scrubs `ELECTRON_RUN_AS_NODE` before target or child code.
+- Native request and terminal records are host control state in a no-reparse,
+  protected host/SYSTEM-only directory. The SDK rejects public allow roots
+  overlapping that directory in either direction and deny roots at/below it;
+  the native host reopens and checks canonical policy roots again before any ACL
+  authorization or target creation. Doctor only verifies the state. Explicit
+  setup may create it or repair an empty, no-reparse, host-owned direct cache
+  child after proving the sandbox SID idle; unknown/non-empty state fails closed.
 
 Packaged native artifacts are verified against an embedded manifest and copied
 as already verified bytes into a protected content-addressed Agent Home store
