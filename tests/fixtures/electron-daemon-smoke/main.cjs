@@ -166,8 +166,10 @@ async function run() {
           observation.state !== 'applied'
           || observation.backend !== 'windows-restricted-user'
         ) {
+          const diagnostics = readWindowsSandboxDiagnostics();
           throw new Error(
-            `Run ${runId} reported a non-applied Windows sandbox: ${JSON.stringify(observation)}`,
+            `Run ${runId} reported a non-applied Windows sandbox: ${JSON.stringify(observation)}; `
+            + `daemon diagnostics: ${JSON.stringify(diagnostics)}`,
           );
         }
         return;
@@ -225,6 +227,58 @@ async function run() {
   await waitForFile(detachFile, 90_000);
   await runtime.close();
   app.quit();
+}
+
+function readWindowsSandboxDiagnostics() {
+  const logFile = path.join(
+    homeDir,
+    '.kodax',
+    'runtime',
+    'daemon',
+    profile,
+    'daemon.log',
+  );
+  let text;
+  try {
+    const descriptor = fs.openSync(logFile, 'r');
+    try {
+      const size = fs.fstatSync(descriptor).size;
+      const length = Math.min(size, 256 * 1024);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(descriptor, buffer, 0, length, size - length);
+      text = buffer.toString('utf8');
+      if (length < size) text = text.slice(text.indexOf('\n') + 1);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    return [{
+      message: 'Could not read the bounded daemon diagnostic tail.',
+      detail: error instanceof Error ? error.message : String(error),
+    }];
+  }
+
+  const diagnostics = [];
+  for (const line of text.split(/\r?\n/).filter(Boolean)) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch (error) {
+      diagnostics.push({
+        message: 'Skipped a malformed daemon diagnostic entry.',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    if (entry?.data?.source !== 'sandbox:windows-v2') continue;
+    diagnostics.push({
+      time: entry.time,
+      message: entry.message,
+      detail: entry.data.detail,
+    });
+  }
+  return diagnostics.slice(-8);
 }
 
 function prepareEnvironmentProbeExtension() {

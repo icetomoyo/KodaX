@@ -188,6 +188,21 @@ describe('packaged Electron daemon environment probe', () => {
     expect(fixtureSource).toContain("observation.backend !== 'windows-restricted-user'");
   });
 
+  it('includes the daemon Windows sandbox diagnostic when an observation is not applied', () => {
+    const observationFailure = fixtureSource.indexOf(
+      '`Run ${runId} reported a non-applied Windows sandbox:',
+    );
+    const diagnosticRead = fixtureSource.lastIndexOf(
+      'readWindowsSandboxDiagnostics()',
+      observationFailure,
+    );
+
+    expect(observationFailure).toBeGreaterThan(0);
+    expect(diagnosticRead).toBeGreaterThan(0);
+    expect(diagnosticRead).toBeLessThan(observationFailure);
+    expect(fixtureSource).toContain("entry?.data?.source !== 'sandbox:windows-v2'");
+  });
+
   it('requires preconfigured setup and carries cancellable signals', () => {
     expect(fixtureSource).not.toContain('setupKodaXSandbox');
     expect(fixtureSource).not.toContain('Promise.race');
