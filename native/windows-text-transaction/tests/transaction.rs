@@ -49,6 +49,39 @@ fn dacl_descriptor(path: &std::path::Path) -> Vec<u8> {
     descriptor
 }
 
+#[cfg(windows)]
+fn normalize_dacl_inheritance_control(mut descriptor: Vec<u8>) -> Vec<u8> {
+    const DACL_INHERITANCE_CONTROL: u16 = 0x0100 | 0x0400 | 0x1000;
+    const INHERITED_ACE_FLAG: u8 = 0x10;
+
+    assert!(descriptor.len() >= 20);
+    let control = u16::from_le_bytes([descriptor[2], descriptor[3]]) & !DACL_INHERITANCE_CONTROL;
+    descriptor[2..4].copy_from_slice(&control.to_le_bytes());
+    let dacl_offset = u32::from_le_bytes(descriptor[16..20].try_into().unwrap()) as usize;
+    if dacl_offset == 0 {
+        return descriptor;
+    }
+    assert!(dacl_offset + 8 <= descriptor.len());
+    let ace_count = u16::from_le_bytes(
+        descriptor[dacl_offset + 4..dacl_offset + 6]
+            .try_into()
+            .unwrap(),
+    );
+    let mut ace_offset = dacl_offset + 8;
+    for _ in 0..ace_count {
+        assert!(ace_offset + 4 <= descriptor.len());
+        descriptor[ace_offset + 1] &= !INHERITED_ACE_FLAG;
+        let ace_size = u16::from_le_bytes(
+            descriptor[ace_offset + 2..ace_offset + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        assert!(ace_size >= 4 && ace_offset + ace_size <= descriptor.len());
+        ace_offset += ace_size;
+    }
+    descriptor
+}
+
 struct BlockingOplock {
     file: windows_sys::Win32::Foundation::HANDLE,
     event: windows_sys::Win32::Foundation::HANDLE,
@@ -614,7 +647,10 @@ fn successful_replace_preserves_readonly_attribute() {
         panic!("readonly replacement failed: {error:?}");
     }
     assert_ne!(fs::metadata(&target_path).unwrap().file_attributes() & 1, 0);
-    assert_eq!(dacl_descriptor(&target_path), dacl_before);
+    assert_eq!(
+        normalize_dacl_inheritance_control(dacl_descriptor(&target_path)),
+        normalize_dacl_inheritance_control(dacl_before)
+    );
     let mut cleanup = fs::metadata(&target_path).unwrap().permissions();
     cleanup.set_readonly(false);
     fs::set_permissions(&target_path, cleanup).unwrap();

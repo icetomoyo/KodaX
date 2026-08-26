@@ -20,7 +20,9 @@ All notable changes to this project will be documented in this file.
   Atomic replacement is now an explicit commit point: Windows performs no
   fallible cleanup afterward, while Unix post-rename durability/rollback
   uncertainty carries a complete receipt as `text_mutation_commit_uncertain`
-  and forbids blind retry. Linux ZFS remains fail-closed until its case and
+  and forbids blind retry. Windows preserves effective DACL entries; the
+  filesystem may canonicalize DACL inheritance/protection control during
+  replacement. Linux ZFS remains fail-closed until its case and
   normalization semantics can be proven from a descriptor.
   The Windows native
   shell runner keeps framed stdin/process containment but drops the

@@ -1130,9 +1130,13 @@ fn extended_acl_text(file: &File) -> Result<Vec<u8>, TextTransactionError> {
 
     let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
     if acl.is_null() {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ENOENT) {
+            return Ok(Vec::new());
+        }
         return Err(metadata_error(
             "cannot read trusted text extended ACL",
-            std::io::Error::last_os_error(),
+            error,
         ));
     }
     let mut length = 0;
@@ -1714,7 +1718,7 @@ mod tests {
         fs::write(&target, "before").unwrap();
         assert!(
             Command::new("chmod")
-                .args(["+a", "everyone deny delete", target.to_str().unwrap()])
+                .args(["+a", "everyone allow read", target.to_str().unwrap()])
                 .status()
                 .unwrap()
                 .success()
@@ -1879,7 +1883,11 @@ mod tests {
         let snapshot = root.snapshot(target.to_str().unwrap()).unwrap();
         assert_eq!(
             snapshot.canonical_path,
-            actual.join("hello.md").to_str().unwrap()
+            fs::canonicalize(&actual)
+                .unwrap()
+                .join("hello.md")
+                .to_str()
+                .unwrap()
         );
         let canonical_snapshot = root
             .snapshot(actual.join("hello.md").to_str().unwrap())
@@ -1947,9 +1955,10 @@ mod tests {
         let directory = tempdir().unwrap();
         let state = private_tempdir();
         let actual = directory.path().join("actual");
-        let alias = actual.join("alias");
         fs::create_dir(&actual).unwrap();
-        symlink(&actual, &alias).unwrap();
+        let canonical_actual = fs::canonicalize(&actual).unwrap();
+        let alias = canonical_actual.join("alias");
+        symlink(&canonical_actual, &alias).unwrap();
         let root =
             TrustedRoot::open(alias.to_str().unwrap(), state.path().to_str().unwrap()).unwrap();
 

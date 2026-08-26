@@ -256,15 +256,17 @@ if (!fs.existsSync(release)) process.exit(7);
   }, 40_000);
 
   it('does not let the sandbox target forge broker control authority', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-posix-control-authority-'));
+    roots.push(root);
     const result = await runKodaXSandboxed({
       command: process.execPath,
       args: [
         '-e',
         "const fs=require('node:fs');try{fs.writeSync(3,Buffer.from('FORGED_CONTROL\\n'))}catch{}process.exit(0)",
       ],
-      cwd: os.tmpdir(),
+      cwd: root,
       filesystem: {
-        allowRead: [process.execPath, os.tmpdir()],
+        allowRead: [root],
         allowWrite: [],
       },
       network: { mode: 'deny' },

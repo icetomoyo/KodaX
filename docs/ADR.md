@@ -5551,9 +5551,12 @@ handle-derived final identity while the stable ancestor handles and slot lock
 are held. Target files must be regular and single-link. The slot mutex lives
 in a current-host-SID private namespace, so a restricted shell cannot precreate
 the public object name and block text tools. Temp data is flushed; owner,
-group, DACL/protected-DACL state, integrity/resource attributes and basic file
-attributes are preserved. Non-default streams, Central Access Policy state or
-unsupported Windows attributes fail closed; v2 does not claim audit-SACL
+group, integrity/resource attributes and basic file attributes are preserved.
+On Windows, effective DACL ACE type/SID/mask/order
+is preserved, while the filesystem may canonicalize inherited-ACE provenance
+and DACL inheritance/protection control. Non-default streams,
+Central Access Policy state or unsupported Windows attributes fail closed;
+v2 does not claim audit-SACL
 preservation. Unix preserves ownership, mode, extended attributes, Linux
 user-modifiable inode flags, and macOS extended ACL/file flags or fails the replacement.
 Kernel-lock abandonment causes a complete reread and
