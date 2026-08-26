@@ -831,7 +831,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        let base = std::env::var_os("KODAX_NATIVE_TEST_TEMP")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join(format!(
             "kodax-windows-sandbox-v2-{label}-{}-{nonce}",
             std::process::id(),
         ));

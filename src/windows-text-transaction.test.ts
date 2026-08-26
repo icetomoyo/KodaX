@@ -23,6 +23,7 @@ import {
 } from './windows-text-transaction.js';
 
 const windowsIt = process.platform === 'win32' ? it : it.skip;
+const posixIt = process.platform === 'win32' ? it.skip : it;
 const portableIt = ['win32', 'linux', 'darwin'].includes(process.platform) ? it : it.skip;
 const execFile = promisify(execFileCallback);
 const authorizeOrdinaryCanonicalTarget = (canonicalTarget: string): void => {
@@ -228,6 +229,22 @@ describe('Windows trusted text transaction integration', () => {
     })).rejects.toMatchObject({
       name: 'KodaXTrustedTextMutationError',
       code: 'text_mutation_policy_denied',
+    });
+  });
+
+  posixIt('reauthorizes a canonical receipt path below an aliased write root', async () => {
+    const actualParent = path.join(root, 'actual-parent');
+    const actualRoot = path.join(actualParent, 'work');
+    const aliasParent = path.join(root, 'alias-parent');
+    const aliasedRoot = path.join(aliasParent, 'work');
+    await fs.mkdir(actualRoot, { recursive: true });
+    await fs.symlink(actualParent, aliasParent, 'dir');
+    const canonicalRoot = await fs.realpath(actualRoot);
+    const canonicalTarget = path.join(canonicalRoot, 'receipt.txt');
+
+    expect(_internalWindowsTextTransaction.authorizeTarget(canonicalTarget, [aliasedRoot])).toEqual({
+      canonicalRoot,
+      canonicalTarget,
     });
   });
 

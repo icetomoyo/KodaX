@@ -146,33 +146,42 @@ function authorizeTarget(target: string, roots: readonly string[]): AuthorizedTa
   assertSupportedAbsolutePath(target, 'target');
   for (const root of roots) assertSupportedAbsolutePath(root, 'write root');
   const resolvedTarget = path.resolve(target);
-  const lexicalRoot = normalizedRootCandidates(roots).find((candidate) => (
+  const candidates = normalizedRootCandidates(roots);
+  const lexicalRoot = candidates.find((candidate) => (
     candidate !== resolvedTarget && sameOrInside(candidate, resolvedTarget)
   ));
-  if (lexicalRoot === undefined) {
-    throw new KodaXTrustedTextMutationError({
-      code: 'text_mutation_policy_denied',
-      path: target,
-      message: `Trusted text mutation target is outside the Runtime write roots: ${target}`,
-    });
-  }
-  let canonicalRoot: string;
-  try {
-    const stat = fs.lstatSync(lexicalRoot);
-    if (!stat.isDirectory()) throw new Error('write root is not a directory');
-    canonicalRoot = fs.realpathSync.native(lexicalRoot);
-  } catch (cause) {
-    throw new KodaXTrustedTextMutationError({
-      code: 'text_mutation_unsafe_path',
-      path: target,
-      message: `Trusted text mutation write root is unavailable: ${lexicalRoot}`,
-      cause,
-    });
-  }
-  return {
-    canonicalRoot,
-    canonicalTarget: path.join(canonicalRoot, path.relative(lexicalRoot, resolvedTarget)),
+  const canonicalizeRoot = (root: string): string => {
+    try {
+      const stat = fs.lstatSync(root);
+      if (!stat.isDirectory()) throw new Error('write root is not a directory');
+      return fs.realpathSync.native(root);
+    } catch (cause) {
+      throw new KodaXTrustedTextMutationError({
+        code: 'text_mutation_unsafe_path',
+        path: target,
+        message: `Trusted text mutation write root is unavailable: ${root}`,
+        cause,
+      });
+    }
   };
+  if (lexicalRoot !== undefined) {
+    const canonicalRoot = canonicalizeRoot(lexicalRoot);
+    return {
+      canonicalRoot,
+      canonicalTarget: path.join(canonicalRoot, path.relative(lexicalRoot, resolvedTarget)),
+    };
+  }
+  for (const candidate of candidates) {
+    const canonicalRoot = canonicalizeRoot(candidate);
+    if (canonicalRoot !== resolvedTarget && sameOrInside(canonicalRoot, resolvedTarget)) {
+      return { canonicalRoot, canonicalTarget: resolvedTarget };
+    }
+  }
+  throw new KodaXTrustedTextMutationError({
+    code: 'text_mutation_policy_denied',
+    path: target,
+    message: `Trusted text mutation target is outside the Runtime write roots: ${target}`,
+  });
 }
 
 function loadNativeBinding(writeRoots: readonly string[]): NativeTextTransactionBinding {
