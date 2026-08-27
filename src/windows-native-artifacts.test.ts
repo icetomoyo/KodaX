@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,14 +13,36 @@ import {
   assertWindowsSandboxControlStateNotDirectlyAccessible,
   ensureUnixTrustedTextStateRoot,
   provisionWindowsAsrtRunner,
+  resolveWindowsAsrtRunnerArtifact,
   unixTrustedTextCoordinationRoot,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
+function windowsManifestText(asrtSha256: string): string {
+  return JSON.stringify({
+    version: 1,
+    platform: 'win32',
+    arch: process.arch,
+    textTransaction: {
+      file: 'kodax_windows_text_transaction.node',
+      protocol: 1,
+      sha256: 'a'.repeat(64),
+    },
+    shellSandbox: {
+      file: 'kodax_windows_shell_sandbox.exe',
+      protocol: 1,
+      sha256: 'b'.repeat(64),
+    },
+    asrtRunner: { file: 'srt-win.exe', version: '0.0.65', sha256: asrtSha256 },
+  });
+}
+
 describe('Windows native artifact trust boundary', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('rejects a development artifact source that overlaps an untrusted write root', () => {
@@ -142,6 +164,141 @@ describe('Windows native artifact trust boundary', () => {
       denyWrite: [],
     })).not.toThrow();
   });
+
+  it.runIf(process.platform === 'win32')(
+    'imports a hash-pinned package-manager hardlink into a single-link protected cache',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-asrt-hardlink-source-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const manifestDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const packageStore = path.join(temporary, 'package-store');
+      const sourcePath = path.join(temporary, 'node_modules', 'srt-win.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const bytes = Buffer.from('hash-pinned package-manager runner');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(path.dirname(moduleFile), { recursive: true });
+        fs.mkdirSync(manifestDirectory, { recursive: true });
+        fs.mkdirSync(packageStore, { recursive: true });
+        fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+        fs.mkdirSync(localAppData, { recursive: true });
+        const storedRunner = path.join(packageStore, 'srt-win.exe');
+        fs.writeFileSync(storedRunner, bytes);
+        fs.linkSync(storedRunner, sourcePath);
+        const manifestText = windowsManifestText(sha256);
+        fs.writeFileSync(path.join(manifestDirectory, 'manifest.json'), manifestText);
+        vi.stubGlobal('KODAX_WINDOWS_NATIVE_MANIFEST_JSON', manifestText);
+
+        expect(fs.lstatSync(sourcePath).nlink).toBeGreaterThan(1);
+        const runner = resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        );
+
+        expect(fs.readFileSync(runner.path)).toEqual(bytes);
+        expect(fs.lstatSync(runner.path).nlink).toBe(1);
+        expect(runner.sha256).toBe(sha256);
+
+        fs.writeFileSync(sourcePath, Buffer.from('tampered package-manager runner'));
+        expect(() => resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        )).toThrow(/native artifact hash mismatch/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'keeps development manifests and ASRT sources single-link',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-asrt-dev-hardlink-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const manifestDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const sourcePath = path.join(temporary, 'node_modules', 'srt-win.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const bytes = Buffer.from('development hardlink runner');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(manifestDirectory, { recursive: true });
+        fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+        fs.mkdirSync(localAppData, { recursive: true });
+        const writableAlias = path.join(temporary, 'writable-alias.exe');
+        fs.writeFileSync(writableAlias, bytes);
+        fs.linkSync(writableAlias, sourcePath);
+        const manifestText = windowsManifestText(sha256);
+        const manifestPath = path.join(manifestDirectory, 'manifest.json');
+        const manifestAlias = path.join(temporary, 'writable-manifest-alias.json');
+        fs.writeFileSync(manifestAlias, manifestText);
+        fs.linkSync(manifestAlias, manifestPath);
+
+        expect(() => resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        )).toThrow(/bounded ordinary file/);
+
+        fs.unlinkSync(manifestPath);
+        fs.writeFileSync(manifestPath, manifestText);
+        expect(() => resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        )).toThrow(/bounded ordinary file/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'rejects a package source that grows beyond the bound after path inspection',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-asrt-growing-source-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const sourcePath = path.join(temporary, 'node_modules', 'srt-win.exe');
+      vi.stubEnv('LOCALAPPDATA', path.join(temporary, 'local-app-data'));
+      try {
+        const bytes = Buffer.from('initial bounded runner');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(path.dirname(moduleFile), { recursive: true });
+        fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+        fs.writeFileSync(sourcePath, bytes);
+        vi.stubGlobal('KODAX_WINDOWS_NATIVE_MANIFEST_JSON', windowsManifestText(sha256));
+        const lstat = fs.lstatSync.bind(fs);
+        let grew = false;
+        vi.spyOn(fs, 'lstatSync').mockImplementation((candidate) => {
+          const stat = lstat(candidate);
+          if (!grew && path.resolve(String(candidate)) === path.resolve(sourcePath)) {
+            grew = true;
+            fs.truncateSync(sourcePath, 64 * 1024 * 1024 + 1);
+          }
+          return stat;
+        });
+
+        expect(() => resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        )).toThrow(/bounded ordinary file/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.runIf(process.platform === 'win32')(
     'provisions the ASRT runner outside Agent Home with local Users read-execute only',

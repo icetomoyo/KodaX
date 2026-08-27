@@ -151,6 +151,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 317 | High | Resolved | A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions | FEATURE_295 protected ASRT artifact import | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 316 | High | Resolved | A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5 | FEATURE_295 Windows atomic text replace | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 315 | Medium | Resolved | Native artifact staging exceeds legacy Windows path limits although the final cache path is valid | FEATURE_295 PowerShell 5.1 artifact staging | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 314 | High | Resolved | Per-command propagation of fixed sensitive-root denies serializes independent Windows shells | FEATURE_295 first native-shell draft | v0.7.96 development | 2026-08-27 | 2026-08-27 |
@@ -355,6 +357,70 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 318: Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 first native capability plan
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+A real sandbox smoke rooted below `%LOCALAPPDATA%\Temp` never reached the
+restricted target, then reported both command timeout and unconfirmed native
+termination. Stage diagnostics proved the native host was blocked inside
+`SetSecurityInfo` while adding a traversal ACE to
+`C:\Users\<host>\AppData`. Updating a container DACL can propagate inheritance
+through its descendants, so the cost depended on unrelated profile size and
+could exceed every command and drain deadline. A workspace below `C:\Works`
+appeared healthy because its smaller ancestors had already accumulated grants.
+
+#### Resolution
+
+Shell admission no longer mutates allow-root ancestors. The restricted target
+already receives enabled `SeChangeNotifyPrivilege`, whose Windows contract
+bypasses directory traverse checks without granting directory listing or file
+content. Read/write authority remains attached only to each handle-canonical
+allow root through the existing sandbox-group and filesystem-capability ACEs.
+An allow root nested below an explicit policy deny is still rejected before
+the first mutation. The native plan test now requires every persistent allow
+operation to target an exact root, and the real `%TEMP%` loader gate completes
+under the original 15-second budget.
+
+### 317: A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 protected ASRT artifact import
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+On a valid local package installation, `kodax sandbox doctor` could report
+ready while model-issued Bash later ran as the host user. The package manager
+had installed the hash-pinned ASRT runner as a hardlink to its content store.
+The import path applied the protected-cache `nlink === 1` invariant to that
+untrusted package source before copying it, rejected preparation, and the
+declared local fallback preserved task execution at normal permissions.
+Trusted text tools were unaffected because they intentionally run in the host.
+
+#### Resolution
+
+The two trust stages now have distinct invariants. In a bundled build, a
+package source may be a hardlink only when a handle-bound bounded read matches
+the exact SHA-256 embedded in the release manifest; its link count is not an
+authority claim. Development manifests and sources remain single-link because
+their digest is not an immutable embedded trust root. KodaX copies the
+authenticated bytes into its protected content-addressed cache. That final
+executable still requires a single link, protected ACLs, the expected hash,
+and the existing no-reparse checks before broker launch. A regression test
+imports a real two-link source, proves the protected copy is single-link, and
+rejects later source-byte tampering.
 
 ### 316: A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5
 
@@ -13610,11 +13676,28 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 195 (30 Open, 165 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 197 (30 Open, 167 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-27: Issue 318 resolved (allow-root ancestor ACL propagation)
+
+- Native shell admission no longer writes traversal ACEs to private ancestors;
+  persistent capability changes are exact-root only.
+- Enabled Windows traverse privilege preserves reachability without widening
+  ancestor content authority, and a cold `%TEMP%` shell now starts within the
+  existing launch budget.
+
+### 2026-08-27: Issue 317 resolved (hash-pinned package hardlink import)
+
+- A package-store hardlink is accepted as an ASRT source only in bundled builds
+  after a handle-bound bounded read matches the embedded release digest;
+  development manifests and sources remain single-link.
+- The protected executable cache remains single-link, ACL-protected, and
+  hash-verified, so installation layout no longer triggers ordinary-permission
+  fallback without weakening the execution boundary.
 
 ### 2026-08-27: Issue 316 resolved (concurrent Windows reader/replace race)
 

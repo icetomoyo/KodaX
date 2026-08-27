@@ -92,6 +92,23 @@ All notable changes to this project will be documented in this file.
   `resolveSrtWinSourcePath()` prefers it in bundled builds, and
   `kodax sandbox setup` installs through the prepared runner's resolved
   descriptor instead of the library's module-relative lookup (Issue 303).
+
+- Windows ASRT import now accepts a package-store hardlink only in a bundled
+  build, after a handle-bound bounded read matches the embedded release
+  SHA-256. Development manifests and sources remain single-link. KodaX still
+  copies it into the protected content-addressed cache, whose executable must
+  remain single-link, ACL-protected, and hash-correct. Valid package layouts no
+  longer make model-issued Bash silently use the declared normal-permission
+  fallback (Issue 317). The repository now declares npm as its package manager;
+  alternate local package metadata remains outside the project contract.
+
+- Windows native shell admission no longer writes traversal ACEs to every
+  allow-root ancestor. The restricted target's enabled traverse privilege
+  reaches an exact capability-protected root without directory-list/content
+  authority, while explicit deny-ancestor conflicts remain rejected. This
+  avoids unbounded profile-DACL propagation and restores cold `%TEMP%` shell
+  startup within the existing deadline (Issue 318).
+
 ### Added
 
 - Custom providers can opt into image / vision input with a single

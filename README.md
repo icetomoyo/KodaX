@@ -818,6 +818,12 @@ ASRT is checked before materialization and again before broker startup. Text
 remains Host/SYSTEM-only, the dedicated sandbox group SID receives read/execute
 on the shell artifact, and local Users receive read/execute on ASRT; neither
 sandbox trustee nor local Users receives write/delete authority.
+A package-store hardlink is accepted only in bundled builds, through a
+handle-bound bounded read whose complete bytes match the embedded release
+digest; development manifests and sources remain single-link. The executable
+used by the broker is still a separate, protected single-link file. Allow-root
+authorization changes only exact canonical roots and never rewrites their
+private ancestor DACLs.
 Linux and macOS use the same trusted-text authority with native no-follow/
 `flock`/CAS/atomic commit, while shell commands remain per-command ASRT
 bubblewrap/Seatbelt invocations with no KodaX workspace-session owner.

@@ -230,6 +230,10 @@ cold admission. Setup rotates the old account SID before
 recording a strict v2 protocol/SID machine marker. Linux and macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
+Windows allow-root ACL changes are exact-root only. The target's enabled
+traverse privilege reaches private descendant roots without rewriting ancestor
+container DACLs, avoiding inheritance propagation through unrelated profile
+trees.
 Only the final Windows target is creation-time contained by KodaX. Issue 307
 records the external ASRT runner's shared-account pre-main creation window;
 post-spawn DACL hardening cannot close it, and current Codex retains the same

@@ -4,6 +4,7 @@
   "description": "KodaX lightweight coding agent - TypeScript implementation with 16 built-in LLM provider aliases, published as a Node-free single-file CLI and SDK",
   "type": "module",
   "private": true,
+  "packageManager": "npm@10.9.8",
   "publishConfig": {
     "access": "public"
   },
@@ -211,7 +212,8 @@
     "scripts/production-env.cjs",
     "README.md",
     "README_CN.md",
-    "docs/SDK_EMBEDDER_GUIDE.md",
+    "public_docs/sdk/embedder-guide.md",
+    "public_docs/configuration/sandbox.md",
     "LICENSE",
     "CHANGELOG.md"
   ]

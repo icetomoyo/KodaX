@@ -134,8 +134,9 @@ SID/protocol machine generation before shell admission.
 The Windows private desktop uses a full-policy capability, while persistent
 filesystem ACEs use stable account-generation + canonical-root + read/write-clause
 capabilities. Read roots carry an exact allow-read capability; read-only roots implicitly carry the matching deny-write
-capability; private ancestors get only target-only metadata/traverse access
-for the sandbox group. Because `WRITE_RESTRICTED` does not enforce read denies,
+capability. The restricted target's enabled traverse privilege reaches exact
+allowed roots without persistent private-ancestor ACEs or profile-DACL
+propagation. Because `WRITE_RESTRICTED` does not enforce read denies,
 `denyRead` uses an execution-logon ACE committed under a short ACL mutex and a
 crash-safe receipt, then removed only after Job drain. Recovery verifies the
 recorded volume/file identity before changing the DACL; a missing or replaced

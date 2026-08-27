@@ -327,6 +327,22 @@ $acl = [IO.File]::GetAccessControl($env:KODAX_ACL_TEST_PATH)
   throw new Error(`Unexpected Windows DACL protection value: ${JSON.stringify(stdout)}`);
 }
 
+async function windowsDaclSddl(directory: string): Promise<string> {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$acl = [IO.Directory]::GetAccessControl($env:KODAX_ACL_TEST_PATH)
+[Console]::Out.Write($acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access))
+`;
+  const { stdout } = await execFile(windowsPowerShell(), [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], {
+    env: { ...process.env, KODAX_ACL_TEST_PATH: directory },
+    windowsHide: true,
+  });
+  return stdout.trim();
+}
+
 function parseWindowsProcess(value: unknown): WindowsProcessIdentity {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Windows process query returned a non-object row.');
@@ -696,8 +712,10 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
   });
 
   it('starts an inbox Windows command under the restricted target token', async () => {
-    const root = await createWindowsV2TestRoot('kodax-v2-loader-');
-    roots.push(root);
+    const parent = await createWindowsV2TestRoot('kodax-v2-loader-parent-');
+    roots.push(parent);
+    const root = await mkdtemp(path.join(parent, 'workspace-'));
+    const parentDacl = await windowsDaclSddl(parent);
     const command = process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe';
     const result = await runKodaXSandboxed({
       command,
@@ -713,6 +731,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
       throw new Error(`Windows restricted target loader failed: ${JSON.stringify(result)}`);
     }
     expect(result).toMatchObject({ status: 'completed', sandboxed: true, exitCode: 0 });
+    expect(await windowsDaclSddl(parent)).toBe(parentDacl);
   }, 45_000);
 
   it('lets every trusted text tool replace a file created by the sandbox account', async () => {
@@ -807,6 +826,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     const parent = await createWindowsV2TestRoot('kodax-v2-private-parent-');
     roots.push(parent);
     await protectPrivateTestDirectory(parent);
+    const parentDacl = await windowsDaclSddl(parent);
     const workspace = path.join(parent, 'workspace');
     const readOnly = path.join(parent, 'read-only');
     const sibling = path.join(parent, 'sibling');
@@ -819,7 +839,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
       'const fs=require("node:fs")',
       'const path=require("node:path")',
       'const [workspace,readOnly,parent,sibling]=process.argv.slice(1)',
-      'if(fs.realpathSync(workspace).toLowerCase()!==workspace.toLowerCase()) process.exit(61)',
+      'if(!fs.statSync(workspace).isDirectory()) process.exit(61)',
       'if(fs.readFileSync(path.join(readOnly,"allowed.txt"),"utf8")!=="read-only-ok") process.exit(62)',
       'fs.writeFileSync(path.join(workspace,"written.txt"),"workspace-ok")',
       'const denied=(operation)=>{try{operation();return false}catch(error){return error&&["EACCES","EPERM"].includes(error.code)}}',
@@ -854,6 +874,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     });
     await expect(readFile(path.join(workspace, 'written.txt'), 'utf8')).resolves.toBe('workspace-ok');
     await expect(stat(path.join(sibling, 'escape.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await windowsDaclSddl(parent)).toBe(parentDacl);
   }, 60_000);
 
   it('enforces denyRead without blocking an overlapping allowed workspace', async () => {
@@ -1262,6 +1283,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
   it('allows policy A in A but denies policy B from writing A', async () => {
     const parent = await createWindowsV2TestRoot('kodax-v2-policy-ab-');
     roots.push(parent);
+    await protectPrivateTestDirectory(parent);
     const rootA = path.join(parent, 'A');
     const rootB = path.join(parent, 'B');
     await Promise.all([mkdir(rootA), mkdir(rootB)]);

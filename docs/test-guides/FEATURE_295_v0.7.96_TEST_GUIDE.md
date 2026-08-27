@@ -176,8 +176,11 @@ shell lifetime.
     ancestor, create a fresh workspace below it, and start a shell after reboot
     and after setup. The old user ACE must not reject admission, and exact
     `AllowRead`/`AllowWrite` capability ACEs must still be installed. No
-    recursive ACL cleanup or account rotation is permitted as the recovery
-    mechanism. Then prove nested Node, cmd, and PowerShell subprocesses work;
+    recursive ACL cleanup, ancestor traversal ACE, or account rotation is
+    permitted as the recovery mechanism. Snapshot the private ancestor DACL
+    before launch and prove it is unchanged afterward. Then prove nested Node,
+    cmd, and PowerShell subprocesses work and that a fresh `%TEMP%` root reaches
+    the target inside the existing 15-second budget;
     keep Issue 309's explicit/protected child-DACL bypass documented as open.
 13. Complete setup before one exact sensitive Agent Home directory exists, then
     create that directory and perform a cold shell admission from two Runtime
@@ -194,6 +197,13 @@ shell lifetime.
   bundled `srt-win.exe`. Cold preparation rejects modified source bytes before
   materialization, and broker startup rejects modified staged bytes before any
   restricted target starts.
+- Import the embedded-manifest-pinned ASRT source once from a two-link
+  package-store fixture. It must materialize a byte-identical, single-link
+  protected cache executable. Mutating the linked source afterward must fail
+  digest validation; concurrent growth beyond the size bound must fail before
+  an unbounded read. A filesystem development manifest or source with multiple
+  links must be rejected. The protected cache and its ACL/link-count
+  requirements must not be relaxed.
 - Read back the protected Windows store ACLs: text is Host/SYSTEM-only, shell
   grants read/execute to the dedicated sandbox group SID, and ASRT grants
   read/execute to local Users. No sandbox/local-Users trustee may have

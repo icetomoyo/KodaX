@@ -31,7 +31,7 @@ use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_CASE_SENSITIVE_INFO,
     FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
     FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
-    FILE_TRAVERSE, FileAttributeTagInfo,
+    FileAttributeTagInfo,
     FileCaseSensitiveInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
     GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
@@ -61,7 +61,6 @@ const READ_EXECUTE_MASK: u32 = FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0;
 const MODIFY_MASK: u32 =
     FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0 | DELETE.0;
 const DENY_WRITE_MASK: u32 = FILE_GENERIC_WRITE.0 | DELETE.0 | FILE_DELETE_CHILD.0;
-const ANCESTOR_METADATA_MASK: u32 = FILE_READ_ATTRIBUTES.0 | FILE_TRAVERSE.0 | SYNCHRONIZE.0;
 const BUILTIN_USERS_SID: &str = "S-1-5-32-545";
 const EVERYONE_SID: &str = "S-1-1-0";
 const EXECUTION_DENY_RECEIPT_VERSION: u16 = 2;
@@ -499,35 +498,6 @@ fn normalized_paths(values: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     unique.into_values().collect()
 }
 
-fn allow_root_ancestors(roots: &[PathBuf]) -> Vec<PathBuf> {
-    let direct = roots
-        .iter()
-        .map(|root| {
-            root.to_string_lossy()
-                .replace('/', "\\")
-                .to_ascii_lowercase()
-        })
-        .collect::<BTreeSet<_>>();
-    let mut ancestors = BTreeMap::new();
-    for root in roots {
-        let mut current = root.parent();
-        while let Some(parent) = current {
-            if parent.parent().is_none() {
-                break;
-            }
-            let key = parent
-                .to_string_lossy()
-                .replace('/', "\\")
-                .to_ascii_lowercase();
-            if !direct.contains(&key) {
-                ancestors.entry(key).or_insert_with(|| parent.to_path_buf());
-            }
-            current = parent.parent();
-        }
-    }
-    ancestors.into_values().collect()
-}
-
 fn policy_operations(
     request: &RunRequest,
     _runner_directory: &Path,
@@ -548,7 +518,10 @@ fn policy_operations(
         }
     }
     deny_write = normalized_paths(deny_write);
-    let allow_roots = normalized_paths(allow_read.iter().chain(&allow_write).cloned());
+    // The restricted target enables SeChangeNotifyPrivilege, so Windows can
+    // traverse to an exact allowed root without persistent ACEs on its
+    // ancestors. Mutating a private container DACL here can trigger inheritance
+    // propagation through an unrelated profile tree.
     let mut operations = Vec::new();
     for path in deny_write {
         operations.push(PlannedAclOperation {
@@ -596,16 +569,6 @@ fn policy_operations(
             trustee: PlannedTrustee::FilesystemCapability(FilesystemCapabilityKind::AllowWrite),
             inherit: true,
             pass: AccessPass::Restricted,
-        });
-    }
-    for path in allow_root_ancestors(&allow_roots) {
-        operations.push(PlannedAclOperation {
-            mode: AclMode::Grant,
-            path,
-            mask: ANCESTOR_METADATA_MASK,
-            trustee: PlannedTrustee::Sid(request.sandbox_group_sid.clone()),
-            inherit: false,
-            pass: AccessPass::Normal,
         });
     }
     operations
@@ -1366,29 +1329,6 @@ fn validate_explicit_allows_do_not_override_inherited_denies(request: &RunReques
     Ok(())
 }
 
-fn validate_ancestor_grants_do_not_cross_read_denies(
-    request: &RunRequest,
-    operations: &[PlannedAclOperation],
-) -> Result<()> {
-    for operation in operations
-        .iter()
-        .filter(|operation| !operation.inherit && operation.mode == AclMode::Grant)
-    {
-        let ancestor = operation.path.to_string_lossy().replace('/', "\\");
-        if request
-            .deny_read
-            .iter()
-            .any(|denied| canonical_path_is_same_or_inside(&denied.replace('/', "\\"), &ancestor))
-        {
-            bail!(
-                "Windows sandbox allow root requires ancestor metadata denied by policy: {}",
-                operation.path.display(),
-            );
-        }
-    }
-    Ok(())
-}
-
 fn execution_deny_receipt_path(request: &RunRequest, control_directory: &Path) -> PathBuf {
     control_directory.join(format!("windows-deny-{}.json", request.terminal_nonce))
 }
@@ -1773,7 +1713,6 @@ pub fn ensure_policy_aces_until(
     let host = current_token()?;
     let host_sid = token_user_sid(host.raw())?;
     let operations = policy_operations(&canonical_request, runner_directory, &host_sid);
-    validate_ancestor_grants_do_not_cross_read_denies(&canonical_request, &operations)?;
     let _transaction =
         acquire_acl_transaction(operation_deadline_unix_ms, "policy ACL authorization")?;
     apply_operations(
@@ -1923,7 +1862,7 @@ mod tests {
     }
 
     #[test]
-    fn acl_plan_is_canonical_append_only_and_policy_scoped() {
+    fn acl_plan_is_root_only_canonical_append_only_and_policy_scoped() {
         let root = temporary_directory("plan");
         let request = request(&root);
         let host = current_token().unwrap();
@@ -1971,79 +1910,8 @@ mod tests {
                 .count(),
             1,
         );
-        let immediate_parent = root.parent().unwrap();
-        assert!(operations.iter().any(|operation| {
-            operation.mode == AclMode::Grant
-                && operation.trustee == PlannedTrustee::Sid(request.sandbox_group_sid.clone())
-                && operation.path == immediate_parent
-                && operation.mask == ANCESTOR_METADATA_MASK
-                && !operation.inherit
-        }));
-        assert!(operations.iter().all(|operation| {
-            operation.path == root || operation.mask == ANCESTOR_METADATA_MASK
-        }));
-        assert_eq!(
-            ANCESTOR_METADATA_MASK & 0x1,
-            0,
-            "ancestor ACE must not list directories"
-        );
+        assert!(operations.iter().all(|operation| operation.path == root));
         fs::remove_dir(root).unwrap();
-    }
-
-    #[test]
-    fn ancestor_metadata_uses_the_normal_pass_and_ignores_inherit_only() {
-        let capability = "S-1-5-21-10-20-30-40";
-        let user = "S-1-5-21-10-20-30-1001";
-        let inherited_only = AceSnapshot {
-            directory: true,
-            aces: vec![ObservedAce {
-                index: 0,
-                mode: AclMode::Grant,
-                sid: BUILTIN_USERS_SID.into(),
-                mask: ANCESTOR_METADATA_MASK,
-                flags: INHERIT_ONLY_ACE.0 as u8,
-            }],
-        };
-        assert!(!inherited_only.satisfies(
-            &RequiredAce::new(
-                AclMode::Grant,
-                "S-1-5-32-544",
-                ANCESTOR_METADATA_MASK,
-                false,
-                AccessPass::Normal,
-            ),
-            user,
-        ));
-
-        let denied_capability = AceSnapshot {
-            directory: true,
-            aces: vec![
-                ObservedAce {
-                    index: 0,
-                    mode: AclMode::Deny,
-                    sid: EVERYONE_SID.into(),
-                    mask: FILE_READ_ATTRIBUTES.0,
-                    flags: 0,
-                },
-                ObservedAce {
-                    index: 1,
-                    mode: AclMode::Grant,
-                    sid: capability.into(),
-                    mask: ANCESTOR_METADATA_MASK,
-                    flags: 0,
-                },
-            ],
-        };
-        assert!(!denied_capability.satisfies(
-            &RequiredAce::new(
-                AclMode::Grant,
-                capability,
-                ANCESTOR_METADATA_MASK,
-                false,
-                AccessPass::Normal,
-            ),
-            user,
-        ));
     }
 
     #[test]

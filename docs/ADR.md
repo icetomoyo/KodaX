@@ -5542,9 +5542,10 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    root receives a stable deny-write capability unless covered by a current
    write root. The ASRT sandbox group supplies ordinary read/execute or modify
    access on the normal pass; the exact read/write root capability supplies the
-   restricted pass. Private ancestors receive only
-   non-inheriting read-attributes/traverse/synchronize for the sandbox group,
-   never list, content-read, write, delete, or inherited authority. Canonical
+   restricted pass. The restricted target enables `SeChangeNotifyPrivilege`,
+   so it can traverse to an exact allowed root without persistent ACEs on
+   private ancestors. Admission never rewrites a profile/container DACL merely
+   to reach a descendant; exact-root content authority is unchanged. Canonical
    targets and nested allow/deny precedence are preflighted before the first
    persistent DACL mutation.
 
@@ -5609,7 +5610,11 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
     and SHA-256 plus the ASRT release version and SHA-256. Verified bytes are
     materialized into a protected content-addressed LocalAppData store before
     load or execution; ASRT source bytes are checked before materialization and
-    the staged executable is rechecked before broker startup. Windows text
+    the staged executable is rechecked before broker startup. A package-store
+    hardlink is acceptable only with an embedded ASRT digest; a handle-bound
+    bounded read authenticates its complete bytes. Development manifests and
+    sources remain single-link. Materialization creates a separate protected
+    single-link executable. Windows text
     bytes remain Host/SYSTEM-only, the native shell executable grants
     read/execute to the dedicated sandbox group SID, and the pinned ASRT
     `srt-win.exe` grants local Users read/execute because the dedicated account

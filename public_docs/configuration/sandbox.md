@@ -174,10 +174,11 @@ clause. Every read root has an exact allow-read capability and a read-only root
 implicitly carries its deny-write capability. The dedicated account,
 per-launch logon, and Everyone SIDs remain in the restricting set because real
 subprocess creation requires them, matching current Codex; Issue 309 documents
-the remaining ambient-trustee child-DACL boundary. The shared sandbox group supplies the normal access-check pass. If a workspace is nested below a private host
-directory, KodaX grants its ancestors only non-inheriting read-attributes/
-traverse/synchronize access—never directory listing, content read, write, or
-delete—and preflights every target before one atomic ACL transaction. Windows
+the remaining ambient-trustee child-DACL boundary. The shared sandbox group
+supplies the normal access-check pass. The target's enabled Windows traverse
+privilege reaches an exact allowed root without persistent ACEs on its private
+ancestors; KodaX never rewrites a profile/container DACL merely to make a child
+root reachable. Every target is preflighted before one atomic ACL transaction. Windows
 `WRITE_RESTRICTED` does not enforce restricting SIDs for reads, so `denyRead`
 uses an execution-logon deny under a short ACL mutex. A durable receipt records
 the no-follow volume/file identity before mutation; exact cleanup follows Job
@@ -219,6 +220,14 @@ directory created after setup. They are not rebuilt for each shell command. The
 ASRT directory is not passed as a final-target policy root. A fixed System32
 provisioner may run during this artifact bootstrap; text content and shell
 stdin never enter it.
+
+In a bundled build, the package-source ASRT executable may be a package-store
+hardlink. KodaX does not trust that link relationship: it performs a
+handle-bound bounded read and requires the complete bytes to match the embedded
+release SHA-256 before copying them into the protected cache. Filesystem
+development manifests and sources remain single-link. The executable used by
+the broker still has one link and must pass the protected ACL and digest checks.
+This prevents a valid installation layout from being mistaken for sandbox failure.
 
 If a prior host died before a native request was consumed, explicit setup can
 self-heal the protected control directory after proving the sandbox SID idle.

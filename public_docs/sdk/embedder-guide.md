@@ -6417,9 +6417,9 @@ filesystem write authority instead uses stable capabilities derived from the
 sandbox-account generation, final handle-canonical root, and
 `allowWrite`/`denyWrite` clause. A read-only root implicitly carries its
 deny-write capability; the shared sandbox group supplies ordinary read access.
-Private ancestors receive only non-inheriting
-read-attributes/traverse/synchronize access for the group, never directory-list,
-content-read, write, or delete authority. Because `WRITE_RESTRICTED` does not
+The target's enabled Windows traverse privilege reaches an exact allowed root
+without persistent ACEs on private ancestors; admission never rewrites a
+profile/container DACL merely to make a descendant reachable. Because `WRITE_RESTRICTED` does not
 apply restricting SIDs to reads, `denyRead` uses an execution-logon ACE under a
 short ACL mutex. The host publishes a durable receipt before mutation, holds
 no-follow handles through Job drain, removes exactly its ACE afterward, and
@@ -6445,6 +6445,12 @@ text, file-mutation content, or shell stdin. Shell policy cannot include that
 store as a write root. The text artifact remains Host/SYSTEM-only, the shell
 artifact grants read/execute to the dedicated sandbox group SID, and the ASRT
 artifact grants local Users read/execute; none grants sandbox write/delete.
+In a bundled build, the package-source ASRT file may be a package-store
+hardlink: KodaX performs a handle-bound bounded read and accepts it only when
+the complete bytes match the embedded digest. Filesystem development manifests
+and sources remain single-link. The copied executable used by the broker
+remains single-link, ACL-protected, and hash-verified. Embedders therefore do
+not need to normalize the package manager's content-store layout.
 
 There is no filesystem-effect lease spanning a command lifetime and no
 owner/reset/allow-revoke/poison admission gate shared with text tools. Shells

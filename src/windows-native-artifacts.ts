@@ -195,22 +195,61 @@ function assertDevelopmentSourceIsOutsideWriteRoots(
   }
 }
 
-function readVerifiedArtifact(file: string, expected: string): Buffer {
-  const stat = fs.lstatSync(file);
-  if (
+function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function readBoundedOrdinaryFile(file: string, requireSingleLink: boolean): Buffer {
+  const before = fs.lstatSync(file);
+  const invalid = (stat: fs.Stats): boolean => (
     !stat.isFile()
     || stat.isSymbolicLink()
-    || stat.nlink !== 1
+    || (requireSingleLink && stat.nlink !== 1)
     || stat.size > MAX_NATIVE_ARTIFACT_BYTES
-  ) {
+  );
+  if (invalid(before)) {
     throw new Error(`native artifact is not a bounded ordinary file: ${file}`);
   }
-  const bytes = fs.readFileSync(file);
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY);
+  try {
+    const opened = fs.fstatSync(descriptor);
+    const current = fs.lstatSync(file);
+    if (invalid(opened) || invalid(current)
+      || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, current)) {
+      throw new Error(`native artifact is not a stable bounded ordinary file: ${file}`);
+    }
+    const buffer = Buffer.allocUnsafe(opened.size + 1);
+    let length = 0;
+    while (length < buffer.byteLength) {
+      const count = fs.readSync(descriptor, buffer, length, buffer.byteLength - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    const after = fs.fstatSync(descriptor);
+    if (length !== opened.size || invalid(after) || !sameFileIdentity(opened, after)) {
+      throw new Error(`native artifact changed during bounded read: ${file}`);
+    }
+    return buffer.subarray(0, length);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readHashPinnedArtifact(
+  file: string,
+  expected: string,
+  requireSingleLink: boolean,
+): Buffer {
+  const bytes = readBoundedOrdinaryFile(file, requireSingleLink);
   const actual = createHash('sha256').update(bytes).digest('hex');
   if (actual !== expected.toLowerCase()) {
     throw new Error(`native artifact hash mismatch: ${file}`);
   }
   return bytes;
+}
+
+function readVerifiedArtifact(file: string, expected: string): Buffer {
+  return readHashPinnedArtifact(file, expected, true);
 }
 
 export function windowsNativeArtifactCacheRoot(): string {
@@ -981,15 +1020,22 @@ export function resolveWindowsAsrtRunnerArtifact(
           options.untrustedWriteRoots ?? [],
         );
       }
-      const manifest = parseManifestText(
-        candidate.manifestText ?? fs.readFileSync(candidate.manifestPath, 'utf8'),
-      );
+      const embeddedManifest = candidate.manifestText !== undefined;
+      const manifest = parseManifestText(candidate.manifestText
+        ?? readBoundedOrdinaryFile(candidate.manifestPath, true).toString('utf8'));
       if (manifest.asrtRunner.version !== expectedVersion) {
         throw new Error(
           `asrtRunner version ${manifest.asrtRunner.version} does not match ${expectedVersion}`,
         );
       }
-      const bytes = readVerifiedArtifact(sourcePath, manifest.asrtRunner.sha256);
+      // Package stores may hard-link production source bytes. Only an embedded
+      // digest is an immutable trust root; development manifests and sources
+      // remain single-link so writable aliases cannot redefine both together.
+      const bytes = readHashPinnedArtifact(
+        sourcePath,
+        manifest.asrtRunner.sha256,
+        !embeddedManifest,
+      );
       const protectedRunner = provisionWindowsAsrtRunner(bytes, manifest.asrtRunner.sha256);
       return {
         ...protectedRunner,

@@ -337,6 +337,10 @@ content-addressed 受保护存储；ASRT 在落库前与 broker 启动前都会�
 Host/SYSTEM 可访问，专用 sandbox group SID 对 shell artifact 只有 read/execute，
 local Users 对 ASRT 只有 read/execute；sandbox trustee 与 local Users 均无
 write/delete 权限。
+包存储中的 hardlink 仅在 bundled 构建中可作为 ASRT 来源，并通过同一文件句柄的
+有界读取核对完整字节与内嵌发布 digest；开发态 manifest 与来源仍须单链接。broker
+实际执行的仍是独立、受保护、单链接文件。allow-root 授权只修改精确 canonical
+root，不再改写其私有祖先目录的 DACL。
 Linux/macOS 使用同一可信文本权威及 native no-follow/`flock`/CAS/原子提交；
 shell 仍是逐命令 ASRT bubblewrap/Seatbelt 执行，不保留 KodaX workspace-session owner。
 Issue 307 记录 ASRT 所有的 runner 在 KodaX 代码运行前启动这一更窄的 pre-main
