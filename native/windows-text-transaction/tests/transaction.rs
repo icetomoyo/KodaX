@@ -746,7 +746,7 @@ fn successful_replace_preserves_readonly_attribute() {
 
 #[test]
 fn rewrites_a_legacy_low_integrity_sandbox_file_without_reapplying_its_label() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempdir().unwrap();
     let target_path = directory.path().join("legacy-low-integrity.txt");
     fs::write(&target_path, "before").unwrap();
     let output = std::process::Command::new("icacls.exe")

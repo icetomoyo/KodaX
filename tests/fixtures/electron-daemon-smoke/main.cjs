@@ -595,7 +595,7 @@ if (!sandboxDoctor.ready) {
 phase = 'publish';
 writeEnvironmentProof({
   daemon: process.env.ELECTRON_RUN_AS_NODE ?? 'absent',
-  externalChild: child.stdout.trim(),
+  externalChild: child.stdout?.trim() ?? '',
   externalChildStatus: child.status,
   externalChildError: child.error?.message,
   shellProbe: shellProbeOutput[0],
