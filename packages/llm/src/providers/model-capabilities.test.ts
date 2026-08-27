@@ -154,6 +154,22 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(getModelCapabilities('deepseek', 'deepseek-v4-pro')?.contextWindow).toBe(1_000_000);
   });
 
+  it('registers glm-5.3-flash (native multimodal, 1M) on all three Zhipu routes', () => {
+    for (const provider of ['zhipu', 'zhipu-coding', 'zai-coding'] as const) {
+      const caps = getModelCapabilities(provider, 'glm-5.3-flash');
+      expect(caps?.contextWindow, `${provider} ctx`).toBe(1_000_000);
+      expect(caps?.maxOutputTokens, `${provider} maxOut`).toBe(131_072);
+      // Text params identical to GLM-5.3 per bigmodel docs — the flash cannot
+      // disable thinking either, so it reuses the zai-glm-5.3 effort mapping.
+      expect(caps?.reasoningCapability, `${provider} reasoning`).toBe('native-effort');
+      expect(caps?.reasoningProfile).toMatchObject({
+        reasoningPreset: 'zai-glm-5.3',
+        defaultEffort: 'max',
+        supportsDisabledThinking: false,
+      });
+    }
+  });
+
   it('exposes effort-first reasoning metadata on built-in model capabilities', () => {
     expect(getModelCapabilities('openai', 'gpt-5.3-codex')?.reasoningProfile).toMatchObject({
       effortStrategy: 'openai-chat-effort',

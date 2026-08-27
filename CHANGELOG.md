@@ -84,6 +84,16 @@ All notable changes to this project will be documented in this file.
   per-model media routing (ark-coding mixed-capability convention). Cost
   accounting uses flash pricing — images bill as size-derived tokens (≤384 per
   image) at text-token rates.
+- `glm-5.3-flash` (published 2026-08-26) is registered on `zhipu`,
+  `zhipu-coding`, and `zai-coding` (selectable via `/model`). It is the first
+  natively multimodal GLM: image input is routed and validated end-to-end
+  (Anthropic-compat image blocks on the coding routes, `image_url` on the
+  public route), video stays provider-native-unwired, and file input remains
+  unwired end-to-end. 1M context, 131K output, cannot disable thinking (same
+  `zai-glm-5.3` effort mapping as `glm-5.3`), and priced from the official
+  announcement at $0.15 input / $0.50 output / $0.03 cached input per million
+  tokens. Defaults stay on `glm-5.3`; `glm-5.3` / `glm-5.2` remain text-only
+  image-unsupported.
 
 ---
 

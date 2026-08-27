@@ -24,7 +24,7 @@ dedicated environment variable — no key is ever stored in config files.
 | `gemini-cli` | `GEMINI_API_KEY` | No | CLI bridge default |
 | `codex-cli` | `OPENAI_API_KEY` | No | CLI bridge default |
 
-> Model snapshot date: 2026-08-24. Run `kodax setup --help` for the latest list.
+> Model snapshot date: 2026-08-26. Run `kodax setup --help` for the latest list.
 
 ## GLM Coding Plan routes
 
@@ -35,6 +35,14 @@ rollback route. The overseas `zai-coding` alias also defaults to `glm-5.3`
 `glm-latest`; a 2026-08-15 live probe confirmed the Ark wire accepts
 `glm-5.3` verbatim and currently resolves `glm-latest` / `glm-5.2` requests
 to GLM-5.3 upstream as well).
+
+`glm-5.3-flash` (published 2026-08-26) is available on `zhipu`, `zhipu-coding`,
+and `zai-coding`. It is the first natively multimodal GLM — image input works
+out of the box (`@path` an image or paste from clipboard); native video input
+exists upstream but is not wired in KodaX yet. It has a 1M context window,
+cannot disable thinking (same effort mapping as `glm-5.3`), and is priced at
+1/10 of GLM-5.3 ($0.15 input / $0.50 output per million tokens, $0.03 cached
+input). On the GLM Coding Plan it comes with 3x plan quota.
 
 KodaX sends both upstream model IDs verbatim: `glm-5.3` and `glm-5.2`. Do not
 append `[1m]`; the context window belongs to local capability metadata, not the

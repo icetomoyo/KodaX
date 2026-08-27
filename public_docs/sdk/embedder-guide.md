@@ -2900,14 +2900,15 @@ isolated embedder namespace, pass a private base directory and expect data at
 
 ### v0.7.88 GLM Coding Plan boundaries
 
-The built-in model catalog exposes both `glm-5.3` and `glm-5.2` for
-`zhipu-coding` and `zai-coding`; both aliases default to `glm-5.3` (the
-overseas alias switched from `glm-5.2` on 2026-08-15). `ark-coding` likewise
-defaults to `glm-5.3` and keeps `glm-5.2` (alias `glm-latest`). Capability
-metadata still records the 1M context locally,
+The built-in model catalog exposes `glm-5.3`, `glm-5.2`, and (since
+2026-08-26) the natively multimodal `glm-5.3-flash` for `zhipu-coding` and
+`zai-coding` (flash also on public `zhipu`); both aliases default to
+`glm-5.3` (the overseas alias switched from `glm-5.2` on 2026-08-15).
+`ark-coding` likewise defaults to `glm-5.3` and keeps `glm-5.2` (alias
+`glm-latest`). Capability metadata still records the 1M context locally,
 but the provider sends the model ID verbatim and never appends `[1m]`.
 
-GLM-5.3 is always-thinking. Hosts may continue to express a stable `off` /
+GLM-5.3 and `glm-5.3-flash` are always-thinking. Hosts may continue to express a stable `off` /
 `none` intent; KodaX normalizes it to low effort. Anthropic-compatible requests
 use adaptive thinking plus `output_config.effort`, while OpenAI-compatible
 requests use enabled thinking plus `reasoning_effort`.

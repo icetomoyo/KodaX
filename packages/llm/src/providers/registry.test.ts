@@ -395,6 +395,12 @@ describe('provider registry', () => {
     expect(zhipu.getWireModel('glm-5.3')).toBe('glm-5.3');
     expect(zhipu.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zhipu.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    // GLM-5.3 Flash (2026-08-26): native multimodal, 1M context, text params
+    // identical to GLM-5.3 per the bigmodel docs page.
+    expect(zhipu.getAvailableModels()).toContain('glm-5.3-flash');
+    expect(zhipu.getWireModel('glm-5.3-flash')).toBe('glm-5.3-flash');
+    expect(zhipu.getEffectiveContextWindow('glm-5.3-flash')).toBe(1_000_000);
+    expect(zhipu.getEffectiveMaxOutputTokens('glm-5.3-flash')).toBe(131_072);
     expect(zhipu.getAvailableModels()).toContain('glm-5.2');
     expect(zhipu.getEffectiveContextWindow('glm-5.2')).toBe(1_000_000);
     expect(zhipu.getEffectiveMaxOutputTokens('glm-5.2')).toBe(131_072);
@@ -408,9 +414,12 @@ describe('provider registry', () => {
     const zhipuCoding = getProvider('zhipu-coding');
     expect(zhipuCoding.getModel()).toBe('glm-5.3');
     expect(zhipuCoding.getWireModel()).toBe('glm-5.3');
-    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
     expect(zhipuCoding.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    // Flash on the Coding Plan: 3x plan quota, same 1M/128K text shape.
+    expect(zhipuCoding.getEffectiveContextWindow('glm-5.3-flash')).toBe(1_000_000);
+    expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3-flash')).toBe(131_072);
     expect(zhipuCoding.getEffectiveContextWindow('glm-5.2')).toBe(1_000_000);
     expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.2')).toBe(131_072);
     expect(zhipuCoding.getEffectiveContextWindow('glm-5-turbo')).toBe(200_000);
@@ -430,11 +439,13 @@ describe('provider registry', () => {
     expect(zai.name).toBe('zai-coding');
     expect(zai.getModel()).toBe('glm-5.3');
     expect(zai.getWireModel()).toBe('glm-5.3');
-    expect(zai.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zai.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
     expect(zai.getEffectiveContextWindow('glm-5.2')).toBe(1_000_000);
     expect(zai.getEffectiveMaxOutputTokens('glm-5.2')).toBe(131_072);
     expect(zai.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zai.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    expect(zai.getEffectiveContextWindow('glm-5.3-flash')).toBe(1_000_000);
+    expect(zai.getEffectiveMaxOutputTokens('glm-5.3-flash')).toBe(131_072);
     expect(zai.getEffectiveContextWindow('glm-5-turbo')).toBe(200_000);
     expect(zai.getAvailableModels()).toContain('glm-4.7');
     expect(zai.getEffectiveContextWindow('glm-4.7')).toBe(200_000);

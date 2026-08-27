@@ -120,6 +120,27 @@ describe('getModelInputCapabilities', () => {
     expect(getModelInputCapabilities({ provider: 'mimo-coding' }).image.status).toBe('unsupported');
     expect(getModelInputCapabilities({ provider: 'mimo-coding', model: 'mimo-v2.5' }).image.status).toBe('supported');
   });
+
+  it.each([
+    { provider: 'zai-coding', model: 'glm-5.3-flash' },
+    { provider: 'zhipu-coding', model: 'glm-5.3-flash' },
+    { provider: 'zhipu', model: 'glm-5.3-flash' },
+  ] as const)(
+    'supports image (native video unwired) for the GLM-5.3 Flash multimodal route $provider/$model',
+    ({ provider, model }) => {
+      const caps = getModelInputCapabilities({ provider, model });
+      expect(caps.image.status).toBe('supported');
+      expect(caps.video.status).toBe('provider-native-unwired');
+      expect(caps.video.nativeSupported).toBe(true);
+    },
+  );
+
+  it.each(['glm-5.3', 'glm-5.2'])(
+    'keeps GLM text-only flagship route zai-coding/%s image-unsupported',
+    (model) => {
+      expect(getModelInputCapabilities({ provider: 'zai-coding', model }).image.status).toBe('unsupported');
+    },
+  );
 });
 
 describe('getModelInputCapabilities: custom providers', () => {

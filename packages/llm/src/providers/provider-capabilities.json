@@ -669,6 +669,40 @@
           }
         },
         {
+          "id": "glm-5.3-flash",
+          "displayName": "GLM-5.3 Flash",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
           "id": "glm-5.2",
           "displayName": "GLM-5.2",
           "contextWindow": 1000000,
@@ -732,6 +766,40 @@
         {
           "id": "glm-5.3",
           "displayName": "GLM-5.3",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "glm-5.3-flash",
+          "displayName": "GLM-5.3 Flash",
           "contextWindow": 1000000,
           "maxOutputTokens": 131072,
           "reasoningCapability": "native-effort",
@@ -879,6 +947,40 @@
         {
           "id": "glm-5.3",
           "displayName": "GLM-5.3",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "glm-5.3-flash",
+          "displayName": "GLM-5.3 Flash",
           "contextWindow": 1000000,
           "maxOutputTokens": 131072,
           "reasoningCapability": "native-effort",

@@ -156,6 +156,18 @@ describe('cost-rates', () => {
       }
     });
 
+    it('should price glm-5.3-flash from the official announcement on all three Zhipu routes', () => {
+      // 2026-08-26 announcement: $0.15 input / $0.50 output / $0.03 cached
+      // input per million tokens (GLM-5.3 list price / 10).
+      for (const provider of ['zhipu', 'zhipu-coding', 'zai-coding'] as const) {
+        expect(DEFAULT_COST_RATES[provider]['glm-5.3-flash']).toEqual({
+          inputPer1M: 0.15,
+          outputPer1M: 0.5,
+          cachePer1M: 0.03,
+        });
+      }
+    });
+
     it('should have empty entries for CLI bridge providers', () => {
       expect(DEFAULT_COST_RATES['gemini-cli']).toEqual({});
       expect(DEFAULT_COST_RATES['codex-cli']).toEqual({});

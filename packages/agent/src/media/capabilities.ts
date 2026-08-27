@@ -83,6 +83,12 @@ const SOURCE_BACKED_NATIVE_MEDIA_ROUTES = new Set([
   'minimax/minimax-m3',
   'mimo-coding/mimo-v2.5',
   'mimo/mimo-v2.5',
+  // GLM-5.3 Flash (2026-08-26): first natively multimodal GLM (image,
+  // video, file input per docs.bigmodel.cn). Same route on the public
+  // API, CN Coding Plan, and the api.z.ai overseas mirror.
+  'zai-coding/glm-5.3-flash',
+  'zhipu-coding/glm-5.3-flash',
+  'zhipu/glm-5.3-flash',
 ]);
 
 type ImageCapabilityRoute =

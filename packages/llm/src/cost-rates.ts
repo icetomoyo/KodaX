@@ -108,6 +108,10 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // GLM-5.3 public API pricing is not published yet; keep the existing
     // flagship nominal rate so pre-registered selections never look free.
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
+    // 2026-08-26 official announcement (docs.bigmodel.cn glm-5.3-flash):
+    // $0.15 input / $0.50 output / $0.03 cached input per 1M tokens —
+    // GLM-5.3 list price / 10. First GLM with published cache pricing.
+    'glm-5.3-flash': { inputPer1M: 0.15, outputPer1M: 0.5, cachePer1M: 0.03 },
     'glm-5': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5.1': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5-turbo': { inputPer1M: 0.01, outputPer1M: 0.03 },
@@ -116,6 +120,9 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // Subscription routes use nominal rates for local accounting; actual
     // billing is plan/quota based. Historical GLM-5.2 requests auto-route to 5.3.
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
+    // Flash is on the Coding Plan with 3x plan quota; nominal accounting
+    // mirrors the published per-token rates (same as the zhipu entry).
+    'glm-5.3-flash': { inputPer1M: 0.15, outputPer1M: 0.5, cachePer1M: 0.03 },
     'glm-5.2': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5-turbo': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'glm-4.7': { inputPer1M: 0.01, outputPer1M: 0.03 },
@@ -126,6 +133,7 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // same upstream backend. Mirror keeps cost-tracker output
     // comparable when users split between the CN and overseas endpoint.
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
+    'glm-5.3-flash': { inputPer1M: 0.15, outputPer1M: 0.5, cachePer1M: 0.03 },
     'glm-5.2': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5-turbo': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'glm-4.7': { inputPer1M: 0.01, outputPer1M: 0.03 },

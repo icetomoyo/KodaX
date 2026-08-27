@@ -373,9 +373,10 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
         maxOutputTokens: 131_072,
         reasoningProfile: expect.objectContaining({ reasoningPreset: 'zai-glm-5.2' }),
       }));
-      // GLM-5.2 remains an explicit rollback choice during the 5.3 rollout.
+      // GLM-5.2 remains an explicit rollback choice during the 5.3 rollout;
+      // glm-5.3-flash (2026-08-26, native multimodal) sits right after 5.3.
       expect(z.model).toBe('glm-5.3');
-      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
       expect(z.models?.find((m) => m.id === 'glm-4.7')).toEqual(expect.objectContaining({
         id: 'glm-4.7',
         displayName: 'GLM-4.7',
@@ -391,11 +392,16 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
     it('zai-coding defaults to GLM-5.3 while retaining GLM-5.2', () => {
       const z = getProviderSnapshots()['zai-coding'];
       expect(z.model).toBe('glm-5.3');
-      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
       expect(z.reasoningProfile).toMatchObject({
         reasoningPreset: 'zai-glm-5.3',
         supportsDisabledThinking: false,
       });
+      expect(z.models?.find((m) => m.id === 'glm-5.3-flash')).toEqual(expect.objectContaining({
+        contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
+        reasoningProfile: expect.objectContaining({ reasoningPreset: 'zai-glm-5.3' }),
+      }));
       expect(z.models?.find((m) => m.id === 'glm-5.2')).toEqual(expect.objectContaining({
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
