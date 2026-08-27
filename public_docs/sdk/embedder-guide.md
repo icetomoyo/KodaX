@@ -6193,6 +6193,12 @@ Windows, Linux, and macOS:
   Consequently sandbox setup, command-runner health, and command cleanup do
   not make these text tools unavailable. This is policy enforcement by the
   trusted KodaX process; hosts must not describe it as OS-token sandboxing.
+  On Windows, replacing a file owned by an obsolete/current sandbox account
+  automatically makes the replacement trusted-host-owned while retaining the
+  ordered effective ACE policy. The filesystem may canonicalize DACL
+  protection/inheritance control at the atomic namespace commit; stale
+  inherited authority is not copied from an old parent, so embedders need no
+  manual owner or ACL recovery step.
 - Commands and scripts use the Windows native shell runner. ASRT supplies the
   dedicated account and network controls; the KodaX runner supplies the
   restricted token and policy capability SID. A nonce-bound private desktop
@@ -6210,22 +6216,62 @@ Windows, Linux, and macOS:
   overlapping that directory in either direction and deny roots at/below it;
   the native host reopens and checks canonical policy roots again before any ACL
   authorization or target creation. Doctor only verifies the state. Explicit
-  setup may create it or repair an empty, no-reparse, host-owned direct cache
-  child after proving the sandbox SID idle; unknown/non-empty state fails closed.
+  setup may create it or repair a no-reparse, host-owned direct cache child
+  after proving the sandbox SID idle. Repair retires only expired dead-PID
+  requests, aged unconsumed dead-PID network requests, or dead-owner terminal
+  records with `jobDrained: true`; live, unexpired, malformed, unknown, and
+  deny-recovery state stays fail-closed.
 
-Packaged native artifacts are verified against an embedded manifest and copied
-as already verified bytes into a protected content-addressed Agent Home store
-before load or execution. A fixed System32 PowerShell process may perform this
-one-time ACL/bootstrap step; it never receives model text, file-mutation
-content, or shell stdin. Shell policy cannot include that store as a write
-root, and the restricted account has read/execute only on its exact runner.
+The Windows private desktop uses an ephemeral full-policy capability. Persistent
+filesystem write authority instead uses stable capabilities derived from the
+sandbox-account generation, final handle-canonical root, and
+`allowWrite`/`denyWrite` clause. A read-only root implicitly carries its
+deny-write capability; the shared sandbox group supplies ordinary read access.
+Private ancestors receive only non-inheriting
+read-attributes/traverse/synchronize access for the group, never directory-list,
+content-read, write, or delete authority. Because `WRITE_RESTRICTED` does not
+apply restricting SIDs to reads, `denyRead` uses an execution-logon ACE under a
+short ACL mutex. The host publishes a durable receipt before mutation, holds
+no-follow handles through Job drain, removes exactly its ACE afterward, and
+recovers a crashed owner only after validating PID creation time and the
+recorded volume/file identity. A missing or replaced target retains the receipt
+and fails later shell admission closed until repair. This transaction never
+gates trusted text tools or spans the command lifetime.
+
+The KodaX root and `/coding` exports of `runKodaX`, `startKodaX`,
+`runManagedTask`, `createKodaXTaskRunner`, `createDefaultCodingAgent`, `KodaXClient`, and `Client` bind this native text host automatically when an embedder did not
+provide one. The root set is evaluated again for every transaction, so a
+linked worktree registered during the Session becomes writable without
+recreating the client. Runtime-owned Runs use their authenticated registry;
+an explicit host on a direct SDK call remains an embedder-owned policy seam.
+
+On Windows, the embedded release manifest pins the text/shell sidecar protocols
+and hashes plus the ASRT release version and hash. Verified bytes are copied
+into a protected content-addressed LocalAppData store independent of
+`KODAX_HOME`; the ASRT source is checked before materialization and the staged
+executable is rechecked before broker startup. A fixed System32 PowerShell
+process may perform this one-time ACL/bootstrap step; it never receives model
+text, file-mutation content, or shell stdin. Shell policy cannot include that
+store as a write root. The text artifact remains Host/SYSTEM-only, the shell
+artifact grants read/execute to the dedicated sandbox group SID, and the ASRT
+artifact grants local Users read/execute; none grants sandbox write/delete.
 
 There is no filesystem-effect lease spanning a command lifetime and no
 owner/reset/allow-revoke/poison admission gate shared with text tools. Shells
-from different Sessions, Runtime processes, and policies may run concurrently.
+from different Sessions, Runtime processes, and policies may run concurrently
+within the documented distinct-broker capacity. One Runtime shares a broker
+only for an exact network-policy/account-generation match; unlike policies and
+Runtime processes remain subject to ASRT 0.0.65's ten-port/five-broker limit
+(Issue 308), without hidden serialization or authority sharing.
 KodaX does not serialize arbitrary shell writes to the same file; those remain
 ordinary OS data races. Revision/CAS conflict handling applies only to the
 controlled text tools.
+
+Issue 309 records a remaining Codex-compatible Windows boundary: stable root
+capabilities do not override an explicit child DACL deliberately widened by its
+owner to an ambient loader-compatibility trustee. Embedders requiring that
+stronger adversarial-shell boundary need a different Windows token/loader
+architecture rather than a command-lifetime KodaX lock.
 
 On Linux and macOS, controlled text tools use the same host-owned native
 transaction contract with a fixed mode-`0700` per-UID coordination root shared
@@ -6239,7 +6285,12 @@ long-lived KodaX workspace-session owner or filesystem-effect lease.
 KodaX's own local workspace-shell policy supplies a stricter `denyRead` set
 than the generic SDK default: common home credential locations, sensitive
 private-key/environment filenames, and the complete resolved agent home are
-denied. Home-local executable search paths nested below those roots are not
+denied. Workspace-local `.kodax/runtime` is denied to both shell reads and
+writes even when the surrounding workspace is writable. Its per-Session
+sequence cursor is a recoverable derived index: a lock-held durable write does
+not require Windows DELETE sharing, retries short sharing conflicts, and a
+truncated cursor is reconstructed from the durable event ledgers. Home-local
+executable search paths nested below those roots are not
 re-granted. This policy belongs to KodaX's command adapter; a standalone SDK
 host must declare the sensitive paths required by its own threat boundary.
 

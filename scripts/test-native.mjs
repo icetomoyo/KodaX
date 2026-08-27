@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +46,50 @@ const nativeDirectory = path.join(root, 'dist', 'native', `${process.platform}-$
 const manifest = JSON.parse(readFileSync(path.join(nativeDirectory, 'manifest.json'), 'utf8'));
 if (manifest.textTransaction?.protocol !== 4) {
   throw new Error('Staged native text transaction protocol is not 4');
+}
+const expectedLegalFiles = [
+  'LICENSE-APACHE.txt',
+  ...(process.platform === 'win32' ? ['NOTICE-windows-sandbox.txt'] : []),
+];
+if (!Array.isArray(manifest.legal) || manifest.legal.length !== expectedLegalFiles.length) {
+  throw new Error('Staged native legal manifest is missing or incompatible');
+}
+for (const filename of expectedLegalFiles) {
+  const entry = manifest.legal.find((candidate) => candidate?.file === filename);
+  const legalFile = path.join(nativeDirectory, filename);
+  const actualSha256 = createHash('sha256').update(readFileSync(legalFile)).digest('hex');
+  if (!entry || !/^[0-9a-f]{64}$/.test(entry.sha256 ?? '') || entry.sha256 !== actualSha256) {
+    throw new Error(`Staged native legal file ${filename} is missing or invalid`);
+  }
+}
+if (process.platform === 'win32') {
+  const packageName = '@anthropic-ai/sandbox-runtime';
+  const rootPackage = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const installedRoot = path.join(root, 'node_modules', '@anthropic-ai', 'sandbox-runtime');
+  const installedPackage = JSON.parse(readFileSync(path.join(installedRoot, 'package.json'), 'utf8'));
+  const pinnedVersion = rootPackage.dependencies?.[packageName];
+  const asrtRunner = manifest.asrtRunner;
+  const asrtRunnerPath = path.join(
+    installedRoot,
+    'vendor',
+    'srt-win',
+    process.arch,
+    'srt-win.exe',
+  );
+  const actualSha256 = createHash('sha256')
+    .update(readFileSync(asrtRunnerPath))
+    .digest('hex');
+  if (
+    typeof pinnedVersion !== 'string'
+    || !/^\d+\.\d+\.\d+$/.test(pinnedVersion)
+    || asrtRunner?.file !== 'srt-win.exe'
+    || asrtRunner.version !== pinnedVersion
+    || asrtRunner.version !== installedPackage.version
+    || !/^[0-9a-f]{64}$/.test(asrtRunner.sha256 ?? '')
+    || actualSha256 !== asrtRunner.sha256
+  ) {
+    throw new Error('Staged ASRT runner does not match its pinned native manifest');
+  }
 }
 const smokeDirectory = mkdtempSync(path.join(nativeTestBase, 'binding-smoke-'));
 try {

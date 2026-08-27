@@ -448,6 +448,29 @@ fn external_read_handle_without_delete_sharing_contends_at_atomic_replace() {
 }
 
 #[test]
+fn external_shell_write_between_snapshot_and_commit_returns_stale_without_overwrite() {
+    let directory = tempdir().unwrap();
+    let target_path = directory.path().join("shell-race.txt");
+    fs::write(&target_path, "before").unwrap();
+    let root = TrustedRoot::open(&as_text(directory.path())).unwrap();
+    let snapshot = root.snapshot(&as_text(&target_path)).unwrap();
+
+    fs::write(&target_path, "shell-won").unwrap();
+    let outcome = root
+        .commit(
+            &as_text(&target_path),
+            &snapshot.revision,
+            "trusted-tool",
+            false,
+            5_000,
+        )
+        .unwrap();
+
+    assert!(matches!(outcome, CommitOutcome::Stale { .. }));
+    assert_eq!(fs::read_to_string(target_path).unwrap(), "shell-won");
+}
+
+#[test]
 fn overlapping_authorized_roots_share_one_canonical_slot_and_revision() {
     let directory = tempdir().unwrap();
     let nested = directory.path().join("nested");
@@ -632,6 +655,59 @@ fn distinct_slots_commit_concurrently_without_cross_file_contention() {
 }
 
 #[test]
+fn concurrent_readers_observe_only_complete_old_or_new_revisions() {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let directory = tempdir().unwrap();
+    let root_path = as_text(directory.path());
+    let target_path = directory.path().join("reader-atomicity.txt");
+    let target = as_text(&target_path);
+    let left = format!("left:{}", "a".repeat(512 * 1024));
+    let right = format!("right:{}", "b".repeat(512 * 1024));
+    fs::write(&target_path, &left).unwrap();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let failures = Arc::new(Mutex::new(Vec::<String>::new()));
+    let reader_stop = Arc::clone(&stop);
+    let reader_failures = Arc::clone(&failures);
+    let reader_left = left.clone();
+    let reader_right = right.clone();
+    let reader = std::thread::spawn(move || {
+        while !reader_stop.load(Ordering::Acquire) {
+            match fs::read_to_string(&target_path) {
+                Ok(content) if content == reader_left || content == reader_right => {}
+                Ok(content) => reader_failures.lock().unwrap().push(format!(
+                    "reader observed an incomplete {}-byte revision",
+                    content.len()
+                )),
+                Err(error) => reader_failures
+                    .lock()
+                    .unwrap()
+                    .push(format!("reader open failed during atomic replace: {error}")),
+            }
+        }
+    });
+
+    let root = TrustedRoot::open(&root_path).unwrap();
+    for index in 0..20 {
+        let snapshot = root.snapshot(&target).unwrap();
+        let content = if index % 2 == 0 { &right } else { &left };
+        assert!(matches!(
+            root.commit(&target, &snapshot.revision, content, false, 5_000)
+                .unwrap(),
+            CommitOutcome::Written(_)
+        ));
+    }
+    stop.store(true, Ordering::Release);
+    reader.join().unwrap();
+    let failures = failures.lock().unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("; "));
+}
+
+#[test]
 fn successful_replace_preserves_readonly_attribute() {
     use std::os::windows::fs::MetadataExt;
 
@@ -665,6 +741,38 @@ fn successful_replace_preserves_readonly_attribute() {
     let mut cleanup = fs::metadata(&target_path).unwrap().permissions();
     cleanup.set_readonly(false);
     fs::set_permissions(&target_path, cleanup).unwrap();
+    assert_eq!(fs::read_to_string(target_path).unwrap(), "after");
+}
+
+#[test]
+fn rewrites_a_legacy_low_integrity_sandbox_file_without_reapplying_its_label() {
+    let directory = tempfile::tempdir().unwrap();
+    let target_path = directory.path().join("legacy-low-integrity.txt");
+    fs::write(&target_path, "before").unwrap();
+    let output = std::process::Command::new("icacls.exe")
+        .arg(&target_path)
+        .args(["/setintegritylevel", "L"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "could not create the legacy sandbox fixture: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let root = TrustedRoot::open(&as_text(directory.path())).unwrap();
+    let snapshot = root.snapshot(&as_text(&target_path)).unwrap();
+    let outcome = root
+        .commit(
+            &as_text(&target_path),
+            &snapshot.revision,
+            "after",
+            false,
+            5_000,
+        )
+        .unwrap();
+
+    assert!(matches!(outcome, CommitOutcome::Written(_)));
     assert_eq!(fs::read_to_string(target_path).unwrap(), "after");
 }
 

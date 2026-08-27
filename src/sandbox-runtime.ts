@@ -25,14 +25,13 @@ import {
   mkdir,
   readFile,
   realpath,
-  rename,
   rm,
   rmdir,
   stat,
   writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { createServer, type Socket } from 'node:net';
+import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -87,12 +86,14 @@ import {
   windowsSandboxV2Generation,
 } from './windows-sandbox-v2.js';
 import {
+  assertWindowsAsrtRunnerTrustOutsideWriteRoots,
   assertWindowsSandboxControlStateNotDirectlyAccessible,
   assertTrustedTextNativeStateNotDirectlyReadable,
   assertTrustedTextNativeStateNotDirectlyWritable,
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
   ensureWindowsSandboxControlDirectory,
   repairWindowsSandboxControlDirectory,
+  resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
   verifyWindowsSandboxControlDirectory,
   windowsNativeArtifactCacheRoot,
@@ -200,8 +201,52 @@ interface WindowsNetworkBrokerRequest {
   readonly config: SandboxRuntimeConfig;
   readonly cwd: string;
   readonly srtWinPath: string;
+  readonly srtWinSha256: string;
+  readonly controllerExecutable: string;
+  readonly controllerSha256: string;
+  readonly controllerProtocol: number;
+  readonly expectedSandboxUserSid: string;
+  readonly expectedSandboxGroupSid: string;
   readonly endpoints: readonly SandboxEndpoint[];
   readonly allowAllNetwork: boolean;
+}
+
+interface WindowsNetworkBrokerState {
+  readonly key: string;
+  readonly requestFile: string;
+  readonly started: Promise<void>;
+  markStarted(): void;
+  child?: ReturnType<typeof spawn>;
+  exit?: Promise<WindowsNetworkBrokerExit>;
+  stderrTail: Buffer;
+  ready?: Promise<WindowsNetworkBrokerReady & { readonly ok: true }>;
+  references: number;
+  failed: boolean;
+  referencesDrained?: Promise<void>;
+  markReferencesDrained?: () => void;
+  stopRequested: boolean;
+  idleTimer?: NodeJS.Timeout;
+  stopping?: Promise<void>;
+}
+
+function retireWindowsNetworkBrokerState(state: WindowsNetworkBrokerState): void {
+  state.failed = true;
+  if (state.references === 0 || state.referencesDrained !== undefined) return;
+  state.referencesDrained = new Promise<void>((resolve) => {
+    state.markReferencesDrained = resolve;
+  });
+}
+
+interface WindowsNetworkBrokerExit {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly error?: Error;
+}
+
+interface WindowsNetworkBrokerLease {
+  readonly ready: WindowsNetworkBrokerReady & { readonly ok: true };
+  retire(): void;
+  release(): Promise<void>;
 }
 
 type WindowsNetworkBrokerReady =
@@ -391,6 +436,8 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
 const MAX_OUTPUT_BYTES = 1_048_576;
 const SCRIPT_TIMEOUT_MS = 120_000;
 const WINDOWS_V2_LAUNCH_TIMEOUT_MS = 30_000;
+const WINDOWS_NETWORK_BROKER_IDLE_MS = 1_000;
+const windowsNetworkBrokers = new Map<string, WindowsNetworkBrokerState>();
 const moduleRequire = createRequire(import.meta.url);
 const ASRT_MODULE_URL = process.env.KODAX_BUNDLED === 'true'
   ? undefined
@@ -502,199 +549,7 @@ const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
   'processes',
   'learned',
 ] as const;
-const WINDOWS_ACL_GUARD_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$mutex = [System.Threading.Mutex]::new($false, 'Local\KodaXAsrtAclGuard-v1')
-$held = $false
-$missing = [System.Collections.Generic.List[string]]::new()
-function Test-KodaXAsrtAclRule($acl, $sidValue, $rights, $inheritance) {
-  foreach ($rule in $acl.Access) {
-    try {
-      $ruleSid = $rule.IdentityReference.Translate(
-        [System.Security.Principal.SecurityIdentifier]
-      ).Value
-    } catch {
-      continue
-    }
-    if (
-      $ruleSid -eq $sidValue -and
-      $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
-      -not $rule.IsInherited -and
-      $rule.InheritanceFlags -eq $inheritance -and
-      $rule.PropagationFlags -eq [System.Security.AccessControl.PropagationFlags]::None -and
-      (([int]$rule.FileSystemRights -band [int]$rights) -eq [int]$rights)
-    ) {
-      return $true
-    }
-  }
-  return $false
-}
-function Test-KodaXParentDeleteChildSafe($acl, $tokenSidValues) {
-  foreach ($rule in $acl.Access) {
-    try {
-      $ruleSid = $rule.IdentityReference.Translate(
-        [System.Security.Principal.SecurityIdentifier]
-      ).Value
-    } catch {
-      continue
-    }
-    if (
-      $tokenSidValues -contains $ruleSid -and
-      $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
-      ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
-      (([int]$rule.FileSystemRights -band [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) -ne 0)
-    ) {
-      return $true
-    }
-  }
-  foreach ($rule in $acl.Access) {
-    try {
-      $ruleSid = $rule.IdentityReference.Translate(
-        [System.Security.Principal.SecurityIdentifier]
-      ).Value
-    } catch {
-      continue
-    }
-    if (
-      $tokenSidValues -contains $ruleSid -and
-      $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
-      ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
-      (([int]$rule.FileSystemRights -band [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) -ne 0)
-    ) {
-      return $false
-    }
-  }
-  return $true
-}
-function Test-KodaXAsrtAclRuleReadsData($acl, $sidValue) {
-  foreach ($rule in $acl.Access) {
-    try {
-      $ruleSid = $rule.IdentityReference.Translate(
-        [System.Security.Principal.SecurityIdentifier]
-      ).Value
-    } catch {
-      continue
-    }
-    if (
-      $ruleSid -eq $sidValue -and
-      $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
-      -not $rule.IsInherited -and
-      $rule.PropagationFlags -eq [System.Security.AccessControl.PropagationFlags]::None -and
-      (([int]$rule.FileSystemRights -band ([int][System.Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [int][System.Security.AccessControl.FileSystemRights]::Synchronize)) -ne 0)
-    ) {
-      return $true
-    }
-  }
-  return $false
-}
-function Add-KodaXAsrtAclRule($target, $sid, $rights, $inheritance, $ruleText) {
-  $acl = Get-Acl -LiteralPath $target
-  if (Test-KodaXAsrtAclRule $acl $sid.Value $rights $inheritance) {
-    return
-  }
-  $principal = '*' + $sid.Value
-  & "$env:SystemRoot\System32\icacls.exe" $target '/deny' "$($principal):$ruleText" | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw "icacls failed to install a KodaX sandbox guard on $target."
-  }
-}
-function Add-KodaXAsrtWriteAclRule($target, $sid, $rights, $inheritance) {
-  $acl = Get-Acl -LiteralPath $target
-  if (Test-KodaXAsrtAclRule $acl $sid.Value $rights $inheritance) {
-    return
-  }
-  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-    $sid,
-    $rights,
-    $inheritance,
-    [System.Security.AccessControl.PropagationFlags]::None,
-    [System.Security.AccessControl.AccessControlType]::Deny
-  )
-  [void]$acl.AddAccessRule($rule)
-  Set-Acl -LiteralPath $target -AclObject $acl
-}
-try {
-  try {
-    $held = $mutex.WaitOne(10000)
-  } catch [System.Threading.AbandonedMutexException] {
-    $held = $true
-  }
-  if (-not $held) {
-    throw 'Timed out waiting for the KodaX ASRT ACL guard mutex.'
-  }
-  $sid = [System.Security.Principal.SecurityIdentifier]::new([string]$payload.sid)
-  $tokenSidValues = @($payload.tokenSids | ForEach-Object { [string]$_ })
-  foreach ($entry in $payload.paths) {
-    $target = [System.IO.Path]::GetFullPath([string]$entry.path)
-    if (-not (Test-Path -LiteralPath $target)) {
-      throw "ACL guard target disappeared before it could be protected: $target"
-    }
-    $inheritance = if ([bool]$entry.directory) {
-      [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    } else {
-      [System.Security.AccessControl.InheritanceFlags]::None
-    }
-    $writeRights = [System.Security.AccessControl.FileSystemRights]::Write -bor
-      [System.Security.AccessControl.FileSystemRights]::Delete -bor
-      [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-      [System.Security.AccessControl.FileSystemRights]::TakeOwnership
-    if ([bool]$entry.directory) {
-      $writeRights = $writeRights -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
-    }
-    $targetRights = if ([string]$entry.mode -eq 'write') {
-      $writeRights
-    } else {
-      [System.Security.AccessControl.FileSystemRights]::FullControl
-    }
-    $parent = [System.IO.Path]::GetDirectoryName($target)
-    $targetAcl = Get-Acl -LiteralPath $target
-    $targetReady = Test-KodaXAsrtAclRule $targetAcl $sid.Value $targetRights $inheritance
-    $targetTooBroad = [string]$entry.mode -eq 'write' -and (Test-KodaXAsrtAclRuleReadsData $targetAcl $sid.Value)
-    if ($targetTooBroad) {
-      $targetReady = $false
-    }
-    $parentReady = -not $parent -or $parent -eq $target -or -not (Test-Path -LiteralPath $parent)
-    if (-not $parentReady) {
-      $parentAcl = Get-Acl -LiteralPath $parent
-      $parentReady = (Test-KodaXAsrtAclRule $parentAcl $sid.Value ([System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) ([System.Security.AccessControl.InheritanceFlags]::None)) -or (Test-KodaXParentDeleteChildSafe $parentAcl $tokenSidValues)
-    }
-    if (-not [bool]$payload.install) {
-      if (-not $targetReady -or -not $parentReady) {
-        [void]$missing.Add($target)
-      }
-      continue
-    }
-    if ($targetTooBroad) {
-      $principal = '*' + $sid.Value
-      & "$env:SystemRoot\System32\icacls.exe" $target '/remove:d' $principal | Out-Null
-      if ($LASTEXITCODE -ne 0) {
-        throw "icacls failed to remove an obsolete KodaX sandbox guard from $target."
-      }
-    }
-    if (-not $targetReady) {
-      if ([string]$entry.mode -eq 'write') {
-        Add-KodaXAsrtWriteAclRule $target $sid $targetRights $inheritance
-      } else {
-        $targetRule = if ([bool]$entry.directory) { '(OI)(CI)(F)' } else { '(F)' }
-        Add-KodaXAsrtAclRule $target $sid $targetRights $inheritance $targetRule
-      }
-    }
-    if (-not $parentReady) {
-      Add-KodaXAsrtAclRule $parent $sid ([System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) ([System.Security.AccessControl.InheritanceFlags]::None) '(DC)'
-    }
-  }
-  [Console]::Out.Write((@{ missing = @($missing) } | ConvertTo-Json -Compress))
-} finally {
-  if ($held) {
-    [void]$mutex.ReleaseMutex()
-  }
-  $mutex.Dispose()
-}
-`;
 const windowsAclReadGuardedPaths = new Set<string>();
-const windowsAclWriteGuardedPaths = new Set<string>();
 const ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL = JSON.stringify(ELECTRON_NODE_ENV_SCRUB_IMPORT);
 const ELECTRON_RUN_AS_NODE_ENV_LITERAL = JSON.stringify(ELECTRON_RUN_AS_NODE_ENV);
 const TARGET_ARGV_BOOTSTRAP = String.raw`
@@ -1156,6 +1011,8 @@ const SANDBOX_NOT_READY_RECHECK_MS = 30_000;
 interface PreparedWindowsSandboxRunner {
   readonly path: string;
   readonly directory: string;
+  readonly sha256: string;
+  readonly developmentTrustRoots: readonly string[];
   readonly srtWin: ReturnType<typeof resolveSrtWin>;
 }
 
@@ -1171,38 +1028,6 @@ function isFileSystemError(error: unknown, ...codes: readonly string[]): boolean
     && 'code' in error
     && typeof error.code === 'string'
     && codes.includes(error.code);
-}
-
-async function readFileIfPresent(file: string): Promise<Buffer | undefined> {
-  try {
-    return await readFile(file);
-  } catch (error: unknown) {
-    if (isFileSystemError(error, 'ENOENT')) return undefined;
-    throw error;
-  }
-}
-
-async function installWindowsRunnerCopy(
-  source: Buffer,
-  destination: string,
-): Promise<void> {
-  const existing = await readFileIfPresent(destination);
-  if (existing?.equals(source)) return;
-  if (existing !== undefined) {
-    throw new Error(`Prepared Windows sandbox runner failed integrity verification: ${destination}.`);
-  }
-  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, source, { flag: 'wx', mode: 0o700 });
-    try {
-      await rename(temporary, destination);
-    } catch (error: unknown) {
-      const concurrent = await readFileIfPresent(destination);
-      if (!concurrent?.equals(source)) throw error;
-    }
-  } finally {
-    await rm(temporary, { force: true });
-  }
 }
 
 const SRT_WIN_ARCH_DIRECTORIES: Readonly<Record<string, string>> = { x64: 'x64', arm64: 'arm64' };
@@ -1237,27 +1062,25 @@ export function resolveSrtWinSourcePath(
   return getSrtWinPath();
 }
 
-async function prepareWindowsSandboxRunner(): Promise<PreparedWindowsSandboxRunner> {
+async function prepareWindowsSandboxRunner(
+  untrustedWriteRoots: readonly string[] = [],
+): Promise<PreparedWindowsSandboxRunner> {
   if (preparedWindowsRunnerPromise === undefined) {
     const preparation = (async () => {
-      const source = await readFile(resolveSrtWinSourcePath());
-      const contentId = createHash('sha256').update(source).digest('hex').slice(0, 16);
-      const directory = path.join(
-        path.resolve(getAgentConfigHome()),
-        'sandbox-runtime',
-        'runner',
+      const protectedRunner = resolveWindowsAsrtRunnerArtifact(
+        import.meta.url,
+        resolveSrtWinSourcePath(),
         KODAX_ASRT_VERSION,
-        process.arch,
-        contentId,
+        { untrustedWriteRoots },
       );
-      const runnerPath = path.join(directory, 'srt-win.exe');
+      const directory = path.dirname(protectedRunner.path);
       await mkdir(windowsSandboxAclCoordinationDirectory(), { recursive: true, mode: 0o700 });
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      await installWindowsRunnerCopy(source, runnerPath);
       const runner = {
-        path: runnerPath,
+        path: protectedRunner.path,
         directory,
-        srtWin: resolveSrtWin({ path: runnerPath }),
+        sha256: protectedRunner.sha256,
+        developmentTrustRoots: protectedRunner.developmentTrustRoots,
+        srtWin: resolveSrtWin({ path: protectedRunner.path }),
       };
       preparedWindowsRunner = runner;
       return runner;
@@ -1270,7 +1093,12 @@ async function prepareWindowsSandboxRunner(): Promise<PreparedWindowsSandboxRunn
       }
     });
   }
-  return preparedWindowsRunnerPromise;
+  const runner = await preparedWindowsRunnerPromise;
+  assertWindowsAsrtRunnerTrustOutsideWriteRoots(
+    runner.developmentTrustRoots,
+    untrustedWriteRoots,
+  );
+  return runner;
 }
 
 function requirePreparedWindowsRunner(): PreparedWindowsSandboxRunner {
@@ -1364,7 +1192,20 @@ function windowsSandboxV2SetupLockFile(): string {
 }
 
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
+const WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC = '[acl_guards_missing]';
+const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
+
+function hasOnlyRepairableWindowsAclGuardDiagnostics(
+  diagnostics: readonly string[],
+): boolean {
+  const blocking = diagnostics.filter(
+    (diagnostic) => !diagnostic.startsWith(WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC),
+  );
+  return blocking.length > 0 && blocking.every(
+    (diagnostic) => diagnostic.startsWith(WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC),
+  );
+}
 
 interface WindowsSandboxV2CutoverMarker {
   readonly version: 3;
@@ -2228,6 +2069,19 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
         try {
           assertWindowsSandboxV2Cutover(user);
           verifyWindowsV2AccountCompatibility(user.sid);
+          const missingGuards = runWindowsAclGuard(
+            windowsPersistentAclGuardRoots(),
+            user.sid,
+            user.groupSid,
+            false,
+          );
+          if (missingGuards.length > 0) {
+            setupRequired = true;
+            diagnostics.push(
+              `${WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC} ${missingGuards.length} persistent Windows sandbox ACL guard(s) are missing. `
+              + 'Run "kodax sandbox setup" once to install them outside the command path.',
+            );
+          }
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
           setupRequired = true;
@@ -2241,7 +2095,7 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
     const legacyTickets = listWindowsSandboxAclPoisonFiles();
     if (legacyTickets.length > 0) {
       diagnostics.push(
-        `[legacy_acl_state_ignored] ${legacyTickets.length} pre-v2 ACL recovery record(s) `
+        `${WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC} ${legacyTickets.length} pre-v2 ACL recovery record(s) `
         + 'remain for migration diagnosis; Windows v2 shell admission does not read them.',
       );
     }
@@ -2387,6 +2241,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       throw new Error('Windows sandbox setup did not return an account SID.');
     }
     installWindowsV2AccountCompatibility(installedUser.sid);
+    installWindowsAclGuards(windowsPersistentAclGuardRoots());
     return doctorSandboxRuntime({ refresh: true });
   }
 
@@ -2416,6 +2271,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     throw new Error('Windows sandbox account rotation did not produce a new SID; v2 remains fail-closed.');
   }
   installWindowsV2AccountCompatibility(installedUser.sid);
+  installWindowsAclGuards(windowsPersistentAclGuardRoots());
   await verifyPreparedWindowsWfp(runner);
   writeWindowsSandboxV2CutoverMarker({
     version: 3,
@@ -2819,16 +2675,27 @@ interface SandboxBrokerResult extends SandboxProcessResult {
 }
 
 /** @internal Test isolation for cached doctor and staged Windows runner state. */
-export function resetSandboxRuntimeForTest(): void {
+export async function resetSandboxRuntimeForTest(): Promise<void> {
   cachedWindowsBootIdentity = undefined;
   doctorPromise = undefined;
   doctorExpiresAt = 0;
   preparedWindowsRunnerPromise = undefined;
   preparedWindowsRunner = undefined;
+  const brokerStops = [...windowsNetworkBrokers.values()].map((state) => {
+    state.references = 0;
+    return stopSharedWindowsNetworkBroker(state);
+  });
+  const brokerResults = await Promise.allSettled(brokerStops);
+  windowsNetworkBrokers.clear();
   windowsAclReadGuardedPaths.clear();
-  windowsAclWriteGuardedPaths.clear();
   rmSync(windowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
+  const failures = brokerResults.flatMap((result) => (
+    result.status === 'rejected' ? [result.reason] : []
+  ));
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Windows network broker test reset failed.');
+  }
 }
 
 function sandboxAbortError(signal: AbortSignal): Error {
@@ -2868,9 +2735,16 @@ function createWindowsV2ProcessControl(
     if (Date.now() >= deadlineAt) {
       return Promise.reject(new Error('Native sandbox bootstrap delivery timed out.'));
     }
+    let stderrTail = Buffer.alloc(0);
+    const stderr = child.stderr;
+    const onStderr = (chunk: Buffer): void => {
+      stderrTail = Buffer.concat([stderrTail, chunk]).subarray(-4_096);
+    };
+    stderr?.on('data', onStderr);
     phases.set(child, 'bootstrap-pending');
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let diagnosticTimer: NodeJS.Timeout | undefined;
       const timer = setTimeout(
         () => finish(new Error('Native sandbox bootstrap delivery timed out.')),
         Math.max(1, deadlineAt - Date.now()),
@@ -2880,17 +2754,36 @@ function createWindowsV2ProcessControl(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (diagnosticTimer !== undefined) clearTimeout(diagnosticTimer);
         signal?.removeEventListener('abort', onAbort);
+        stderr?.off('data', onStderr);
         if (error === undefined) resolve();
-        else reject(error);
+        else {
+          const diagnostic = stderrTail.toString('utf8').trim();
+          reject(diagnostic === ''
+            ? error
+            : new Error(
+                `${error.message} Native sandbox stderr: ${diagnostic}`,
+                { cause: error },
+              ));
+        }
+      };
+      const failAfterStderrDrain = (error: Error): void => {
+        if (settled || diagnosticTimer !== undefined) return;
+        diagnosticTimer = setTimeout(() => finish(error), 100);
+        diagnosticTimer.unref();
       };
       const onError = (error: Error): void => {
-        finish(new Error('Native sandbox bootstrap delivery failed.', { cause: error }));
+        failAfterStderrDrain(
+          new Error('Native sandbox bootstrap delivery failed.', { cause: error }),
+        );
       };
       const onClose = (): void => {
         stdin.off('error', onError);
         if (!settled) {
-          finish(new Error('Native sandbox bootstrap pipe closed before delivery completed.'));
+          failAfterStderrDrain(
+            new Error('Native sandbox bootstrap pipe closed before delivery completed.'),
+          );
         }
       };
       const onAbort = (): void => {
@@ -2910,7 +2803,9 @@ function createWindowsV2ProcessControl(
           if (!settled) phases.set(child, 'control-open');
           finish();
         } else {
-          finish(new Error('Native sandbox bootstrap delivery failed.', { cause: error }));
+          failAfterStderrDrain(
+            new Error('Native sandbox bootstrap delivery failed.', { cause: error }),
+          );
         }
       });
     });
@@ -2919,6 +2814,12 @@ function createWindowsV2ProcessControl(
   const verifyTerminalRecord = async (): Promise<void> => {
     const raw = await readFile(terminalRecordPath, 'utf8');
     const value = JSON.parse(raw) as unknown;
+    const cleanupDeferred = typeof value === 'object' && value !== null
+      ? Reflect.get(value, 'denyReadCleanupDeferred')
+      : undefined;
+    const cleanupDiagnostic = typeof value === 'object' && value !== null
+      ? Reflect.get(value, 'denyReadCleanupDiagnostic')
+      : undefined;
     if (
       typeof value !== 'object'
       || value === null
@@ -2927,8 +2828,25 @@ function createWindowsV2ProcessControl(
       || Reflect.get(value, 'jobDrained') !== true
       || !Number.isSafeInteger(Reflect.get(value, 'targetExitCode'))
       || typeof Reflect.get(value, 'terminationRequested') !== 'boolean'
+      || typeof cleanupDeferred !== 'boolean'
+      || (
+        cleanupDeferred
+        && (
+          typeof cleanupDiagnostic !== 'string'
+          || cleanupDiagnostic.length === 0
+          || cleanupDiagnostic.length > 2_048
+        )
+      )
     ) {
       throw new Error('Native sandbox terminal record was invalid.');
+    }
+    if (cleanupDeferred) {
+      emitKodaXDiagnostic({
+        source: 'sandbox:windows-v2',
+        level: 'warn',
+        message: 'Windows denyRead ACL cleanup was deferred for automatic recovery.',
+        detail: cleanupDiagnostic,
+      });
     }
   };
 
@@ -3036,7 +2954,10 @@ function createWindowsV2ProcessControl(
     terminate,
     async waitForTerminalObservation() {
       const active = terminalObservation;
-      if (active === undefined) return;
+      if (active === undefined) {
+        await verifyTerminalRecord();
+        return;
+      }
       await active.then(
         () => undefined,
         () => undefined,
@@ -3262,6 +3183,10 @@ async function runBroker(request: SandboxBrokerRequest, signal?: AbortSignal): P
         true,
         processControl,
       );
+      // The native host can close while bootstrap delivery is still draining.
+      // Observe collection immediately so that its early rejection cannot reach
+      // the process-level unhandledRejection hook before the delivery branch joins it.
+      void collecting.catch(() => undefined);
       try {
         await processControl.closeInput(child, signal, deadlineAt);
       } catch (deliveryError: unknown) {
@@ -3397,7 +3322,10 @@ function withPreparedWindowsRunner(
     },
     filesystem: {
       ...config.filesystem,
-      allowRead: [...new Set([...config.filesystem.allowRead, runner.directory])],
+      // srt-win is launched by the trusted host, not by the restricted target.
+      // Adding its protected cache directory to target policy caused native ACL
+      // transactions to mutate an otherwise immutable bootstrap artifact.
+      allowRead: config.filesystem.allowRead,
       denyWrite: process.platform === 'win32'
         ? config.filesystem.denyWrite
         : [...new Set([...(config.filesystem.denyWrite ?? []), runner.directory])],
@@ -3462,6 +3390,7 @@ function canonicalTempDirectories(): string[] {
 
 function existingWorkspaceDenyWrites(workspaceRoot: string): string[] {
   const candidates = [
+    path.join(workspaceRoot, '.kodax', 'runtime'),
     path.join(workspaceRoot, '.git', 'config'),
     path.join(workspaceRoot, '.git', 'hooks'),
   ];
@@ -3484,7 +3413,12 @@ function workspaceShellSensitiveReadDenies(
     .map((relative) => path.resolve(home, relative))
     .filter((candidate) => path.relative(candidate, agentHome) !== '');
   const agentHomeDenies = process.platform === 'win32'
-    ? [path.resolve(agentHome), windowsSandboxAclCoordinationDirectory()]
+    ? [
+        ...WORKSPACE_SHELL_SENSITIVE_AGENT_HOME_PATHS.map(
+          (relative) => path.resolve(agentHome, relative),
+        ),
+        windowsSandboxAclCoordinationDirectory(),
+      ]
     : [
         path.resolve(controlDirectory),
         ...WORKSPACE_SHELL_SENSITIVE_AGENT_HOME_PATHS.map(
@@ -3493,7 +3427,7 @@ function workspaceShellSensitiveReadDenies(
       ];
   return [...new Set([
     ...agentHomeDenies,
-    ...trustedTextNativeArtifactStateRoots(),
+    ...(process.platform === 'win32' ? [] : trustedTextNativeArtifactStateRoots()),
     ...homeDenies,
   ])];
 }
@@ -3515,12 +3449,9 @@ function windowsAclGuardKey(candidate: string): string {
   return path.resolve(candidate).toLowerCase();
 }
 
-function windowsAclGuardCovers(candidate: string, mode: 'read' | 'write'): boolean {
+function windowsAclGuardCovers(candidate: string): boolean {
   const key = windowsAclGuardKey(candidate);
-  const roots = mode === 'read'
-    ? windowsAclReadGuardedPaths
-    : new Set([...windowsAclReadGuardedPaths, ...windowsAclWriteGuardedPaths]);
-  for (const root of roots) {
+  for (const root of windowsAclReadGuardedPaths) {
     if (key === root || key.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`)) {
       return true;
     }
@@ -3543,39 +3474,28 @@ function runWindowsAclGuard(
   sandboxUserSid: string,
   sandboxGroupSid: string | undefined,
   install: boolean,
-  mode: 'read' | 'write',
 ): string[] {
+  if (sandboxGroupSid === undefined) {
+    throw new Error('Windows sandbox group SID is unavailable for persistent denyRead.');
+  }
   const roots = existingMinimalWindowsAclGuardRoots(candidates);
   if (roots.length === 0) return [];
-  const payload = JSON.stringify({
-    sid: sandboxUserSid,
-    tokenSids: [
+  const executable = resolveWindowsSandboxV2Executable({
+    sandboxReadSid: sandboxGroupSid,
+    untrustedWriteRoots: [],
+  }).path;
+  const result = spawnSync(
+    executable,
+    [
+      '__persistent-deny-read',
+      install ? 'install' : 'verify',
       sandboxUserSid,
       sandboxGroupSid,
-      'S-1-1-0',
-      'S-1-5-11',
-      'S-1-5-32-545',
-    ].filter((candidate): candidate is string => candidate !== undefined),
-    install,
-    paths: roots.map((candidate) => ({
-      path: candidate,
-      directory: statSync(candidate).isDirectory(),
-      mode,
-    })),
-  });
-  const powershell = windowsAclPowerShellExecutable();
-  const result = spawnSync(
-    powershell,
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      Buffer.from(WINDOWS_ACL_GUARD_SCRIPT, 'utf16le').toString('base64'),
     ],
     {
-      input: payload,
+      input: JSON.stringify(roots),
       encoding: 'utf8',
-      timeout: install && mode === 'read' ? 15 * 60_000 : install ? 15_000 : 5_000,
+      timeout: install ? 15 * 60_000 : 30_000,
       windowsHide: true,
     },
   );
@@ -3587,46 +3507,27 @@ function runWindowsAclGuard(
   }
   let missing: string[];
   try {
-    const output = JSON.parse(result.stdout.trim()) as { readonly missing?: unknown };
-    missing = Array.isArray(output.missing)
-      ? output.missing.filter((entry): entry is string => typeof entry === 'string')
+    const output: unknown = JSON.parse(result.stdout.trim());
+    missing = Array.isArray(output)
+      ? output.filter((entry): entry is string => typeof entry === 'string')
       : [];
   } catch (error: unknown) {
     throw new Error(`Windows sandbox ACL guard returned invalid output: ${errorText(error)}`);
   }
   if (missing.length === 0) {
-    const guardedPaths = mode === 'read'
-      ? windowsAclReadGuardedPaths
-      : windowsAclWriteGuardedPaths;
-    for (const root of roots) guardedPaths.add(windowsAclGuardKey(root));
+    for (const root of roots) windowsAclReadGuardedPaths.add(windowsAclGuardKey(root));
   }
   return missing;
 }
 
-function windowsAclPowerShellExecutable(): string {
-  const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
-  const pwsh = path.join(programFiles, 'PowerShell', '7', 'pwsh.exe');
-  if (existsSync(pwsh)) return pwsh;
-  return path.join(
-    process.env.SystemRoot ?? 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  );
-}
-
-function installWindowsAclGuards(
-  candidates: readonly string[],
-  mode: 'read' | 'write',
-): void {
+function installWindowsAclGuards(candidates: readonly string[]): void {
   if (process.platform !== 'win32' || candidates.length === 0) return;
-  const pending = candidates.filter((candidate) => !windowsAclGuardCovers(candidate, mode));
+  const pending = candidates.filter((candidate) => !windowsAclGuardCovers(candidate));
   if (pending.length === 0) return;
   const runner = requirePreparedWindowsRunner();
   const user = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   if (!user.sid) throw new Error('Windows sandbox account SID is unavailable for ACL guards.');
-  const missing = runWindowsAclGuard(pending, user.sid, user.groupSid, true, mode);
+  const missing = runWindowsAclGuard(pending, user.sid, user.groupSid, true);
   if (missing.length > 0) {
     throw new Error('Windows sandbox ACL guards were not installed completely.');
   }
@@ -3643,11 +3544,9 @@ function withoutWindowsAsrtDenyPropagation(
       // Persistent guards cover broad roots once during explicit setup. Keep
       // uncovered SDK-specific denies on ASRT's ordinary per-run path.
       denyRead: config.filesystem.denyRead.filter(
-        (candidate) => !windowsAclGuardCovers(candidate, 'read'),
+        (candidate) => !windowsAclGuardCovers(candidate),
       ),
-      denyWrite: config.filesystem.denyWrite?.filter(
-        (candidate) => !windowsAclGuardCovers(candidate, 'write'),
-      ),
+      denyWrite: config.filesystem.denyWrite,
     },
   };
 }
@@ -3932,6 +3831,22 @@ function workspaceShellRuntimeReadScopes(
   ));
 }
 
+function windowsNativeRuntimeReadScopes(scopes: readonly string[]): string[] {
+  const canonical = new Map<string, string>();
+  for (const scope of scopes) {
+    try {
+      const resolved = realpathSync.native(scope);
+      canonical.set(resolved.toLowerCase(), resolved);
+    } catch {
+      // A concurrent removal must not fall back to a lexical grant that the
+      // native runner would correctly reject for containing a reparse point.
+    }
+  }
+  return [...canonical.values()].sort((left, right) => (
+    left.toLowerCase().localeCompare(right.toLowerCase())
+  ));
+}
+
 function sameWindowsPath(left: string, right: string): boolean {
   return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }
@@ -4057,9 +3972,11 @@ function workspaceShellSandboxConfig(
     agentHome,
     controlDirectory,
   );
+  const workspaceRuntimeState = path.join(workspaceRoot, '.kodax', 'runtime');
+  const readDenies = [...sensitiveReadDenies, workspaceRuntimeState];
   const denyRead = process.platform === 'win32'
-    ? existingMinimalWindowsAclGuardRoots(sensitiveReadDenies)
-    : sensitiveReadDenies.filter((candidate) => candidate !== agentHome);
+    ? existingMinimalWindowsAclGuardRoots(readDenies)
+    : readDenies.filter((candidate) => candidate !== agentHome);
   const scopedAgentHomeAccess = process.platform === 'win32'
     ? windowsAgentHomeAccessRoots(agentHome, agentHomeAccess)
     : { read: [], write: [] };
@@ -4088,7 +4005,7 @@ function workspaceShellSandboxConfig(
       normalizedSandboxPaths(allowRead, workspaceRoot),
     );
   }
-  return withPreparedWindowsRunner({
+  return {
     network: {
       allowedDomains: [],
       deniedDomains: [],
@@ -4111,25 +4028,7 @@ function workspaceShellSandboxConfig(
         ...(linkedGit.gitfile !== undefined ? [linkedGit.gitfile] : []),
       ],
     },
-  });
-}
-
-function workspaceShellSessionSandboxConfig(
-  workspaceRoot: string,
-  shellTempDirectory: string | undefined,
-  agentHomeAccess?: AsrtShellAgentHomeAccess,
-  filesystemAccess?: AsrtShellSandboxSelection['filesystemAccess'],
-  runtimeReadScopes?: readonly string[],
-): SandboxRuntimeConfig {
-  const config = workspaceShellSandboxConfig(
-    workspaceRoot,
-    shellTempDirectory,
-    agentHomeAccess,
-    filesystemAccess,
-    runtimeReadScopes,
-  );
-  if (process.platform !== 'win32') return config;
-  return boundedWindowsWorkspaceDenies(config);
+  };
 }
 
 function boundedWindowsWorkspaceDenies(
@@ -4229,7 +4128,7 @@ async function runWindowsV2Sandboxed(
         isElectron: process.versions.electron !== undefined,
       })
     : { args: [...(input.args ?? [])], env };
-  const shellPolicy = withPreparedWindowsRunner({
+  const shellPolicy: SandboxRuntimeConfig = {
     network: {
       allowedDomains: [],
       deniedDomains: [],
@@ -4244,7 +4143,7 @@ async function runWindowsV2Sandboxed(
       denyRead: normalizedSandboxPaths(input.filesystem.denyRead, cwd),
       denyWrite: normalizedSandboxPaths(input.filesystem.denyWrite, cwd),
     },
-  });
+  };
   const prepared = await prepareWindowsV2Invocation({
     shellPolicy,
     executable: input.command,
@@ -4271,6 +4170,7 @@ async function runWindowsV2Sandboxed(
   });
   rememberChildProcessTree(child);
   let executionFailure: unknown;
+  let nativeHostFailure: Error | undefined;
   try {
     const result = collectProcess(
       child,
@@ -4280,6 +4180,10 @@ async function runWindowsV2Sandboxed(
       true,
       processControl,
     );
+    // Controller/host loss may reject collection before closeInput finishes its
+    // bounded stderr drain. Attach the observer now; the authoritative await and
+    // error propagation remain below.
+    void result.catch(() => undefined);
     try {
       await processControl.closeInput(child, input.signal, deadlineAt);
     } catch (deliveryError: unknown) {
@@ -4296,6 +4200,18 @@ async function runWindowsV2Sandboxed(
       throw finalError;
     }
     const collected = await result;
+    if (collected.exitCode !== 0) {
+      const internalDiagnostic = collected.stderr
+        .split(/\r?\n/u)
+        .filter((line) => line.startsWith('kodax-windows-sandbox protocol '))
+        .slice(-4)
+        .join('\n');
+      nativeHostFailure = new Error(
+        internalDiagnostic.length > 0
+          ? internalDiagnostic
+          : `Windows native sandbox host exited with code ${collected.exitCode}.`,
+      );
+    }
     return collected;
   } catch (error: unknown) {
     executionFailure = error;
@@ -4310,7 +4226,42 @@ async function runWindowsV2Sandboxed(
           'Windows native sandbox execution and cleanup both failed.',
         );
       }
+      if (nativeHostFailure !== undefined) {
+        throw new AggregateError(
+          [nativeHostFailure, cleanupError],
+          'Windows native sandbox host and cleanup both failed.',
+        );
+      }
       throw cleanupError;
+    }
+  }
+}
+
+function ensureWindowsAclGuardsForAdmission(
+  sandboxUserSid: string,
+  sandboxGroupSid: string,
+): void {
+  const pending = windowsPersistentAclGuardRoots()
+    .filter((candidate) => !windowsAclGuardCovers(candidate));
+  if (pending.length === 0) return;
+  const missing = runWindowsAclGuard(
+    pending,
+    sandboxUserSid,
+    sandboxGroupSid,
+    false,
+  );
+  if (missing.length > 0) {
+    const stillMissing = runWindowsAclGuard(
+      missing,
+      sandboxUserSid,
+      sandboxGroupSid,
+      true,
+    );
+    if (stillMissing.length > 0) {
+      throw new Error(
+        `${WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC} ${stillMissing.length} persistent Windows sandbox ACL guard(s) `
+        + 'could not be repaired. Run "kodax sandbox setup" and retry.',
+      );
     }
   }
 }
@@ -4333,7 +4284,9 @@ export async function runKodaXSandboxed(
     throw new Error('Sandbox maxOutputBytes must be a positive safe integer.');
   }
   const cwd = path.resolve(input.cwd);
-  const protectedTextStateRoots = trustedTextNativeArtifactStateRoots();
+  const protectedTextStateRoots = process.platform === 'win32'
+    ? []
+    : trustedTextNativeArtifactStateRoots();
   const normalizedFilesystem: KodaXSandboxFilesystemPolicy = {
     allowRead: normalizedSandboxPaths(input.filesystem.allowRead, cwd),
     allowWrite: normalizedSandboxPaths(input.filesystem.allowWrite, cwd),
@@ -4360,7 +4313,35 @@ export async function runKodaXSandboxed(
   };
   const network = input.network ?? { mode: 'deny' };
   const endpoints = sdkSandboxEndpoints(network);
-  const doctor = await doctorSandboxRuntime();
+  let doctor = await doctorSandboxRuntime();
+  if (
+    process.platform === 'win32'
+    && !doctor.ready
+    && hasOnlyRepairableWindowsAclGuardDiagnostics(doctor.diagnostics)
+  ) {
+    try {
+      const runner = await prepareWindowsSandboxRunner(normalizedFilesystem.allowWrite);
+      const cutover = assertWindowsSandboxV2Cutover(
+        getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
+      );
+      ensureWindowsAclGuardsForAdmission(
+        cutover.sandboxUserSid,
+        cutover.sandboxGroupSid,
+      );
+      doctor = await doctorSandboxRuntime({ refresh: true });
+    } catch (error: unknown) {
+      const refreshed = await doctorSandboxRuntime({ refresh: true });
+      doctor = {
+        ...refreshed,
+        ready: false,
+        setupRequired: true,
+        diagnostics: [
+          ...refreshed.diagnostics,
+          `[acl_guard_repair_failed] ${errorText(error).slice(0, 4_096)}`,
+        ],
+      };
+    }
+  }
   if (!doctor.ready) {
     return {
       status: 'unavailable',
@@ -4616,13 +4597,24 @@ async function readWindowsNetworkBrokerReady(
 
 async function stopWindowsNetworkBroker(
   child: ReturnType<typeof spawn>,
+  exit: Promise<WindowsNetworkBrokerExit>,
+  stderrTail: () => string,
 ): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const settled = new Promise<void>((resolve) => {
-    const finish = (): void => resolve();
-    child.once('exit', finish);
-    child.once('close', finish);
-  });
+  const assertCleanExit = (outcome: WindowsNetworkBrokerExit): void => {
+    if (outcome.error !== undefined || outcome.code !== 0 || outcome.signal !== null) {
+      const diagnostic = stderrTail().trim();
+      throw new Error(
+        `Windows network broker exited without a clean cleanup result `
+        + `(code ${String(outcome.code)}, signal ${String(outcome.signal)})`
+        + (diagnostic === '' ? '.' : `: ${diagnostic}`),
+        outcome.error === undefined ? undefined : { cause: outcome.error },
+      );
+    }
+  };
+  if (child.exitCode !== null || child.signalCode !== null) {
+    assertCleanExit(await exit);
+    return;
+  }
   await new Promise<void>((resolve) => {
     const stdin = child.stdin;
     if (stdin === null || stdin.destroyed) {
@@ -4634,16 +4626,309 @@ async function stopWindowsNetworkBroker(
     stdin.end(finish);
   });
   const graceful = await Promise.race([
-    settled.then(() => true),
+    exit.then((outcome) => ({ graceful: true as const, outcome })),
     new Promise<false>((resolve) => {
       const timer = setTimeout(() => resolve(false), 5_000);
       timer.unref();
     }),
   ]);
-  if (graceful) return;
+  if (graceful !== false) {
+    assertCleanExit(graceful.outcome);
+    return;
+  }
   const termination = await killChildProcessTree(child, { forceMs: 500, taskkillMs: 500 });
   if (termination.status === 'unknown') {
     throw new Error('Windows network broker process-tree termination was not confirmed.');
+  }
+  await exit;
+  throw new Error('Windows network broker did not exit within its graceful cleanup budget.');
+}
+
+function normalizedWindowsNetworkBrokerRequest(
+  request: WindowsNetworkBrokerRequest,
+): WindowsNetworkBrokerRequest {
+  return {
+    ...request,
+    srtWinPath: path.resolve(request.srtWinPath),
+    srtWinSha256: request.srtWinSha256.toLowerCase(),
+    controllerExecutable: path.resolve(request.controllerExecutable),
+    controllerSha256: request.controllerSha256.toLowerCase(),
+    endpoints: [...request.endpoints]
+      .map(({ host, port }) => ({ host: host.toLowerCase(), port }))
+      .sort((left, right) => (
+        left.host.localeCompare(right.host) || left.port - right.port
+      ))
+      .filter((endpoint, index, endpoints) => (
+        index === 0
+        || endpoint.host !== endpoints[index - 1]!.host
+        || endpoint.port !== endpoints[index - 1]!.port
+      )),
+  };
+}
+
+function canonicalWindowsNetworkBrokerValue(value: unknown): string {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('Windows network broker policy number is invalid.');
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalWindowsNetworkBrokerValue(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => (
+      `${JSON.stringify(key)}:${canonicalWindowsNetworkBrokerValue(item)}`
+    )).join(',')}}`;
+  }
+  throw new Error('Windows network broker policy contains an unsupported value.');
+}
+
+function windowsNetworkBrokerKey(request: WindowsNetworkBrokerRequest): string {
+  const normalized = normalizedWindowsNetworkBrokerRequest(request);
+  // With filesystem authority disabled, ASRT uses cwd only for safe.directory.
+  // KodaX replaces that environment per native target, so cwd is deliberately
+  // excluded while every network/account authority input remains in the key.
+  const serialized = canonicalWindowsNetworkBrokerValue({
+    version: normalized.version,
+    config: normalized.config,
+    srtWinPath: path.resolve(normalized.srtWinPath).toLowerCase(),
+    srtWinSha256: normalized.srtWinSha256,
+    controllerExecutable: normalized.controllerExecutable.toLowerCase(),
+    controllerSha256: normalized.controllerSha256,
+    controllerProtocol: normalized.controllerProtocol,
+    expectedSandboxUserSid: normalized.expectedSandboxUserSid.toUpperCase(),
+    expectedSandboxGroupSid: normalized.expectedSandboxGroupSid.toUpperCase(),
+    endpoints: normalized.endpoints,
+    allowAllNetwork: normalized.allowAllNetwork,
+  });
+  return createHash('sha256').update(serialized).digest('hex');
+}
+
+function createWindowsNetworkBrokerState(
+  key: string,
+  request: WindowsNetworkBrokerRequest,
+  controlDirectory: string,
+): WindowsNetworkBrokerState {
+  let markStarted = (): void => undefined;
+  const state: WindowsNetworkBrokerState = {
+    key,
+    requestFile: path.join(
+      controlDirectory,
+      `windows-network-${process.pid}-${randomUUID()}.json`,
+    ),
+    started: new Promise<void>((resolve) => { markStarted = resolve; }),
+    markStarted: () => markStarted(),
+    references: 0,
+    failed: false,
+    stopRequested: false,
+    stderrTail: Buffer.alloc(0),
+  };
+  state.ready = (async () => {
+    try {
+      await writeFile(state.requestFile, JSON.stringify(request), { flag: 'wx', mode: 0o600 });
+      if (state.stopRequested) throw new Error('Windows network broker start was cancelled.');
+      const launch = prepareInternalNodeLaunch({
+        args: windowsNetworkBrokerEntryArgs(state.requestFile),
+        env: sanitizedEnvironment(),
+        isElectron: process.versions.electron !== undefined,
+      });
+      const child = spawn(process.execPath, launch.args, {
+        cwd: controlDirectory,
+        env: launch.env,
+        shell: false,
+        stdio: ['pipe', 'ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      state.child = child;
+      rememberChildProcessTree(child);
+      state.markStarted();
+      child.stderr?.on('data', (chunk: Buffer) => {
+        state.stderrTail = Buffer.concat([state.stderrTail, chunk]).subarray(-16 * 1024);
+      });
+      state.exit = new Promise<WindowsNetworkBrokerExit>((resolve) => {
+        let processError: Error | undefined;
+        child.once('error', (error) => { processError = error; });
+        child.once('close', (code, signal) => resolve({
+          code,
+          signal,
+          ...(processError === undefined ? {} : { error: processError }),
+        }));
+      });
+      child.on('error', (error) => {
+        emitKodaXDiagnostic({
+          source: 'sandbox:windows-v2',
+          level: 'warn',
+          message: 'Shared Windows network broker process failed.',
+          detail: error,
+        });
+      });
+      child.once('exit', (code, signal) => {
+        if (state.stopping === undefined && windowsNetworkBrokers.get(key) === state) {
+          windowsNetworkBrokers.delete(key);
+        }
+        if (!state.stopRequested && (code !== 0 || signal !== null)) {
+          retireWindowsNetworkBrokerState(state);
+          emitKodaXDiagnostic({
+            source: 'sandbox:windows-v2',
+            level: 'warn',
+            message: 'Shared Windows network broker exited unexpectedly.',
+            detail: state.stderrTail.toString('utf8').trim()
+              || `code ${String(code)}, signal ${String(signal)}`,
+          });
+        }
+      });
+      let ready: WindowsNetworkBrokerReady;
+      try {
+        ready = await readWindowsNetworkBrokerReady(child);
+      } catch (error: unknown) {
+        const diagnostic = state.stderrTail.toString('utf8').trim();
+        throw new Error(
+          diagnostic === ''
+            ? 'Windows network broker failed before readiness.'
+            : `Windows network broker failed before readiness: ${diagnostic}`,
+          { cause: error },
+        );
+      }
+      if (!ready.ok) throw new Error(ready.error);
+      return ready;
+    } finally {
+      state.markStarted();
+    }
+  })().catch((error: unknown) => {
+    retireWindowsNetworkBrokerState(state);
+    throw error;
+  });
+  void state.ready.catch(() => undefined);
+  return state;
+}
+
+async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState): Promise<void> {
+  if (state.stopping !== undefined) return state.stopping;
+  if (state.idleTimer !== undefined) {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = undefined;
+  }
+  state.stopRequested = true;
+  state.stopping = (async () => {
+    await state.started;
+    const results = await Promise.allSettled([
+      ...(state.child === undefined || state.exit === undefined
+        ? []
+        : [stopWindowsNetworkBroker(
+            state.child,
+            state.exit,
+            () => state.stderrTail.toString('utf8'),
+          )]),
+      rm(state.requestFile, { force: true }),
+    ]);
+    const failures = results.flatMap((result) => (
+      result.status === 'rejected' ? [result.reason] : []
+    ));
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Shared Windows network broker cleanup failed.');
+    }
+  })().finally(() => {
+    if (windowsNetworkBrokers.get(state.key) === state) {
+      windowsNetworkBrokers.delete(state.key);
+    }
+  });
+  return state.stopping;
+}
+
+async function releaseWindowsNetworkBrokerState(
+  state: WindowsNetworkBrokerState,
+): Promise<void> {
+  state.references = Math.max(0, state.references - 1);
+  if (state.references !== 0) return;
+  state.markReferencesDrained?.();
+  state.markReferencesDrained = undefined;
+  state.referencesDrained = undefined;
+  if (state.failed) {
+    await stopSharedWindowsNetworkBroker(state);
+    return;
+  }
+  state.idleTimer = setTimeout(() => {
+    state.idleTimer = undefined;
+    void stopSharedWindowsNetworkBroker(state).catch((error: unknown) => {
+      emitKodaXDiagnostic({
+        source: 'sandbox:windows-v2',
+        level: 'warn',
+        message: 'Idle shared Windows network broker cleanup failed.',
+        detail: error,
+      });
+    });
+  }, WINDOWS_NETWORK_BROKER_IDLE_MS);
+  state.idleTimer.unref();
+}
+
+async function acquireWindowsNetworkBroker(
+  request: WindowsNetworkBrokerRequest,
+  controlDirectory: string,
+  signal?: AbortSignal,
+  deadlineAt?: number,
+): Promise<WindowsNetworkBrokerLease> {
+  const normalized = normalizedWindowsNetworkBrokerRequest(request);
+  const key = windowsNetworkBrokerKey(normalized);
+  while (true) {
+    let state = windowsNetworkBrokers.get(key);
+    if (state?.stopping !== undefined) {
+      await waitForSandboxRunnerPreparation(state.stopping, signal, deadlineAt);
+      continue;
+    }
+    if (state?.failed) {
+      if (state.references !== 0 && state.referencesDrained !== undefined) {
+        await waitForSandboxRunnerPreparation(state.referencesDrained, signal, deadlineAt);
+      } else {
+        await waitForSandboxRunnerPreparation(
+          stopSharedWindowsNetworkBroker(state),
+          signal,
+          deadlineAt,
+        );
+      }
+      continue;
+    }
+    if (state === undefined) {
+      state = createWindowsNetworkBrokerState(key, normalized, controlDirectory);
+      windowsNetworkBrokers.set(key, state);
+    }
+    if (state.idleTimer !== undefined) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = undefined;
+    }
+    state.references += 1;
+    let released = false;
+    const release = async (): Promise<void> => {
+      if (released) return;
+      released = true;
+      await releaseWindowsNetworkBrokerState(state);
+    };
+    try {
+      const readyPromise = state.ready;
+      if (readyPromise === undefined) throw new Error('Windows network broker did not start.');
+      const ready = await waitForSandboxRunnerPreparation(readyPromise, signal, deadlineAt);
+      return {
+        ready,
+        retire() {
+          retireWindowsNetworkBrokerState(state);
+        },
+        release,
+      };
+    } catch (error: unknown) {
+      try {
+        await release();
+      } catch (cleanupError: unknown) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Windows network broker acquisition and cleanup both failed.',
+        );
+      }
+      throw error;
+    }
   }
 }
 
@@ -4658,7 +4943,9 @@ async function prepareWindowsV2ShellInvocation(input: {
   readonly signal?: AbortSignal;
   readonly deadlineAt?: number;
 }): Promise<Awaited<ReturnType<KodaXShellSandbox['prepare']>>> {
-  const runtimeReadScopes = workspaceShellRuntimeReadScopes(input.env, input.executable);
+  const runtimeReadScopes = windowsNativeRuntimeReadScopes(
+    workspaceShellRuntimeReadScopes(input.env, input.executable),
+  );
   const shellPolicy = workspaceShellCommandSandboxConfig(
     input.workspaceRoot,
     undefined,
@@ -4690,19 +4977,26 @@ async function prepareWindowsV2Invocation(input: {
   readonly signal?: AbortSignal;
   readonly deadlineAt?: number;
 }): Promise<Awaited<ReturnType<KodaXShellSandbox['prepare']>>> {
-  const launchDeadlineUnixMs = Math.min(
-    input.deadlineAt ?? Number.MAX_SAFE_INTEGER,
-    Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS,
-  );
+  const preparationDeadlineAt = input.deadlineAt
+    ?? Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS;
   const runner = await waitForSandboxRunnerPreparation(
-    prepareWindowsSandboxRunner(),
+    prepareWindowsSandboxRunner(input.shellPolicy.filesystem.allowWrite),
     input.signal,
-    launchDeadlineUnixMs,
+    preparationDeadlineAt,
   );
+  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const cutover = assertWindowsSandboxV2Cutover(
     getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
   );
-  const shellPolicy = input.shellPolicy;
+  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
+  ensureWindowsAclGuardsForAdmission(
+    cutover.sandboxUserSid,
+    cutover.sandboxGroupSid,
+  );
+  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
+  const shellPolicy = withoutWindowsAsrtDenyPropagation(
+    withPreparedWindowsRunner(input.shellPolicy),
+  );
   assertWindowsSandboxControlStateNotDirectlyAccessible({
     allowRead: shellPolicy.filesystem.allowRead,
     allowWrite: shellPolicy.filesystem.allowWrite,
@@ -4715,46 +5009,41 @@ async function prepareWindowsV2Invocation(input: {
     sandboxReadSid: cutover.sandboxGroupSid,
     untrustedWriteRoots: shellPolicy.filesystem.allowWrite,
   });
-  const controlDirectory = await sandboxControlDirectory();
+  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
+  const controlDirectory = await waitForSandboxRunnerPreparation(
+    sandboxControlDirectory(),
+    input.signal,
+    preparationDeadlineAt,
+  );
+  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   if (controlDirectory.toLowerCase() !== windowsSandboxControlDirectory().toLowerCase()) {
     throw new Error('Windows native shell control state resolved to an unexpected path.');
   }
-  const brokerRequestFile = path.join(
-    controlDirectory,
-    `windows-network-${process.pid}-${randomUUID()}.json`,
-  );
   const brokerRequest: WindowsNetworkBrokerRequest = {
     version: 1,
     config: asrtWindowsNetworkOnlyConfig(shellPolicy),
     cwd: input.cwd,
     srtWinPath: runner.path,
+    srtWinSha256: runner.sha256,
+    controllerExecutable: shellArtifact.path,
+    controllerSha256: shellArtifact.sha256,
+    controllerProtocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+    expectedSandboxUserSid: cutover.sandboxUserSid,
+    expectedSandboxGroupSid: cutover.sandboxGroupSid,
     endpoints: input.endpoints,
     allowAllNetwork: input.allowAllNetwork,
   };
-  await writeFile(brokerRequestFile, JSON.stringify(brokerRequest), { flag: 'wx', mode: 0o600 });
-  const launch = prepareInternalNodeLaunch({
-    args: windowsNetworkBrokerEntryArgs(brokerRequestFile),
-    env: sanitizedEnvironment(),
-    isElectron: process.versions.electron !== undefined,
-  });
-  let broker: ReturnType<typeof spawn> | undefined;
+  let brokerLease: WindowsNetworkBrokerLease | undefined;
   let nativeRequestFile: string | undefined;
   let nativeTerminalRecordFile: string | undefined;
   try {
-    broker = spawn(process.execPath, launch.args, {
-      cwd: controlDirectory,
-      env: launch.env,
-      shell: false,
-      stdio: ['pipe', 'ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    rememberChildProcessTree(broker);
-    const ready = await readWindowsNetworkBrokerReady(
-      broker,
+    brokerLease = await acquireWindowsNetworkBroker(
+      brokerRequest,
+      controlDirectory,
       input.signal,
-      launchDeadlineUnixMs,
+      preparationDeadlineAt,
     );
-    if (!ready.ok) throw new Error(ready.error);
+    const ready = brokerLease.ready;
     if (
       ready.sandboxUserSid !== cutover.sandboxUserSid
       || ready.sandboxGroupSid !== cutover.sandboxGroupSid
@@ -4763,13 +5052,10 @@ async function prepareWindowsV2Invocation(input: {
         'The broker observed a sandbox account identity from another v2 generation',
       );
     }
-    const asrtSha256 = createHash('sha256')
-      .update(await readFile(runner.path))
-      .digest('hex');
     const generation = windowsSandboxV2Generation({
       sandboxUserSid: ready.sandboxUserSid,
       sandboxGroupSid: ready.sandboxGroupSid,
-      asrtSha256,
+      asrtSha256: runner.sha256,
       shellSha256: shellArtifact.sha256,
     });
     nativeRequestFile = path.join(
@@ -4781,6 +5067,7 @@ async function prepareWindowsV2Invocation(input: {
       `windows-terminal-${process.pid}-${randomUUID()}.json`,
     );
     const terminalNonce = randomUUID();
+    const operationDeadlineUnixMs = input.deadlineAt ?? preparationDeadlineAt;
     const targetEnvironment = mergeWindowsSandboxTargetEnvironment(
       ready.asrtChildEnvironment,
       input.env,
@@ -4812,11 +5099,12 @@ async function prepareWindowsV2Invocation(input: {
       controllerPipe: ready.controllerPipe,
       terminalRecordPath: nativeTerminalRecordFile,
       terminalNonce,
-      launchDeadlineUnixMs,
+      operationDeadlineUnixMs,
     });
     await writeFile(nativeRequestFile, JSON.stringify(nativeRequest), { flag: 'wx', mode: 0o600 });
+    throwIfSandboxRunnerPreparationStopped(input.signal, operationDeadlineUnixMs);
     let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
-    const ownedBroker = broker;
+    const ownedBrokerLease = brokerLease;
     const ownedRequestFile = nativeRequestFile;
     const ownedTerminalRecordFile = nativeTerminalRecordFile;
     const bootstrap = encodeWindowsSandboxV2Bootstrap(targetEnvironment);
@@ -4832,17 +5120,26 @@ async function prepareWindowsV2Invocation(input: {
       stdinPrefix: bootstrap,
       processTreeContainment: 'native-job',
       processControl,
-      cleanup() {
+      cleanup(cleanupInput) {
         cleanupPromise ??= (async () => {
-          await processControl.waitForTerminalObservation();
+          let terminalFailure: unknown;
+          if (cleanupInput?.execution === 'started_or_unknown') {
+            try {
+              await processControl.waitForTerminalObservation();
+            } catch (error: unknown) {
+              terminalFailure = error;
+              ownedBrokerLease.retire();
+            }
+          }
           const results = await Promise.allSettled([
-            stopWindowsNetworkBroker(ownedBroker),
+            ownedBrokerLease.release(),
             rm(ownedRequestFile, { force: true }),
             rm(ownedTerminalRecordFile, { force: true }),
           ]);
           const failures = results.flatMap((result) => (
             result.status === 'rejected' ? [result.reason] : []
           ));
+          if (terminalFailure !== undefined) failures.unshift(terminalFailure);
           if (failures.length > 0) {
             throw new AggregateError(failures, 'Windows native shell cleanup failed.');
           }
@@ -4858,8 +5155,7 @@ async function prepareWindowsV2Invocation(input: {
     };
   } catch (error: unknown) {
     const cleanup = await Promise.allSettled([
-      ...(broker === undefined ? [] : [stopWindowsNetworkBroker(broker)]),
-      rm(brokerRequestFile, { force: true }),
+      ...(brokerLease === undefined ? [] : [brokerLease.release()]),
       ...(nativeRequestFile === undefined ? [] : [rm(nativeRequestFile, { force: true })]),
       ...(nativeTerminalRecordFile === undefined
         ? []
@@ -5634,15 +5930,155 @@ function writeWindowsNetworkBrokerReady(response: WindowsNetworkBrokerReady): vo
   writeSync(3, `${JSON.stringify(response)}\n`);
 }
 
+interface WindowsNativeControllerProcess {
+  readonly child: ReturnType<typeof spawn>;
+  readonly pipe: string;
+  readonly exit: Promise<WindowsNetworkBrokerExit>;
+  readonly stderrTail: () => string;
+  stopping: boolean;
+  outcome?: WindowsNetworkBrokerExit;
+}
+
+async function startWindowsNativeController(
+  executable: string,
+): Promise<WindowsNativeControllerProcess> {
+  const child = spawn(executable, ['__controller', String(process.pid)], {
+    env: sanitizedEnvironment(),
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let stderrTail = Buffer.alloc(0);
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderrTail = Buffer.concat([stderrTail, chunk]).subarray(-16 * 1024);
+  });
+  let processError: Error | undefined;
+  let pipe = '';
+  let resolveExit!: (outcome: WindowsNetworkBrokerExit) => void;
+  const exit = new Promise<WindowsNetworkBrokerExit>((resolve) => {
+    resolveExit = resolve;
+  });
+  const state: WindowsNativeControllerProcess = {
+    child,
+    get pipe() { return pipe; },
+    exit,
+    stderrTail: () => stderrTail.toString('utf8'),
+    stopping: false,
+  };
+  child.once('error', (error) => { processError = error; });
+  child.once('close', (code, signal) => {
+    const outcome = {
+      code,
+      signal,
+      ...(processError === undefined ? {} : { error: processError }),
+    };
+    state.outcome = outcome;
+    resolveExit(outcome);
+  });
+  try {
+    const stdout = child.stdout;
+    if (stdout === null) throw new Error('Windows native controller stdout pipe was not created.');
+    pipe = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let buffered = Buffer.alloc(0);
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        stdout.off('data', onData);
+        child.off('error', onError);
+        child.off('exit', onExit);
+        action();
+      };
+      const onError = (error: Error): void => finish(() => reject(error));
+      const onExit = (code: number | null): void => finish(() => reject(new Error(
+        `Windows native controller exited ${String(code)} before readiness: ${state.stderrTail()}`,
+      )));
+      const onData = (chunk: Buffer): void => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.length > 4_096) {
+          finish(() => reject(new Error('Windows native controller readiness exceeded 4 KiB.')));
+          return;
+        }
+        const newline = buffered.indexOf(0x0a);
+        if (newline >= 0) {
+          finish(() => resolve(buffered.subarray(0, newline).toString('utf8').trim()));
+        }
+      };
+      const timer = setTimeout(
+        () => finish(() => reject(new Error('Windows native controller readiness timed out.'))),
+        10_000,
+      );
+      timer.unref();
+      stdout.on('data', onData);
+      child.once('error', onError);
+      child.once('exit', onExit);
+    });
+    const match = /^\\\\\.\\pipe\\kodax-v2-(\d+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(pipe);
+    if (match === null || child.pid === undefined || Number(match[1]) !== child.pid) {
+      throw new Error('Windows native controller returned an unauthenticated pipe name.');
+    }
+    return state;
+  } catch (error: unknown) {
+    try {
+      await stopWindowsNativeController(state);
+    } catch (cleanupError: unknown) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Windows native controller startup and cleanup both failed.',
+      );
+    }
+    throw error;
+  }
+}
+
+async function stopWindowsNativeController(
+  controller: WindowsNativeControllerProcess,
+): Promise<void> {
+  controller.stopping = true;
+  const stdin = controller.child.stdin;
+  if (stdin !== null && !stdin.destroyed) {
+    await new Promise<void>((resolve) => {
+      const finish = (): void => resolve();
+      stdin.once('error', finish);
+      stdin.end(finish);
+    });
+  }
+  const graceful = await Promise.race([
+    controller.exit.then((outcome) => ({ graceful: true as const, outcome })),
+    new Promise<false>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 5_000);
+      timer.unref();
+    }),
+  ]);
+  if (graceful === false) {
+    controller.child.kill('SIGKILL');
+    await controller.exit;
+    throw new Error('Windows native controller did not exit within its cleanup budget.');
+  }
+  if (
+    graceful.outcome.error !== undefined
+    || graceful.outcome.code !== 0
+    || graceful.outcome.signal !== null
+  ) {
+    throw new Error(
+      `Windows native controller cleanup failed (code ${String(graceful.outcome.code)}, `
+      + `signal ${String(graceful.outcome.signal)}): ${controller.stderrTail().trim()}`,
+      graceful.outcome.error === undefined ? undefined : { cause: graceful.outcome.error },
+    );
+  }
+}
+
 /**
- * One process owns exactly one ASRT network proxy and one controller pipe.
- * It never launches the target; the native host owns target containment.
+ * One process owns exactly one ASRT network proxy and one host-only native
+ * controller. It never launches the target; the native host owns target
+ * containment and each command keeps independent runner IPC and a Job.
  */
 export async function runAsrtWindowsNetworkBrokerProcess(
   requestFile: string,
 ): Promise<number> {
-  let controllerServer: ReturnType<typeof createServer> | undefined;
-  let controllerSocket: Socket | undefined;
+  let controller: WindowsNativeControllerProcess | undefined;
+  let stopLifetimeObservation: (() => void) | undefined;
   let readyWritten = false;
   const cleanupFailures: unknown[] = [];
   try {
@@ -5653,8 +6089,28 @@ export async function runAsrtWindowsNetworkBrokerProcess(
       || request.config.filesystem.disabled !== true
       || !path.isAbsolute(request.cwd)
       || !path.isAbsolute(request.srtWinPath)
+      || !/^[0-9a-f]{64}$/i.test(request.srtWinSha256)
+      || !path.isAbsolute(request.controllerExecutable)
+      || !/^[0-9a-f]{64}$/i.test(request.controllerSha256)
+      || request.controllerProtocol !== WINDOWS_SANDBOX_V2_PROTOCOL
+      || !/^S-\d+(?:-\d+)+$/i.test(request.expectedSandboxUserSid)
+      || !/^S-\d+(?:-\d+)+$/i.test(request.expectedSandboxGroupSid)
     ) {
       throw new Error('Windows network broker request is invalid or enables filesystem authority.');
+    }
+    const srtWinBytes = await readFile(request.srtWinPath);
+    if (
+      createHash('sha256').update(srtWinBytes).digest('hex')
+      !== request.srtWinSha256.toLowerCase()
+    ) {
+      throw new Error('ASRT Windows runner artifact changed before broker startup.');
+    }
+    const controllerBytes = await readFile(request.controllerExecutable);
+    if (
+      createHash('sha256').update(controllerBytes).digest('hex')
+      !== request.controllerSha256.toLowerCase()
+    ) {
+      throw new Error('Windows native controller artifact changed before broker startup.');
     }
     const endpoints = new Set(
       request.endpoints.map((item) => `${item.host.toLowerCase()}:${item.port}`),
@@ -5692,20 +6148,13 @@ export async function runAsrtWindowsNetworkBrokerProcess(
     ) {
       throw new Error('Windows sandbox account is not ready for native shell execution.');
     }
-    const controllerPipe = `\\\\.\\pipe\\kodax-v2-${process.pid}-${randomUUID()}`;
-    controllerServer = createServer({ pauseOnConnect: true }, (socket) => {
-      if (controllerSocket !== undefined) {
-        socket.destroy(new Error('Windows sandbox controller already connected.'));
-        return;
-      }
-      controllerSocket = socket;
-      socket.once('error', (error) => {
-        process.stderr.write(`Windows sandbox controller pipe failed: ${errorText(error)}\n`);
-      });
-      controllerServer?.close();
-    });
-    controllerServer.listen(controllerPipe);
-    await once(controllerServer, 'listening');
+    if (
+      sandboxUser.sid.toUpperCase() !== request.expectedSandboxUserSid.toUpperCase()
+      || sandboxUser.groupSid.toUpperCase() !== request.expectedSandboxGroupSid.toUpperCase()
+    ) {
+      throw new Error('Windows sandbox account changed while the network broker was starting.');
+    }
+    controller = await startWindowsNativeController(request.controllerExecutable);
     writeWindowsNetworkBrokerReady({
       version: 1,
       ok: true,
@@ -5714,18 +6163,22 @@ export async function runAsrtWindowsNetworkBrokerProcess(
       asrtChildEnvironment: invocation.childEnvironment,
       sandboxUserSid: sandboxUser.sid,
       sandboxGroupSid: sandboxUser.groupSid,
-      controllerPipe,
+      controllerPipe: controller.pipe,
     });
     readyWritten = true;
-    await new Promise<void>((resolve) => {
+    const brokerLifetime = new Promise<void>((resolve) => {
       let settled = false;
       const finish = (): void => {
         if (settled) return;
         settled = true;
+        process.stdin.off('end', finish);
+        process.stdin.off('close', finish);
         process.off('SIGINT', finish);
         process.off('SIGTERM', finish);
+        process.stdin.pause();
         resolve();
       };
+      stopLifetimeObservation = finish;
       process.stdin.once('end', finish);
       process.stdin.once('close', finish);
       process.once('SIGINT', finish);
@@ -5733,6 +6186,19 @@ export async function runAsrtWindowsNetworkBrokerProcess(
       if (process.stdin.readableEnded || process.stdin.destroyed) finish();
       else process.stdin.resume();
     });
+    const controllerLifetime = controller.exit.then((outcome) => {
+      if (controller?.stopping) return;
+      throw new Error(
+        `Windows native controller exited while its broker was active `
+        + `(code ${String(outcome.code)}, signal ${String(outcome.signal)}): `
+        + controller!.stderrTail().trim(),
+        outcome.error === undefined ? undefined : { cause: outcome.error },
+      );
+    });
+    await Promise.race([brokerLifetime, controllerLifetime]);
+    if (controller.outcome !== undefined && !controller.stopping) {
+      throw new Error('Windows native controller exited before broker shutdown completed.');
+    }
   } catch (error: unknown) {
     if (!readyWritten) {
       try {
@@ -5744,9 +6210,13 @@ export async function runAsrtWindowsNetworkBrokerProcess(
     }
     cleanupFailures.push(error);
   } finally {
-    controllerSocket?.destroy();
-    if (controllerServer?.listening) {
-      await new Promise<void>((resolve) => controllerServer?.close(() => resolve()));
+    stopLifetimeObservation?.();
+    if (controller !== undefined) {
+      try {
+        await stopWindowsNativeController(controller);
+      } catch (error: unknown) {
+        cleanupFailures.push(error);
+      }
     }
     try {
       SandboxManager.cleanupAfterCommand();

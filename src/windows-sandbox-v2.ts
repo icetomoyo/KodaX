@@ -8,7 +8,7 @@ import {
   type ResolveWindowsNativeArtifactOptions,
 } from './windows-native-artifacts.js';
 
-export const WINDOWS_SANDBOX_V2_PROTOCOL = 5;
+export const WINDOWS_SANDBOX_V2_PROTOCOL = 7;
 
 export interface AsrtWindowsInvocation {
   readonly executable: string;
@@ -24,7 +24,9 @@ export interface SplitAsrtWindowsInvocation {
 
 export interface WindowsSandboxV2PolicyInput {
   readonly generation: string;
+  readonly allowRead: readonly string[];
   readonly allowWrite: readonly string[];
+  readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
 }
 
@@ -46,7 +48,7 @@ export interface WindowsSandboxV2RunRequest {
   readonly controllerPipe: string;
   readonly terminalRecordPath: string;
   readonly terminalNonce: string;
-  readonly launchDeadlineUnixMs: number;
+  readonly operationDeadlineUnixMs: number;
 }
 
 export interface WindowsSandboxV2RunRequestInput {
@@ -63,7 +65,7 @@ export interface WindowsSandboxV2RunRequestInput {
   readonly controllerPipe: string;
   readonly terminalRecordPath: string;
   readonly terminalNonce: string;
-  readonly launchDeadlineUnixMs: number;
+  readonly operationDeadlineUnixMs: number;
 }
 
 /**
@@ -151,7 +153,7 @@ function normalizedPolicyPaths(values: readonly string[]): readonly string[] {
 }
 
 /**
- * The complete immutable write policy is the authority key. Two Runtime
+ * The complete immutable filesystem policy is the authority key. Two Runtime
  * processes independently derive the same key without a mutable SID registry.
  */
 export function windowsSandboxV2PolicyFingerprint(
@@ -161,9 +163,11 @@ export function windowsSandboxV2PolicyFingerprint(
     throw new Error('Windows sandbox v2 generation is empty.');
   }
   const canonical = JSON.stringify({
-    version: 1,
+    version: 2,
     generation: input.generation,
+    allowRead: normalizedPolicyPaths(input.allowRead),
     allowWrite: normalizedPolicyPaths(input.allowWrite),
+    denyRead: normalizedPolicyPaths(input.denyRead),
     denyWrite: normalizedPolicyPaths(input.denyWrite),
   });
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
@@ -288,8 +292,8 @@ export function createWindowsSandboxV2RunRequest(
   })) {
     throw new Error('Windows sandbox v2 ASRT prefix retained a target environment entry.');
   }
-  if (!Number.isSafeInteger(input.launchDeadlineUnixMs) || input.launchDeadlineUnixMs <= 0) {
-    throw new Error('Windows sandbox v2 launch deadline is invalid.');
+  if (!Number.isSafeInteger(input.operationDeadlineUnixMs) || input.operationDeadlineUnixMs <= 0) {
+    throw new Error('Windows sandbox v2 operation deadline is invalid.');
   }
   if (!path.win32.isAbsolute(input.terminalRecordPath) || input.terminalRecordPath.includes('\0')) {
     throw new Error('Windows sandbox v2 terminal record path is invalid.');
@@ -305,7 +309,9 @@ export function createWindowsSandboxV2RunRequest(
   }
   const policyFingerprint = windowsSandboxV2PolicyFingerprint({
     generation: input.generation,
+    allowRead: input.allowRead,
     allowWrite: input.allowWrite,
+    denyRead: input.denyRead,
     denyWrite: input.denyWrite,
   });
   const policyCapabilitySid = windowsSandboxV2PolicyCapabilitySid(policyFingerprint);
@@ -333,7 +339,7 @@ export function createWindowsSandboxV2RunRequest(
     controllerPipe: input.controllerPipe,
     terminalRecordPath: input.terminalRecordPath,
     terminalNonce: input.terminalNonce.toLowerCase(),
-    launchDeadlineUnixMs: input.launchDeadlineUnixMs,
+    operationDeadlineUnixMs: input.operationDeadlineUnixMs,
   };
 }
 

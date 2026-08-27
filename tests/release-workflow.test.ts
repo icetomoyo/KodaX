@@ -149,6 +149,43 @@ describe('GitHub release workflow', () => {
     expect(source).toContain('trustedTextNative');
   });
 
+  it('anchors the pinned ASRT runner in every native build and release gate', () => {
+    const buildNative = readFileSync(resolve('scripts/build-native.mjs'), 'utf8');
+    const buildBinary = readFileSync(resolve('scripts/build-binary.mjs'), 'utf8');
+    const testNative = readFileSync(resolve('scripts/test-native.mjs'), 'utf8');
+    const release = readFileSync(resolve('scripts/release.mjs'), 'utf8');
+
+    expect(buildNative).toContain('manifest.asrtRunner = {');
+    expect(buildNative).toContain('protocol: 7');
+    expect(buildNative).toContain("'LICENSE-APACHE.txt'");
+    expect(buildNative).toContain("'NOTICE-windows-sandbox.txt'");
+    expect(buildNative).toContain("file: 'srt-win.exe'");
+    expect(buildNative).toContain('version: asrtVersion');
+    expect(buildNative).toContain('sha256: sha256(asrtRunnerPath)');
+
+    for (const source of [buildBinary, testNative, release]) {
+      expect(source).toContain('manifest.asrtRunner');
+      expect(source).toContain("'@anthropic-ai', 'sandbox-runtime'");
+      expect(source).toContain("'srt-win.exe'");
+      expect(source).toContain('asrtRunner.sha256');
+      expect(source).toContain('asrtRunner.version');
+    }
+    expect(buildBinary).toContain('copied ASRT runner hash does not match its manifest');
+    expect(release).toContain("['shellSandbox', 7, 'kodax-windows-sandbox.exe']");
+    expect(release).not.toContain("['shellSandbox', 5, 'kodax-windows-sandbox.exe']");
+    expect(release).toContain('ASRT runner hash does not match its manifest');
+    expect(release).toContain('expectedLegalFiles');
+  });
+
+  it('runs the installed tarball gate through npm JavaScript on Windows', () => {
+    const source = readFileSync(resolve('scripts/test-packed-native.mjs'), 'utf8');
+    expect(source).toContain('process.env.npm_execpath');
+    expect(source).toContain("'npm-cli.js'");
+    expect(source).toContain("'lib',");
+    expect(source).toContain('spawnSync(process.execPath, [npmCli,');
+    expect(source).not.toContain("process.platform === 'win32' ? 'npm.cmd'");
+  });
+
   it('aggregates every platform native authority before auditing the npm package', () => {
     const source = readFileSync(resolve('.github/workflows/release.yml'), 'utf8');
     const workflow = parse(source) as ReleaseWorkflow;
@@ -165,7 +202,7 @@ describe('GitHub release workflow', () => {
     expect(steps.find((step) => step.name === 'Pack and audit universal npm package')?.run)
       .toBe('node scripts/release.mjs --skip-build --pack-only');
     expect(steps.find((step) => step.name === 'Installed npm trusted text native gate')?.run)
-      .toBe('node scripts/test-packed-native.mjs');
+      .toBe('npm run test:packed-native');
   });
 
   it('executes every release artifact on a matching native architecture', () => {

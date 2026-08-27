@@ -5385,7 +5385,7 @@ team, codex cross-check) in this repository's session records.
 
 ## ADR-066: Trusted Text Transactions and a Native Windows Shell Sandbox Are Separate Authorities
 
-**Status**: Accepted and implementation authorized (revised 2026-08-26).
+**Status**: Accepted and implementation authorized (revised 2026-08-27).
 
 **Driver**: the production `write` failure in session
 `20260825_215704_r8107f13f0eec3` exposed two concerns that the legacy design
@@ -5405,6 +5405,12 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    They never enter ASRT, a workspace session, the shell runner, or a sandbox
    text helper. Text mutation is constrained by host policy and final resource
    identity; it is not described as OS-token sandbox enforcement.
+   KodaX's root and `/coding` `runKodaX`, `startKodaX`, `runManagedTask`,
+   `createKodaXTaskRunner`, `createDefaultCodingAgent`, `KodaXClient`, and `Client`
+   entries bind this authority when the embedder did not supply one. Their
+   root closure reads the live linked-worktree registry for each transaction;
+   the CLI uses the same entry. Runtime-owned Runs continue to replace any
+   caller host with their authenticated workspace registry.
 2. **Cross-platform in-process filesystem primitive**: strict platform path
    and commit guarantees are provided by a narrow native binding loaded into
    the trusted Runtime on Windows, Linux, and macOS. The transaction itself
@@ -5450,7 +5456,10 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    revalidates identity and policy, rereads content and revision, applies CAS
    to the candidate bytes computed by the trusted TypeScript tool, writes an
    exclusive same-directory temp file, flushes it, and atomically replaces or
-   creates the target. There is no
+   creates the target. Windows first holds a delete/write reservation across
+   the locked final reread, CAS, and POSIX-semantics rename: compatible readers
+   can retain a complete old handle while no incompatible reader or new writer
+   enters the commit window. There is no
    in-place fallback. Diff rendering, LSP work, and presentation occur after
    releasing the lock.
 5. **Conflict contract**: two KodaX text transactions based on the same
@@ -5458,8 +5467,9 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    canonical slots do not wait for one another. An arbitrary shell does not
    participate in this lock. A shell change observed by the locked final reread
    is a conflict, and an incompatible writer handle at that reread is
-   contended. An uncooperative write, replace, or rename after the final reread
-   remains an ordinary OS race. Documentation must not claim that KodaX
+   contended. Windows' final reservation excludes a new writer after that
+   reread; on Unix an uncooperative write, replace, or rename after it remains
+   an ordinary OS race. Documentation must not claim that KodaX
    serializes arbitrary shell filesystem activity.
 6. **Undo receipt**: a backup records canonical slot identity, pre-image and
    post-commit revision. Undo restores only when the current revision still
@@ -5484,9 +5494,22 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
     reject allow roots overlapping that directory in either direction, and
     deny roots at or below it, before ACL authorization or target creation.
     Ancestor denies remain permitted because the child DACL is protected.
-    Doctor only verifies this state; explicit setup may create or repair only
-    an empty, no-reparse, host-owned direct child after the sandbox SID is idle.
-    Unknown owner, non-empty state, or live sandbox processes remain fail-closed.
+    Doctor only verifies this state; explicit setup may create or repair a
+    no-reparse, host-owned direct child after the sandbox SID is idle. Repair
+    retires only expired dead-PID request records or dead-owner terminal records
+    that already prove Job drainage. Live/unexpired/malformed/unknown records and
+    ACL-recovery receipts remain fail-closed.
+    The process-level ASRT broker starts the verified native shell artifact in
+    a liveness-controller mode under the trusted host token. That controller
+    creates its named pipe with a protected DACL containing exactly Host and
+    SYSTEM full-control ACEs, rejects remote clients, verifies owner/DACL before
+    readiness, and keeps multiple pending instances for concurrent hosts. The
+    broker authenticates the advertised pipe PID against the spawned controller;
+    each host authenticates the actual pipe server PID. The controller monitors
+    both broker process identity and broker stdin, while the broker observes the
+    controller's exact exit and bounded stderr. Loss on either side closes all
+    controller handles and makes active Jobs fail closed; a later command
+    creates a fresh broker instead of inheriting stale controller state.
 8. **Containment before execution**: the restricted runner creates the shell
    target suspended with an explicit handle list and creation-time assignment
    to a no-breakaway, kill-on-close Job. It reports `Ready` only after proving
@@ -5506,23 +5529,65 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    untrusted final target has creation-time KodaX Job containment.
 9. **Shell permission and network split**: ASRT supplies only its network
    proxy, WFP, CA and dedicated account. The KodaX runner supplies a
-   `WRITE_RESTRICTED` token whose restricting set carries the immutable policy
-   capability SID plus the dedicated account, logon, and Everyone SIDs used by
-   Codex for Windows subprocess compatibility. The account SID is deliberately
-   absent from the token's default DACL; the default DACL contains only logon,
-   Everyone, and policy capability trustees. Ordinary path access is supplied
-   by the ASRT sandbox group, while policy writes normally require the
-   capability ACE on the restricted write pass. Because an existing exact
-   account/logon/Everyone write ACE can satisfy that compatibility pass,
-   cutover deletes and recreates the dedicated account and requires a new SID.
-   Capability ACEs are append-only; execution-specific deny ACEs use the
-   unique logon SID. This Codex-shaped shell model is ambient-read plus
-   explicit deny, not a strict read whitelist.
+   `WRITE_RESTRICTED` token whose restricting set carries one ephemeral full-
+   policy capability, stable read/write filesystem-clause capabilities, and
+   the dedicated primary account, per-launch logon, and Everyone SIDs for
+   Windows subprocess compatibility, matching current Codex. Removing the
+   primary SID makes real Node/cmd/PowerShell child creation fail with `EPERM`.
+   The account SID remains absent from the token's default DACL. The full-policy capability isolates the private desktop but is
+   never persisted on filesystem roots. Persistent write authority instead uses
+   capability SIDs derived from account generation, final handle-canonical root,
+   and clause (`allowWrite` or `denyWrite`), matching Codex's bounded root model.
+   Every read root receives its exact allow-read capability, and a read-only
+   root receives a stable deny-write capability unless covered by a current
+   write root. The ASRT sandbox group supplies ordinary read/execute or modify
+   access on the normal pass; the exact read/write root capability supplies the
+   restricted pass. Private ancestors receive only
+   non-inheriting read-attributes/traverse/synchronize for the sandbox group,
+   never list, content-read, write, delete, or inherited authority. Canonical
+   targets and nested allow/deny precedence are preflighted before the first
+   persistent DACL mutation.
+
+   `WRITE_RESTRICTED` does not consult restricting SIDs for reads. `denyRead`
+   is therefore an execution-scoped deny ACE for the authenticated runner logon
+   SID, not a capability ACE. The host records a flushed, atomically published
+   receipt before the short ACL mutation, holds no-follow target handles while
+   the command runs, and removes exactly its owned ACE only after the runner
+   proves the Job drained. A host crash leaves recovery evidence keyed by exact
+   PID creation time; the next shell host recovers stale evidence under the same
+   short ACL mutex. Fixed Agent Home and credential denies are installed once
+   on exact existing roots for the stable sandbox group through native no-follow
+   handles. Cold admission idempotently installs a guard for an exact sensitive
+   root created after setup. They are not propagated afresh by every command.
+   This mutex covers only ACL commit/cleanup, never command
+   lifetime or trusted text admission. The full-policy/root-clause split bounds
+   persistent ACE growth; no speculative capability garbage collector is added.
+   This remains ambient-read plus explicit deny, not a strict read whitelist.
+   Because the compatibility SIDs remain in the restricted pass, an explicit
+   or protected child DACL widened to one of them can bypass a later root
+   capability; Issue 309 records this unresolved boundary rather than claiming
+   that exact root ACEs override arbitrary child ownership.
 10. **Shell concurrency**: Windows v2 shell invocations explicitly identify
     native token isolation and bypass the legacy filesystem-effect lease.
     Different policies, Sessions and Runtime processes may run concurrently.
     No owner/reset/allow-revoke/cleanup/poison admission gate spans a command
-    lifetime.
+    lifetime. Inside one Runtime process, commands with the same canonical
+    network policy and sandbox-account generation acquire references to one
+    process-level ASRT network broker. Each command still has an independent
+    native request, restricted policy token, controller connection and Job;
+    releasing one command cannot close the broker while another reference is
+    live. The broker is retained for one second after the last release to avoid
+    cold-start churn. Different network policies or account generations never
+    share a broker.
+
+    This pool is intentionally narrower than Codex's process-shared Windows
+    ingress. ASRT 0.0.65 exposes neither authenticated per-connection policy
+    identity nor route selection, and allocates two ports per broker from its
+    fixed ten-port range. KodaX therefore does not merge unlike policies into a
+    permissive callback and does not serialize their command lifetimes. Issue
+    308 tracks the remaining capacity bound for distinct policies and Runtime
+    processes.
+
     Linux and macOS likewise prepare an independent ASRT bubblewrap or
     Seatbelt/`sandbox-exec` invocation for each command and keep no KodaX
     workspace-session owner or cross-command lifecycle lock. Shell writers on
@@ -5539,10 +5604,17 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
 11. **Atomic backend migration**: `sandbox setup` holds a machine coordination
     lock, proves the old account idle, recovers recorded ACL work, deletes and
     recreates the account, verifies that its SID changed, then writes a strict
-    protocol/SID machine generation marker by flushed atomic replace. Native
-    sidecars are independently protocol- and SHA-256-verified against an
-    embedded packaged manifest, then materialized into a protected content-
-    addressed store before load or execution. Concurrent Runtime provisioners
+    protocol/SID machine generation marker by flushed atomic replace. The
+    embedded release manifest independently pins each native sidecar protocol
+    and SHA-256 plus the ASRT release version and SHA-256. Verified bytes are
+    materialized into a protected content-addressed LocalAppData store before
+    load or execution; ASRT source bytes are checked before materialization and
+    the staged executable is rechecked before broker startup. Windows text
+    bytes remain Host/SYSTEM-only, the native shell executable grants
+    read/execute to the dedicated sandbox group SID, and the pinned ASRT
+    `srt-win.exe` grants local Users read/execute because the dedicated account
+    must execute it. No sandbox or local-Users trustee receives write/delete.
+    This store is independent of a custom or private `KODAX_HOME`. Concurrent Runtime provisioners
     share read verification of an already executing immutable image; artifact
     bootstrap is not a cross-Runtime admission lock. A fixed System32 provisioner may
     run once for that artifact bootstrap; it receives already verified bytes,
@@ -5563,11 +5635,14 @@ capability or a shell policy SID. Text authorization is repeated against
 handle-derived final identity while the stable ancestor handles and slot lock
 are held. Target files must be regular and single-link. The slot mutex lives
 in a current-host-SID private namespace, so a restricted shell cannot precreate
-the public object name and block text tools. Temp data is flushed; owner,
-group, integrity/resource attributes and basic file attributes are preserved.
-On Windows, effective DACL ACE type/SID/mask/order
-is preserved, while the filesystem may canonicalize inherited-ACE provenance
-and DACL inheritance/protection control. Non-default streams,
+the public object name and block text tools. Temp data is flushed. On Windows,
+the replacement is owned by the trusted host rather than copying a foreign
+sandbox owner/group; this makes old sandbox-owned files self-healing without
+requiring setup or ACL cleanup. The temporary replacement receives the source's
+ordered effective ACE policy; the filesystem may canonicalize DACL
+protection/inheritance control at the atomic namespace commit. Stale inherited
+authority is not copied from an old parent. Integrity/resource attributes
+and basic file attributes are preserved. Non-default streams,
 Central Access Policy state or unsupported Windows attributes fail closed;
 v2 does not claim audit-SACL
 preservation. Unix preserves ownership, mode, extended attributes, Linux
@@ -5578,8 +5653,11 @@ add-and-verify transactions. Agent Home Runtime/daemon/grant state,
 native artifacts, sandbox state, credentials, Git control files and hooks are
 classified on the final identity and cannot be made writable through a path
 alias. The protected native store is excluded from shell write roots; its DACL
-grants the sandbox group read/execute only for the exact shell artifact and no
-write/delete authority.
+grants only the minimum per-artifact read/execute trustee described above and
+no sandbox/local-Users write/delete authority. The ASRT executable directory is
+never added to the final restricted target's policy roots; ASRT launches it as
+trusted infrastructure, so target ACL application cannot mutate the immutable
+artifact cache.
 
 **Consequences**: on Windows, Linux, and macOS, ASRT/runner/setup failures
 cannot block trusted text tools;
@@ -5590,14 +5668,22 @@ artifacts with intentionally independent health: an in-process filesystem
 primitive and a shell sidecar. The text path is stricter than Claude Code's
 current path-based atomic fallback, while the shell protocol follows Codex's
 explicit-stdio and creation-time containment pattern.
-Issue 307 records the remaining ASRT-owned runner pre-main window: KodaX and
+ Issue 307 records the remaining ASRT-owned runner pre-main window: KodaX and
 current Codex both create the final target in its Job at process creation, but
 their shared-account runner is first launched by the external account broker.
  KodaX does not pretend that a post-spawn hardening step can close that upstream
  race. The host requests inherited modal-error suppression before ASRT launch,
  but a loader/pre-main runner fault remains part of the upstream bootstrap
  residual because ASRT owns the cross-account creation contract; final-target
- faults are suppressed. The residual cannot affect the ASRT-independent trusted text path.
+ faults are suppressed. Issue 308 separately records that KodaX's exact-policy
+ ASRT broker pool is not yet Codex's identity-routed shared ingress: same-policy
+ commands share capacity, while distinct policies/processes remain bounded by
+ ASRT's fixed proxy ports. Neither residual can affect the ASRT-independent
+ trusted text path. Issue 309 records the Codex-compatible token model's
+ remaining ambient-trustee weakness for any explicit compatibility ACE,
+ including one already present on an external or host-owned descendant;
+ FEATURE_295 does not claim to solve that upstream Windows token/loader
+ trade-off.
 
 **Rejected alternatives**: keeping a sandboxed text helper (retains both
 failure classes); forwarding text bytes after ASRT's control frame (stdin-only

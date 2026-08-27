@@ -19,3 +19,12 @@
  */
 
 export * from '@kodax-ai/coding';
+export {
+  Client,
+  createDefaultCodingAgent,
+  createKodaXTaskRunner,
+  KodaXClient,
+  runKodaX,
+  runManagedTask,
+  startKodaX,
+} from './trusted-coding-entry.js';

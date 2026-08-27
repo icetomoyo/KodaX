@@ -59,6 +59,11 @@ try {
   assert.equal(result.ordinaryQueryCount, ordinaryQueryCount);
   assert.equal(result.parallelSessionCount, 4, 'The packaged smoke must exercise four concurrent Runtime sessions.');
   assert.equal(
+    result.executionDenyReceiptCount,
+    0,
+    'Completed packaged Runtime commands must not leave execution deny receipts.',
+  );
+  assert.equal(
     result.appliedSandboxCount,
     ordinaryQueryCount,
     'Every packaged Runtime query must execute Bash through the Windows restricted-user sandbox.',

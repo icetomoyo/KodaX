@@ -354,7 +354,10 @@ function requireWrittenOutcome(
   ) {
     throw new Error('Native text transaction returned an incomplete commit receipt.');
   }
-  const receipt = {
+  const receipt: Omit<
+    Extract<KodaXTrustedTextCommitOutcome, { readonly status: 'written' }>,
+    'status'
+  > = {
     before: {
       state: outcome.preRevision.startsWith('missing:') ? 'missing' : 'present',
       content: outcome.preContent,

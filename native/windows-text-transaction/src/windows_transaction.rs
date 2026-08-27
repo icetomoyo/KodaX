@@ -3,6 +3,7 @@ use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
 use std::ptr::{null, null_mut};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -10,7 +11,8 @@ use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
     FILE_OPEN_REQUIRING_OPLOCK, FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION,
-    FILE_RENAME_REPLACE_IF_EXISTS, FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+    FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS, FILE_STREAM_INFORMATION,
+    FILE_SYNCHRONOUS_IO_NONALERT,
     FileRenameInformationEx, FileStreamInformation, NtCreateFile, NtQueryInformationFile,
     NtSetInformationFile,
 };
@@ -25,12 +27,12 @@ use windows_sys::Win32::Security::Authorization::{
     SDDL_REVISION_1, SE_FILE_OBJECT, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::{
-    ACL, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, AclSizeInformation,
-    DACL_SECURITY_INFORMATION, EqualSid, GROUP_SECURITY_INFORMATION, GetAclInformation,
-    GetSecurityDescriptorControl, GetTokenInformation, LABEL_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-    SCOPE_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    ACE_HEADER, ACL, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, AclSizeInformation,
+    AddAce, DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorControl,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, InitializeAcl, IsValidSid,
+    LABEL_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SCOPE_SECURITY_INFORMATION,
+    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
@@ -54,6 +56,9 @@ use windows_sys::Win32::System::Ioctl::{
     FSCTL_REQUEST_OPLOCK, OPLOCK_LEVEL_CACHE_HANDLE, OPLOCK_LEVEL_CACHE_READ,
     OPLOCK_LEVEL_CACHE_WRITE, REQUEST_OPLOCK_CURRENT_VERSION, REQUEST_OPLOCK_INPUT_BUFFER,
     REQUEST_OPLOCK_INPUT_FLAG_REQUEST, REQUEST_OPLOCK_OUTPUT_BUFFER,
+};
+use windows_sys::Win32::System::SystemServices::{
+    SECURITY_MANDATORY_LOW_RID, SYSTEM_MANDATORY_LABEL_ACE_TYPE,
 };
 use windows_sys::Win32::System::Threading::{
     AddSIDToBoundaryDescriptor, ClosePrivateNamespace, CreateBoundaryDescriptorW, CreateEventW,
@@ -332,7 +337,7 @@ impl TrustedRoot {
             if before.state == ResourceState::Present {
                 let existing = open_existing_for_metadata(parent.raw(), leaf)?;
                 reject_non_default_streams(existing.raw())?;
-                // Apply the final owner/DACL and attributes before the first payload byte.
+                // Apply the final DACL and attributes before the first payload byte.
                 // A crash can therefore leave only a non-shareable, correctly protected temp.
                 copy_metadata(existing.raw(), temp.raw())?;
             }
@@ -343,8 +348,21 @@ impl TrustedRoot {
             }
             temp.ensure_held()?;
 
-            // Re-open and re-hash while the slot mutex is held. An uncooperative shell writer
-            // that changed the resource before this point turns the commit into a stale result.
+            // Reserve delete/write sharing before the final reread. Once acquired, ordinary
+            // non-delete-sharing readers cannot enter the narrow replace window and a writer
+            // cannot open after CAS but before the namespace commit.
+            let _replace_reservation = if before.state == ResourceState::Present {
+                Some(acquire_replace_reservation(
+                    parent.raw(),
+                    leaf,
+                    timeout_ms,
+                )?)
+            } else {
+                None
+            };
+            // Re-open and re-hash while the slot mutex and replacement reservation are held.
+            // An uncooperative shell writer that changed the resource before this point turns
+            // the commit into a stale result.
             let final_check = read_snapshot(parent.raw(), leaf, &slot_id, &canonical_path)?;
             if final_check.revision != before.revision {
                 return Ok(CommitOutcome::Stale {
@@ -372,9 +390,6 @@ impl TrustedRoot {
                 post_revision: present_revision(&slot_id, temp_identity, content.as_bytes()),
                 abandoned_lock: mutex.abandoned,
             };
-            if before.state == ResourceState::Present {
-                verify_replace_delete_sharing(parent.raw(), leaf)?;
-            }
             atomic_rename(
                 temp.raw(),
                 parent.raw(),
@@ -901,7 +916,7 @@ fn read_snapshot(
         parent,
         leaf,
         FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-        FILE_SHARE_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         FILE_OPEN,
         FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )?
@@ -1077,8 +1092,13 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
     }
 
     // Full audit SACL preservation still requires SeSecurityPrivilege. The ordinary host
-    // preserves the security fields Windows exposes through READ_CONTROL/WRITE_DAC/
-    // WRITE_OWNER and fails closed on a Central Access Policy (SCOPE), which it cannot set.
+    // preserves the security fields Windows exposes through READ_CONTROL/WRITE_DAC and
+    // fails closed on a Central Access Policy (SCOPE), which it cannot set. The staging
+    // handle also requests WRITE_OWNER because Windows requires it for some label/attribute
+    // updates even though this transaction never assigns owner or group.
+    // Owner/group are deliberately not reassigned: Windows rejects a foreign owner outside
+    // the host token with ERROR_INVALID_OWNER. Atomic replacement therefore lets the
+    // replacement become host-owned while preserving DACL and supported security attributes.
     let mut scope = null_mut();
     let mut scope_descriptor: PSECURITY_DESCRIPTOR = null_mut();
     let scope_status = unsafe {
@@ -1109,25 +1129,17 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
         ));
     }
 
-    let mut owner = null_mut();
-    let mut group = null_mut();
     let mut dacl = null_mut();
-    let mut label_and_attributes = null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
-    let security_information = OWNER_SECURITY_INFORMATION
-        | GROUP_SECURITY_INFORMATION
-        | DACL_SECURITY_INFORMATION
-        | LABEL_SECURITY_INFORMATION
-        | ATTRIBUTE_SECURITY_INFORMATION;
     let status = unsafe {
         GetSecurityInfo(
             source,
             SE_FILE_OBJECT,
-            security_information,
-            &mut owner,
-            &mut group,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
             &mut dacl,
-            &mut label_and_attributes,
+            null_mut(),
             &mut descriptor,
         )
     };
@@ -1145,10 +1157,32 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
             return Err(error);
         }
     };
-    // A newly created sibling is already unprotected. Asking Windows to
-    // "unprotect" it would merge parent ACEs and change the source ACL's
-    // explicit/inherited provenance. Only protection needs an explicit flag.
-    let set_information = security_information
+    let source_dacl = match dacl_fingerprint(dacl, dacl_protected) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            unsafe { LocalFree(descriptor) };
+            return Err(error);
+        }
+    };
+    // Protected files carry their complete DACL. Unprotected files carry only
+    // explicit ACEs; the replacement remains unprotected and inherits from its
+    // current parent instead of freezing stale inherited ACEs from an earlier
+    // directory. ACE order is retained because deny/allow ordering is semantic.
+    let mut explicit_dacl = if dacl_protected {
+        None
+    } else {
+        match explicit_dacl_buffer(dacl) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { LocalFree(descriptor) };
+                return Err(error);
+            }
+        }
+    };
+    let dacl_to_set = explicit_dacl
+        .as_mut()
+        .map_or(dacl, |buffer| buffer.as_mut_ptr().cast::<ACL>());
+    let set_information = DACL_SECURITY_INFORMATION
         | if dacl_protected {
             PROTECTED_DACL_SECURITY_INFORMATION
         } else {
@@ -1159,10 +1193,10 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
             destination,
             SE_FILE_OBJECT,
             set_information,
-            owner,
-            group,
-            dacl,
-            label_and_attributes,
+            null_mut(),
+            null_mut(),
+            dacl_to_set,
+            null_mut(),
         )
     };
     if set_status != 0 {
@@ -1173,20 +1207,17 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
             set_status,
         ));
     }
-    let mut destination_owner = null_mut();
-    let mut destination_group = null_mut();
     let mut destination_dacl = null_mut();
-    let mut destination_label_and_attributes = null_mut();
     let mut destination_descriptor: PSECURITY_DESCRIPTOR = null_mut();
     let destination_status = unsafe {
         GetSecurityInfo(
             destination,
             SE_FILE_OBJECT,
-            security_information,
-            &mut destination_owner,
-            &mut destination_group,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
             &mut destination_dacl,
-            &mut destination_label_and_attributes,
+            null_mut(),
             &mut destination_descriptor,
         )
     };
@@ -1199,12 +1230,11 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
         ));
     }
     let verified = (|| {
-        Ok(same_sid(owner, destination_owner)
-            && same_sid(group, destination_group)
-            && same_acl(dacl, destination_dacl)?
-            && same_acl(label_and_attributes, destination_label_and_attributes)?
-            && (security_descriptor_control(destination_descriptor)? & SE_DACL_PROTECTED != 0)
-                == dacl_protected)
+        Ok(
+            source_dacl == dacl_fingerprint(destination_dacl, dacl_protected)?
+                && (security_descriptor_control(destination_descriptor)? & SE_DACL_PROTECTED != 0)
+                    == dacl_protected,
+        )
     })();
     unsafe { LocalFree(destination_descriptor) };
     unsafe { LocalFree(descriptor) };
@@ -1214,39 +1244,309 @@ fn copy_metadata(source: HANDLE, destination: HANDLE) -> Result<(), TextTransact
             "temporary text file security metadata did not match the source",
         ));
     }
+    copy_sacl_class(
+        source,
+        destination,
+        LABEL_SECURITY_INFORMATION,
+        "mandatory integrity label",
+    )?;
+    copy_sacl_class(
+        source,
+        destination,
+        ATTRIBUTE_SECURITY_INFORMATION,
+        "resource attributes",
+    )?;
     Ok(())
 }
 
-fn same_sid(left: *mut c_void, right: *mut c_void) -> bool {
-    if left.is_null() || right.is_null() {
-        return left == right;
+fn copy_sacl_class(
+    source: HANDLE,
+    destination: HANDLE,
+    security_information: u32,
+    label: &str,
+) -> Result<(), TextTransactionError> {
+    let mut source_acl = null_mut();
+    let mut source_descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    let source_status = unsafe {
+        GetSecurityInfo(
+            source,
+            SE_FILE_OBJECT,
+            security_information,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut source_acl,
+            &mut source_descriptor,
+        )
+    };
+    if source_status != 0 {
+        return Err(TextTransactionError::os(
+            TextTransactionErrorCode::MetadataPreservation,
+            format!("cannot read existing text file {label}"),
+            source_status,
+        ));
     }
-    unsafe { EqualSid(left, right) != 0 }
+    let expected = match acl_bytes(source_acl) {
+        Ok(value) => value,
+        Err(error) => {
+            unsafe { LocalFree(source_descriptor) };
+            return Err(error);
+        }
+    };
+    if expected.as_ref().is_none_or(|bytes| bytes.len() <= size_of::<ACL>()) {
+        unsafe { LocalFree(source_descriptor) };
+        return Ok(());
+    }
+    if security_information == LABEL_SECURITY_INFORMATION {
+        let integrity = mandatory_label_rid(source_acl);
+        if integrity.as_ref().is_ok_and(|rid| {
+            rid.is_some_and(|value| value <= SECURITY_MANDATORY_LOW_RID as u32)
+        }) {
+            // Legacy ASRT targets could stamp workspace files with an explicit
+            // untrusted/low label. Reapplying that label requires a privilege
+            // an ordinary host intentionally does not hold and would keep the
+            // file unusable by the trusted text path. A host-authorized rewrite
+            // therefore normalizes only these sandbox-origin labels to the
+            // destination's ordinary inherited integrity level. Higher labels
+            // and unknown SACL shapes remain fail-closed below.
+            unsafe { LocalFree(source_descriptor) };
+            return Ok(());
+        }
+        if let Err(error) = integrity {
+            unsafe { LocalFree(source_descriptor) };
+            return Err(error);
+        }
+    }
+    let set_status = unsafe {
+        SetSecurityInfo(
+            destination,
+            SE_FILE_OBJECT,
+            security_information,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            source_acl,
+        )
+    };
+    unsafe { LocalFree(source_descriptor) };
+    if set_status != 0 {
+        return Err(TextTransactionError::os(
+            TextTransactionErrorCode::MetadataPreservation,
+            format!("cannot preserve existing text file {label}"),
+            set_status,
+        ));
+    }
+
+    let mut destination_acl = null_mut();
+    let mut destination_descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    let destination_status = unsafe {
+        GetSecurityInfo(
+            destination,
+            SE_FILE_OBJECT,
+            security_information,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut destination_acl,
+            &mut destination_descriptor,
+        )
+    };
+    if destination_status != 0 {
+        return Err(TextTransactionError::os(
+            TextTransactionErrorCode::MetadataPreservation,
+            format!("cannot verify temporary text file {label}"),
+            destination_status,
+        ));
+    }
+    let actual = acl_bytes(destination_acl);
+    unsafe { LocalFree(destination_descriptor) };
+    if expected != actual? {
+        return Err(TextTransactionError::new(
+            TextTransactionErrorCode::MetadataPreservation,
+            format!("temporary text file {label} did not match the source"),
+        ));
+    }
+    Ok(())
 }
 
-fn same_acl(left: *mut ACL, right: *mut ACL) -> Result<bool, TextTransactionError> {
-    if left.is_null() || right.is_null() {
-        return Ok(left == right);
+fn mandatory_label_rid(acl: *mut ACL) -> Result<Option<u32>, TextTransactionError> {
+    if acl.is_null() {
+        return Ok(None);
     }
-    let bytes = |acl: *mut ACL| -> Result<Vec<u8>, TextTransactionError> {
-        let mut information = ACL_SIZE_INFORMATION::default();
+    let mut observed = None;
+    for index in 0..unsafe { (*acl).AceCount } {
+        let mut ace = null_mut();
+        if unsafe { GetAce(acl, index.into(), &mut ace) } == 0 {
+            return Err(metadata_error("cannot inspect a mandatory label ACE"));
+        }
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        if header.AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE as u8 {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "mandatory label query returned an unexpected SACL ACE",
+            ));
+        }
+        if (header.AceSize as usize) < size_of::<ACE_HEADER>() + size_of::<u32>() * 2 {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "mandatory label ACE is truncated",
+            ));
+        }
+        let sid = unsafe { ace.cast::<u8>().add(8) }.cast::<c_void>();
+        if unsafe { IsValidSid(sid) } == 0 {
+            return Err(metadata_error("mandatory label ACE contains an invalid SID"));
+        }
+        let count = unsafe { GetSidSubAuthorityCount(sid) };
+        if count.is_null() || unsafe { *count } == 0 {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "mandatory label SID has no integrity RID",
+            ));
+        }
+        let rid = unsafe { GetSidSubAuthority(sid, u32::from(*count) - 1) };
+        if rid.is_null() {
+            return Err(metadata_error("cannot read mandatory label integrity RID"));
+        }
+        let rid = unsafe { *rid };
+        if observed.replace(rid).is_some() {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "multiple mandatory integrity labels are not supported",
+            ));
+        }
+    }
+    Ok(observed)
+}
+
+fn acl_bytes(acl: *mut ACL) -> Result<Option<Vec<u8>>, TextTransactionError> {
+    if acl.is_null() {
+        return Ok(None);
+    }
+    let mut information = ACL_SIZE_INFORMATION::default();
+    if unsafe {
+        GetAclInformation(
+            acl,
+            (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
+            size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
+        )
+    } == 0
+    {
+        return Err(metadata_error("cannot inspect text file ACL metadata"));
+    }
+    Ok(Some(
+        unsafe { std::slice::from_raw_parts(acl.cast::<u8>(), information.AclBytesInUse as usize) }
+            .to_vec(),
+    ))
+}
+
+type DaclFingerprint = Option<(u8, Vec<Vec<u8>>)>;
+
+fn dacl_fingerprint(
+    dacl: *mut ACL,
+    include_inherited: bool,
+) -> Result<DaclFingerprint, TextTransactionError> {
+    const ACL_HEADER_BYTES: usize = 8;
+    const INHERITED_ACE_FLAG: u8 = 0x10;
+    let Some(bytes) = acl_bytes(dacl)? else {
+        return Ok(None);
+    };
+    if bytes.len() < ACL_HEADER_BYTES {
+        return Err(TextTransactionError::new(
+            TextTransactionErrorCode::MetadataPreservation,
+            "filesystem returned a malformed text file DACL",
+        ));
+    }
+    let revision = bytes[0];
+    let ace_count = u16::from_le_bytes([bytes[4], bytes[5]]);
+    let mut aces = Vec::with_capacity(ace_count.into());
+    let mut offset = ACL_HEADER_BYTES;
+    for _ in 0..ace_count {
+        if offset + 4 > bytes.len() {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "filesystem returned a truncated text file DACL",
+            ));
+        }
+        let size = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]) as usize;
+        if size < 4 || offset + size > bytes.len() {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "filesystem returned an invalid text file DACL ACE",
+            ));
+        }
+        if include_inherited || bytes[offset + 1] & INHERITED_ACE_FLAG == 0 {
+            aces.push(bytes[offset..offset + size].to_vec());
+        }
+        offset += size;
+    }
+    if offset != bytes.len() {
+        return Err(TextTransactionError::new(
+            TextTransactionErrorCode::MetadataPreservation,
+            "filesystem returned an invalid text file DACL length",
+        ));
+    }
+    Ok(Some((revision, aces)))
+}
+
+fn explicit_dacl_buffer(dacl: *mut ACL) -> Result<Option<Vec<u32>>, TextTransactionError> {
+    const INHERITED_ACE_FLAG: u8 = 0x10;
+    if dacl.is_null() {
+        return Ok(None);
+    }
+    let revision = unsafe { (*dacl).AclRevision } as u32;
+    let ace_count = unsafe { (*dacl).AceCount } as u32;
+    let mut explicit_aces = Vec::new();
+    let mut byte_count = size_of::<ACL>();
+    for index in 0..ace_count {
+        let mut ace = null_mut();
+        if unsafe { GetAce(dacl, index, &mut ace) } == 0 {
+            return Err(metadata_error("cannot inspect a text file DACL ACE"));
+        }
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        let size = header.AceSize as usize;
+        if size < size_of::<ACE_HEADER>() {
+            return Err(TextTransactionError::new(
+                TextTransactionErrorCode::MetadataPreservation,
+                "filesystem returned an invalid text file DACL ACE",
+            ));
+        }
+        if header.AceFlags & INHERITED_ACE_FLAG == 0 {
+            explicit_aces
+                .push(unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), size).to_vec() });
+            byte_count = byte_count.checked_add(size).ok_or_else(|| {
+                TextTransactionError::new(
+                    TextTransactionErrorCode::MetadataPreservation,
+                    "text file DACL is too large to preserve",
+                )
+            })?;
+        }
+    }
+    let word_count = byte_count.div_ceil(size_of::<u32>());
+    let mut storage = vec![0u32; word_count];
+    let acl = storage.as_mut_ptr().cast::<ACL>();
+    if unsafe { InitializeAcl(acl, (word_count * size_of::<u32>()) as u32, revision) } == 0 {
+        return Err(metadata_error(
+            "cannot initialize the replacement text file DACL",
+        ));
+    }
+    for ace in explicit_aces {
         if unsafe {
-            GetAclInformation(
+            AddAce(
                 acl,
-                (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
-                size_of::<ACL_SIZE_INFORMATION>() as u32,
-                AclSizeInformation,
+                revision,
+                u32::MAX,
+                ace.as_ptr().cast(),
+                ace.len() as u32,
             )
         } == 0
         {
-            return Err(metadata_error("cannot inspect text file ACL metadata"));
+            return Err(metadata_error(
+                "cannot preserve an explicit text file DACL ACE",
+            ));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(acl.cast::<u8>(), information.AclBytesInUse as usize)
-        }
-        .to_vec())
-    };
-    Ok(bytes(left)? == bytes(right)?)
+    }
+    Ok(Some(storage))
 }
 
 fn security_descriptor_control(
@@ -1376,7 +1676,9 @@ fn atomic_rename(
             // inheritance/protection control at this namespace commit; effective
             // ACEs are verified by the native release tests.
             (*info).Anonymous.Flags =
-                FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+                FILE_RENAME_REPLACE_IF_EXISTS
+                    | FILE_RENAME_POSIX_SEMANTICS
+                    | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
         } else {
             (*info).Anonymous.Flags = 0;
         }
@@ -1408,22 +1710,37 @@ fn atomic_rename(
     Ok(())
 }
 
-fn verify_replace_delete_sharing(parent: HANDLE, leaf: &str) -> Result<(), TextTransactionError> {
-    let handle = open_relative(
-        parent,
-        leaf,
-        DELETE | SYNCHRONIZE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        FILE_OPEN,
-        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )?;
-    if handle.is_none() {
-        return Err(TextTransactionError::new(
-            TextTransactionErrorCode::Stale,
-            "text transaction target disappeared before atomic replacement",
-        ));
+fn acquire_replace_reservation(
+    parent: HANDLE,
+    leaf: &str,
+    timeout_ms: u32,
+) -> Result<OwnedHandle, TextTransactionError> {
+    let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
+    loop {
+        match open_relative(
+            parent,
+            leaf,
+            DELETE | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        ) {
+            Ok(Some(handle)) => return Ok(handle),
+            Ok(None) => {
+                return Err(TextTransactionError::new(
+                    TextTransactionErrorCode::Stale,
+                    "text transaction target disappeared before atomic replacement",
+                ));
+            }
+            Err(error)
+                if error.code == TextTransactionErrorCode::Contended
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
     }
-    Ok(())
 }
 
 fn delete_by_handle(handle: HANDLE) -> Result<(), TextTransactionError> {
@@ -2050,6 +2367,45 @@ mod tests {
             normalize_dacl_inheritance_control(test_dacl(&target)),
             normalize_dacl_inheritance_control(dacl_before)
         );
+    }
+
+    #[test]
+    fn recognizes_the_legacy_low_integrity_label_as_sandbox_origin_metadata() {
+        use windows_sys::Win32::Security::GetSecurityDescriptorSacl;
+
+        let sddl = wide_nul("S:(ML;;NW;;;LW)");
+        let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+        assert_ne!(
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    null_mut(),
+                )
+            },
+            0
+        );
+        let mut present = 0;
+        let mut acl = null_mut();
+        let mut defaulted = 0;
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorSacl(
+                    descriptor,
+                    &mut present,
+                    &mut acl,
+                    &mut defaulted,
+                )
+            },
+            0
+        );
+        assert_ne!(present, 0);
+        assert_eq!(
+            mandatory_label_rid(acl).unwrap(),
+            Some(SECURITY_MANDATORY_LOW_RID as u32),
+        );
+        unsafe { LocalFree(descriptor) };
     }
 
     #[test]

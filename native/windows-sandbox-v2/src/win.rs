@@ -5,14 +5,17 @@ use std::mem::{size_of, zeroed};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::path::Path;
 use std::ptr::null_mut;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use windows::Win32::Foundation::{
-    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, ERROR_NO_DATA,
-    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ,
-    GENERIC_WRITE, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE,
-    LocalFree, SetHandleInformation, SetLastError, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS,
+    ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+    ERROR_PIPE_LISTENING, ERROR_SUCCESS, FILETIME, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE,
+    GetLastError, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    SetHandleInformation, SetLastError, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -22,18 +25,20 @@ use windows::Win32::Security::Authorization::{
 };
 use windows::Win32::Security::{
     ACL, AdjustTokenPrivileges, CreateRestrictedToken, DACL_SECURITY_INFORMATION,
-    DISABLE_MAX_PRIVILEGE, DuplicateTokenEx, GetAce, GetLengthSid, GetTokenInformation, LUA_TOKEN,
-    LookupPrivilegeValueW, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, RevertToSelf, SE_PRIVILEGE_ENABLED, SECURITY_ATTRIBUTES,
-    SID_AND_ATTRIBUTES, SecurityImpersonation, SetKernelObjectSecurity, SetTokenInformation,
-    TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_PRIVILEGES,
-    TOKEN_QUERY, TOKEN_USER, TokenDefaultDacl, TokenGroups, TokenPrimary, TokenRestrictedSids,
-    TokenUser, WRITE_RESTRICTED,
+    DISABLE_MAX_PRIVILEGE, DuplicateTokenEx, GetAce, GetLengthSid, GetSecurityDescriptorControl,
+    GetTokenInformation, LUA_TOKEN, LookupPrivilegeValueW, OWNER_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, RevertToSelf,
+    SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES,
+    SecurityImpersonation, SetKernelObjectSecurity, SetTokenInformation, TOKEN_ALL_ACCESS,
+    TOKEN_DEFAULT_DACL, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    TOKEN_USER, TokenDefaultDacl, TokenGroups, TokenPrimary, TokenRestrictedSids, TokenUser,
+    WRITE_RESTRICTED,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, READ_CONTROL, WRITE_DAC,
+    CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_FIRST_PIPE_INSTANCE,
+    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, READ_CONTROL,
+    WRITE_DAC,
 };
 use windows::Win32::System::Console::GetStdHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -48,7 +53,7 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
     ImpersonateNamedPipeClient, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-    PIPE_TYPE_BYTE, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState,
+    PIPE_TYPE_BYTE, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState, WaitNamedPipeW,
 };
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, DESKTOP_CREATEMENU, DESKTOP_CREATEWINDOW,
@@ -63,10 +68,11 @@ use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateMutexW,
     CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetCurrentProcessId, GetCurrentThread,
-    GetExitCodeProcess, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    OpenProcess, OpenProcessToken, OpenThreadToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, ReleaseMutex,
-    ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
+    GetExitCodeProcess, GetProcessTimes, InitializeProcThreadAttributeList,
+    LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken, OpenThreadToken,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_ACCESS_RIGHTS,
+    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ReleaseMutex, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::core::{PCWSTR, PWSTR};
@@ -76,6 +82,7 @@ use crate::model::EnvironmentEntry;
 const SEM_FAILCRITICALERRORS: u32 = 0x0001;
 const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
 const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -86,6 +93,44 @@ pub fn suppress_system_error_dialogs() {
     unsafe {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     }
+}
+
+pub fn process_creation_time(pid: u32) -> Result<Option<u64>> {
+    let process = match unsafe {
+        OpenProcess(
+            PROCESS_ACCESS_RIGHTS(PROCESS_QUERY_LIMITED_INFORMATION.0 | PROCESS_SYNCHRONIZE),
+            false,
+            pid,
+        )
+    } {
+        Ok(process) => process,
+        Err(_error)
+            if unsafe { GetLastError() } == windows::Win32::Foundation::ERROR_INVALID_PARAMETER =>
+        {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("OpenProcess({pid}) for identity"));
+        }
+    };
+    let process = OwnedHandle::new(process, "process identity")?;
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    unsafe {
+        GetProcessTimes(
+            process.raw(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+        .with_context(|| format!("GetProcessTimes({pid})"))?;
+    }
+    Ok(Some(
+        (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime),
+    ))
 }
 
 pub struct OwnedHandle(HANDLE);
@@ -468,33 +513,47 @@ pub fn verify_protected_runner_process(
     Ok(())
 }
 
-fn policy_restrictions<'a>(
-    capability: &'a LocalSid,
-    user: &'a LocalSid,
-    logon: &'a LocalSid,
-    everyone: &'a LocalSid,
-) -> [SID_AND_ATTRIBUTES; 4] {
-    [capability, user, logon, everyone].map(|sid| SID_AND_ATTRIBUTES {
-        Sid: sid.raw(),
-        Attributes: 0,
-    })
+fn policy_restrictions(
+    capabilities: &[LocalSid],
+    account: &LocalSid,
+    logon: &LocalSid,
+    everyone: &LocalSid,
+) -> Vec<SID_AND_ATTRIBUTES> {
+    capabilities
+        .iter()
+        .chain([account, logon, everyone])
+        .map(|sid| SID_AND_ATTRIBUTES {
+            Sid: sid.raw(),
+            Attributes: 0,
+        })
+        .collect()
 }
 
-pub fn restricted_policy_token(capability_sid: &str) -> Result<OwnedHandle> {
+pub fn restricted_policy_token(
+    policy_capability_sid: &str,
+    filesystem_capability_sids: &[String],
+) -> Result<OwnedHandle> {
     let base = current_token()?;
-    let capability = LocalSid::from_string(capability_sid)?;
-    let user_sid = token_user_sid(base.raw())?;
-    let user = LocalSid::from_string(&user_sid)?;
+    let mut capability_sid_strings = Vec::with_capacity(filesystem_capability_sids.len() + 1);
+    capability_sid_strings.push(policy_capability_sid.to_owned());
+    capability_sid_strings.extend(filesystem_capability_sids.iter().cloned());
+    let capabilities = capability_sid_strings
+        .iter()
+        .map(|sid| LocalSid::from_string(sid))
+        .collect::<Result<Vec<_>>>()?;
+    let policy_capability = capabilities
+        .first()
+        .ok_or_else(|| anyhow!("restricted policy token omitted its policy capability"))?;
+    let account_sid = token_user_sid(base.raw())?;
+    let account = LocalSid::from_string(&account_sid)?;
     let logon_sid = current_logon_sid()?;
     let logon = LocalSid::from_string(&logon_sid)?;
     let everyone_sid = "S-1-1-0";
     let everyone = LocalSid::from_string(everyone_sid)?;
-    // Match the proven Codex restricted-token compatibility order. The
-    // dedicated account is an identity marker, while Logon and Everyone keep
-    // ordinary Windows loader/IPC objects usable under WRITE_RESTRICTED.
-    // Filesystem authority still requires the normal-pass sandbox-group ACL;
-    // execution-unique deny ACEs remain authoritative for denied roots.
-    let restrictions = policy_restrictions(&capability, &user, &logon, &everyone);
+    // Windows loader/IPC compatibility requires the same identity SIDs used by
+    // Codex. Filesystem roots compensate explicitly: every read-only root
+    // carries a stable deny-write clause in the restricted access pass.
+    let restrictions = policy_restrictions(&capabilities, &account, &logon, &everyone);
     let mut restricted = HANDLE::default();
     unsafe {
         CreateRestrictedToken(
@@ -509,15 +568,19 @@ pub fn restricted_policy_token(capability_sid: &str) -> Result<OwnedHandle> {
     }
     let restricted = OwnedHandle::new(restricted, "restricted policy token")?;
     let observed_restrictions = token_restricted_sid_strings(restricted.raw())?;
-    let expected_restrictions = [capability_sid, &user_sid, &logon_sid, everyone_sid];
+    let expected_restrictions = capability_sid_strings
+        .iter()
+        .cloned()
+        .chain([account_sid, logon_sid.clone(), everyone_sid.to_owned()])
+        .collect::<Vec<_>>();
     if observed_restrictions != expected_restrictions {
         bail!("restricted policy token did not preserve its policy capability boundary");
     }
-    set_token_default_dacl(restricted.raw(), &[&logon, &everyone, &capability])?;
+    set_token_default_dacl(restricted.raw(), &[&logon, &everyone, policy_capability])?;
     let expected_default_dacl = [
-        (logon_sid.clone(), GENERIC_ALL.0),
+        (logon_sid, GENERIC_ALL.0),
         (everyone_sid.to_owned(), GENERIC_ALL.0),
-        (capability_sid.to_owned(), GENERIC_ALL.0),
+        (policy_capability_sid.to_owned(), GENERIC_ALL.0),
     ];
     if token_default_dacl_aces(restricted.raw())? != expected_default_dacl {
         bail!("restricted policy token did not preserve its safe default DACL");
@@ -538,6 +601,9 @@ pub fn restricted_policy_token(capability_sid: &str) -> Result<OwnedHandle> {
     let primary = OwnedHandle::new(primary, "restricted policy primary token")?;
     if token_restricted_sid_strings(primary.raw())? != expected_restrictions {
         bail!("restricted policy primary token changed its restricting SID boundary");
+    }
+    if token_default_dacl_aces(primary.raw())? != expected_default_dacl {
+        bail!("restricted policy primary token changed its safe default DACL");
     }
     Ok(primary)
 }
@@ -846,20 +912,39 @@ pub fn connect_named_pipe_writer(name: &str) -> Result<(std::fs::File, u32)> {
     connect_named_pipe(name, GENERIC_WRITE.0, "named pipe writer")
 }
 
-pub fn connect_controller_pipe(name: &str) -> Result<(std::fs::File, u32)> {
+pub fn connect_controller_pipe(name: &str, timeout: Duration) -> Result<(std::fs::File, u32)> {
     let wide_name = wide(name);
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(wide_name.as_ptr()),
-            FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
-            FILE_SHARE_MODE(0),
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-    }
-    .with_context(|| format!("connect controller pipe {name}"))?;
+    let started = std::time::Instant::now();
+    let handle = loop {
+        match unsafe {
+            CreateFileW(
+                PCWSTR(wide_name.as_ptr()),
+                FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
+                FILE_SHARE_MODE(0),
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        } {
+            Ok(handle) => break handle,
+            Err(error) => {
+                let code = unsafe { GetLastError() };
+                if code != ERROR_PIPE_BUSY && code != ERROR_FILE_NOT_FOUND {
+                    return Err(error).with_context(|| format!("connect controller pipe {name}"));
+                }
+                let remaining = timeout.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(error)
+                        .with_context(|| format!("controller pipe {name} remained busy"));
+                }
+                let wait_ms = u32::try_from(remaining.as_millis().min(100))
+                    .unwrap_or(100)
+                    .max(1);
+                let _ = unsafe { WaitNamedPipeW(PCWSTR(wide_name.as_ptr()), wait_ms) };
+            }
+        }
+    };
     let handle = OwnedHandle::new(handle, "controller pipe client")?;
     let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
     unsafe {
@@ -872,6 +957,208 @@ pub fn connect_controller_pipe(name: &str) -> Result<(std::fs::File, u32)> {
             .context("GetNamedPipeServerProcessId(controller)")?;
     }
     Ok((handle.into_file(), server_pid))
+}
+
+fn create_controller_pipe_instance(
+    name: &str,
+    descriptor: &LocalSecurityDescriptor,
+    first: bool,
+) -> Result<OwnedHandle> {
+    let security = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0.0,
+        bInheritHandle: false.into(),
+    };
+    let wide_name = wide(name);
+    let access = if first {
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE
+    } else {
+        PIPE_ACCESS_DUPLEX
+    };
+    let handle = unsafe {
+        CreateNamedPipeW(
+            PCWSTR(wide_name.as_ptr()),
+            access,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            255,
+            4 * 1024,
+            4 * 1024,
+            0,
+            Some(&security),
+        )
+    };
+    OwnedHandle::new(handle, "CreateNamedPipeW(controller)")
+}
+
+enum ControllerPipeState {
+    Listening,
+    Connected,
+    Retire,
+}
+
+fn controller_pipe_state(handle: &OwnedHandle) -> Result<ControllerPipeState> {
+    let connected = unsafe { ConnectNamedPipe(handle.raw(), None) };
+    if connected.is_ok() {
+        let mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+        unsafe {
+            SetNamedPipeHandleState(handle.raw(), Some(&mode), None, None)
+                .context("SetNamedPipeHandleState(controller blocking)")?;
+        }
+        return Ok(ControllerPipeState::Connected);
+    }
+    let code = unsafe { GetLastError() };
+    if code == ERROR_PIPE_CONNECTED {
+        let mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+        unsafe {
+            SetNamedPipeHandleState(handle.raw(), Some(&mode), None, None)
+                .context("SetNamedPipeHandleState(controller blocking)")?;
+        }
+        return Ok(ControllerPipeState::Connected);
+    }
+    if code == ERROR_PIPE_LISTENING {
+        return Ok(ControllerPipeState::Listening);
+    }
+    if code == ERROR_NO_DATA {
+        return Ok(ControllerPipeState::Retire);
+    }
+    connected.context("ConnectNamedPipe(controller)")?;
+    unreachable!()
+}
+
+fn verify_controller_pipe_security(handle: &OwnedHandle, host_sid: &str) -> Result<()> {
+    let mut owner = PSID::default();
+    let mut dacl: *mut ACL = null_mut();
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    let code = unsafe {
+        GetSecurityInfo(
+            handle.raw(),
+            SE_KERNEL_OBJECT,
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            Some(&mut dacl),
+            None,
+            Some(&mut descriptor),
+        )
+    };
+    if code != ERROR_SUCCESS {
+        bail!("GetSecurityInfo(controller pipe) failed with {code:?}");
+    }
+    let _descriptor = LocalSecurityDescriptor(descriptor);
+    if owner.0.is_null() || dacl.is_null() || !sid_to_string(owner)?.eq_ignore_ascii_case(host_sid)
+    {
+        bail!("Controller pipe is not owned by the exact host SID");
+    }
+    let mut control = 0u16;
+    let mut revision = 0u32;
+    unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) }
+        .context("GetSecurityDescriptorControl(controller pipe)")?;
+    if control & SE_DACL_PROTECTED.0 == 0 {
+        bail!("Controller pipe DACL is not protected");
+    }
+    let acl = unsafe { &*dacl };
+    if acl.AceCount != 2 {
+        bail!("Controller pipe DACL is not host/SYSTEM-only");
+    }
+    let mut host_allow = false;
+    let mut system_allow = false;
+    for index in 0..u32::from(acl.AceCount) {
+        let mut raw = null_mut();
+        unsafe { GetAce(dacl, index, &mut raw) }
+            .with_context(|| format!("GetAce(controller pipe, {index})"))?;
+        let header = unsafe { &*(raw as *const windows::Win32::Security::ACE_HEADER) };
+        if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+            bail!("Controller pipe DACL contains a non-allow ACE");
+        }
+        let ace = unsafe { &*(raw as *const windows::Win32::Security::ACCESS_ALLOWED_ACE) };
+        if ace.Mask != FILE_ALL_ACCESS.0 {
+            bail!("Controller pipe DACL contains a non-full-control ACE");
+        }
+        let sid = sid_to_string(PSID((&ace.SidStart as *const u32).cast_mut().cast()))?;
+        host_allow |= sid.eq_ignore_ascii_case(host_sid);
+        system_allow |= sid == "S-1-5-18";
+    }
+    if !host_allow || !system_allow {
+        bail!("Controller pipe DACL omitted host or SYSTEM");
+    }
+    Ok(())
+}
+
+fn controller_pipe_client_alive(handle: &OwnedHandle) -> bool {
+    unsafe { PeekNamedPipe(handle.raw(), None, 0, None, None, None).is_ok() }
+}
+
+pub fn run_controller_pipe_server(broker_pid: u32) -> Result<()> {
+    if broker_pid == 0 || broker_pid == unsafe { GetCurrentProcessId() } {
+        bail!("Windows sandbox controller broker PID is invalid");
+    }
+    let token = current_token()?;
+    if !token_restricted_sid_strings(token.raw())?.is_empty() {
+        bail!("Windows sandbox controller must run under the trusted host token");
+    }
+    let host_sid = token_user_sid(token.raw())?;
+    let broker = unsafe {
+        OpenProcess(
+            PROCESS_ACCESS_RIGHTS(PROCESS_SYNCHRONIZE),
+            false,
+            broker_pid,
+        )
+    }
+    .context("OpenProcess(controller broker)")?;
+    let broker = OwnedHandle::new(broker, "controller broker")?;
+    let descriptor =
+        LocalSecurityDescriptor::from_sddl(&format!("D:P(A;;GA;;;SY)(A;;GA;;;{host_sid})"))?;
+    let name = format!(
+        r"\\.\pipe\kodax-v2-{}-{}",
+        unsafe { GetCurrentProcessId() },
+        uuid::Uuid::new_v4(),
+    );
+    const PENDING_INSTANCES: usize = 8;
+    let mut listeners = Vec::with_capacity(PENDING_INSTANCES);
+    listeners.push(create_controller_pipe_instance(&name, &descriptor, true)?);
+    verify_controller_pipe_security(&listeners[0], &host_sid)?;
+    while listeners.len() < PENDING_INSTANCES {
+        listeners.push(create_controller_pipe_instance(&name, &descriptor, false)?);
+    }
+    let mut clients: Vec<OwnedHandle> = Vec::new();
+    let (stdin_done, stdin_status) = mpsc::channel();
+    thread::spawn(move || {
+        let result = io::copy(&mut io::stdin(), &mut io::sink());
+        let _ = stdin_done.send(result);
+    });
+    println!("{name}");
+    io::stdout().flush().context("flush controller readiness")?;
+
+    loop {
+        match stdin_status.try_recv() {
+            Ok(Ok(_)) => break,
+            Ok(Err(error)) => return Err(error).context("read controller lifetime stdin"),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                bail!("Controller lifetime stdin monitor stopped unexpectedly")
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        match unsafe { WaitForSingleObject(broker.raw(), 0) } {
+            WAIT_OBJECT_0 => break,
+            WAIT_TIMEOUT => {}
+            other => bail!("Controller broker wait failed with {other:?}"),
+        }
+        let mut pending = Vec::with_capacity(PENDING_INSTANCES);
+        for listener in listeners.drain(..) {
+            match controller_pipe_state(&listener)? {
+                ControllerPipeState::Listening => pending.push(listener),
+                ControllerPipeState::Connected => clients.push(listener),
+                ControllerPipeState::Retire => {}
+            }
+        }
+        while pending.len() < PENDING_INSTANCES {
+            pending.push(create_controller_pipe_instance(&name, &descriptor, false)?);
+        }
+        listeners = pending;
+        clients.retain(controller_pipe_client_alive);
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
 }
 
 pub fn named_pipe_available_bytes(pipe: &std::fs::File) -> Result<u32> {
@@ -1872,12 +2159,13 @@ mod tests {
     }
 
     #[test]
-    fn policy_restrictions_match_codex_loader_compatibility_order() {
+    fn policy_restrictions_match_the_loader_compatibility_identity_set() {
         let capability = LocalSid::from_string("S-1-5-21-101-102-103-104").unwrap();
-        let user = LocalSid::from_string("S-1-5-21-1-2-3-4").unwrap();
+        let account = LocalSid::from_string("S-1-5-21-201-202-203-204").unwrap();
         let logon = LocalSid::from_string("S-1-5-5-1-2").unwrap();
         let everyone = LocalSid::from_string("S-1-1-0").unwrap();
-        let restrictions = policy_restrictions(&capability, &user, &logon, &everyone);
+        let capabilities = [capability];
+        let restrictions = policy_restrictions(&capabilities, &account, &logon, &everyone);
 
         assert_eq!(
             restrictions
@@ -1886,7 +2174,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "S-1-5-21-101-102-103-104",
-                "S-1-5-21-1-2-3-4",
+                "S-1-5-21-201-202-203-204",
                 "S-1-5-5-1-2",
                 "S-1-1-0",
             ]
@@ -1896,14 +2184,19 @@ mod tests {
     #[test]
     fn policy_capability_can_create_a_restricted_primary_token() {
         let capability = "S-1-5-21-101-102-103-104";
-        let token = restricted_policy_token(capability).unwrap();
+        let filesystem_capability = "S-1-5-21-201-202-203-204".to_owned();
+        let token =
+            restricted_policy_token(capability, std::slice::from_ref(&filesystem_capability))
+                .unwrap();
         let restrictions = token_restricted_sid_strings(token.raw()).unwrap();
         assert_eq!(restrictions.first().map(String::as_str), Some(capability));
-        assert!(restrictions.contains(&token_user_sid(token.raw()).unwrap()));
+        assert!(restrictions.contains(&filesystem_capability));
+        assert!(restrictions.contains(&token_user_sid(current_token().unwrap().raw()).unwrap()));
         assert!(restrictions.contains(&current_logon_sid().unwrap()));
         assert!(restrictions.iter().any(|sid| sid == "S-1-1-0"));
         let default_dacl = token_default_dacl_aces(token.raw()).unwrap();
         assert!(default_dacl.contains(&(capability.to_owned(), GENERIC_ALL.0)));
+        assert!(default_dacl.contains(&(current_logon_sid().unwrap(), GENERIC_ALL.0)));
         assert!(default_dacl.iter().any(|(sid, _)| sid == "S-1-1-0"));
     }
 

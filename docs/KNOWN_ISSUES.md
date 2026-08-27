@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-08-26_
+_Last Updated: 2026-08-27_
 
 ---
 
@@ -151,6 +151,15 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 316 | High | Resolved | A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5 | FEATURE_295 Windows atomic text replace | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 315 | Medium | Resolved | Native artifact staging exceeds legacy Windows path limits although the final cache path is valid | FEATURE_295 PowerShell 5.1 artifact staging | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 314 | High | Resolved | Per-command propagation of fixed sensitive-root denies serializes independent Windows shells | FEATURE_295 first native-shell draft | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 313 | High | Resolved | Stale inherited shared-account ACEs make every fresh Windows shell fail admission after reboot or setup | pre-FEATURE_295 shared-account ACL grants | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 312 | High | Resolved | A dead Windows shell request makes native control-state repair permanently reject the non-empty directory | FEATURE_295 protected native shell control state | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 311 | High | Resolved | Windows Session event cursor replacement fails under a non-delete-sharing handle and workspace shell authority includes Runtime state | Runtime per-Session sequence cursor / workspace shell root grant | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 310 | High | Resolved | Trusted Write cannot replace a Windows file owned by an old or current sandbox identity | FEATURE_295 Windows metadata preservation | v0.7.96 development | 2026-08-27 | 2026-08-27 |
+| 309 | Medium | Open | An explicit ambient compatibility ACE can bypass a later Windows root capability | Windows v2 Codex-compatible restricted token | - | 2026-08-27 | - |
+| 308 | Medium | Open | ASRT's fixed Windows proxy range caps simultaneous distinct network-policy brokers | ASRT 0.0.65 Windows network proxy | - | 2026-08-27 | - |
 | 307 | High | Open | ASRT launches the shared-account Windows shell runner before KodaX can attach a creation-time process DACL or Job | Windows v2 ASRT runner bootstrap | - | 2026-08-26 | - |
 | 306 | High | Resolved | ASRT Windows consumes runner stdin as control data, so sandboxed text helpers inherit EOF and every real write fails | Windows ASRT process backend through 0.0.73 | v0.7.96 development | 2026-08-25 | 2026-08-26 |
 | 305 | Medium | Resolved | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | v0.7.96 development | 2026-08-25 | 2026-08-26 |
@@ -346,6 +355,358 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 316: A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 Windows atomic text replace
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Problem and Resolution
+
+The first continuous-reader acceptance test reproduced
+`atomic text transaction replace failed` with Win32 error 5. The transaction
+briefly probed DELETE sharing and closed that handle; a new reader could open
+without DELETE sharing between the probe and `FileRenameInformationEx`. The
+probe therefore proved only a past instant. Commit now acquires and holds a
+target delete/write reservation through the locked final reread, CAS, and
+namespace commit. Windows POSIX rename semantics permit replacement while
+compatible readers remain open; new incompatible readers cannot enter the
+narrow commit window, and new writers are excluded after final CAS. Internal
+snapshot handles share read/write/delete so KodaX readers do not create the
+failure themselves. A continuous half-megabyte reader/writer stress test proves
+that every successful read is exactly an old or new revision, never partial.
+
+### 315: Native artifact staging exceeds legacy Windows path limits although the final cache path is valid
+
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 PowerShell 5.1 artifact staging
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Problem and Resolution
+
+The complete sandbox-runtime suite found that a valid deep `LOCALAPPDATA` cache
+could still fail before launch: the PowerShell 5.1 staging name appended a
+32-character GUID and pushed the temporary path beyond the legacy `MAX_PATH`
+boundary. The final artifact name itself fit. Staging now uses the shorter
+cryptographically random name returned by `GetRandomFileName()` while retaining
+same-directory atomic replacement and hash verification. A deep-cache regression
+test covers the exact boundary.
+
+### 314: Per-command propagation of fixed sensitive-root denies serializes independent Windows shells
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 first native-shell draft
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Problem and Resolution
+
+The first native-shell draft attached the same fixed Agent Home and credential
+denies to every command. Windows inherited-ACL propagation occurred under one
+machine mutex, so large existing trees created head-of-line blocking across
+otherwise independent Runtime, Session, and policy commands. Setup now installs
+the fixed exact-root denies once for the stable sandbox group through native
+no-follow handles. Command admission verifies the installed DACL; if an exact
+sensitive root materializes only after setup, admission adds that one missing
+guard idempotently under the same owner-recovering native mutex. Dynamic
+per-command denies remain scoped to the command. The broad Agent Home and native
+artifact-cache parents are not recursively stamped.
+
+### 313: Stale inherited shared-account ACEs make every fresh Windows shell fail admission after reboot or setup
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: pre-FEATURE_295 shared-account ACL grants
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+Real Windows acceptance failed on fresh `%TEMP%` descendants because an ancestor
+still carried an inherited direct Modify ACE for the dedicated sandbox user.
+Reboot and ordinary setup retained the account, so every new directory inherited
+the ACE and native preflight rejected every shell as
+`windows_v2_legacy_user_ace`.
+
+#### Resolution
+
+The native preflight no longer treats a direct shared-account ACE as machine
+corruption or blocks every shell. Exact `AllowRead` / `AllowWrite` capabilities
+are still installed for declared roots, and stale inherited user ACEs require
+no recursive cleanup, account rotation, reboot, or persistent lock before
+admission. The primary account SID remains in the restricting set because real
+Node, cmd, and PowerShell child creation otherwise fails with `EPERM`. Therefore
+this operational self-heal does not claim that a hostile explicit/protected
+child DACL cannot widen a later policy; that separate authority limitation
+remains open as Issue 309.
+
+### 312: A dead Windows shell request makes native control-state repair permanently reject the non-empty directory
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 protected native shell control state
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+The complete real-Windows policy suite found an old
+`windows-shell-<dead-pid>-<nonce>.json` request in the protected native control
+directory. Doctor correctly rejected an injected ACL drift, but explicit setup
+also rejected the host-owned directory merely because that dead request made it
+non-empty. The damaged DACL then made every later shell admission unavailable,
+even though trusted text tools remained independent.
+
+#### Root Cause
+
+Preparation normally removes request and terminal records, but a host crash can
+leave a request before the native host consumes it. Control-state repair treated
+all non-empty entries identically. It did not distinguish a live command, an ACL
+recovery receipt, or unknown state from an expired request whose creator PID was
+already dead and whose operation deadline had passed.
+
+#### Resolution
+
+Explicit repair, after its existing proof that the sandbox SID is idle, now
+retires only bounded, ordinary control records whose inactivity is independently
+proved: an expired shell request or aged unconsumed network request owned by a
+dead PID, or a terminal record with `jobDrained: true` and a dead creator. A live
+PID, an unexpired or malformed record, an unknown filename, and every
+`windows-deny` recovery receipt remain fail-closed and keep repair from changing
+the DACL. Doctor remains verify-only.
+
+- **Files Changed**: `src/windows-native-artifacts.ts`, Windows policy smoke and
+  sandbox documentation
+- **Tests Added**: real host-owned control DACL drift with both an expired dead
+  request and an expired live-owner request; repair retires only the former,
+  rejects the latter, and succeeds after the live owner record is removed
+- **Resolution Date**: 2026-08-27
+
+### 311: Windows Session event cursor replacement fails under a non-delete-sharing handle and workspace shell authority includes Runtime state
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: Runtime per-Session sequence cursor / workspace shell root grant
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+While two KodaX threads were active, one Run terminated with `EPERM: operation
+not permitted, rename ...sequence.<pid>.<uuid>.tmp -> ...sequence`. The affected
+Session had already persisted more than one thousand monotonic events and later
+files were host-owned with no deny ACE, ruling out a persistent status lock or
+permanent ACL denial. At the same time, workspace-local `.kodax/runtime` was
+inside the shell's broad workspace read/write authority.
+
+#### Root Cause
+
+The recoverable per-Session sequence cursor used the same temporary-file rename
+as authoritative Runtime JSON. On Windows, replacing an existing path requires
+every open target handle to share DELETE. A watcher, filter, or another process
+opening `sequence` with read/write sharing but without delete sharing therefore
+made the single `renameSync` fail immediately. KodaX's per-Session lock covered
+allocation and append correctly; it could not change an external handle's share
+mode. Separately, shell policy denied global Agent Home state but did not carve
+workspace-local `.kodax/runtime` out of its writable workspace root.
+
+#### Resolution
+
+The derived sequence cursor now uses its own lock-held in-place durable writer:
+open/truncate, write, `fsync`, close, with a one-second Windows retry budget for
+`EPERM`/`EACCES`/`EBUSY`. It no longer depends on DELETE sharing. A crash after
+truncate is recoverable by design because the next locked read scans durable
+per-Run event ledgers for the maximum sequence before allocating again. Other
+authoritative Runtime files retain atomic replacement. Workspace-local
+`.kodax/runtime` is now included in shell read and write denies, preventing a
+restricted command from opening or modifying Session journals, cursors, daemon
+records, or grants while ordinary workspace files remain writable.
+
+- **Files Changed**: `src/sdk-runtime.ts`, `src/sandbox-runtime.ts`
+- **Tests Added**: real Windows non-delete-sharing cursor holder; temporary
+  non-write-sharing holder with bounded recovery; truncated-cursor ledger
+  recovery; Windows native request denial for workspace-local Runtime state
+- **Resolution Date**: 2026-08-27
+
+### 310: Trusted Write cannot replace a Windows file owned by an old or current sandbox identity
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 Windows metadata preservation
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-27
+- **Resolved**: 2026-08-27
+
+#### Original Problem
+
+After rebuilding and linking v0.7.95 plus the FEATURE_295 worktree, trusted
+`write` still failed on an existing ordinary text file with `cannot preserve
+existing text file security metadata`. The file had only the Archive attribute,
+but deletion was also denied. A tight native transaction loop reproduced the
+failure deterministically with Win32 error 1307 (`ERROR_INVALID_OWNER`).
+
+#### Root Cause
+
+The file was owned by a retired sandbox-account SID. The Windows transaction
+copied OWNER, GROUP, DACL, label and resource attributes to its same-directory
+temporary file in one `SetSecurityInfo` call. The trusted host lacks
+`SeRestorePrivilege` and cannot assign an arbitrary foreign owner, so metadata
+copy failed before any content write. Files moved from a former sandbox root
+could also carry stale inherited ACEs that should not be frozen at the new
+parent, or an explicit low-integrity mandatory label that an ordinary trusted
+host cannot reapply.
+
+#### Resolution
+
+Windows replacements now become trusted-host-owned and never reassign a foreign
+owner/group. The ordered effective ACE policy is retained, while the filesystem
+may canonicalize DACL protection/inheritance control at the atomic namespace
+commit; stale inherited authority is not copied from an old parent. Security
+metadata classes are applied and verified independently.
+An explicit low/untrusted mandatory label is recognized as legacy sandbox-origin
+metadata and normalized to the destination directory's ordinary host integrity;
+higher or unknown labels remain fail-closed. This is automatic on the first
+trusted Write/Edit: no setup, reboot, owner file, or manual ACL repair is
+required.
+
+- **Files Changed**: `native/windows-text-transaction/src/windows_transaction.rs`,
+  trusted-text documentation
+- **Tests Added**: real sandbox-owned file replacement twice; real moved
+  sandbox-owned file with stale inheritance remains unprotected after self-heal;
+  real low-integrity file replacement does not reapply the obsolete label
+- **Resolution Date**: 2026-08-27
+
+### 309: An explicit ambient compatibility ACE can bypass a later Windows root capability
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: Windows v2 Codex-compatible restricted token
+- **Created**: 2026-08-27
+
+#### Problem
+
+Windows `WRITE_RESTRICTED` checks a write against both the normal token and the
+restricting SID set. KodaX, like current Codex, retains the dedicated primary
+sandbox-user, per-launch logon, and Everyone SIDs because real Node, cmd, and
+PowerShell subprocess creation fails when the primary SID is removed. Exact
+`AllowRead` / `AllowWrite` capabilities are still installed for declared roots,
+but an explicit ambient-trustee child DACL can satisfy the restricted pass
+without the intended root capability.
+However, a sandbox command owns files and directories that it creates below an
+authorized write root. It can deliberately change such an object's DACL to
+grant modify access to an ambient compatibility SID. A later command can then
+satisfy both access-check passes without possessing that root's allow-write
+capability. An inheritable deny added only at the root does not override an
+existing explicit or protected child DACL.
+
+This does not require an earlier adversarial command in the same KodaX Session:
+an existing descendant created earlier or externally can already carry the
+explicit ambient compatibility ACE, including a host-owned object whose DACL
+explicitly grants that trustee. Host-only protected objects that omit such an
+ACE remain protected. The residual does not affect trusted text tools, which use host-side
+canonical identity, kernel slot locks, and CAS rather than the shell token. A
+command-lifetime filesystem fence would not repair the access-control gap.
+
+#### Rejected Patch and Direction
+
+An inheritable OWNER RIGHTS deny for `WRITE_DAC`/`WRITE_OWNER` was tested and
+rejected: it also applies to host-owned existing descendants and prevents the
+trusted native host from installing or recovering execution-scoped `denyRead`
+ACEs. Recursive stamping would reintroduce the slow, globally mutable ACL graph
+that FEATURE_295 removes.
+
+Close this issue only with a Windows authority model that removes ambient
+write trustees without breaking loader startup (for example, a proven
+AppContainer/capability design or equivalent native mediation). Regression
+coverage must include explicit/protected child DACLs and existing descendants;
+ordinary root-only capability tests are insufficient.
+
+### 308: ASRT's fixed Windows proxy range caps simultaneous distinct network-policy brokers
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: ASRT 0.0.65 Windows network proxy
+- **Created**: 2026-08-27
+
+#### Problem
+
+ASRT's Windows network backend allocates one HTTP backend port and one mux
+frontend port for each initialized `SandboxManager`, from the fixed
+`60080..60089` range. FEATURE_295 now shares one process-level broker among
+concurrent commands whose complete network policy and sandbox-account
+generation are identical. This keeps same-policy commands parallel under port
+pressure and removes the previous per-command port multiplication.
+
+Different network policies and different KodaX Runtime processes cannot safely
+join that broker. Each distinct live broker still consumes two of the ten ASRT
+ports, so at most five distinct cold brokers can coexist before ASRT reports
+that no proxy port is free. This limitation affects shell network containment
+only. Trusted text tools do not use ASRT and remain available.
+
+#### Root Cause and Direction
+
+ASRT 0.0.65 installs one process-global network callback per
+`SandboxManager`, but its proxy connection does not expose a trustworthy
+per-client policy identity that KodaX could use for routing. Codex instead has
+a process-shared Windows ingress that attributes connections to the restricted
+token SID before selecting a route. Sharing one permissive ASRT callback across
+different KodaX policies would widen authority; widening the WFP port range or
+serializing shell command lifetimes would only hide the missing routing
+contract.
+
+Close this issue only after ASRT exposes authenticated connection attribution /
+shared ingress routing, or KodaX owns an equivalent native policy-capable
+ingress. Regression coverage must keep same-network-policy commands on one
+broker, keep different policies isolated, rotate the key with the sandbox
+account generation, and prove trusted text remains independent when all proxy
+ports are unavailable.
+
+### 307: ASRT launches the shared-account Windows shell runner before KodaX can attach a creation-time process DACL or Job
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: Windows v2 ASRT runner bootstrap
+- **Created**: 2026-08-26
+
+#### Problem
+
+KodaX creates every final shell target suspended and assigns it to the
+no-breakaway, kill-on-close Job through the creation-time Job attribute before
+resume. The preceding runner is different: ASRT 0.0.65 owns the
+`CreateProcessWithLogonW` call under the shared sandbox account, so KodaX code
+cannot apply a runner process DACL or Job atomically at creation. A concurrently
+compromised process under that account therefore retains a narrow pre-main race
+against the runner. A loader failure before runner `main` also remains inside
+ASRT's creation contract; KodaX requests inherited error-mode suppression in
+the host and repeats it in runner code, but cannot retroactively protect an
+image that failed before entry.
+
+This boundary does not involve trusted text tools, which never enter ASRT, and
+does not weaken creation-time containment of the final command target. Current
+Codex retains the same `CreateProcessWithLogonW` runner-bootstrap residual
+while assigning its final target Job at creation.
+
+#### Closure Direction
+
+Close this issue only when ASRT accepts creation-time process/thread security
+descriptors plus containment handles, or when a privileged KodaX spawn service
+owns the equivalent atomic boundary. A post-spawn DACL or Job attachment cannot
+close the race and must not be presented as doing so. Regression coverage must
+continue to prove final-target creation-time Job containment, fail-closed peer
+loss, loader-error suppression where KodaX code is reachable, and complete
+independence of trusted text transactions.
 
 ### 305: A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes
 
@@ -13243,11 +13604,76 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 186 (28 Open, 158 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 195 (30 Open, 165 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-27: Issue 316 resolved (concurrent Windows reader/replace race)
+
+- Trusted text commit now holds a target delete/write reservation across final
+  CAS and atomic replacement and uses compatible-reader POSIX rename semantics.
+- Continuous readers observe only complete old/new revisions; an external write
+  before final CAS still returns stale without overwriting the newer content.
+
+### 2026-08-27: Issues 313-315 resolved (legacy ACL, fixed-root serialization, and native staging)
+
+- Legacy shared-account ACEs no longer fail shell admission, removing the
+  reboot/setup lockout without recursive cleanup. The account SID remains for
+  required subprocess compatibility, and Issue 309 records the resulting
+  explicit child-DACL authority residual.
+- Fixed sensitive-root denies are native, persistent, and setup-time. Cold
+  admission idempotently guards an exact sensitive directory created after
+  setup, while independent command lifetimes remain parallel.
+- Native artifact staging uses a short random same-directory name so a valid
+  final cache path is not rejected by PowerShell 5.1's legacy path limit.
+
+### 2026-08-27: Issue 312 resolved (dead native control request self-healing)
+
+- Explicit Windows sandbox setup now retires only expired dead-owner request
+  records and proven-drained terminal records before repairing a host-owned
+  control DACL.
+- Live, unexpired, malformed, unknown, and ACL-recovery records remain
+  fail-closed; doctor continues to perform no repair.
+- The complete real Windows policy suite now runs after a simulated drift and
+  recovery without poisoning every later shell test.
+
+### 2026-08-27: Issues 310/311 resolved (Windows text-owner and Runtime cursor self-healing)
+
+- Trusted Windows text replacement now self-heals old/current sandbox-owned
+  files into trusted-host ownership and preserves the ordered effective ACE
+  policy without freezing stale inherited authority; Windows may canonicalize
+  DACL protection/inheritance control at namespace commit. A legacy
+  low-integrity label is normalized instead of being reapplied by a host that
+  cannot safely assign it.
+- Session sequence persistence no longer depends on Windows DELETE sharing;
+  lock-held durable cursor writes retry transient sharing conflicts and recover
+  a truncated cursor from durable event ledgers.
+- Workspace-local `.kodax/runtime` is now denied to sandbox shell reads and
+  writes even while the surrounding workspace remains writable.
+
+### 2026-08-27: Issue 309 recorded (ambient trustee child-DACL boundary)
+
+- Reproduced the Windows `WRITE_RESTRICTED` compatibility trade-off with a real
+  target-created file: after an owner grants Everyone modify, a later token can
+  satisfy both access-check passes without the earlier root capability.
+- Rejected an inheritable OWNER RIGHTS deny after real tests proved it also
+  blocks the trusted host from managing existing host-owned deny roots.
+- Confirmed with real Node/cmd/PowerShell probes that the primary sandbox-user
+  SID must remain alongside logon/Everyone for subprocess compatibility. Exact
+  read capabilities remain, but Issue 309 stays open for all retained ambient
+  trustees; trusted text tools remain outside this boundary.
+
+### 2026-08-27: Issue 308 recorded (ASRT Windows distinct-policy proxy capacity)
+- FEATURE_295 now pools one ASRT Windows network broker per exact network
+  policy and sandbox-account generation inside a Runtime process, so concurrent
+  same-policy shell commands no longer multiply fixed proxy-port consumption.
+- ASRT 0.0.65 still provides no authenticated per-connection identity for
+  routing different policies through one ingress. Distinct policies and
+  Runtime processes therefore remain bounded by five simultaneous brokers in
+  the ten-port range. The issue stays Open rather than weakening policy,
+  widening WFP exposure, or restoring a command-lifetime serialization lock.
 
 ### 2026-08-26: Issue 307 recorded (Windows v2 upstream bootstrap boundary)
 - KodaX creates every final shell target in its no-breakaway Job through the

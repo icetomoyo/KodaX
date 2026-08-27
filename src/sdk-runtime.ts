@@ -13399,7 +13399,7 @@ function createRuntimePersistence(
     const current = Math.max(cursor ?? 0, validatedFloor);
     const firstSeq = current + 1;
     const last = current + count;
-    writeRuntimeJsonAtomic(sessionEventSequenceFile(sessionId), last);
+    writeRuntimeSequenceCursor(sessionEventSequenceFile(sessionId), last);
     validatedSequenceFloorBySession.set(sessionId, last);
     return {
       firstSeq,
@@ -14477,7 +14477,7 @@ function createRuntimePersistence(
             sessionId,
             journalEpoch: randomUUID(),
           });
-          writeRuntimeJsonAtomic(sessionEventSequenceFile(sessionId), 0);
+          writeRuntimeSequenceCursor(sessionEventSequenceFile(sessionId), 0);
           validatedSequenceFloorBySession.set(sessionId, 0);
           return true;
         },
@@ -14922,6 +14922,54 @@ function createRuntimePersistence(
 
 function writeRuntimeJsonAtomic(file: string, value: unknown): void {
   writeRuntimeTextAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeRuntimeSequenceCursor(file: string, value: number): void {
+  const deadline = performance.now() + 1_000;
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    let descriptor: number | undefined;
+    let writeError: unknown;
+    try {
+      descriptor = fs.openSync(file, "w", 0o600);
+      fs.writeFileSync(descriptor, `${JSON.stringify(value)}\n`, "utf-8");
+      fs.fsyncSync(descriptor);
+    } catch (error: unknown) {
+      writeError = error;
+    }
+    let closeError: unknown;
+    if (descriptor !== undefined) {
+      try {
+        fs.closeSync(descriptor);
+      } catch (error: unknown) {
+        closeError = error;
+      }
+    }
+    if (writeError === undefined && closeError === undefined) return;
+    if (closeError !== undefined) {
+      if (writeError !== undefined) {
+        throw new AggregateError(
+          [writeError, closeError],
+          `Runtime event sequence write and handle cleanup both failed: ${file}`,
+        );
+      }
+      throw closeError;
+    }
+    if (
+      process.platform !== "win32"
+      || !isTransientWindowsRuntimeWriteError(writeError)
+      || performance.now() >= deadline
+    ) {
+      throw writeError;
+    }
+    Atomics.wait(waitCell, 0, 0, 10);
+  }
+}
+
+function isTransientWindowsRuntimeWriteError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY";
 }
 
 function writeRuntimeTextAtomic(file: string, content: string): void {

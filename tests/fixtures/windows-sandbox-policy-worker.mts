@@ -15,6 +15,30 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
+function errorDiagnostic(value: unknown, depth = 0): string {
+  if (!(value instanceof Error)) return String(value);
+  const base = value.stack ?? `${value.name}: ${value.message}`;
+  if (depth >= 4) return base;
+  const nested = value instanceof AggregateError
+    ? value.errors
+    : value.cause === undefined
+      ? []
+      : [value.cause];
+  return nested.length === 0
+    ? base
+    : `${base}\n${nested.map((item, index) => (
+        `[nested ${index + 1}] ${errorDiagnostic(item, depth + 1)}`
+      )).join('\n')}`;
+}
+
+function hasOnlyRepairableAclGuardDiagnostics(diagnostics: readonly string[]): boolean {
+  const blocking = diagnostics.filter(
+    (diagnostic) => !diagnostic.startsWith('[legacy_acl_state_ignored]'),
+  );
+  return blocking.length > 0
+    && blocking.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'));
+}
+
 const workspace = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_WORKSPACE'));
 const barrierScript = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_BARRIER'));
 const barrierDirectory = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_BARRIER_DIR'));
@@ -36,8 +60,7 @@ try {
   let doctor = await doctorSandboxRuntime({ refresh: true });
   if (
     !doctor.ready
-    && doctor.diagnostics.length > 0
-    && doctor.diagnostics.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'))
+    && hasOnlyRepairableAclGuardDiagnostics(doctor.diagnostics)
   ) {
     doctor = await setupSandboxRuntime();
   }
@@ -96,7 +119,7 @@ try {
     reportToolSandboxObservation: (observation) => observations.push(observation),
   });
 } catch (caught) {
-  error = caught instanceof Error ? caught.stack : String(caught);
+  error = errorDiagnostic(caught);
 } finally {
   restoreDiagnostics();
 }

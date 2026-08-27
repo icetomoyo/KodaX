@@ -40,7 +40,7 @@ pub struct RunRequest {
     pub controller_pipe: String,
     pub terminal_record_path: String,
     pub terminal_nonce: String,
-    pub launch_deadline_unix_ms: u64,
+    pub operation_deadline_unix_ms: u64,
 }
 
 impl RunRequest {
@@ -55,8 +55,8 @@ impl RunRequest {
         if self.generation.is_empty() {
             bail!("Windows sandbox generation is empty");
         }
-        if self.launch_deadline_unix_ms == 0 {
-            bail!("Windows sandbox launch deadline is invalid");
+        if self.operation_deadline_unix_ms == 0 {
+            bail!("Windows sandbox operation deadline is invalid");
         }
         if self.asrt_executable.is_empty() || self.target_argv.first().is_none_or(String::is_empty)
         {
@@ -185,6 +185,7 @@ pub struct SpawnMessage {
     pub target_argv: Vec<String>,
     pub cwd: String,
     pub policy_capability_sid: String,
+    pub filesystem_capability_sids: Vec<String>,
     pub session_nonce: String,
     pub target_environment: Vec<EnvironmentEntry>,
 }
@@ -219,6 +220,9 @@ pub struct TerminalRecord {
     pub job_drained: bool,
     pub target_exit_code: u32,
     pub termination_requested: bool,
+    pub deny_read_cleanup_deferred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deny_read_cleanup_diagnostic: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,6 +241,52 @@ pub fn capability_sid(fingerprint: &str) -> Result<String> {
     let mut hash = Sha256::new();
     hash.update(b"KodaX Windows sandbox v2 policy capability\0");
     hash.update(normalized.as_bytes());
+    let digest = hash.finalize();
+    let authorities = digest.as_chunks::<4>().0[..4]
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join("-");
+    Ok(format!("S-1-5-21-{authorities}"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FilesystemCapabilityKind {
+    AllowRead,
+    AllowWrite,
+    DenyWrite,
+}
+
+impl FilesystemCapabilityKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AllowRead => "allow-read",
+            Self::AllowWrite => "allow-write",
+            Self::DenyWrite => "deny-write",
+        }
+    }
+}
+
+pub fn filesystem_capability_sid(
+    generation: &str,
+    canonical_path: &str,
+    kind: FilesystemCapabilityKind,
+) -> Result<String> {
+    if generation.is_empty() {
+        bail!("Windows sandbox filesystem capability generation is empty");
+    }
+    if canonical_path.is_empty() || canonical_path.contains('\0') {
+        bail!("Windows sandbox filesystem capability path is invalid");
+    }
+    let normalized_path = canonical_path.replace('/', "\\").to_ascii_lowercase();
+    let mut hash = Sha256::new();
+    hash.update(b"KodaX Windows sandbox v2 filesystem capability\0");
+    hash.update(generation.as_bytes());
+    hash.update(b"\0");
+    hash.update(kind.label().as_bytes());
+    hash.update(b"\0");
+    hash.update(normalized_path.trim_end_matches('\\').as_bytes());
     let digest = hash.finalize();
     let authorities = digest.as_chunks::<4>().0[..4]
         .iter()
@@ -266,6 +316,41 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_capabilities_are_stable_per_generation_root_and_clause() {
+        let generation = "generation-a";
+        let root = r"C:\Work\Repo";
+        let same = r"c:/work/repo";
+
+        let allow_write =
+            filesystem_capability_sid(generation, root, FilesystemCapabilityKind::AllowWrite)
+                .unwrap();
+        assert_eq!(
+            allow_write,
+            filesystem_capability_sid(generation, same, FilesystemCapabilityKind::AllowWrite,)
+                .unwrap(),
+        );
+        assert_ne!(
+            allow_write,
+            filesystem_capability_sid(generation, root, FilesystemCapabilityKind::DenyWrite,)
+                .unwrap(),
+        );
+        assert_ne!(
+            allow_write,
+            filesystem_capability_sid("generation-b", root, FilesystemCapabilityKind::AllowWrite,)
+                .unwrap(),
+        );
+        assert_ne!(
+            allow_write,
+            filesystem_capability_sid(
+                generation,
+                r"C:\Work\Other",
+                FilesystemCapabilityKind::AllowWrite,
+            )
+            .unwrap(),
+        );
+    }
+
+    #[test]
     fn request_rejects_a_capability_substitution() {
         let request = RunRequest {
             protocol: PROTOCOL_VERSION,
@@ -285,7 +370,7 @@ mod tests {
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
-            launch_deadline_unix_ms: 1,
+            operation_deadline_unix_ms: 1,
         };
         assert!(request.validate().is_err());
     }
@@ -311,7 +396,7 @@ mod tests {
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
-            launch_deadline_unix_ms: 1,
+            operation_deadline_unix_ms: 1,
         };
         request.validate().unwrap();
     }
@@ -338,7 +423,7 @@ mod tests {
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
-            launch_deadline_unix_ms: 1,
+            operation_deadline_unix_ms: 1,
         };
 
         assert!(
@@ -371,7 +456,7 @@ mod tests {
             controller_pipe: r"\\.\pipe\kodax-v2-1234-12345678-1234-1234-1234-123456789abc".into(),
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
-            launch_deadline_unix_ms: 1,
+            operation_deadline_unix_ms: 1,
         };
         assert!(request.validate().is_err());
     }

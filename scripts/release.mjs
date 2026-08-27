@@ -134,10 +134,60 @@ function assertNativeArtifacts(dir) {
     if (manifest.version !== 1 || manifest.platform !== platform || manifest.arch !== arch) {
       throw new Error(`${platform}-${arch} native manifest has an incompatible platform or version`);
     }
+    const expectedLegalFiles = [
+      'LICENSE-APACHE.txt',
+      ...(platform === 'win32' ? ['NOTICE-windows-sandbox.txt'] : []),
+    ];
+    if (!Array.isArray(manifest.legal) || manifest.legal.length !== expectedLegalFiles.length) {
+      throw new Error(`${platform}-${arch} native legal manifest is missing or incompatible`);
+    }
+    for (const filename of expectedLegalFiles) {
+      const entry = manifest.legal.find((candidate) => candidate?.file === filename);
+      const legalFile = path.join(nativeDirectory, filename);
+      if (
+        !entry
+        || !/^[0-9a-f]{64}$/.test(entry.sha256 ?? '')
+        || !existsSync(legalFile)
+        || createHash('sha256').update(readFileSync(legalFile)).digest('hex') !== entry.sha256
+      ) {
+        throw new Error(`${platform}-${arch} native legal file ${filename} is missing or invalid`);
+      }
+    }
+    if (platform === 'win32') {
+      const packageName = '@anthropic-ai/sandbox-runtime';
+      const rootPackage = JSON.parse(readFileSync(rootPkgPath, 'utf8'));
+      const pinnedVersion = rootPackage.dependencies?.[packageName];
+      const installedRoot = path.join(
+        repoRoot, 'node_modules', '@anthropic-ai', 'sandbox-runtime',
+      );
+      const installedPackage = JSON.parse(readFileSync(
+        path.join(installedRoot, 'package.json'),
+        'utf8',
+      ));
+      const asrtRunner = manifest.asrtRunner;
+      const asrtRunnerPath = path.join(
+        installedRoot, 'vendor', 'srt-win', arch, 'srt-win.exe',
+      );
+      if (
+        typeof pinnedVersion !== 'string'
+        || !/^\d+\.\d+\.\d+$/.test(pinnedVersion)
+        || asrtRunner?.file !== 'srt-win.exe'
+        || asrtRunner.version !== pinnedVersion
+        || installedPackage.version !== asrtRunner.version
+        || !/^[0-9a-f]{64}$/.test(asrtRunner.sha256 ?? '')
+        || !existsSync(asrtRunnerPath)
+      ) {
+        throw new Error('Windows ASRT runner is missing or incompatible with its native manifest');
+      }
+      const actual = createHash('sha256').update(readFileSync(asrtRunnerPath)).digest('hex');
+      if (actual !== asrtRunner.sha256) {
+        throw new Error('ASRT runner hash does not match its manifest');
+      }
+    }
     const expected = [
       ['textTransaction', 4, textFilename],
       ...(platform === 'win32'
-        ? [['shellSandbox', 5, 'kodax-windows-sandbox.exe']]
+        ? [['shellSandbox', 7, 'kodax-windows-sandbox.exe']]
         : []),
     ];
     for (const [kind, protocol, filename] of expected) {

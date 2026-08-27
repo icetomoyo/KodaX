@@ -125,9 +125,11 @@ not yet proven by the native descriptor path.
 Arbitrary shell programs do not participate in the text-tool lock. If the
 locked final reread observes a shell change, the text operation returns a
 structured stale conflict and does not overwrite the newer bytes; an
-incompatible writer handle at that reread returns contention. An uncooperative
-write, replace, or rename after the final reread remains an ordinary
-operating-system race.
+incompatible writer handle at that reread returns contention. On Windows a
+delete/write reservation excludes a new writer between final CAS and the
+POSIX-semantics atomic replace while compatible readers keep complete old/new
+handles. On Unix, an uncooperative write, replace, or rename after final reread
+remains an ordinary operating-system race.
 Different canonical files do not share a transaction lock.
 
 On Windows the kernel lock lives in a private namespace bound to the trusted
@@ -142,6 +144,13 @@ does not mean the lock is held. Process death releases either lock
 automatically and no PID/ticket recovery protocol is required. Unix atomic
 replacement preserves ownership, mode, extended attributes, Linux
 user-modifiable inode flags, and macOS extended ACL/file flags or fails closed.
+On Windows, replacing a file left by an older sandbox identity makes the new
+file trusted-host-owned while retaining its ordered effective ACE policy. The
+filesystem may canonicalize DACL protection/inheritance control at the atomic
+namespace commit; stale inherited authority is not copied from a former parent.
+A low-integrity sandbox label normalizes to ordinary
+host integrity instead of being reapplied. Thus an obsolete sandbox owner cannot permanently
+block Write/Edit and does not require manual ACL repair.
 
 ## Background commands and session reuse (v0.7.96)
 
@@ -155,6 +164,41 @@ the known null-desktop loader failure and exposure to the interactive desktop. N
 owner, reset, cleanup, or poison gate spans the command lifetime, so shell
 commands from different policies, Sessions, and Runtime processes may overlap.
 A long-running shell therefore cannot make a trusted text tool unavailable.
+Workspace-local `.kodax/runtime` state is excluded from shell read and write
+authority even though the surrounding workspace is writable; Session journals,
+cursor files, daemon records, and grants remain host-owned control state.
+The private desktop uses an ephemeral full-policy capability. Filesystem write
+authority instead uses stable capabilities derived from the sandbox-account
+generation, final canonical root, and `allowRead`/`allowWrite`/`denyWrite`
+clause. Every read root has an exact allow-read capability and a read-only root
+implicitly carries its deny-write capability. The dedicated account,
+per-launch logon, and Everyone SIDs remain in the restricting set because real
+subprocess creation requires them, matching current Codex; Issue 309 documents
+the remaining ambient-trustee child-DACL boundary. The shared sandbox group supplies the normal access-check pass. If a workspace is nested below a private host
+directory, KodaX grants its ancestors only non-inheriting read-attributes/
+traverse/synchronize access—never directory listing, content read, write, or
+delete—and preflights every target before one atomic ACL transaction. Windows
+`WRITE_RESTRICTED` does not enforce restricting SIDs for reads, so `denyRead`
+uses an execution-logon deny under a short ACL mutex. A durable receipt records
+the no-follow volume/file identity before mutation; exact cleanup follows Job
+drain. A later shell host recovers a crashed owner only when PID creation time
+and target identity prove the receipt stale. A missing or replaced target keeps
+the receipt and blocks shell admission until repair, but cannot block trusted
+text tools.
+Within one Runtime, commands whose canonical network policy and sandbox-account
+generation match share one process-level ASRT network broker; their native
+requests, restricted policy tokens, controller connections, and Jobs remain
+independent. Different network policies never share that authority. ASRT
+0.0.65 still consumes two fixed-range ports for each distinct broker and has no
+authenticated connection identity for routing unlike policies through one
+ingress. Issue 308 tracks this capacity difference from Codex; KodaX does not
+widen a policy or serialize shell lifetimes to conceal it.
+The broker also owns a verified native liveness controller. Its named pipe is
+created with a protected Host/SYSTEM-only DACL, rejects remote clients, and
+keeps multiple pending instances for concurrent host launches. Restricted
+targets cannot connect to or exhaust this control path. Broker/controller loss
+closes every controller handle, drains active Jobs, and lets a later command
+create a fresh broker.
 This authority split is advertised as `sandboxRuntime:6`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`
@@ -162,12 +206,27 @@ cutover. Setup waits for old sandbox processes to exit, recovers recorded ACL
 work, recreates the dedicated account with a new SID, and records that SID and
 the native protocol in machine state. Doctor and native shell admission remain
 fail-closed if that state is missing or mismatched; trusted text tools remain
-available throughout. Native artifacts are independently checked against the
-embedded packaged protocol/SHA-256 manifest and staged in a protected content-
-addressed Agent Home store. The restricted account receives read/execute, but
-not write/delete, access to its exact runner artifact. A fixed System32
+available throughout. The embedded release manifest pins each native sidecar
+protocol/SHA-256 plus the ASRT release version/SHA-256. Verified bytes are
+staged in a protected content-addressed LocalAppData store independent of
+`KODAX_HOME`; ASRT is checked before materialization and again before broker
+startup. Windows text bytes remain Host/SYSTEM-only; the dedicated sandbox
+group SID receives read/execute, but not write/delete, on the shell artifact;
+and local Users receive only read/execute on the pinned ASRT executable. Fixed
+Agent Home and credential read denies are installed once on exact roots through
+native no-follow handles; cold admission idempotently guards an exact sensitive
+directory created after setup. They are not rebuilt for each shell command. The
+ASRT directory is not passed as a final-target policy root. A fixed System32
 provisioner may run during this artifact bootstrap; text content and shell
 stdin never enter it.
+
+If a prior host died before a native request was consumed, explicit setup can
+self-heal the protected control directory after proving the sandbox SID idle.
+It retires only an expired request whose creator PID is dead, an aged
+unconsumed network request from a dead PID, or a dead-owner terminal record
+that already says `jobDrained: true`. Doctor never performs this cleanup.
+Live, unexpired, malformed, unknown, and `windows-deny` recovery records remain
+fail-closed instead of being treated as disposable files.
 
 The final target is in its Job at process creation. ASRT still creates the
 shared-account runner before KodaX code can apply runner-process hardening;
@@ -178,6 +237,14 @@ creation contract still controls loader faults before runner `main`; final targe
 faults are suppressed. It does not affect trusted text tools. Closing it requires an ASRT
 creation-time process/thread security contract or privileged spawn service,
 not another post-spawn patch.
+
+Issue 309 documents the remaining Windows compatibility limitation: an explicit
+ACE for a retained compatibility trustee can bypass a later root capability.
+The ACE may be left by a sandbox command or already exist on an external or
+host-owned descendant. KodaX requires exact read/write capabilities for normal
+declared roots, but the primary account, logon, and Everyone SIDs must remain
+for working subprocesses; closing explicit child-DACL reuse needs a different
+loader/token architecture.
 
 Linux and macOS shell calls remain ASRT-contained per command through
 bubblewrap or Seatbelt/`sandbox-exec`. They do not keep a KodaX workspace-

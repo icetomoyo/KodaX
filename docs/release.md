@@ -18,9 +18,17 @@ following side-by-side files. Extract it into a dedicated directory:
 ├── provider-capabilities.json     # Provider metadata
 ├── semantic-worker.js             # Repo-intelligence Worker
 ├── runtime-worker.js              # SDK Runtime Worker
-├── sandbox-workspace-session.js   # ASRT workspace session
-└── constructed-handler-worker.js  # Constructed-tool Worker
+├── constructed-handler-worker.js  # Constructed-tool Worker
+└── vendor/kodax-native/<platform-arch>/
+    ├── manifest.json               # Protocol and SHA-256 manifest
+    ├── LICENSE-APACHE.txt          # Native component license
+    └── kodax[-windows]-text-transaction.node  # Trusted text binding
 ```
+
+Windows archives additionally contain `kodax-windows-sandbox.exe` in the same
+native directory and the pinned ASRT runner at
+`vendor/srt-win/<arch>/srt-win.exe`. The native directory also carries
+`NOTICE-windows-sandbox.txt`, including the Codex-informed attribution.
 
 Run `./kodax` (or `kodax.exe`) from any working directory. The binary locates
 all sidecars relative to `process.execPath`, so the extracted files must be
@@ -32,9 +40,9 @@ moved or archived as one unit.
 | --------------- | ------------------------------- | ------------------ |
 | `win-x64`       | Windows 10 1809+ / x64          | `windows-latest`   |
 | `linux-x64`     | Linux glibc 2.27+ / x64         | `ubuntu-latest`    |
-| `linux-arm64`   | Linux glibc 2.27+ / aarch64     | `ubuntu-latest` (cross) |
-| `darwin-x64`    | macOS 11+ / Intel               | `macos-14` (cross) |
-| `darwin-arm64`  | macOS 11+ / Apple Silicon       | `macos-14`         |
+| `linux-arm64`   | Linux glibc 2.27+ / aarch64     | `ubuntu-24.04-arm` |
+| `darwin-x64`    | macOS 11+ / Intel               | `macos-15-intel`   |
+| `darwin-arm64`  | macOS 11+ / Apple Silicon       | `macos-15`         |
 
 Win7 and pre-glibc-2.27 distros (NeoKylin v7, CentOS 6/7) are **not supported**.
 LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
@@ -55,14 +63,13 @@ LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
 ### Commands
 
 ```bash
-# Current platform only (fastest)
+# Current platform/architecture only
+npm run build:native
 npm run build:binary
 
-# Specific target (Bun cross-compiles from any host)
+# Explicit target on its matching native host
+npm run build:native
 node scripts/build-binary.mjs --target=linux-arm64
-
-# All 5 targets in sequence (one machine, ~3-5 min)
-npm run build:binary:all
 
 # Reuse existing dist/ (skip TypeScript rebuild)
 node scripts/build-binary.mjs --skip-tsc
@@ -71,11 +78,11 @@ node scripts/build-binary.mjs --skip-tsc
 node scripts/build-binary.mjs --clean
 ```
 
-Output lives under `dist/binary/<target>/`. When the requested targets include
-the current host, the build itself runs that artifact with an isolated
-`KODAX_HOME` and requires `a2a list` to emit exactly one A2A v2 JSON document.
-Cross-compiled targets cannot be executed by this gate. A supplementary manual
-version smoke is:
+Output lives under `dist/binary/<target>/`. FEATURE_295 native bindings are
+built and executed on a matching OS/architecture; the release workflow's five
+native runners aggregate the npm package afterward. The build runs the local
+artifact with an isolated `KODAX_HOME` and requires `a2a list` to emit exactly
+one A2A v2 JSON document. A supplementary manual version smoke is:
 
 ```bash
 dist/binary/linux-x64/kodax --version
@@ -1561,9 +1568,11 @@ injected. Check `scripts/build-binary.mjs` was used, not raw `bun build`.
 directory is missing next to the executable. Verify the archive was extracted
 intact; the binary alone is not enough.
 
-**Worker or sandbox mode fails in a compiled binary** - verify
-`semantic-worker.js`, `runtime-worker.js`, `sandbox-workspace-session.js`, and
-`constructed-handler-worker.js` are next to the executable.
+**Worker, trusted text, or sandbox mode fails in a compiled binary** - verify
+`semantic-worker.js`, `runtime-worker.js`, and
+`constructed-handler-worker.js` are next to the executable, and verify the
+matching `vendor/kodax-native/<platform-arch>` directory. Windows also requires
+the pinned `vendor/srt-win/<arch>/srt-win.exe`.
 `scripts/build-binary.mjs` fails the build when any source sidecar is missing,
 but copying only the executable after extraction breaks sidecar resolution at
 runtime.

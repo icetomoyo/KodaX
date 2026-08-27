@@ -193,6 +193,12 @@ the addon is loaded from a verified descriptor, and sandboxed shell policy
 denies writes to both artifact and coordination roots. Unix replacement
 preserves owner, mode, extended attributes, Linux inode flags, and macOS
 extended ACL/file flags or fails closed.
+On Windows, commit holds a target delete/write reservation across the locked
+final reread, revision CAS, and `FileRenameInformationEx` commit. POSIX rename
+semantics keep compatible readers open while preventing a non-delete-sharing
+reader or new writer from entering that narrow window. Legacy low-integrity
+sandbox labels normalize to the destination's ordinary host integrity; higher
+or unknown labels remain fail-closed.
 
 Windows v2 Bash uses a different native sidecar. Bounded frames separate
 control from target stdin and carry explicit close, output, error, terminate,
@@ -204,9 +210,14 @@ policy capability, so restricted targets initialize without using the
 interactive desktop or opening a sibling policy's desktop. The
 prepared invocation identifies native token isolation so Coding bypasses the
 legacy effect gate and lease; no owner/reset/cleanup/poison transition spans a
-command lifetime. The restricting set carries policy capability plus the
-account, logon, and Everyone SIDs used by Codex for subprocess compatibility,
-while the token default DACL excludes the account. Setup rotates the old account SID before
+command lifetime. The restricting set carries the exact read/write policy
+capabilities plus the dedicated account, per-launch logon, and Everyone
+compatibility SIDs. Real nested Node/cmd/PowerShell probes require the account
+SID, matching current Codex; Issue 309 records that an ambient-trustee child
+DACL can therefore bypass a later root capability. The token default DACL still
+excludes the account. Fixed exact sensitive-root denies are installed once with native
+no-follow handles and a newly materialized root is repaired idempotently at
+cold admission. Setup rotates the old account SID before
 recording a strict v2 protocol/SID machine marker. Linux and macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
@@ -1049,44 +1060,26 @@ File mutation sinks recheck the Runtime/home-root hard boundary immediately
 before execution. Undo records context-local canonical path identities and
 refuses restore after retargeting. Model-facing worktree creation ignores any
 undeclared base path; only the workflow controller can supply its Runtime-owned
-worktree base through trusted execution context. A cross-process category lease
-prevents shell effects from overlapping the canonical-check/write window of
-host file sinks; shell-shell and independent direct-file work remain concurrent,
-while a cross-category conflict fails quickly instead of waiting indefinitely.
+worktree base through trusted execution context. Since FEATURE_295, controlled
+text sinks use the native trusted-text transaction described in section 3 and
+never acquire the legacy cross-process filesystem-effect lease. Worktree and
+other non-text namespace effects retain their separate legacy coordination.
 Recognized shell mutations of the Agent Home root or Runtime are blocked before
 either Auto engine can consult its classifier or approval surface; credential
 and security configuration remains on the reviewable branch.
-Every coding run keeps authorization independent from containment. Runtime
-attempts ASRT first; a pre-start infrastructure failure or incompatible policy
-owner returns an already-authorized command to ordinary permission execution.
-Committed or unknown target start is never replayed by the execution layer.
-Linux's PID namespace and the Windows per-effect Job provide process-tree
-containment when selected. On Windows, ASRT never grants `MODIFY` on the Agent Home
-directory object because that right includes root deletion. It grants verified
-ordinary paths only in a session keyed by the permission review's exact
-Agent Home read/write targets. Existing targets are granted directly; a missing
-external target that would require a broader parent grant uses ordinary permission
-execution. The OS boundary independently rejects the
-root object, broken/escaping links, and writes under Runtime, sandbox-control,
-legacy process-control, or Learned Area. Each policy group grants the workspace
-plus one bounded policy temp root; every session receives a disposable child
-through `TEMP`, `TMP`, and `TMPDIR`, and KodaX removes that child after exit.
-Creating or modifying files inside `agents`,
-Sessions, tool-results, and other ordinary directories stays available without
-approval. Reviewable Agent Home reads are not placed on the OS sandbox's
-unconditional deny list, so an explicit approval remains effective. Because
-ASRT's Windows sessions share one restricted-user SID, so only exact effective
-policy matches share concurrently; an incompatible policy uses ordinary
-permission execution. Setup/reset holds a short cross-process coordination
-fence. `kodax sandbox setup` installs idempotent persistent
-read guards for the dedicated sandbox SID on existing sensitive roots; normal
-startup only audits them and fails closed if migration is required. Exact
-reviewed child grants override the inherited Agent Home deny, while the root
-object itself remains ungranted. Workspace `.git/config` and `.git/hooks` use
-bounded write-only guards that omit read/synchronize denial; global Git config
-is disabled in the sandbox. Covered paths are removed from ASRT's deny arrays,
-uncovered SDK-specific paths retain ASRT behavior, and a parent delete-child
-deny is added only when effective sandbox token ACLs otherwise allow it.
+Shell authorization remains independent from containment. Windows v2 uses ASRT
+only for the network/account launch and the native host/runner path described in
+section 3 for per-command restricted token, private desktop, framed stdio, and
+creation-time Job containment. Different policies, Sessions, and Runtime
+processes do not share a command-lifetime filesystem-effect lease. Fixed
+sensitive-root denies are installed and verified through native no-follow
+handles and repaired idempotently at cold shell admission; truly dynamic
+`denyRead` roots keep their short execution-logon ACL transaction and crash-safe
+receipt. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
+without a KodaX workspace-session owner. A pre-target-start sandbox preparation
+failure may return the already-authorized call to the ordinary permission path;
+it never redirects through trusted text or replays a target whose start is
+committed or unknown.
 
 ## 12. Media Input Artifacts
 

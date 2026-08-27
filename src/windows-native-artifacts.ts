@@ -17,6 +17,7 @@ export interface WindowsNativeArtifactManifest {
   readonly arch: string;
   readonly textTransaction: WindowsNativeArtifactEntry;
   readonly shellSandbox: WindowsNativeArtifactEntry;
+  readonly asrtRunner: WindowsAsrtRunnerArtifactEntry;
 }
 
 export interface WindowsNativeArtifactEntry {
@@ -25,7 +26,14 @@ export interface WindowsNativeArtifactEntry {
   readonly sha256: string;
 }
 
+export interface WindowsAsrtRunnerArtifactEntry {
+  readonly file: 'srt-win.exe';
+  readonly version: string;
+  readonly sha256: string;
+}
+
 export type WindowsNativeArtifactKind = 'textTransaction' | 'shellSandbox';
+type WindowsProtectedArtifactKind = WindowsNativeArtifactKind | 'asrtRunner';
 
 export interface ResolvedWindowsNativeArtifact {
   readonly path: string;
@@ -38,6 +46,12 @@ export interface ResolveWindowsNativeArtifactOptions {
   readonly untrustedWriteRoots?: readonly string[];
 }
 
+export interface ResolvedWindowsAsrtRunnerArtifact {
+  readonly path: string;
+  readonly sha256: string;
+  readonly developmentTrustRoots: readonly string[];
+}
+
 interface PortableTextArtifactManifest {
   readonly version: 1;
   readonly platform: NodeJS.Platform;
@@ -46,7 +60,7 @@ interface PortableTextArtifactManifest {
 }
 
 const MAX_NATIVE_ARTIFACT_BYTES = 64 * 1024 * 1024;
-const WINDOWS_NATIVE_CACHE_VERSION = 'v1';
+const WINDOWS_NATIVE_CACHE_VERSION = 'v2';
 
 function embeddedNativeManifestText(): string | undefined {
   if (
@@ -122,12 +136,28 @@ function assertManifestEntry(
   return entry;
 }
 
+function assertManifestAsrtRunner(
+  manifest: Partial<WindowsNativeArtifactManifest>,
+): WindowsAsrtRunnerArtifactEntry {
+  const entry = manifest.asrtRunner;
+  if (
+    entry?.file !== 'srt-win.exe'
+    || typeof entry.version !== 'string'
+    || entry.version === ''
+    || !/^[0-9a-f]{64}$/i.test(entry.sha256 ?? '')
+  ) {
+    throw new Error('manifest asrtRunner entry is invalid');
+  }
+  return entry;
+}
+
 function parseManifestText(text: string): WindowsNativeArtifactManifest {
   const manifest = manifestObject(text);
   assertManifestHeader(manifest);
   for (const kind of ['textTransaction', 'shellSandbox'] as const) {
     assertManifestEntry(manifest, kind);
   }
+  assertManifestAsrtRunner(manifest);
   return manifest as WindowsNativeArtifactManifest;
 }
 
@@ -154,7 +184,10 @@ function assertDevelopmentSourceIsOutsideWriteRoots(
   directory: string,
   roots: readonly string[],
 ): void {
-  if (roots.some((root) => sameOrInside(root, directory) || sameOrInside(directory, root))) {
+  const canonicalDirectory = canonicalExistingPath(directory);
+  if (roots.map(canonicalExistingPath).some((root) => (
+    sameOrInside(root, canonicalDirectory) || sameOrInside(canonicalDirectory, root)
+  ))) {
     throw new Error(
       `native artifact source overlaps a writable Runtime root: ${directory}. `
       + 'Use a production bundle with an embedded native manifest.',
@@ -196,15 +229,16 @@ export function assertWindowsSandboxControlStateNotDirectlyAccessible(input: {
   readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
 }): void {
-  const controlRoot = windowsSandboxControlDirectory();
-  const allowConflict = [...input.allowRead, ...input.allowWrite].find((root) => (
-    sameOrInside(controlRoot, root) || sameOrInside(root, controlRoot)
-  ));
+  const controlRoot = canonicalExistingPath(windowsSandboxControlDirectory());
+  const allowConflict = [...input.allowRead, ...input.allowWrite].find((root) => {
+    const canonical = canonicalExistingPath(root);
+    return sameOrInside(controlRoot, canonical) || sameOrInside(canonical, controlRoot);
+  });
   if (allowConflict !== undefined) {
     throw new Error(`Windows policy overlaps protected native shell control state: ${allowConflict}`);
   }
   const denyConflict = [...input.denyRead, ...input.denyWrite].find((root) => (
-    sameOrInside(controlRoot, root)
+    sameOrInside(controlRoot, canonicalExistingPath(root))
   ));
   if (denyConflict !== undefined) {
     throw new Error(`Windows deny policy targets protected native shell control state: ${denyConflict}`);
@@ -214,10 +248,11 @@ export function assertWindowsSandboxControlStateNotDirectlyAccessible(input: {
 export function assertWindowsNativeArtifactStoreNotDirectlyWritable(
   roots: readonly string[],
 ): void {
-  const cacheRoot = windowsNativeArtifactCacheRoot();
-  const conflict = roots.find((root) => (
-    sameOrInside(cacheRoot, root) || sameOrInside(root, cacheRoot)
-  ));
+  const cacheRoot = canonicalExistingPath(windowsNativeArtifactCacheRoot());
+  const conflict = roots.find((root) => {
+    const canonical = canonicalExistingPath(root);
+    return sameOrInside(cacheRoot, canonical) || sameOrInside(canonical, cacheRoot);
+  });
   if (conflict !== undefined) {
     throw new Error(`Windows write policy targets protected native state: ${conflict}`);
   }
@@ -262,12 +297,11 @@ function assertTrustedTextNativeStateNotDirectlyAccessible(
   roots: readonly string[],
   access: 'read' | 'write',
 ): void {
-  const protectedRoots = process.platform === 'win32'
+  const protectedRoots = (process.platform === 'win32'
     ? trustedTextNativeArtifactStateRoots()
-    : [ensureUnixTrustedTextStateRoot(), ensureUnixTrustedTextCoordinationRoot()];
-  const candidateRoots = process.platform === 'win32'
-    ? roots
-    : roots.map(canonicalExistingPath);
+    : [ensureUnixTrustedTextStateRoot(), ensureUnixTrustedTextCoordinationRoot()])
+    .map(canonicalExistingPath);
+  const candidateRoots = roots.map(canonicalExistingPath);
   for (const protectedRoot of protectedRoots) {
     const conflict = candidateRoots.find((root) => (
       sameOrInside(protectedRoot, root) || sameOrInside(root, protectedRoot)
@@ -516,13 +550,16 @@ export function resolveTrustedTextNativeArtifact(
 }
 
 function protectedArtifactDirectory(
-  kind: WindowsNativeArtifactKind,
+  kind: WindowsProtectedArtifactKind,
   sha256: string,
   sandboxReadSid: string | undefined,
+  localUsersReadExecute = false,
 ): string {
-  const accessKey = sandboxReadSid === undefined
-    ? 'host-only'
-    : `sandbox-${createHash('sha256').update(sandboxReadSid.toUpperCase()).digest('hex').slice(0, 16)}`;
+  const accessKey = localUsersReadExecute
+    ? 'local-users'
+    : sandboxReadSid === undefined
+      ? 'host-only'
+      : `sandbox-${createHash('sha256').update(sandboxReadSid.toUpperCase()).digest('hex').slice(0, 16)}`;
   return path.join(
     windowsNativeArtifactCacheRoot(),
     WINDOWS_NATIVE_CACHE_VERSION,
@@ -546,6 +583,7 @@ $hostSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $usersSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
 $sandboxSid = if ([string]::IsNullOrEmpty([string]$payload.sandboxReadSid)) { $null } else { [Security.Principal.SecurityIdentifier]::new([string]$payload.sandboxReadSid) }
+$localUsersReadExecute = [bool]$payload.localUsersReadExecute
 $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
 $none = [Security.AccessControl.PropagationFlags]::None
 $allow = [Security.AccessControl.AccessControlType]::Allow
@@ -564,21 +602,23 @@ function New-FileSecurity {
   $security.SetOwner($hostSid)
   [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($hostSid, [Security.AccessControl.FileSystemRights]::FullControl, $allow))
   [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, [Security.AccessControl.FileSystemRights]::FullControl, $allow))
-  if ($null -ne $sandboxSid) { [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sandboxSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $allow)) }
+  if ($localUsersReadExecute) { [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($usersSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $allow)) }
+  elseif ($null -ne $sandboxSid) { [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sandboxSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $allow)) }
   return $security
 }
 function Assert-NoReparse([string]$candidate) {
   $item = Get-Item -LiteralPath $candidate -Force
   if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse artifact path: $candidate" }
 }
-function Assert-AclShape($acl, [bool]$directory) {
+function Assert-AclShape($acl, [bool]$directory, [string]$candidate) {
   if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) { throw 'artifact ACL is not protected and host-owned' }
   $expected = @{}
   $expected[$hostSid.Value] = [int][Security.AccessControl.FileSystemRights]::FullControl
   $expected[$systemSid.Value] = [int][Security.AccessControl.FileSystemRights]::FullControl
   $readExecuteMask = [int]([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize)
   if ($directory) { $expected[$usersSid.Value] = $readExecuteMask }
-  if (-not $directory -and $null -ne $sandboxSid) { $expected[$sandboxSid.Value] = $readExecuteMask }
+  if (-not $directory -and $localUsersReadExecute) { $expected[$usersSid.Value] = $readExecuteMask }
+  elseif (-not $directory -and $null -ne $sandboxSid) { $expected[$sandboxSid.Value] = $readExecuteMask }
   $observed = @{}
   foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
     if ($rule.IsInherited) { throw 'artifact ACL contains an inherited rule' }
@@ -587,8 +627,8 @@ function Assert-AclShape($acl, [bool]$directory) {
     # surface below remains closed and fully verified.
     if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Deny) { continue }
     $sid = $rule.IdentityReference.Value
-    if (-not $expected.ContainsKey($sid) -or $observed.ContainsKey($sid)) { throw 'artifact ACL contains an unexpected allow rule' }
-    if ([int]$rule.FileSystemRights -ne $expected[$sid]) { throw 'artifact ACL allow mask is invalid' }
+    if (-not $expected.ContainsKey($sid) -or $observed.ContainsKey($sid)) { throw "artifact ACL contains an unexpected allow rule for $sid at $candidate" }
+    if ([int]$rule.FileSystemRights -ne $expected[$sid]) { throw "artifact ACL allow mask is invalid for $sid at $candidate" }
     if ($directory) {
       if ($rule.InheritanceFlags -ne $inherit -or $rule.PropagationFlags -ne $none) { throw 'artifact directory ACL inheritance is invalid' }
     } elseif ($rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None) {
@@ -601,12 +641,12 @@ function Assert-AclShape($acl, [bool]$directory) {
 function Ensure-ProtectedDirectory([string]$candidate) {
   if (Test-Path -LiteralPath $candidate) {
     Assert-NoReparse $candidate
-    Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true
+    Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
     return
   }
   [void][IO.Directory]::CreateDirectory($candidate, (New-DirectorySecurity))
   Assert-NoReparse $candidate
-  Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true
+  Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
 }
 $cacheRoot = [IO.Path]::GetFullPath([string]$payload.cacheRoot)
 $anchor = [IO.Path]::GetFullPath([string]$payload.anchor)
@@ -626,7 +666,10 @@ $hash = [Security.Cryptography.SHA256]::Create()
 try { $actual = ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
 if ($actual -ne ([string]$payload.sha256).ToLowerInvariant()) { throw 'provisioning payload hash mismatch' }
 $destination = [IO.Path]::Combine($destinationDirectory, [string]$payload.file)
-$temporary = [IO.Path]::Combine($destinationDirectory, '.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+# Keep the CreateNew staging name short. PowerShell 5.1 FileStream still hits
+# MAX_PATH on otherwise valid LocalAppData roots before long-path policy is
+# enabled, while GetRandomFileName retains cross-process collision resistance.
+$temporary = [IO.Path]::Combine($destinationDirectory, '.' + [IO.Path]::GetRandomFileName() + '.tmp')
 try {
   if (-not (Test-Path -LiteralPath $destination)) {
     $stream = [IO.FileStream]::new($temporary, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::None, 65536, [IO.FileOptions]::WriteThrough, (New-FileSecurity))
@@ -634,7 +677,7 @@ try {
     try { [IO.File]::Move($temporary, $destination) } catch { if (-not (Test-Path -LiteralPath $destination)) { throw } }
   }
   Assert-NoReparse $destination
-  Assert-AclShape ([IO.File]::GetAccessControl($destination)) $false
+  Assert-AclShape ([IO.File]::GetAccessControl($destination)) $false $destination
   # A sibling Runtime may already be executing this content-addressed image.
   # Verification must share an immutable published file for read/delete or
   # artifact provisioning itself becomes a cross-Runtime admission lock.
@@ -691,6 +734,46 @@ function Assert-ControlSecurity([string]$candidate) {
   }
   foreach ($sid in $expected.Keys) { if (-not $observed.ContainsKey($sid)) { throw 'control directory ACL is missing a required principal' } }
 }
+function Test-ControlOwnerProcessAlive([uint32]$processId) {
+  if ($processId -gt [int]::MaxValue) { return $false }
+  try {
+    return $null -ne [Diagnostics.Process]::GetProcessById([int]$processId)
+  } catch [ArgumentException] {
+    return $false
+  } catch {
+    return $true
+  }
+}
+function Remove-ProvenStaleControlEntries([string]$candidate) {
+  $now = [DateTimeOffset]::UtcNow
+  foreach ($entry in [IO.Directory]::EnumerateFiles($candidate)) {
+    $item = Get-Item -LiteralPath $entry -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 1048576) { continue }
+    $match = [regex]::Match($item.Name, '^windows-(shell|network|terminal)-([0-9]+)-[0-9a-fA-F-]{36}\.json$')
+    if (-not $match.Success) { continue }
+    $ownerPid = 0L
+    if (-not [long]::TryParse($match.Groups[2].Value, [ref]$ownerPid) -or $ownerPid -le 0 -or $ownerPid -gt [uint32]::MaxValue) { continue }
+    if (Test-ControlOwnerProcessAlive ([uint32]$ownerPid)) { continue }
+    $kind = $match.Groups[1].Value
+    $retire = $false
+    if ($kind -eq 'network') {
+      # A network request is deleted as soon as its broker reads it. A dead
+      # creator plus two launch budgets proves this file was never admitted.
+      $retire = $item.LastWriteTimeUtc -lt $now.UtcDateTime.AddMinutes(-1)
+    } else {
+      try { $record = ([IO.File]::ReadAllText($entry) | ConvertFrom-Json) } catch { continue }
+      if ($kind -eq 'shell') {
+        $deadline = 0L
+        $retire = [long]::TryParse([string]$record.operationDeadlineUnixMs, [ref]$deadline) -and $deadline -lt $now.ToUnixTimeMilliseconds()
+      } else {
+        # A terminal record is disposable only after native Job drainage was
+        # durably observed. Unknown or partial records remain fail-closed.
+        $retire = $record.jobDrained -eq $true
+      }
+    }
+    if ($retire) { [IO.File]::Delete($entry) }
+  }
+}
 $cacheRoot = [IO.Path]::GetFullPath([string]$payload.cacheRoot)
 $controlRoot = [IO.Path]::GetFullPath([string]$payload.controlRoot)
 $action = [string]$payload.action
@@ -712,6 +795,7 @@ if ($action -eq 'verify') {
     Assert-NoReparse $controlRoot
     $existing = [IO.Directory]::GetAccessControl($controlRoot)
     if ($existing.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) { throw 'refusing to repair native shell control state not owned by the host' }
+    Remove-ProvenStaleControlEntries $controlRoot
     $entries = [IO.Directory]::EnumerateFileSystemEntries($controlRoot).GetEnumerator()
     try { $notEmpty = $entries.MoveNext() } finally { $entries.Dispose() }
     if ($notEmpty) { throw 'refusing to repair non-empty native shell control state; close KodaX and remove the directory manually' }
@@ -779,10 +863,11 @@ export function repairWindowsSandboxControlDirectory(): string {
 }
 
 function provisionProtectedArtifact(input: {
-  readonly kind: WindowsNativeArtifactKind;
-  readonly entry: WindowsNativeArtifactEntry;
+  readonly kind: WindowsProtectedArtifactKind;
+  readonly entry: Pick<WindowsNativeArtifactEntry, 'file' | 'sha256'>;
   readonly bytes: Buffer;
   readonly sandboxReadSid?: string;
+  readonly localUsersReadExecute?: boolean;
 }): string {
   if (input.sandboxReadSid !== undefined && !/^S-\d+(?:-\d+)+$/i.test(input.sandboxReadSid)) {
     throw new Error('Native artifact sandbox-read SID is invalid.');
@@ -793,6 +878,7 @@ function provisionProtectedArtifact(input: {
     input.kind,
     input.entry.sha256,
     input.sandboxReadSid,
+    input.localUsersReadExecute === true,
   );
   const powershell = path.join(
     process.env.SystemRoot ?? String.raw`C:\Windows`,
@@ -810,6 +896,7 @@ function provisionProtectedArtifact(input: {
       sha256: input.entry.sha256,
       bytes: input.bytes.toString('base64'),
       sandboxReadSid: input.sandboxReadSid ?? '',
+      localUsersReadExecute: input.localUsersReadExecute === true,
     }),
     encoding: 'utf8',
     env: process.env,
@@ -834,6 +921,98 @@ function provisionProtectedArtifact(input: {
     throw new Error('Protected native artifact escaped its physical cache root.');
   }
   return canonicalDestination;
+}
+
+export function provisionWindowsAsrtRunner(
+  bytes: Buffer,
+  expectedSha256: string,
+): { readonly path: string; readonly sha256: string } {
+  if (process.platform !== 'win32') {
+    throw new Error('The protected ASRT Windows runner is unavailable on this platform.');
+  }
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_NATIVE_ARTIFACT_BYTES) {
+    throw new Error('The ASRT Windows runner has an invalid size.');
+  }
+  if (!/^[0-9a-f]{64}$/i.test(expectedSha256)) {
+    throw new Error('The ASRT Windows runner trusted digest is invalid.');
+  }
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== expectedSha256.toLowerCase()) {
+    throw new Error('The ASRT Windows runner does not match its trusted release digest.');
+  }
+  const protectedPath = provisionProtectedArtifact({
+    kind: 'asrtRunner',
+    entry: { file: 'srt-win.exe', sha256 },
+    bytes,
+    localUsersReadExecute: true,
+  });
+  return { path: protectedPath, sha256 };
+}
+
+export function resolveWindowsAsrtRunnerArtifact(
+  moduleUrl: string,
+  sourcePath: string,
+  expectedVersion: string,
+  options: { readonly untrustedWriteRoots?: readonly string[] } = {},
+): ResolvedWindowsAsrtRunnerArtifact {
+  if (process.platform !== 'win32') {
+    throw new Error('The protected ASRT Windows runner is unavailable on this platform.');
+  }
+  assertWindowsNativeArtifactStoreNotDirectlyWritable(options.untrustedWriteRoots ?? []);
+  const trustedManifestText = embeddedNativeManifestText();
+  const sourceDirectory = path.dirname(path.resolve(sourcePath));
+  const candidates = trustedManifestText === undefined
+    ? artifactDirectories(moduleUrl).map((directory) => ({
+        manifestPath: path.join(directory, 'manifest.json'),
+        manifestText: undefined as string | undefined,
+        developmentTrustRoots: [directory, sourceDirectory] as readonly string[],
+      }))
+    : [{
+        manifestPath: '<embedded native manifest>',
+        manifestText: trustedManifestText,
+        developmentTrustRoots: [] as readonly string[],
+      }];
+  const diagnostics: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      for (const trustRoot of candidate.developmentTrustRoots) {
+        assertDevelopmentSourceIsOutsideWriteRoots(
+          trustRoot,
+          options.untrustedWriteRoots ?? [],
+        );
+      }
+      const manifest = parseManifestText(
+        candidate.manifestText ?? fs.readFileSync(candidate.manifestPath, 'utf8'),
+      );
+      if (manifest.asrtRunner.version !== expectedVersion) {
+        throw new Error(
+          `asrtRunner version ${manifest.asrtRunner.version} does not match ${expectedVersion}`,
+        );
+      }
+      const bytes = readVerifiedArtifact(sourcePath, manifest.asrtRunner.sha256);
+      const protectedRunner = provisionWindowsAsrtRunner(bytes, manifest.asrtRunner.sha256);
+      return {
+        ...protectedRunner,
+        developmentTrustRoots: candidate.developmentTrustRoots,
+      };
+    } catch (error: unknown) {
+      diagnostics.push(
+        `${candidate.manifestPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  throw new Error(
+    `A trusted ASRT Windows runner is unavailable. ${diagnostics.join(' | ')}`,
+  );
+}
+
+export function assertWindowsAsrtRunnerTrustOutsideWriteRoots(
+  developmentTrustRoots: readonly string[],
+  untrustedWriteRoots: readonly string[],
+): void {
+  for (const trustRoot of developmentTrustRoots) {
+    assertDevelopmentSourceIsOutsideWriteRoots(trustRoot, untrustedWriteRoots);
+  }
 }
 
 export function resolveWindowsNativeArtifact(
@@ -881,6 +1060,7 @@ export const _internalWindowsNativeArtifacts = {
   assertDevelopmentSourceIsOutsideWriteRoots,
   artifactDirectories,
   parseManifestEntryText,
+  assertManifestAsrtRunner,
   parseManifestText,
   protectedArtifactDirectory,
   sameOrInside,

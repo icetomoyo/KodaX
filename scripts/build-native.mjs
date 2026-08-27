@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -41,6 +42,27 @@ function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+function pinnedAsrtRunner(arch) {
+  const packageName = '@anthropic-ai/sandbox-runtime';
+  const rootPackage = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const asrtVersion = rootPackage.dependencies?.[packageName];
+  if (typeof asrtVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(asrtVersion)) {
+    throw new Error(`${packageName} must be pinned to an exact release version`);
+  }
+  const asrtRoot = path.join(root, 'node_modules', '@anthropic-ai', 'sandbox-runtime');
+  const installed = JSON.parse(readFileSync(path.join(asrtRoot, 'package.json'), 'utf8'));
+  if (installed.version !== asrtVersion) {
+    throw new Error(
+      `${packageName} ${String(installed.version)} does not match pinned version ${asrtVersion}`,
+    );
+  }
+  const asrtRunnerPath = path.join(asrtRoot, 'vendor', 'srt-win', arch, 'srt-win.exe');
+  if (!existsSync(asrtRunnerPath)) {
+    throw new Error(`Missing pinned ASRT runner: ${asrtRunnerPath}`);
+  }
+  return { asrtRunnerPath, asrtVersion };
+}
+
 const targetArgs = rustTarget === undefined ? [] : ['--target', rustTarget];
 runCargo(textCrate, ['build', '--release', '--locked', ...targetArgs]);
 if (process.platform === 'win32') {
@@ -75,6 +97,8 @@ copyFileSync(
   ),
   textOutput,
 );
+const apacheLicenseOutput = path.join(output, 'LICENSE-APACHE.txt');
+copyFileSync(path.join(textCrate, 'LICENSE-APACHE'), apacheLicenseOutput);
 
 const manifest = {
   version: 1,
@@ -85,6 +109,10 @@ const manifest = {
     protocol: 4,
     sha256: sha256(textOutput),
   },
+  legal: [{
+    file: path.basename(apacheLicenseOutput),
+    sha256: sha256(apacheLicenseOutput),
+  }],
 };
 if (process.platform === 'win32') {
   const shellOutput = path.join(output, 'kodax-windows-sandbox.exe');
@@ -94,9 +122,21 @@ if (process.platform === 'win32') {
   );
   manifest.shellSandbox = {
     file: path.basename(shellOutput),
-    protocol: 5,
+    protocol: 7,
     sha256: sha256(shellOutput),
   };
+  const { asrtRunnerPath, asrtVersion } = pinnedAsrtRunner(targetArch);
+  manifest.asrtRunner = {
+    file: 'srt-win.exe',
+    version: asrtVersion,
+    sha256: sha256(asrtRunnerPath),
+  };
+  const noticeOutput = path.join(output, 'NOTICE-windows-sandbox.txt');
+  copyFileSync(path.join(shellCrate, 'NOTICE'), noticeOutput);
+  manifest.legal.push({
+    file: path.basename(noticeOutput),
+    sha256: sha256(noticeOutput),
+  });
 }
 writeFileSync(
   path.join(output, 'manifest.json'),

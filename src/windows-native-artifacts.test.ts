@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,6 +12,7 @@ import {
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
   assertWindowsSandboxControlStateNotDirectlyAccessible,
   ensureUnixTrustedTextStateRoot,
+  provisionWindowsAsrtRunner,
   unixTrustedTextCoordinationRoot,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
@@ -68,6 +71,42 @@ describe('Windows native artifact trust boundary', () => {
     expect(() => check(source, [path.resolve('C:/other-workspace')])).not.toThrow();
   });
 
+  it.runIf(process.platform === 'win32')(
+    'rejects writable junctions into protected native and development state',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-alias-boundary-'));
+      vi.stubEnv('LOCALAPPDATA', path.join(temporary, 'local'));
+      try {
+        const cacheRoot = windowsNativeArtifactCacheRoot();
+        const developmentSource = path.join(temporary, 'development-source');
+        const aliases = path.join(temporary, 'aliases');
+        fs.mkdirSync(cacheRoot, { recursive: true });
+        fs.mkdirSync(developmentSource, { recursive: true });
+        fs.mkdirSync(aliases, { recursive: true });
+        const cacheAlias = path.join(aliases, 'cache');
+        const developmentAlias = path.join(aliases, 'development');
+        fs.symlinkSync(cacheRoot, cacheAlias, 'junction');
+        fs.symlinkSync(developmentSource, developmentAlias, 'junction');
+
+        expect(() => assertWindowsNativeArtifactStoreNotDirectlyWritable([
+          cacheAlias,
+        ])).toThrow(/protected native state/);
+        expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+          allowRead: [],
+          allowWrite: [path.join(cacheAlias, 'control-v1')],
+          denyRead: [],
+          denyWrite: [],
+        })).toThrow(/native shell control state/);
+        expect(() => _internalWindowsNativeArtifacts.assertDevelopmentSourceIsOutsideWriteRoots(
+          developmentSource,
+          [developmentAlias],
+        )).toThrow(/native artifact source overlaps/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('rejects read or write grants on either side of the native control boundary', () => {
     vi.stubEnv('LOCALAPPDATA', path.resolve('C:/kodax-control-test-local'));
     const control = windowsSandboxControlDirectory();
@@ -103,6 +142,82 @@ describe('Windows native artifact trust boundary', () => {
       denyWrite: [],
     })).not.toThrow();
   });
+
+  it.runIf(process.platform === 'win32')(
+    'provisions the ASRT runner outside Agent Home with local Users read-execute only',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-asrt-runner-artifact-'));
+      const agentHome = path.join(temporary, 'private-agent-home');
+      const localAppData = path.join(
+        temporary,
+        'local-app-data-path-length-regression',
+      );
+      fs.mkdirSync(localAppData, { recursive: true });
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      vi.stubEnv('KODAX_HOME', agentHome);
+      try {
+        const bytes = Buffer.from('bounded test executable');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        const runner = provisionWindowsAsrtRunner(bytes, sha256);
+        expect(runner.path.toLowerCase()).toContain(
+          windowsNativeArtifactCacheRoot().toLowerCase(),
+        );
+        expect(runner.path.toLowerCase()).not.toContain(agentHome.toLowerCase());
+        expect(runner.sha256).toMatch(/^[0-9a-f]{64}$/);
+
+        const script = String.raw`
+$acl = [IO.File]::GetAccessControl($env:KODAX_TEST_ARTIFACT)
+$rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
+  [pscustomobject]@{
+    sid = $_.IdentityReference.Value
+    type = [string]$_.AccessControlType
+    mask = [int]$_.FileSystemRights
+    inherited = $_.IsInherited
+  }
+})
+[pscustomobject]@{ protected = $acl.AreAccessRulesProtected; rules = $rules } | ConvertTo-Json -Compress -Depth 4
+`;
+        const powershell = path.join(
+          process.env.SystemRoot ?? String.raw`C:\Windows`,
+          'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+        );
+        const result = spawnSync(powershell, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+        ], {
+          env: { ...process.env, KODAX_TEST_ARTIFACT: runner.path },
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        const acl = JSON.parse(result.stdout.trim()) as {
+          readonly protected: boolean;
+          readonly rules: readonly {
+            readonly sid: string;
+            readonly type: string;
+            readonly mask: number;
+            readonly inherited: boolean;
+          }[];
+        };
+        expect(acl.protected).toBe(true);
+        expect(acl.rules).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            sid: 'S-1-5-32-545',
+            type: 'Allow',
+            inherited: false,
+          }),
+        ]));
+        expect(acl.rules).toHaveLength(3);
+
+        expect(() => provisionWindowsAsrtRunner(
+          Buffer.from('tampered executable with the same package version'),
+          sha256,
+        )).toThrow(/trusted release digest/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe.skipIf(process.platform === 'win32')('Unix native text state boundary', () => {

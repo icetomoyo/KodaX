@@ -100,6 +100,7 @@
     "build:binary:all": "node scripts/build-binary.mjs --all",
     "test": "vitest run",
     "test:native": "node scripts/test-native.mjs",
+    "test:packed-native": "node scripts/test-packed-native.mjs",
     "test:fast": "vitest run -c vitest.fast.config.ts",
     "test:changed": "vitest run --changed",
     "test:unit": "vitest run -c vitest.unit.config.ts",

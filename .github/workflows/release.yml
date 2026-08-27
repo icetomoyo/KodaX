@@ -346,7 +346,7 @@ jobs:
         run: node scripts/release.mjs --skip-build --pack-only
 
       - name: Installed npm trusted text native gate
-        run: node scripts/test-packed-native.mjs
+        run: npm run test:packed-native
 
       - name: Hash npm package
         shell: bash

@@ -212,6 +212,12 @@ async function run() {
     for (const subscription of sandboxSubscriptions) subscription.close();
     for (const subscription of permissionSubscriptions) subscription.close();
   }
+  const executionDenyReceiptCount = countExecutionDenyReceiptsForPath(
+    path.join(homeDir, '.kodax', 'config.json'),
+  );
+  if (executionDenyReceiptCount !== 0) {
+    throw new Error(`Packaged Runtime left ${executionDenyReceiptCount} execution deny receipt(s).`);
+  }
   const preflight = await runtime.status.preflight();
   writeResult({
     ok: true,
@@ -222,11 +228,31 @@ async function run() {
     ordinaryQueryCount,
     parallelSessionCount,
     appliedSandboxCount,
+    executionDenyReceiptCount,
   });
 
   await waitForFile(detachFile, 90_000);
   await runtime.close();
   app.quit();
+}
+
+function countExecutionDenyReceiptsForPath(expectedPath) {
+  const controlDirectory = path.join(
+    process.env.LOCALAPPDATA ?? path.join(homeDir, 'AppData', 'Local'),
+    'KodaXNativeArtifactsV3',
+    'control-v1',
+  );
+  const expected = path.resolve(expectedPath).toLowerCase();
+  return fs.readdirSync(controlDirectory)
+    .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+    .filter((name) => {
+      const receipt = JSON.parse(fs.readFileSync(path.join(controlDirectory, name), 'utf8'));
+      return Array.isArray(receipt.targets) && receipt.targets.some((target) => (
+        target && typeof target.canonicalPath === 'string'
+        && path.resolve(target.canonicalPath).toLowerCase() === expected
+      ));
+    })
+    .length;
 }
 
 function readWindowsSandboxDiagnostics() {
@@ -370,6 +396,7 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
         || !content.includes('runtime-sandbox-ok')
         || !content.includes('profile-toolchain-ok')
         || !content.includes('parallel-barrier-ok')
+        || !content.includes('deny-read-ok')
         || !content.includes('abcdef0')
         || !content.includes('node-realpath-ok')
         || !content.toLowerCase().includes(${JSON.stringify(
@@ -415,6 +442,10 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
             `git rev-parse --short HEAD `
             + `&& node -e "const p=require('node:fs').realpathSync(process.execPath);`
             + `process.stdout.write('node-realpath='+p+'\\nnode-realpath-ok')" `
+            + `&& node -e "const fs=require('node:fs');try{fs.readFileSync(process.argv[1]);`
+            + `process.exit(74)}catch(error){if(!error||!['EACCES','EPERM'].includes(error.code))`
+            + `throw error;process.stdout.write('deny-read-ok\\n')}" `
+            + `"${path.join(configDir, 'config.json')}" `
             + `&& if defined ELECTRON_RUN_AS_NODE `
             + `(exit /b 97) else (dir /b "${path.join(workspaceDir, 'quoted command directory')}" `
             + '&& echo runtime-sandbox-ok)',
@@ -458,14 +489,24 @@ const writeEnvironmentProof = (value) => {
   });
   renameSync(temporary, proofPath);
 };
+const hasOnlyRepairableAclGuardDiagnostics = (diagnostics) => {
+  const blocking = diagnostics.filter(
+    (diagnostic) => !diagnostic.startsWith('[legacy_acl_state_ignored]'),
+  );
+  return blocking.length > 0
+    && blocking.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'));
+};
 try {
 const child = spawnSync(process.env.ComSpec ?? 'cmd.exe', [
   '/d', '/s', '/c',
   'if defined ELECTRON_RUN_AS_NODE (echo present) else (echo absent)',
 ], { encoding: 'utf8', windowsHide: true });
 phase = 'sandbox-doctor';
-const sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
-if (!sandboxDoctor.ready) {
+let sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
+if (
+  !sandboxDoctor.ready
+  && !hasOnlyRepairableAclGuardDiagnostics(sandboxDoctor.diagnostics)
+) {
   throw new Error(
     'Packaged Electron release gate requires a preconfigured Windows sandbox: '
       + JSON.stringify(sandboxDoctor),
@@ -542,6 +583,15 @@ const directPowerShellProbe = await runPhase('direct-powershell-probe', (signal)
       timeoutMs: 60_000,
       signal,
     }));
+if (!sandboxDoctor.ready) {
+  sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
+  if (!sandboxDoctor.ready) {
+    throw new Error(
+      'Cold shell admission did not repair newly materialized persistent ACL guards: '
+        + JSON.stringify(sandboxDoctor),
+    );
+  }
+}
 phase = 'publish';
 writeEnvironmentProof({
   daemon: process.env.ELECTRON_RUN_AS_NODE ?? 'absent',

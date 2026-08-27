@@ -137,9 +137,6 @@ const version =
     : '0.0.0');
 
 import {
-  runKodaX,
-  runManagedTask,
-  KodaXClient,
   KodaXEvents,
   type KodaXOptions,
   KodaXReasoningMode,
@@ -165,6 +162,7 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
+import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
   createMemoryControlPlane,

@@ -114,12 +114,16 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
   it('derives one stable policy capability independent of input ordering and casing', () => {
     const first = windowsSandboxV2PolicyFingerprint({
       generation: 'generation-a',
+      allowRead: ['C:\\Runtime'],
       allowWrite: ['C:\\Work\\Repo', 'D:\\Cache'],
+      denyRead: ['C:\\Secret'],
       denyWrite: ['C:\\Work\\Repo\\.git'],
     });
     const second = windowsSandboxV2PolicyFingerprint({
       generation: 'generation-a',
+      allowRead: ['c:/runtime'],
       allowWrite: ['d:/cache', 'c:/work/repo', 'D:\\CACHE'],
+      denyRead: ['c:/secret'],
       denyWrite: ['c:/work/repo/.git'],
     });
 
@@ -135,24 +139,40 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
   it('changes the capability when the generation or deny policy changes', () => {
     const base = windowsSandboxV2PolicyFingerprint({
       generation: 'generation-a',
+      allowRead: [],
       allowWrite: ['C:\\work'],
+      denyRead: [],
       denyWrite: [],
     });
     const changedGeneration = windowsSandboxV2PolicyFingerprint({
       generation: 'generation-b',
+      allowRead: [],
       allowWrite: ['C:\\work'],
+      denyRead: [],
       denyWrite: [],
     });
     const changedDeny = windowsSandboxV2PolicyFingerprint({
       generation: 'generation-a',
+      allowRead: [],
       allowWrite: ['C:\\work'],
+      denyRead: [],
       denyWrite: ['C:\\work\\locked'],
+    });
+    const changedRead = windowsSandboxV2PolicyFingerprint({
+      generation: 'generation-a',
+      allowRead: ['C:\\runtime'],
+      allowWrite: ['C:\\work'],
+      denyRead: [],
+      denyWrite: [],
     });
 
     expect(windowsSandboxV2PolicyCapabilitySid(changedGeneration)).not.toBe(
       windowsSandboxV2PolicyCapabilitySid(base),
     );
     expect(windowsSandboxV2PolicyCapabilitySid(changedDeny)).not.toBe(
+      windowsSandboxV2PolicyCapabilitySid(base),
+    );
+    expect(windowsSandboxV2PolicyCapabilitySid(changedRead)).not.toBe(
       windowsSandboxV2PolicyCapabilitySid(base),
     );
   });
@@ -183,11 +203,11 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
       terminalRecordPath: 'C:\\control\\windows-terminal.json',
       terminalNonce: '12345678-1234-1234-1234-123456789abc',
-      launchDeadlineUnixMs: 123_456,
+      operationDeadlineUnixMs: 123_456,
     });
 
     expect(request).toMatchObject({
-      protocol: 5,
+      protocol: 7,
       generation,
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
@@ -195,7 +215,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       asrtPrefixArgs: ['exec', '--quiet', '--'],
       targetArgv: ['cmd.exe', '/d', '/s', '/c', 'echo hello'],
       controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
-      launchDeadlineUnixMs: 123_456,
+      operationDeadlineUnixMs: 123_456,
     });
     expect(request.policyFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(request.policyCapabilitySid).toBe(
@@ -216,7 +236,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       denyWrite: [],
       terminalRecordPath: 'C:\\control\\windows-terminal.json',
       terminalNonce: '12345678-1234-1234-1234-123456789abc',
-      launchDeadlineUnixMs: 123_456,
+      operationDeadlineUnixMs: 123_456,
     } as const;
     expect(() => createWindowsSandboxV2RunRequest({
       ...base,
@@ -250,7 +270,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     };
     expect(length).toBe(frame.byteLength - 4);
     expect(message).toEqual({
-      protocol: 5,
+      protocol: 7,
       targetEnvironment: [
         { name: 'Path', value: 'C:\\bin' },
         { name: 'SECRET', value: 'sentinel' },

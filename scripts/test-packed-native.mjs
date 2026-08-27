@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,28 @@ if (tarballs.length !== 1) {
 
 const installation = mkdtempSync(path.join(os.tmpdir(), 'kodax-packed-native-'));
 try {
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const installed = spawnSync(npm, [
+  const configuredNpmCli = process.env.npm_execpath?.trim();
+  const bundledNpmCli = path.join(
+    path.dirname(process.execPath),
+    'node_modules',
+    'npm',
+    'bin',
+    'npm-cli.js',
+  );
+  const prefixedNpmCli = path.join(
+    path.dirname(path.dirname(process.execPath)),
+    'lib',
+    'node_modules',
+    'npm',
+    'bin',
+    'npm-cli.js',
+  );
+  const npmCli = [configuredNpmCli, bundledNpmCli, prefixedNpmCli]
+    .find((candidate) => candidate !== undefined && existsSync(candidate));
+  if (npmCli === undefined) {
+    throw new Error('The packed native gate requires the npm CLI JavaScript entry.');
+  }
+  const installed = spawnSync(process.execPath, [npmCli,
     'install',
     '--prefix', installation,
     '--ignore-scripts',

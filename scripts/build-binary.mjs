@@ -32,6 +32,7 @@
  */
 
 import { execFile, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
@@ -129,6 +130,20 @@ function readVersion() {
     throw new Error('Root package.json has no "version" field');
   }
   return pkg.version;
+}
+
+function sha256(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+function pinnedAsrtVersion() {
+  const packageName = '@anthropic-ai/sandbox-runtime';
+  const rootPackage = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const version = rootPackage.dependencies?.[packageName];
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`${packageName} must be pinned to an exact release version.`);
+  }
+  return version;
 }
 
 function ensureBunAvailable() {
@@ -367,18 +382,7 @@ function buildOne(target, version) {
   // src/sandbox-runtime.ts reads this sidecar next to the executable instead.
   if (target.startsWith('win-')) {
     const srtWinArch = target.endsWith('x64') ? 'x64' : 'arm64';
-    const srtWinSrc = join(
-      ROOT, 'node_modules', '@anthropic-ai', 'sandbox-runtime',
-      'vendor', 'srt-win', srtWinArch, 'srt-win.exe',
-    );
-    if (!existsSync(srtWinSrc)) {
-      throw new Error(`Missing ${srtWinSrc}. Run 'npm install' first.`);
-    }
-    const srtWinDir = join(outDir, 'vendor', 'srt-win', srtWinArch);
-    mkdirSync(srtWinDir, { recursive: true });
-    cpSync(srtWinSrc, join(srtWinDir, 'srt-win.exe'));
-
-    const nativeArch = target.endsWith('x64') ? 'x64' : 'arm64';
+    const nativeArch = srtWinArch;
     const nativeSrc = join(ROOT, 'dist', 'native', `win32-${nativeArch}`);
     if (!existsSync(nativeSrc)) {
       throw new Error(
@@ -388,12 +392,45 @@ function buildOne(target, version) {
     }
     for (const artifact of [
       'manifest.json',
+      'LICENSE-APACHE.txt',
+      'NOTICE-windows-sandbox.txt',
       'kodax-windows-text-transaction.node',
       'kodax-windows-sandbox.exe',
     ]) {
       if (!existsSync(join(nativeSrc, artifact))) {
         throw new Error(`Missing Windows native artifact: ${join(nativeSrc, artifact)}.`);
       }
+    }
+    const manifest = JSON.parse(readFileSync(join(nativeSrc, 'manifest.json'), 'utf8'));
+    if (manifest.version !== 1 || manifest.platform !== 'win32' || manifest.arch !== nativeArch) {
+      throw new Error(`Windows native manifest does not match target ${nativeArch}.`);
+    }
+    const asrtRunner = manifest.asrtRunner;
+    const srtWinSrc = join(
+      ROOT, 'node_modules', '@anthropic-ai', 'sandbox-runtime',
+      'vendor', 'srt-win', srtWinArch, 'srt-win.exe',
+    );
+    if (!existsSync(srtWinSrc)) {
+      throw new Error(`Missing ${srtWinSrc}. Run 'npm install' first.`);
+    }
+    const installedAsrt = JSON.parse(readFileSync(join(
+      ROOT, 'node_modules', '@anthropic-ai', 'sandbox-runtime', 'package.json',
+    ), 'utf8'));
+    if (
+      asrtRunner?.file !== 'srt-win.exe'
+      || asrtRunner.version !== pinnedAsrtVersion()
+      || installedAsrt.version !== asrtRunner.version
+      || !/^[0-9a-f]{64}$/.test(asrtRunner.sha256 ?? '')
+      || sha256(srtWinSrc) !== asrtRunner.sha256
+    ) {
+      throw new Error('Pinned ASRT runner is missing or does not match the native manifest.');
+    }
+    const srtWinDir = join(outDir, 'vendor', 'srt-win', srtWinArch);
+    mkdirSync(srtWinDir, { recursive: true });
+    const copiedAsrtRunner = join(srtWinDir, 'srt-win.exe');
+    cpSync(srtWinSrc, copiedAsrtRunner);
+    if (sha256(copiedAsrtRunner) !== asrtRunner.sha256) {
+      throw new Error('The copied ASRT runner hash does not match its manifest.');
     }
     const nativeDst = join(outDir, 'vendor', 'kodax-native', `win32-${nativeArch}`);
     mkdirSync(nativeDst, { recursive: true });
@@ -403,7 +440,11 @@ function buildOne(target, version) {
     const nativeArch = target.endsWith('x64') ? 'x64' : 'arm64';
     const nativeDirectory = `${nativePlatform}-${nativeArch}`;
     const nativeSrc = join(ROOT, 'dist', 'native', nativeDirectory);
-    for (const artifact of ['manifest.json', 'kodax-text-transaction.node']) {
+    for (const artifact of [
+      'manifest.json',
+      'LICENSE-APACHE.txt',
+      'kodax-text-transaction.node',
+    ]) {
       if (!existsSync(join(nativeSrc, artifact))) {
         throw new Error(
           `Missing ${join(nativeSrc, artifact)}. Build the trusted text native `

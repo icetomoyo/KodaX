@@ -248,8 +248,45 @@ describe('packaged Electron daemon environment probe', () => {
     }
   });
 
-  it('fails closed on a not-ready doctor without starting a command', async () => {
+  it('lets cold shell admission repair newly materialized persistent ACL guards', async () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'kodax-electron-probe-doctor-'));
+    const proofPath = path.join(temporaryRoot, 'environment-proof.json');
+    let commandCalls = 0;
+    let doctorCalls = 0;
+    try {
+      const extensionPath = generateExtension(temporaryRoot, proofPath);
+      probeGlobal.__kodaxElectronProbeHarness = {
+        doctor: async () => {
+          doctorCalls += 1;
+          return doctorCalls === 1
+            ? {
+                ready: false,
+                diagnostics: ['[acl_guards_missing] setup required'],
+                setupRequired: true,
+              }
+            : { ready: true, diagnostics: [], setupRequired: false };
+        },
+        toolBash: async () => {
+          commandCalls += 1;
+          return 'Exit: 0\nshell-probe-ok\nnode-mode=absent\nprofile-toolchain-ok';
+        },
+        runSandboxed: async () => {
+          commandCalls += 1;
+          return completedProbe('repaired');
+        },
+      };
+      await activateExtension(extensionPath);
+      await waitUntil(() => existsSync(proofPath));
+      expect(commandCalls).toBe(3);
+      expect(doctorCalls).toBe(2);
+      expect(readFileSync(proofPath, 'utf8')).not.toContain('probeError');
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  it('fails closed on a non-guard doctor failure without starting a command', async () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'kodax-electron-probe-doctor-failed-'));
     const proofPath = path.join(temporaryRoot, 'environment-proof.json');
     let commandCalls = 0;
     try {
@@ -257,7 +294,7 @@ describe('packaged Electron daemon environment probe', () => {
       probeGlobal.__kodaxElectronProbeHarness = {
         doctor: async () => ({
           ready: false,
-          diagnostics: ['[acl_guards_missing] setup required'],
+          diagnostics: ['sandbox account generation does not match'],
           setupRequired: true,
         }),
         toolBash: async () => {

@@ -55,6 +55,43 @@ fn run() -> anyhow::Result<u32> {
             )?;
             Ok(0)
         }
+        "__persistent-deny-read" => {
+            let action = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Persistent denyRead action is required"))?;
+            let sandbox_user_sid = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Sandbox user SID is required"))?;
+            let sandbox_group_sid = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Sandbox group SID is required"))?;
+            if args.next().is_some() {
+                anyhow::bail!("Persistent denyRead accepts action, user SID, and group SID");
+            }
+            let paths: Vec<String> = serde_json::from_reader(std::io::stdin())
+                .map_err(|error| anyhow::anyhow!("Invalid persistent denyRead request: {error}"))?;
+            if paths.len() > 256 || paths.iter().any(|path| path.is_empty() || path.contains('\0')) {
+                anyhow::bail!("Persistent denyRead request contains invalid paths");
+            }
+            let user_sid = sandbox_user_sid
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Sandbox user SID is not Unicode"))?;
+            let group_sid = sandbox_group_sid
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Sandbox group SID is not Unicode"))?;
+            match action.to_string_lossy().as_ref() {
+                "verify" => {
+                    let missing = acl::verify_persistent_deny_read(&paths, group_sid)?;
+                    println!("{}", serde_json::to_string(&missing)?);
+                }
+                "install" => {
+                    acl::ensure_persistent_deny_read(&paths, user_sid, group_sid)?;
+                    println!("[]");
+                }
+                _ => anyhow::bail!("Unknown persistent denyRead action"),
+            }
+            Ok(0)
+        }
         "__host" => {
             let value = args
                 .next()
@@ -63,6 +100,21 @@ fn run() -> anyhow::Result<u32> {
                 anyhow::bail!("Windows sandbox host accepts one request path");
             }
             host::run(std::path::Path::new(&value))
+        }
+        "__controller" => {
+            let broker_pid = args
+                .next()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Windows sandbox controller broker PID is required")
+                })?
+                .to_string_lossy()
+                .parse::<u32>()
+                .map_err(|_| anyhow::anyhow!("Windows sandbox controller broker PID is invalid"))?;
+            if args.next().is_some() {
+                anyhow::bail!("Windows sandbox controller accepts one broker PID");
+            }
+            win::run_controller_pipe_server(broker_pid)?;
+            Ok(0)
         }
         "__runner" => {
             let control_pipe_name = args.next().ok_or_else(|| {

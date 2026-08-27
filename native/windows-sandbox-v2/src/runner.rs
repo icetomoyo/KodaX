@@ -266,11 +266,18 @@ pub fn run(control_pipe_name: &str, event_pipe_name: &str, host_sid: &str) -> Re
     if spawn.target_argv.first().is_none_or(String::is_empty)
         || spawn.cwd.is_empty()
         || !spawn.policy_capability_sid.starts_with("S-1-5-21-")
+        || spawn
+            .filesystem_capability_sids
+            .iter()
+            .any(|sid| !sid.starts_with("S-1-5-21-"))
     {
         bail!("Windows sandbox Spawn frame was incomplete");
     }
 
-    let token = match restricted_policy_token(&spawn.policy_capability_sid) {
+    let token = match restricted_policy_token(
+        &spawn.policy_capability_sid,
+        &spawn.filesystem_capability_sids,
+    ) {
         Ok(token) => token,
         Err(error) => {
             write_json(

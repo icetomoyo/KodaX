@@ -4,18 +4,24 @@ import {
   type ChildProcess,
 } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { createConnection, createServer, type Server } from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { DEFAULT_WINDOWS_PROXY_PORT_RANGE } from '@anthropic-ai/sandbox-runtime';
 
 import {
   assertTrustedTextMutationPolicy,
+  toolEdit,
+  toolInsertAfterAnchor,
+  toolUndo,
   toolWrite,
   type KodaXToolExecutionContext,
 } from '@kodax-ai/coding';
+import { toolMultiEdit } from '../packages/coding/src/tools/multi-edit.js';
 
 import {
   doctorSandboxRuntime,
@@ -66,6 +72,28 @@ interface RuntimeLaunch {
   readonly diagnostics: () => string;
 }
 
+type RuntimeProbeRecord =
+  | { readonly kind: 'result'; readonly result: KodaXSandboxRunResult }
+  | { readonly kind: 'error'; readonly message: string };
+
+interface RuntimeRecoveryProbe {
+  readonly readyPath: string;
+  readonly stopPath: string;
+}
+
+function executionDenyReceiptContainsPath(payload: string, expectedPath: string): boolean {
+  const value = JSON.parse(payload) as unknown;
+  if (value === null || typeof value !== 'object') return false;
+  const targets = Reflect.get(value, 'targets');
+  if (!Array.isArray(targets)) return false;
+  const expected = path.resolve(expectedPath).toLowerCase();
+  return targets.some((target) => {
+    if (target === null || typeof target !== 'object') return false;
+    const candidate = Reflect.get(target, 'canonicalPath');
+    return typeof candidate === 'string' && path.resolve(candidate).toLowerCase() === expected;
+  });
+}
+
 const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, milliseconds);
 });
@@ -76,6 +104,112 @@ async function createWindowsV2TestRoot(prefix: string): Promise<string> {
     ?? os.tmpdir();
   await mkdir(base, { recursive: true });
   return mkdtemp(path.join(base, prefix));
+}
+
+async function protectPrivateTestDirectory(directory: string): Promise<void> {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$path = $env:KODAX_PRIVATE_TEST_PATH
+$acl = [Security.AccessControl.DirectorySecurity]::new()
+$acl.SetAccessRuleProtection($true, $false)
+$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$propagation = [Security.AccessControl.PropagationFlags]::None
+$allow = [Security.AccessControl.AccessControlType]::Allow
+$current = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+[void]$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($current, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $propagation, $allow))
+[void]$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($system, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $propagation, $allow))
+[IO.Directory]::SetAccessControl($path, $acl)
+`;
+  await execFile(windowsPowerShell(), [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], {
+    env: { ...process.env, KODAX_PRIVATE_TEST_PATH: directory },
+    windowsHide: true,
+  });
+}
+
+async function occupyLoopbackPort(port: number): Promise<Server | undefined> {
+  const server = createServer();
+  return new Promise<Server | undefined>((resolve, reject) => {
+    const onError = (error: NodeJS.ErrnoException): void => {
+      server.close();
+      if (error.code === 'EADDRINUSE') resolve(undefined);
+      else reject(error);
+    };
+    server.once('error', onError);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', onError);
+      resolve(server);
+    });
+  });
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => {
+    if (error === undefined) resolve();
+    else reject(error);
+  }));
+}
+
+async function readControllerPipe(child: ChildProcess): Promise<string> {
+  const stdout = child.stdout;
+  if (stdout === null) throw new Error('Native controller stdout pipe was not created.');
+  return new Promise<string>((resolve, reject) => {
+    let buffered = '';
+    const timer = setTimeout(() => finish(new Error('Native controller readiness timed out.')), 10_000);
+    const finish = (error?: Error, value?: string): void => {
+      clearTimeout(timer);
+      stdout.off('data', onData);
+      child.off('exit', onExit);
+      if (error === undefined && value !== undefined) resolve(value);
+      else reject(error ?? new Error('Native controller readiness was empty.'));
+    };
+    const onData = (chunk: Buffer | string): void => {
+      buffered += chunk.toString();
+      const newline = buffered.indexOf('\n');
+      if (newline >= 0) finish(undefined, buffered.slice(0, newline).trim());
+    };
+    const onExit = (code: number | null): void => finish(new Error(
+      `Native controller exited before readiness with code ${String(code)}.`,
+    ));
+    stdout.on('data', onData);
+    child.once('exit', onExit);
+  });
+}
+
+async function connectHostPipe(pipeName: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = createConnection(pipeName);
+        let settled = false;
+        const finish = (error?: Error): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          socket.destroy();
+          if (error === undefined) resolve();
+          else reject(error);
+        };
+        const timer = setTimeout(
+          () => finish(new Error('Host controller-pipe connection timed out.')),
+          Math.max(1, deadline - Date.now()),
+        );
+        socket.once('connect', () => finish());
+        socket.once('error', finish);
+      });
+      return;
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'ENOENT' && code !== 'EBUSY' && code !== 'EPIPE') || Date.now() >= deadline) {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
 }
 
 function assertExpectedWindowsPolicyWriteDenial(
@@ -173,6 +307,24 @@ function windowsPowerShell(): string {
     'v1.0',
     'powershell.exe',
   );
+}
+
+async function windowsDaclIsProtected(file: string): Promise<boolean> {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$acl = [IO.File]::GetAccessControl($env:KODAX_ACL_TEST_PATH)
+[Console]::Out.Write($acl.AreAccessRulesProtected)
+`;
+  const { stdout } = await execFile(windowsPowerShell(), [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], {
+    env: { ...process.env, KODAX_ACL_TEST_PATH: file },
+    windowsHide: true,
+  });
+  if (stdout.trim() === 'True') return true;
+  if (stdout.trim() === 'False') return false;
+  throw new Error(`Unexpected Windows DACL protection value: ${JSON.stringify(stdout)}`);
 }
 
 function parseWindowsProcess(value: unknown): WindowsProcessIdentity {
@@ -300,6 +452,34 @@ async function waitForNativeHost(
   throw new Error(`Native sandbox host was not found below Runtime ${runtimePid}: ${runtime.diagnostics()}`);
 }
 
+async function waitForNativeController(
+  runtimePid: number,
+  runtime: RuntimeLaunch,
+): Promise<{ readonly broker: WindowsProcessIdentity; readonly controller: WindowsProcessIdentity }> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const children = await queryWindowsProcesses(`ParentProcessId = ${runtimePid}`);
+    const brokers = children.filter((candidate) => (
+      /sandbox-network-broker(?:-entry\.ts|\.js)(?:[\s"]|$)/i.test(candidate.commandLine)
+    ));
+    for (const broker of brokers) {
+      const descendants = await queryWindowsProcesses(`ParentProcessId = ${broker.pid}`);
+      const controller = descendants.find((candidate) => (
+        candidate.name.toLowerCase() === 'kodax-windows-sandbox.exe'
+        && /(?:^|[\s"])__controller(?:[\s"]|$)/i.test(candidate.commandLine)
+      ));
+      if (controller !== undefined) return { broker, controller };
+    }
+    if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
+      throw new Error(`Sandbox Runtime exited before controller discovery: ${runtime.diagnostics()}`);
+    }
+    await delay(100);
+  }
+  throw new Error(
+    `Native sandbox controller was not found below Runtime ${runtimePid}: ${runtime.diagnostics()}`,
+  );
+}
+
 function sameProcess(left: WindowsProcessIdentity, right: WindowsProcessIdentity): boolean {
   return left.pid === right.pid && left.created === right.created;
 }
@@ -347,7 +527,7 @@ async function waitForExactProcessesToExit(
     await delay(100);
   }
   throw new Error(`Sandbox processes did not drain: ${remaining.map((identity) => (
-    `${identity.name}:${identity.pid}`
+    `${identity.name}:${identity.pid} parent=${identity.parentPid} argv=${identity.commandLine}`
   )).join(', ')}`);
 }
 
@@ -360,6 +540,8 @@ async function terminateIfStillExact(identity: WindowsProcessIdentity | undefine
 function launchSandboxRuntime(
   root: string,
   markerPath: string,
+  recovery?: RuntimeRecoveryProbe,
+  denyRead: readonly string[] = [],
 ): RuntimeLaunch {
   const sandboxRuntimeUrl = new URL('../src/sandbox-runtime.ts', import.meta.url).href;
   const targetScript = [
@@ -372,27 +554,51 @@ function launchSandboxRuntime(
   ].join(';');
   const runtimeScript = [
     `import { runKodaXSandboxed } from ${JSON.stringify(sandboxRuntimeUrl)}`,
-    'const input=JSON.parse(Buffer.from(process.argv[1],"base64url").toString("utf8"))',
-    'try {',
-    '  const result=await runKodaXSandboxed(input)',
-    '  process.stdout.write("TERMINAL:"+Buffer.from(JSON.stringify({kind:"result",result})).toString("base64url"))',
-    '} catch(error) {',
-    '  const message=error instanceof Error?error.message:String(error)',
-    '  process.stdout.write("TERMINAL:"+Buffer.from(JSON.stringify({kind:"error",message})).toString("base64url"))',
-    '}',
+    'const decode=value=>JSON.parse(Buffer.from(value,"base64url").toString("utf8"))',
+    'const encode=value=>Buffer.from(JSON.stringify(value)).toString("base64url")',
+    'const run=async input=>{try{return {kind:"result",result:await runKodaXSandboxed(input)}}catch(error){return {kind:"error",message:error instanceof Error?error.message:String(error)}}}',
+    'const first=await run(decode(process.argv[1]))',
+    'if(process.argv[2]===undefined){process.stdout.write("TERMINAL:"+encode(first))}else{process.stdout.write("FIRST:"+encode(first)+"\\n");const second=await run(decode(process.argv[2]));process.stdout.write("SECOND:"+encode(second))}',
   ].join(';');
   const request = Buffer.from(JSON.stringify({
     command: process.execPath,
     args: ['-e', targetScript, markerPath],
     cwd: root,
-    filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+    filesystem: { allowRead: [root], allowWrite: [root], denyRead, denyWrite: [] },
     network: { mode: 'allow' },
     timeoutMs: 60_000,
     inheritEnvironment: true,
   }), 'utf8').toString('base64url');
+  const recoveryScript = [
+    'const fs=require("node:fs")',
+    'fs.writeFileSync(process.argv[1],"ready")',
+    'const wait=new Int32Array(new SharedArrayBuffer(4))',
+    'const deadline=Date.now()+20000',
+    'while(!fs.existsSync(process.argv[2])&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+    'if(!fs.existsSync(process.argv[2])) process.exit(41)',
+  ].join(';');
+  const recoveryRequest = recovery === undefined
+    ? undefined
+    : Buffer.from(JSON.stringify({
+        command: process.execPath,
+        args: ['-e', recoveryScript, recovery.readyPath, recovery.stopPath],
+        cwd: root,
+        filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+        network: { mode: 'allow' },
+        timeoutMs: 30_000,
+        inheritEnvironment: true,
+      }), 'utf8').toString('base64url');
   const child = spawn(
     process.execPath,
-    ['--import', 'tsx', '--input-type=module', '-e', runtimeScript, request],
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      runtimeScript,
+      request,
+      ...(recoveryRequest === undefined ? [] : [recoveryRequest]),
+    ],
     {
       cwd: process.cwd(),
       env: process.env,
@@ -413,6 +619,43 @@ function launchSandboxRuntime(
     completion,
     diagnostics: () => JSON.stringify({ stdout, stderr }),
   };
+}
+
+function decodeRuntimeProbeRecord(output: string, prefix: 'FIRST' | 'SECOND'): RuntimeProbeRecord {
+  const encoded = new RegExp(`${prefix}:([A-Za-z0-9_-]+)`).exec(output)?.[1];
+  if (encoded === undefined) {
+    throw new Error(`Sandbox Runtime omitted its ${prefix.toLowerCase()} record: ${output}`);
+  }
+  const value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as unknown;
+  if (value === null || typeof value !== 'object') {
+    throw new Error(`Sandbox Runtime returned an invalid ${prefix.toLowerCase()} record.`);
+  }
+  const kind = Reflect.get(value, 'kind');
+  if (kind === 'error' && typeof Reflect.get(value, 'message') === 'string') {
+    return { kind, message: Reflect.get(value, 'message') as string };
+  }
+  const result = Reflect.get(value, 'result');
+  if (kind === 'result' && result !== null && typeof result === 'object') {
+    return { kind, result: result as KodaXSandboxRunResult };
+  }
+  throw new Error(`Sandbox Runtime returned an invalid ${prefix.toLowerCase()} outcome.`);
+}
+
+async function waitForRecoveryReady(file: string, runtime: RuntimeLaunch): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    try {
+      await stat(file);
+      return;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
+      throw new Error(`Sandbox Runtime exited before its recovery target: ${runtime.diagnostics()}`);
+    }
+    await delay(50);
+  }
+  throw new Error(`Sandbox Runtime recovery target did not become ready: ${runtime.diagnostics()}`);
 }
 
 async function waitForRuntimeCompletion(runtime: RuntimeLaunch): Promise<RuntimeCompletion> {
@@ -472,6 +715,252 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     expect(result).toMatchObject({ status: 'completed', sandboxed: true, exitCode: 0 });
   }, 45_000);
 
+  it('lets every trusted text tool replace a file created by the sandbox account', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-sandbox-owned-text-');
+    roots.push(root);
+    const target = path.join(root, 'sandbox-owned.md');
+    const createResult = await runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', 'require("node:fs").writeFileSync(process.argv[1], "sandbox-owned")', target],
+      cwd: root,
+      filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+      network: { mode: 'deny' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+    });
+    expect(createResult).toMatchObject({ status: 'completed', sandboxed: true, exitCode: 0 });
+
+    const textHost = createWindowsTrustedTextMutationHost(
+      () => [root],
+      assertTrustedTextMutationPolicy,
+    );
+    const context: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: root,
+      gitRoot: root,
+      trustedTextMutationHost: textHost,
+    };
+    await expect(toolWrite({ path: target, content: 'trusted-host' }, context))
+      .resolves.toContain('File updated');
+    await expect(toolEdit({
+      path: target,
+      old_string: 'trusted-host',
+      new_string: 'trusted-edit',
+    }, context)).resolves.toContain('File edited');
+    await expect(toolMultiEdit({
+      path: target,
+      edits: [{ old_string: 'trusted-edit', new_string: 'trusted-anchor' }],
+    }, context)).resolves.toContain('File edited');
+    await expect(toolInsertAfterAnchor({
+      path: target,
+      anchor: 'trusted-anchor',
+      content: 'trusted-insert',
+    }, context)).resolves.toContain('Content inserted');
+    await expect(readFile(target, 'utf8')).resolves.toBe('trusted-anchor\ntrusted-insert');
+    await expect(toolUndo({}, context)).resolves.toContain('Restored');
+    await expect(readFile(target, 'utf8')).resolves.toBe('trusted-anchor');
+  }, 60_000);
+
+  it('self-heals a sandbox-owned file with stale inherited ACLs without disabling inheritance', async () => {
+    const parent = await createWindowsV2TestRoot('kodax-v2-stale-inherited-text-');
+    roots.push(parent);
+    const sourceRoot = path.join(parent, 'source');
+    const targetRoot = path.join(parent, 'target');
+    await Promise.all([mkdir(sourceRoot), mkdir(targetRoot)]);
+    const source = path.join(sourceRoot, 'sandbox-owned.md');
+    const target = path.join(targetRoot, 'sandbox-owned.md');
+    const createResult = await runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', 'require("node:fs").writeFileSync(process.argv[1], "sandbox-owned")', source],
+      cwd: sourceRoot,
+      filesystem: {
+        allowRead: [sourceRoot], allowWrite: [sourceRoot], denyRead: [], denyWrite: [],
+      },
+      network: { mode: 'deny' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+    });
+    expect(createResult).toMatchObject({ status: 'completed', sandboxed: true, exitCode: 0 });
+    await execFile('icacls.exe', [source, '/setintegritylevel', 'L'], {
+      windowsHide: true,
+    });
+    await rename(source, target);
+    expect(await windowsDaclIsProtected(target)).toBe(false);
+
+    const textHost = createWindowsTrustedTextMutationHost(
+      () => [targetRoot],
+      assertTrustedTextMutationPolicy,
+    );
+    const context: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: targetRoot,
+      gitRoot: targetRoot,
+      trustedTextMutationHost: textHost,
+    };
+    await expect(toolWrite({ path: target, content: 'trusted-host' }, context))
+      .resolves.toContain('File updated');
+    await expect(readFile(target, 'utf8')).resolves.toBe('trusted-host');
+    expect(await windowsDaclIsProtected(target)).toBe(false);
+  }, 60_000);
+
+  it('reaches private read/write roots without exposing their parent or siblings', async () => {
+    const parent = await createWindowsV2TestRoot('kodax-v2-private-parent-');
+    roots.push(parent);
+    await protectPrivateTestDirectory(parent);
+    const workspace = path.join(parent, 'workspace');
+    const readOnly = path.join(parent, 'read-only');
+    const sibling = path.join(parent, 'sibling');
+    await Promise.all([mkdir(workspace), mkdir(readOnly), mkdir(sibling)]);
+    await Promise.all([
+      writeFile(path.join(readOnly, 'allowed.txt'), 'read-only-ok', 'utf8'),
+      writeFile(path.join(sibling, 'secret.txt'), 'sibling-secret', 'utf8'),
+    ]);
+    const probe = [
+      'const fs=require("node:fs")',
+      'const path=require("node:path")',
+      'const [workspace,readOnly,parent,sibling]=process.argv.slice(1)',
+      'if(fs.realpathSync(workspace).toLowerCase()!==workspace.toLowerCase()) process.exit(61)',
+      'if(fs.readFileSync(path.join(readOnly,"allowed.txt"),"utf8")!=="read-only-ok") process.exit(62)',
+      'fs.writeFileSync(path.join(workspace,"written.txt"),"workspace-ok")',
+      'const denied=(operation)=>{try{operation();return false}catch(error){return error&&["EACCES","EPERM"].includes(error.code)}}',
+      'if(!denied(()=>fs.readdirSync(parent))) process.exit(63)',
+      'if(!denied(()=>fs.readFileSync(path.join(sibling,"secret.txt")))) process.exit(64)',
+      'if(!denied(()=>fs.writeFileSync(path.join(sibling,"escape.txt"),"escape"))) process.exit(65)',
+      'process.stdout.write("private-parent-policy-ok")',
+    ].join(';');
+    const result = await runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', probe, workspace, readOnly, parent, sibling],
+      cwd: workspace,
+      filesystem: {
+        allowRead: [workspace, readOnly],
+        allowWrite: [workspace],
+        denyRead: [],
+        denyWrite: [],
+      },
+      network: { mode: 'deny' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+    });
+
+    if (result.status !== 'completed') {
+      throw new Error(`Private-parent policy smoke unavailable: ${JSON.stringify(result)}`);
+    }
+    expect(result).toMatchObject({
+      status: 'completed',
+      sandboxed: true,
+      exitCode: 0,
+      stdout: 'private-parent-policy-ok',
+    });
+    await expect(readFile(path.join(workspace, 'written.txt'), 'utf8')).resolves.toBe('workspace-ok');
+    await expect(stat(path.join(sibling, 'escape.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 60_000);
+
+  it('enforces denyRead without blocking an overlapping allowed workspace', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-deny-read-');
+    roots.push(root);
+    const workspace = path.join(root, 'workspace');
+    const secret = path.join(root, 'secret');
+    await Promise.all([mkdir(workspace), mkdir(secret)]);
+    await writeFile(path.join(secret, 'value.txt'), 'host-only-secret', 'utf8');
+    const probe = [
+      'const fs=require("node:fs")',
+      'const path=require("node:path")',
+      'const [workspace,secret]=process.argv.slice(1)',
+      'fs.writeFileSync(path.join(workspace,"allowed.txt"),"allowed")',
+      'try{fs.readFileSync(path.join(secret,"value.txt"));process.exit(71)}catch(error){if(!error||!["EACCES","EPERM"].includes(error.code))throw error}',
+      'process.stdout.write("deny-read-ok")',
+    ].join(';');
+    const result = await runKodaXSandboxed({
+      command: process.execPath,
+      args: ['-e', probe, workspace, secret],
+      cwd: workspace,
+      filesystem: {
+        allowRead: [root],
+        allowWrite: [workspace],
+        denyRead: [secret],
+        denyWrite: [],
+      },
+      network: { mode: 'deny' },
+      timeoutMs: 30_000,
+      inheritEnvironment: true,
+    });
+
+    if (result.status !== 'completed') {
+      throw new Error(`denyRead policy smoke unavailable: ${JSON.stringify(result)}`);
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`denyRead policy smoke failed: ${JSON.stringify(result)}`);
+    }
+    expect(result).toMatchObject({
+      status: 'completed',
+      sandboxed: true,
+      exitCode: 0,
+      stdout: 'deny-read-ok',
+    });
+    await expect(readFile(path.join(workspace, 'allowed.txt'), 'utf8')).resolves.toBe('allowed');
+  }, 60_000);
+
+  it('keeps the shared controller pipe host-only under restricted connection pressure', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-controller-acl-');
+    roots.push(root);
+    const shell = resolveWindowsSandboxV2Executable();
+    const controller = spawn(shell.path, ['__controller', String(process.pid)], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const controllerCompletion = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => controller.once('close', (code, signal) => resolve({ code, signal })));
+    let controllerStderr = '';
+    controller.stderr?.on('data', (chunk: Buffer | string) => {
+      controllerStderr += chunk.toString();
+    });
+    try {
+      const controllerPipe = await readControllerPipe(controller);
+      expect(controllerPipe).toMatch(/^\\\\\.\\pipe\\kodax-v2-\d+-[0-9a-f-]{36}$/i);
+      await Promise.all(Array.from({ length: 16 }, () => connectHostPipe(controllerPipe)));
+
+      const pressureScript = [
+        'const net=require("node:net")',
+        'const pipe=process.argv[1]',
+        'let pending=64,connected=0',
+        'const finish=()=>{if(--pending===0){process.stdout.write(String(connected));process.exit(connected===0?0:42)}}',
+        'for(let i=0;i<64;i+=1){',
+        ' const socket=net.createConnection(pipe)',
+        ' const timer=setTimeout(()=>{socket.destroy();finish()},2000)',
+        ' socket.once("connect",()=>{clearTimeout(timer);connected+=1;socket.destroy();finish()})',
+        ' socket.once("error",()=>{clearTimeout(timer);finish()})',
+        '}',
+      ].join(';');
+      const pressure = await runKodaXSandboxed({
+        command: process.execPath,
+        args: ['-e', pressureScript, controllerPipe],
+        cwd: root,
+        filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+        network: { mode: 'deny' },
+        timeoutMs: 30_000,
+        inheritEnvironment: true,
+      });
+      if (pressure.status !== 'completed') {
+        throw new Error(`Restricted controller pressure was unavailable: ${JSON.stringify(pressure)}`);
+      }
+      expect(pressure).toMatchObject({
+        status: 'completed', sandboxed: true, exitCode: 0, stdout: '0',
+      });
+      await Promise.all(Array.from({ length: 16 }, () => connectHostPipe(controllerPipe)));
+    } finally {
+      controller.stdin?.end();
+      const completion = await controllerCompletion;
+      if (completion.code !== 0) {
+        throw new Error(
+          `Native controller cleanup failed: ${JSON.stringify({ ...completion, controllerStderr })}`,
+        );
+      }
+    }
+  }, 60_000);
+
   it('keeps control state host-only and native host rejects a forged overlapping grant', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-control-boundary-');
     roots.push(root);
@@ -523,7 +1012,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
         controllerPipe: String.raw`\\.\pipe\kodax-v2-${process.pid}-${randomUUID()}`,
         terminalRecordPath: terminalPath,
         terminalNonce: randomUUID(),
-        launchDeadlineUnixMs: Date.now() + 30_000,
+        operationDeadlineUnixMs: Date.now() + 30_000,
       });
       await writeFile(requestPath, JSON.stringify(request), { flag: 'wx' });
       let nativeFailure: unknown;
@@ -560,7 +1049,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
         controllerPipe: String.raw`\\.\pipe\kodax-v2-${process.pid}-${randomUUID()}`,
         terminalRecordPath: denyTerminalPath,
         terminalNonce: randomUUID(),
-        launchDeadlineUnixMs: Date.now() + 30_000,
+        operationDeadlineUnixMs: Date.now() + 30_000,
       });
       await writeFile(denyRequestPath, JSON.stringify(denyRequest), { flag: 'wx' });
       let denyFailure: unknown;
@@ -599,8 +1088,16 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     }
   }, 90_000);
 
-  it('keeps doctor verify-only and setup repairs an empty host-owned control DACL', async () => {
+  it('keeps doctor verify-only and setup retires a dead request before repairing control DACL', async () => {
     const control = ensureWindowsSandboxControlDirectory();
+    const staleRequest = path.join(
+      control,
+      `windows-shell-4294967294-${randomUUID()}.json`,
+    );
+    const liveRequest = path.join(
+      control,
+      `windows-shell-${process.pid}-${randomUUID()}.json`,
+    );
     const corruption = String.raw`
 $ErrorActionPreference = 'Stop'
 $path = $env:KODAX_CONTROL_TEST_PATH
@@ -612,6 +1109,12 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
 [IO.Directory]::SetAccessControl($path, $acl)
 `;
     try {
+      await writeFile(staleRequest, JSON.stringify({ operationDeadlineUnixMs: 1 }), {
+        flag: 'wx',
+      });
+      await writeFile(liveRequest, JSON.stringify({ operationDeadlineUnixMs: 1 }), {
+        flag: 'wx',
+      });
       await execFile(windowsPowerShell(), [
         '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-EncodedCommand', Buffer.from(corruption, 'utf16le').toString('base64'),
@@ -623,10 +1126,21 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       expect(before).toMatchObject({ ready: false, setupRequired: true });
       expect(() => verifyWindowsSandboxControlDirectory()).toThrow(/exact|unexpected|host\/SYSTEM/i);
 
+      await expect(setupSandboxRuntime()).rejects.toThrow(
+        /control state verification and setup repair both failed/i,
+      );
+      await expect(stat(staleRequest)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(liveRequest)).resolves.toBeDefined();
+      await rm(liveRequest, { force: true });
+
       const repaired = await setupSandboxRuntime();
       expect(repaired).toMatchObject({ ready: true, setupRequired: false });
       expect(verifyWindowsSandboxControlDirectory()).toBe(control);
     } finally {
+      await Promise.all([
+        rm(staleRequest, { force: true }),
+        rm(liveRequest, { force: true }),
+      ].map(async (cleanup) => cleanup.catch(() => undefined)));
       try {
         verifyWindowsSandboxControlDirectory();
       } catch {
@@ -881,7 +1395,96 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     }
   }, 60_000);
 
-  it('keeps trusted Write available while a different-file shell stays alive', async () => {
+  it('shares one same-policy proxy when fixed Windows proxy ports are under pressure', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-shared-proxy-');
+    roots.push(root);
+    await delay(1_200);
+    const occupied = await Promise.all(
+      DEFAULT_WINDOWS_PROXY_PORT_RANGE.slice(0, 3).map(occupyLoopbackPort),
+    );
+    const ownedServers = occupied.filter((server): server is Server => server !== undefined);
+    const targetScript = [
+      'const fs=require("node:fs")',
+      'fs.writeFileSync(process.argv[1],"ready")',
+      'const wait=new Int32Array(new SharedArrayBuffer(4))',
+      'const deadline=Date.now()+15000',
+      'while(fs.readdirSync(process.argv[2]).filter(name=>name.startsWith("ready-")).length<4&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+      'if(fs.readdirSync(process.argv[2]).filter(name=>name.startsWith("ready-")).length<4) process.exit(41)',
+      'process.stdout.write("shared-proxy-ready")',
+    ].join(';');
+    try {
+      const results = await Promise.all(Array.from({ length: 4 }, (_, index) => (
+        runKodaXSandboxed({
+          command: process.execPath,
+          args: ['-e', targetScript, path.join(root, `ready-${index}`), root],
+          cwd: root,
+          filesystem: { allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [] },
+          network: { mode: 'allow' },
+          timeoutMs: 25_000,
+          inheritEnvironment: true,
+        })
+      )));
+      for (const result of results) {
+        expect(result).toMatchObject({
+          status: 'completed',
+          sandboxed: true,
+          exitCode: 0,
+          stdout: 'shared-proxy-ready',
+        });
+      }
+    } finally {
+      await Promise.all(ownedServers.map(closeServer));
+    }
+  }, 60_000);
+
+  it('keeps concurrent denyRead leases execution-scoped and removes every receipt', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-concurrent-deny-read-');
+    roots.push(root);
+    const deniedRoots = await Promise.all(Array.from({ length: 15 }, async (_, index) => {
+      const denied = path.join(root, `denied-${index}`);
+      await mkdir(denied);
+      await writeFile(path.join(denied, 'secret.txt'), 'secret', 'utf8');
+      return denied;
+    }));
+    const secret = path.join(deniedRoots[0]!, 'secret.txt');
+    const receiptsBefore = (await readdir(windowsSandboxControlDirectory()))
+      .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+      .sort();
+    const targetScript = [
+      'const fs=require("node:fs")',
+      'fs.writeFileSync(process.argv[1],"ready")',
+      'const wait=new Int32Array(new SharedArrayBuffer(4))',
+      'const deadline=Date.now()+15000',
+      'while(fs.readdirSync(process.argv[2]).filter(name=>name.startsWith("ready-")).length<4&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+      'if(fs.readdirSync(process.argv[2]).filter(name=>name.startsWith("ready-")).length<4) process.exit(41)',
+      'try{fs.readFileSync(process.argv[3]);process.exit(74)}catch(error){if(!error||!["EACCES","EPERM"].includes(error.code))throw error}',
+      'process.stdout.write("deny-read-held")',
+    ].join(';');
+    const results = await Promise.all(Array.from({ length: 4 }, (_, index) => (
+      runKodaXSandboxed({
+        command: process.execPath,
+        args: ['-e', targetScript, path.join(root, `ready-${index}`), root, secret],
+        cwd: root,
+        filesystem: {
+          allowRead: [root], allowWrite: [root], denyRead: deniedRoots, denyWrite: [],
+        },
+        network: { mode: 'allow' },
+        timeoutMs: 90_000,
+        inheritEnvironment: true,
+      })
+    )));
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: 'completed', sandboxed: true, exitCode: 0, stdout: 'deny-read-held',
+      });
+    }
+    const receiptsAfter = (await readdir(windowsSandboxControlDirectory()))
+      .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+      .sort();
+    expect(receiptsAfter).toEqual(receiptsBefore);
+  }, 180_000);
+
+  it('keeps every trusted text tool available while a different-file shell stays alive', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-shell-write-');
     roots.push(root);
     const ready = path.join(root, 'shell.ready');
@@ -939,7 +1542,23 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       };
       await expect(toolWrite({ path: written, content: 'hello' }, ctx))
         .resolves.toContain('File created');
-      await expect(readFile(written, 'utf8')).resolves.toBe('hello');
+      await expect(toolEdit({
+        path: written,
+        old_string: 'hello',
+        new_string: 'edited',
+      }, ctx)).resolves.toContain('File edited');
+      await expect(toolMultiEdit({
+        path: written,
+        edits: [{ old_string: 'edited', new_string: 'anchor' }],
+      }, ctx)).resolves.toContain('File edited');
+      await expect(toolInsertAfterAnchor({
+        path: written,
+        anchor: 'anchor',
+        content: 'inserted',
+      }, ctx)).resolves.toContain('Content inserted');
+      await expect(readFile(written, 'utf8')).resolves.toBe('anchor\ninserted');
+      await expect(toolUndo({}, ctx)).resolves.toContain('Restored');
+      await expect(readFile(written, 'utf8')).resolves.toBe('anchor');
     } finally {
       await writeFile(stop, 'stop', 'utf8');
       await Promise.allSettled([shellRun]);
@@ -955,7 +1574,15 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       roots.push(root);
       const markerPath = path.join(root, 'processes.json');
       const written = path.join(root, `after-${terminatedRole}.md`);
-      const runtime = launchSandboxRuntime(root, markerPath);
+      const denied = path.join(root, 'denied');
+      await mkdir(denied);
+      await writeFile(path.join(denied, 'secret.txt'), 'secret', 'utf8');
+      const runtime = launchSandboxRuntime(
+        root,
+        markerPath,
+        undefined,
+        terminatedRole === 'host' ? [denied] : [],
+      );
       let runtimeSettled = false;
       let tracked: readonly WindowsProcessIdentity[] = [];
       try {
@@ -1009,6 +1636,39 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         await expect(toolWrite({ path: written, content: `after ${terminatedRole}` }, ctx))
           .resolves.toContain('File created');
         await expect(readFile(written, 'utf8')).resolves.toBe(`after ${terminatedRole}`);
+
+        if (terminatedRole === 'host') {
+          const receiptsAfterCrash = (await readdir(windowsSandboxControlDirectory()))
+            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'));
+          const ownedReceipts = await Promise.all(receiptsAfterCrash.map(async (name) => (
+            readFile(path.join(windowsSandboxControlDirectory(), name), 'utf8')
+          )));
+          expect(ownedReceipts.filter((receipt) => (
+            executionDenyReceiptContainsPath(receipt, denied)
+          ))).toHaveLength(1);
+          const recovery = await runKodaXSandboxed({
+            command: process.execPath,
+            args: ['-e', 'process.stdout.write("recovered")'],
+            cwd: root,
+            filesystem: {
+              allowRead: [root], allowWrite: [root], denyRead: [denied], denyWrite: [],
+            },
+            network: { mode: 'allow' },
+            timeoutMs: 15_000,
+            inheritEnvironment: true,
+          });
+          expect(recovery).toMatchObject({
+            status: 'completed', sandboxed: true, exitCode: 0, stdout: 'recovered',
+          });
+          const receiptsAfterRecovery = (await readdir(windowsSandboxControlDirectory()))
+            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'));
+          const remainingReceipts = await Promise.all(receiptsAfterRecovery.map(async (name) => (
+            readFile(path.join(windowsSandboxControlDirectory(), name), 'utf8')
+          )));
+          expect(remainingReceipts.some((receipt) => (
+            executionDenyReceiptContainsPath(receipt, denied)
+          ))).toBe(false);
+        }
       } finally {
         for (const identity of [...tracked].reverse()) {
           await terminateIfStillExact(identity);
@@ -1021,6 +1681,86 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     },
     120_000,
   );
+
+  it('fails closed on controller loss, drains the active Job, and recreates a broker', async () => {
+    const root = await createWindowsV2TestRoot('kodax-v2-kill-controller-');
+    roots.push(root);
+    const markerPath = path.join(root, 'processes.json');
+    const recoveryReady = path.join(root, 'recovery.ready');
+    const recoveryStop = path.join(root, 'recovery.stop');
+    const runtime = launchSandboxRuntime(root, markerPath, {
+      readyPath: recoveryReady,
+      stopPath: recoveryStop,
+    });
+    let runtimeSettled = false;
+    let tracked: readonly WindowsProcessIdentity[] = [];
+    try {
+      const runtimePid = runtime.child.pid;
+      if (runtimePid === undefined) throw new Error('Sandbox Runtime did not expose a PID.');
+      const marker = await waitForSandboxProcessMarker(markerPath, runtime);
+      const host = await waitForNativeHost(runtimePid, runtime);
+      const { broker, controller } = await waitForNativeController(runtimePid, runtime);
+      const observed = await queryWindowsProcessIds([
+        marker.targetPid,
+        marker.runnerPid,
+        marker.descendantPid,
+      ]);
+      const requireIdentity = (pid: number, label: string): WindowsProcessIdentity => {
+        const identity = observed.find((candidate) => candidate.pid === pid);
+        if (identity === undefined || identity.created === '') {
+          throw new Error(`Cannot attest the live sandbox ${label} process ${pid}.`);
+        }
+        return identity;
+      };
+      tracked = [
+        requireIdentity(marker.targetPid, 'target'),
+        requireIdentity(marker.descendantPid, 'descendant'),
+        requireIdentity(marker.runnerPid, 'runner'),
+        host,
+        controller,
+        broker,
+      ];
+
+      await terminateExactProcess(controller);
+      await waitForExactProcessesToExit(tracked);
+      await waitForRecoveryReady(recoveryReady, runtime);
+      const replacement = await waitForNativeController(runtimePid, runtime);
+      const replacementHost = await waitForNativeHost(runtimePid, runtime);
+      expect(sameProcess(replacement.broker, broker)).toBe(false);
+      expect(sameProcess(replacement.controller, controller)).toBe(false);
+      expect(sameProcess(replacementHost, host)).toBe(false);
+      const replacementProcesses = [
+        replacementHost,
+        replacement.controller,
+        replacement.broker,
+      ];
+      tracked = [...tracked, ...replacementProcesses];
+      await writeFile(recoveryStop, 'stop', 'utf8');
+      const completion = await waitForRuntimeCompletion(runtime);
+      runtimeSettled = true;
+      expect(completion).toMatchObject({ code: 0, signal: null });
+      const first = decodeRuntimeProbeRecord(completion.stdout, 'FIRST');
+      if (first.kind === 'result') {
+        expect(first.result).toMatchObject({ status: 'completed', sandboxed: true });
+        expect(first.result.exitCode).not.toBe(0);
+      } else {
+        expect(first).toMatchObject({ kind: 'error' });
+      }
+      expect(decodeRuntimeProbeRecord(completion.stdout, 'SECOND')).toMatchObject({
+        kind: 'result',
+        result: { status: 'completed', sandboxed: true, exitCode: 0 },
+      });
+      await waitForExactProcessesToExit(replacementProcesses);
+    } finally {
+      for (const identity of [...tracked].reverse()) {
+        await terminateIfStillExact(identity);
+      }
+      if (runtime.child.exitCode === null && runtime.child.signalCode === null) {
+        runtime.child.kill('SIGKILL');
+      }
+      if (!runtimeSettled) await waitForRuntimeCompletion(runtime);
+    }
+  }, 120_000);
 
   it('does not let a restricted shell open host text or ACL namespaces', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-private-namespace-');

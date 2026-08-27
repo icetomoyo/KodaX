@@ -7,6 +7,15 @@
 // Core API - 从 @kodax-ai/coding 重新导出
 export * from '@kodax-ai/coding';
 export {
+  Client,
+  createDefaultCodingAgent,
+  createKodaXTaskRunner,
+  KodaXClient,
+  runKodaX,
+  runManagedTask,
+  startKodaX,
+} from './trusted-coding-entry.js';
+export {
   ACP_LOG_LEVELS,
   AcpLogger,
   resolveAcpLogLevel,

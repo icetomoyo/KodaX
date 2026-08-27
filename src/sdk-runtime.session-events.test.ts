@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -31,6 +31,16 @@ describe("Runtime Session event journals", () => {
       "runtime",
       "session-events",
       Buffer.from(sessionId, "utf8").toString("base64url") || "_",
+    );
+  }
+
+  function windowsPowerShell(): string {
+    return path.join(
+      process.env.SystemRoot ?? String.raw`C:\Windows`,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
     );
   }
 
@@ -398,6 +408,166 @@ describe("Runtime Session event journals", () => {
       cursor: expect.objectContaining({ sessionId: "process-session-second", seq: 1 }),
     }]);
   }, 30_000);
+
+  it.runIf(process.platform === "win32")(
+    "updates a Session cursor while another process opens it without delete sharing",
+    async () => {
+      const root = await createRoot();
+      const sessionId = "windows-sequence-share-delete";
+      const runtime = await createKodaXRuntime({ mode: "embedded", homeDir: root });
+      const sequence = path.join(sessionEventDir(root, sessionId), "sequence");
+      const ready = path.join(root, "sequence-holder.ready");
+      const stop = path.join(root, "sequence-holder.stop");
+      const holderScript = String.raw`
+$ErrorActionPreference = 'Stop'
+$stream = [IO.File]::Open(
+  $env:KODAX_SEQUENCE_TEST_PATH,
+  [IO.FileMode]::Open,
+  [IO.FileAccess]::ReadWrite,
+  [IO.FileShare]::ReadWrite
+)
+try {
+  [IO.File]::WriteAllText($env:KODAX_SEQUENCE_TEST_READY, 'ready')
+  while (-not [IO.File]::Exists($env:KODAX_SEQUENCE_TEST_STOP)) {
+    Start-Sleep -Milliseconds 10
+  }
+} finally {
+  $stream.Dispose()
+}
+`;
+      let stderr = "";
+      let holder: ReturnType<typeof spawn> | undefined;
+      let holderCompletion: Promise<number | null> | undefined;
+      try {
+        await runtime.sessions.create({ sessionId });
+        holder = spawn(windowsPowerShell(), [
+          "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+          "-EncodedCommand", Buffer.from(holderScript, "utf16le").toString("base64"),
+        ], {
+          env: {
+            ...process.env,
+            KODAX_SEQUENCE_TEST_PATH: sequence,
+            KODAX_SEQUENCE_TEST_READY: ready,
+            KODAX_SEQUENCE_TEST_STOP: stop,
+          },
+          stdio: ["ignore", "ignore", "pipe"],
+          windowsHide: true,
+        });
+        holder.stderr?.on("data", (chunk: Buffer | string) => {
+          stderr += chunk.toString();
+        });
+        holderCompletion = new Promise((resolve) => holder?.once("exit", resolve));
+        await vi.waitFor(() => expect(fs.stat(ready)).resolves.toBeDefined(), {
+          timeout: 10_000,
+          interval: 10,
+        });
+
+        await expect(runtime.sessions.updateSettings(sessionId, {
+          permissionMode: "plan",
+        })).resolves.toMatchObject({ permissionMode: "plan" });
+        await expect(runtime.events.replay({ sessionId })).resolves.toHaveLength(2);
+      } finally {
+        await fs.writeFile(stop, "stop", "utf8").catch(() => undefined);
+        const code = await holderCompletion;
+        if (holder !== undefined && code !== 0) {
+          throw new Error(`Windows sequence-holder failed with ${String(code)}: ${stderr}`);
+        }
+        await runtime.close();
+      }
+    },
+    30_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "retries a Session cursor write while a non-sharing reader exits",
+    async () => {
+      const root = await createRoot();
+      const sessionId = "windows-sequence-transient-reader";
+      const runtime = await createKodaXRuntime({ mode: "embedded", homeDir: root });
+      const sequence = path.join(sessionEventDir(root, sessionId), "sequence");
+      const ready = path.join(root, "sequence-reader.ready");
+      const holderScript = String.raw`
+$ErrorActionPreference = 'Stop'
+$stream = [IO.File]::Open(
+  $env:KODAX_SEQUENCE_TEST_PATH,
+  [IO.FileMode]::Open,
+  [IO.FileAccess]::Read,
+  [IO.FileShare]::Read
+)
+try {
+  [IO.File]::WriteAllText($env:KODAX_SEQUENCE_TEST_READY, 'ready')
+  Start-Sleep -Milliseconds 250
+} finally {
+  $stream.Dispose()
+}
+`;
+      let stderr = "";
+      let holder: ReturnType<typeof spawn> | undefined;
+      let holderCompletion: Promise<number | null> | undefined;
+      try {
+        await runtime.sessions.create({ sessionId });
+        holder = spawn(windowsPowerShell(), [
+          "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+          "-EncodedCommand", Buffer.from(holderScript, "utf16le").toString("base64"),
+        ], {
+          env: {
+            ...process.env,
+            KODAX_SEQUENCE_TEST_PATH: sequence,
+            KODAX_SEQUENCE_TEST_READY: ready,
+          },
+          stdio: ["ignore", "ignore", "pipe"],
+          windowsHide: true,
+        });
+        holder.stderr?.on("data", (chunk: Buffer | string) => {
+          stderr += chunk.toString();
+        });
+        holderCompletion = new Promise((resolve) => holder?.once("exit", resolve));
+        await vi.waitFor(() => expect(fs.stat(ready)).resolves.toBeDefined(), {
+          timeout: 10_000,
+          interval: 10,
+        });
+
+        await expect(runtime.sessions.updateSettings(sessionId, {
+          permissionMode: "plan",
+        })).resolves.toMatchObject({ permissionMode: "plan" });
+        await expect(runtime.events.replay({ sessionId })).resolves.toHaveLength(2);
+      } finally {
+        const code = await holderCompletion;
+        if (holder !== undefined && code !== 0) {
+          throw new Error(`Windows sequence reader failed with ${String(code)}: ${stderr}`);
+        }
+        await runtime.close();
+      }
+    },
+    30_000,
+  );
+
+  it("recovers a truncated Session cursor from the durable event ledgers", async () => {
+    const root = await createRoot();
+    const sessionId = "truncated-sequence-recovery";
+    const first = await createKodaXRuntime({ mode: "embedded", homeDir: root });
+    try {
+      await first.sessions.create({ sessionId });
+      await first.sessions.updateSettings(sessionId, { permissionMode: "plan" });
+      await expect(first.events.replay({ sessionId })).resolves.toHaveLength(2);
+    } finally {
+      await first.close();
+    }
+
+    await fs.writeFile(
+      path.join(sessionEventDir(root, sessionId), "sequence"),
+      "",
+      "utf8",
+    );
+    const recovered = await createKodaXRuntime({ mode: "embedded", homeDir: root });
+    try {
+      await recovered.sessions.updateSettings(sessionId, { permissionMode: "auto" });
+      const events = await recovered.events.replay({ sessionId });
+      expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+    } finally {
+      await recovered.close();
+    }
+  });
 
   it("starts a fresh Session journal instead of importing legacy global sequences", async () => {
     const root = await createRoot();

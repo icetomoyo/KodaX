@@ -272,16 +272,29 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `undo` 在可信 KodaX Runtime 中完成最终路径/identity 策略校验、跨 Runtime
 逐文件内核锁、revision CAS、元数据保留的 flush 后原子替换与受保护 native 状态根；它们不进入 ASRT、workspace
 session、shell runner、setup、cleanup、owner、reset 或 poison 状态，也不宣称受到
-OS token sandbox enforcement。Windows shell 仅由 ASRT 提供网络/专用账户服务，
+OS token sandbox enforcement。根入口和 `/coding` 的 `runKodaX`、`startKodaX`、
+`runManagedTask`、`createKodaXTaskRunner`、`createDefaultCodingAgent`、`KodaXClient` 及其 `Client` 别名默认绑定同一 native 文本权威，并在每次事务读取新注册的 linked-
+worktree 根。Windows shell 仅由 ASRT 提供网络/专用账户服务，
 KodaX native runner 负责 restricted token、nonce 绑定且按 policy 隔离的私有 desktop、创建时 Job containment 和 framed stdio；
 不同 policy、Session、Runtime 的 native shell 不共享覆盖命令生命周期的 filesystem-
-effect lease。任意 shell 写文件仍是正常 OS 数据竞争，KodaX CAS 只约束受控文本
+effect lease。同一 Runtime 中具有完全相同网络策略和 sandbox 账户代际的命令共享
+一个 ASRT 网络 broker，但仍各自拥有 policy token 与 Job；不同策略绝不共享权威。
+Issue 308 记录 ASRT 0.0.65 对不同策略/Runtime 仍存在的固定端口容量限制。任意 shell 写文件仍是正常 OS 数据竞争，KodaX CAS 只约束受控文本
 工具。目标 stdin EOF 不会关闭 native 控制流；控制与事件使用相互独立且认证过的
 单向管道。timeout/cancel 只有在校验 nonce 绑定的 runner 终态记录、确认整个 Job
-已排空后才返回原始停止原因。native 请求与终态记录位于无 reparse、仅 host/SYSTEM
+已排空后才返回原始停止原因。每个共享 broker 还拥有一个经校验的 native 存活
+controller。Windows 可信替换会把旧 sandbox owner 的文件自动归一为可信 host
+owner，并保留有序的最终有效 ACE 策略；文件系统可在原子命名空间提交时规范化
+DACL protection/inheritance 控制位，旧父目录的继承权限不会被原样冻结。
+即使工作区整体可写，shell 也不能读写工作区内的 `.kodax/runtime` 控制状态。
+其 named pipe 创建时即应用仅 Host/SYSTEM 的 protected DACL，并保留
+多个 pending instance。受限目标无法连接或耗尽它；controller/broker 丢失会关闭
+通道并排空所有关联命令的 Job。native 请求与终态记录位于无 reparse、仅 host/SYSTEM
 可访问的控制目录；SDK policy 校验和 native host 都会在目标启动前拒绝与该目录
 祖先或子孙重叠的 allow root，以及指向该目录或其子项的 deny root。doctor 只验证；
-显式 setup 仅在 sandbox 账户已空闲时创建或收窄修复空的 host-owned 状态。Unix 在原子提交后若无法证明目录 durability，会携带
+显式 setup 会先证明 sandbox 账户已空闲，只回收已过 deadline 且 owner PID 已死的
+请求，或已证明 Job 排空的死 owner 终态记录，再修复 host-owned 状态；live、未过期、
+损坏、未知及 deny-recovery 记录继续 fail-closed。Unix 在原子提交后若无法证明目录 durability，会携带
 完整的提交前/后 receipt 返回 `text_mutation_commit_uncertain`，要求先重读，禁止盲目重试。已有文件的修改会
 保留 Undo backup；若 Undo 本身处于提交不确定状态，其 receipt 会重绑定到观测到的
 提交后 revision，之后只能通过 CAS 校验的 Undo 继续收敛。详见
@@ -291,11 +304,19 @@ v0.7.95 旧调用图的 daemon。
 现有 Windows 安装需要运行一次 `kodax sandbox setup`：切换流程会等待旧沙箱进程
 退出，使用新 SID 重建专用账户，并记录 native protocol/SID 代际。迁移状态缺失时
 只阻止 native shell 准入，不会阻止可信文本工具。
+Windows 的嵌入发布 manifest 会钉住 text/shell 的 protocol 与 hash，以及 ASRT
+release version 与 hash。已校验的可执行文件进入独立于 `KODAX_HOME` 的 LocalAppData
+content-addressed 受保护存储；ASRT 在落库前与 broker 启动前都会重验。text 仅
+Host/SYSTEM 可访问，专用 sandbox group SID 对 shell artifact 只有 read/execute，
+local Users 对 ASRT 只有 read/execute；sandbox trustee 与 local Users 均无
+write/delete 权限。
 Linux/macOS 使用同一可信文本权威及 native no-follow/`flock`/CAS/原子提交；
 shell 仍是逐命令 ASRT bubblewrap/Seatbelt 执行，不保留 KodaX workspace-session owner。
 Issue 307 记录 ASRT 所有的 runner 在 KodaX 代码运行前启动这一更窄的 pre-main
 窗口；当前 Codex 也保留相同边界。最终命令仍在创建时加入 Job，可信文本工具完全
-不经过该边界。
+不经过该边界。Issue 309 记录另一个与 Codex 相同的 Windows 残余：稳定 root
+capability 无法覆盖显式 ambient loader-compatibility ACE；该 ACE 既可能由此前
+sandbox 命令留下，也可能原本就存在于 external 或 host-owned descendant 上。
 
 **v0.7.95 发布**：零字节、畸形或截断 owner 的过期 learning lock
 会在字节与 stat 二次确认未变后自动恢复。同一次 Windows 启动内的

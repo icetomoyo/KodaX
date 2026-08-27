@@ -731,20 +731,41 @@ path/identity policy checks, a cross-Runtime per-file kernel lock, revision
 CAS, metadata-preserving flushed atomic replacement, and a protected native
 state root. They do not enter ASRT, a workspace
 session, shell runner, setup, cleanup, owner, reset, or poison state, and are
-not described as OS-token-sandboxed. Windows shell commands keep ASRT only for
-network/account services and use the KodaX native restricted-token runner with
+not described as OS-token-sandboxed. The root and `/coding` direct SDK entries
+(`runKodaX`, `startKodaX`, `runManagedTask`, `createKodaXTaskRunner`, `createDefaultCodingAgent`,
+`KodaXClient`, and its `Client` alias) bind the same native text
+authority by default and read newly registered linked-worktree roots at
+transaction time. Windows shell commands keep ASRT only for network/account
+services and use the KodaX native restricted-token runner with
 a nonce-bound per-policy private desktop, creation-time Job containment, and framed stdio. Native shell commands from
 different policies, Sessions, and Runtime processes do not share a
-command-lifetime filesystem-effect lease. Arbitrary shell writes remain normal
+command-lifetime filesystem-effect lease. Commands in one Runtime with the
+same network policy and sandbox-account generation share one ASRT network
+broker while retaining independent policy tokens and Jobs. Unlike policies do
+not share authority; Issue 308 tracks ASRT 0.0.65's remaining fixed-port
+capacity limit across distinct policies and Runtime processes. Arbitrary shell writes remain normal
 OS races; only controlled text tools participate in KodaX CAS. Target stdin EOF
 does not close the native control stream. Authenticated directional pipes keep
 control and events independent; timeout/cancel validates a nonce-bound runner
 Job-drain record before returning the original stop reason.
+Windows trusted replacement automatically converts an obsolete sandbox-owned
+file to trusted-host ownership and preserves the ordered effective ACE policy.
+The filesystem may canonicalize DACL protection/inheritance control at the
+atomic namespace commit; stale inherited authority is not copied from an old
+parent. The
+shell cannot read or write workspace-local `.kodax/runtime` control state even
+when the surrounding workspace is writable.
+Each shared broker owns a verified native liveness controller whose named pipe
+is created with a protected Host/SYSTEM-only DACL and multiple pending
+instances. Restricted targets cannot connect or exhaust it; controller or
+broker loss closes the channel and drains every attached command Job.
 Native request/terminal state is kept in a no-reparse, host/SYSTEM-only control
 directory; both SDK policy validation and the native host reject overlapping
 allow roots and deny roots at/below it before target launch. Doctor only
-verifies; explicit setup can create or narrowly repair empty host-owned state
-after the sandbox account is proven idle.
+verifies. After proving the sandbox account idle, explicit setup can retire an
+expired dead-PID request or a dead-owner terminal record that already proves
+Job drainage before repairing host-owned state. Live, unexpired, malformed,
+unknown, and deny-recovery records remain fail-closed.
 If Unix cannot prove directory durability after the atomic commit, the tool
 returns `text_mutation_commit_uncertain` with the complete pre/post receipt and
 requires a reread instead of a blind retry. Existing-file edits retain their
@@ -757,12 +778,23 @@ Existing Windows installations run `kodax sandbox setup` once: the cutover
 waits for old sandbox processes to exit, recreates the dedicated account with
 a new SID, and records the native protocol/SID generation. Missing migration
 state blocks native shell admission, not trusted text tools.
+On Windows, the embedded release manifest pins text/shell protocols and hashes
+plus the ASRT release version and hash. Verified executables are staged in a
+content-addressed protected LocalAppData store independent of `KODAX_HOME`;
+ASRT is checked before materialization and again before broker startup. Text
+remains Host/SYSTEM-only, the dedicated sandbox group SID receives read/execute
+on the shell artifact, and local Users receive read/execute on ASRT; neither
+sandbox trustee nor local Users receives write/delete authority.
 Linux and macOS use the same trusted-text authority with native no-follow/
 `flock`/CAS/atomic commit, while shell commands remain per-command ASRT
 bubblewrap/Seatbelt invocations with no KodaX workspace-session owner.
 Issue 307 tracks the narrower ASRT-owned runner pre-main creation window that
 also remains in current Codex; final command targets are still placed in their
 Job at process creation, and trusted text tools never enter that boundary.
+Issue 309 records the other Codex-compatible Windows residual: stable root
+capabilities do not override an explicit ambient loader-compatibility ACE,
+whether left by an earlier sandbox command or already present on an external or
+host-owned descendant.
 
 **v0.7.95 release:** stale learning locks with zero-byte,
 malformed, or truncated owner records self-recover after an unchanged

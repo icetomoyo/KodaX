@@ -124,21 +124,43 @@ no dependency on ASRT, shell setup, a runner, workspace sessions, cleanup,
 reset, owner, or poison state; text-tool policy is a trusted-host boundary, not
 OS-token sandbox enforcement. Windows shell/process execution is a separate
 native host/runner protocol: ASRT provides network/account services, the
-runner supplies a restricted policy-capability token (with the dedicated
-account, logon, and Everyone SIDs retained for Codex-compatible subprocess
-startup), uses a nonce-bound policy-capability private desktop, and creates the target suspended
+runner supplies a restricted policy-capability token (with exact read/write
+capabilities plus the dedicated account, per-launch logon, and Everyone
+compatibility SIDs, matching current Codex), uses a nonce-bound policy-capability private desktop, and creates the target suspended
 inside a no-breakaway, kill-on-close Job before `Ready` and resume. Linux and
 macOS shell commands use per-command ASRT bubblewrap/Seatbelt preparation with
 no KodaX workspace-session owner. One-time Windows v2 setup rotates the pre-v2 account SID and records the new
 SID/protocol machine generation before shell admission.
-Packaged native bytes are verified against an embedded manifest and staged in
-a protected content-addressed Agent Home store before load/execution; Unix
-loads its binding through a digest-verified no-follow descriptor below a
+The Windows private desktop uses a full-policy capability, while persistent
+filesystem ACEs use stable account-generation + canonical-root + read/write-clause
+capabilities. Read roots carry an exact allow-read capability; read-only roots implicitly carry the matching deny-write
+capability; private ancestors get only target-only metadata/traverse access
+for the sandbox group. Because `WRITE_RESTRICTED` does not enforce read denies,
+`denyRead` uses an execution-logon ACE committed under a short ACL mutex and a
+crash-safe receipt, then removed only after Job drain. Recovery verifies the
+recorded volume/file identity before changing the DACL; a missing or replaced
+object keeps the receipt and fails shell admission closed until repair. No ACL
+mutex or receipt participates in trusted text admission or spans the command
+lifetime. Fixed sensitive-root read denies are installed once through native
+no-follow handles; admission idempotently repairs an exact root created after
+setup instead of returning a permanent setup error.
+The protected control directory is doctor-verified and setup-repaired only
+after the sandbox SID is idle. Repair can retire an expired dead-PID request or
+a dead-owner terminal record that already proves Job drainage; live,
+unexpired, malformed, unknown, and deny-recovery records remain fail-closed.
+On Windows, an embedded release manifest pins the text/shell sidecar protocols
+and hashes plus the ASRT release version and hash. Verified bytes are staged in
+a protected content-addressed LocalAppData store; the ASRT source is checked
+before materialization and the staged executable is rechecked before broker
+startup. Text remains Host/SYSTEM-only, the shell artifact grants read/execute
+to the dedicated sandbox group SID, and ASRT grants local Users read/execute;
+none grants sandbox write/delete. Unix keeps its binding in a protected Agent
+Home cache and loads it through a digest-verified no-follow descriptor below a
 UID-owned mode-`0700` state root, which sandboxed shell policy cannot write. The
 fixed bootstrap provisioner never receives model text or shell stdin.
 Windows uses a host-SID private mutex; Unix uses a fixed per-UID system
 coordination root and private inode carrying kernel `flock`, no-follow
- descriptor walking, file/parent `fsync`, and rename. Atomic replacement is the
+descriptor walking, file/parent `fsync`, and rename. Atomic replacement is the
  commit point; any Unix-only durability/rollback uncertainty after it carries a
  complete receipt and is surfaced as `text_mutation_commit_uncertain`, never as
  an ordinary retryable I/O failure.
@@ -214,25 +236,17 @@ sensitive files require review. The legacy `processes/children` registry is
 hard-denied to model writes; upgrade cleanup quarantines its unauthenticated
 records without signaling a process. Exact
 non-sensitive Runtime reads remain open.
-Shell authorization and OS containment are separate layers. Runtime attempts
-the sandbox first; infrastructure unavailability or policy-owner contention
-before target start returns an already-authorized call to the normal permission
-path. A sandbox denial after target start is never implicitly replayed. Runtime
-supplies Linux PID-namespace containment and a Windows per-effect Job when
-containment is selected. Windows sandbox grants
-attach to the permission review's exact verified ordinary Home paths, not to
-the Home root object, so child mutation does not imply whole-root deletion.
-Safe paths remain automatic; root/control-plane writes and escaping links are
-rejected again before ACL construction. Each exact policy group uses a
-disposable temp scope and leaves unrelated user-owned trees ungranted. Equal
-workspace, Agent Home, additional filesystem, toolchain, and network policies
-may share one Windows safety domain concurrently; different policies use the
-normal permission fallback. Existing sensitive roots carry idempotent persistent read
-guards for the dedicated sandbox SID, installed only by explicit sandbox setup;
-startup performs a bounded read-only audit. Exact child grants preserve safe
-Agent Home access beneath the inherited deny. Repository config and hooks use
-write-only guards so Git reads continue to work, and covered guards are removed
-from ASRT's per-session deny set to avoid recursive ACL propagation.
+The v0.7.85 containment path used ASRT workspace sessions, a per-effect Job,
+policy-owner fallback, and a cross-process filesystem-effect lease. FEATURE_295
+supersedes that path for shell and controlled text tools; it remains only for
+legacy/non-text namespace effects such as worktree lifecycle. The current
+v0.7.96 boundaries are defined above: trusted text is host-authorized and never
+enters the shell graph, while Windows shell uses per-command native token/Job
+containment and Linux/macOS use one ASRT command wrapper per invocation. Fixed
+sensitive-root guards are native, additive, idempotently repaired at shell
+admission, and removed from per-command dynamic deny sets. Dynamic `denyRead`
+retains its execution-logon receipt and short ACL transaction without owning a
+command-lifetime mutex or affecting trusted text.
 Learned Skill discovery likewise treats local and remote project identities as
 distinct physical roots, searches each applicable root, and directs lifecycle
 mutations back to the store that owns the discovered record.

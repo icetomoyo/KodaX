@@ -15,7 +15,10 @@ use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_READ,
 };
 
-use crate::acl::{ensure_allow_aces, ensure_execution_denies, verify_control_directory_boundary};
+use crate::acl::{
+    ExecutionDenyCleanup, ensure_policy_aces_until, install_execution_deny_read_until,
+    recover_stale_execution_denies_until, verify_control_directory_boundary,
+};
 use crate::model::{
     BootstrapRequest, ErrorMessage, ExitMessage, HelloMessage, ReadyMessage, RunRequest,
     SpawnMessage, StartedMessage, TerminalRecord, controller_pipe_server_pid,
@@ -26,8 +29,8 @@ use crate::protocol::{Frame, FrameKind, PROTOCOL_VERSION, read_frame, write_fram
 use crate::win::{
     NamedPipeServer, NamedPipeServers, OwnedHandle, PrivateDesktop, SpawnedHostChild,
     connect_controller_pipe, current_token, disconnect_named_pipe, named_pipe_available_bytes,
-    named_pipe_client_identity, process_is_descendant_of, spawn_asrt_launcher, terminate_process,
-    token_user_sid, verify_protected_runner_process,
+    named_pipe_client_identity, process_creation_time, process_is_descendant_of,
+    spawn_asrt_launcher, terminate_process, token_user_sid, verify_protected_runner_process,
 };
 
 const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
@@ -36,6 +39,7 @@ pub const TERMINATION_CONFIRMED_EXIT_CODE: u32 = 254;
 const CONTROL_OPEN: u8 = 0;
 const CONTROL_TERMINATION_REQUESTED: u8 = 1;
 const CONTROL_LOST: u8 = 2;
+const LAUNCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ControllerOutcome {
@@ -83,6 +87,13 @@ impl HostAbort {
                 disconnect_named_pipe(&pipe)?;
             }
             bail!("Windows sandbox launch was aborted before runner authentication completed");
+        }
+        Ok(())
+    }
+
+    fn ensure_open(&self, stage: &str) -> Result<()> {
+        if self.requested.load(Ordering::Acquire) {
+            bail!("Windows sandbox launch was aborted during {stage}");
         }
         Ok(())
     }
@@ -185,11 +196,11 @@ impl LaunchWatchdog {
         }
     }
 
-    fn finish(mut self) -> Result<()> {
+    fn finish(mut self, stage: &str) -> Result<()> {
         self.stop.store(true, Ordering::Release);
         self.join()?;
         if self.expired.load(Ordering::Acquire) {
-            bail!("Windows sandbox launch deadline expired before Started");
+            bail!("Windows sandbox launch deadline expired during {stage}");
         }
         Ok(())
     }
@@ -228,6 +239,19 @@ impl LaunchDeadline {
             bail!("Windows sandbox launch deadline expired at {stage}");
         }
         Ok(())
+    }
+
+    fn remaining(self, stage: &str) -> Result<Duration> {
+        self.ensure(stage)?;
+        Ok(self.0.saturating_duration_since(Instant::now()))
+    }
+
+    fn phase_deadline_at(self, now: Instant, budget: Duration) -> Instant {
+        self.0.min(now.checked_add(budget).unwrap_or(self.0))
+    }
+
+    fn phase_deadline(self, budget: Duration) -> Instant {
+        self.phase_deadline_at(Instant::now(), budget)
     }
 }
 
@@ -412,19 +436,23 @@ fn start_control_pump(mut writer: File, outcome: Arc<AtomicU8>) {
 pub fn run(request_path: &Path) -> Result<u32> {
     let request = read_request(request_path)?;
     validate_terminal_record_path(request_path, Path::new(&request.terminal_record_path))?;
-    let deadline = LaunchDeadline::from_unix_ms(request.launch_deadline_unix_ms)?;
+    let deadline = LaunchDeadline::from_unix_ms(request.operation_deadline_unix_ms)?;
     let current = current_token()?;
     let host_sid = token_user_sid(current.raw())?;
     let control_directory = request_path
         .parent()
         .ok_or_else(|| anyhow!("Windows sandbox request has no control directory"))?;
     verify_control_directory_boundary(&request, control_directory, &host_sid)?;
+    recover_stale_execution_denies_until(control_directory, request.operation_deadline_unix_ms)?;
     if host_sid == request.sandbox_user_sid {
         bail!("Windows sandbox host must not run as the restricted account");
     }
     let bootstrap = read_bootstrap(std::io::stdin().lock())?;
     deadline.ensure("bootstrap")?;
-    let (controller, controller_pid) = connect_controller_pipe(&request.controller_pipe)?;
+    let (controller, controller_pid) = connect_controller_pipe(
+        &request.controller_pipe,
+        deadline.remaining("controller connection")?,
+    )?;
     if controller_pid != controller_pipe_server_pid(&request.controller_pipe)? {
         bail!("Windows sandbox controller pipe server PID did not match its authenticated name");
     }
@@ -434,7 +462,11 @@ pub fn run(request_path: &Path) -> Result<u32> {
         .parent()
         .ok_or_else(|| anyhow!("Windows sandbox executable has no parent"))?;
     deadline.ensure("ACL authorization")?;
-    ensure_allow_aces(&request, runner_directory)?;
+    let filesystem_capability_sids = ensure_policy_aces_until(
+        &request,
+        runner_directory,
+        request.operation_deadline_unix_ms,
+    )?;
     deadline.ensure("ACL authorization")?;
 
     let servers = NamedPipeServers::create(&host_sid, &request.sandbox_user_sid)?;
@@ -455,7 +487,8 @@ pub fn run(request_path: &Path) -> Result<u32> {
     let mut child = spawn_asrt_launcher(&request.asrt_executable, &asrt_args, &request.cwd)?;
     let abort = HostAbort::new(child.abort_process()?);
     let controller_monitor = ControllerMonitor::start(controller, abort.clone());
-    let launch_watchdog = LaunchWatchdog::start(deadline.0, abort.clone());
+    let runner_watchdog =
+        LaunchWatchdog::start(deadline.phase_deadline(LAUNCH_PHASE_TIMEOUT), abort.clone());
     deadline.ensure("ASRT resume")?;
     child.resume()?;
     child.start_diagnostic_pump();
@@ -500,19 +533,93 @@ pub fn run(request_path: &Path) -> Result<u32> {
             .context("clone authenticated Windows sandbox abort pipe")?,
     )?;
     child.close_launch_stdin();
+    let runner_creation_time = process_creation_time(client_pid)?
+        .ok_or_else(|| anyhow!("Windows sandbox runner exited after authentication"))?;
+    runner_watchdog.finish("runner authentication")?;
+    let execution_deny_lease = install_execution_deny_read_until(
+        &request,
+        control_directory,
+        &client_logon_sid,
+        client_pid,
+        request.operation_deadline_unix_ms,
+    )?;
+    deadline.ensure("denyRead authorization")?;
+    abort.ensure_open("denyRead authorization")?;
+    if process_creation_time(client_pid)? != Some(runner_creation_time) {
+        bail!("Windows sandbox runner identity changed during denyRead authorization");
+    }
+    let target_watchdog =
+        LaunchWatchdog::start(deadline.phase_deadline(LAUNCH_PHASE_TIMEOUT), abort.clone());
 
-    relay_after_hello(
+    let relay_result = relay_after_hello(
         event_pipe,
         control_pipe,
         &request,
         hello,
         bootstrap,
+        filesystem_capability_sids,
         controller_monitor,
-        launch_watchdog,
+        target_watchdog,
         deadline,
         abort,
         desktop,
+    );
+    let settlement = relay_result?;
+    finalize_drained_run(
+        settlement,
+        || match execution_deny_lease {
+            Some(lease) => match lease.finish() {
+                ExecutionDenyCleanup::Completed => Ok(None),
+                ExecutionDenyCleanup::Deferred(diagnostic) => Ok(Some(diagnostic)),
+                ExecutionDenyCleanup::Failed(error) => {
+                    Err(error.context("clean Windows denyRead execution ACLs"))
+                }
+            },
+            None => Ok(None),
+        },
+        |record| write_terminal_record(Path::new(&request.terminal_record_path), record),
+        &request.terminal_nonce,
     )
+}
+
+struct RelaySettlement {
+    host_exit_code: u32,
+    target_exit_code: u32,
+    termination_requested: bool,
+}
+
+fn finalize_drained_run(
+    settlement: RelaySettlement,
+    cleanup: impl FnOnce() -> Result<Option<String>>,
+    write_terminal: impl FnOnce(&TerminalRecord) -> Result<()>,
+    terminal_nonce: &str,
+) -> Result<u32> {
+    let cleanup_result = cleanup();
+    let (cleanup_deferred, cleanup_diagnostic) = match &cleanup_result {
+        Ok(Some(diagnostic)) => (true, Some(diagnostic.clone())),
+        Ok(None) => (false, None),
+        Err(error) => (
+            true,
+            Some(format!("{error:#}").chars().take(2_048).collect()),
+        ),
+    };
+    let terminal_result = write_terminal(&TerminalRecord {
+        protocol: PROTOCOL_VERSION,
+        nonce: terminal_nonce.to_owned(),
+        job_drained: true,
+        target_exit_code: settlement.target_exit_code,
+        termination_requested: settlement.termination_requested,
+        deny_read_cleanup_deferred: cleanup_deferred,
+        deny_read_cleanup_diagnostic: cleanup_diagnostic,
+    });
+    match (cleanup_result, terminal_result) {
+        (Ok(_), Ok(())) => Ok(settlement.host_exit_code),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error.context("write Windows sandbox terminal record")),
+        (Err(cleanup_error), Err(terminal_error)) => Err(anyhow!(
+            "Windows sandbox ACL cleanup failed: {cleanup_error:#}; terminal record also failed: {terminal_error:#}",
+        )),
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // Own all authenticated launch guards until Exit.
@@ -522,23 +629,16 @@ fn relay_after_hello(
     request: &RunRequest,
     hello: HelloMessage,
     bootstrap: BootstrapRequest,
+    filesystem_capability_sids: Vec<String>,
     controller_monitor: ControllerMonitor,
     launch_watchdog: LaunchWatchdog,
     deadline: LaunchDeadline,
     _abort: HostAbort,
     _desktop: PrivateDesktop,
-) -> Result<u32> {
+) -> Result<RelaySettlement> {
     if hello.protocol != PROTOCOL_VERSION {
         bail!("Windows sandbox runner reported an incompatible protocol");
     }
-    ensure_execution_denies(
-        request,
-        std::env::current_exe()?
-            .parent()
-            .ok_or_else(|| anyhow!("Windows sandbox executable has no parent"))?,
-        &hello.logon_sid,
-    )?;
-    deadline.ensure("execution deny verification")?;
     write_json(
         &mut control_pipe,
         FrameKind::Spawn,
@@ -547,6 +647,7 @@ fn relay_after_hello(
             target_argv: request.target_argv.clone(),
             cwd: request.cwd.clone(),
             policy_capability_sid: request.policy_capability_sid.clone(),
+            filesystem_capability_sids,
             session_nonce: hello.session_nonce.clone(),
             target_environment: bootstrap.target_environment,
         },
@@ -567,7 +668,7 @@ fn relay_after_hello(
     )?;
     validate_started(&ready, &started)?;
     deadline.ensure("Started")?;
-    launch_watchdog.finish()?;
+    launch_watchdog.finish("target Started")?;
     let control_outcome = Arc::new(AtomicU8::new(CONTROL_OPEN));
     start_control_pump(control_pipe, Arc::clone(&control_outcome));
     loop {
@@ -594,24 +695,19 @@ fn relay_after_hello(
                 }
                 let control_state = control_outcome.load(Ordering::Acquire);
                 let termination_requested = control_state == CONTROL_TERMINATION_REQUESTED;
-                write_terminal_record(
-                    Path::new(&request.terminal_record_path),
-                    &TerminalRecord {
-                        protocol: PROTOCOL_VERSION,
-                        nonce: request.terminal_nonce.clone(),
-                        job_drained: true,
-                        target_exit_code: exit.code,
-                        termination_requested,
-                    },
-                )?;
-                return match control_state {
-                    CONTROL_OPEN => Ok(exit.code),
-                    CONTROL_TERMINATION_REQUESTED => Ok(TERMINATION_CONFIRMED_EXIT_CODE),
+                let host_exit_code = match control_state {
+                    CONTROL_OPEN => exit.code,
+                    CONTROL_TERMINATION_REQUESTED => TERMINATION_CONFIRMED_EXIT_CODE,
                     CONTROL_LOST => {
                         bail!("Windows sandbox host control stream was lost before Exit settled")
                     }
                     _ => bail!("Windows sandbox host control state was invalid"),
                 };
+                return Ok(RelaySettlement {
+                    host_exit_code,
+                    target_exit_code: exit.code,
+                    termination_requested,
+                });
             }
             FrameKind::Error => {
                 let error: ErrorMessage = serde_json::from_slice(&frame.payload)?;
@@ -635,9 +731,73 @@ fn validate_started(ready: &ReadyMessage, started: &StartedMessage) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    fn phase_deadline_restarts_without_exceeding_the_operation_deadline() {
+        let now = Instant::now();
+        let operation = LaunchDeadline(now + Duration::from_secs(120));
+
+        assert_eq!(
+            operation.phase_deadline_at(now, Duration::from_secs(30)),
+            now + Duration::from_secs(30),
+        );
+        assert_eq!(
+            operation.phase_deadline_at(now + Duration::from_secs(105), Duration::from_secs(30),),
+            now + Duration::from_secs(120),
+        );
+    }
+
+    #[test]
+    fn drained_terminal_is_written_even_when_acl_cleanup_fails() {
+        let terminal_written = Cell::new(false);
+        let error = finalize_drained_run(
+            RelaySettlement {
+                host_exit_code: 0,
+                target_exit_code: 0,
+                termination_requested: false,
+            },
+            || Err(anyhow!("cleanup failed")),
+            |_| {
+                terminal_written.set(true);
+                Ok(())
+            },
+            "terminal-nonce",
+        )
+        .unwrap_err();
+
+        assert!(terminal_written.get());
+        assert!(error.to_string().contains("cleanup failed"));
+    }
+
+    #[test]
+    fn drained_terminal_records_durable_acl_cleanup_deferral_as_success() {
+        let terminal_deferred = Cell::new(false);
+        let exit_code = finalize_drained_run(
+            RelaySettlement {
+                host_exit_code: 0,
+                target_exit_code: 0,
+                termination_requested: false,
+            },
+            || Ok(Some("ACL transaction remained busy".into())),
+            |record| {
+                terminal_deferred.set(record.deny_read_cleanup_deferred);
+                assert_eq!(
+                    record.deny_read_cleanup_diagnostic.as_deref(),
+                    Some("ACL transaction remained busy"),
+                );
+                Ok(())
+            },
+            "terminal-nonce",
+        )
+        .unwrap();
+
+        assert_eq!(exit_code, 0);
+        assert!(terminal_deferred.get());
+    }
 
     #[test]
     fn controller_no_data_is_alive_but_eof_or_payload_is_lost() {

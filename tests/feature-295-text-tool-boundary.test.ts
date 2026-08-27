@@ -131,6 +131,32 @@ describe('FEATURE_295 trusted text-tool production boundary', () => {
     expect(sdk).not.toContain('createAsrtTextFileMutationSandbox');
   });
 
+  it('wires every KodaX-owned direct coding entry to the same native authority', () => {
+    const entry = readSource('src/trusted-coding-entry.ts');
+    const root = readSource('src/index.ts');
+    const coding = readSource('src/sdk-coding.ts');
+    const cli = readSource('src/kodax_cli.ts');
+
+    expect(entry).toContain('createTrustedTextMutationHost(');
+    expect(entry).toContain('workspaceSandboxRoots?.list()');
+    expect(entry).toContain('createCodingKodaXTaskRunner({');
+    expect(entry).not.toContain('createAsrt');
+    for (const source of [root, coding]) {
+      for (const name of [
+        'Client',
+        'createDefaultCodingAgent',
+        'createKodaXTaskRunner',
+        'KodaXClient',
+        'runKodaX',
+        'runManagedTask',
+        'startKodaX',
+      ]) expect(source).toContain(name);
+      expect(source).toContain("from './trusted-coding-entry.js'");
+    }
+    expect(cli).toContain("from './trusted-coding-entry.js'");
+    expect(cli).toContain('runManagedTask');
+  });
+
   it('does not expose or propagate a text sandbox capability', () => {
     const productionSources = [
       'packages/coding/src/types.ts',
