@@ -990,6 +990,10 @@ fn create_controller_pipe_instance(
     OwnedHandle::new(handle, "CreateNamedPipeW(controller)")
 }
 
+fn controller_pipe_security_descriptor(host_sid: &str) -> Result<LocalSecurityDescriptor> {
+    LocalSecurityDescriptor::from_sddl(&format!("O:{host_sid}D:P(A;;GA;;;SY)(A;;GA;;;{host_sid})"))
+}
+
 enum ControllerPipeState {
     Listening,
     Connected,
@@ -1106,8 +1110,7 @@ pub fn run_controller_pipe_server(broker_pid: u32) -> Result<()> {
     }
     .context("OpenProcess(controller broker)")?;
     let broker = OwnedHandle::new(broker, "controller broker")?;
-    let descriptor =
-        LocalSecurityDescriptor::from_sddl(&format!("D:P(A;;GA;;;SY)(A;;GA;;;{host_sid})"))?;
+    let descriptor = controller_pipe_security_descriptor(&host_sid)?;
     let name = format!(
         r"\\.\pipe\kodax-v2-{}-{}",
         unsafe { GetCurrentProcessId() },
@@ -2156,6 +2159,20 @@ mod tests {
         let token = current_token().unwrap();
         assert!(token_user_sid(token.raw()).unwrap().starts_with("S-1-"));
         assert!(current_logon_sid().unwrap().starts_with("S-1-"));
+    }
+
+    #[test]
+    fn controller_pipe_is_created_with_the_exact_host_owner() {
+        let host_sid = token_user_sid(current_token().unwrap().raw()).unwrap();
+        let descriptor = controller_pipe_security_descriptor(&host_sid).unwrap();
+        let name = format!(
+            r"\\.\pipe\kodax-owner-test-{}-{}",
+            unsafe { GetCurrentProcessId() },
+            uuid::Uuid::new_v4(),
+        );
+        let pipe = create_controller_pipe_instance(&name, &descriptor, true).unwrap();
+
+        verify_controller_pipe_security(&pipe, &host_sid).unwrap();
     }
 
     #[test]

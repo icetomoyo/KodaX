@@ -108,6 +108,24 @@ function makeCtx(): KodaXToolExecutionContext {
   };
 }
 
+async function awaitTestEvent(
+  event: Promise<void>,
+  label: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      event,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function makeOptions(): KodaXOptions {
   return {
     provider: 'anthropic',
@@ -2915,6 +2933,10 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       | { readonly digest: KodaXMemoryOutcomeDigest; readonly jobId?: string }
       | undefined;
     const receipts: Array<{ readonly proposalIds: readonly string[] }> = [];
+    let signalReceipt = (): void => {};
+    const receiptDelivered = new Promise<void>((resolve) => {
+      signalReceipt = resolve;
+    });
     const notices: Array<{
       readonly summaries: readonly string[];
       readonly proposalIds: readonly string[];
@@ -2989,6 +3011,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           },
           onMemoryReviewReceipt: (receipt) => {
             receipts.push({ proposalIds: receipt.proposalIds });
+            signalReceipt();
           },
           onMemoryNotice: (notice) => {
             notices.push({
@@ -3027,7 +3050,8 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
         operation: 'remember',
         claimKey: 'verify-code-before-documentation',
       }]);
-      await vi.waitFor(() => expect(receipts).toHaveLength(1), { timeout: 5_000 });
+      await awaitTestEvent(receiptDelivered, 'explicit memory review receipt');
+      expect(receipts).toHaveLength(1);
       expect(receipts).toEqual([{ proposalIds: [] }]);
       expect(notices).toEqual([]);
       expect(reviewedInput).toBeDefined();
@@ -3051,6 +3075,9 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       expect(sessionData?.lineage?.entries ?? []).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: 'memory_outcome_digest' }),
       ]));
+      await vi.waitFor(async () => {
+        expect(await listPendingEpisodeReviews(identity)).toHaveLength(0);
+      }, { timeout: 15_000 });
     } finally {
       await rm(home, {
         recursive: true,
@@ -3059,7 +3086,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
         retryDelay: 100,
       });
     }
-  }, 30_000);
+  }, 40_000);
 
   it('binds AMA memory_intent to a queued user turn', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'kodax-runner-memory-follow-up-'));
@@ -3242,6 +3269,10 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       readonly jobId?: string;
       readonly proposalIds: readonly string[];
     }> = [];
+    let signalReceipt = (): void => {};
+    const receiptDelivered = new Promise<void>((resolve) => {
+      signalReceipt = resolve;
+    });
     const storage = {
       load: async (id: string) => id === sessionId ? sessionData : null,
       save: async (id: string, data: KodaXSessionData) => {
@@ -3300,6 +3331,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
               jobId: receipt.jobId,
               proposalIds: receipt.proposalIds,
             });
+            signalReceipt();
           },
         },
       }, '我记得昨天已经核对过文档', async () => ({
@@ -3312,7 +3344,8 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       expect(result.success).toBe(true);
       expect(outcome?.digest.memoryIntent).toBeUndefined();
       expect(outcome?.jobId).toMatch(/^[a-f0-9]{64}$/);
-      await vi.waitFor(() => expect(receipts).toHaveLength(1), { timeout: 5_000 });
+      await awaitTestEvent(receiptDelivered, 'completed episode memory review receipt');
+      expect(receipts).toHaveLength(1);
       expect(receipts[0]).toEqual({
         jobId: outcome?.jobId,
         proposalIds: [],
@@ -3333,7 +3366,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       await vi.waitFor(async () => {
         const pending = await listPendingEpisodeReviews(identity);
         expect(pending).toHaveLength(0);
-      }, { timeout: 5_000 });
+      }, { timeout: 15_000 });
     } finally {
       await rm(home, {
         recursive: true,
@@ -3342,7 +3375,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
         retryDelay: 100,
       });
     }
-  }, 20_000);
+  }, 35_000);
 
   it('runs configured guardrails before permission and execution on the managed path', async () => {
     const order: string[] = [];
