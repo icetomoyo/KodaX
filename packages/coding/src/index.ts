@@ -458,6 +458,7 @@ export {
   maybeRunToolOutputGc,
   applyToolResultGuardrail,
   getToolResultPolicy,
+  ToolResultBatchCapacityError,
   buildToolResultBudget,
   buildToolResultBudgetFromUsage,
   clampToolResultPolicyToBudget,
@@ -468,6 +469,9 @@ export {
 export type {
   EditRecoveryDiagnostic,
   EditToolErrorCode,
+  GuardedToolResultBatch,
+  ToolResultBatchDebt,
+  ToolResultBatchEntry,
   ToolResultBudget,
   ToolResultBudgetReason,
   ToolResultBudgetUsageInput,

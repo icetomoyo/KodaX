@@ -8,6 +8,23 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- FEATURE_296 replaces the local tool-result capacity hard gate with
+  capacity-debt admission plus a bounded recovery ladder (ADR-067). Executed
+  `tool_use`/`tool_result` pairs always commit; an over-budget batch records
+  `capacityDebt` metadata with its artifact pointer instead of aborting the
+  Run. The next iteration's compaction relieves the debt (a still-over
+  compacted transcript commits best-effort with `stillOverCapacity`), the
+  output reserve shrinks floor-bounded (3000) while over capacity — both in
+  the post-compaction judgment and on the wire-level request — and an
+  irreducibly oversized fresh user input degrades to a preview head plus a
+  durable pointer the model pages in slices, on the request copy only. A
+  transient compaction-summarizer failure fails open with the existing
+  circuit breaker bounding repeats. Local capacity terminals now classify as
+  `failureKind: "context_capacity"` with structured `contextTokens`
+  (`required`/`available`) — never masked as a provider credential failure,
+  classified by isolated class identity rather than message text — and the
+  daemon schema plus resume round-trip preserve the new fields.
+
 - Classified Runtime failures now expose one credential-safe `failureDetail`
   across failure events (or settlement `run.updated`), Run result/status, and
   Session diagnostics. The stable

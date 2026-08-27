@@ -7,6 +7,7 @@ import {
   applyToolResultBatchGuardrail,
   applyToolResultGuardrail,
   getToolResultPolicy,
+  ToolResultBatchCapacityError,
 } from './tool-result-policy.js';
 import { buildToolResultBudgetFromUsage } from './tool-result-budget.js';
 import { TOOL_OUTPUT_DIR_ENV } from './truncate.js';
@@ -108,13 +109,13 @@ describe('tool result guardrail', () => {
     }], ctx, {
       aggregateInlineTokens: 1_000,
     });
-    const firstEntry = first[0]!;
+    const firstEntry = first.entries[0]!;
     const filesAfterFirstPass = await fs.readdir(tempDir);
 
     const second = await applyToolResultBatchGuardrail([firstEntry], ctx, {
       aggregateInlineTokens: 400,
     });
-    const secondEntry = second[0]!;
+    const secondEntry = second.entries[0]!;
 
     expect(secondEntry.content.length).toBeLessThan(firstEntry.content.length);
     expect((secondEntry.content.match(/KODAX_RESULT_INCOMPLETE/g) ?? [])).toHaveLength(1);
@@ -123,10 +124,12 @@ describe('tool result guardrail', () => {
     expect(await fs.readdir(tempDir)).toEqual(filesAfterFirstPass);
   });
 
-  it('fails explicitly when even the recoverable artifact marker cannot fit', async () => {
+  it('records capacity debt when even the recoverable artifact marker cannot fit', async () => {
     const content = Array.from({ length: 3_000 }, (_, index) => `line-${index + 1}`).join('\n');
 
-    await expect(applyToolResultBatchGuardrail([{
+    // FEATURE_296 (ADR-067): the irreducible marker no longer fails the
+    // batch; it commits as debt and the recovery ladder owns the next request.
+    const guarded = await applyToolResultBatchGuardrail([{
       id: 'result-1',
       toolName: 'read',
       content,
@@ -135,7 +138,23 @@ describe('tool result guardrail', () => {
       executionCwd: process.cwd(),
     }, {
       aggregateInlineTokens: 1,
-    })).rejects.toThrow(/cannot preserve recoverable tool\/result pairs within capacity/i);
+    });
+
+    expect(guarded.entries[0]!.content).toContain('KODAX_RESULT_INCOMPLETE');
+    expect(guarded.capacityDebt).toBeDefined();
+    expect(guarded.capacityDebt!.requiredTokens)
+      .toBeGreaterThan(guarded.capacityDebt!.availableTokens);
+  });
+
+  it('carries a stable code and typed token fields for SDK classification (FEATURE_296 T1)', () => {
+    // FEATURE_296: the typed terminal (child briefing / ladder exhaustion)
+    // must be classifiable by identity, not message text.
+    const error = new ToolResultBatchCapacityError(4_321, 1_234);
+
+    expect(error.code).toBe('KODAX_TOOL_RESULT_CAPACITY_EXCEEDED');
+    expect(error.requiredTokens).toBe(4_321);
+    expect(error.availableTokens).toBe(1_234);
+    expect(error.name).toBe('ToolResultBatchCapacityError');
   });
 
   it('keeps the Issue 158 moderate-output reproduction verbatim', async () => {
@@ -155,8 +174,8 @@ describe('tool result guardrail', () => {
       aggregateInlineTokens: 200_000,
     });
 
-    expect(result[0]?.content).toBe(content);
-    expect(result[0]?.outputPath).toBeUndefined();
+    expect(result.entries[0]?.content).toBe(content);
+    expect(result.entries[0]?.outputPath).toBeUndefined();
   });
 
   it('spills one pathological result at the per-result attention boundary', async () => {
@@ -174,9 +193,11 @@ describe('tool result guardrail', () => {
       aggregateInlineTokens: 200_000,
     });
 
-    expect(result[0]?.content).toContain('KODAX_RESULT_INCOMPLETE');
-    expect(result[0]?.content).toContain('Full output saved to:');
-    expect(await fs.readFile(result[0]!.outputPath!, 'utf8')).toBe(content);
+    expect(result.entries[0]?.content).toContain('KODAX_RESULT_INCOMPLETE');
+    expect(result.entries[0]?.content).toContain('Full output saved to:');
+    expect(await fs.readFile(result.entries[0]!.outputPath!, 'utf8')).toBe(content);
+    // Attention-only degradation physically fits, so no debt is recorded.
+    expect(result.capacityDebt).toBeUndefined();
   });
 
   it('spills the 174,763-byte dense Bash result before token estimation', async () => {
@@ -203,9 +224,9 @@ describe('tool result guardrail', () => {
         aggregateInlineTokens: 200_000,
       });
 
-      expect(result[0]?.content).toContain('KODAX_RESULT_INCOMPLETE');
-      expect(result[0]!.content.length).toBeLessThan(40 * 1024);
-      expect(await fs.readFile(result[0]!.outputPath!, 'utf8')).toBe(content);
+      expect(result.entries[0]?.content).toContain('KODAX_RESULT_INCOMPLETE');
+      expect(result.entries[0]!.content.length).toBeLessThan(40 * 1024);
+      expect(await fs.readFile(result.entries[0]!.outputPath!, 'utf8')).toBe(content);
       expect(countedLengths.every((length) => length < content.length)).toBe(true);
     } finally {
       countSpy.mockRestore();
@@ -228,8 +249,8 @@ describe('tool result guardrail', () => {
       aggregateInlineTokens: 200_000,
     });
 
-    expect(result.some((entry) => entry.content.includes('KODAX_RESULT_INCOMPLETE'))).toBe(true);
-    expect(result.filter((entry) => entry.outputPath !== undefined)).toHaveLength(1);
+    expect(result.entries.some((entry) => entry.content.includes('KODAX_RESULT_INCOMPLETE'))).toBe(true);
+    expect(result.entries.filter((entry) => entry.outputPath !== undefined)).toHaveLength(1);
   });
 
   it('keeps fixed recovery messages outside the tool-result attention ledger', async () => {
@@ -245,7 +266,7 @@ describe('tool result guardrail', () => {
       aggregateInlineTokens: 200_000,
     }, 50_000);
 
-    expect(result).toEqual([{
+    expect(result.entries).toEqual([{
       id: 'small-after-recovery',
       toolName: 'edit',
       content,
@@ -388,7 +409,7 @@ describe('tool result guardrail', () => {
       aggregateInlineTokens: 200_000,
     });
 
-    expect(result[0]?.content).toBe(content);
-    expect(result[0]?.outputPath).toBeUndefined();
+    expect(result.entries[0]?.content).toBe(content);
+    expect(result.entries[0]?.outputPath).toBeUndefined();
   });
 });

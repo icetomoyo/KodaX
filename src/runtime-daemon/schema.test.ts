@@ -181,6 +181,27 @@ describe('runtime daemon protocol schema', () => {
     )).toEqual([]);
   });
 
+  it('admits a context-capacity failureDetail with contextTokens (FEATURE_296)', () => {
+    const failureDetail = {
+      failureKind: 'context_capacity',
+      stage: 'runtime_control',
+      providerErrorCode: 'context_capacity_exceeded',
+      safeMessage: 'The run could not fit its context within the model window.',
+      contextTokens: { required: 98_000, available: 100_000 },
+    };
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['run.get'].result,
+      {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        phase: 'failed',
+        startedAt: '2026-08-27T00:00:00.000Z',
+        provider: 'custom-provider',
+        failureDetail,
+      },
+    )).toEqual([]);
+  });
+
   it('admits a Runtime-owned cancellation classification', () => {
     expect(validateRuntimeDaemonJsonSchema(
       RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result,

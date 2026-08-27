@@ -185,15 +185,19 @@ describe('Runner tool-result batch capacity', () => {
       .toBeLessThanOrEqual(availableTokens);
   });
 
-  it('fails when an over-capacity batch contains no string result that can spill', async () => {
+  it('admits an over-capacity non-string batch with capacity-debt metadata', async () => {
     const multimodal: RunnerToolResult = {
       content: [{ type: 'image', path: 'C:/tmp/large.png' }],
     };
-    await expect(transformFor(3_000, 1_000, 500)({
+    // FEATURE_296 (ADR-067): unspillable results no longer abort the run; the
+    // pair commits with debt metadata and compaction owns the next request.
+    const transformed = await transformFor(3_000, 1_000, 500)({
       calls: [call('image', 'read')],
       results: [multimodal],
       transcript,
-    })).rejects.toThrow(/cannot preserve recoverable tool\/result pairs within capacity/i);
+    });
+    expect(transformed).toHaveLength(1);
+    expect(transformed[0]!.metadata).toMatchObject({ capacityDebt: true });
   });
 
   it('does not register the legacy per-result truncation guardrail in runner-driven', async () => {

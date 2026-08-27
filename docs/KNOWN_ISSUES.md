@@ -11314,6 +11314,12 @@ direction, but review found unresolved correctness and resource regressions:
   complete value and emits one idempotent `KODAX_RESULT_INCOMPLETE` preview. An
   unrepresentable minimum marker fails explicitly instead of overfilling the
   request.
+  *(Superseded 2026-08-27 by FEATURE_296 / ADR-067: an unrepresentable marker
+  now records capacity debt and commits the complete tool_use/tool_result
+  pair; a bounded recovery ladder — forced compaction, floor-bounded reserve
+  shrink, irreducible-input degradation — owns the next request instead of
+  failing the run. Termination is reserved for requests that cannot be made
+  legal and surfaces as the structured `context_capacity` failure kind.)*
 - Capacity first solves the largest final input `Pmax` satisfying
   `Pmax + providerReservedOutputTokens + max(2048, ceil(Pmax * 3%)) <=
   contextWindow`, then admits at most `Cbatch = max(0, Pmax -

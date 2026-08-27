@@ -124,6 +124,15 @@ const TOOL_RESULT_POLICIES: Record<string, ToolResultPolicy> = {
     direction: 'head',
     spillToFile: true,
   },
+  // FEATURE_296 T5: irreducibly oversized fresh user input (request-copy
+  // degradation). Only the hint is load-bearing — the preview size comes from
+  // `maxInlineTokens` at the call site.
+  user_input: {
+    maxLines: 1200,
+    maxBytes: 40 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
 };
 
 // Capacity answers "will the next request fit?"; attention bounds answer
@@ -179,6 +188,8 @@ function buildToolResultHint(toolName: string): string {
       return 'Inspect the file with read instead of relying on a huge diff preview.';
     case 'child_task_summary':
       return 'Use the Read tool on the saved output path to view the full child task report.';
+    case 'user_input':
+      return 'Use read with offset/limit on the saved output file to page through the full input.';
     default:
       return 'Use a narrower follow-up tool call to inspect the missing details.';
   }
@@ -209,13 +220,59 @@ export interface ToolResultBatchEntry {
 
 export const TOOL_RESULT_INCOMPLETE_MARKER = 'KODAX_RESULT_INCOMPLETE';
 
+/**
+ * Capacity debt (FEATURE_296 / ADR-067): the admitted batch exceeds the local
+ * next-request estimate by `requiredTokens - availableTokens`. Debt is a
+ * recovery signal for the request-assembly ladder (forced compaction, reserve
+ * shrink); it never terminates a run by itself.
+ */
+export interface ToolResultBatchDebt {
+  readonly requiredTokens: number;
+  readonly availableTokens: number;
+}
+
+/** Result of the batch admission choke point; debt is present only when over. */
+export interface GuardedToolResultBatch {
+  readonly entries: readonly ToolResultBatchEntry[];
+  readonly capacityDebt?: ToolResultBatchDebt;
+}
+
+/** Single diagnostic identity for debt events across all admission callers. */
+export const TOOL_RESULT_DEBT_DIAGNOSTIC_SOURCE = 'coding:tool-result-policy';
+
+export function emitCapacityDebtDiagnostic(
+  requiredTokens: number,
+  availableTokens: number,
+): void {
+  emitKodaXDiagnostic({
+    source: TOOL_RESULT_DEBT_DIAGNOSTIC_SOURCE,
+    level: 'error',
+    message:
+      `Tool result admission requires ${requiredTokens} tokens against a `
+      + `${availableTokens}-token budget; over-budget entries are admitted as `
+      + `capacity debt (or kept as a typed failure by child-briefing callers).`,
+  });
+}
+
+/**
+ * Typed capacity terminal (FEATURE_296): raised only where debt admission does
+ * not apply (child briefing sizing, ladder-exhaustion terminals). Carries a
+ * stable code plus token numbers so SDK layers can classify by identity
+ * instead of message text.
+ */
 export class ToolResultBatchCapacityError extends Error {
+  readonly code = 'KODAX_TOOL_RESULT_CAPACITY_EXCEEDED';
+  readonly requiredTokens: number;
+  readonly availableTokens: number;
+
   constructor(requiredTokens: number, availableTokens: number) {
     super(
       `Tool result batch cannot preserve recoverable tool/result pairs within capacity: `
       + `${requiredTokens} tokens required, ${availableTokens} available.`,
     );
     this.name = 'ToolResultBatchCapacityError';
+    this.requiredTokens = requiredTokens;
+    this.availableTokens = availableTokens;
   }
 }
 
@@ -375,17 +432,19 @@ export async function applyToolResultGuardrail(
  * next-request capacity and the independent attention bounds. The largest raw
  * results are spilled one at a time, with the full output preserved as an
  * artifact. The actual replacement (including its marker and envelope overhead)
- * is recounted before deciding whether another result must spill. Physical
- * capacity is the only hard failure: if artifact persistence fails, attention
- * admission degrades visibly rather than discarding otherwise admissible data.
+ * is recounted before deciding whether another result must spill. When even
+ * marker-only entries exceed the physical estimate, the shortfall is returned
+ * as capacity debt (FEATURE_296 / ADR-067) — the pair always commits and the
+ * recovery ladder owns the next request — while artifact persistence failure
+ * still degrades visibly rather than discarding otherwise admissible data.
  */
 export async function applyToolResultBatchGuardrail(
   entries: readonly ToolResultBatchEntry[],
   ctx: KodaXToolExecutionContext,
   budget: ToolResultCapacity | undefined,
   additionalMessageTokens = 0,
-): Promise<ToolResultBatchEntry[]> {
-  if (entries.length === 0) return [];
+): Promise<GuardedToolResultBatch> {
+  if (entries.length === 0) return { entries: [] };
 
   const result = await Promise.all(entries.map(async (entry): Promise<ToolResultBatchEntry> => {
     const guarded = await applyToolResultGuardrail(entry.toolName, entry.content, ctx, {
@@ -397,7 +456,7 @@ export async function applyToolResultBatchGuardrail(
       ...(guarded.outputPath ? { outputPath: guarded.outputPath } : {}),
     };
   }));
-  if (!budget) return result;
+  if (!budget) return { entries: result };
 
   const entryTokens = result.map((entry) => countToolResultTokens(entry.content));
   const fixedMessageTokens = Math.max(0, Math.floor(additionalMessageTokens));
@@ -408,7 +467,7 @@ export async function applyToolResultBatchGuardrail(
   if (physicalTotalTokens <= physicalCapacityTokens
     && inlineResultTokens <= TOOL_RESULT_BATCH_ATTENTION_TOKENS
     && entryTokens.every((tokens) => tokens <= TOOL_RESULT_PER_ENTRY_ATTENTION_TOKENS)) {
-    return result;
+    return { entries: result };
   }
 
   const candidates = result
@@ -455,17 +514,14 @@ export async function applyToolResultBatchGuardrail(
   }
 
   if (physicalTotalTokens > physicalCapacityTokens) {
-    emitKodaXDiagnostic({
-      source: 'coding:tool-result-policy',
-      level: 'error',
-      message:
-        `Tool result artifact markers require ${physicalTotalTokens} tokens, exceeding the `
-        + `${physicalCapacityTokens}-token physical admission capacity; preserving recoverability.`,
-    });
-    throw new ToolResultBatchCapacityError(
-      physicalTotalTokens,
-      physicalCapacityTokens,
-    );
+    emitCapacityDebtDiagnostic(physicalTotalTokens, physicalCapacityTokens);
+    return {
+      entries: result,
+      capacityDebt: {
+        requiredTokens: physicalTotalTokens,
+        availableTokens: physicalCapacityTokens,
+      },
+    };
   }
 
   const attentionAdmissionIncomplete = inlineResultTokens > TOOL_RESULT_BATCH_ATTENTION_TOKENS
@@ -480,7 +536,7 @@ export async function applyToolResultBatchGuardrail(
     });
   }
 
-  return result;
+  return { entries: result };
 }
 
 function countToolResultTokens(content: string): number {

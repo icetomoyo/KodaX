@@ -94,8 +94,15 @@ import type {
   KodaXOptions,
   KodaXPromptCacheDiagnosticEvent,
   KodaXReasoningMode,
+  KodaXToolExecutionContext,
   KodaXWireReasoningEffort,
 } from '../../../types.js';
+import { resolveContextTokenCount } from '../../../token-accounting.js';
+import {
+  applyContextCapacityReserveOverride,
+  createUserInputDegradationCache,
+  degradeIrreducibleUserInputs,
+} from '../../../capacity-recovery.js';
 import type { KodaXOutputSegmentMode } from '../../../output-segments.js';
 import {
   emitProviderRateLimit,
@@ -351,6 +358,12 @@ export function buildRunnerLlmAdapter(
   const iterationState = iterationStateRef ?? localIterationState;
   const MAX_ITER_HINT = MANAGED_RUNNER_PANIC_ITERATIONS;
   let pendingRuntimeReminders: string[] = [];
+
+  // FEATURE_296 T5/T6 (ADR-067): per-run request-recovery state — the cache
+  // of degraded copies for irreducibly oversized fresh user inputs, and the
+  // tool-execution context backing the spill artifact.
+  const userInputDegradationCache = createUserInputDegradationCache();
+  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map() };
 
   // Cost tracker — one per session; `recordUsage` is called after every
   // provider.stream usage payload. REPL /cost reads through
@@ -689,6 +702,28 @@ export function buildRunnerLlmAdapter(
       // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
+      // FEATURE_296 T5/T6 (ADR-067): degrade irreducibly oversized fresh user
+      // inputs on the request copy, then shrink the wire-level output reserve
+      // while the assembled request is still over capacity so the request
+      // the provider receives is legal. The provider stays the authoritative
+      // judge; a rejection routes to classification, not a resend.
+      const recoveryContextWindow = contextBudgetCatalogs?.contextWindow;
+      if (recoveryContextWindow !== undefined) {
+        providerMessages = await degradeIrreducibleUserInputs(
+          providerMessages,
+          userInputSpillCtx,
+          recoveryContextWindow,
+          userInputDegradationCache,
+        );
+        applyContextCapacityReserveOverride(provider, {
+          ...(activeModel !== undefined ? { model: activeModel } : {}),
+          contextWindow: recoveryContextWindow,
+          currentTokens: resolveContextTokenCount(
+            providerMessages,
+            contextTokenSnapshotRef?.current,
+          ),
+        });
+      }
       let attempt = 0;
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
       // FEATURE_085 parity for the Scout/Runner path: mirror the main
@@ -848,6 +883,19 @@ export function buildRunnerLlmAdapter(
             throwIfManagedProviderAborted(options.abortSignal, providerMessages);
             hasEscalatedForCurrentAdapterCall = true;
             provider.setMaxOutputTokensOverride(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
+            // FEATURE_296 T6 (ADR-067): the escalation must not blanket the
+            // capacity floor-shrink — on a squeezed window 64K would re-issue
+            // an illegal request. Re-clamp to the floor-bounded reserve.
+            if (recoveryContextWindow !== undefined) {
+              applyContextCapacityReserveOverride(provider, {
+                ...(activeModel !== undefined ? { model: activeModel } : {}),
+                contextWindow: recoveryContextWindow,
+                currentTokens: resolveContextTokenCount(
+                  providerMessages,
+                  contextTokenSnapshotRef?.current,
+                ),
+              });
+            }
             options.events?.onRetry?.(
               `Output budget reached, escalating to ${KODAX_ESCALATED_MAX_OUTPUT_TOKENS} tokens and retrying the same turn`,
               1,

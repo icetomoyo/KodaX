@@ -123,6 +123,8 @@ export {
   calculateContextSafetyMargin,
   calculateMaxContextInputTokens,
   exceedsContextCapacity,
+  reclaimReservedResponseTokens,
+  RESERVE_SHRINK_FLOOR_TOKENS,
   type ContextCapacityInput,
 } from './context-capacity.js';
 

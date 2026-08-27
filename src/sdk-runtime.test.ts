@@ -14796,6 +14796,29 @@ describe("createKodaXRuntime", () => {
         fields: { code: "run_settlement_not_persisted" },
         expected: { failureKind: "runtime_cleanup", stage: "runtime_settlement", providerErrorCode: "runtime_settlement_failed" },
       },
+      {
+        message: "context capacity exceeded",
+        name: "ContextCapacityError",
+        fields: { code: "KODAX_CONTEXT_CAPACITY_EXCEEDED" },
+        expected: { failureKind: "context_capacity", stage: "runtime_control", providerErrorCode: "context_capacity_exceeded" },
+      },
+      {
+        message: "tool result batch cannot preserve recoverable pairs",
+        name: "ToolResultBatchCapacityError",
+        fields: {
+          code: "KODAX_TOOL_RESULT_CAPACITY_EXCEEDED",
+          requiredTokens: 901,
+          availableTokens: 300,
+        },
+        expected: { failureKind: "context_capacity", stage: "runtime_control", providerErrorCode: "context_capacity_exceeded" },
+      },
+      {
+        // Negative: a provider error whose message merely mentions capacity
+        // must stay in the provider taxonomy, never classified as a local
+        // context-capacity failure (no KODAX_* code, no capacity class).
+        message: "provider reported capacity exceeded",
+        expected: { failureKind: "provider", stage: "transport", providerErrorCode: "provider_error" },
+      },
     ];
 
     for (const failureCase of cases) {
@@ -14870,6 +14893,71 @@ describe("createKodaXRuntime", () => {
     expect(identifierResult.failureDetail).not.toHaveProperty("upstreamErrorCode");
     expect(identifierResult.failureDetail).not.toHaveProperty("requestId");
     expect(JSON.stringify(identifierResult)).not.toContain(identifierSecret);
+    await runtime.close();
+  });
+
+  it("surfaces local capacity errors as context_capacity without credential masking (FEATURE_296)", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "capacity-credential-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Capacity Debt Terminal" });
+    const capacityError = Object.assign(new Error("tool result batch too large"), {
+      name: "ToolResultBatchCapacityError",
+      code: "KODAX_TOOL_RESULT_CAPACITY_EXCEEDED",
+      requiredTokens: 901,
+      availableTokens: 300,
+    });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(capacityError)));
+    const handle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "capacity terminal",
+      providerCredential: "capacity-cred-secret",
+      providerCredentialProvider: "mock-provider",
+    } as RuntimeStartRunInput & {
+      readonly providerCredential: string;
+      readonly providerCredentialProvider: string;
+    });
+    const result = await handle.result;
+
+    expect(result.failureDetail).toMatchObject({
+      failureKind: "context_capacity",
+      providerErrorCode: "context_capacity_exceeded",
+      contextTokens: { required: 901, available: 300 },
+    });
+    expect(result.terminal?.failureKind).toBe("context_capacity");
+    // A local capacity error is never masked as a provider credential failure
+    // and never echoes the run-scoped credential.
+    expect(result.failureDetail?.safeMessage).not.toBe("Provider request failed.");
+    expect(JSON.stringify(result)).not.toContain("capacity-cred-secret");
+
+    // ContextCapacityError token shape: required = current + reserved,
+    // available = window.
+    const contextError = Object.assign(new Error("request cannot fit"), {
+      code: "KODAX_CONTEXT_CAPACITY_EXCEEDED",
+      contextWindow: 100_000,
+      currentTokens: 88_000,
+      reservedResponseTokens: 10_000,
+    });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(contextError)));
+    const contextHandle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "context capacity shape",
+      providerCredential: "capacity-cred-secret",
+      providerCredentialProvider: "mock-provider",
+    } as RuntimeStartRunInput & {
+      readonly providerCredential: string;
+      readonly providerCredentialProvider: string;
+    });
+    const contextResult = await contextHandle.result;
+    expect(contextResult.failureDetail).toMatchObject({
+      failureKind: "context_capacity",
+      contextTokens: { required: 98_000, available: 100_000 },
+    });
     await runtime.close();
   });
 

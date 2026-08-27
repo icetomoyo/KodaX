@@ -16,8 +16,8 @@ import {
 } from '../tools/tool-result-budget.js';
 import {
   applyToolResultBatchGuardrail,
+  emitCapacityDebtDiagnostic,
   type ToolResultBatchEntry,
-  ToolResultBatchCapacityError,
 } from '../tools/tool-result-policy.js';
 
 export interface RunnerToolResultBatchTransformOptions {
@@ -43,23 +43,42 @@ async function transformRunnerToolResultBatch(
   const stringEntries = collectStringEntries(batch);
   if (stringEntries.length === 0) {
     if (rawTokens > budget.aggregateInlineTokens) {
-      throw new ToolResultBatchCapacityError(rawTokens, budget.aggregateInlineTokens);
+      // FEATURE_296: unspillable non-string results admit with debt instead of
+      // aborting; the pair commits and compaction owns the next request.
+      emitCapacityDebtDiagnostic(rawTokens, budget.aggregateInlineTokens);
+      return stampCapacityDebt(batch.results);
     }
     return batch.results;
   }
   const nonStringTokens = estimateNonStringResultTokens(batch.calls, batch.results);
   const stringBudgetTokens = Math.max(0, budget.aggregateInlineTokens - nonStringTokens);
-  const guardedEntries = await applyToolResultBatchGuardrail(
+  const guarded = await applyToolResultBatchGuardrail(
     stringEntries,
     options.ctx,
     narrowBudgetToStrings(budget, stringBudgetTokens),
   );
-  const transformed = mergeGuardedStringResults(batch, guardedEntries, options);
+  const transformed = mergeGuardedStringResults(batch, guarded.entries, options);
   const finalTokens = estimateRunnerToolResultBatchTokens(batch.calls, transformed);
-  if (finalTokens > budget.aggregateInlineTokens) {
-    throw new ToolResultBatchCapacityError(finalTokens, budget.aggregateInlineTokens);
+  if (finalTokens > budget.aggregateInlineTokens && !guarded.capacityDebt) {
+    // The transform's estimate can disagree slightly with the guardrail's
+    // per-entry count; either way the shortfall is debt, not a failure.
+    emitCapacityDebtDiagnostic(finalTokens, budget.aggregateInlineTokens);
   }
-  return transformed;
+  // Debt is authoritative from the choke point: even when the transform's own
+  // recount happens to fit, a guardrail debt keeps the batch marked.
+  return guarded.capacityDebt ? stampCapacityDebt(transformed) : transformed;
+}
+
+function stampCapacityDebt(
+  results: readonly RunnerToolResult[],
+): readonly RunnerToolResult[] {
+  return results.map((result) => ({
+    ...result,
+    metadata: {
+      ...(result.metadata ?? {}),
+      capacityDebt: true,
+    },
+  }));
 }
 
 export function resolveRunnerToolResultBudget(

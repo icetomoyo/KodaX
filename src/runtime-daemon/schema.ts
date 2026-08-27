@@ -1371,6 +1371,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
         'response_stream_error',
         'cancelled',
         'runtime_settlement_failed',
+        'context_capacity_exceeded',
         'provider_error',
       ],
     },
@@ -1379,6 +1380,14 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
     upstreamErrorCode: { type: 'string', maxLength: 200 },
     requestId: { type: 'string', maxLength: 200 },
     retryAfterMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+    contextTokens: {
+      type: 'object',
+      properties: {
+        required: { type: 'integer', minimum: 0 },
+        available: { type: 'integer', minimum: 0 },
+      },
+      required: ['required', 'available'],
+    },
   }, ['failureKind', 'stage', 'providerErrorCode', 'safeMessage']);
 }
 
@@ -1396,6 +1405,7 @@ function runtimeFailureKindSchema(): RuntimeDaemonJsonSchema {
       'provider_aborted',
       'invalid_response',
       'runtime_cleanup',
+      'context_capacity',
       'provider',
     ],
   };

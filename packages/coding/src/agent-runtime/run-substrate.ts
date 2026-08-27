@@ -101,6 +101,11 @@ import {
   rebaseContextTokenSnapshot,
   resolveContextTokenCount,
 } from '../token-accounting.js';
+import {
+  applyContextCapacityReserveOverride,
+  createUserInputDegradationCache,
+  degradeIrreducibleUserInputs,
+} from '../capacity-recovery.js';
 // CAP-082 (`createEstimatedContextTokenSnapshot`) is consumed inside
 // `agent-runtime/catch-terminals.ts:runCatchCleanup` since FEATURE_100 P3.5d.
 // CAP-079 (`applyToolResultGuardrail`) is now wired inside
@@ -1325,6 +1330,10 @@ export async function runSubstrate(
       events.getCostReport.current = () => formatCostReport(getSummary(turnState.costTracker));
     }
 
+    // FEATURE_296 T5: per-run cache of degraded request copies for
+    // irreducibly oversized fresh user inputs.
+    const userInputDegradationCache = createUserInputDegradationCache();
+
     for (let iter = 0; iter < iterationLimit; iter++) {
     try {
       if (
@@ -1716,18 +1725,38 @@ export async function runSubstrate(
       const responseId = liveTurnScopeRef.current.turnId;
       let nextOutputSegmentMode: 'append' | 'replace' = 'append';
       let activeProviderRequestId: string | undefined;
+      // FEATURE_296 T5/T6 (ADR-067): `wireMessages` is the request-only view
+      // the provider receives — irreducibly oversized user inputs degraded to
+      // preview + durable pointer — while `providerMessages` keeps the
+      // originals for every `messages =` transcript alias below. The
+      // wire-level output reserve shrinks floor-bounded while the assembled
+      // request is over capacity, so the provider request is legal; a
+      // rejection routes to classification, never a resend.
+      let wireMessages = await degradeIrreducibleUserInputs(
+        providerMessages,
+        ctx,
+        contextWindow,
+        userInputDegradationCache,
+      );
+      applyContextCapacityReserveOverride(streamProvider, {
+        ...(turnState.currentModelOverride !== undefined
+          ? { model: turnState.currentModelOverride }
+          : {}),
+        contextWindow,
+        currentTokens: resolveContextTokenCount(wireMessages, contextTokenSnapshot),
+      });
       while (true) {
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
         // same fixed request overhead onto the exact messages sent next.
         estimatedRequestTokenSnapshot = rebaseContextTokenSnapshot(
-          providerMessages,
+          wireMessages,
           estimatedRequestTokenSnapshot,
         );
         const providerRequestId = boundarySession.beginAttempt(
           turnState.currentProviderName,
           turnState.currentModelOverride ?? streamProvider.getModel(),
-          providerMessages,
+          wireMessages,
           attempt,
           false,
         );
@@ -1753,7 +1782,7 @@ export async function runSubstrate(
         const retrySignal = streamTimers.retrySignal;
         const resetIdleTimer = streamTimers.resetIdleTimer;
 
-        const payloadBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);
+        const payloadBytes = estimateProviderPayloadBytes(wireMessages, effectiveSystemPrompt);
         emitResilienceDebug('[resilience:request]', {
           provider: turnState.currentProviderName,
           attempt,
@@ -1790,7 +1819,7 @@ export async function runSubstrate(
             });
             streamCallbacks.onRetryAfter?.(event);
           };
-          emitContextBudgetSnapshot(providerMessages);
+          emitContextBudgetSnapshot(wireMessages);
           const cacheDiagnostic = emitPromptCacheDiagnosticRequest({
             events,
             enabled: options.context?.contextDiagnostics === true,
@@ -1802,13 +1831,13 @@ export async function runSubstrate(
             disablePromptCache: options.disablePromptCache,
             system: effectiveSystemPrompt,
             tools: activeToolDefinitions,
-            messages: providerMessages,
+            messages: wireMessages,
             ...(memorySuffix !== undefined ? { ephemeralSuffix: memorySuffix } : {}),
             ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
             attempt,
           });
           result = await streamProvider.stream(
-            providerMessages,
+            wireMessages,
             activeToolDefinitions,
             effectiveSystemPrompt,
             effectiveProviderReasoning,
@@ -1845,7 +1874,7 @@ export async function runSubstrate(
           });
 
           if (decision.shouldUseNonStreaming) {
-            const fallbackBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);
+            const fallbackBytes = estimateProviderPayloadBytes(wireMessages, effectiveSystemPrompt);
             emitResilienceDebug('[resilience:fallback]', {
               provider: turnState.currentProviderName,
               attempt,
@@ -1857,7 +1886,7 @@ export async function runSubstrate(
             // attempt loop must `break` with the buffered result. On
             // failure, fall through to recovery-action branches with
             // the new error.
-            emitContextBudgetSnapshot(providerMessages);
+            emitContextBudgetSnapshot(wireMessages);
             const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
@@ -1869,7 +1898,7 @@ export async function runSubstrate(
               disablePromptCache: options.disablePromptCache,
               system: effectiveSystemPrompt,
               tools: activeToolDefinitions,
-              messages: providerMessages,
+              messages: wireMessages,
               ...(memorySuffix !== undefined ? { ephemeralSuffix: memorySuffix } : {}),
               ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
               attempt,
@@ -1878,7 +1907,7 @@ export async function runSubstrate(
             const fallbackOutcome = await executeNonStreamingFallback({
               events,
               streamProvider,
-              providerMessages,
+              providerMessages: wireMessages,
               activeToolDefinitions,
               effectiveSystemPrompt,
               effectiveProviderReasoning,
@@ -1938,6 +1967,12 @@ export async function runSubstrate(
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
             providerMessages = recovery.messages;
+            wireMessages = await degradeIrreducibleUserInputs(
+              providerMessages,
+              ctx,
+              contextWindow,
+              userInputDegradationCache,
+            );
             streamTimers.clearAll();
             // Don't bill a retry slot for the sanitize step.
             attempt -= 1;
@@ -1953,6 +1988,12 @@ export async function runSubstrate(
           const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
           telemetryRecovery(decision.action, recovery);
           providerMessages = recovery.messages;
+          wireMessages = await degradeIrreducibleUserInputs(
+            providerMessages,
+            ctx,
+            contextWindow,
+            userInputDegradationCache,
+          );
 
           streamTimers.clearAll();
           await waitForRetryDelay(decision.delayMs, options.abortSignal);

@@ -81,3 +81,23 @@ export function calculateMaxContextInputTokens(
 
   return best;
 }
+
+/**
+ * FEATURE_296 (ADR-067) recovery-ladder rung: shrink the reserved output
+ * budget until the over-capacity input fits, bounded by this floor. Consumed
+ * by the post-compaction `stillOverCapacity` checks (T3) and the request-build
+ * max_tokens decision (T6). Compaction pressure detection keeps the true
+ * reserve so relief still triggers conservatively.
+ */
+export const RESERVE_SHRINK_FLOOR_TOKENS = 3_000;
+
+export function reclaimReservedResponseTokens(input: ContextCapacityInput): number {
+  const window = Math.max(0, Math.floor(input.contextWindow));
+  const current = Math.max(0, Math.floor(input.currentTokens));
+  const base = Math.max(RESERVE_SHRINK_FLOOR_TOKENS, Math.floor(input.reservedResponseTokens ?? 0));
+  if (!exceedsContextCapacity({ ...input, contextWindow: window, currentTokens: current })) {
+    return base;
+  }
+  const headroom = window - current - calculateContextSafetyMargin(current);
+  return Math.min(base, Math.max(RESERVE_SHRINK_FLOOR_TOKENS, headroom));
+}

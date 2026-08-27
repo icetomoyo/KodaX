@@ -5700,3 +5700,107 @@ ASRT `0.0.65`, `0.0.67`, and `0.0.73`; Claude Code FileWrite/Edit and path
 policy source; Codex Windows no-follow, runner, token, capability, pipe, stdio
 and Job source at `2764e836`; independent architecture, security, and
 concurrency/recovery reviews on 2026-08-26.
+
+## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
+
+**Status**: Accepted and implementation authorized (2026-08-27); supersedes
+the Issue 158 closure record's hard-gate defaults.
+
+**Driver**: an SDK embedder lost runs to `ToolResultBatchCapacityError`
+after tools had already executed. Four-agent investigation confirmed the
+hard gate fires on a local estimate (safety margin plus reserved output)
+before the provider is ever asked; the aborted tool turn is dropped from
+the durable error snapshot, so resumed sessions lose evidence that tools
+ran; the compaction hook structurally never sees the just-executed results
+because the throw skips the next iteration; and under a run-scoped
+credential the terminal error is masked as a provider credential failure
+and misclassified as `network`. The Issue 158 closure record deliberately
+chose "an unrepresentable minimum marker fails explicitly instead of
+overfilling the request"; this ADR reverses that default with evidence the
+record could not weigh: Claude Code never refuses to append tool results
+locally — it persists, clears old tool outputs, summarizes, and treats the
+provider's own too-long rejection as the authoritative signal, with a
+thrash guard. The root confusion in KodaX was treating the durable
+transcript as if it carried the provider request's capacity limit.
+
+**Decision**: the transcript is an unbounded source of truth; capacity is
+enforced only while assembling the next provider request, through a bounded
+recovery ladder.
+
+1. **Capacity debt, not termination.** `applyToolResultBatchGuardrail`
+   remains the single admission choke point for batch shaping, but a
+   physical-capacity shortfall returns marker-only minimal entries plus a
+   debt record (`requiredTokens`, `availableTokens`) instead of throwing.
+   Results carry `capacityDebt` metadata; non-string results that cannot
+   spill are admitted as-is. The runner batch transform, background
+   envelope enforcer, and idle-yield wake all funnel through the choke
+   point, so debt marking and diagnostics stay uniform. The
+   `tool_use`/`tool_result` pair therefore always commits after execution;
+   crash repair keeps the existing drop-style cleaners as the backstop.
+2. **Debt drives a bounded ladder before each provider request**: force
+   compaction of old history (debt counts as hard pressure, so the circuit
+   breaker bypass applies) → shrink the reserved output tokens toward a
+   floor of 3000 — in the post-compaction judgment and on the wire-level
+   request the provider actually receives — → degrade an irreducibly
+   oversized fresh input to an inline preview plus durable pointer (the
+   existing tool-output spill contract; the SDK submit path gains what the
+   REPL paste anchors already do). The provider is the authoritative judge:
+   a rejection routes to classification, never a speculative resend (the
+   sketched conservatism-band resend was deliberately trimmed as unearned).
+   Existing circuit breakers and anti-thrash state bound the ladder; a
+   consecutive-debt transcript terminates through classification instead of
+   looping.
+3. **Termination is reserved for configuration-impossible requests** (a
+   minimal degraded request cannot be assembled at all). A terminal
+   capacity failure preserves the full transcript so a corrected
+   configuration resumes in the same session; it never discards executed
+   work.
+4. **Structured, unmasked, redaction-safe error surface.** Capacity errors
+   carry `code` and typed token fields; `RuntimeRunFailureKind` gains
+   `context_capacity`, classified by class identity before the overloaded
+   text patterns. `normalizeRuntimeRunError` passes capacity-class errors
+   through unmasked — allowlisted strictly by class identity (instanceof or
+   code), never by message text, and never for errors derived from provider
+   response bodies, preserving the Issue 298 credential isolation.
+5. **Scope exclusions preserved.** The child-executor briefing admission
+   keeps its typed failure semantics (it sizes a new child run's initial
+   request); it sheds evidence rather than incurring debt. Provider-layer
+   `KodaXProviderError` status/code preservation and the provider-layer
+   reduced-`max_tokens` retry are out of scope: the retry is dead under the
+   escalation override and mathematically ineffective for input-side
+   overflow, so the controlled attempt never relies on it.
+
+**Consequences**: long runs survive local estimate shortfalls that
+compaction can relieve — the dominant observed failure class — with no
+user-visible interruption. Executed work is never silently discarded, so a
+resumed model sees which tools already ran (tools still execute exactly
+once; no replay is introduced). The ladder can spend at most one additional
+provider request per run beyond the normal flow. Debt-admitted transcripts
+keep pairing integrity and pass the authoritative-snapshot gate. The
+residual risk is a genuinely irreducible round (oversized fresh input on a
+small-window model), which degrades to preview-plus-pointer rather than
+failing; only a misconfiguration (system prompt plus tool definitions
+exceeding the window) terminates, with numbers and a remedy.
+
+**Rejected alternatives**: keeping the Issue 158 hard gate (kills runs the
+provider would accept and discards executed work); literal single-write
+pair atomicity (delays the write-ahead `tool_use` commit, weakening crash
+evidence and inviting organic side-effect re-issue); routing recovery
+through the provider-layer reduced-`max_tokens` retry (disabled by the
+escalation override and unable to fix input-side overflow); unbounded
+reactive compaction on provider rejection (thrash; the top-of-iteration
+forced path already covers the need); allowlisting capacity errors by
+message text or unmasking provider-derived errors (would regress the Issue
+298 credential isolation); replaying tools after resume (violates the
+side-effect safety policy).
+
+**Evidence base**: four-agent investigation on 2026-08-27 (runner lifecycle
+trace, SDK error-path trace, adversarial design review) against
+`runner.ts`, `tool-result-policy.ts`, `runner-tool-result-batch.ts`,
+`compaction.ts`, `compaction-orchestration.ts`, `sdk-runtime.ts`,
+`classifier.ts`, and `base.ts`; Claude Code documented behavior for
+append-then-free context management, reduced-`max_tokens` retries, and
+compaction thrash guards (code.claude.com/docs error reference, context
+window, model configuration, how-claude-code-works); the SDK embedder
+report that initiated FEATURE_296; the Issue 158 closure record
+(docs/KNOWN_ISSUES.md) whose defaults this ADR explicitly supersedes.

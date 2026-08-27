@@ -14,12 +14,12 @@
 | Current released version | `v0.7.95` (Git tag / GitHub Release) |
 | Current package version | `@kodax-ai/kodax@0.7.95` release (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Total tracked features | `79` |
-| InProgress | `2` |
+| Total tracked features | `80` |
+| InProgress | `3` |
 | Planned | `16` |
 | Completed | `55` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -27,8 +27,8 @@
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
 | Completed | 55 | `294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `293` and `294` are complete in the v0.7.89 release; `292`, `291`, `290`, and `289` shipped in v0.7.85. npm publication remains manual. |
-| InProgress | 2 | `225, 295` | `295` implements cross-platform trusted text transactions plus the v0.7.96 Windows sandbox v2 atomic cutover; `225` remains the bounded v0.8.25 cleanup. |
-| Planned, near-term | 0 | `-` | `v0.7.96` development is occupied by in-progress FEATURE_295; Issue 256 descendant-closure remains open and npm publication remains manual. |
+| InProgress | 3 | `225, 295, 296` | `295` implements cross-platform trusted text transactions plus the v0.7.96 Windows sandbox v2 atomic cutover; `296` replaces the local tool-result capacity hard gate with capacity-debt admission plus a bounded recovery ladder; `225` remains the bounded v0.8.25 cleanup. |
+| Planned, near-term | 0 | `-` | `v0.7.96` development is occupied by in-progress FEATURE_295 and FEATURE_296; Issue 256 descendant-closure remains open and npm publication remains manual. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -79,7 +79,7 @@
 | `v0.7.93` | `0` |
 | `v0.7.94` | `0` |
 | `v0.7.95` | `0` |
-| `v0.7.96` | `1` |
+| `v0.7.96` | `2` |
 | `v0.7.100` | `0` |
 | `v0.7.105` | `0` |
 | `v0.8.10` | `5` |
@@ -512,6 +512,7 @@
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | Core / Sandbox + Filesystem Reliability | High | `v0.7.96` | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) |
+| `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | Core / Runtime + SDK Reliability | High | `v0.7.96` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---

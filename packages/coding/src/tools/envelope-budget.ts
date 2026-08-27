@@ -16,7 +16,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 import type { ToolResultBudget } from './tool-result-budget.js';
 import {
   applyToolResultBatchGuardrail,
-  ToolResultBatchCapacityError,
+  emitCapacityDebtDiagnostic,
 } from './tool-result-policy.js';
 
 export type EnvelopeBudgetResolver = (
@@ -40,13 +40,15 @@ export function createEnvelopeAggregateBudgetEnforcer(
       ctx,
       budget,
     );
-    const result = guarded.map((entry) => entry.content);
+    const result = guarded.entries.map((entry) => entry.content);
     const finalTokens = countEnvelopeTokens(result);
-    if (finalTokens > budget.aggregateInlineTokens) {
-      throw new ToolResultBatchCapacityError(
-        finalTokens,
-        budget.aggregateInlineTokens,
-      );
+    if (
+      finalTokens > budget.aggregateInlineTokens
+      && !guarded.capacityDebt
+    ) {
+      // FEATURE_296 (ADR-067): an irreducible envelope marker records debt
+      // instead of failing; the wake commits and compaction owns recovery.
+      emitCapacityDebtDiagnostic(finalTokens, budget.aggregateInlineTokens);
     }
     return result;
   };

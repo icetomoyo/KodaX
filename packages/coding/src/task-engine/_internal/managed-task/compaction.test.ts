@@ -6,7 +6,6 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
 });
 
 import {
-  ContextCapacityError,
   Runner,
   compact as mockedCompact,
   createAgent,
@@ -354,7 +353,7 @@ describe('managed history compaction', () => {
     );
   });
 
-  it('fails explicitly and leaves canonical history untouched when hard-pressure summary fails', async () => {
+  it('fails open and records a breaker failure when hard-pressure summary fails transiently', async () => {
     const messages = makeMessages();
     const original = structuredClone(messages);
     const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
@@ -364,8 +363,68 @@ describe('managed history compaction', () => {
       contextTokenSnapshotRef: ref,
     });
 
-    await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+    // FEATURE_296 (ADR-067): a transient summarizer failure no longer aborts
+    // the run under hard pressure; the hook returns undefined (fail open),
+    // canonical history is untouched, and the circuit breaker records the
+    // failure so repeated outages are bounded.
+    await expect(hook?.(messages)).resolves.toBeUndefined();
     expect(messages).toEqual(original);
+  });
+
+  it('commits the best-effort compacted transcript when the summary alone still exceeds capacity', async () => {
+    const messages = makeMessages();
+    const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
+    // Summary so large that even the compacted transcript stays over the
+    // physical next-request budget.
+    const oversizedMessages = [{
+      role: 'user' as const,
+      content: `oversized summary\n${'summary '.repeat(40_000)}`,
+      _synthetic: true,
+      _source: 'compaction-checkpoint',
+    }];
+    const overSized: CompactionResult = {
+      ...compactedResult(messages),
+      messages: oversizedMessages,
+    };
+    compactMock.mockResolvedValue(overSized);
+    const onCompactEnd = vi.fn();
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+      resolvedContextCapacity: resolvedCapacity(100),
+      contextTokenSnapshotRef: ref,
+    });
+
+    // FEATURE_296 (ADR-067): a still-over compaction is committed best-effort
+    // instead of aborting the run; the ladder owns the next request.
+    const compacted = await hook?.(messages);
+
+    expect(compacted).toBeDefined();
+    expect(compacted).toEqual(overSized.messages);
+    expect(onCompactEnd).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      outcome: 'compacted',
+      stillOverCapacity: true,
+    }));
+  });
+
+  it('treats a reclaimable escalation reserve as relieved after compaction (FEATURE_296 T3)', async () => {
+    const messages = makeMessages();
+    const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
+    compactMock.mockResolvedValue(compactedResult(messages));
+    const onCompactEnd = vi.fn();
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+      resolvedContextCapacity: resolvedCapacity(100, 100_000, 40_000),
+      contextTokenSnapshotRef: ref,
+    });
+
+    // The compacted transcript is over capacity with the 40k escalation
+    // reserve but legal with the floor-bounded shrunk reserve, so no debt.
+    const compacted = await hook?.(messages);
+
+    expect(compacted).toBeDefined();
+    expect(onCompactEnd).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      outcome: 'compacted',
+    }));
+    const endResult = onCompactEnd.mock.calls.at(-1)?.[1];
+    expect(endResult?.stillOverCapacity).toBeUndefined();
   });
 
   it('fails open for an explicit early policy while physical capacity remains', async () => {

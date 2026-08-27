@@ -1952,7 +1952,7 @@ async function buildChildBriefing(
     const admitted = await applyToolResultBatchGuardrail(evidence, ctx, {
       aggregateInlineTokens: evidenceBudget,
     });
-    parts.push(...evidenceHeading, ...admitted.map((item) => item.content));
+    parts.push(...evidenceHeading, ...admitted.entries.map((item) => item.content));
   }
 
   parts.push(...footer);

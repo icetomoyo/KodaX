@@ -386,6 +386,12 @@ export type KodaXCompactionEndResult = KodaXCompactionEndState & (
       readonly outcome: 'compacted';
       readonly reason?: never;
       readonly failurePhase?: never;
+      /**
+       * FEATURE_296 (ADR-067): the compacted transcript still exceeds the
+       * physical next-request budget; it was committed best-effort and the
+       * recovery ladder owns the next request.
+       */
+      readonly stillOverCapacity?: boolean;
     }
   | {
       readonly outcome: 'skipped';

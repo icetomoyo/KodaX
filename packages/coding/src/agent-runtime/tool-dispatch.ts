@@ -868,10 +868,16 @@ async function admitAndEmitVisibleToolResults(
     input.toolResultBudget,
     recoveryMessageTokens,
   );
-  const guardedById = new Map(guardedBatch.map((entry) => [entry.id, entry]));
+  const guardedById = new Map(guardedBatch.entries.map((entry) => [entry.id, entry]));
   const finalResults = toolResults.map((result) => {
     const guarded = guardedById.get(result.tool_use_id);
-    if (!guarded || guarded.content === result.content) return result;
+    if (!guarded || guarded.content === result.content) {
+      // FEATURE_296 (ADR-067): an over-budget batch admits with debt metadata
+      // so the pair commits; the recovery ladder owns the next request.
+      return guardedBatch.capacityDebt
+        ? { ...result, metadata: { ...(result.metadata ?? {}), capacityDebt: true } }
+        : result;
+    }
     return {
       ...result,
       content: guarded.content,
@@ -879,6 +885,7 @@ async function admitAndEmitVisibleToolResults(
         ...(result.metadata ?? {}),
         truncated: true,
         capacityFallback: true,
+        ...(guardedBatch.capacityDebt ? { capacityDebt: true } : {}),
         ...(guarded.outputPath ? { outputPath: guarded.outputPath } : {}),
       },
     };

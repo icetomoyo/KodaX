@@ -146,6 +146,12 @@ export type { ToolOutputGcResult } from './tool-output-gc.js';
 export {
   applyToolResultGuardrail,
   getToolResultPolicy,
+  ToolResultBatchCapacityError,
+} from './tool-result-policy.js';
+export type {
+  GuardedToolResultBatch,
+  ToolResultBatchDebt,
+  ToolResultBatchEntry,
 } from './tool-result-policy.js';
 export {
   buildToolResultBudget,

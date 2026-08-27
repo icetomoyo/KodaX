@@ -9,7 +9,6 @@ import type { KodaXEvents, KodaXToolExecutionContext } from '../../types.js';
 import { countTokens, estimateTokens } from '../../tokenizer.js';
 import { TOOL_OUTPUT_DIR_ENV } from '../../tools/truncate.js';
 import type { ToolResultBudget } from '../../tools/tool-result-budget.js';
-import { ToolResultBatchCapacityError } from '../../tools/tool-result-policy.js';
 import { applyPostToolProcessing, runToolDispatch } from '../tool-dispatch.js';
 import { buildRuntimeSessionState } from '../runtime-session-state.js';
 
@@ -171,7 +170,7 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
     expect(admittedResultTokens + recoveryTokens).toBeLessThanOrEqual(resultOnlyTokens + 1);
   });
 
-  it('rejects an irreducible recovery payload even when the raw result fits by itself', async () => {
+  it('admits an irreducible recovery payload with capacity debt even when the raw result fits by itself', async () => {
     const rawResult = '[Tool Error] edit: EDIT_TOO_LARGE: x';
     const resultOnlyTokens = 4 + countTokens(rawResult) + 4;
     const toolBlocks = [tool('edit-1', 'edit', { path: path.join(tempDir, 'target.ts') })];
@@ -180,7 +179,7 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
       modelSelection: {},
     });
 
-    await expect(applyPostToolProcessing({
+    const processed = await applyPostToolProcessing({
       toolBlocks,
       resultMap: new Map([['edit-1', rawResult]]),
       events: {},
@@ -188,7 +187,17 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
       ctx: ctx(),
       runtimeSessionState,
       toolResultBudget: budget(resultOnlyTokens + 1),
-    })).rejects.toBeInstanceOf(ToolResultBatchCapacityError);
+    });
+
+    // FEATURE_296 (ADR-067): an irreducible marker no longer fails the batch;
+    // the pair commits with debt metadata and compaction owns recovery.
+    expect(processed.toolResults).toHaveLength(1);
+    expect(processed.toolResults[0]!.content).toContain('KODAX_RESULT_INCOMPLETE');
+    expect(processed.toolResults[0]!.content).toContain('Full output saved to:');
+    expect(processed.toolResults[0]!.metadata).toMatchObject({
+      capacityDebt: true,
+      outputPath: expect.any(String),
+    });
   });
 
   it('reserves the active provider output budget and a physical-token safety margin', async () => {

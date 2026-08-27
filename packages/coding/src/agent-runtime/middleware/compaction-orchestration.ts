@@ -8,7 +8,9 @@
  *
  * Current contract: default compaction is physical-capacity-driven and gives
  * the semantic summarizer complete evidence. Hard pressure bypasses breaker
- * skips; failure preserves canonical history and propagates a typed error.
+ * skips; failure preserves canonical history. A still-over compacted
+ * transcript commits best-effort with a `stillOverCapacity` flag (FEATURE_296)
+ * instead of propagating a typed error.
  * Deterministic destructive pruning is an explicit legacy opt-in only.
  *
  * Class 1 (substrate). Three sequential phases of the compaction
@@ -63,6 +65,7 @@ import {
   emitKodaXDiagnostic,
   exceedsContextCapacity,
   needsCompaction,
+  reclaimReservedResponseTokens,
   type CompactionConfig,
   type CompactionUpdate,
 } from '@kodax-ai/agent';
@@ -589,12 +592,20 @@ export interface CompactionLifecycleOutput {
    * the caller keeps its existing per-turn snapshot.
    */
   readonly contextTokenSnapshot: KodaXContextTokenSnapshot | undefined;
+  /**
+   * FEATURE_296 (ADR-067): the compacted transcript exceeds the physical
+   * next-request budget even at the floor-bounded shrunk reserve (T3); it is
+   * committed best-effort and the recovery ladder owns the next request
+   * instead of aborting the run.
+   */
+  readonly stillOverCapacity?: boolean;
 }
 
 /**
  * Compose the three compaction phases into one call. The current default is
  * semantic summary, no-op legacy degradation, then validated commit. A final
- * physical-capacity check prevents submitting a known-overflow request.
+ * physical-capacity check reports a still-over compacted transcript as
+ * `stillOverCapacity` (FEATURE_296) instead of aborting the run.
  * Phase ordering is load-bearing:
  *   1. `tryIntelligentCompact` — LLM compact (or skip on circuit
  *      breaker / `!needsCompact`)
@@ -652,16 +663,29 @@ export async function runCompactionLifecycle(
     0,
     input.currentTokens - estimateTokens(input.messages),
   ) + estimateTokens(degradationPhase.compacted);
-  if (exceedsContextCapacity({
+  // FEATURE_296 T3: judge against the floor-bounded shrunk reserve first —
+  // a reclaimable escalation reserve is relief, not debt.
+  const stillOverCapacity = exceedsContextCapacity({
     contextWindow: input.contextWindow,
     currentTokens: physicalTokensAfter,
-    reservedResponseTokens: input.reservedResponseTokens,
-  })) {
-    throw new ContextCapacityError({
+    reservedResponseTokens: reclaimReservedResponseTokens({
       contextWindow: input.contextWindow,
       currentTokens: physicalTokensAfter,
       reservedResponseTokens: input.reservedResponseTokens,
-    }, 'History compaction');
+    }),
+  });
+  if (stillOverCapacity) {
+    // FEATURE_296 (ADR-067): a still-over compacted transcript commits
+    // best-effort (no larger than the pre-compaction transcript); the
+    // recovery ladder owns the next request instead of aborting the run.
+    emitKodaXDiagnostic({
+      source: 'coding:compaction-orchestration',
+      level: 'error',
+      message:
+        `Compacted history still requires ${physicalTokensAfter} tokens against the `
+        + `${input.contextWindow}-token window; the recovery ladder must relieve `
+        + `capacity before the next request.`,
+    });
   }
   const compactionUpdate = didCompactMessages
     ? {
@@ -692,5 +716,6 @@ export async function runCompactionLifecycle(
     nextCompactConsecutiveFailures: llmPhase.nextCompactConsecutiveFailures,
     nextCompactionAntiThrash: llmPhase.nextCompactionAntiThrash,
     contextTokenSnapshot: commitPhase.contextTokenSnapshot,
+    ...(stillOverCapacity ? { stillOverCapacity: true } : {}),
   };
 }

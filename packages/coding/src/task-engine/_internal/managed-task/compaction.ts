@@ -12,6 +12,7 @@ import {
   injectPostCompactAttachments,
   needsCompaction,
   POST_COMPACT_TOKEN_BUDGET,
+  reclaimReservedResponseTokens,
   resolveContextWindow,
   resolveCompactionPolicy,
   type AgentMessage,
@@ -132,6 +133,13 @@ interface ManagedCompactionCandidate {
   readonly finalTokens: number;
   readonly finalCompactableTokens: number;
   readonly update: CompactionUpdate;
+  /**
+   * FEATURE_296 (ADR-067): the compacted transcript exceeds the physical
+   * next-request budget even at the floor-bounded shrunk reserve (T3). It is
+   * committed best-effort (no larger than the pre-compaction transcript) and
+   * the recovery ladder owns the next request instead of aborting the run.
+   */
+  readonly stillOverCapacity?: boolean;
 }
 
 type PersistenceResult =
@@ -467,17 +475,18 @@ async function buildManagedCompactionCandidate(input: {
     : attached.messages;
   const finalMessages = prependImmutableSystem(input.immutableSystem, attachedMessages);
   const finalTokens = input.fixedOverheadTokens + estimateTokens(attachedMessages);
-  if (exceedsContextCapacity({
+  // FEATURE_296 T3: judge the compacted transcript against the floor-bounded
+  // shrunk reserve first — a reclaimable escalation reserve is relief, not
+  // debt. Only an input that cannot fit even at the floor records debt.
+  const stillOverCapacity = exceedsContextCapacity({
     contextWindow: input.contextWindow,
     currentTokens: finalTokens,
-    reservedResponseTokens: input.reservedResponseTokens,
-  })) {
-    throw new ContextCapacityError({
+    reservedResponseTokens: reclaimReservedResponseTokens({
       contextWindow: input.contextWindow,
       currentTokens: finalTokens,
       reservedResponseTokens: input.reservedResponseTokens,
-    }, 'Managed history compaction');
-  }
+    }),
+  });
   return {
     finalMessages,
     finalTokens,
@@ -488,6 +497,7 @@ async function buildManagedCompactionCandidate(input: {
       input.preCompactionMessages,
       attached.postCompactAttachments,
     ),
+    ...(stillOverCapacity ? { stillOverCapacity: true } : {}),
   };
 }
 
@@ -666,9 +676,12 @@ async function resolveManagedSummaryOutcome(
       failurePhase: 'summary_generation',
     };
     emitCompactionFailure('Managed history compaction summary failed.', error);
-    return attempt.hardPressure
-      ? { kind: 'capacity', endResult, error: capacityError(input) }
-      : { kind: 'stopped', endResult };
+    // FEATURE_296 (ADR-067): a transient summarizer failure fails open even
+    // under hard pressure — canonical history is untouched and the run
+    // continues; the circuit breaker bounds repeated outages. A genuine
+    // ContextCapacityError (the summary request itself cannot fit) still
+    // terminates above.
+    return { kind: 'stopped', endResult };
   }
   if (!result.compacted) return noCompactablePrefixOutcome(input);
   return {
@@ -743,6 +756,16 @@ async function commitManagedCompactionResult(
   }).state;
   notifyPostCompact(input.hookOptions.onPostCompact);
   updateSnapshot(input.snapshotRef, candidate.finalMessages, candidate.finalTokens);
+  if (candidate.stillOverCapacity) {
+    emitKodaXDiagnostic({
+      source: 'coding:managed-compaction',
+      level: 'error',
+      message:
+        `Compacted history still requires ${candidate.finalTokens} tokens against the `
+        + `${input.contextWindow}-token window; the recovery ladder must relieve `
+        + `capacity before the next request (FEATURE_296).`,
+    });
+  }
   const endResult: KodaXCompactionEndResult = {
     ...compactionEndState(
       attempt.currentTokens,
@@ -750,6 +773,7 @@ async function commitManagedCompactionResult(
       state.breaker,
     ),
     outcome: 'compacted',
+    ...(candidate.stillOverCapacity ? { stillOverCapacity: true } : {}),
   };
   emitCommittedCompaction(input, candidate, summary.result, startedAt);
   return { kind: 'committed', endResult, messages: candidate.finalMessages };

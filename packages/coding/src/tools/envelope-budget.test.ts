@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { countTokens } from '../tokenizer.js';
 import { createEnvelopeAggregateBudgetEnforcer } from './envelope-budget.js';
 import type { ToolResultBudget } from './tool-result-budget.js';
-import { ToolResultBatchCapacityError } from './tool-result-policy.js';
 import { TOOL_OUTPUT_DIR_ENV } from './truncate.js';
 
 function budget(aggregateInlineTokens: number): ToolResultBudget {
@@ -85,10 +84,14 @@ describe('createEnvelopeAggregateBudgetEnforcer', () => {
     expect(await fs.readdir(tempDir)).toHaveLength(1);
   });
 
-  it('fails explicitly when even the minimum recoverable marker cannot fit', async () => {
+  it('admits with a marker and debt when even the minimum recoverable marker cannot fit', async () => {
     const enforce = createEnvelopeAggregateBudgetEnforcer(ctx(), () => budget(1));
 
-    await expect(enforce(['X '.repeat(400)]))
-      .rejects.toBeInstanceOf(ToolResultBatchCapacityError);
+    const result = await enforce(['X '.repeat(400)]);
+
+    // FEATURE_296 (ADR-067): the envelope no longer fails on an irreducible
+    // marker; it admits the marker fragment and records capacity debt.
+    expect(result).toHaveLength(1);
+    expect(result[0]).toContain('KODAX_RESULT_INCOMPLETE');
   });
 });

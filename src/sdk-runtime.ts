@@ -43,6 +43,7 @@ import {
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
   startKodaX,
+  ToolResultBatchCapacityError,
   validateCustomProviderConfig,
 } from "@kodax-ai/coding";
 import {
@@ -159,6 +160,7 @@ import {
   resolveExecutionPath,
   getDefaultWorkflowRunManager,
   initializeSkillRegistry,
+  ContextCapacityError,
   actorQueueId,
   enqueueWithArtifacts,
   getMessageQueue,
@@ -2013,6 +2015,7 @@ export type RuntimeRunFailureKind =
   | "provider_aborted"
   | "invalid_response"
   | "runtime_cleanup"
+  | "context_capacity"
   | "provider";
 
 export type RuntimeFailureStage =
@@ -2043,6 +2046,7 @@ export type RuntimeProviderErrorCode =
   | "response_stream_error"
   | "cancelled"
   | "runtime_settlement_failed"
+  | "context_capacity_exceeded"
   | "provider_error";
 
 export interface RuntimeFailureDetail {
@@ -2057,6 +2061,11 @@ export interface RuntimeFailureDetail {
   readonly upstreamErrorCode?: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
+  /** Local context-capacity accounting (FEATURE_296); absent for non-capacity failures. */
+  readonly contextTokens?: {
+    readonly required: number;
+    readonly available: number;
+  };
 }
 
 export interface RuntimeTerminalFact {
@@ -8698,7 +8707,11 @@ function createRuntimeRunService(deps: {
     const failureDetail = captureRuntimeFailureDetail(error, record);
     const failure = classifyRuntimeRunFailure(error);
     const capturedError = new Error(failureDetail.safeMessage);
+    // FEATURE_296 (ADR-067): a local capacity failure keeps its own identity
+    // under a run-scoped credential; only provider-derived failures carry the
+    // credential-safe provider name.
     capturedError.name = record.hadProviderCredential
+      && failureDetail.failureKind !== "context_capacity"
       ? "KodaXProviderRunError"
       : normalizeError(error).name;
     capturedError.stack = undefined;
@@ -16572,7 +16585,20 @@ function parseRuntimeFailureDetail(
     ...(isRetryAfterMs(value.retryAfterMs)
       ? { retryAfterMs: value.retryAfterMs }
       : {}),
+    ...(isRuntimeContextTokens(value.contextTokens)
+      ? { contextTokens: value.contextTokens }
+      : {}),
   };
+}
+
+function isRuntimeContextTokens(
+  value: unknown,
+): value is NonNullable<RuntimeFailureDetail["contextTokens"]> {
+  return isRecord(value)
+    && Number.isSafeInteger(value.required)
+    && (value.required as number) >= 0
+    && Number.isSafeInteger(value.available)
+    && (value.available as number) >= 0;
 }
 
 function isRuntimeRunFailureKind(
@@ -16590,6 +16616,7 @@ function isRuntimeRunFailureKind(
     value === "provider_aborted" ||
     value === "invalid_response" ||
     value === "runtime_cleanup" ||
+    value === "context_capacity" ||
     value === "provider"
   );
 }
@@ -21375,6 +21402,7 @@ const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProvide
   "response_stream_error",
   "cancelled",
   "runtime_settlement_failed",
+  "context_capacity_exceeded",
   "provider_error",
 ]);
 
@@ -21424,6 +21452,9 @@ function buildRuntimeFailureDetail(
     run,
   );
   const retryAfterMs = readRuntimeRetryAfterMs(error);
+  const contextTokens = classification.failureKind === "context_capacity"
+    ? readRuntimeContextTokens(error)
+    : undefined;
   return {
     ...classification,
     safeMessage: runtimeFailurePublicMessage(classification),
@@ -21431,12 +21462,42 @@ function buildRuntimeFailureDetail(
     ...(upstreamErrorCode !== undefined ? { upstreamErrorCode } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
   };
+}
+
+function readRuntimeContextTokens(
+  error: unknown,
+): RuntimeFailureDetail["contextTokens"] {
+  const required = readNumericErrorField(error, "requiredTokens");
+  const available = readNumericErrorField(error, "availableTokens");
+  if (required !== undefined && available !== undefined) {
+    return { required, available };
+  }
+  const contextWindow = readNumericErrorField(error, "contextWindow");
+  const currentTokens = readNumericErrorField(error, "currentTokens");
+  const reservedResponseTokens = readNumericErrorField(error, "reservedResponseTokens");
+  if (contextWindow !== undefined && currentTokens !== undefined) {
+    return {
+      required: currentTokens + (reservedResponseTokens ?? 0),
+      available: contextWindow,
+    };
+  }
+  return undefined;
 }
 
 function classifyRuntimeFailureDetail(
   error: unknown,
 ): RuntimeFailureClassification {
+  // FEATURE_296 (ADR-067): local capacity failures are classified by isolated
+  // class identity first, so a provider-derived error that merely shares the
+  // class name or message cannot be misclassified into context_capacity.
+  if (
+    error instanceof ContextCapacityError
+    || error instanceof ToolResultBatchCapacityError
+  ) {
+    return runtimeFailure("context_capacity", "runtime_control", "context_capacity_exceeded");
+  }
   const normalized = normalizeError(error);
   const facts: RuntimeFailureFacts = {
     name: normalized.name,
@@ -21455,6 +21516,16 @@ function classifyRuntimeKnownFailure(
   facts: RuntimeFailureFacts,
 ): RuntimeFailureClassification | undefined {
   const { code, errorClass, name, stableHint, status } = facts;
+  // FEATURE_296 (ADR-067): local context-capacity failures are classified by
+  // class identity (instanceof, checked above) or their stable KODAX_* code
+  // (for persisted/re-serialized errors), never by settable name or
+  // provider-derived message text.
+  if (
+    code === "kodax_context_capacity_exceeded"
+    || code === "kodax_tool_result_capacity_exceeded"
+  ) {
+    return runtimeFailure("context_capacity", "runtime_control", "context_capacity_exceeded");
+  }
   if (
     code === "actor_settlement_not_persisted"
     || code === "run_settlement_not_persisted"
@@ -21750,6 +21821,7 @@ function runtimeFailurePublicMessage(
     case "response_stream_error": return "Provider returned an invalid response stream.";
     case "cancelled": return "Runtime run was cancelled.";
     case "runtime_settlement_failed": return "Runtime settlement failed.";
+    case "context_capacity_exceeded": return "The run could not fit its context within the model window.";
     case "provider_error": return "Provider request failed.";
   }
 }

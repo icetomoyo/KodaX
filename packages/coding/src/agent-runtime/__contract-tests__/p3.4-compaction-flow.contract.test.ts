@@ -10,7 +10,6 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
 });
 
 import {
-  ContextCapacityError,
   compact as mockedCompact,
   gracefulCompactDegradation as mockedDegrade,
   type CompactionResult,
@@ -108,15 +107,52 @@ describe('P3.4 physical-capacity compaction lifecycle', () => {
     }));
   });
 
-  it('preserves canonical history and fails explicitly after hard-pressure summary failure', async () => {
+  it('preserves canonical history and records capacity debt after hard-pressure summary failure', async () => {
     const messages = history();
     const original = structuredClone(messages);
     compactMock.mockRejectedValue(new Error('summary unavailable'));
-    await expect(runCompactionLifecycle(
+    const output = await runCompactionLifecycle(
       lifecycleInput(messages, 88_000, 100),
-    )).rejects.toBeInstanceOf(ContextCapacityError);
+    );
+    // FEATURE_296 (ADR-067): the summary failure no longer converts a
+    // physically over-capacity transcript into an abort; with the shrunk
+    // reserve (T3) the unchanged history is legal, so no debt is recorded.
     expect(messages).toEqual(original);
+    expect(output.messages).toEqual(original);
+    expect(output.didCompactMessages).toBe(false);
+    expect(output.stillOverCapacity).toBeUndefined();
     expect(degradeMock).not.toHaveBeenCalled();
+  });
+
+  it('commits a still-over compaction best-effort with stillOverCapacity instead of throwing', async () => {
+    const messages = history();
+    const oversized = [{ role: 'system' as const, content: `summary\n${'detail '.repeat(40_000)}` }];
+    compactMock.mockResolvedValue({
+      ...successfulResult(messages),
+      messages: oversized,
+    });
+    const output = await runCompactionLifecycle(lifecycleInput(messages, 88_000, 100));
+
+    // FEATURE_296 (ADR-067): an over-capacity compacted transcript commits
+    // best-effort; the recovery ladder owns the next request.
+    expect(output.messages).toEqual(oversized);
+    expect(output.didCompactMessages).toBe(true);
+    expect(output.stillOverCapacity).toBe(true);
+  });
+
+  it('treats a reclaimable escalation reserve as relieved instead of still-over (FEATURE_296 T3)', async () => {
+    const messages = history();
+    compactMock.mockResolvedValue(successfulResult(messages));
+    // 40k escalated reserve: the compacted transcript is over capacity with
+    // the base reserve but legal with the floor-bounded shrunk reserve, so
+    // the run continues without recording debt.
+    const output = await runCompactionLifecycle({
+      ...lifecycleInput(messages, 88_000, 100),
+      reservedResponseTokens: 40_000,
+    });
+
+    expect(output.didCompactMessages).toBe(true);
+    expect(output.stillOverCapacity).toBeUndefined();
   });
 
   it('fails open after an early-policy summary failure while capacity remains', async () => {
