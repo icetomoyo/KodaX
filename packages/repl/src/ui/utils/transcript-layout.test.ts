@@ -855,6 +855,7 @@ describe("transcript-layout", () => {
 
   it("renders a colored inline diff for edit results by default (no show-all)", () => {
     const output = [
+      "Active file changed on disk: /repo/src/foo.ts",
       "File edited: /repo/src/foo.ts (1 replacements)",
       "  (+2 lines, -1 lines)",
       "",
@@ -896,11 +897,21 @@ describe("transcript-layout", () => {
     // Diff rows carry background bars for the renderer to resolve.
     expect(added?.bg).toBe("diffAdd");
     expect(removed?.bg).toBe("diffRemove");
+    const context = rows.find((r) => r.text.includes("function processInput"));
+    // Context rows have no band and must stay legible solo: muted prose gray,
+    // never "dim" (the renderer stacks dimColor on "dim" → unreadable).
+    expect(context?.color).toBe("thinking");
+    expect(context?.bg).toBeUndefined();
     // Gutter line numbers are derived from the @@ header (new side for
     // added, old side for removed) — @@ -42,3 +42,4 @@ puts the removal
     // at old 43 and the last addition at new 44.
     expect(added?.text.startsWith("44 │ +")).toBe(true);
     expect(removed?.text.startsWith("43 │ -")).toBe(true);
+    // Banner/note rows stay intentionally quiet: "dim" is fine here because
+    // notes are never banded (no dimColor-on-bg readability trap).
+    const note = rows.find((r) => r.text.includes("changed on disk"));
+    expect(note?.color).toBe("dim");
+    expect(note?.bg).toBeUndefined();
     // The redundant `--- ` / `+++ ` file headers are dropped.
     expect(rows.some((r) => r.text.startsWith("--- "))).toBe(false);
     expect(rows.some((r) => r.text.startsWith("+++ "))).toBe(false);

@@ -529,11 +529,12 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
   selectionRange,
 }) => {
   const color = resolveTranscriptColor(theme, row.color);
-  // Diff-row background bar. The custom Text primitive does not inherit
-  // backgroundColor into nested segment Texts (no backgroundContext here),
-  // so this must be passed explicitly to every segment below — including
-  // the non-selected before/after slices of an active selection. The
-  // selected slice keeps its own accent background (precedence).
+  // Diff-row background bar, painted by a full-width Box: the Box primitive
+  // fills its whole computed rect with backgroundColor (render-background)
+  // and hands the color down via backgroundContext, which nested Texts
+  // inherit — so the band spans the entire line like codex regardless of
+  // text length or soft wrap. Non-selected segments inherit; the selected
+  // slice keeps its own accent background (explicit prop wins over context).
   const rowBg = row.bg === "diffAdd"
     ? theme.colors.diffAddBackground
     : row.bg === "diffRemove"
@@ -552,11 +553,38 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
     : "";
   const accentWholeRow = selectedItem && !selectionRange;
   const dimColor = !accentWholeRow && row.color === "dim";
+  const textColor = accentWholeRow ? theme.colors.accent : color;
   const commonTextProps = {
+    color: textColor,
     bold: row.bold || accentWholeRow,
     italic: row.italic,
     dimColor,
   } as const;
+
+  const body = (
+    <Text {...commonTextProps}>
+      {selectionRange && normalizedText ? (
+        <>
+          {beforeSelection ? (
+            <Text {...commonTextProps}>{beforeSelection}</Text>
+          ) : null}
+          <Text
+            backgroundColor={theme.colors.accent}
+            color={theme.colors.background}
+            bold
+            italic={row.italic}
+          >
+            {selectedText}
+          </Text>
+          {afterSelection ? (
+            <Text {...commonTextProps}>{afterSelection}</Text>
+          ) : null}
+        </>
+      ) : (
+        baseText
+      )}
+    </Text>
+  );
 
   return (
     <Box marginLeft={row.indent ?? 0}>
@@ -566,44 +594,13 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
           <Text> </Text>
         </>
       )}
-      <Text
-        color={accentWholeRow ? theme.colors.accent : color}
-        backgroundColor={rowBg}
-        {...commonTextProps}
-      >
-        {selectionRange && normalizedText ? (
-          <>
-            {beforeSelection ? (
-              <Text
-                color={accentWholeRow ? theme.colors.accent : color}
-                backgroundColor={rowBg}
-                {...commonTextProps}
-              >
-                {beforeSelection}
-              </Text>
-            ) : null}
-            <Text
-              backgroundColor={theme.colors.accent}
-              color={theme.colors.background}
-              bold
-              italic={row.italic}
-            >
-              {selectedText}
-            </Text>
-            {afterSelection ? (
-              <Text
-                color={accentWholeRow ? theme.colors.accent : color}
-                backgroundColor={rowBg}
-                {...commonTextProps}
-              >
-                {afterSelection}
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          baseText
-        )}
-      </Text>
+      {rowBg ? (
+        <Box width="100%" backgroundColor={rowBg}>
+          {body}
+        </Box>
+      ) : (
+        body
+      )}
     </Box>
   );
 }, areTranscriptRowPropsEqual);

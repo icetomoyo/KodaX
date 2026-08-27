@@ -44,8 +44,14 @@ function colorForDiffRow(kind: DiffRowKind): TranscriptColorToken {
       return "success";
     case "remove":
       return "error";
+    case "context":
+      // Context rows carry no background bar, so their foreground must stay
+      // legible on its own. "dim" gets double-dimmed (#666666 plus the
+      // renderer's dimColor flag) and becomes unreadable; the muted prose
+      // gray keeps hierarchy while staying readable.
+      return "thinking";
     default:
-      return "dim";
+      return "dim"; // notes (banner / LSP dump): intentionally quiet
   }
 }
 
