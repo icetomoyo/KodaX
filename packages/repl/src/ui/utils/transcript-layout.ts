@@ -1,5 +1,6 @@
 import { ToolCallStatus, type HistoryItem, type Theme, type ToolCall } from "../types.js";
 import type { IterationRecord } from "../contexts/StreamingContext.js";
+import { buildDiffRows, type DiffRowKind } from "./diff-rows.js";
 import { calculateVisualLayout } from "./textUtils.js";
 import {
   collapseToolCalls,
@@ -17,10 +18,11 @@ import { stripAnsi } from "./strip-ansi.js";
  * FEATURE_141 (v0.7.37) wired a colored `<DiffHunk>` component, but the live
  * transcript renders through the flat `TranscriptRow[]` model (FEATURE_172/214
  * windowing), not the React component tree — so that path was never reached and
- * file edits showed no diff. This renders the unified-diff text that edit /
- * write / multi_edit / insert_after_anchor already embed in their result string
- * directly into colored rows (green added / red removed), inline in the
- * transcript, without leaving the row model.
+ * file edits showed no diff. The dead DiffHunk/parse-unified-diff components
+ * were removed; mutation-tool diffs now flow through `buildDiffRows`
+ * (diff-rows.ts): line-number gutter, add/remove background bars, and
+ * changed-lines-first folding, rendered as colored rows inline in the
+ * transcript without leaving the row model.
  */
 const MUTATION_TOOL_NAMES = new Set([
   "edit",
@@ -36,25 +38,21 @@ function isMutationTool(tool: ToolCall): boolean {
   return MUTATION_TOOL_NAMES.has(stripRolePrefix(tool.name).trim().toLowerCase());
 }
 
-function classifyDiffLine(line: string): { color: TranscriptColorToken; skip: boolean } {
-  // File headers and the result-summary preamble are redundant with the tool's
-  // own main row (which already names the file) — drop them.
-  if (line.startsWith("--- ") || line.startsWith("+++ ")) {
-    return { color: "dim", skip: true };
+function colorForDiffRow(kind: DiffRowKind): TranscriptColorToken {
+  switch (kind) {
+    case "add":
+      return "success";
+    case "remove":
+      return "error";
+    default:
+      return "dim";
   }
-  if (/^(File (edited|created|updated|written)|Content inserted)/.test(line)) {
-    return { color: "dim", skip: true };
-  }
-  if (line.startsWith("@@")) {
-    return { color: "dim", skip: false };
-  }
-  if (line.startsWith("+")) {
-    return { color: "success", skip: false };
-  }
-  if (line.startsWith("-")) {
-    return { color: "error", skip: false };
-  }
-  return { color: "dim", skip: false };
+}
+
+function bgForDiffRow(kind: DiffRowKind): TranscriptRow["bg"] {
+  if (kind === "add") return "diffAdd";
+  if (kind === "remove") return "diffRemove";
+  return undefined;
 }
 
 /**
@@ -69,44 +67,34 @@ function pushDiffRows(
   viewportWidth: number,
   showAllContent: boolean,
 ): boolean {
-  const classified: Array<{ text: string; color: TranscriptColorToken }> = [];
-  let hasDiffContent = false;
-  for (const raw of output.split(/\r?\n/)) {
-    const { color, skip } = classifyDiffLine(raw);
-    if (skip) continue;
-    if (color === "success" || color === "error") hasDiffContent = true;
-    classified.push({ text: raw, color });
-  }
+  const result = buildDiffRows(output, {
+    maxRows: DIFF_PREVIEW_MAX_LINES,
+    showAll: showAllContent,
+  });
   // Only render when the result actually contains added/removed lines. A
   // `write` that creates a new file emits a summary ("File created: … / N
   // lines written") with no diff — fall through to the normal output path so
   // we don't surface an orphaned stat line.
-  if (!hasDiffContent) return false;
+  if (!result) return false;
 
-  // Drop leading/trailing blank rows left after removing the preamble, without
-  // mutating the collected array (CLAUDE.md immutability).
-  let start = 0;
-  let end = classified.length;
-  while (start < end && classified[start]!.text.trim() === "") start++;
-  while (end > start && classified[end - 1]!.text.trim() === "") end--;
-  const visible = classified.slice(start, end);
-  if (visible.length === 0) return false;
-
-  const shown = showAllContent ? visible : visible.slice(0, DIFF_PREVIEW_MAX_LINES);
-  shown.forEach((row, index) => {
+  result.rows.forEach((row, index) => {
     pushWrappedRows(
       rows,
       `${keyPrefix}-diff-${index}`,
       row.text,
       getBodyWidth(viewportWidth, 4),
-      { color: row.color, indent: 4 },
+      {
+        color: colorForDiffRow(row.kind),
+        bg: bgForDiffRow(row.kind),
+        indent: 4,
+      },
     );
   });
-  if (!showAllContent && visible.length > shown.length) {
+  if (result.hiddenRowCount > 0) {
     pushWrappedRows(
       rows,
       `${keyPrefix}-diff-more`,
-      `... (${visible.length - shown.length} more lines)`,
+      `... (${result.hiddenRowCount} more lines, Ctrl+O then Ctrl+E to expand)`,
       getBodyWidth(viewportWidth, 4),
       { color: "dim", indent: 4 },
     );
@@ -132,6 +120,13 @@ export interface TranscriptRow {
   text: string;
   itemId?: string;
   color?: TranscriptColorToken;
+  /**
+   * Optional row background accent for diff rows. Resolved to
+   * theme.colors.diffAddBackground / diffRemoveBackground by the row
+   * renderer; a pure function of the diff text, so row fingerprints
+   * (key + text) stay sufficient for section identity.
+   */
+  bg?: "diffAdd" | "diffRemove";
   indent?: number;
   bold?: boolean;
   italic?: boolean;

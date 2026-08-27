@@ -1,13 +1,13 @@
 /**
- * FEATURE_141 (v0.7.37) — ToolCallDisplay output-rendering integration tests.
+ * ToolCallDisplay rendering tests.
  *
- * Locks the contract that:
- *   1. Successful tool with string output gets rendered (this is the
- *      first time KodaX's transcript shows tool result content at all).
- *   2. Output containing unified-diff text is parsed and DiffHunk
- *      renders the diff portion separately from preamble.
- *   3. Non-success states (error / executing / cancelled) do NOT render
- *      tool.output (avoids leaking partial results during execution).
+ * The live transcript renders tool result content through the flat
+ * TranscriptRow[] model (transcript-layout.ts buildToolRows / pushDiffRows),
+ * NOT through this component tree — the FEATURE_141 ToolOutputBlock /
+ * DiffHunk path was unreachable in the live UI and was removed. What
+ * remains here is the non-leak contract: tool.output must never render
+ * through ToolCallDisplay, and non-success states surface tool.error
+ * instead of partial results.
  */
 
 import React from 'react';
@@ -25,17 +25,8 @@ const baseTool = (overrides: Partial<ToolCall>): ToolCall => ({
   ...overrides,
 });
 
-describe('ToolCallDisplay — FEATURE_141 output rendering', () => {
-  it('renders plain-text tool output for a successful call', () => {
-    const tool = baseTool({
-      output: 'File edited: foo.ts\n  (+1 lines, -0 lines)',
-    });
-    const { lastFrame } = render(<ToolCallDisplay tool={tool} />);
-    const out = lastFrame() ?? '';
-    expect(out).toContain('File edited: foo.ts');
-  });
-
-  it('renders unified-diff content with coloured DiffHunk when output contains @@', () => {
+describe('ToolCallDisplay — output non-leak contract', () => {
+  it('does NOT render tool.output for a successful call (diff rows render via the transcript row model)', () => {
     const tool = baseTool({
       output: [
         'File edited: foo.ts',
@@ -44,23 +35,15 @@ describe('ToolCallDisplay — FEATURE_141 output rendering', () => {
         '--- foo.ts',
         '+++ foo.ts',
         '@@ -1,3 +1,4 @@',
-        ' const a = 1;',
         '-const b = 2;',
         '+const b = 3;',
-        '+const c = 4;',
-        ' const d = 5;',
       ].join('\n'),
     });
     const { lastFrame } = render(<ToolCallDisplay tool={tool} />);
     const out = lastFrame() ?? '';
-    // Preamble text shows
-    expect(out).toContain('File edited: foo.ts');
-    // Hunk header shows
-    expect(out).toContain('@@ -1,3 +1,4 @@');
-    // Add/remove lines show with their prefix
-    expect(out).toContain('-const b = 2');
-    expect(out).toContain('+const b = 3');
-    expect(out).toContain('+const c = 4');
+    expect(out).toContain('edit');
+    expect(out).not.toContain('File edited: foo.ts');
+    expect(out).not.toContain('+const b = 3;');
   });
 
   it('does NOT render tool.output for an Executing tool', () => {

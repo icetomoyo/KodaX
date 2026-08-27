@@ -30,6 +30,10 @@ export const darkTheme: Theme = {
     // Backgrounds - deep dark, not colored - 背景色 - 深色，不带色调
     background: "#0D0D0D", // Almost pure black - 接近纯黑
     inputBackground: "#1A1A1A", // Slightly lighter for input - 稍浅用于输入区
+    // Diff row bars (codex-style) - dim green/red backgrounds so add/remove
+    // rows scan fast without screaming. Degrade via chalk on 16-color terms.
+    diffAddBackground: "#213A2B",
+    diffRemoveBackground: "#4A221D",
   },
   symbols: {
     prompt: ">",
@@ -56,6 +60,8 @@ export const minimalTheme: Theme = {
     hint: "#8B5CF6",
     background: "#0D0D0D",
     inputBackground: "#1A1A1A",
+    diffAddBackground: "#213A2B",
+    diffRemoveBackground: "#4A221D",
   },
   symbols: {
     prompt: "$",

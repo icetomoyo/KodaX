@@ -506,6 +506,7 @@ export function areTranscriptRowPropsEqual(
     if (a.key !== b.key) return false;
     if (a.text !== b.text) return false;
     if (a.color !== b.color) return false;
+    if (a.bg !== b.bg) return false;
     if (a.bold !== b.bold) return false;
     if (a.italic !== b.italic) return false;
     if (a.indent !== b.indent) return false;
@@ -528,6 +529,16 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
   selectionRange,
 }) => {
   const color = resolveTranscriptColor(theme, row.color);
+  // Diff-row background bar. The custom Text primitive does not inherit
+  // backgroundColor into nested segment Texts (no backgroundContext here),
+  // so this must be passed explicitly to every segment below — including
+  // the non-selected before/after slices of an active selection. The
+  // selected slice keeps its own accent background (precedence).
+  const rowBg = row.bg === "diffAdd"
+    ? theme.colors.diffAddBackground
+    : row.bg === "diffRemove"
+      ? theme.colors.diffRemoveBackground
+      : undefined;
   const normalizedText = row.text === " " ? "" : row.text;
   const baseText = normalizedText || " ";
   const selectedText = selectionRange && normalizedText
@@ -557,6 +568,7 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
       )}
       <Text
         color={accentWholeRow ? theme.colors.accent : color}
+        backgroundColor={rowBg}
         {...commonTextProps}
       >
         {selectionRange && normalizedText ? (
@@ -564,6 +576,7 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
             {beforeSelection ? (
               <Text
                 color={accentWholeRow ? theme.colors.accent : color}
+                backgroundColor={rowBg}
                 {...commonTextProps}
               >
                 {beforeSelection}
@@ -580,6 +593,7 @@ const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
             {afterSelection ? (
               <Text
                 color={accentWholeRow ? theme.colors.accent : color}
+                backgroundColor={rowBg}
                 {...commonTextProps}
               >
                 {afterSelection}

@@ -152,6 +152,9 @@ export interface ThemeColors {
   hint: string; // Hint state - 提示状态
   background: string; // Background color - 背景颜色
   inputBackground: string; // Input background color - 输入框背景颜色
+  /** Optional diff-row background bars (codex-style dark green/red). */
+  diffAddBackground?: string; // Diff added-line background - 新增行背景条
+  diffRemoveBackground?: string; // Diff removed-line background - 删除行背景条
 }
 
 export interface ThemeSymbols {

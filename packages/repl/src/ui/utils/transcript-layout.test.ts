@@ -1,4 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Isolate the runtime agent import that `tool-display.ts` (transitive dep of
+// transcript-layout) pulls in: the real @kodax-ai/agent entry fails to collect
+// under the local Vitest transform (skill-creator script chain, KNOWN_ISSUES
+// #141 family). These stubs match the not-a-memory-file outcome every fixture
+// in this file exercises — no test here touches memory-badge behavior.
+vi.mock("@kodax-ai/agent", () => ({
+  getAgentConfigPath: () => "/mock/agent-config",
+  isAutoManagedMemoryFile: () => false,
+  parseMemoryTypeFromFilename: () => undefined,
+}));
+
 import { ToolCallStatus, type HistoryItem } from "../types.js";
 import { computeInlineLedgerStep } from "./inline-ledger-controller.js";
 import { EMPTY_INLINE_SCROLLBACK_STATE, planInlineScrollback } from "../../tui/substrate/ink/inline-scrollback-ledger.js";
@@ -881,6 +893,14 @@ describe("transcript-layout", () => {
     const removed = rows.find((r) => r.text.includes("return input.toLowerCase();"));
     expect(added?.color).toBe("success");
     expect(removed?.color).toBe("error");
+    // Diff rows carry background bars for the renderer to resolve.
+    expect(added?.bg).toBe("diffAdd");
+    expect(removed?.bg).toBe("diffRemove");
+    // Gutter line numbers are derived from the @@ header (new side for
+    // added, old side for removed) — @@ -42,3 +42,4 @@ puts the removal
+    // at old 43 and the last addition at new 44.
+    expect(added?.text.startsWith("44 │ +")).toBe(true);
+    expect(removed?.text.startsWith("43 │ -")).toBe(true);
     // The redundant `--- ` / `+++ ` file headers are dropped.
     expect(rows.some((r) => r.text.startsWith("--- "))).toBe(false);
     expect(rows.some((r) => r.text.startsWith("+++ "))).toBe(false);

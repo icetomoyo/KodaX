@@ -648,6 +648,40 @@ function summarizeToolOutputDetails(toolName: string, output: string | undefined
     return parts;
   }
 
+  // Mutation tools (edit / write / multi_edit / insert_after_anchor) embed
+  // "File edited: <path>" + "(+N lines, -M lines)" preambles in their
+  // result. Surface path + change counts on the main row; the diff body
+  // itself renders through pushDiffRows (transcript-layout).
+  if (
+    baseToolName === "edit"
+    || baseToolName === "write"
+    || baseToolName === "multi_edit"
+    || baseToolName === "insert_after_anchor"
+  ) {
+    const pathMatch = /^(?:File (?:edited|created|updated|written)|Content inserted after anchor in):\s+(.+)$/im.exec(output);
+    if (pathMatch?.[1]) {
+      // A trailing " (N replacements)" / " (N edits, M replacements)" /
+      // " (no changes)" suffix shares the preamble line — strip it so only
+      // the path shows.
+      const filePath = pathMatch[1].trim().replace(/\s*\([^)]*\)$/, "");
+      if (filePath) {
+        parts.push(truncateValue(filePath));
+        const statMatch = /\(\+(\d+) lines?, -(\d+) lines?\)/.exec(output);
+        if (statMatch?.[1] && statMatch[2]) {
+          parts.push(`+${statMatch[1]} -${statMatch[2]}`);
+        } else {
+          const writtenMatch = /\((\d+) lines? written\)/.exec(output);
+          if (writtenMatch?.[1]) {
+            parts.push(`new, ${writtenMatch[1]} lines`);
+          } else if (/no changes/.test(output)) {
+            parts.push("no changes");
+          }
+        }
+      }
+    }
+    return parts;
+  }
+
   return [];
 }
 
