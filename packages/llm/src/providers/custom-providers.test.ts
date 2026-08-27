@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KodaXCustomProviderConfig, KodaXReasoningProfile } from '../types.js';
+import { KodaXProviderError } from '../errors.js';
 import { createCustomProvider } from './custom-provider.js';
 import {
   getCustomProvider,
@@ -996,9 +997,22 @@ describe('custom providers', () => {
   it('reports both built-in and custom providers when resolution fails', () => {
     registerCustomProviders([cloneConfig(OPENAI_CUSTOM)]);
 
-    expect(() => resolveProvider('missing-provider')).toThrowError(
-      /Unknown provider: missing-provider\. Available:/,
-    );
+    const error: unknown = (() => {
+      try {
+        resolveProvider('missing-provider');
+        return undefined;
+      } catch (caught: unknown) {
+        return caught;
+      }
+    })();
+    expect(error).toBeInstanceOf(KodaXProviderError);
+    expect(error).toMatchObject({
+      message: expect.stringMatching(/Unknown provider: missing-provider\. Available:/),
+      metadata: {
+        failureCode: 'provider_not_registered',
+        stage: 'catalog',
+      },
+    });
     expect(() => resolveProvider('missing-provider')).toThrowError(/custom-openai/);
     expect(() => resolveProvider('missing-provider')).toThrowError(/openai/);
   });

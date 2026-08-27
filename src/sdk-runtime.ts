@@ -46,6 +46,7 @@ import {
   validateCustomProviderConfig,
 } from "@kodax-ai/coding";
 import {
+  getProviderCredentialEnvironmentNames,
   redactScopedProviderCredential,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
@@ -1296,6 +1297,7 @@ export interface RuntimeSessionDiagnosticRun {
   readonly terminalAt?: string;
   readonly terminalTimeKnown: boolean;
   readonly terminal?: RuntimeTerminalFact;
+  readonly failureDetail?: RuntimeFailureDetail;
   readonly activeSubtaskCount: number | null;
   readonly activeSubtaskCountSource: "run_status" | "unknown";
   readonly stop?: RuntimeRunStopStatus;
@@ -1906,6 +1908,7 @@ export interface RuntimeRunStatus {
   readonly model?: string;
   readonly reasoning?: KodaXReasoningMode;
   readonly error?: string;
+  readonly failureDetail?: RuntimeFailureDetail;
   readonly lifecycleError?: RuntimeRunLifecycleError;
   readonly terminal?: RuntimeTerminalFact;
   readonly continuation?: RuntimeContinuationStatus;
@@ -2002,10 +2005,59 @@ export type RuntimeRunFailureKind =
   | "auth"
   | "rate_limit"
   | "network"
+  | "not_found"
+  | "unknown_provider"
+  | "request"
+  | "upstream"
+  | "cancelled"
   | "provider_aborted"
   | "invalid_response"
   | "runtime_cleanup"
   | "provider";
+
+export type RuntimeFailureStage =
+  | "catalog"
+  | "credential"
+  | "request_build"
+  | "transport"
+  | "response_stream"
+  | "runtime_control"
+  | "runtime_settlement";
+
+export type RuntimeProviderErrorCode =
+  | "credential_unavailable"
+  | "authentication_failed"
+  | "rate_limited"
+  | "network_error"
+  | "tls_error"
+  | "request_timeout"
+  | "provider_not_registered"
+  | "catalog_error"
+  | "model_not_found"
+  | "endpoint_not_found"
+  | "resource_not_found"
+  | "request_build_failed"
+  | "upstream_client_error"
+  | "upstream_server_error"
+  | "protocol_mismatch"
+  | "response_stream_error"
+  | "cancelled"
+  | "runtime_settlement_failed"
+  | "provider_error";
+
+export interface RuntimeFailureDetail {
+  readonly failureKind: RuntimeRunFailureKind;
+  readonly stage: RuntimeFailureStage;
+  /** Stable KodaX code suitable for programmatic handling. */
+  readonly providerErrorCode: RuntimeProviderErrorCode;
+  /** Bounded KodaX-owned display text; never derived from provider response bodies. */
+  readonly safeMessage: string;
+  readonly httpStatus?: number;
+  /** Provider-controlled code; informative only and not part of KodaX compatibility. */
+  readonly upstreamErrorCode?: string;
+  readonly requestId?: string;
+  readonly retryAfterMs?: number;
+}
 
 export interface RuntimeTerminalFact {
   readonly revision: number;
@@ -2023,6 +2075,7 @@ export interface RuntimeRunResult {
   readonly phase: RuntimeRunPhase;
   readonly result?: KodaXResult;
   readonly error?: Error;
+  readonly failureDetail?: RuntimeFailureDetail;
   readonly terminal?: RuntimeTerminalFact;
   readonly stop?: RuntimeRunStopStatus;
 }
@@ -3218,6 +3271,9 @@ function createRuntimeSessionDiagnosticsRecord(
           terminalTimeKnown:
             isTerminalRunPhase(run.phase) && run.endedAt !== undefined,
           ...(run.terminal !== undefined ? { terminal: run.terminal } : {}),
+          ...(run.failureDetail !== undefined
+            ? { failureDetail: run.failureDetail }
+            : {}),
           activeSubtaskCount,
           activeSubtaskCountSource,
           ...(run.stop !== undefined ? { stop: run.stop } : {}),
@@ -3257,6 +3313,7 @@ interface RuntimeRunRecord {
   autoModeSpeculativeWindowMs?: number;
   reasoning?: KodaXReasoningMode;
   error?: string;
+  failureDetail?: RuntimeFailureDetail;
   lifecycleError?: RuntimeRunLifecycleError;
   terminal?: RuntimeTerminalFact;
   readonly result: Promise<RuntimeRunResult>;
@@ -3311,6 +3368,7 @@ interface RuntimeActorHealthBaseRunState {
 interface RuntimeRunFailureFact {
   readonly phase: "failed" | "interrupted";
   readonly error?: Error;
+  readonly failureDetail?: RuntimeFailureDetail;
   readonly terminal: Omit<RuntimeTerminalFact, "revision" | "kind">;
 }
 
@@ -8116,6 +8174,9 @@ function createRuntimeRunService(deps: {
       ...(record.capturedExecutorFailure?.error !== undefined
         ? { error: record.capturedExecutorFailure.error }
         : {}),
+      ...(record.failureDetail !== undefined
+        ? { failureDetail: record.failureDetail }
+        : {}),
       terminal,
       ...(record.stop !== undefined ? { stop: record.stop } : {}),
     });
@@ -8129,18 +8190,31 @@ function createRuntimeRunService(deps: {
     if (record.terminalEmitted && record.terminal !== undefined) {
       return finishDurableRunAfterEventFailure(record, cause, record.terminal);
     }
-    const message = `Run terminal settlement was not persisted: ${cause.message}`;
-    const settlementError = Object.assign(new Error(message, { cause }), {
+    const rawSettlementError = Object.assign(
+      new Error(`Run terminal settlement was not persisted: ${cause.message}`),
+      {
+        name: "RuntimeRunSettlementError",
+        code: "run_settlement_not_persisted" as const,
+        retryable: false as const,
+      },
+    );
+    const failureDetail = captureRuntimeFailureDetail(
+      rawSettlementError,
+      record,
+    );
+    const settlementError = Object.assign(new Error(failureDetail.safeMessage), {
       name: "RuntimeRunSettlementError",
       code: "run_settlement_not_persisted" as const,
       retryable: false as const,
     });
+    settlementError.stack = undefined;
+    record.failureDetail = failureDetail;
     record.terminalEmitted = false;
     delete record.terminal;
     delete record.endedAt;
     record.lifecycleError = {
       code: "run_settlement_not_persisted",
-      message,
+      message: failureDetail.safeMessage,
       retryable: false,
     };
     emitKodaXDiagnostic({
@@ -8154,6 +8228,7 @@ function createRuntimeRunService(deps: {
       sessionId: record.sessionId,
       phase: "unknown",
       error: settlementError,
+      failureDetail,
       ...(record.stop !== undefined ? { stop: record.stop } : {}),
     });
   };
@@ -8245,15 +8320,23 @@ function createRuntimeRunService(deps: {
     ) return;
     const message = health.message
       ?? "Actor settlement persistence is unknown; Runtime stopped the owning Run.";
-    const error = new Error(message);
-    error.name = "AgentSettlementPersistenceError";
+    const rawError = Object.assign(new Error(message), {
+      name: "AgentSettlementPersistenceError",
+      code: "actor_settlement_not_persisted" as const,
+    });
+    const failureDetail = captureRuntimeFailureDetail(rawError, record);
+    const error = new Error(failureDetail.safeMessage);
+    error.name = rawError.name;
+    error.stack = undefined;
     record.actorDurabilityFailure = {
       phase: "failed",
       error,
+      failureDetail,
       terminal: {
         code: "actor_settlement_not_persisted",
         effectOutcome: "unknown",
-        message,
+        message: failureDetail.safeMessage,
+        failureKind: failureDetail.failureKind,
       },
     };
     record.actorDurabilityPreservesExecutorFact =
@@ -8474,11 +8557,14 @@ function createRuntimeRunService(deps: {
     sessionId: record.sessionId,
     phase: "unknown",
     ...(result !== undefined ? { result } : {}),
-    error: new Error(
+    error: createRuntimePublicError(
       record.lifecycleError?.message
       ?? record.error
       ?? "Actor settlement persistence is unknown.",
     ),
+    ...(record.failureDetail !== undefined
+      ? { failureDetail: record.failureDetail }
+      : {}),
     ...(record.stop !== undefined ? { stop: record.stop } : {}),
   });
 
@@ -8597,28 +8683,32 @@ function createRuntimeRunService(deps: {
       && error instanceof Error
       && error.name === "AbortError";
     if (trustedManagedAbort) {
+      const failureDetail = runtimeCancellationFailureDetail();
       return {
         phase: "interrupted",
+        failureDetail,
         terminal: {
           code: "interrupted",
           effectOutcome: "unknown",
           message: record.stop.reason,
+          failureKind: failureDetail.failureKind,
         },
       };
     }
-    const normalized = normalizeRuntimeRunError(error, record);
+    const failureDetail = captureRuntimeFailureDetail(error, record);
     const failure = classifyRuntimeRunFailure(error);
-    const failureKind = record.hadProviderCredential
-      ? classifyCredentialSafeFailureKind(error)
-      : undefined;
-    const capturedError = new Error(normalized.message);
-    capturedError.name = normalized.name;
+    const capturedError = new Error(failureDetail.safeMessage);
+    capturedError.name = record.hadProviderCredential
+      ? "KodaXProviderRunError"
+      : normalizeError(error).name;
+    capturedError.stack = undefined;
     return {
       phase: failure.phase,
       error: capturedError,
+      failureDetail,
       terminal: {
         ...failure.terminal,
-        ...(failureKind !== undefined ? { failureKind } : {}),
+        failureKind: failureDetail.failureKind,
       },
     };
   };
@@ -8629,6 +8719,7 @@ function createRuntimeRunService(deps: {
   ): RuntimeRunResult => {
     const phase = record.terminalEmitted ? record.phase : failure.phase;
     if (!record.terminalEmitted) {
+      record.failureDetail = failure.failureDetail;
       if (failure.error === undefined) {
         delete record.error;
       } else {
@@ -8642,11 +8733,20 @@ function createRuntimeRunService(deps: {
       phase,
       failure.terminal,
     );
+    if (
+      record.phase !== failure.phase
+      || record.failureDetail !== failure.failureDetail
+    ) {
+      return resultFromStatus(statusFromRecord(record));
+    }
     return {
       runId: record.runId,
       sessionId: record.sessionId,
       phase: record.phase,
       ...(failure.error !== undefined ? { error: failure.error } : {}),
+      ...(record.failureDetail !== undefined
+        ? { failureDetail: record.failureDetail }
+        : {}),
       ...(record.terminal !== undefined
         ? { terminal: record.terminal }
         : {}),
@@ -8675,6 +8775,31 @@ function createRuntimeRunService(deps: {
         )
       )
     );
+  };
+
+  const terminalFromExecutorResult = (
+    record: RuntimeRunRecord,
+    value: KodaXResult,
+    phase: RuntimeRunPhase,
+  ): Omit<RuntimeTerminalFact, "revision" | "kind"> | undefined => {
+    if (phase === "interrupted" && record.stop !== undefined) {
+      const detail = record.failureDetail ?? runtimeCancellationFailureDetail();
+      record.failureDetail = detail;
+      return {
+        code: "interrupted",
+        effectOutcome: "unknown",
+        message: detail.safeMessage,
+        failureKind: detail.failureKind,
+      };
+    }
+    if (!value.success && !value.interrupted && value.signal === "BLOCKED") {
+      return {
+        code: "blocked",
+        effectOutcome: "known",
+        ...(value.signalReason !== undefined ? { message: value.signalReason } : {}),
+      };
+    }
+    return undefined;
   };
 
   const cancelRun = (
@@ -8743,6 +8868,8 @@ function createRuntimeRunService(deps: {
     }
     delete record.actorHealthBaseState;
     const requestedAt = new Date().toISOString();
+    const cancellationDetail = runtimeCancellationFailureDetail();
+    record.failureDetail = cancellationDetail;
     record.stop ??= {
       requestedAt,
       state: wasQueued ? "confirmed" : "unknown",
@@ -8775,6 +8902,7 @@ function createRuntimeRunService(deps: {
         runId: record.runId,
         sessionId: record.sessionId,
         phase: record.phase,
+        failureDetail: cancellationDetail,
         ...(record.stop !== undefined ? { stop: record.stop } : {}),
       };
       const retainDurabilityFence =
@@ -8790,12 +8918,14 @@ function createRuntimeRunService(deps: {
     markRunTerminal(deps.bus, deps.persistence, record, "cancelled", {
       code: "cancelled",
       effectOutcome: "none",
-      message: reason,
+      message: cancellationDetail.safeMessage,
+      failureKind: cancellationDetail.failureKind,
     });
     const result: RuntimeRunResult = {
       runId: record.runId,
       sessionId: record.sessionId,
       phase: record.phase,
+      failureDetail: cancellationDetail,
       ...(record.stop !== undefined ? { stop: record.stop } : {}),
     };
     resolveRunStart(record, result);
@@ -8838,23 +8968,14 @@ function createRuntimeRunService(deps: {
         : value.success
           ? "completed"
           : "failed";
-      const blockedTerminal =
-        !value.success && !value.interrupted && value.signal === "BLOCKED"
-          ? {
-              code: "blocked" as const,
-              effectOutcome: "known" as const,
-              ...(value.signalReason !== undefined
-                ? { message: value.signalReason }
-                : {}),
-            }
-          : undefined;
+      const terminal = terminalFromExecutorResult(record, value, phase);
       try {
         markRunTerminal(
           deps.bus,
           deps.persistence,
           record,
           phase,
-          blockedTerminal,
+          terminal,
         );
       } catch (error: unknown) {
         finishRunSettlementFailure(record, error);
@@ -8865,6 +8986,9 @@ function createRuntimeRunService(deps: {
         sessionId: record.sessionId,
         phase: record.phase,
         result: value,
+        ...(record.failureDetail !== undefined
+          ? { failureDetail: record.failureDetail }
+          : {}),
         ...(record.terminal !== undefined ? { terminal: record.terminal } : {}),
         ...(record.stop !== undefined ? { stop: record.stop } : {}),
       });
@@ -9138,16 +9262,6 @@ function createRuntimeRunService(deps: {
               : value.success
                 ? "completed"
                 : "failed";
-          const blockedTerminal =
-            !value.success && !value.interrupted && value.signal === "BLOCKED"
-              ? {
-                  code: "blocked" as const,
-                  effectOutcome: "known" as const,
-                  ...(value.signalReason !== undefined
-                    ? { message: value.signalReason }
-                    : {}),
-                }
-              : undefined;
           const actorHealth = await awaitActorFinalization(record);
           if (actorHealth.state === "unknown") {
             return unknownActorSettlementResult(record, value);
@@ -9160,7 +9274,7 @@ function createRuntimeRunService(deps: {
             deps.persistence,
             record,
             phase,
-            blockedTerminal,
+            terminalFromExecutorResult(record, value, phase),
           );
           return {
             runId: record.runId,
@@ -9169,6 +9283,9 @@ function createRuntimeRunService(deps: {
             result: value,
             ...(record.terminal !== undefined
               ? { terminal: record.terminal }
+              : {}),
+            ...(record.failureDetail !== undefined
+              ? { failureDetail: record.failureDetail }
               : {}),
             ...(record.stop !== undefined ? { stop: record.stop } : {}),
           };
@@ -9240,12 +9357,21 @@ function createRuntimeRunService(deps: {
         if (actorDurabilityFailureApplies(record)) {
           return applyRunFailureFact(record, record.actorDurabilityFailure);
         }
-        markRunTerminal(deps.bus, deps.persistence, record, phase);
+        markRunTerminal(
+          deps.bus,
+          deps.persistence,
+          record,
+          phase,
+          terminalFromExecutorResult(record, value, phase),
+        );
         return {
           runId: record.runId,
           sessionId: record.sessionId,
           phase: record.phase,
           result: value,
+          ...(record.failureDetail !== undefined
+            ? { failureDetail: record.failureDetail }
+            : {}),
           ...(record.stop !== undefined ? { stop: record.stop } : {}),
         };
       }, async (error: unknown) => {
@@ -10197,6 +10323,9 @@ function createRuntimeRunService(deps: {
             runId: run.runId,
             sessionId: run.sessionId,
             phase: run.phase,
+            ...(run.failureDetail !== undefined
+              ? { failureDetail: run.failureDetail }
+              : {}),
             ...(run.terminal !== undefined ? { terminal: run.terminal } : {}),
             ...(run.stop !== undefined ? { stop: run.stop } : {}),
           };
@@ -14732,6 +14861,7 @@ function createRuntimePersistence(
               stageChangedAt: requestedAt,
               activeSubtaskCount: 0,
               endedAt: requestedAt,
+              failureDetail: runtimeCancellationFailureDetail(),
               stop: {
                 requestedAt,
                 state: "confirmed",
@@ -14745,6 +14875,7 @@ function createRuntimePersistence(
                 code: "cancelled",
                 effectOutcome: "none",
                 message: reason,
+                failureKind: "cancelled",
               },
             }
           : {
@@ -14753,6 +14884,7 @@ function createRuntimePersistence(
               stage: "unknown",
               stageChangedAt: requestedAt,
               error: "stop_outcome_unconfirmed",
+              failureDetail: runtimeCancellationFailureDetail(),
               stop: {
                 requestedAt,
                 state: "unknown",
@@ -16125,6 +16257,9 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
       ? { reasoning: value.reasoning as KodaXReasoningMode }
       : {}),
     ...(typeof value.error === "string" ? { error: value.error } : {}),
+    ...(parseRuntimeFailureDetail(value.failureDetail) !== undefined
+      ? { failureDetail: parseRuntimeFailureDetail(value.failureDetail)! }
+      : {}),
     ...(parseRuntimeRunLifecycleError(value.lifecycleError) !== undefined
       ? {
           lifecycleError: parseRuntimeRunLifecycleError(
@@ -16410,6 +16545,36 @@ function parseRuntimeTerminalFact(
   };
 }
 
+function parseRuntimeFailureDetail(
+  value: unknown,
+): RuntimeFailureDetail | undefined {
+  if (
+    !isRecord(value)
+    || !isRuntimeRunFailureKind(value.failureKind)
+    || !isRuntimeFailureStage(value.stage)
+    || !isRuntimeProviderErrorCode(value.providerErrorCode)
+    || typeof value.safeMessage !== "string"
+    || value.safeMessage.length === 0
+    || value.safeMessage.length > RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT
+  ) return undefined;
+  return {
+    failureKind: value.failureKind,
+    stage: value.stage,
+    providerErrorCode: value.providerErrorCode,
+    safeMessage: value.safeMessage,
+    ...(isHttpStatus(value.httpStatus) ? { httpStatus: value.httpStatus } : {}),
+    ...(isSafeDiagnosticIdentifier(value.upstreamErrorCode)
+      ? { upstreamErrorCode: value.upstreamErrorCode }
+      : {}),
+    ...(isSafeDiagnosticIdentifier(value.requestId)
+      ? { requestId: value.requestId }
+      : {}),
+    ...(isRetryAfterMs(value.retryAfterMs)
+      ? { retryAfterMs: value.retryAfterMs }
+      : {}),
+  };
+}
+
 function isRuntimeRunFailureKind(
   value: unknown,
 ): value is RuntimeRunFailureKind {
@@ -16417,11 +16582,32 @@ function isRuntimeRunFailureKind(
     value === "auth" ||
     value === "rate_limit" ||
     value === "network" ||
+    value === "not_found" ||
+    value === "unknown_provider" ||
+    value === "request" ||
+    value === "upstream" ||
+    value === "cancelled" ||
     value === "provider_aborted" ||
     value === "invalid_response" ||
     value === "runtime_cleanup" ||
     value === "provider"
   );
+}
+
+function isRuntimeFailureStage(value: unknown): value is RuntimeFailureStage {
+  return value === "catalog"
+    || value === "credential"
+    || value === "request_build"
+    || value === "transport"
+    || value === "response_stream"
+    || value === "runtime_control"
+    || value === "runtime_settlement";
+}
+
+function isRuntimeProviderErrorCode(
+  value: unknown,
+): value is RuntimeProviderErrorCode {
+  return typeof value === "string" && RUNTIME_PROVIDER_ERROR_CODES.has(value);
 }
 
 function isRuntimeTerminalKind(
@@ -16479,6 +16665,9 @@ function recordFromPersistedStatus(
     ...(status.model !== undefined ? { model: status.model } : {}),
     ...(status.reasoning !== undefined ? { reasoning: status.reasoning } : {}),
     ...(status.error !== undefined ? { error: status.error } : {}),
+    ...(status.failureDetail !== undefined
+      ? { failureDetail: status.failureDetail }
+      : {}),
     ...(status.lifecycleError !== undefined
       ? { lifecycleError: status.lifecycleError }
       : {}),
@@ -18292,7 +18481,8 @@ function wrapKodaXEvents(input: {
           severity: "error",
           message: trustedManagedAbort
             ? "Managed provider observed Runtime Stop."
-            : normalizeRuntimeRunError(error, record).message,
+            : record.executorTerminalSignal?.failure?.failureDetail?.safeMessage
+              ?? captureRuntimeFailureDetail(error, record).safeMessage,
         },
         meta,
       );
@@ -20665,6 +20855,9 @@ function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
     ...(run.model !== undefined ? { model: run.model } : {}),
     ...(run.reasoning !== undefined ? { reasoning: run.reasoning } : {}),
     ...(run.error !== undefined ? { error: run.error } : {}),
+    ...(run.failureDetail !== undefined
+      ? { failureDetail: run.failureDetail }
+      : {}),
     ...(run.lifecycleError !== undefined
       ? { lifecycleError: run.lifecycleError }
       : {}),
@@ -20698,10 +20891,21 @@ function resultFromStatus(status: RuntimeRunStatus): RuntimeRunResult {
     runId: status.runId,
     sessionId: status.sessionId,
     phase: status.phase,
-    ...(status.error !== undefined ? { error: new Error(status.error) } : {}),
+    ...(status.error !== undefined
+      ? { error: createRuntimePublicError(status.error) }
+      : {}),
+    ...(status.failureDetail !== undefined
+      ? { failureDetail: status.failureDetail }
+      : {}),
     ...(status.terminal !== undefined ? { terminal: status.terminal } : {}),
     ...(status.stop !== undefined ? { stop: status.stop } : {}),
   };
+}
+
+function createRuntimePublicError(message: string): Error {
+  const error = new Error(message);
+  error.stack = undefined;
+  return error;
 }
 
 function runtimeRunStopReceipt(
@@ -20924,6 +21128,7 @@ function markRunTerminal(
   run.interruptInputOpen = false;
   terminalizeQueuedInterruptInputs(run);
   run.phase = phase;
+  if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();
   run.stage = "terminal";
   run.stageChangedAt = endedAt;
@@ -21063,6 +21268,7 @@ function applyAuthoritativeRunStatus(
   run.model = status.model;
   run.reasoning = status.reasoning;
   run.error = status.error;
+  run.failureDetail = status.failureDetail;
   run.lifecycleError = status.lifecycleError;
   run.terminal = status.terminal;
   run.stop = status.stop;
@@ -21148,80 +21354,432 @@ function classifyRuntimeRunFailure(error: unknown): {
   };
 }
 
-function normalizeRuntimeRunError(
-  error: unknown,
-  run: RuntimeRunRecord,
-): Error {
-  if (!run.hadProviderCredential) return normalizeError(error);
-  const safe = new Error(
-    "Provider run failed while using a run-scoped credential.",
-  );
-  safe.name = "KodaXProviderRunError";
-  return safe;
+const RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT = 1_024;
+const RUNTIME_MAX_RETRY_AFTER_MS = 86_400_000;
+const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProviderErrorCode>([
+  "credential_unavailable",
+  "authentication_failed",
+  "rate_limited",
+  "network_error",
+  "tls_error",
+  "request_timeout",
+  "provider_not_registered",
+  "catalog_error",
+  "model_not_found",
+  "endpoint_not_found",
+  "resource_not_found",
+  "request_build_failed",
+  "upstream_client_error",
+  "upstream_server_error",
+  "protocol_mismatch",
+  "response_stream_error",
+  "cancelled",
+  "runtime_settlement_failed",
+  "provider_error",
+]);
+
+interface RuntimeFailureClassification {
+  readonly failureKind: RuntimeRunFailureKind;
+  readonly stage: RuntimeFailureStage;
+  readonly providerErrorCode: RuntimeProviderErrorCode;
 }
 
-function classifyCredentialSafeFailureKind(
+interface RuntimeFailureFacts {
+  readonly name: string;
+  readonly status?: number;
+  readonly code?: string;
+  readonly stableHint?: string;
+  readonly metadataStage?: string;
+  readonly errorClass: ReturnType<typeof classifyResilienceError>["errorClass"];
+}
+
+function captureRuntimeFailureDetail(
   error: unknown,
-): RuntimeRunFailureKind {
+  run: RuntimeRunRecord,
+): RuntimeFailureDetail {
+  try {
+    return buildRuntimeFailureDetail(error, run);
+  } catch {
+    return {
+      failureKind: "provider",
+      stage: "transport",
+      providerErrorCode: "provider_error",
+      safeMessage: "Provider request failed.",
+    };
+  }
+}
+
+function buildRuntimeFailureDetail(
+  error: unknown,
+  run: RuntimeRunRecord,
+): RuntimeFailureDetail {
+  const classification = classifyRuntimeFailureDetail(error);
+  const httpStatus = readRuntimeHttpStatus(error);
+  const upstreamErrorCode = filterRuntimeDiagnosticIdentifier(
+    readRuntimeUpstreamCode(error),
+    run,
+  );
+  const requestId = filterRuntimeDiagnosticIdentifier(
+    readRuntimeRequestId(error),
+    run,
+  );
+  const retryAfterMs = readRuntimeRetryAfterMs(error);
+  return {
+    ...classification,
+    safeMessage: runtimeFailurePublicMessage(classification),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(upstreamErrorCode !== undefined ? { upstreamErrorCode } : {}),
+    ...(requestId !== undefined ? { requestId } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+  };
+}
+
+function classifyRuntimeFailureDetail(
+  error: unknown,
+): RuntimeFailureClassification {
   const normalized = normalizeError(error);
-  const status = readNumericErrorField(error, "status")
-    ?? readNumericErrorField(error, "statusCode");
-  const code = readStringErrorField(error, "code")?.toLowerCase();
+  const facts: RuntimeFailureFacts = {
+    name: normalized.name,
+    status: readRuntimeHttpStatus(error),
+    code: readRuntimeUpstreamCode(error)?.toLowerCase(),
+    stableHint: readStringErrorField(error, "failureCode")?.toLowerCase(),
+    metadataStage: readStringErrorField(error, "stage"),
+    errorClass: classifyResilienceError(normalized).errorClass,
+  };
+  return classifyRuntimeKnownFailure(facts)
+    ?? classifyRuntimeConnectionFailure(facts)
+    ?? classifyRuntimeResponseFailure(facts);
+}
+
+function classifyRuntimeKnownFailure(
+  facts: RuntimeFailureFacts,
+): RuntimeFailureClassification | undefined {
+  const { code, errorClass, name, stableHint, status } = facts;
+  if (
+    code === "actor_settlement_not_persisted"
+    || code === "run_settlement_not_persisted"
+    || name === "AgentSettlementPersistenceError"
+    || name === "RuntimeRunSettlementError"
+  ) return runtimeFailure("runtime_cleanup", "runtime_settlement", "runtime_settlement_failed");
+  if (code === "credential_unavailable") {
+    return runtimeFailure("auth", "credential", "credential_unavailable");
+  }
+  if (stableHint === "provider_not_registered") {
+    return runtimeFailure("unknown_provider", "catalog", "provider_not_registered");
+  }
+  if (stableHint === "request_build_failed") {
+    return runtimeFailure("request", "request_build", "request_build_failed");
+  }
+  if (stableHint === "protocol_mismatch") {
+    return runtimeFailure("invalid_response", "response_stream", "protocol_mismatch");
+  }
+  if (stableHint === "response_stream_error") {
+    return runtimeFailure("invalid_response", "response_stream", "response_stream_error");
+  }
+  if (errorClass === "user_abort") {
+    return runtimeFailure("provider_aborted", "transport", "cancelled");
+  }
   if (
     status === 401 ||
     status === 403 ||
-    normalized.name === "AuthenticationError" ||
-    normalized.name === "PermissionDeniedError" ||
+    name === "AuthenticationError" ||
+    name === "PermissionDeniedError" ||
     code === "unauthorized" ||
     code === "invalid_api_key" ||
     code === "authentication_error"
   ) {
-    return "auth";
+    return runtimeFailure("auth", "credential", "authentication_failed");
   }
+  if (status === 429 || (status === undefined && errorClass === "rate_limit")) {
+    return runtimeFailure("rate_limit", "transport", "rate_limited");
+  }
+  return undefined;
+}
+
+function classifyRuntimeConnectionFailure(
+  facts: RuntimeFailureFacts,
+): RuntimeFailureClassification | undefined {
+  const { code, errorClass } = facts;
   if (
-    code === "actor_settlement_not_persisted" ||
-    code === "run_settlement_not_persisted" ||
-    normalized.name === "AgentSettlementPersistenceError"
+    code === "etimedout"
+    || code === "und_err_connect_timeout"
+    || errorClass === "request_timeout"
+    || errorClass === "stream_idle_timeout"
+    || errorClass === "chunk_timeout"
   ) {
-    return "runtime_cleanup";
+    return runtimeFailure("network", "transport", "request_timeout");
   }
-  const errorClass = classifyResilienceError(normalized).errorClass;
-  if (errorClass === "rate_limit") return "rate_limit";
   if (
-    errorClass === "request_timeout" ||
-    errorClass === "stream_idle_timeout" ||
-    errorClass === "chunk_timeout" ||
-    errorClass === "connection_failure" ||
-    errorClass === "provider_overloaded"
+    code?.includes("cert") === true
+    || code?.includes("tls") === true
+    || code?.includes("ssl") === true
   ) {
-    return "network";
+    return runtimeFailure("network", "transport", "tls_error");
   }
-  if (errorClass === "user_abort") return "provider_aborted";
   if (
-    errorClass === "incomplete_stream" ||
+    errorClass === "connection_failure"
+    || ["econnreset", "econnrefused", "enotfound", "eai_again", "epipe"]
+      .includes(code ?? "")
+  ) {
+    return runtimeFailure("network", "transport", "network_error");
+  }
+  return undefined;
+}
+
+function classifyRuntimeResponseFailure(
+  facts: RuntimeFailureFacts,
+): RuntimeFailureClassification {
+  const { code, errorClass, metadataStage, status } = facts;
+  if (["model_not_found", "model_not_exist"].includes(code ?? "")) {
+    return runtimeFailure("not_found", "transport", "model_not_found");
+  }
+  if (["endpoint_not_found", "deployment_not_found", "route_not_found"].includes(code ?? "")) {
+    return runtimeFailure("not_found", "transport", "endpoint_not_found");
+  }
+  if (status === 404 || code === "not_found" || code === "resource_not_found") {
+    return runtimeFailure("not_found", "transport", "resource_not_found");
+  }
+  if (errorClass === "incomplete_stream") {
+    return runtimeFailure("invalid_response", "response_stream", "response_stream_error");
+  }
+  if (
     errorClass === "reasoning_content_required"
+    || code === "protocol_error"
+    || code === "unsupported_protocol"
+    || status === 415
   ) {
-    return "invalid_response";
+    return runtimeFailure("invalid_response", "response_stream", "protocol_mismatch");
   }
-  return "provider";
+  if (
+    metadataStage === "request_build"
+    || ["err_invalid_arg_type", "err_invalid_url", "request_build_failed"]
+      .includes(code ?? "")
+  ) {
+    return runtimeFailure("request", "request_build", "request_build_failed");
+  }
+  if (status !== undefined && status >= 500) {
+    return runtimeFailure("upstream", "transport", "upstream_server_error");
+  }
+  if (status !== undefined && status >= 400) {
+    return runtimeFailure("upstream", "transport", "upstream_client_error");
+  }
+  if (metadataStage === "catalog") {
+    return runtimeFailure("provider", "catalog", "catalog_error");
+  }
+  return runtimeFailure(
+    "provider",
+    metadataStage === "response_stream" ? "response_stream" : "transport",
+    "provider_error",
+  );
+}
+
+function runtimeFailure(
+  failureKind: RuntimeRunFailureKind,
+  stage: RuntimeFailureStage,
+  providerErrorCode: RuntimeProviderErrorCode,
+): RuntimeFailureClassification {
+  return { failureKind, stage, providerErrorCode };
+}
+
+function readRuntimeHttpStatus(error: unknown): number | undefined {
+  const direct = readNumericErrorField(error, "httpStatus")
+    ?? readNumericErrorField(error, "status")
+    ?? readNumericErrorField(error, "statusCode");
+  if (isHttpStatus(direct)) return direct;
+  if (!isRecord(error) || !isRecord(error.response)) return undefined;
+  return isHttpStatus(error.response.status) ? error.response.status : undefined;
+}
+
+function readRuntimeUpstreamCode(error: unknown): string | undefined {
+  const code = readStringErrorField(error, "upstreamCode")
+    ?? readStringErrorField(error, "code");
+  if (!isSafeDiagnosticIdentifier(code)) return undefined;
+  if (["PROVIDER_ERROR", "RATE_LIMIT_ERROR", "KODAX_ERROR"].includes(code)) {
+    return undefined;
+  }
+  return code;
+}
+
+function readRuntimeRequestId(error: unknown): string | undefined {
+  const direct = readStringErrorField(error, "requestId")
+    ?? readStringErrorField(error, "request_id");
+  if (isSafeDiagnosticIdentifier(direct)) return direct;
+  for (const name of ["x-request-id", "request-id", "anthropic-request-id", "cf-ray"]) {
+    const value = readRuntimeErrorHeader(error, name);
+    if (isSafeDiagnosticIdentifier(value)) return value;
+  }
+  return undefined;
+}
+
+function readRuntimeRetryAfterMs(error: unknown): number | undefined {
+  const direct = readNumericErrorField(error, "retryAfterMs")
+    ?? readNumericErrorField(error, "retryAfter");
+  if (isRetryAfterMs(direct)) return direct;
+  const milliseconds = Number(readRuntimeErrorHeader(error, "retry-after-ms"));
+  if (isRetryAfterMs(milliseconds) && milliseconds > 0) return milliseconds;
+  const standard = readRuntimeErrorHeader(error, "retry-after");
+  if (standard === undefined) return undefined;
+  const seconds = Number(standard);
+  const waitMs = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(standard) - Date.now();
+  return isRetryAfterMs(waitMs) && waitMs > 0 ? Math.round(waitMs) : undefined;
+}
+
+function readRuntimeErrorHeader(
+  error: unknown,
+  name: string,
+  depth = 0,
+): string | undefined {
+  if (!isRecord(error) || depth > 4) return undefined;
+  const responseHeaders = isRecord(error.response) ? error.response.headers : undefined;
+  for (const headers of [error.headers, responseHeaders]) {
+    const value = readRuntimeHeaderValue(headers, name);
+    if (value !== undefined) return value;
+  }
+  return readRuntimeErrorHeader(error.cause, name, depth + 1);
+}
+
+function readRuntimeHeaderValue(
+  headers: unknown,
+  name: string,
+): string | undefined {
+  if (!isRecord(headers)) return undefined;
+  if (typeof headers.get === "function") {
+    const value = headers.get.call(headers, name) as unknown;
+    return typeof value === "string" ? value : undefined;
+  }
+  const entry = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  )?.[1];
+  if (typeof entry === "string") return entry;
+  return Array.isArray(entry) && typeof entry[0] === "string"
+    ? entry[0]
+    : undefined;
+}
+
+function isHttpStatus(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= 100
+    && value <= 599;
+}
+
+function isRetryAfterMs(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= RUNTIME_MAX_RETRY_AFTER_MS;
+}
+
+function isSafeDiagnosticIdentifier(value: unknown): value is string {
+  return typeof value === "string" && /^[\w.:-]{1,200}$/.test(value);
+}
+
+function filterRuntimeDiagnosticIdentifier(
+  value: string | undefined,
+  run: RuntimeRunRecord,
+): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return runtimeSensitiveValues(run).some((sensitive) => value.includes(sensitive))
+      ? undefined
+      : value;
+  } catch {
+    // Provider-controlled identifiers are optional; fail closed if the
+    // registered credential catalog cannot be enumerated safely.
+    return undefined;
+  }
+}
+
+function runtimeSensitiveValues(run: RuntimeRunRecord): readonly string[] {
+  const credentialValues = [run.providerCredential];
+  const registeredCredentialNames = new Set(
+    typeof getProviderCredentialEnvironmentNames === "function"
+      ? getProviderCredentialEnvironmentNames()
+      : [],
+  );
+  for (const [name, value] of Object.entries(process.env)) {
+    if (
+      registeredCredentialNames.has(name)
+      || /(?:api[_-]?key|authorization|credential|password|secret|token)/i.test(name)
+    ) {
+      credentialValues.push(value);
+    }
+  }
+  const prompt = run.start?.prompt;
+  return [...new Set([
+    ...credentialValues.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    ),
+    ...(typeof prompt === "string" && prompt.length >= 4 ? [prompt] : []),
+  ])].sort((left, right) => right.length - left.length);
+}
+
+function runtimeCancellationFailureDetail(): RuntimeFailureDetail {
+  return {
+    failureKind: "cancelled",
+    stage: "runtime_control",
+    providerErrorCode: "cancelled",
+    safeMessage: "Runtime run was cancelled by the user.",
+  };
+}
+
+function runtimeFailurePublicMessage(
+  classification: RuntimeFailureClassification,
+): string {
+  if (classification.failureKind === "provider_aborted") {
+    return "Provider request was aborted.";
+  }
+  switch (classification.providerErrorCode) {
+    case "credential_unavailable": return "Provider credential is unavailable.";
+    case "authentication_failed": return "Provider authentication failed.";
+    case "rate_limited": return "Provider rate limit exceeded.";
+    case "network_error": return "Provider network request failed.";
+    case "tls_error": return "Provider TLS connection failed.";
+    case "request_timeout": return "Provider request timed out.";
+    case "provider_not_registered": return "Provider is not registered in the catalog.";
+    case "catalog_error": return "Provider catalog resolution failed.";
+    case "model_not_found": return "The requested model was not found.";
+    case "endpoint_not_found": return "The configured provider endpoint was not found.";
+    case "resource_not_found": return "The requested provider resource was not found.";
+    case "request_build_failed": return "Provider request construction failed.";
+    case "upstream_client_error": return "Provider rejected the request.";
+    case "upstream_server_error": return "Provider service failed to process the request.";
+    case "protocol_mismatch": return "Provider protocol is incompatible.";
+    case "response_stream_error": return "Provider returned an invalid response stream.";
+    case "cancelled": return "Runtime run was cancelled.";
+    case "runtime_settlement_failed": return "Runtime settlement failed.";
+    case "provider_error": return "Provider request failed.";
+  }
 }
 
 function readStringErrorField(
   error: unknown,
   field: string,
+  depth = 0,
 ): string | undefined {
-  if (!isRecord(error)) return undefined;
+  if (!isRecord(error) || depth > 4) return undefined;
+  if (isRecord(error.metadata) && typeof error.metadata[field] === "string") {
+    return error.metadata[field];
+  }
   const value = error[field];
-  return typeof value === "string" ? value : undefined;
+  if (typeof value === "string") return value;
+  return readStringErrorField(error.cause, field, depth + 1);
 }
 
 function readNumericErrorField(
   error: unknown,
   field: string,
+  depth = 0,
 ): number | undefined {
-  if (!isRecord(error)) return undefined;
+  if (!isRecord(error) || depth > 4) return undefined;
+  if (isRecord(error.metadata) && typeof error.metadata[field] === "number") {
+    return error.metadata[field];
+  }
   const value = error[field];
-  return typeof value === "number" ? value : undefined;
+  if (typeof value === "number") return value;
+  return readNumericErrorField(error.cause, field, depth + 1);
 }
 
 function permissionMatchesFilter(

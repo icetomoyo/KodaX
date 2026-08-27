@@ -12376,7 +12376,9 @@ describe("createKodaXRuntime", () => {
       await expect(run.result).resolves.toMatchObject({ phase: "failed" });
       await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
         phase: "failed",
-        error: executorError.message,
+        error: executorError.name === "AbortError"
+          ? "Provider request was aborted."
+          : "Provider request failed.",
         terminal: { kind: "failed", code: "run_failed" },
       });
     } finally {
@@ -12676,7 +12678,7 @@ describe("createKodaXRuntime", () => {
       phase: "failed",
       errors: [{
         code: "run_failed",
-        message: "finalizer verifier failed",
+        message: "Provider request failed.",
       }],
     });
     await runtime.close();
@@ -13724,7 +13726,7 @@ describe("createKodaXRuntime", () => {
     });
     await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
       phase: "failed",
-      error: "executor failed durably",
+      error: "Provider request failed.",
       terminal: {
         kind: "failed",
         code: "run_failed",
@@ -14567,7 +14569,14 @@ describe("createKodaXRuntime", () => {
     await expect(handle.result).resolves.toMatchObject({
       phase: "failed",
       error: {
-        message: "Provider run failed while using a run-scoped credential.",
+        message: "Provider request timed out.",
+      },
+      failureDetail: {
+        failureKind: "network",
+        stage: "transport",
+        providerErrorCode: "request_timeout",
+        upstreamErrorCode: "ETIMEDOUT",
+        safeMessage: "Provider request timed out.",
       },
       terminal: {
         failureKind: "network",
@@ -14584,6 +14593,357 @@ describe("createKodaXRuntime", () => {
     ).not.toContain(secret);
     await runtime.close();
     expect(await readDirectoryText(tempRoot)).not.toContain(secret);
+  });
+
+  it("projects one sanitized provider failure detail across result, status, event, and diagnostics", async () => {
+    const {
+      captureRuntimeSessionDiagnostics,
+      createKodaXRuntime,
+    } = await import("@kodax-ai/kodax/runtime");
+    const secret = "F295_FAILURE_DETAIL_SECRET";
+    const prompt = "private prompt that must not escape";
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "failure-detail-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({
+      title: "Provider Failure Detail",
+    });
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+      const error = Object.assign(
+        new Error(
+          `Model missing-model rejected private prompt fragment at https://user:${secret}@api.example.test/v1/models?api_key=${secret}; `
+            + `Authorization: Bearer ${secret}; file=C:\\private\\workspace\\config.json`,
+        ),
+        {
+          status: 404,
+          code: "model_not_found",
+          request_id: "req_safe_123",
+          headers: {
+            "retry-after": "2",
+            authorization: `Bearer ${secret}`,
+          },
+          response: { body: `raw body ${secret}` },
+        },
+      );
+      options.events?.onError?.(error);
+      return fakeRunningSession(options, Promise.reject(error));
+    });
+    const trustedInput = {
+      sessionId: session.id,
+      prompt,
+      providerCredential: secret,
+      providerCredentialProvider: "mock-provider",
+    } as RuntimeStartRunInput & {
+      readonly providerCredential: string;
+      readonly providerCredentialProvider: string;
+    };
+
+    const handle = await runtime.runs.start(trustedInput);
+    const result = await handle.result;
+    const status = await runtime.runs.get(handle.runId);
+    const [failedEvent] = await runtime.events.replay({
+      runId: handle.runId,
+      type: "run.failed",
+    });
+    const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+      sessionId: session.id,
+      runId: handle.runId,
+    });
+    const expectedDetail = {
+      failureKind: "not_found",
+      stage: "transport",
+      providerErrorCode: "model_not_found",
+      upstreamErrorCode: "model_not_found",
+      httpStatus: 404,
+      requestId: "req_safe_123",
+      retryAfterMs: 2_000,
+      safeMessage: "The requested model was not found.",
+    };
+
+    expect(result).toMatchObject({
+      phase: "failed",
+      error: { message: "The requested model was not found." },
+      failureDetail: expectedDetail,
+      terminal: { failureKind: "not_found" },
+    });
+    expect(status.failureDetail).toEqual(result.failureDetail);
+    expect(failedEvent?.payload).toMatchObject({
+      failureDetail: result.failureDetail,
+    });
+    expect(diagnostics.run.failureDetail).toEqual(result.failureDetail);
+    expect(status.error).toBe(result.failureDetail?.safeMessage);
+    expect(result.error?.stack).toBeUndefined();
+    expect(result.failureDetail?.safeMessage.length).toBeLessThanOrEqual(1_024);
+
+    const serialized = JSON.stringify({ result, status, failedEvent, diagnostics });
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(prompt);
+    expect(serialized).not.toContain("private prompt fragment");
+    expect(serialized).not.toContain("raw body");
+    expect(serialized).not.toContain("api_key=");
+    expect(serialized).not.toContain("user:");
+    expect(serialized).not.toContain("Authorization");
+    expect(serialized).not.toContain("C:\\private\\workspace");
+    await runtime.close();
+    expect(await readDirectoryText(tempRoot)).not.toContain(secret);
+  });
+
+  it("distinguishes the supported provider and Runtime failure taxonomy", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "failure-taxonomy-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Failure Taxonomy" });
+    const cases: readonly {
+      readonly message: string;
+      readonly name?: string;
+      readonly fields?: Readonly<Record<string, unknown>>;
+      readonly expected: Readonly<Record<string, string | number>>;
+    }[] = [
+      {
+        message: "invalid API key",
+        fields: { status: 401, code: "invalid_api_key" },
+        expected: { failureKind: "auth", stage: "credential", providerErrorCode: "authentication_failed" },
+      },
+      {
+        message: "too many requests",
+        fields: { status: 429, headers: { "retry-after": "4" } },
+        expected: { failureKind: "rate_limit", stage: "transport", providerErrorCode: "rate_limited", retryAfterMs: 4_000 },
+      },
+      {
+        message: "service overloaded after retries",
+        name: "KodaXRateLimitError",
+        fields: { metadata: { httpStatus: 503, stage: "transport" } },
+        expected: { failureKind: "upstream", stage: "transport", providerErrorCode: "upstream_server_error", httpStatus: 503 },
+      },
+      {
+        message: "provider overloaded after retries",
+        name: "KodaXRateLimitError",
+        fields: { metadata: { httpStatus: 529, stage: "transport" } },
+        expected: { failureKind: "upstream", stage: "transport", providerErrorCode: "upstream_server_error", httpStatus: 529 },
+      },
+      {
+        message: "socket reset",
+        fields: { code: "ECONNRESET" },
+        expected: { failureKind: "network", stage: "transport", providerErrorCode: "network_error" },
+      },
+      {
+        message: "certificate expired",
+        fields: { code: "CERT_HAS_EXPIRED" },
+        expected: { failureKind: "network", stage: "transport", providerErrorCode: "tls_error" },
+      },
+      {
+        message: "request timed out",
+        fields: { code: "ETIMEDOUT" },
+        expected: { failureKind: "network", stage: "transport", providerErrorCode: "request_timeout" },
+      },
+      {
+        message: "model alpha was not found",
+        fields: { status: 404, code: "model_not_found" },
+        expected: { failureKind: "not_found", stage: "transport", providerErrorCode: "model_not_found" },
+      },
+      {
+        message: "endpoint route was not found",
+        fields: { status: 404, code: "endpoint_not_found" },
+        expected: { failureKind: "not_found", stage: "transport", providerErrorCode: "endpoint_not_found" },
+      },
+      {
+        message: "model endpoint route was not found",
+        fields: { status: 404 },
+        expected: { failureKind: "not_found", stage: "transport", providerErrorCode: "resource_not_found" },
+      },
+      {
+        message: "unknown provider alias",
+        fields: { metadata: { failureCode: "provider_not_registered", stage: "catalog" } },
+        expected: { failureKind: "unknown_provider", stage: "catalog", providerErrorCode: "provider_not_registered" },
+      },
+      {
+        message: "catalog entry is invalid",
+        fields: { metadata: { stage: "catalog" } },
+        expected: { failureKind: "provider", stage: "catalog", providerErrorCode: "catalog_error" },
+      },
+      {
+        message: "request payload could not be constructed",
+        fields: { code: "ERR_INVALID_ARG_TYPE", metadata: { stage: "request_build" } },
+        expected: { failureKind: "request", stage: "request_build", providerErrorCode: "request_build_failed" },
+      },
+      {
+        message: "upstream unavailable",
+        fields: { status: 502 },
+        expected: { failureKind: "upstream", stage: "transport", providerErrorCode: "upstream_server_error" },
+      },
+      {
+        message: "wire protocol is incompatible",
+        fields: { code: "protocol_error" },
+        expected: { failureKind: "invalid_response", stage: "response_stream", providerErrorCode: "protocol_mismatch" },
+      },
+      {
+        message: "stream ended before completion",
+        name: "StreamIncompleteError",
+        expected: { failureKind: "invalid_response", stage: "response_stream", providerErrorCode: "response_stream_error" },
+      },
+      {
+        message: "request aborted by user",
+        name: "AbortError",
+        expected: { failureKind: "provider_aborted", stage: "transport", providerErrorCode: "cancelled" },
+      },
+      {
+        message: "terminal state could not be persisted",
+        fields: { code: "run_settlement_not_persisted" },
+        expected: { failureKind: "runtime_cleanup", stage: "runtime_settlement", providerErrorCode: "runtime_settlement_failed" },
+      },
+    ];
+
+    for (const failureCase of cases) {
+      const error = Object.assign(
+        new Error(failureCase.message),
+        failureCase.fields ?? {},
+      );
+      if (failureCase.name !== undefined) error.name = failureCase.name;
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+        fakeRunningSession(options, Promise.reject(error)));
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: `classify ${failureCase.message}`,
+      });
+      const result = await handle.result;
+      expect(result.failureDetail).toMatchObject(failureCase.expected);
+      expect(result.terminal?.failureKind).toBe(
+        failureCase.expected.failureKind,
+      );
+    }
+
+    const bodySecret = "F295_RAW_RESPONSE_BODY_SECRET";
+    const jsonError = new Error(
+      `mock API error: ${JSON.stringify({
+        error: { message: "Quota exhausted for project safe-project." },
+        rawResponseBody: bodySecret,
+      })}`,
+    );
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(jsonError)));
+    const jsonHandle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "select one safe JSON error field",
+    });
+    const jsonResult = await jsonHandle.result;
+    expect(jsonResult.failureDetail?.safeMessage).toBe("Provider request failed.");
+    expect(JSON.stringify(jsonResult)).not.toContain(bodySecret);
+
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(new Error("x".repeat(5_000)))));
+    const longHandle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "bound an oversized provider message",
+    });
+    const longResult = await longHandle.result;
+    expect(longResult.failureDetail?.safeMessage).toBe("Provider request failed.");
+
+    const identifierSecret = "Z9";
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(Object.assign(
+        new Error("upstream unavailable"),
+        {
+          status: 502,
+          code: identifierSecret,
+          request_id: identifierSecret,
+        },
+      ))));
+    const identifierHandle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "drop secret diagnostic identifiers",
+      providerCredential: identifierSecret,
+      providerCredentialProvider: "mock-provider",
+    } as RuntimeStartRunInput & {
+      readonly providerCredential: string;
+      readonly providerCredentialProvider: string;
+    });
+    const identifierResult = await identifierHandle.result;
+    expect(identifierResult.failureDetail).toMatchObject({
+      providerErrorCode: "upstream_server_error",
+      httpStatus: 502,
+    });
+    expect(identifierResult.failureDetail).not.toHaveProperty("upstreamErrorCode");
+    expect(identifierResult.failureDetail).not.toHaveProperty("requestId");
+    expect(JSON.stringify(identifierResult)).not.toContain(identifierSecret);
+    await runtime.close();
+  });
+
+  it("projects active coding cancellation consistently across Runtime surfaces", async () => {
+    const {
+      captureRuntimeSessionDiagnostics,
+      createKodaXRuntime,
+    } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "coding-cancellation-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Coding cancellation" });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+      let settleInterrupted: (() => void) | undefined;
+      const result = new Promise<KodaXResult>((resolve) => {
+        settleInterrupted = () => resolve({
+            success: false,
+            interrupted: true,
+            lastText: "",
+            messages: [],
+            sessionId: session.id,
+          });
+      });
+      return {
+        ...fakeRunningSession(options, result),
+        abort() {
+          settleInterrupted?.();
+        },
+      };
+    });
+
+    const handle = await runtime.runs.start({
+      sessionId: session.id,
+      prompt: "cancel an active coding run",
+    });
+    await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
+      accepted: true,
+      phase: "unknown",
+    });
+    await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
+      phase: "unknown",
+      failureDetail: {
+        failureKind: "cancelled",
+        providerErrorCode: "cancelled",
+      },
+    });
+    const result = await handle.result;
+    const status = await runtime.runs.get(handle.runId);
+    const [interruptedEvent] = await runtime.events.replay({
+      runId: handle.runId,
+      type: "run.interrupted",
+    });
+    const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+      sessionId: session.id,
+      runId: handle.runId,
+    });
+    const expectedDetail = {
+      failureKind: "cancelled",
+      stage: "runtime_control",
+      providerErrorCode: "cancelled",
+      safeMessage: "Runtime run was cancelled by the user.",
+    } as const;
+
+    expect(result).toMatchObject({
+      phase: "interrupted",
+      failureDetail: expectedDetail,
+      terminal: { failureKind: "cancelled" },
+    });
+    expect(status.failureDetail).toEqual(expectedDetail);
+    expect(interruptedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
+    expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
+    await runtime.close();
   });
 
   it("preserves trusted managed Stop causality before run-scoped credential redaction", async () => {
@@ -14710,7 +15070,13 @@ describe("createKodaXRuntime", () => {
     await expect(handle.result).resolves.toMatchObject({
       phase: "failed",
       error: {
-        message: "Provider run failed while using a run-scoped credential.",
+        message: "Provider request failed.",
+      },
+      failureDetail: {
+        failureKind: "provider",
+        stage: "transport",
+        providerErrorCode: "provider_error",
+        safeMessage: "Provider request failed.",
       },
       terminal: { kind: "failed", code: "run_failed" },
       stop: { state: "confirmed", outcome: "failed" },
@@ -14746,7 +15112,7 @@ describe("createKodaXRuntime", () => {
     await expect(handle.result).resolves.toMatchObject({
       phase: "failed",
       terminal: { kind: "failed", code: "run_failed" },
-      error: { name: "AbortError", message: "synthetic provider AbortError" },
+      error: { name: "AbortError", message: "Provider request was aborted." },
     });
     await runtime.close();
   });
@@ -15659,6 +16025,26 @@ describe("createKodaXRuntime", () => {
       accepted: false,
     });
     await expect(queued.result).resolves.toMatchObject({ phase: "cancelled" });
+    const cancelledStatus = await runtime.runs.get(queued.runId);
+    const cancelledResult = await queued.result;
+    const [cancelledEvent] = await runtime.events.replay({
+      runId: queued.runId,
+      type: "run.cancelled",
+    });
+    const cancelledDiagnostics = await runtime.sessions.diagnostics({
+      sessionId: session.id,
+      runId: queued.runId,
+    });
+    const cancellationDetail = {
+      failureKind: "cancelled",
+      stage: "runtime_control",
+      providerErrorCode: "cancelled",
+      safeMessage: "Runtime run was cancelled by the user.",
+    };
+    expect(cancelledResult.failureDetail).toEqual(cancellationDetail);
+    expect(cancelledStatus?.failureDetail).toEqual(cancellationDetail);
+    expect(cancelledEvent?.payload).toMatchObject({ failureDetail: cancellationDetail });
+    expect(cancelledDiagnostics.run.failureDetail).toEqual(cancellationDetail);
     await runtime.close();
     await expect(active.result).resolves.toMatchObject({ phase: "unknown" });
   });
@@ -16069,7 +16455,7 @@ describe("createKodaXRuntime", () => {
       const [failedRun] = await runtime.runs.list({ sessionId: session.id });
       expect(failedRun).toMatchObject({
         phase: "failed",
-        error: "synchronous launch failure",
+        error: "Provider request failed.",
       });
       await expect(
         runtime.runs.submitInput({
@@ -16803,10 +17189,10 @@ describe("createKodaXRuntime", () => {
     });
 
     expect(result.phase).toBe("failed");
-    expect(result.error?.message).toBe("provider exploded");
+    expect(result.error?.message).toBe("Provider request failed.");
     expect(status).toMatchObject({
       phase: "failed",
-      error: "provider exploded",
+      error: "Provider request failed.",
     });
     expect(failedEvents).toHaveLength(1);
 

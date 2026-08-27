@@ -20,6 +20,7 @@ import {
   KodaXWireReasoningEffort,
 } from '../types.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXReasoningEffortRejectedError } from '../errors.js';
+import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import { resolveProviderCredential } from '../provider-credential-context.js';
 
@@ -127,26 +128,57 @@ function normalizeHttpStatus(value: unknown): number | undefined {
   return undefined;
 }
 
-function extractHttpStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') {
+function extractHttpStatus(error: unknown, depth = 0): number | undefined {
+  if (!error || typeof error !== 'object' || depth > 4) {
     return undefined;
   }
   const record = error as Record<string, unknown>;
   return normalizeHttpStatus(record.status)
     ?? normalizeHttpStatus(record.statusCode)
     ?? normalizeHttpStatus(record.code)
-    ?? extractHttpStatus(record.cause);
+    ?? extractHttpStatus(record.cause, depth + 1);
 }
 
-function extractErrorCode(error: unknown): string {
-  if (!error || typeof error !== 'object') {
+function extractErrorCode(error: unknown, depth = 0): string {
+  if (!error || typeof error !== 'object' || depth > 4) {
     return '';
   }
   const record = error as Record<string, unknown>;
   if (typeof record.code === 'string') {
     return record.code;
   }
-  return extractErrorCode(record.cause);
+  return extractErrorCode(record.cause, depth + 1);
+}
+
+function extractDiagnosticString(
+  error: unknown,
+  fields: readonly string[],
+  depth = 0,
+): string | undefined {
+  if (!error || typeof error !== 'object' || depth > 4) return undefined;
+  const record = error as Record<string, unknown>;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === 'string' && /^[\w.:-]{1,200}$/.test(value)) return value;
+  }
+  return extractDiagnosticString(record.cause, fields, depth + 1);
+}
+
+function extractRequestId(error: unknown): string | undefined {
+  const direct = extractDiagnosticString(error, ['requestId', 'request_id']);
+  if (direct !== undefined) return direct;
+  const headers = extractHeadersFromError(error);
+  const names = ['x-request-id', 'request-id', 'anthropic-request-id', 'cf-ray'];
+  for (const name of names) {
+    const value = headers instanceof Headers
+      ? headers.get(name) ?? undefined
+      : headers?.[name] ?? headers?.[name.replace(/\b\w/g, (char) => char.toUpperCase())];
+    const candidate = Array.isArray(value) ? value[0] : value;
+    if (typeof candidate === 'string' && /^[\w.:-]{1,200}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -342,7 +374,11 @@ export abstract class KodaXBaseProvider {
     _streamOptions?: KodaXProviderStreamOptions,
     _signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
-    throw new KodaXProviderError(`${this.name} does not support non-streaming fallback`);
+    throw new KodaXProviderError(
+      `${this.name} does not support non-streaming fallback`,
+      this.name,
+      { failureCode: 'protocol_mismatch', stage: 'response_stream' },
+    );
   }
 
   isConfigured(): boolean {
@@ -635,6 +671,7 @@ export abstract class KodaXBaseProvider {
       throw new KodaXProviderError(
         `${this.name}${modelLabel} does not advertise provider-specific reasoning effort "${effort}". Supported stable efforts: ${KODAX_STABLE_EFFORT_INTENTS.join(', ')}.`,
         this.name,
+        { failureCode: 'request_build_failed', stage: 'request_build' },
       );
     }
     if (capability.localRejectEfforts?.includes(effort)) {
@@ -642,6 +679,7 @@ export abstract class KodaXBaseProvider {
       throw new KodaXProviderError(
         `${this.name}${modelLabel} does not support reasoning effort "${effort}".`,
         this.name,
+        { failureCode: 'request_build_failed', stage: 'request_build' },
       );
     }
     if (effort === 'none' || capability.disabledEfforts?.includes(effort)) {
@@ -667,6 +705,7 @@ export abstract class KodaXBaseProvider {
     throw new KodaXProviderError(
       `${this.name}${modelLabel} does not support reasoning effort "${effort}". Supported efforts: ${supportedLabel}.`,
       this.name,
+      { failureCode: 'request_build_failed', stage: 'request_build' },
     );
   }
 
@@ -691,6 +730,7 @@ export abstract class KodaXBaseProvider {
         throw new KodaXProviderError(
           `${this.name}${modelLabel} does not support reasoning effort "${requestedEffort}".`,
           this.name,
+          { failureCode: 'request_build_failed', stage: 'request_build' },
         );
       }
       if (capability.defaultEffort) {
@@ -810,6 +850,22 @@ export abstract class KodaXBaseProvider {
     return result.type === 'header' ? result.waitMs : undefined;
   }
 
+  private providerErrorMetadata(error: unknown): KodaXProviderErrorMetadata {
+    const httpStatus = extractHttpStatus(error);
+    const upstreamCode = extractErrorCode(error);
+    const requestId = extractRequestId(error);
+    const retryAfterMs = this.extractRetryAfterMs(error);
+    return {
+      stage: 'transport',
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+      ...(upstreamCode !== '' && /^[\w.:-]{1,200}$/.test(upstreamCode)
+        ? { upstreamCode }
+        : {}),
+      ...(requestId !== undefined ? { requestId } : {}),
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
+  }
+
   /**
    * Detect "prompt too long / context window exceeded" errors and compute
    * a reduced max_tokens for retry.  Returns undefined if not a context
@@ -894,11 +950,17 @@ export abstract class KodaXBaseProvider {
         }
 
         if (this.isRateLimitError(e)) {
-          // Last retry exhausted — throw
+          // Last retry exhausted — throw. Append the provider's own error detail
+          // (quota code, reset time — e.g. GLM's [1308] 5-hour-window message) so
+          // users see WHY they were limited instead of only generic guidance.
           if (i === retries - 1) {
+            const detail = getErrorMessage(e).trim();
+            const suffix = detail ? `\n${detail}` : '';
+            const metadata = this.providerErrorMetadata(e);
             throw new KodaXRateLimitError(
-              `API rate limit exceeded after ${retries} retries. Please wait and try again later.`,
-              60000
+              `API rate limit exceeded after ${retries} retries. Please wait and try again later.${suffix}`,
+              metadata.retryAfterMs ?? 60000,
+              metadata,
             );
           }
 
@@ -1002,9 +1064,12 @@ export abstract class KodaXBaseProvider {
             this.onStaleConnection();
           }
 
+          if (e instanceof KodaXProviderError) throw e;
+
           throw new KodaXProviderError(
             `${this.name} API error: ${e.message}`,
-            this.name
+            this.name,
+            this.providerErrorMetadata(e),
           );
         }
         throw e;

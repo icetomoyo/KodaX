@@ -88,18 +88,114 @@ describe('runtime daemon protocol schema', () => {
 
   it('admits credential-safe terminal failure classifications', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result;
+    expect(schema).toMatchObject({
+      properties: {
+        failureDetail: {
+          required: [
+            'failureKind',
+            'stage',
+            'providerErrorCode',
+            'safeMessage',
+          ],
+        },
+      },
+    });
     expect(validateRuntimeDaemonJsonSchema(schema, {
       runId: 'run-1',
       sessionId: 'session-1',
       phase: 'failed',
+      failureDetail: {
+        failureKind: 'not_found',
+        stage: 'transport',
+        providerErrorCode: 'model_not_found',
+        safeMessage: 'Model missing-model was not found.',
+        httpStatus: 404,
+        upstreamErrorCode: 'model_not_found',
+        requestId: 'req_safe_123',
+        retryAfterMs: 2000,
+      },
       terminal: {
         revision: 1,
         kind: 'failed',
         code: 'run_failed',
         effectOutcome: 'known',
-        failureKind: 'network',
+        failureKind: 'not_found',
       },
     })).toEqual([]);
+  });
+
+  it('admits an unconfirmed Runtime settlement across status and diagnostics', () => {
+    const failureDetail = {
+      failureKind: 'runtime_cleanup',
+      stage: 'runtime_settlement',
+      providerErrorCode: 'runtime_settlement_failed',
+      safeMessage: 'Runtime settlement failed.',
+    };
+    const lifecycleError = {
+      code: 'run_settlement_not_persisted',
+      message: 'Runtime settlement failed.',
+      retryable: false,
+    };
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['run.get'].result,
+      {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        phase: 'unknown',
+        startedAt: '2026-08-27T00:00:00.000Z',
+        provider: 'custom-provider',
+        failureDetail,
+        lifecycleError,
+      },
+    )).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['session.diagnostics'].result,
+      {
+        schemaVersion: 1,
+        captureStartedAt: '2026-08-27T00:00:00.000Z',
+        capturedAt: '2026-08-27T00:00:00.000Z',
+        sdkVersion: '0.7.96',
+        runtimeVersion: '0.7.96',
+        daemonVersion: null,
+        runtimeId: 'runtime-1',
+        runtimeMode: 'embedded',
+        sessionId: 'session-1',
+        observation: {
+          cursor: { sessionId: 'session-1', journalEpoch: 'epoch-1', seq: 1 },
+          transcriptRevision: 'revision-1',
+        },
+        run: {
+          controlRecord: 'present',
+          state: 'unknown',
+          stage: 'unknown',
+          terminalTimeKnown: false,
+          failureDetail,
+          activeSubtaskCount: null,
+          activeSubtaskCountSource: 'unknown',
+          errors: [{
+            code: 'run_settlement_not_persisted',
+            message: 'Runtime settlement failed.',
+          }],
+        },
+      },
+    )).toEqual([]);
+  });
+
+  it('admits a Runtime-owned cancellation classification', () => {
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result,
+      {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        phase: 'cancelled',
+        failureDetail: {
+          failureKind: 'cancelled',
+          stage: 'runtime_control',
+          providerErrorCode: 'cancelled',
+          safeMessage: 'Runtime run was cancelled by the user.',
+        },
+      },
+    )).toEqual([]);
   });
 
   it('accepts daemon and supervisor process-start identities returned by management inspection', () => {

@@ -103,8 +103,15 @@ remains authoritative and is not republished.
 through rejection-observed cleanup paths. `src/runtime-daemon/transport.ts`
 publishes the same typed disconnect facts to pending RPCs and lifecycle
 subscribers and rejects oversized outbound frames before socket write.
-Credential-safe terminal classification is persisted as `failureKind`; raw
-provider errors are not part of that field.
+Provider failures are normalized once into `failureDetail` and projected
+unchanged through `run.failed`, Run result/status, and Session diagnostics.
+The existing terminal `failureKind` remains the coarse compatibility field;
+`providerErrorCode` is the stable KodaX classification, while
+`upstreamErrorCode` is explicitly provider-controlled. `safeMessage` comes
+from a bounded KodaX-owned template rather than provider response text;
+provider-controlled identifiers are allowlisted and dropped if they contain a
+run credential, prompt, or registered secret. Headers/bodies, URLs, local
+paths, stacks, causes, and raw errors never cross the Runtime boundary.
 
 Reconnect recovery belongs to the SDK host adapter, not the transport. After
 admission returns `runId`, an adapter may create a replacement Runtime, verify

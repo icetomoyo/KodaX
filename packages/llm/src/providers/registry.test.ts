@@ -100,7 +100,19 @@ describe('provider registry', () => {
   });
 
   it('throws a provider error for unknown providers', () => {
-    expect(() => getProvider('missing-provider')).toThrowError(KodaXProviderError);
+    let caught: unknown;
+    try {
+      getProvider('missing-provider');
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(KodaXProviderError);
+    expect(caught).toMatchObject({
+      metadata: {
+        failureCode: 'provider_not_registered',
+        stage: 'catalog',
+      },
+    });
   });
 
   it('registers MiniMax Coding Plan as minimax-coding (Anthropic-compat, MINIMAX_CODING_API_KEY)', () => {

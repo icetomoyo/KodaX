@@ -3,6 +3,7 @@ import { APIUserAbortError as AnthropicAPIUserAbortError } from '@anthropic-ai/s
 import { APIUserAbortError as OpenAIAPIUserAbortError } from 'openai';
 import { KodaXBaseProvider } from './base.js';
 import type { KodaXOnRetryAfterCallback } from './base.js';
+import { KodaXProviderError, KodaXRateLimitError } from '../errors.js';
 import { runWithScopedConfig } from '../run-scoped-config.js';
 import type {
   KodaXMessage,
@@ -573,6 +574,90 @@ describe('KodaXBaseProvider', () => {
       timeoutSpy.mockRestore();
       randomSpy.mockRestore();
     }
+  });
+
+  it('appends the original rate-limit detail when retries are exhausted', async () => {
+    const provider = new TestProvider();
+    // GLM-style quota body: the detail users need (reset time, quota code) lives
+    // in the provider's own error message and must not be discarded.
+    const glmDetail =
+      '429 [1308][已达到 5 小时使用上限，2026-08-25 21:12:09 后可继续使用。]';
+    const task = vi.fn<() => Promise<string>>().mockRejectedValue(new Error(glmDetail));
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return undefined as unknown as ReturnType<typeof setTimeout>;
+    });
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    try {
+      const error: unknown = await provider
+        .exposeWithRateLimit(task, undefined, 2)
+        .then(() => undefined, (e: unknown) => e);
+      expect(task).toHaveBeenCalledTimes(2);
+      expect(error).toBeInstanceOf(KodaXRateLimitError);
+      expect((error as Error).message).toContain(
+        'API rate limit exceeded after 2 retries. Please wait and try again later.',
+      );
+      expect((error as Error).message).toContain('已达到 5 小时使用上限');
+    } finally {
+      timeoutSpy.mockRestore();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it('preserves only approved upstream failure metadata when wrapping provider errors', async () => {
+    const provider = new TestProvider();
+    const upstream = Object.assign(new Error('model missing-model was not found'), {
+      status: 404,
+      code: 'model_not_found',
+      request_id: 'req_safe_123',
+      headers: {
+        'retry-after': '3',
+        authorization: 'Bearer must-not-be-copied',
+      },
+      response: { body: 'must-not-be-copied' },
+    });
+
+    const error: unknown = await provider
+      .exposeWithRateLimit(() => Promise.reject(upstream), undefined, 1)
+      .then(() => undefined, (caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(KodaXProviderError);
+    expect(error).toMatchObject({
+      metadata: {
+        stage: 'transport',
+        httpStatus: 404,
+        upstreamCode: 'model_not_found',
+        requestId: 'req_safe_123',
+        retryAfterMs: 3_000,
+      },
+    });
+    expect(error).not.toHaveProperty('cause');
+    expect(error).not.toHaveProperty('response');
+    expect(JSON.stringify(error)).not.toContain('must-not-be-copied');
+  });
+
+  it('does not overwrite an already classified provider failure', async () => {
+    const provider = new TestProvider();
+    const classified = new KodaXProviderError(
+      'Local request construction failed.',
+      'test',
+      { failureCode: 'request_build_failed', stage: 'request_build' },
+    );
+
+    const error: unknown = await provider
+      .exposeWithRateLimit(() => Promise.reject(classified), undefined, 1)
+      .then(() => undefined, (caught: unknown) => caught);
+
+    expect(error).toBe(classified);
+    expect(error).toMatchObject({
+      metadata: {
+        failureCode: 'request_build_failed',
+        stage: 'request_build',
+      },
+    });
   });
 
   it('retries Chinese context-overflow errors immediately', async () => {

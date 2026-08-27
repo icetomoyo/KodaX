@@ -190,8 +190,13 @@ Clients receive a close code, `connectionId`, and `reconnectable` marker, while
 durable Run status remains the authority for `daemon_crashed`. A host that has
 received a `runId` reconnects by creating/attaching a replacement Runtime and
 querying then awaiting that exact Run. Reissuing `runs.start()` is forbidden
-because it can duplicate provider and tool effects. Credential-scoped provider
-errors retain a bounded `failureKind` while raw provider text stays redacted.
+because it can duplicate provider and tool effects. Provider errors produce
+one bounded `failureDetail` at the Runtime failure boundary. Events,
+result/status, and Session diagnostics reuse that fact so classification cannot
+drift. Stable KodaX codes are separate from optional upstream codes/request
+IDs. Display text is generated from KodaX-owned templates, so provider response
+bodies, credentials, prompts, headers, URLs, local paths, stacks, and raw errors
+do not cross the boundary.
 
 For a Windows daemon Runtime, startup is a three-part process boundary:
 PowerShell creates the daemon suspended, assigns it to a kill-on-close Job

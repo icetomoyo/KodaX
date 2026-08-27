@@ -11,6 +11,7 @@ import type {
   KodaXVerifyCredentialResult,
   KodaXVerifyStrategy,
 } from '../types.js';
+import { KodaXProviderError } from '../errors.js';
 import type { KodaXBaseProvider } from './base.js';
 import {
   KODAX_PROVIDERS,
@@ -57,7 +58,11 @@ export function resolveProvider(name: string): KodaXBaseProvider {
     return custom;
   }
   const available = getAvailableProviderNames();
-  throw new Error(`Unknown provider: ${name}. Available: ${available.join(', ')}`);
+  throw new KodaXProviderError(
+    `Unknown provider: ${name}. Available: ${available.join(', ')}`,
+    name,
+    { failureCode: 'provider_not_registered', stage: 'catalog' },
+  );
 }
 
 /**

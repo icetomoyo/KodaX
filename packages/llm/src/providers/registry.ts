@@ -381,7 +381,13 @@ function resolveApiKeyEnvForProvider(name: string): string | undefined {
 export function getProvider(name?: string): KodaXBaseProvider {
   const n = name ?? KODAX_DEFAULT_PROVIDER;
   const factory = KODAX_PROVIDERS[n];
-  if (!factory) throw new KodaXProviderError(`Unknown provider: ${n}. Available: ${Object.keys(KODAX_PROVIDERS).join(', ')}`, n);
+  if (!factory) {
+    throw new KodaXProviderError(
+      `Unknown provider: ${n}. Available: ${Object.keys(KODAX_PROVIDERS).join(', ')}`,
+      n,
+      { failureCode: 'provider_not_registered', stage: 'catalog' },
+    );
+  }
 
   const apiKeyEnv = resolveApiKeyEnvForProvider(n);
   const currentApiKey = resolveProviderCredential(

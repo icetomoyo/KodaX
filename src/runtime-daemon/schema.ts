@@ -1216,11 +1216,13 @@ function runStatusSchema(): RuntimeDaemonJsonSchema {
     model: stringSchema,
     reasoning: stringSchema,
     error: stringSchema,
+    failureDetail: runtimeFailureDetailSchema(),
     lifecycleError: objectSchema({
       code: {
         enum: [
           'actor_settlement_retrying',
           'actor_settlement_not_persisted',
+          'run_settlement_not_persisted',
         ],
       },
       message: stringSchema,
@@ -1242,6 +1244,7 @@ function sessionDiagnosticsSchema(): RuntimeDaemonJsonSchema {
         'stop_outcome_unconfirmed',
         'actor_settlement_retrying',
         'actor_settlement_not_persisted',
+        'run_settlement_not_persisted',
         'run_failed',
         'terminal_time_unknown',
       ],
@@ -1259,6 +1262,7 @@ function sessionDiagnosticsSchema(): RuntimeDaemonJsonSchema {
     terminalAt: stringSchema,
     terminalTimeKnown: booleanSchema,
     terminal: runtimeTerminalFactSchema(),
+    failureDetail: runtimeFailureDetailSchema(),
     activeSubtaskCount: {
       oneOf: [integerSchema, { type: 'null' }],
     },
@@ -1329,18 +1333,72 @@ function runtimeTerminalFactSchema(): RuntimeDaemonJsonSchema {
     },
     effectOutcome: { enum: ['none', 'known', 'unknown'] },
     message: stringSchema,
-    failureKind: {
+    failureKind: runtimeFailureKindSchema(),
+  }, ['revision', 'kind', 'code', 'effectOutcome']);
+}
+
+function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({
+    failureKind: runtimeFailureKindSchema(),
+    stage: {
       enum: [
-        'auth',
-        'rate_limit',
-        'network',
-        'provider_aborted',
-        'invalid_response',
-        'runtime_cleanup',
-        'provider',
+        'catalog',
+        'credential',
+        'request_build',
+        'transport',
+        'response_stream',
+        'runtime_control',
+        'runtime_settlement',
       ],
     },
-  }, ['revision', 'kind', 'code', 'effectOutcome']);
+    providerErrorCode: {
+      enum: [
+        'credential_unavailable',
+        'authentication_failed',
+        'rate_limited',
+        'network_error',
+        'tls_error',
+        'request_timeout',
+        'provider_not_registered',
+        'catalog_error',
+        'model_not_found',
+        'endpoint_not_found',
+        'resource_not_found',
+        'request_build_failed',
+        'upstream_client_error',
+        'upstream_server_error',
+        'protocol_mismatch',
+        'response_stream_error',
+        'cancelled',
+        'runtime_settlement_failed',
+        'provider_error',
+      ],
+    },
+    safeMessage: { type: 'string', maxLength: 1_024 },
+    httpStatus: { type: 'integer', minimum: 100, maximum: 599 },
+    upstreamErrorCode: { type: 'string', maxLength: 200 },
+    requestId: { type: 'string', maxLength: 200 },
+    retryAfterMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+  }, ['failureKind', 'stage', 'providerErrorCode', 'safeMessage']);
+}
+
+function runtimeFailureKindSchema(): RuntimeDaemonJsonSchema {
+  return {
+    enum: [
+      'auth',
+      'rate_limit',
+      'network',
+      'not_found',
+      'unknown_provider',
+      'request',
+      'upstream',
+      'cancelled',
+      'provider_aborted',
+      'invalid_response',
+      'runtime_cleanup',
+      'provider',
+    ],
+  };
 }
 
 function runStopStatusSchema(): RuntimeDaemonJsonSchema {
@@ -1387,6 +1445,7 @@ function runResultSchema(): RuntimeDaemonJsonSchema {
     error: {
       oneOf: [stringSchema, objectAnySchema],
     },
+    failureDetail: runtimeFailureDetailSchema(),
   }, ['runId', 'sessionId', 'phase'], true);
 }
 

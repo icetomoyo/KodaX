@@ -3215,9 +3215,6 @@ function serializeRuntimeDaemonMethodResult(
     error: {
       name: result.error.name,
       message: result.error.message,
-      ...(result.error.stack !== undefined
-        ? { stack: result.error.stack }
-        : {}),
     },
   };
 }

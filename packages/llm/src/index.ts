@@ -89,6 +89,7 @@ export {
   KodaXNetworkError,
   KodaXToolCallIdError,
 } from './errors.js';
+export type { KodaXProviderErrorMetadata } from './errors.js';
 
 // ============== Constants ==============
 export {

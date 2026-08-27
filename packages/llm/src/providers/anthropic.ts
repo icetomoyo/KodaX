@@ -1308,6 +1308,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           'cache-boundary marker reached system message serialization unlowered. '
             + 'Provider base class lowering must run before any wire-level serialization.',
           this.name,
+          { failureCode: 'request_build_failed', stage: 'request_build' },
         );
       }
     }
