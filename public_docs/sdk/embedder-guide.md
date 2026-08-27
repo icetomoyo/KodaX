@@ -4622,6 +4622,33 @@ ordinary Node/CLI process and use attach-only mode instead. A packaged
 `autoStart: true` timeout includes this fuse requirement in its diagnostic; the
 SDK does not relaunch the GUI or silently fall back to an inline Runtime.
 
+### Packaged Electron native artifact layout
+
+An Electron host that enables `asar` must keep KodaX native artifacts as
+physical ordinary files. All platforms unpack KodaX's `dist/native` tree;
+Windows additionally unpacks ASRT's `vendor/srt-win` tree. For
+`electron-builder`, use:
+
+```json
+{
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/@kodax-ai/kodax/dist/native/**/*",
+    "node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*",
+    "node_modules/**/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*"
+  ]
+}
+```
+
+The nested ASRT pattern covers an npm installation that cannot hoist the exact
+KodaX dependency version. If a different packager or dependency layout is
+used, apply the same rule to the actual installed paths. KodaX maps an embedded
+`app.asar` source only to an existing sibling under `app.asar.unpacked`, then
+retains the ordinary-file identity, bounded-read, embedded SHA-256, and
+protected-cache checks. It does not trust virtual ASAR file metadata or fall
+back to unchecked native bytes. Missing physical artifacts therefore fail with
+an actionable native-artifact diagnostic before a sandbox process is launched.
+
 ```ts
 import { connectKodaXRuntime } from '@kodax-ai/kodax/runtime';
 

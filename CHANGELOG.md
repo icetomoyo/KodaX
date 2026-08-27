@@ -89,7 +89,10 @@ All notable changes to this project will be documented in this file.
   machine protocol/SID generation before broker launch. Both native artifacts
   are checked against an embedded manifest and loaded/executed only from a
   protected content-addressed store whose immutable-image verification remains
-  shareable across concurrent Runtime processes. Linux/macOS shells remain
+  shareable across concurrent Runtime processes. Packaged Electron hosts now
+  resolve only explicitly unpacked physical native files before applying those
+  checks; the release smoke asserts both KodaX native files and the Windows ASRT
+  runner are present under `app.asar.unpacked` (Issue 319). Linux/macOS shells remain
   per-command ASRT bubblewrap/Seatbelt calls with no KodaX workspace-session
   owner (Issues 304–306). Public POSIX sandbox calls now require target-start
   attestation over a broker-only bounded control pipe. A proven pre-target exit

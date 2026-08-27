@@ -14,12 +14,16 @@ import {
   ensureUnixTrustedTextStateRoot,
   provisionWindowsAsrtRunner,
   resolveWindowsAsrtRunnerArtifact,
+  resolveWindowsNativeArtifact,
   unixTrustedTextCoordinationRoot,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
-function windowsManifestText(asrtSha256: string): string {
+function windowsManifestText(
+  asrtSha256: string,
+  shellSha256 = 'b'.repeat(64),
+): string {
   return JSON.stringify({
     version: 1,
     platform: 'win32',
@@ -32,7 +36,7 @@ function windowsManifestText(asrtSha256: string): string {
     shellSandbox: {
       file: 'kodax_windows_shell_sandbox.exe',
       protocol: 1,
-      sha256: 'b'.repeat(64),
+      sha256: shellSha256,
     },
     asrtRunner: { file: 'srt-win.exe', version: '0.0.65', sha256: asrtSha256 },
   });
@@ -91,6 +95,70 @@ describe('Windows native artifact trust boundary', () => {
     expect(() => check(source, [path.resolve('C:/workspace')])).toThrow(/overlaps/);
     expect(() => check(source, [path.join(source, 'nested')])).toThrow(/overlaps/);
     expect(() => check(source, [path.resolve('C:/other-workspace')])).not.toThrow();
+  });
+
+  it('prefers an existing physical app.asar.unpacked artifact without accepting a missing one', () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-electron-artifact-path-'));
+    try {
+      const virtualArtifact = path.join(
+        temporary,
+        'resources',
+        'app.asar',
+        'node_modules',
+        'fixture',
+        'native.exe',
+      );
+      const physicalArtifact = path.join(
+        temporary,
+        'resources',
+        'app.asar.unpacked',
+        'node_modules',
+        'fixture',
+        'native.exe',
+      );
+      fs.mkdirSync(path.dirname(physicalArtifact), { recursive: true });
+      fs.writeFileSync(physicalArtifact, 'physical');
+
+      expect(_internalWindowsNativeArtifacts.physicalElectronArtifactPath(virtualArtifact))
+        .toBe(physicalArtifact);
+      const missingPhysicalSibling = path.join(
+        temporary,
+        'other-resources',
+        'app.asar',
+        'native.exe',
+      );
+      expect(_internalWindowsNativeArtifacts.physicalElectronArtifactPath(
+        missingPhysicalSibling,
+      )).toBe(missingPhysicalSibling);
+
+      const moduleUrl = pathToFileURL(path.join(
+        temporary,
+        'resources',
+        'app.asar',
+        'node_modules',
+        '@kodax-ai',
+        'kodax',
+        'dist',
+        'sdk-sandbox.js',
+      )).href;
+      fs.mkdirSync(path.join(
+        temporary,
+        'resources',
+        'app.asar.unpacked',
+        'node_modules',
+        '@kodax-ai',
+        'kodax',
+        'dist',
+        'native',
+        `win32-${process.arch}`,
+      ), { recursive: true });
+      expect(_internalWindowsNativeArtifacts.artifactDirectories(moduleUrl)[0])
+        .toContain(`${path.sep}app.asar${path.sep}`);
+      expect(_internalWindowsNativeArtifacts.artifactDirectories(moduleUrl, true)[0])
+        .toContain(`${path.sep}app.asar.unpacked${path.sep}`);
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   });
 
   it.runIf(process.platform === 'win32')(
@@ -210,6 +278,121 @@ describe('Windows native artifact trust boundary', () => {
           pathToFileURL(moduleFile).href,
           sourcePath,
           '0.0.65',
+        )).toThrow(/native artifact hash mismatch/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'imports an embedded ASRT runner from its physical Electron unpacked path',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-electron-asrt-source-'));
+      const moduleFile = path.join(
+        temporary,
+        'resources',
+        'app.asar',
+        'node_modules',
+        '@kodax-ai',
+        'kodax',
+        'dist',
+        'sdk-sandbox.js',
+      );
+      const sourcePath = path.join(
+        temporary,
+        'resources',
+        'app.asar',
+        'node_modules',
+        '@anthropic-ai',
+        'sandbox-runtime',
+        'vendor',
+        'srt-win',
+        process.arch,
+        'srt-win.exe',
+      );
+      const physicalSourcePath = sourcePath.replace(
+        `${path.sep}app.asar${path.sep}`,
+        `${path.sep}app.asar.unpacked${path.sep}`,
+      );
+      vi.stubEnv('LOCALAPPDATA', path.join(temporary, 'local-app-data'));
+      try {
+        const bytes = Buffer.from('electron unpacked runner');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(path.join(temporary, 'local-app-data'), { recursive: true });
+        fs.mkdirSync(path.dirname(physicalSourcePath), { recursive: true });
+        fs.writeFileSync(physicalSourcePath, bytes);
+        vi.stubGlobal('KODAX_WINDOWS_NATIVE_MANIFEST_JSON', windowsManifestText(sha256));
+
+        const runner = resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        );
+
+        expect(fs.readFileSync(runner.path)).toEqual(bytes);
+        expect(runner.developmentTrustRoots).toEqual([]);
+        fs.writeFileSync(physicalSourcePath, 'tampered');
+        expect(() => resolveWindowsAsrtRunnerArtifact(
+          pathToFileURL(moduleFile).href,
+          sourcePath,
+          '0.0.65',
+        )).toThrow(/native artifact hash mismatch/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'imports embedded KodaX native bytes from the physical Electron unpacked directory',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-electron-native-source-'));
+      const moduleFile = path.join(
+        temporary,
+        'resources',
+        'app.asar',
+        'node_modules',
+        '@kodax-ai',
+        'kodax',
+        'dist',
+        'sdk-sandbox.js',
+      );
+      const virtualDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const physicalDirectory = virtualDirectory.replace(
+        `${path.sep}app.asar${path.sep}`,
+        `${path.sep}app.asar.unpacked${path.sep}`,
+      );
+      const sourcePath = path.join(physicalDirectory, 'kodax_windows_shell_sandbox.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const bytes = Buffer.from('electron unpacked KodaX shell runner');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(physicalDirectory, { recursive: true });
+        fs.mkdirSync(localAppData, { recursive: true });
+        fs.writeFileSync(sourcePath, bytes);
+        vi.stubGlobal(
+          'KODAX_WINDOWS_NATIVE_MANIFEST_JSON',
+          windowsManifestText('a'.repeat(64), sha256),
+        );
+
+        const runner = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+        );
+
+        expect(fs.readFileSync(runner.path)).toEqual(bytes);
+        fs.writeFileSync(sourcePath, 'tampered');
+        expect(() => resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
         )).toThrow(/native artifact hash mismatch/);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });

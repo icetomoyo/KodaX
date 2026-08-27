@@ -139,6 +139,16 @@ describe('GitHub release workflow', () => {
     }
   });
 
+  it('keeps packaged Electron native authorities as physical unpacked files', () => {
+    const source = readFileSync(resolve('scripts/test-electron-daemon-smoke.mjs'), 'utf8');
+
+    expect(source).toContain('asarUnpack: [');
+    expect(source).toContain('node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*');
+    expect(source).toContain('node_modules/@kodax-ai/kodax/dist/native/**/*');
+    expect(source).toContain('verifyPackagedNativeArtifacts');
+    expect(source).toContain("'app.asar.unpacked'");
+  });
+
   it('packages both verified Windows native authorities with standalone binaries', () => {
     const source = readFileSync(resolve('scripts/build-binary.mjs'), 'utf8');
 

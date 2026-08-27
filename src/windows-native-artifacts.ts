@@ -91,7 +91,24 @@ function embeddedNativeManifestText(): string | undefined {
     : undefined;
 }
 
-function artifactDirectories(moduleUrl: string): readonly string[] {
+function physicalElectronArtifactPath(candidate: string): string {
+  const resolved = path.resolve(candidate);
+  const parsed = path.parse(resolved);
+  const components = resolved.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  const archiveIndex = components.findIndex(
+    (component) => component.toLowerCase() === 'app.asar',
+  );
+  if (archiveIndex < 0) return resolved;
+  const unpackedComponents = [...components];
+  unpackedComponents[archiveIndex] = `${components[archiveIndex]!}.unpacked`;
+  const unpacked = path.join(parsed.root, ...unpackedComponents);
+  return fs.existsSync(unpacked) ? unpacked : resolved;
+}
+
+function artifactDirectories(
+  moduleUrl: string,
+  usePhysicalElectronArtifacts = false,
+): readonly string[] {
   const moduleDirectory = path.dirname(fileURLToPath(moduleUrl));
   const nativeDirectory = `win32-${process.arch}`;
   return [...new Set([
@@ -99,7 +116,10 @@ function artifactDirectories(moduleUrl: string): readonly string[] {
     path.join(moduleDirectory, '..', 'native', nativeDirectory),
     path.join(moduleDirectory, '..', 'dist', 'native', nativeDirectory),
     path.join(path.dirname(process.execPath), 'vendor', 'kodax-native', nativeDirectory),
-  ].map((candidate) => path.resolve(candidate)))];
+  ].map((candidate) => {
+    const resolved = path.resolve(candidate);
+    return usePhysicalElectronArtifacts ? physicalElectronArtifactPath(resolved) : resolved;
+  }))];
 }
 
 function manifestObject(text: string): Partial<WindowsNativeArtifactManifest> {
@@ -382,7 +402,10 @@ function canonicalExistingPath(value: string): string {
   }
 }
 
-function portableTextArtifactDirectories(moduleUrl: string): readonly string[] {
+function portableTextArtifactDirectories(
+  moduleUrl: string,
+  usePhysicalElectronArtifacts: boolean,
+): readonly string[] {
   const moduleDirectory = path.dirname(fileURLToPath(moduleUrl));
   const nativeDirectory = `${process.platform}-${process.arch}`;
   return [...new Set([
@@ -390,7 +413,10 @@ function portableTextArtifactDirectories(moduleUrl: string): readonly string[] {
     path.join(moduleDirectory, '..', 'native', nativeDirectory),
     path.join(moduleDirectory, '..', 'dist', 'native', nativeDirectory),
     path.join(path.dirname(process.execPath), 'vendor', 'kodax-native', nativeDirectory),
-  ].map((candidate) => path.resolve(candidate)))];
+  ].map((candidate) => {
+    const resolved = path.resolve(candidate);
+    return usePhysicalElectronArtifacts ? physicalElectronArtifactPath(resolved) : resolved;
+  }))];
 }
 
 function parsePortableTextManifest(text: string): PortableTextArtifactManifest {
@@ -566,7 +592,7 @@ export function resolveTrustedTextNativeArtifact(
   }
   const embedded = embeddedNativeManifestText();
   const diagnostics: string[] = [];
-  for (const directory of portableTextArtifactDirectories(moduleUrl)) {
+  for (const directory of portableTextArtifactDirectories(moduleUrl, embedded !== undefined)) {
     const manifestPath = path.join(directory, 'manifest.json');
     try {
       assertDevelopmentSourceIsOutsideWriteRoots(directory, untrustedWriteRoots);
@@ -999,7 +1025,10 @@ export function resolveWindowsAsrtRunnerArtifact(
   }
   assertWindowsNativeArtifactStoreNotDirectlyWritable(options.untrustedWriteRoots ?? []);
   const trustedManifestText = embeddedNativeManifestText();
-  const sourceDirectory = path.dirname(path.resolve(sourcePath));
+  const resolvedSourcePath = trustedManifestText === undefined
+    ? path.resolve(sourcePath)
+    : physicalElectronArtifactPath(sourcePath);
+  const sourceDirectory = path.dirname(resolvedSourcePath);
   const candidates = trustedManifestText === undefined
     ? artifactDirectories(moduleUrl).map((directory) => ({
         manifestPath: path.join(directory, 'manifest.json'),
@@ -1032,7 +1061,7 @@ export function resolveWindowsAsrtRunnerArtifact(
       // digest is an immutable trust root; development manifests and sources
       // remain single-link so writable aliases cannot redefine both together.
       const bytes = readHashPinnedArtifact(
-        sourcePath,
+        resolvedSourcePath,
         manifest.asrtRunner.sha256,
         !embeddedManifest,
       );
@@ -1073,7 +1102,7 @@ export function resolveWindowsNativeArtifact(
   assertWindowsNativeArtifactStoreNotDirectlyWritable(options.untrustedWriteRoots ?? []);
   const trustedManifestText = embeddedNativeManifestText();
   const diagnostics: string[] = [];
-  for (const directory of artifactDirectories(moduleUrl)) {
+  for (const directory of artifactDirectories(moduleUrl, trustedManifestText !== undefined)) {
     const manifestPath = path.join(directory, 'manifest.json');
     try {
       assertDevelopmentSourceIsOutsideWriteRoots(directory, options.untrustedWriteRoots ?? []);
@@ -1105,6 +1134,7 @@ export function resolveWindowsNativeArtifact(
 export const _internalWindowsNativeArtifacts = {
   assertDevelopmentSourceIsOutsideWriteRoots,
   artifactDirectories,
+  physicalElectronArtifactPath,
   parseManifestEntryText,
   assertManifestAsrtRunner,
   parseManifestText,

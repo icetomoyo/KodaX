@@ -288,6 +288,45 @@ async function preparePackagedApplication(electronVersion) {
     'utf8',
   );
   await run(process.execPath, [electronBuilderCli, '--dir', '--win', '--x64', '--config', 'electron-builder.json'], appDir, 300_000);
+  verifyPackagedNativeArtifacts();
+}
+
+function verifyPackagedNativeArtifacts() {
+  const unpackedModules = path.join(
+    appDir,
+    'release',
+    'win-unpacked',
+    'resources',
+    'app.asar.unpacked',
+    'node_modules',
+  );
+  const required = [
+    path.join(
+      unpackedModules,
+      '@anthropic-ai',
+      'sandbox-runtime',
+      'vendor',
+      'srt-win',
+      'x64',
+      'srt-win.exe',
+    ),
+    ...[
+      'manifest.json',
+      'kodax-windows-sandbox.exe',
+      'kodax-windows-text-transaction.node',
+    ].map((file) => path.join(
+      unpackedModules,
+      '@kodax-ai',
+      'kodax',
+      'dist',
+      'native',
+      'win32-x64',
+      file,
+    )),
+  ];
+  for (const artifact of required) {
+    assert.ok(existsSync(artifact), `Packaged native artifact is not physical: ${artifact}`);
+  }
 }
 
 async function verifyIndependentWindowsSandboxPolicySharing() {
@@ -408,6 +447,11 @@ function createBuilderConfig(electronVersion) {
     electronVersion,
     electronDist,
     asar: true,
+    asarUnpack: [
+      'node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*',
+      'node_modules/**/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*',
+      'node_modules/@kodax-ai/kodax/dist/native/**/*',
+    ],
     npmRebuild: false,
     directories: { output: 'release' },
     files: ['main.cjs', 'package.json', 'node_modules/**/*'],

@@ -514,7 +514,8 @@ bootstrap-only child exec boundary and removed before daemon or ordinary user
 child code loads. The default-enabled Electron `RunAsNode` fuse is required;
 hosts that disable it must start the daemon through ordinary Node/KodaX CLI and
 connect in attach-only mode. For SDK calls, `homeDir` is the CLI-style base
-directory that owns `.kodax`, not the `.kodax` path itself.
+directory that owns `.kodax`, not the `.kodax` path itself. Electron embedders
+must also follow the [native artifact unpacking contract](public_docs/sdk/embedder-guide.md#packaged-electron-native-artifact-layout).
 
 **v0.7.75 Windows GUI stabilization candidate:** Runtime Worker-reachable
 non-interactive subprocesses request hidden Windows consoles across memory/Git,

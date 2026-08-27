@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-08-27_
+_Last Updated: 2026-08-28_
 
 ---
 
@@ -151,6 +151,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96 development | 2026-08-28 | 2026-08-28 |
 | 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 317 | High | Resolved | A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions | FEATURE_295 protected ASRT artifact import | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 316 | High | Resolved | A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5 | FEATURE_295 Windows atomic text replace | v0.7.96 development | 2026-08-27 | 2026-08-27 |
@@ -357,6 +358,34 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 319: Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 packaged Electron native verification
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-28
+- **Resolved**: 2026-08-28
+
+#### Original Problem
+
+The packaged Electron daemon failed sandbox preparation even though
+electron-builder had materialized the ASRT runner and KodaX native binaries
+under `app.asar.unpacked`. Electron returned synthetic, changing identity data
+for `lstat(app.asar/...)` while `open` and `fstat` described the physical NTFS
+file. The intentional stable-file check therefore rejected both artifact
+families before the packaged sandbox smoke could run.
+
+#### Resolution
+
+Embedded-manifest resolution now maps only an exact `app.asar` path component
+to an existing physical `app.asar.unpacked` sibling. The physical file still
+passes the original ordinary-file, descriptor identity, byte bound, embedded
+SHA-256, and protected-cache verification; development manifests receive no
+ASAR-specific relaxation. The Electron fixture explicitly unpacks both native
+trees and verifies the required physical files before process startup. The SDK
+embedder guide publishes the same packaging contract for host applications.
 
 ### 318: Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL
 
@@ -13676,11 +13705,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 197 (30 Open, 167 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 198 (30 Open, 168 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-28: Issue 319 resolved (Electron ASAR physical native artifacts)
+
+- Packaged Electron embeds explicitly unpack KodaX native artifacts and the
+  Windows ASRT runner instead of depending on virtual ASAR file metadata.
+- Embedded-manifest loading maps only to an existing `app.asar.unpacked`
+  sibling and retains all stable-file, bounded-read, digest, and protected-cache
+  verification.
 
 ### 2026-08-27: Issue 318 resolved (allow-root ancestor ACL propagation)
 

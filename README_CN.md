@@ -125,7 +125,8 @@ daemon，不会再次打开 GUI。`ELECTRON_RUN_AS_NODE` 只存在于子进程�
 在 daemon 与普通用户子进程代码加载前即被移除。该路径要求 Electron 默认开启的
 `RunAsNode` fuse；主动关闭该 fuse 的宿主必须通过普通 Node/KodaX CLI 启动 daemon，
 再使用 attach-only 模式连接。SDK 的 `homeDir` 是拥有 `.kodax` 的 CLI 风格基础目录，
-不是 `.kodax` 目录本身。
+不是 `.kodax` 目录本身。Electron 宿主还必须遵循
+[native artifact 解包契约](public_docs/sdk/embedder-guide.md#packaged-electron-native-artifact-layout)。
 
 **v0.7.75 Windows GUI 稳定性候选版**：Runtime Worker 可达的非交互后台子进程
 在 Windows 上统一请求隐藏控制台，覆盖 memory/Git、provider CLI/ACP、LSP、
