@@ -1,4 +1,5 @@
 import type { KodaXToolExecutionContext } from '../types.js';
+import { hasTransientTextArtifact } from '../transient-text-artifacts.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { countTokens } from '../tokenizer.js';
 import {
@@ -209,6 +210,10 @@ export interface ApplyToolResultGuardrailOptions {
   maxInlineTokens?: number;
   /** Existing local artifact pointer when re-admitting an already guarded result. */
   existingOutputPath?: string;
+  /** Explicit run-scoped spill directory for request-only artifacts. */
+  outputDirectory?: string;
+  /** Trusted request-only persistence seam for non-filesystem artifacts. */
+  persistOutput?: (toolName: string, content: string) => Promise<string>;
 }
 
 export interface ToolResultBatchEntry {
@@ -343,7 +348,9 @@ export async function applyToolResultGuardrail(
   let spillError: unknown;
   if (policy.spillToFile) {
     try {
-      outputPath = await persistToolOutput(toolName, content, ctx);
+      outputPath = options?.persistOutput
+        ? await options.persistOutput(toolName, content)
+        : await persistToolOutput(toolName, content, ctx, options?.outputDirectory);
     } catch (err) {
       outputPath = undefined;
       spillFailed = true;
@@ -447,8 +454,13 @@ export async function applyToolResultBatchGuardrail(
   if (entries.length === 0) return { entries: [] };
 
   const result = await Promise.all(entries.map(async (entry): Promise<ToolResultBatchEntry> => {
+    const preserveTransientCapability = entry.outputPath !== undefined
+      && hasTransientTextArtifact(entry.outputPath);
     const guarded = await applyToolResultGuardrail(entry.toolName, entry.content, ctx, {
       existingOutputPath: entry.outputPath,
+      ...(preserveTransientCapability
+        ? { persistOutput: async () => entry.outputPath! }
+        : {}),
     });
     return {
       ...entry,
@@ -481,6 +493,8 @@ export async function applyToolResultBatchGuardrail(
     const exceedsPhysicalCapacity = physicalTotalTokens > physicalCapacityTokens;
     if (!exceedsEntryAttention && !exceedsBatchAttention && !exceedsPhysicalCapacity) break;
     const entry = result[candidate.index]!;
+    const preserveTransientCapability = entry.outputPath !== undefined
+      && hasTransientTextArtifact(entry.outputPath);
     const otherInlineTokens = inlineResultTokens - entryTokens[candidate.index]!;
     const maxInlineTokens = Math.min(
       TOOL_RESULT_PER_ENTRY_ATTENTION_TOKENS - TOOL_RESULT_ENTRY_STRUCTURAL_TOKENS,
@@ -502,6 +516,9 @@ export async function applyToolResultBatchGuardrail(
       forceSpill: true,
       maxInlineTokens,
       existingOutputPath: entry.outputPath,
+      ...(preserveTransientCapability
+        ? { persistOutput: async () => entry.outputPath! }
+        : {}),
     });
     result[candidate.index] = {
       ...entry,

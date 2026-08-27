@@ -69,6 +69,9 @@ await runKodaX({ provider: registerVirtual(replay), ... }, prompt);
 - The actual prompt the user typed (may include proprietary task descriptions)
 - File paths from the user's machine (e.g. `C:\Users\…\.kodax\skills\…`)
 - Model thinking blocks that may reveal task context
+- Bounded provider failure metadata. Known ambient and run-scoped credentials
+  are redacted before serialization, while typed error identity is retained so
+  replay follows the same recovery branch.
 
 Treat as PII-adjacent. Regenerate locally with `record-goldens.ts` rather than checking in.
 
@@ -88,8 +91,8 @@ Default options: `{ perBucket: { short: 8, medium: 15, long: 8 }, perFamilyMin: 
 
 Real LLM calls are non-deterministic. Goldens replay through `ReplayProvider`:
 
-- **Record**: `runKodaX` runs against a real provider wrapped by `RecorderProvider`; every `provider.stream` request envelope + ordered callback timeline + result is captured into `recordings/<sessionId>.json`
-- **Replay**: `runKodaX` runs against `ReplayProvider`, which returns recorded results in sequence. Any shape mismatch (message count / role pattern / tool names / reasoning depth / modelOverride) throws `ReplayMismatchError` at the offending call
+- **Record**: `runKodaX` runs against a real provider wrapped by `RecorderProvider`; every `provider.stream` or non-streaming fallback `provider.complete` attempt records its request envelope, outcome, and ordered callback timeline in `recordings/<sessionId>.json`
+- **Replay**: `runKodaX` runs against `ReplayProvider`, which reproduces successful results and failures in sequence. Any method or request-shape mismatch (message count / role pattern / tool names / reasoning depth / modelOverride / output-token override) throws `ReplayMismatchError` at the offending call
 
 This locks **two layers**:
 1. Provider request shape (does the substrate still build the same prompt?)

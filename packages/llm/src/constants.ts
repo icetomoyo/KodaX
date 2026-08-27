@@ -22,9 +22,8 @@ export const KODAX_CAPPED_MAX_OUTPUT_TOKENS = 32000;
 /**
  * One-shot escalated budget used by the agent loop when a capped turn
  * returns `stop_reason: max_tokens`. The next stream call in the same
- * logical turn is issued with this value. Set once per turn via the
- * provider's public `setMaxOutputTokensOverride`; auto-cleared on the
- * next successful response in `base.ts withRateLimit`.
+ * logical turn is issued with this value through request-scoped stream
+ * options, so concurrent runs sharing a provider cannot affect each other.
  */
 export const KODAX_ESCALATED_MAX_OUTPUT_TOKENS = 64000;
 

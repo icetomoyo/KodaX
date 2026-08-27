@@ -62,8 +62,17 @@ import type {
   KodaXReasoningRequest,
   KodaXStreamResult,
   KodaXProviderConfig,
+  KodaXProviderErrorMetadata,
 } from '@kodax-ai/llm';
-import { KodaXBaseProvider } from '@kodax-ai/llm';
+import {
+  KodaXBaseProvider,
+  KodaXError,
+  KodaXNetworkError,
+  KodaXProviderError,
+  KodaXRateLimitError,
+  KodaXReasoningEffortRejectedError,
+  redactScopedProviderCredential,
+} from '@kodax-ai/llm';
 
 // ---------------------------------------------------------------------------
 // Recording shape
@@ -102,20 +111,59 @@ export interface RecordedRequestEnvelope {
   modelOverride?: string;
   /** sessionId from streamOptions, if any. */
   sessionId?: string;
+  /** Request-local response-token override, if any. */
+  maxOutputTokensOverride?: number;
 }
 
 export interface RecordedStreamCall {
   /** Ordinal of this call within the session (0-based). */
   index: number;
+  /** Transport method used for this attempt; absent means legacy `stream`. */
+  method?: 'stream' | 'complete';
   /** Request envelope summary — used for shape validation on replay. */
   request: RecordedRequestEnvelope;
   /** Ordered timeline of callbacks the inner provider fired. */
   callbacks: RecordedCallback[];
-  /** Recorded result of the stream. */
-  result: KodaXStreamResult;
+  /** Recorded successful result. */
+  result?: KodaXStreamResult;
+  /** Safe failure shape used to reproduce recovery routing. */
+  error?: RecordedProviderError;
   /** Wall-clock duration of the inner stream call (informational). */
   durationMs: number;
 }
+
+export type RecordedProviderError =
+  | {
+      readonly kind: 'network';
+      readonly name: 'KodaXNetworkError';
+      readonly message: string;
+      readonly isTimeout: boolean;
+    }
+  | {
+      readonly kind: 'rate_limit';
+      readonly name: 'KodaXRateLimitError';
+      readonly message: string;
+      readonly retryAfter?: number;
+      readonly metadata?: KodaXProviderErrorMetadata;
+    }
+  | {
+      readonly kind: 'reasoning_effort_rejected';
+      readonly name: 'KodaXReasoningEffortRejectedError';
+      readonly message: string;
+      readonly provider: string;
+      readonly rejectedEffort: string;
+      readonly model: string;
+    }
+  | {
+      readonly kind: 'provider';
+      readonly name: 'KodaXProviderError';
+      readonly message: string;
+      readonly provider?: string;
+      readonly metadata?: KodaXProviderErrorMetadata;
+    }
+  | { readonly kind: 'kodax'; readonly name: string; readonly message: string; readonly code: string }
+  | { readonly kind: 'error'; readonly name: string; readonly message: string; readonly code?: string }
+  | { readonly kind?: undefined; readonly name: string; readonly message: string };
 
 /**
  * Snapshot of the inner provider's configuration query surface, taken once at
@@ -219,6 +267,7 @@ function summariseEnvelope(
     reasoning: normalisedReasoning,
     modelOverride: streamOptions?.modelOverride,
     sessionId: streamOptions?.sessionId,
+    maxOutputTokensOverride: streamOptions?.maxOutputTokensOverride,
   };
 }
 
@@ -293,6 +342,14 @@ export function diffEnvelope(
     });
   }
 
+  if (recorded.maxOutputTokensOverride !== live.maxOutputTokensOverride) {
+    diffs.push({
+      field: 'maxOutputTokensOverride',
+      recorded: recorded.maxOutputTokensOverride,
+      live: live.maxOutputTokensOverride,
+    });
+  }
+
   const rDepth = recorded.reasoning?.depth ?? null;
   const lDepth = live.reasoning?.depth ?? null;
   if (rDepth !== lDepth) {
@@ -318,6 +375,39 @@ const WRAPPER_CONFIG: KodaXProviderConfig = {
   contextWindow: 200_000,
   maxOutputTokens: 32_000,
 };
+
+function recordingStreamOptions(
+  streamOptions: KodaXProviderStreamOptions | undefined,
+  callbacks: RecordedCallback[],
+): KodaXProviderStreamOptions {
+  return {
+    ...streamOptions,
+    onTextDelta: (text) => {
+      callbacks.push({ kind: 'textDelta', text });
+      streamOptions?.onTextDelta?.(text);
+    },
+    onThinkingDelta: (text) => {
+      callbacks.push({ kind: 'thinkingDelta', text });
+      streamOptions?.onThinkingDelta?.(text);
+    },
+    onThinkingEnd: (thinking) => {
+      callbacks.push({ kind: 'thinkingEnd', thinking });
+      streamOptions?.onThinkingEnd?.(thinking);
+    },
+    onToolInputDelta: (toolName, partialJson, meta) => {
+      callbacks.push({ kind: 'toolInputDelta', toolName, partialJson, toolId: meta?.toolId });
+      streamOptions?.onToolInputDelta?.(toolName, partialJson, meta);
+    },
+    onRateLimit: (attempt, maxRetries, delayMs) => {
+      callbacks.push({ kind: 'rateLimit', attempt, maxRetries, delayMs });
+      streamOptions?.onRateLimit?.(attempt, maxRetries, delayMs);
+    },
+    onHeartbeat: (pause) => {
+      callbacks.push({ kind: 'heartbeat', pause });
+      streamOptions?.onHeartbeat?.(pause);
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // RecorderProvider — wraps an inner provider, captures every stream call
@@ -366,9 +456,6 @@ export class RecorderProvider extends KodaXBaseProvider {
   override getEffectiveContextWindow(model?: string): number { return this.inner.getEffectiveContextWindow(model); }
   override getEffectiveMaxOutputTokens(model?: string): number { return this.inner.getEffectiveMaxOutputTokens(model); }
   override getStreamMaxDurationMs(): number | undefined { return this.inner.getStreamMaxDurationMs(); }
-  override setMaxOutputTokensOverride(value: number | undefined): void {
-    this.inner.setMaxOutputTokensOverride(value);
-  }
   override isConfigured(): boolean { return this.inner.isConfigured(); }
   override supportsNonStreamingFallback(): boolean { return this.inner.supportsNonStreamingFallback(); }
   override async complete(
@@ -379,7 +466,29 @@ export class RecorderProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
-    return this.inner.complete(messages, tools, system, reasoning, streamOptions, signal);
+    const callbacks: RecordedCallback[] = [];
+    const start = Date.now();
+    try {
+      const result = await this.inner.complete(
+        messages,
+        tools,
+        system,
+        reasoning,
+        recordingStreamOptions(streamOptions, callbacks),
+        signal,
+      );
+      this.recordAttempt('complete', messages, tools, system, reasoning, streamOptions, callbacks, {
+        result,
+        durationMs: Date.now() - start,
+      });
+      return result;
+    } catch (error) {
+      this.recordAttempt('complete', messages, tools, system, reasoning, streamOptions, callbacks, {
+        error,
+        durationMs: Date.now() - start,
+      });
+      throw error;
+    }
   }
 
   async stream(
@@ -391,68 +500,59 @@ export class RecorderProvider extends KodaXBaseProvider {
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
     const callbacks: RecordedCallback[] = [];
-
-    const wrappedOptions: KodaXProviderStreamOptions = {
-      ...streamOptions,
-      onTextDelta: (text) => {
-        callbacks.push({ kind: 'textDelta', text });
-        streamOptions?.onTextDelta?.(text);
-      },
-      onThinkingDelta: (text) => {
-        callbacks.push({ kind: 'thinkingDelta', text });
-        streamOptions?.onThinkingDelta?.(text);
-      },
-      onThinkingEnd: (thinking) => {
-        callbacks.push({ kind: 'thinkingEnd', thinking });
-        streamOptions?.onThinkingEnd?.(thinking);
-      },
-      onToolInputDelta: (toolName, partialJson, meta) => {
-        callbacks.push({
-          kind: 'toolInputDelta',
-          toolName,
-          partialJson,
-          toolId: meta?.toolId,
-        });
-        streamOptions?.onToolInputDelta?.(toolName, partialJson, meta);
-      },
-      onRateLimit: (attempt, maxRetries, delayMs) => {
-        callbacks.push({ kind: 'rateLimit', attempt, maxRetries, delayMs });
-        streamOptions?.onRateLimit?.(attempt, maxRetries, delayMs);
-      },
-      onHeartbeat: (pause) => {
-        callbacks.push({ kind: 'heartbeat', pause });
-        streamOptions?.onHeartbeat?.(pause);
-      },
-    };
-
     const start = Date.now();
-    const result = await this.inner.stream(
-      messages,
-      tools,
-      system,
-      reasoning,
-      wrappedOptions,
-      signal,
-    );
-    const durationMs = Date.now() - start;
+    try {
+      const result = await this.inner.stream(
+        messages,
+        tools,
+        system,
+        reasoning,
+        recordingStreamOptions(streamOptions, callbacks),
+        signal,
+      );
+      this.recordAttempt('stream', messages, tools, system, reasoning, streamOptions, callbacks, {
+        result,
+        durationMs: Date.now() - start,
+      });
+      return result;
+    } catch (error) {
+      this.recordAttempt('stream', messages, tools, system, reasoning, streamOptions, callbacks, {
+        error,
+        durationMs: Date.now() - start,
+      });
+      throw error;
+    }
+  }
 
-    const request = summariseEnvelope(
-      messages,
-      tools,
-      system,
-      reasoning,
-      streamOptions,
-    );
-
+  private recordAttempt(
+    method: 'stream' | 'complete',
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning: boolean | KodaXReasoningRequest | undefined,
+    streamOptions: KodaXProviderStreamOptions | undefined,
+    callbacks: RecordedCallback[],
+    outcome: {
+      readonly result?: KodaXStreamResult;
+      readonly error?: unknown;
+      readonly durationMs: number;
+    },
+  ): void {
+    const error = outcome.error === undefined
+      ? undefined
+      : serializeProviderError(
+          outcome.error,
+          process.env[this.inner.getApiKeyEnv()],
+        );
     this.calls.push({
       index: this.calls.length,
-      request,
+      method,
+      request: summariseEnvelope(messages, tools, system, reasoning, streamOptions),
       callbacks,
-      result,
-      durationMs,
+      ...(outcome.result === undefined ? {} : { result: outcome.result }),
+      ...(error === undefined ? {} : { error }),
+      durationMs: outcome.durationMs,
     });
-
-    return result;
   }
 
   /** Build the JSON-serialisable recording for this session. */
@@ -518,8 +618,6 @@ export class ReplayProvider extends KodaXBaseProvider {
   private readonly recording: SessionRecording;
   private readonly summary: RecordedProviderSummary;
   private cursor = 0;
-  /** Honours setMaxOutputTokensOverride during replay (one-shot, like base). */
-  private replayMaxOutputOverride?: number;
 
   constructor(recording: SessionRecording) {
     super();
@@ -571,13 +669,8 @@ export class ReplayProvider extends KodaXBaseProvider {
   }
   override getContextWindow(): number { return this.summary.contextWindow; }
   override getEffectiveContextWindow(_model?: string): number { return this.summary.contextWindow; }
-  override getEffectiveMaxOutputTokens(_model?: string): number {
-    return this.replayMaxOutputOverride ?? this.summary.maxOutputTokens;
-  }
+  override getEffectiveMaxOutputTokens(_model?: string): number { return this.summary.maxOutputTokens; }
   override getStreamMaxDurationMs(): number | undefined { return this.summary.streamMaxDurationMs; }
-  override setMaxOutputTokensOverride(value: number | undefined): void {
-    this.replayMaxOutputOverride = value;
-  }
   override isConfigured(): boolean { return this.summary.isConfigured; }
   override supportsNonStreamingFallback(): boolean { return this.summary.supportsNonStreamingFallback; }
 
@@ -589,12 +682,42 @@ export class ReplayProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     _signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
+    return this.replayCall('stream', messages, tools, system, reasoning, streamOptions);
+  }
+
+  override async complete(
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning?: boolean | KodaXReasoningRequest,
+    streamOptions?: KodaXProviderStreamOptions,
+    _signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    return this.replayCall('complete', messages, tools, system, reasoning, streamOptions);
+  }
+
+  private async replayCall(
+    method: 'stream' | 'complete',
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning: boolean | KodaXReasoningRequest | undefined,
+    streamOptions: KodaXProviderStreamOptions | undefined,
+  ): Promise<KodaXStreamResult> {
     if (this.cursor >= this.recording.calls.length) {
       throw new ReplayExhaustedError(this.recording.calls.length);
     }
 
     const recorded = this.recording.calls[this.cursor]!;
     this.cursor += 1;
+    const recordedMethod = recorded.method ?? 'stream';
+    if (recordedMethod !== method) {
+      throw new ReplayMismatchError(recorded.index, [{
+        field: 'method',
+        recorded: recordedMethod,
+        live: method,
+      }]);
+    }
 
     const liveEnvelope = summariseEnvelope(
       messages,
@@ -635,6 +758,104 @@ export class ReplayProvider extends KodaXBaseProvider {
       }
     }
 
+    if (recorded.error !== undefined) {
+      throw restoreProviderError(recorded.error);
+    }
+    if (recorded.result === undefined) {
+      throw new Error(`ReplayProvider: call ${recorded.index} has no result or error`);
+    }
     return recorded.result;
+  }
+}
+
+function redactCredentialStrings(value: unknown, credential: string | undefined): unknown {
+  if (!credential) return value;
+  if (typeof value === 'string') {
+    return value.split(credential).join('[REDACTED_CREDENTIAL]');
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactCredentialStrings(entry, credential));
+  }
+  if (value === null || typeof value !== 'object') return value;
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    redacted[key] = redactCredentialStrings(entry, credential);
+  }
+  return redacted;
+}
+
+function serializeProviderError(
+  error: unknown,
+  ambientCredential: string | undefined,
+): RecordedProviderError {
+  let recorded: RecordedProviderError;
+  if (error instanceof KodaXNetworkError) {
+    recorded = {
+      kind: 'network', name: 'KodaXNetworkError', message: error.message,
+      isTimeout: error.isTimeout,
+    };
+  } else if (error instanceof KodaXRateLimitError) {
+    recorded = {
+      kind: 'rate_limit', name: 'KodaXRateLimitError', message: error.message,
+      ...(error.retryAfter === undefined ? {} : { retryAfter: error.retryAfter }),
+      ...(error.metadata === undefined ? {} : { metadata: error.metadata }),
+    };
+  } else if (error instanceof KodaXReasoningEffortRejectedError) {
+    recorded = {
+      kind: 'reasoning_effort_rejected',
+      name: 'KodaXReasoningEffortRejectedError',
+      message: error.message,
+      provider: error.provider ?? '',
+      rejectedEffort: error.rejectedEffort,
+      model: error.model,
+    };
+  } else if (error instanceof KodaXProviderError) {
+    recorded = {
+      kind: 'provider', name: 'KodaXProviderError', message: error.message,
+      ...(error.provider === undefined ? {} : { provider: error.provider }),
+      ...(error.metadata === undefined ? {} : { metadata: error.metadata }),
+    };
+  } else if (error instanceof KodaXError) {
+    recorded = {
+      kind: 'kodax', name: error.name, message: error.message, code: error.code,
+    };
+  } else {
+    const errorLike = error instanceof Error ? error : new Error(String(error));
+    const code = (errorLike as Error & { readonly code?: unknown }).code;
+    recorded = {
+      kind: 'error', name: errorLike.name, message: errorLike.message,
+      ...(typeof code === 'string' ? { code } : {}),
+    };
+  }
+  const scopedSafe = redactScopedProviderCredential(recorded);
+  return redactCredentialStrings(scopedSafe, ambientCredential) as RecordedProviderError;
+}
+
+function restoreProviderError(recorded: RecordedProviderError): Error {
+  switch (recorded.kind) {
+    case 'network': return new KodaXNetworkError(recorded.message, recorded.isTimeout);
+    case 'rate_limit': return new KodaXRateLimitError(recorded.message, recorded.retryAfter, recorded.metadata);
+    case 'reasoning_effort_rejected':
+      return new KodaXReasoningEffortRejectedError(
+        recorded.message, recorded.provider, recorded.rejectedEffort, recorded.model,
+      );
+    case 'provider':
+      return new KodaXProviderError(recorded.message, recorded.provider, recorded.metadata);
+    case 'kodax': {
+      const error = new KodaXError(recorded.message, recorded.code);
+      error.name = recorded.name;
+      return error;
+    }
+    case 'error': {
+      const error = new Error(recorded.message);
+      error.name = recorded.name;
+      if (recorded.code !== undefined) Object.assign(error, { code: recorded.code });
+      return error;
+    }
+    case undefined: {
+      const error = new Error(recorded.message);
+      error.name = recorded.name;
+      return error;
+    }
   }
 }

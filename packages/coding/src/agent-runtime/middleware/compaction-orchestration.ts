@@ -7,10 +7,10 @@
  *   - docs/features/v0.7.29-capability-inventory.md#cap-063-pre-stream-validateandfixtoolhistory--oncompactedmessages-emission
  *
  * Current contract: default compaction is physical-capacity-driven and gives
- * the semantic summarizer complete evidence. Hard pressure bypasses breaker
- * skips; failure preserves canonical history. A still-over compacted
- * transcript commits best-effort with a `stillOverCapacity` flag (FEATURE_296)
- * instead of propagating a typed error.
+ * the semantic summarizer complete evidence. Hard pressure may bypass
+ * cooldown while the breaker is closed; an open breaker returns typed
+ * capacity without another summary. A first still-over compacted transcript
+ * commits best-effort with a `stillOverCapacity` flag (FEATURE_296).
  * Deterministic destructive pruning is an explicit legacy opt-in only.
  *
  * Class 1 (substrate). Three sequential phases of the compaction
@@ -87,6 +87,7 @@ import {
   type CompactionAntiThrashConfig,
   type CompactionAntiThrashState,
 } from './compaction-pressure.js';
+import { hasIrreducibleUserInput } from '../../capacity-recovery.js';
 
 export const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
 
@@ -132,8 +133,9 @@ export interface TryIntelligentCompactOutput {
 
 /**
  * CAP-060: semantic compaction with circuit-breaker and lifecycle events.
- * Breaker/cooldown skips apply only to optional early compaction; hard
- * physical pressure always attempts summary and propagates typed failures.
+ * Breaker/cooldown skips apply only to optional early compaction. Hard
+ * physical pressure may bypass cooldown until the breaker limit, then ends
+ * with typed capacity instead of retrying the summarizer without a bound.
  */
 export async function tryIntelligentCompact(
   input: TryIntelligentCompactInput,
@@ -146,6 +148,18 @@ export async function tryIntelligentCompact(
     currentTokens: input.currentTokens,
     reservedResponseTokens: input.reservedResponseTokens,
   });
+  const hasIrreducibleInput = hasIrreducibleUserInput(
+    input.messages,
+    input.contextWindow,
+  );
+
+  if (circuitBreakerTripped && requiresCapacityRelief && !hasIrreducibleInput) {
+    throw new ContextCapacityError({
+      contextWindow: input.contextWindow,
+      currentTokens: input.currentTokens,
+      reservedResponseTokens: input.reservedResponseTokens,
+    }, 'History compaction');
+  }
 
   if (!input.needsCompact || (circuitBreakerTripped && !requiresCapacityRelief)) {
     return {
@@ -329,6 +343,11 @@ export async function tryIntelligentCompact(
         input.reservedResponseTokens,
       )) {
         nextFailures = 0;
+      } else if (hasIrreducibleInput) {
+        // A fresh request that is larger than the model window cannot be
+        // repaired by summarizing history. The request-copy degradation rung
+        // owns it, so it must not consume or trip the summarizer breaker.
+        nextFailures = 0;
       } else {
         // Counter increment is load-bearing (drives the circuit breaker) and
         // stays unconditional; only the diagnostic line is debug-gated.
@@ -370,14 +389,19 @@ export async function tryIntelligentCompact(
       compacted = result.messages;
     }
   } catch (error) {
-    if (error instanceof ContextCapacityError) {
+    if (
+      error instanceof ContextCapacityError
+      && !hasIrreducibleInput
+    ) {
       throw error;
     }
     // Error is handled, not swallowed: the counter increment drives the
     // circuit breaker and we fall through to deterministic graceful
     // degradation below. Report the real failure through diagnostics; raw
     // console output remains forbidden because it can corrupt Ink rendering.
-    nextFailures = input.compactConsecutiveFailures + 1;
+    nextFailures = error instanceof ContextCapacityError && hasIrreducibleInput
+      ? 0
+      : input.compactConsecutiveFailures + 1;
     emitKodaXDiagnostic({
       source: 'coding:compaction',
       level: 'error',

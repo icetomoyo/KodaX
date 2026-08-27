@@ -81,12 +81,11 @@ describe('CAP-060 capacity-driven semantic compaction', () => {
     expect(compactMock).not.toHaveBeenCalled();
   });
 
-  it('bypasses the circuit breaker when the complete request no longer fits', async () => {
+  it('terminates with typed capacity after the hard-pressure breaker limit', async () => {
     const value = input(88_000, 100, 3);
     compactMock.mockResolvedValue(result(value.messages));
-    const output = await tryIntelligentCompact(value);
-    expect(compactMock).toHaveBeenCalledOnce();
-    expect(output.didCompactMessages).toBe(true);
+    await expect(tryIntelligentCompact(value)).rejects.toBeInstanceOf(ContextCapacityError);
+    expect(compactMock).not.toHaveBeenCalled();
   });
 
   it('rethrows typed capacity failures instead of converting them to lossy fallback', async () => {
@@ -99,6 +98,32 @@ describe('CAP-060 capacity-driven semantic compaction', () => {
     await expect(tryIntelligentCompact(value)).rejects.toBeInstanceOf(
       ContextCapacityError,
     );
+  });
+
+  it('does not spend or trip the breaker when a fresh user input is itself irreducible', async () => {
+    const irreducibleMessages: KodaXMessage[] = [{
+      role: 'user',
+      content: `FRESH_IRREDUCIBLE_INPUT\n${'payload '.repeat(120_000)}`,
+    }];
+    compactMock.mockRejectedValue(new ContextCapacityError({
+      contextWindow: 100_000,
+      currentTokens: estimateTokens(irreducibleMessages),
+      reservedResponseTokens: 10_000,
+    }, 'Compaction summary request'));
+    let failures = 0;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const value = {
+        ...input(estimateTokens(irreducibleMessages), 100, failures),
+        messages: irreducibleMessages,
+      };
+      const output = await tryIntelligentCompact(value);
+      failures = output.nextCompactConsecutiveFailures;
+      expect(output.compacted).toBe(irreducibleMessages);
+    }
+
+    expect(failures).toBe(0);
+    expect(compactMock).toHaveBeenCalledTimes(5);
   });
 
   it('fails open and increments the breaker on an early-policy provider error', async () => {

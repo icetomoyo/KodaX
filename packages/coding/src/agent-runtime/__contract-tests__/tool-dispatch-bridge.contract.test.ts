@@ -23,6 +23,10 @@ import {
 } from '../runtime-session-state.js';
 import type { RunnableToolCall } from '../middleware/edit-recovery.js';
 import { TOOL_OUTPUT_DIR_ENV } from '../../tools/truncate.js';
+import {
+  createTransientTextArtifact,
+  deleteTransientTextArtifact,
+} from '../../transient-text-artifacts.js';
 
 function freshState(): RuntimeSessionState {
   return buildRuntimeSessionState({
@@ -254,6 +258,51 @@ describe('FEATURE_254 portable bridge dispatch', () => {
       expect(await fs.readdir(tempDir)).toHaveLength(1);
     } finally {
       unregister();
+    }
+  });
+
+  it('mirrors transient read provenance to the visible bridge call without spilling', async () => {
+    const capability = createTransientTextArtifact('private input\n'.repeat(4_000));
+    const artifactPaths = new Map<string, string>();
+    const executionContext: KodaXToolExecutionContext = {
+      backups: new Map(),
+      recordToolResultArtifact: (toolCallId, outputPath) => {
+        artifactPaths.set(toolCallId, outputPath);
+      },
+    };
+    const toolBlocks = [{
+      id: 'bridge-read',
+      name: TOOL_CALL_NAME,
+      type: 'tool_use',
+      input: { name: 'read', input: { path: capability, limit: 2_000 } },
+    } as never];
+
+    try {
+      const runtimeSessionState = freshState();
+      const resultMap = await runToolDispatch({
+        toolBlocks,
+        events: {} as KodaXEvents,
+        ctx: executionContext,
+        runtimeSessionState,
+        activeToolNames: [TOOL_CALL_NAME, 'read'],
+        abortSignal: undefined,
+      });
+      const processed = await applyPostToolProcessing({
+        toolBlocks,
+        resultMap,
+        events: {} as KodaXEvents,
+        emitActiveExtensionEvent: async () => undefined,
+        ctx: executionContext,
+        runtimeSessionState,
+        toolResultBudget: { aggregateInlineTokens: 100 },
+        toolResultArtifactPaths: artifactPaths,
+      });
+
+      expect(artifactPaths.get('bridge-read')).toBe(capability);
+      expect(processed.toolResults[0]?.metadata?.outputPath).toBe(capability);
+      expect(await fs.readdir(tempDir)).toEqual([]);
+    } finally {
+      deleteTransientTextArtifact(capability);
     }
   });
 

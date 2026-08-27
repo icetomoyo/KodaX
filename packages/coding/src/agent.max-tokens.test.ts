@@ -17,7 +17,7 @@
  * 32K → 64K were never end-to-end tested) and matches opencode/pi-mono
  * behavior. Only Claude Code retains escalation, tuned to its own infra.
  *
- * Also asserts the public setter/getter wired on KodaXBaseProvider.
+ * Also asserts the configured provider budget resolution.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,6 +37,7 @@ import {
   registerModelProvider,
 } from '@kodax-ai/llm';
 import { runKodaX } from './agent.js';
+import { readTransientTextArtifact } from './transient-text-artifacts.js';
 
 const TEST_PROVIDER_NAME = 'max-tokens-escalation-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'MAX_TOKENS_ESCALATION_PROVIDER_API_KEY';
@@ -44,12 +45,12 @@ const TEST_PROVIDER_API_KEY_ENV = 'MAX_TOKENS_ESCALATION_PROVIDER_API_KEY';
 /**
  * Programmable mock provider: each stream() call returns the next
  * pre-configured response and records the effective max_tokens budget
- * seen at that moment (so tests can assert escalation actually flipped
- * the override on the provider instance).
+ * seen at that moment.
  */
 class MaxTokensScriptedProvider extends KodaXBaseProvider {
   static responses: KodaXStreamResult[] = [];
   static observedBudgets: number[] = [];
+  static observedMessages: KodaXMessage[][] = [];
   static streamCalls = 0;
 
   readonly name = TEST_PROVIDER_NAME;
@@ -62,6 +63,7 @@ class MaxTokensScriptedProvider extends KodaXBaseProvider {
     // Mirror zhipu-coding's post-Shard-A default: capped output budget
     // so the escalation branch can meaningfully trigger.
     maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+    contextWindow: 100_000,
     capabilityProfile: {
       transport: 'native-api',
       conversationSemantics: 'full-history',
@@ -83,7 +85,10 @@ class MaxTokensScriptedProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     _signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
-    MaxTokensScriptedProvider.observedBudgets.push(this.getEffectiveMaxOutputTokens());
+    MaxTokensScriptedProvider.observedMessages.push(structuredClone(_messages));
+    MaxTokensScriptedProvider.observedBudgets.push(
+      streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(),
+    );
     const idx = MaxTokensScriptedProvider.streamCalls;
     MaxTokensScriptedProvider.streamCalls += 1;
     const resp = MaxTokensScriptedProvider.responses[idx];
@@ -93,8 +98,6 @@ class MaxTokensScriptedProvider extends KodaXBaseProvider {
     for (const block of resp.textBlocks) {
       streamOptions?.onTextDelta?.(block.text);
     }
-    // Mirror withRateLimit's auto-clear of the override after success.
-    this.setMaxOutputTokensOverride(undefined);
     return resp;
   }
 }
@@ -102,21 +105,18 @@ class MaxTokensScriptedProvider extends KodaXBaseProvider {
 function resetProvider(): void {
   MaxTokensScriptedProvider.responses = [];
   MaxTokensScriptedProvider.observedBudgets = [];
+  MaxTokensScriptedProvider.observedMessages = [];
   MaxTokensScriptedProvider.streamCalls = 0;
 }
 
 describe('KodaXBaseProvider.getEffectiveMaxOutputTokens', () => {
-  it('prefers override > env var > config > global fallback', () => {
+  it('prefers env var > config > global fallback', () => {
     const provider = new MaxTokensScriptedProvider();
     expect(provider.getEffectiveMaxOutputTokens()).toBe(KODAX_CAPPED_MAX_OUTPUT_TOKENS);
 
     process.env.KODAX_MAX_OUTPUT_TOKENS = '48000';
     expect(provider.getEffectiveMaxOutputTokens()).toBe(48000);
 
-    provider.setMaxOutputTokensOverride(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
-    expect(provider.getEffectiveMaxOutputTokens()).toBe(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
-
-    provider.setMaxOutputTokensOverride(undefined);
     expect(provider.getEffectiveMaxOutputTokens()).toBe(48000);
     delete process.env.KODAX_MAX_OUTPUT_TOKENS;
     expect(provider.getEffectiveMaxOutputTokens()).toBe(KODAX_CAPPED_MAX_OUTPUT_TOKENS);
@@ -227,6 +227,28 @@ describe('runKodaX max_tokens continuation (L5)', () => {
     expect(MaxTokensScriptedProvider.observedBudgets[0]).toBe(SCOPED_BUDGET);
   }, 30_000);
 
+  it('removes volatile oversized-input artifacts when the SA run settles', async () => {
+    MaxTokensScriptedProvider.responses = [{
+      textBlocks: [{ type: 'text', text: 'done' }],
+      toolBlocks: [],
+      thinkingBlocks: [],
+      stopReason: 'end_turn',
+    }];
+    const oversized = `private sentinel\n${'evidence '.repeat(45_000)}`;
+
+    const result = await runKodaX(
+      { provider: TEST_PROVIDER_NAME, reasoningMode: 'off' },
+      oversized,
+    );
+
+    expect(result.success).toBe(true);
+    const wire = JSON.stringify(MaxTokensScriptedProvider.observedMessages);
+    const artifactPath = wire.match(/kodax-transient:\/\/text\/[0-9a-f]{64}/)?.[0];
+    expect(artifactPath).toBeDefined();
+    expect(readTransientTextArtifact(artifactPath!)).toBeUndefined();
+    expect(JSON.stringify(result.messages)).toContain('private sentinel');
+  }, 30_000);
+
   it('respects user KODAX_MAX_OUTPUT_TOKENS override on every turn', async () => {
     process.env.KODAX_MAX_OUTPUT_TOKENS = '48000';
     MaxTokensScriptedProvider.responses = [
@@ -254,13 +276,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
     expect(MaxTokensScriptedProvider.observedBudgets).toEqual([48000, 48000]);
   }, 30_000);
 
-  // KODAX_ESCALATED_MAX_OUTPUT_TOKENS is kept as an exported constant for
-  // external callers (FFI, plugins) that want to opt in to the larger budget
-  // via setMaxOutputTokensOverride; the agent loop itself no longer wires it.
-  it('keeps KODAX_ESCALATED_MAX_OUTPUT_TOKENS as a usable explicit override', () => {
+  it('keeps KODAX_ESCALATED_MAX_OUTPUT_TOKENS above the capped default', () => {
     expect(KODAX_ESCALATED_MAX_OUTPUT_TOKENS).toBeGreaterThan(KODAX_CAPPED_MAX_OUTPUT_TOKENS);
-    const provider = new MaxTokensScriptedProvider();
-    provider.setMaxOutputTokensOverride(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
-    expect(provider.getEffectiveMaxOutputTokens()).toBe(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
   });
 });

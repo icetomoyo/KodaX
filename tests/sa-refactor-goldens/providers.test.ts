@@ -22,7 +22,16 @@ import type {
   KodaXStreamResult,
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { KodaXBaseProvider } from '@kodax-ai/llm';
+import {
+  KodaXBaseProvider,
+  KodaXNetworkError,
+  runWithProviderCredential,
+} from '@kodax-ai/llm';
+import { classifyResilienceError } from '../../packages/coding/src/resilience/classifier.js';
+import { runRecoveryPipeline } from '../../packages/coding/src/agent-runtime/provider-retry-policy.js';
+import { DEFAULT_RESILIENCE_CONFIG } from '../../packages/coding/src/resilience/config.js';
+import { ProviderRecoveryCoordinator } from '../../packages/coding/src/resilience/recovery-coordinator.js';
+import { StableBoundaryTracker } from '../../packages/coding/src/resilience/stable-boundary.js';
 
 import {
   RecorderProvider,
@@ -107,6 +116,29 @@ class ScriptedProvider extends KodaXBaseProvider {
       }
     }
     return turn.result;
+  }
+}
+
+class FallbackScriptedProvider extends ScriptedProvider {
+  override supportsNonStreamingFallback(): boolean {
+    return true;
+  }
+
+  override async stream(): Promise<KodaXStreamResult> {
+    throw new KodaXNetworkError('stream transport closed');
+  }
+
+  override async complete(
+    _messages: KodaXMessage[],
+    _tools: KodaXToolDefinition[],
+    _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest,
+    streamOptions?: KodaXProviderStreamOptions,
+  ): Promise<KodaXStreamResult> {
+    streamOptions?.onThinkingDelta?.('fallback thinking');
+    streamOptions?.onThinkingEnd?.('fallback thinking');
+    streamOptions?.onTextDelta?.('hi back');
+    return RESULT_TEXT_ONLY;
   }
 }
 
@@ -221,15 +253,20 @@ describe('RecorderProvider', () => {
     expect(recorder.isConfigured()).toBe(inner.isConfigured());
   });
 
-  it('routes setMaxOutputTokensOverride to the inner provider so escalation works during recording', () => {
-    const inner = new ScriptedProvider([]);
+  it('routes request-local maxOutputTokensOverride to the inner provider during recording', async () => {
+    const inner = new ScriptedProvider([{ callbacks: [], result: RESULT_TEXT_ONLY }]);
     const recorder = new RecorderProvider(inner, 'session-esc');
+    const streamSpy = vi.spyOn(inner, 'stream');
 
-    recorder.setMaxOutputTokensOverride(99_000);
-    expect(inner.getEffectiveMaxOutputTokens()).toBe(99_000);
-    expect(recorder.getEffectiveMaxOutputTokens()).toBe(99_000);
-    recorder.setMaxOutputTokensOverride(undefined);
+    await recorder.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 99_000,
+    });
+
     expect(inner.getEffectiveMaxOutputTokens()).toBe(32_000);
+    expect(streamSpy.mock.calls[0]?.[4]).toMatchObject({
+      maxOutputTokensOverride: 99_000,
+    });
+    expect(recorder.buildRecording().calls[0]?.request.maxOutputTokensOverride).toBe(99_000);
   });
 
   it('captures innerSummary in the recording for replay-side delegation', async () => {
@@ -245,6 +282,78 @@ describe('RecorderProvider', () => {
     expect(recording.innerSummary.maxOutputTokens).toBe(32_000);
     expect(recording.innerSummary.reasoningCapability).toBe('native-budget');
     expect(recording.innerSummary.supportsThinking).toBe(true);
+  });
+
+  it('records failed stream and successful non-stream fallback attempts in order', async () => {
+    const recorder = new RecorderProvider(new FallbackScriptedProvider([]), 'session-fallback');
+    await expect(recorder.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 4_000,
+    })).rejects.toThrow('stream transport closed');
+    await expect(recorder.complete(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_000,
+    })).resolves.toEqual(RESULT_TEXT_ONLY);
+
+    expect(recorder.buildRecording().calls).toMatchObject([
+      {
+        method: 'stream',
+        request: { maxOutputTokensOverride: 4_000 },
+        error: { kind: 'network', name: 'KodaXNetworkError', message: 'stream transport closed' },
+      },
+      {
+        method: 'complete',
+        request: { maxOutputTokensOverride: 3_000 },
+        callbacks: [
+          { kind: 'thinkingDelta', text: 'fallback thinking' },
+          { kind: 'thinkingEnd', thinking: 'fallback thinking' },
+          { kind: 'textDelta', text: 'hi back' },
+        ],
+        result: RESULT_TEXT_ONLY,
+      },
+    ]);
+
+    const replay = new ReplayProvider(recorder.buildRecording());
+    await expect(replay.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 4_000,
+    })).rejects.toThrow('stream transport closed');
+    const callbacks: string[] = [];
+    await expect(replay.complete(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_000,
+      onThinkingDelta: (text) => callbacks.push(`thinking:${text}`),
+      onThinkingEnd: (thinking) => callbacks.push(`thinking-end:${thinking}`),
+      onTextDelta: (text) => callbacks.push(`text:${text}`),
+    })).resolves.toEqual(RESULT_TEXT_ONLY);
+    expect(callbacks).toEqual([
+      'thinking:fallback thinking',
+      'thinking-end:fallback thinking',
+      'text:hi back',
+    ]);
+  });
+
+  it('redacts ambient and run-scoped credentials from recorded failures', async () => {
+    const ambientSecret = 'ambient-golden-secret';
+    const scopedSecret = 'scoped-golden-secret';
+    vi.stubEnv('__SCRIPTED_NO_KEY__', ambientSecret);
+    class SecretFailureProvider extends ScriptedProvider {
+      override async stream(): Promise<KodaXStreamResult> {
+        throw new KodaXNetworkError(
+          `transport rejected ${ambientSecret} and ${scopedSecret}`,
+        );
+      }
+    }
+    const recorder = new RecorderProvider(new SecretFailureProvider([]), 'session-secret');
+    try {
+      await expect(runWithProviderCredential(
+        'scripted',
+        scopedSecret,
+        () => recorder.stream(PLAIN_MESSAGES, [], 'sys'),
+      )).rejects.toBeInstanceOf(KodaXNetworkError);
+      const serialized = JSON.stringify(recorder.buildRecording());
+      expect(serialized).not.toContain(ambientSecret);
+      expect(serialized).not.toContain(scopedSecret);
+      expect(serialized).toContain('[REDACTED_CREDENTIAL]');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('persists recordings to disk in <dir>/<sessionId>.json', async () => {
@@ -308,6 +417,51 @@ describe('ReplayProvider', () => {
     expect(onToolInputDelta).toHaveBeenNthCalledWith(2, 'read_file', 'th":"b.ts"}', { toolId: 'call_2' });
 
     expect(replay.remaining).toBe(0);
+  });
+
+  it('replays stream failure into a shape-checked non-stream fallback', async () => {
+    const recorder = new RecorderProvider(new FallbackScriptedProvider([]), 'session-fallback-replay');
+    await expect(recorder.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 4_000,
+    })).rejects.toThrow('stream transport closed');
+    await recorder.complete(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_000,
+    });
+
+    const replay = new ReplayProvider(recorder.buildRecording());
+    const replayFailure: unknown = await replay.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 4_000,
+    }).then(() => undefined, (error: unknown) => error);
+    expect(replayFailure).toBeInstanceOf(KodaXNetworkError);
+    expect(classifyResilienceError(replayFailure as Error)).toEqual(
+      classifyResilienceError(new KodaXNetworkError('stream transport closed')),
+    );
+    const recovery = runRecoveryPipeline({
+      error: replayFailure as Error,
+      failureStage: 'mid_stream_text',
+      attempt: 2,
+      events: {},
+      resilienceCfg: DEFAULT_RESILIENCE_CONFIG,
+      recoveryCoordinator: new ProviderRecoveryCoordinator(
+        new StableBoundaryTracker(),
+        DEFAULT_RESILIENCE_CONFIG,
+      ),
+    });
+    expect(recovery.decision).toMatchObject({
+      action: 'non_streaming_fallback',
+      shouldUseNonStreaming: true,
+    });
+    await expect(replay.complete(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_000,
+    })).resolves.toEqual(RESULT_TEXT_ONLY);
+
+    const mismatch = new ReplayProvider(recorder.buildRecording());
+    await expect(mismatch.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 4_000,
+    })).rejects.toThrow('stream transport closed');
+    await expect(mismatch.complete(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_001,
+    })).rejects.toMatchObject({ name: 'ReplayMismatchError' });
   });
 
   it('throws ReplayMismatchError on message-count drift', async () => {
@@ -430,17 +584,28 @@ describe('ReplayProvider', () => {
     expect(replay.getAvailableModels()).toEqual(['custom-default-model', 'alt-model']);
   });
 
-  it('honours setMaxOutputTokensOverride during replay (one-shot escalation)', async () => {
+  it('shape-checks request-local maxOutputTokensOverride during replay', async () => {
     const inner = new ScriptedProvider([{ callbacks: [], result: RESULT_TEXT_ONLY }]);
     const recorder = new RecorderProvider(inner, 'session-replay-esc');
-    await recorder.stream(PLAIN_MESSAGES, [], 'sys', undefined, {});
+    await recorder.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 64_000,
+    });
 
     const replay = new ReplayProvider(recorder.buildRecording());
     expect(replay.getEffectiveMaxOutputTokens()).toBe(32_000);
-    replay.setMaxOutputTokensOverride(64_000);
-    expect(replay.getEffectiveMaxOutputTokens()).toBe(64_000);
-    replay.setMaxOutputTokensOverride(undefined);
-    expect(replay.getEffectiveMaxOutputTokens()).toBe(32_000);
+    await expect(replay.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 64_000,
+    })).resolves.toEqual(RESULT_TEXT_ONLY);
+
+    const mismatch = new ReplayProvider(recorder.buildRecording());
+    await expect(mismatch.stream(PLAIN_MESSAGES, [], 'sys', undefined, {
+      maxOutputTokensOverride: 3_000,
+    })).rejects.toMatchObject({
+      name: 'ReplayMismatchError',
+      diffs: expect.arrayContaining([
+        expect.objectContaining({ field: 'maxOutputTokensOverride' }),
+      ]),
+    });
   });
 
   it('rejects recordings missing innerSummary', () => {

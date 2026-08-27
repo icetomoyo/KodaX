@@ -17,9 +17,19 @@ All notable changes to this project will be documented in this file.
   output reserve shrinks floor-bounded (3000) while over capacity — both in
   the post-compaction judgment and on the wire-level request — and an
   irreducibly oversized fresh user input degrades to a preview head plus a
-  durable pointer the model pages in slices, on the request copy only. A
-  transient compaction-summarizer failure fails open with the existing
-  circuit breaker bounding repeats. Local capacity terminals now classify as
+  run-scoped volatile pointer the model pages in slices, on the request copy
+  only; the full input stays behind an unguessable in-memory capability that
+  is removed when the Run ends and leaves no filesystem residue. A
+  transient compaction-summarizer failure fails open until the existing
+  circuit breaker opens; repeated failures or reducible still-over-capacity
+  results then produce a typed capacity terminal instead of repeatedly
+  invoking the summarizer. An irreducibly oversized fresh input does not spend
+  that summary-failure budget, and paging its transient capability cannot be
+  re-spilled into the global tool-result store. Provider output-token and
+  reasoning self-heal state is likewise request-local, so concurrent Runs
+  sharing a cached provider cannot alter one another. Runner final recounts
+  stamp capacity debt even when only the final
+  assembled batch crosses the budget. Local capacity terminals now classify as
   `failureKind: "context_capacity"` with structured `contextTokens`
   (`required`/`available`) — never masked as a provider credential failure,
   classified by isolated class identity rather than message text — and the
@@ -32,6 +42,11 @@ All notable changes to this project will be documented in this file.
   request metadata; KodaX-owned `safeMessage` templates never copy provider
   response text, credentials, prompts, headers/bodies, URLs, local paths,
   stacks, or raw errors.
+
+- Unified text diffs now use budget-capped anchored LCS matching, grouping
+  replacement blocks as removals followed by additions without duplicating
+  shared context. REPL diff context stays legible, and add/remove backgrounds
+  span the full terminal row while preserving selection highlighting.
 
 - FEATURE_295 separates cross-platform trusted text transactions from shell
   containment. On Windows, Linux, and macOS, `write`, `edit`, `multi_edit`, `insert_after_anchor`, and

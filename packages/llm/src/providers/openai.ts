@@ -558,11 +558,13 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     model: string,
     capability: OpenAIReasoningAttempt,
     reasoning: KodaXNormalizedReasoningRequest,
+    suppressReasoningEffort: boolean,
+    maxOutputTokens: number,
   ): void {
     // Passive-learning self-heal retry: the prior attempt was rejected for its
     // reasoning-effort value, so drop ALL reasoning params and let the provider
     // use its default — the retried turn completes without the bad effort.
-    if (this.suppressReasoningEffort) {
+    if (suppressReasoningEffort) {
       return;
     }
     // Part 2 degradation rung (mirrors the anthropic ladder): the terminal 'none'
@@ -579,7 +581,6 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     // Qwen's extra_body or Zhipu's thinking block, so we intentionally attach
     // those fields on the raw request object here.
     const params = createParams as unknown as Record<string, unknown>;
-    const maxOutputTokens = this.getEffectiveMaxOutputTokens(model);
     const requestedBudget = clampThinkingBudget(
       resolveThinkingBudget(
         this.config,
@@ -822,7 +823,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
-    return this.withRateLimit(async () => {
+    return this.withRateLimit(async (retryState) => {
       // FEATURE_116 (v0.7.37): strip any cache-boundary markers before
       // building the wire payload. OpenAI-compat path has no client-side
       // cache marker to lower; the markers are KodaX-internal only.
@@ -870,8 +871,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           : isReasoningEnabled(normalizedReasoning)
             ? this.getReasoningFallbackChain(initialCapability).filter(isOpenAIReasoningAttempt)
             : ['none'];
-      const maxOutputTokens =
-        streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
+        ?? this.getEffectiveMaxOutputTokens(model);
+      retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
+      const maxOutputTokens = retryState.maxOutputTokensOverride
+        ?? requestMaxOutputTokens;
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -911,7 +915,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           this.resetReasoningCapabilityParams(
             attemptParams as unknown as Record<string, unknown>,
           );
-          this.applyReasoningCapability(attemptParams, model, capability, normalizedReasoning);
+          this.applyReasoningCapability(
+            attemptParams,
+            model,
+            capability,
+            normalizedReasoning,
+            retryState.suppressReasoningEffort,
+            maxOutputTokens,
+          );
 
           try {
             stream = await client.chat.completions.create(
@@ -1122,7 +1133,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
-    return this.withRateLimit(async () => {
+    return this.withRateLimit(async (retryState) => {
       // FEATURE_116 (v0.7.37): strip cache-boundary markers (see stream()).
       const cleanMessages = this.stripCacheBoundariesFromMessages(messages);
       const { system: mergedSystem, rest: nonSystemMessages } =
@@ -1156,8 +1167,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         : isReasoningEnabled(normalizedReasoning)
           ? this.getReasoningFallbackChain(initialCapability).filter(isOpenAIReasoningAttempt)
           : ['none'];
-      const maxOutputTokens =
-        streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
+        ?? this.getEffectiveMaxOutputTokens(model);
+      retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
+      const maxOutputTokens = retryState.maxOutputTokensOverride
+        ?? requestMaxOutputTokens;
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -1202,6 +1216,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             model,
             capability,
             normalizedReasoning,
+            retryState.suppressReasoningEffort,
+            maxOutputTokens,
           );
 
           try {

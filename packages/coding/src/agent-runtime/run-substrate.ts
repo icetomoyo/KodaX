@@ -103,6 +103,7 @@ import {
 } from '../token-accounting.js';
 import {
   applyContextCapacityReserveOverride,
+  cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
 } from '../capacity-recovery.js';
@@ -549,6 +550,7 @@ export async function runSubstrate(
   const releaseActiveExecutionRuntime = bindActiveExtensionExecutionRuntime(runtime);
   let releaseRuntimeBinding: (() => void) | undefined;
   let releaseActiveRootQueueRoute: (() => void) | undefined;
+  const userInputDegradationCache = createUserInputDegradationCache();
   try {
   const maxIter = options.maxIter ?? 200;
   const absoluteIterationLimit = maxIter + MAX_INTERRUPT_CONTINUATION_ITERATIONS;
@@ -1330,10 +1332,6 @@ export async function runSubstrate(
       events.getCostReport.current = () => formatCostReport(getSummary(turnState.costTracker));
     }
 
-    // FEATURE_296 T5: per-run cache of degraded request copies for
-    // irreducibly oversized fresh user inputs.
-    const userInputDegradationCache = createUserInputDegradationCache();
-
     for (let iter = 0; iter < iterationLimit; iter++) {
     try {
       if (
@@ -1690,6 +1688,7 @@ export async function runSubstrate(
       }
       const emitContextBudgetSnapshot = (
         currentProviderMessages: readonly KodaXMessage[],
+        requestReservedResponseTokens = reservedResponseTokens,
       ): void => {
         if (
           options.context?.contextDiagnostics !== true
@@ -1711,7 +1710,7 @@ export async function runSubstrate(
               toolDefinitions: activeToolDefinitions,
               messages: currentProviderMessages,
               ...(memorySuffix?.content ? { pendingInput: memorySuffix.content } : {}),
-              reservedResponseTokens,
+              reservedResponseTokens: requestReservedResponseTokens,
             }),
             profile: contextOptimizationProfile,
           });
@@ -1727,7 +1726,7 @@ export async function runSubstrate(
       let activeProviderRequestId: string | undefined;
       // FEATURE_296 T5/T6 (ADR-067): `wireMessages` is the request-only view
       // the provider receives — irreducibly oversized user inputs degraded to
-      // preview + durable pointer — while `providerMessages` keeps the
+      // preview + run-scoped pointer — while `providerMessages` keeps the
       // originals for every `messages =` transcript alias below. The
       // wire-level output reserve shrinks floor-bounded while the assembled
       // request is over capacity, so the provider request is legal; a
@@ -1738,7 +1737,7 @@ export async function runSubstrate(
         contextWindow,
         userInputDegradationCache,
       );
-      applyContextCapacityReserveOverride(streamProvider, {
+      const requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
         ...(turnState.currentModelOverride !== undefined
           ? { model: turnState.currentModelOverride }
           : {}),
@@ -1819,7 +1818,7 @@ export async function runSubstrate(
             });
             streamCallbacks.onRetryAfter?.(event);
           };
-          emitContextBudgetSnapshot(wireMessages);
+          emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
           const cacheDiagnostic = emitPromptCacheDiagnosticRequest({
             events,
             enabled: options.context?.contextDiagnostics === true,
@@ -1846,6 +1845,7 @@ export async function runSubstrate(
               promptCacheKey,
               onRetryAfter: wrappedRetryAfter,
               modelOverride: turnState.currentModelOverride,
+              maxOutputTokensOverride: requestMaxOutputTokens,
               ephemeralSuffix: memorySuffix,
               signal: retrySignal,
             },
@@ -1886,7 +1886,7 @@ export async function runSubstrate(
             // attempt loop must `break` with the buffered result. On
             // failure, fall through to recovery-action branches with
             // the new error.
-            emitContextBudgetSnapshot(wireMessages);
+            emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
             const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
@@ -1914,6 +1914,7 @@ export async function runSubstrate(
               callerAbortSignal: options.abortSignal,
               promptCacheKey,
               modelOverride: turnState.currentModelOverride,
+              maxOutputTokensOverride: requestMaxOutputTokens,
               ephemeralSuffix: memorySuffix,
               hardTimeoutMs: API_HARD_TIMEOUT_MS,
               boundarySession,
@@ -2778,6 +2779,7 @@ export async function runSubstrate(
     limitReached: true,
   });
   } finally {
+    await cleanupUserInputDegradationCache(userInputDegradationCache);
     releaseActiveRootQueueRoute?.();
     releaseRuntimeBinding?.();
     releaseActiveExecutionRuntime();

@@ -5743,23 +5743,28 @@ recovery ladder.
    `tool_use`/`tool_result` pair therefore always commits after execution;
    crash repair keeps the existing drop-style cleaners as the backstop.
 2. **Debt drives a bounded ladder before each provider request**: force
-   compaction of old history (debt counts as hard pressure, so the circuit
-   breaker bypass applies) → shrink the reserved output tokens toward a
+   compaction of old history (debt counts as hard pressure while the circuit
+   breaker remains closed) → shrink the reserved output tokens toward a
    floor of 3000 — in the post-compaction judgment and on the wire-level
    request the provider actually receives — → degrade an irreducibly
-   oversized fresh input to an inline preview plus durable pointer (the
-   existing tool-output spill contract; the SDK submit path gains what the
-   REPL paste anchors already do). The provider is the authoritative judge:
+   oversized fresh input to an inline preview plus a run-scoped volatile
+   pointer. The isolated artifact is removed when the owning Run ends; the
+   SDK submit path gains what the REPL paste anchors already do without
+   retaining sensitive input in the global tool-output store. The provider is the authoritative judge:
    a rejection routes to classification, never a speculative resend (the
    sketched conservatism-band resend was deliberately trimmed as unearned).
-   Existing circuit breakers and anti-thrash state bound the ladder; a
-   consecutive-debt transcript terminates through classification instead of
-   looping.
-3. **Termination is reserved for configuration-impossible requests** (a
-   minimal degraded request cannot be assembled at all). A terminal
-   capacity failure preserves the full transcript so a corrected
-   configuration resumes in the same session; it never discards executed
-   work.
+   Existing circuit breakers and anti-thrash state bound the ladder. Hard
+   pressure can compact while the breaker is closed, but repeated summarizer
+   failures or reducible still-over-capacity results open it and terminate
+   through typed capacity classification instead of bypassing it forever. An
+   irreducibly oversized fresh input owns its own degradation rung and therefore
+   does not consume the summary breaker's failure budget.
+3. **Termination follows bounded recovery.** A terminal capacity error is
+   returned when the summary breaker is open under hard pressure and no
+   irreducible-input degradation rung applies, when no compactable prefix and
+   no such rung exists, or when a legal minimal degraded request still cannot
+   be assembled. It preserves the full transcript so a later Run can
+   resume in the same session; it never discards executed work.
 4. **Structured, unmasked, redaction-safe error surface.** Capacity errors
    carry `code` and typed token fields; `RuntimeRunFailureKind` gains
    `context_capacity`, classified by class identity before the overloaded
@@ -5767,32 +5772,39 @@ recovery ladder.
    through unmasked — allowlisted strictly by class identity (instanceof or
    code), never by message text, and never for errors derived from provider
    response bodies, preserving the Issue 298 credential isolation.
-5. **Scope exclusions preserved.** The child-executor briefing admission
+5. **Provider retry state is request-local.** Output-token overrides and the
+   reasoning-effort self-heal flag live in one request's retry state, never on
+   a cached Provider singleton. The deprecated setter remains a one-shot
+   compatibility slot captured when the next request is admitted; the admitted
+   request carries that value in async-context-local state so sibling requests
+   cannot observe it. Concurrent callers must use the request option. Parsed
+   overflow recovery may only lower the request's existing cap.
+6. **Scope exclusions preserved.** The child-executor briefing admission
    keeps its typed failure semantics (it sizes a new child run's initial
-   request); it sheds evidence rather than incurring debt. Provider-layer
-   `KodaXProviderError` status/code preservation and the provider-layer
-   reduced-`max_tokens` retry are out of scope: the retry is dead under the
-   escalation override and mathematically ineffective for input-side
-   overflow, so the controlled attempt never relies on it.
+   request); it sheds evidence rather than incurring debt. Broader
+   provider-layer `KodaXProviderError` status/code preservation remains out
+   of scope.
 
 **Consequences**: long runs survive local estimate shortfalls that
 compaction can relieve — the dominant observed failure class — with no
 user-visible interruption. Executed work is never silently discarded, so a
 resumed model sees which tools already ran (tools still execute exactly
-once; no replay is introduced). The ladder can spend at most one additional
-provider request per run beyond the normal flow. Debt-admitted transcripts
+once; no replay is introduced). Summary requests are circuit-breaker-bounded,
+and each assembled turn makes at most one ordinary provider request.
+Debt-admitted transcripts
 keep pairing integrity and pass the authoritative-snapshot gate. The
 residual risk is a genuinely irreducible round (oversized fresh input on a
-small-window model), which degrades to preview-plus-pointer rather than
-failing; only a misconfiguration (system prompt plus tool definitions
-exceeding the window) terminates, with numbers and a remedy.
+small-window model), which degrades to an in-memory preview capability rather
+than being persisted to disk. An exhausted breaker or an impossible minimal
+request terminates with numbers and a remedy; an absent compactable prefix is
+terminal only when no irreducible-input degradation rung applies.
 
 **Rejected alternatives**: keeping the Issue 158 hard gate (kills runs the
 provider would accept and discards executed work); literal single-write
 pair atomicity (delays the write-ahead `tool_use` commit, weakening crash
 evidence and inviting organic side-effect re-issue); routing recovery
-through the provider-layer reduced-`max_tokens` retry (disabled by the
-escalation override and unable to fix input-side overflow); unbounded
+through an unbounded provider-layer reduced-`max_tokens` retry (unable to fix
+input-side overflow and capable of raising an explicit cap); unbounded
 reactive compaction on provider rejection (thrash; the top-of-iteration
 forced path already covers the need); allowlisting capacity errors by
 message text or unmasking provider-derived errors (would regress the Issue

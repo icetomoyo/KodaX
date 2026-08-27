@@ -6,6 +6,7 @@ import type { KodaXToolResultContentItem } from '@kodax-ai/llm';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { buildReadFileUnchangedStub } from '../multi-instance/read-file-state-cache.js';
+import { readTransientTextArtifact } from '../transient-text-artifacts.js';
 import {
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   formatSize,
@@ -97,6 +98,141 @@ function renderReadOutput(lines: string[], notes: string[]): string {
   return `${content}\n\n${notes.join('\n')}`;
 }
 
+interface TransientTextPage {
+  readonly offset: number;
+  readonly limit: number;
+  readonly totalLines: number;
+  readonly lines: string[];
+  readonly hasMoreLines: boolean;
+  readonly lineContinuation?: LineContinuation;
+}
+
+const TRANSIENT_READ_CONTENT_MAX_BYTES = DEFAULT_TOOL_OUTPUT_MAX_BYTES - 4_096;
+
+function getTransientReadWindow(input: Record<string, unknown>): {
+  readonly offset: number;
+  readonly limit: number;
+  readonly lineOffset: number;
+} {
+  const numeric = (value: unknown, fallback: number): number => (
+    Number.isFinite(value) ? Math.floor(Number(value)) : fallback
+  );
+  return {
+    offset: Math.max(1, numeric(input.offset, 1)),
+    limit: Math.min(
+      READ_DEFAULT_LIMIT,
+      Math.max(1, numeric(input.limit, READ_DEFAULT_LIMIT)),
+    ),
+    lineOffset: Math.max(0, numeric(input.line_offset, 0)),
+  };
+}
+
+function sliceTransientUnicodeLine(input: {
+  readonly content: string;
+  readonly start: number;
+  readonly end: number;
+  readonly lineNumber: number;
+  readonly lineOffset: number;
+}): { readonly text: string; readonly continuation?: LineContinuation } | { readonly error: string } {
+  const visible: string[] = [];
+  let character = 0;
+  for (let cursor = input.start; cursor < input.end;) {
+    const codePoint = input.content.codePointAt(cursor)!;
+    if (character >= input.lineOffset && visible.length < READ_MAX_LINE_CHARS) {
+      visible.push(String.fromCodePoint(codePoint));
+    }
+    character += 1;
+    cursor += codePoint > 0xFFFF ? 2 : 1;
+  }
+  if (input.lineOffset > character) {
+    return {
+      error: `[Tool Error] line_offset ${input.lineOffset} is beyond end of line `
+        + `${input.lineNumber} (${character} Unicode characters total)`,
+    };
+  }
+  const nextOffset = input.lineOffset + visible.length;
+  return {
+    text: visible.join(''),
+    ...(nextOffset < character
+      ? {
+          continuation: {
+            lineNumber: input.lineNumber,
+            start: input.lineOffset,
+            end: nextOffset - 1,
+            total: character,
+            nextOffset,
+          },
+        }
+      : {}),
+  };
+}
+
+function selectTransientTextPage(
+  content: string,
+  input: Record<string, unknown>,
+): TransientTextPage | { readonly error: string } {
+  const { offset, limit, lineOffset } = getTransientReadWindow(input);
+  const selected: string[] = [];
+  let lineContinuation: LineContinuation | undefined;
+  let selectedBytes = 0;
+  let stoppedByByteLimit = false;
+  let totalLines = 1;
+  let lineNumber = 1;
+  let lineStart = 0;
+  while (lineStart <= content.length) {
+    const newline = content.indexOf('\n', lineStart);
+    const lineEnd = newline < 0 ? content.length : newline;
+    if (lineNumber >= offset && selected.length < limit && !stoppedByByteLimit) {
+      const slice = sliceTransientUnicodeLine({
+        content, start: lineStart, end: lineEnd, lineNumber,
+        lineOffset: lineNumber === offset ? lineOffset : 0,
+      });
+      if ('error' in slice) return slice;
+      const nextBytes = Buffer.byteLength(slice.text, 'utf-8') + (selected.length > 0 ? 1 : 0);
+      if (selectedBytes + nextBytes > TRANSIENT_READ_CONTENT_MAX_BYTES) {
+        stoppedByByteLimit = true;
+      } else {
+        selected.push(slice.text);
+        selectedBytes += nextBytes;
+        lineContinuation = slice.continuation;
+        if (lineContinuation !== undefined) stoppedByByteLimit = true;
+      }
+    }
+    if (newline < 0) break;
+    totalLines += 1;
+    lineNumber += 1;
+    lineStart = newline + 1;
+  }
+  if (offset > totalLines) {
+    return { error: `[Tool Error] Offset ${offset} is beyond end of file (${totalLines} lines total)` };
+  }
+  return {
+    offset,
+    limit,
+    totalLines,
+    lines: selected,
+    hasMoreLines: stoppedByByteLimit || offset - 1 + selected.length < totalLines,
+    ...(lineContinuation === undefined ? {} : { lineContinuation }),
+  };
+}
+
+function renderTransientTextPage(page: TransientTextPage): string {
+  return renderReadOutput(page.lines, buildReadNotes({
+    offset: page.offset,
+    linesShown: page.lines.length,
+    limit: page.limit,
+    totalLines: page.totalLines,
+    hasMoreLines: page.hasMoreLines,
+    preflightNote: '',
+    lineContinuation: page.lineContinuation,
+  }));
+}
+
+function readTransientText(content: string, input: Record<string, unknown>): string {
+  const page = selectTransientTextPage(content, input);
+  return 'error' in page ? page.error : renderTransientTextPage(page);
+}
+
 async function isProbablyBinary(filePath: string, fileSize: number): Promise<boolean> {
   if (fileSize === 0) {
     return false;
@@ -164,7 +300,15 @@ export async function toolRead(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string | readonly KodaXToolResultContentItem[]> {
-  const filePath = resolveExecutionPath(input.path as string, ctx);
+  const requestedPath = input.path as string;
+  const transientContent = readTransientTextArtifact(requestedPath);
+  if (transientContent !== undefined) {
+    if (ctx.toolCallId) {
+      ctx.recordToolResultArtifact?.(ctx.toolCallId, requestedPath);
+    }
+    return readTransientText(transientContent, input);
+  }
+  const filePath = resolveExecutionPath(requestedPath, ctx);
   try {
     ctx.assertReadablePath?.(filePath);
   } catch {

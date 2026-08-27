@@ -19,11 +19,11 @@ class FakeProvider extends KodaXBaseProvider {
 
   async stream(): Promise<never> {
     return this.withRateLimit(
-      async () => {
+      async (retryState) => {
         this.attempts += 1;
         // The reasoning-application layer drops the effort when suppressed, so
         // the retry is "effort-free" and must succeed — unless rejectForever.
-        if (!this.suppressReasoningEffort || this.rejectForever) {
+        if (!retryState.suppressReasoningEffort || this.rejectForever) {
           const err = new Error(
             "Unsupported value: 'reasoning_effort' does not support 'max'.",
           ) as Error & { status?: number };

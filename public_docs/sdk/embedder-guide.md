@@ -3313,6 +3313,7 @@ failureSub.close();
 | `upstreamErrorCode` | Optional provider-controlled identifier. Useful for support only; not part of KodaX compatibility. |
 | `requestId` | Optional bounded upstream request identifier for provider support. |
 | `retryAfterMs` | Optional validated retry delay, capped at 24 hours. Absence does not imply immediate retry is safe. |
+| `contextTokens` | Present for `context_capacity`; contains bounded non-negative `required` and `available` token counts for diagnostics and UI guidance. |
 
 The stable classification is:
 
@@ -3329,6 +3330,7 @@ The stable classification is:
 | `cancelled` | `runtime_control` | `cancelled` |
 | `provider_aborted` | `transport` | `cancelled` |
 | `runtime_cleanup` | `runtime_settlement` | `runtime_settlement_failed` |
+| `context_capacity` | `runtime_control` | `context_capacity_exceeded` |
 | `provider` | `catalog`, `transport`, or `response_stream` | `catalog_error`, `provider_error` |
 
 `providerErrorCode` intentionally describes the KodaX interpretation, while
@@ -3341,6 +3343,10 @@ otherwise it remains `resource_not_found`. This prevents a generic status from
 claiming certainty KodaX does not have. User cancellation and an isolated
 provider-side abort share the stable `cancelled` code but remain distinguishable
 by `failureKind` and `stage`.
+Local context exhaustion is reported as `context_capacity` /
+`runtime_control` / `context_capacity_exceeded`; when available,
+`contextTokens.required` is the estimated complete request and
+`contextTokens.available` is the physical model-window budget.
 
 #### Security boundary
 

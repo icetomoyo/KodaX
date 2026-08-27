@@ -66,6 +66,10 @@ import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
+import {
+  cleanupUserInputDegradationCache,
+  createUserInputDegradationCache,
+} from '../capacity-recovery.js';
 import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import {
@@ -1996,6 +2000,7 @@ async function runManagedTaskViaRunnerInner(
   const initialManagedContext = captureManagedRunContext();
   let managedRuntimeContextBaseline = initialManagedContext.runtimeFingerprint;
   let pendingCompactedRuntimeContext: string | undefined;
+  const userInputDegradationCache = createUserInputDegradationCache();
   const llm = buildRunnerLlmAdapter(
     options,
     adapterOverride,
@@ -2014,6 +2019,8 @@ async function runManagedTaskViaRunnerInner(
       mcpCatalogText: amaMcpCatalogText,
       contextWindow: resolvedContextCapacity.contextWindow,
     },
+    undefined,
+    userInputDegradationCache,
   );
 
   // FEATURE_143 (v0.7.36) — `plan.promptOverlay` (routing-notes block:
@@ -2851,6 +2858,7 @@ async function runManagedTaskViaRunnerInner(
       throw error;
     } finally {
       releaseRuntimeBinding?.();
+      await cleanupUserInputDegradationCache(userInputDegradationCache);
     }
   })();
 

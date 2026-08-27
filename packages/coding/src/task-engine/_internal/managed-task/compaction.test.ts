@@ -6,6 +6,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
 });
 
 import {
+  ContextCapacityError,
   Runner,
   compact as mockedCompact,
   createAgent,
@@ -701,7 +702,7 @@ describe('managed history compaction', () => {
     }));
   });
 
-  it('bypasses an open breaker immediately under physical context pressure', async () => {
+  it('terminates at an open breaker under physical context pressure', async () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, messages) };
     compactMock.mockRejectedValue(new Error('temporary summary failure'));
@@ -717,9 +718,60 @@ describe('managed history compaction', () => {
 
     ref.current = snapshot(88_000, messages);
     compactMock.mockResolvedValueOnce(compactedResult(messages));
-    await expect(hook?.(messages)).resolves.toBeDefined();
-    expect(compactMock).toHaveBeenCalledTimes(4);
-    expect(compactMock.mock.calls[3]?.[10]).toBe(true);
+    await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+    expect(compactMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not trip the breaker across repeated irreducible fresh-input turns', async () => {
+    const messages: KodaXMessage[] = [{
+      role: 'user',
+      content: `FRESH_IRREDUCIBLE_INPUT\n${'payload '.repeat(120_000)}`,
+    }];
+    const currentTokens = estimateTokens(messages);
+    const ref: ContextTokenSnapshotRef = { current: snapshot(currentTokens, messages) };
+    compactMock.mockRejectedValue(new ContextCapacityError({
+      contextWindow: 100_000,
+      currentTokens,
+      reservedResponseTokens: 10_000,
+    }, 'Managed compaction summary request'));
+    const hook = await buildManagedTaskCompactionHook(options(), {
+      resolvedContextCapacity: resolvedCapacity(100),
+      contextTokenSnapshotRef: ref,
+    });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      ref.current = snapshot(currentTokens, messages);
+      await expect(hook?.(messages)).resolves.toBeUndefined();
+    }
+
+    expect(compactMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('bounds repeated still-over compactions before returning typed capacity', async () => {
+    const messages = makeMessages();
+    const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
+    const oversizedMessages = [{
+      role: 'user' as const,
+      content: `oversized summary\n${'summary '.repeat(40_000)}`,
+      _synthetic: true,
+      _source: 'compaction-checkpoint',
+    }];
+    compactMock.mockResolvedValue({
+      ...compactedResult(messages),
+      messages: oversizedMessages,
+    });
+    const hook = await buildManagedTaskCompactionHook(options(), {
+      resolvedContextCapacity: resolvedCapacity(100),
+      contextTokenSnapshotRef: ref,
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      ref.current = snapshot(88_000, messages);
+      await expect(hook?.(messages)).resolves.toBeDefined();
+    }
+    ref.current = snapshot(88_000, messages);
+    await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+    expect(compactMock).toHaveBeenCalledTimes(3);
   });
 
   it('rearms the breaker early after meaningful compactable growth', async () => {

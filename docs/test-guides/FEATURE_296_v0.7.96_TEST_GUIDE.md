@@ -7,7 +7,8 @@ tools have executed. Executed `tool_use`/`tool_result` pairs must commit;
 capacity shortfalls record debt that the next iteration's compaction relieves;
 capacity terminals classify as the structured, unmasked `context_capacity`
 failure kind; and an irreducibly oversized fresh input degrades to a preview
-plus a durable pointer instead of killing the Run.
+plus a run-scoped volatile pointer instead of killing the Run or retaining the
+full input in the global tool-output store.
 
 ## Prerequisites
 
@@ -29,10 +30,10 @@ plus a durable pointer instead of killing the Run.
 2. While the transcript is over capacity, confirm the run keeps making
    progress instead of looping: compaction diagnostics appear, and after
    relief the conversation resumes without user action.
-3. Force a transient compaction-summarizer failure (e.g. revoke the provider
-   key briefly at pressure). The Run must fail open — history stays intact
-   and the run continues or fails with the provider's own error — never a
-   local "Managed history compaction" capacity abort.
+3. Force one transient compaction-summarizer failure (e.g. revoke the provider
+   key briefly at pressure). That attempt must fail open with history intact.
+   Repeat until the summary breaker opens: the Run must then stop with typed
+   `context_capacity` without issuing another summary request or looping.
 
 ## Structured failure-kind checks
 
@@ -51,7 +52,16 @@ plus a durable pointer instead of killing the Run.
    the model window) through the SDK `submitInput` path. The Run must
    continue: the request carries a preview head plus a
    `Full output saved to:` pointer with a read-with-offset/limit hint, and
-   the model can page through the artifact in slices.
+   the model can page through the content in slices. The pointer must use an
+   unguessable `kodax-transient://text/...` capability, create neither an
+   OS-temporary artifact nor a `~/.kodax/tool-results` entry, and stop
+   resolving after Run settlement. Repeat once through SA and once through
+   the managed/AMA path; the canonical transcript must retain the original.
+   Read a slice containing one line longer than the tool-output byte budget:
+   paging by `line_offset` must make progress on Unicode characters, and a
+   second guardrail pass must retain the same volatile capability instead of
+   creating a global tool-result artifact. Repeat at least five recovery
+   iterations; this irreducible input must not open the summary breaker.
 7. Repeat with a merely large (but window-fitting) paste: it must be
    delivered verbatim, never degraded.
 
@@ -63,3 +73,7 @@ plus a durable pointer instead of killing the Run.
 9. Ordinary in-budget tool results are byte-identical to pre-feature
    behavior (the Issue 158 verbatim reproduction in the automated suite is
    the canonical check).
+10. Share one cached Provider across parallel Runs with different output-token
+    caps and reasoning-effort rejections. Each wire request must retain its own
+    cap and self-heal state; parsed overflow recovery may lower but never raise
+    an explicit cap.

@@ -56,6 +56,7 @@ import {
   type CompactionAntiThrashState,
   type CompactionSkipReason,
 } from '../../../agent-runtime/middleware/compaction-pressure.js';
+import { hasIrreducibleUserInput } from '../../../capacity-recovery.js';
 
 const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
 const COMPACT_FAILURE_COOLDOWN_TURNS = 2;
@@ -396,12 +397,23 @@ function admitManagedCompactionAttempt(input: {
   );
   const breakerTripped = input.state.breaker.consecutiveFailures
     >= COMPACT_CIRCUIT_BREAKER_LIMIT;
+  const hasIrreducibleInput = hasIrreducibleUserInput(
+    input.messages,
+    input.contextWindow,
+  );
   const attempt = {
     ...compactable,
     messages: input.messages,
     currentTokens: input.currentTokens,
     hardPressure,
   };
+  if (breakerTripped && hardPressure && !hasIrreducibleInput) {
+    throw new ContextCapacityError({
+      contextWindow: input.contextWindow,
+      currentTokens: input.currentTokens,
+      reservedResponseTokens: input.reservedResponseTokens,
+    }, 'Managed history compaction');
+  }
   const compactableNeedsCompaction = needsCompaction(
     compactable.compactableMessages,
     input.compactionConfig,
@@ -658,13 +670,22 @@ async function resolveManagedSummaryOutcome(
   try {
     result = await requestManagedCompactionSummary({ ...input, systemPrompt });
   } catch (error) {
-    if (error instanceof ContextCapacityError) {
+    const hasIrreducibleInput = hasIrreducibleUserInput(
+      attempt.messages,
+      input.contextWindow,
+    );
+    if (
+      error instanceof ContextCapacityError
+      && !hasIrreducibleInput
+    ) {
       return { kind: 'capacity', endResult: capacityEndResult(attempt, state), error };
     }
-    state.breaker = recordSummaryCircuitFailure(
-      state.breaker,
-      attempt.compactableCurrentTokens,
-    );
+    if (!(error instanceof ContextCapacityError && hasIrreducibleInput)) {
+      state.breaker = recordSummaryCircuitFailure(
+        state.breaker,
+        attempt.compactableCurrentTokens,
+      );
+    }
     const endResult: KodaXCompactionEndResult = {
       ...compactionEndState(
         attempt.currentTokens,
@@ -679,8 +700,9 @@ async function resolveManagedSummaryOutcome(
     // FEATURE_296 (ADR-067): a transient summarizer failure fails open even
     // under hard pressure — canonical history is untouched and the run
     // continues; the circuit breaker bounds repeated outages. A genuine
-    // ContextCapacityError (the summary request itself cannot fit) still
-    // terminates above.
+    // ContextCapacityError for an ordinary summary request still terminates
+    // above. When a fresh input is itself irreducible, summary cannot help;
+    // fail open here so the request-copy degradation rung can run next.
     return { kind: 'stopped', endResult };
   }
   if (!result.compacted) return noCompactablePrefixOutcome(input);
@@ -695,7 +717,10 @@ function noCompactablePrefixOutcome(
   input: ManagedCompactionExecutionInput,
 ): ManagedTerminalOutcome {
   const { attempt, state } = input;
-  if (attempt.hardPressure) {
+  if (
+    attempt.hardPressure
+    && !hasIrreducibleUserInput(attempt.messages, input.contextWindow)
+  ) {
     return {
       kind: 'capacity',
       endResult: capacityEndResult(attempt, state),
@@ -749,7 +774,11 @@ async function commitManagedCompactionResult(
   );
   if (!persisted.ok) return persistenceFailureOutcome(input, persisted.error);
 
-  state.breaker = createSummaryCircuitBreaker();
+  const irreducibleInputOwnsDebt = candidate.stillOverCapacity
+    && hasIrreducibleUserInput(attempt.messages, input.contextWindow);
+  state.breaker = candidate.stillOverCapacity && !irreducibleInputOwnsDebt
+    ? recordSummaryCircuitFailure(state.breaker, attempt.compactableCurrentTokens)
+    : createSummaryCircuitBreaker();
   state.antiThrash = recordCompactionSavings(state.antiThrash, {
     tokensBefore: attempt.compactableCurrentTokens,
     tokensAfter: candidate.finalCompactableTokens,

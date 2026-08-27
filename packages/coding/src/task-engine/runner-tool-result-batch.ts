@@ -59,14 +59,27 @@ async function transformRunnerToolResultBatch(
   );
   const transformed = mergeGuardedStringResults(batch, guarded.entries, options);
   const finalTokens = estimateRunnerToolResultBatchTokens(batch.calls, transformed);
-  if (finalTokens > budget.aggregateInlineTokens && !guarded.capacityDebt) {
+  const capacityDebt = shouldStampRunnerCapacityDebt(
+    guarded.capacityDebt !== undefined,
+    finalTokens,
+    budget.aggregateInlineTokens,
+  );
+  if (finalTokens > budget.aggregateInlineTokens && guarded.capacityDebt === undefined) {
     // The transform's estimate can disagree slightly with the guardrail's
     // per-entry count; either way the shortfall is debt, not a failure.
     emitCapacityDebtDiagnostic(finalTokens, budget.aggregateInlineTokens);
   }
   // Debt is authoritative from the choke point: even when the transform's own
   // recount happens to fit, a guardrail debt keeps the batch marked.
-  return guarded.capacityDebt ? stampCapacityDebt(transformed) : transformed;
+  return capacityDebt ? stampCapacityDebt(transformed) : transformed;
+}
+
+export function shouldStampRunnerCapacityDebt(
+  guardrailReportedDebt: boolean,
+  finalTokens: number,
+  availableTokens: number,
+): boolean {
+  return guardrailReportedDebt || finalTokens > availableTokens;
 }
 
 function stampCapacityDebt(

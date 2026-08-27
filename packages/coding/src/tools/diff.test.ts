@@ -80,4 +80,19 @@ describe('generateDiff', () => {
     expect(ops.slice(0, 2000).every((line) => line.startsWith('- '))).toBe(true);
     expect(ops.slice(2000).every((line) => line.startsWith('+ '))).toBe(true);
   });
+
+  it('honors zero context without retaining unchanged trailing rows', () => {
+    const diff = generateDiff('a\nold\nb\nc\ntail', 'a\nnew\nb\nc\nlast', 'f.txt', 0);
+
+    expect(diff.split('\n').filter((line) => line.startsWith('@@'))).toEqual([
+      '@@ -2,1 +2,1 @@',
+      '@@ -5,1 +5,1 @@',
+    ]);
+    expect(bodyOps(diff)).toEqual([
+      '- old',
+      '+ new',
+      '- tail',
+      '+ last',
+    ]);
+  });
 });

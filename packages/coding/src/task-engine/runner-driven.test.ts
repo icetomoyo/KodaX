@@ -70,6 +70,8 @@ import {
 import { hashProviderVisibleMessages } from '../agent-runtime/prompt-cache-diagnostics.js';
 import { CodingActorSession } from '../agent-runtime/actor-runtime.js';
 import { buildFallbackRoutingDecision, type ReasoningPlan } from '../reasoning.js';
+import { readTransientTextArtifact } from '../transient-text-artifacts.js';
+import { createUserInputDegradationCache } from '../capacity-recovery.js';
 
 // Shared scratch directory for `managedTaskWorkspaceDir` so the
 // Shard 6d-h artifact writes (contract.json / managed-task.json /
@@ -1404,11 +1406,18 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
           evidenceSupport: 'limited' as const,
         },
       };
-      async stream(): Promise<any> {
-        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+      async stream(
+        _messages: KodaXMessage[],
+        _tools: KodaXToolDefinition[],
+        _system: string,
+        _reasoning?: boolean | KodaXReasoningRequest,
+        streamOptions?: KodaXProviderStreamOptions,
+      ): Promise<KodaXStreamResult> {
+        observedBudgets.push(
+          streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(),
+        );
         const resp = responses[callIdx++];
         if (!resp) throw new Error(`No scripted response for stream call #${callIdx}`);
-        this.setMaxOutputTokensOverride(undefined); // mirror withRateLimit auto-clear
         return {
           textBlocks: resp.textBlocks,
           toolBlocks: [],
@@ -1427,6 +1436,43 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       provider: ESCALATION_PROVIDER_NAME,
     };
   }
+
+  it('removes volatile oversized-input artifacts when a managed run settles', async () => {
+    let artifactPath: string | undefined;
+    class Scripted extends KodaXBaseProviderRef {
+      readonly name = ESCALATION_PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config = {
+        apiKeyEnv: ESCALATION_PROVIDER_API_KEY_ENV,
+        model: 'scripted',
+        supportsThinking: false,
+        reasoningCapability: 'prompt-only' as const,
+        contextWindow: 200_000,
+        maxOutputTokens: 32_000,
+      };
+
+      async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+        artifactPath ??= JSON.stringify(messages)
+          .match(/kodax-transient:\/\/text\/[0-9a-f]{64}/)?.[0];
+        return {
+          textBlocks: [{ type: 'text', text: 'done' }],
+          toolBlocks: [],
+          thinkingBlocks: [],
+          stopReason: 'end_turn',
+        };
+      }
+    }
+    process.env[ESCALATION_PROVIDER_API_KEY_ENV] = 'test-key';
+    registerModelProviderFn(ESCALATION_PROVIDER_NAME, () => new Scripted());
+    const oversized = `managed private sentinel\n${'evidence '.repeat(90_000)}`;
+
+    const result = await runManagedTaskViaRunner(makeAdapterOptions(), oversized);
+
+    expect(result.success).toBe(true);
+    expect(artifactPath).toBeDefined();
+    expect(readTransientTextArtifact(artifactPath!)).toBeUndefined();
+    expect(JSON.stringify(result.messages)).toContain('managed private sentinel');
+  }, 60_000);
 
   it('forwards provider retry callbacks from managed-worker stream options', async () => {
     const onProviderRateLimit = vi.fn();
@@ -1609,6 +1655,7 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         contextWindow: 123_456,
       },
       () => ({ content: volatileSuffix }),
+      createUserInputDegradationCache(),
     );
     const secretPrompt = 'AMA_DIAGNOSTIC_PROMPT_MUST_NOT_LEAK';
     await adapter(
@@ -2150,7 +2197,6 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         observedModels.push(streamOptions?.modelOverride);
         const resp = responses[callIdx++];
         if (!resp) throw new Error(`No scripted response for stream call #${callIdx}`);
-        this.setMaxOutputTokensOverride(undefined);
         return resp;
       }
     }
@@ -2340,7 +2386,6 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         streamOptions?: KodaXProviderStreamOptions,
       ): Promise<KodaXStreamResult> {
         streamCalls += 1;
-        this.setMaxOutputTokensOverride(undefined);
         if (streamCalls === 1) {
           return { textBlocks: [], toolBlocks: [], stopReason: 'max_tokens' };
         }
@@ -2485,12 +2530,19 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
           evidenceSupport: 'limited' as const,
         },
       };
-      async stream(messages: import('@kodax-ai/llm').KodaXMessage[]): Promise<any> {
-        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+      async stream(
+        messages: import('@kodax-ai/llm').KodaXMessage[],
+        _tools: KodaXToolDefinition[],
+        _system: string,
+        _reasoning?: boolean | KodaXReasoningRequest,
+        streamOptions?: KodaXProviderStreamOptions,
+      ): Promise<KodaXStreamResult> {
+        observedBudgets.push(
+          streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(),
+        );
         capturedMessagesPerCall.push([...messages]);
         const resp = responses[callIdx++];
         if (!resp) throw new Error(`No scripted response for stream call #${callIdx}`);
-        this.setMaxOutputTokensOverride(undefined);
         return {
           textBlocks: resp.textBlocks,
           toolBlocks: [],
@@ -2561,10 +2613,17 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
           evidenceSupport: 'limited' as const,
         },
       };
-      async stream(): Promise<any> {
-        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+      async stream(
+        _messages: KodaXMessage[],
+        _tools: KodaXToolDefinition[],
+        _system: string,
+        _reasoning?: boolean | KodaXReasoningRequest,
+        streamOptions?: KodaXProviderStreamOptions,
+      ): Promise<KodaXStreamResult> {
+        observedBudgets.push(
+          streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(),
+        );
         callIdx += 1;
-        this.setMaxOutputTokensOverride(undefined);
         // Call 1: capped budget hit, forces L1 escalation.
         if (callIdx === 1) {
           return {

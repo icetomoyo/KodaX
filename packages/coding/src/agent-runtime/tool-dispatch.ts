@@ -447,6 +447,13 @@ async function executeBridgeToolCall(input: {
   }
 
   const ctxWithToolHooks = createContextForToolCall(input.events, targetCall, input.ctx);
+  const recordTargetArtifact = ctxWithToolHooks.recordToolResultArtifact;
+  if (recordTargetArtifact !== undefined) {
+    ctxWithToolHooks.recordToolResultArtifact = (toolCallId, outputPath) => {
+      recordTargetArtifact(toolCallId, outputPath);
+      recordTargetArtifact(input.bridgeCall.id, outputPath);
+    };
+  }
   const toolMeta = createToolEventMeta(input.events, targetCall.id);
   const runScopedTarget = getToolDefinition(targetName) === undefined
     ? lookupRunScopedTool(input.ctx.extensionRuntime, targetName)

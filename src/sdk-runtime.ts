@@ -21428,6 +21428,11 @@ function captureRuntimeFailureDetail(
   try {
     return buildRuntimeFailureDetail(error, run);
   } catch {
+    emitKodaXDiagnostic({
+      source: "runtime.failure-detail",
+      level: "warn",
+      message: `Runtime run ${run.runId} failure classification fell back to the safe provider default.`,
+    });
     return {
       failureKind: "provider",
       stage: "transport",
@@ -21471,19 +21476,28 @@ function readRuntimeContextTokens(
 ): RuntimeFailureDetail["contextTokens"] {
   const required = readNumericErrorField(error, "requiredTokens");
   const available = readNumericErrorField(error, "availableTokens");
-  if (required !== undefined && available !== undefined) {
-    return { required, available };
+  if (required !== undefined || available !== undefined) {
+    return isNonNegativeSafeInteger(required) && isNonNegativeSafeInteger(available)
+      ? { required, available }
+      : undefined;
   }
   const contextWindow = readNumericErrorField(error, "contextWindow");
   const currentTokens = readNumericErrorField(error, "currentTokens");
   const reservedResponseTokens = readNumericErrorField(error, "reservedResponseTokens");
-  if (contextWindow !== undefined && currentTokens !== undefined) {
-    return {
-      required: currentTokens + (reservedResponseTokens ?? 0),
-      available: contextWindow,
-    };
+  if (!isNonNegativeSafeInteger(contextWindow) || !isNonNegativeSafeInteger(currentTokens)) {
+    return undefined;
   }
-  return undefined;
+  if (reservedResponseTokens !== undefined && !isNonNegativeSafeInteger(reservedResponseTokens)) {
+    return undefined;
+  }
+  const derivedRequired = currentTokens + (reservedResponseTokens ?? 0);
+  return Number.isSafeInteger(derivedRequired)
+    ? { required: derivedRequired, available: contextWindow }
+    : undefined;
+}
+
+function isNonNegativeSafeInteger(value: number | undefined): value is number {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0;
 }
 
 function classifyRuntimeFailureDetail(

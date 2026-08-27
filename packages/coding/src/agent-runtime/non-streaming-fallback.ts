@@ -69,6 +69,7 @@ export interface NonStreamingFallbackInput {
   /** Opaque logical-context hash used only by opted-in Provider cache routing. */
   readonly promptCacheKey?: string;
   readonly modelOverride: string | undefined;
+  readonly maxOutputTokensOverride?: number;
   readonly ephemeralSuffix?: KodaXEphemeralSuffix;
   readonly hardTimeoutMs: number;
   readonly boundarySession: BoundaryTrackerSession;
@@ -148,6 +149,7 @@ export async function executeNonStreamingFallback(
           input.events.onThinkingEnd?.(thinking, requestMeta);
         },
         modelOverride: input.modelOverride,
+        maxOutputTokensOverride: input.maxOutputTokensOverride,
         ephemeralSuffix: input.ephemeralSuffix,
         signal: fallbackSignal,
       },

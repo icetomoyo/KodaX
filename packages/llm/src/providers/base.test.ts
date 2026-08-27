@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { APIUserAbortError as AnthropicAPIUserAbortError } from '@anthropic-ai/sdk';
 import { APIUserAbortError as OpenAIAPIUserAbortError } from 'openai';
 import { KodaXBaseProvider } from './base.js';
-import type { KodaXOnRetryAfterCallback } from './base.js';
+import type { KodaXOnRetryAfterCallback, ProviderRequestRetryState } from './base.js';
 import { KodaXProviderError, KodaXRateLimitError } from '../errors.js';
 import { runWithScopedConfig } from '../run-scoped-config.js';
 import type {
@@ -80,7 +80,7 @@ class TestProvider extends KodaXBaseProvider {
   }
 
   exposeWithRateLimit<T>(
-    fn: () => Promise<T>,
+    fn: (retryState: ProviderRequestRetryState) => Promise<T>,
     signal?: AbortSignal,
     retries = 3,
     onRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void,
@@ -325,16 +325,6 @@ describe('KodaXBaseProvider', () => {
     expect(provider.getEffectiveMaxOutputTokens('default-model')).toBe(32_000);
     expect(provider.getEffectiveMaxOutputTokens('small-window-model')).toBe(8_000);
     expect(provider.getEffectiveMaxOutputTokens('plain-model')).toBe(32_000);
-  });
-
-  it('keeps one-shot maxOutputTokens override above descriptor data', () => {
-    const provider = new TestProvider();
-    provider.setMaxOutputTokensOverride(64_000);
-    try {
-      expect(provider.getEffectiveMaxOutputTokens('small-window-model')).toBe(64_000);
-    } finally {
-      provider.setMaxOutputTokensOverride(undefined);
-    }
   });
 
   it('keeps env KODAX_MAX_OUTPUT_TOKENS above descriptor data', () => {
@@ -639,6 +629,20 @@ describe('KodaXBaseProvider', () => {
     expect(JSON.stringify(error)).not.toContain('must-not-be-copied');
   });
 
+  it('rejects out-of-range upstream HTTP status metadata', async () => {
+    const provider = new TestProvider();
+    const upstream = Object.assign(new Error('invalid upstream status'), {
+      status: 999,
+    });
+
+    const error: unknown = await provider
+      .exposeWithRateLimit(() => Promise.reject(upstream), undefined, 1)
+      .then(() => undefined, (caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(KodaXProviderError);
+    expect(error).not.toHaveProperty('metadata.httpStatus');
+  });
+
   it('does not overwrite an already classified provider failure', async () => {
     const provider = new TestProvider();
     const classified = new KodaXProviderError(
@@ -665,14 +669,18 @@ describe('KodaXBaseProvider', () => {
     const onRateLimit = vi.fn();
     let attempt = 0;
     const observedMaxTokens: number[] = [];
-    const task = vi.fn<() => Promise<string>>(async () => {
+    const task = vi.fn<(retryState: ProviderRequestRetryState) => Promise<string>>(
+      async (retryState) => {
       attempt += 1;
-      observedMaxTokens.push(provider.getEffectiveMaxOutputTokens());
+      observedMaxTokens.push(
+        retryState.maxOutputTokensOverride ?? provider.getEffectiveMaxOutputTokens(),
+      );
       if (attempt === 1) {
         throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
       }
       return 'ok';
-    });
+      },
+    );
 
     await expect(
       provider.exposeWithRateLimit(task, undefined, 2, onRateLimit),
@@ -680,6 +688,103 @@ describe('KodaXBaseProvider', () => {
     expect(task).toHaveBeenCalledTimes(2);
     expect(onRateLimit).toHaveBeenCalledWith(1, 2, 0);
     expect(observedMaxTokens).toEqual([32_000, 3_000]);
+  });
+
+  it('isolates context-overflow retry state across concurrent requests', async () => {
+    const provider = new TestProvider();
+    let releaseRetry: () => void = () => undefined;
+    let markRetryStarted: () => void = () => undefined;
+    const retryGate = new Promise<void>((resolve) => {
+      releaseRetry = resolve;
+    });
+    const retryStarted = new Promise<void>((resolve) => {
+      markRetryStarted = resolve;
+    });
+    const firstRequestTokens: number[] = [];
+    let firstAttempt = 0;
+
+    const firstRequest = provider.exposeWithRateLimit(async (retryState) => {
+      firstAttempt += 1;
+      firstRequestTokens.push(
+        retryState.maxOutputTokensOverride ?? provider.getEffectiveMaxOutputTokens(),
+      );
+      if (firstAttempt === 1) {
+        throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
+      }
+      markRetryStarted();
+      await retryGate;
+      return 'first';
+    }, undefined, 2);
+
+    await retryStarted;
+    const secondRequestTokens: number[] = [];
+    const secondRequest = provider.exposeWithRateLimit(async (retryState) => {
+      secondRequestTokens.push(
+        retryState.maxOutputTokensOverride ?? provider.getEffectiveMaxOutputTokens(),
+      );
+      return 'second';
+    }, undefined, 1);
+    releaseRetry();
+
+    await expect(Promise.all([firstRequest, secondRequest])).resolves.toEqual([
+      'first',
+      'second',
+    ]);
+    expect(firstRequestTokens).toEqual([32_000, 3_000]);
+    expect(secondRequestTokens).toEqual([32_000]);
+  });
+
+  it('never raises an explicit request cap while handling context overflow', async () => {
+    const provider = new TestProvider();
+    const task = vi.fn<(retryState: ProviderRequestRetryState) => Promise<string>>(
+      async (retryState) => {
+        retryState.maxOutputTokensLimit ??= 1_024;
+        throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
+      },
+    );
+
+    await expect(provider.exposeWithRateLimit(task, undefined, 2)).rejects.toBeInstanceOf(
+      KodaXProviderError,
+    );
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the deprecated next-request override isolated and one-shot', async () => {
+    const provider = new TestProvider();
+    provider.setMaxOutputTokensOverride(1_234);
+
+    expect(provider.getEffectiveMaxOutputTokens()).toBe(1_234);
+
+    await expect(provider.exposeWithRateLimit(async (retryState) => (
+      retryState.maxOutputTokensOverride
+        ?? provider.getEffectiveMaxOutputTokens()
+    ))).resolves.toBe(1_234);
+    expect(provider.getEffectiveMaxOutputTokens()).toBe(32_000);
+    await expect(provider.exposeWithRateLimit(async (retryState) => (
+      retryState.maxOutputTokensOverride
+    ))).resolves.toBeUndefined();
+  });
+
+  it('does not expose an admitted deprecated override to a concurrent sibling request', async () => {
+    const provider = new TestProvider();
+    let releaseFirst: () => void = () => undefined;
+    let markFirstActive: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstActive = new Promise<void>((resolve) => { markFirstActive = resolve; });
+    provider.setMaxOutputTokensOverride(1_234);
+
+    const first = provider.exposeWithRateLimit(async () => {
+      markFirstActive();
+      await firstGate;
+      return provider.getEffectiveMaxOutputTokens();
+    });
+    await firstActive;
+    const second = provider.exposeWithRateLimit(async () => (
+      provider.getEffectiveMaxOutputTokens()
+    ));
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([1_234, 32_000]);
   });
 
   it('aborts rate-limit retry sleep when the signal aborts', async () => {

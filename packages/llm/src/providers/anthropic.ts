@@ -262,10 +262,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     reasoning: KodaXNormalizedReasoningRequest,
     model: string,
     maxOutputTokens: number,
+    suppressReasoningEffort: boolean,
   ): void {
     // Passive-learning self-heal retry: drop reasoning params after an effort
     // rejection so the retried turn completes on the provider default.
-    if (this.suppressReasoningEffort) {
+    if (suppressReasoningEffort) {
       return;
     }
     this.validateExplicitReasoningEffort(reasoning, model);
@@ -643,13 +644,16 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
-    return this.withRateLimit(async () => {
+    return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const maxOutputTokens =
-        streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
+        ?? this.getEffectiveMaxOutputTokens(model);
+      retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
+      const maxOutputTokens = retryState.maxOutputTokensOverride
+        ?? requestMaxOutputTokens;
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(messages, model),
       ), streamOptions?.ephemeralSuffix?.content);
@@ -718,6 +722,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             normalizedReasoning,
             model,
             maxOutputTokens,
+            retryState.suppressReasoningEffort,
           );
         } else if (capability === 'native-budget') {
           const requestedBudget = resolveThinkingBudget(
@@ -1093,13 +1098,16 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
-    return this.withRateLimit(async () => {
+    return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const maxOutputTokens =
-        streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
+        ?? this.getEffectiveMaxOutputTokens(model);
+      retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
+      const maxOutputTokens = retryState.maxOutputTokensOverride
+        ?? requestMaxOutputTokens;
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(messages, model),
       ), streamOptions?.ephemeralSuffix?.content);
@@ -1167,6 +1175,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             normalizedReasoning,
             model,
             maxOutputTokens,
+            retryState.suppressReasoningEffort,
           );
         } else if (capability === 'native-budget') {
           const requestedBudget = resolveThinkingBudget(

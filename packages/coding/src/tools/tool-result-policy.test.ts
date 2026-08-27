@@ -13,6 +13,10 @@ import { buildToolResultBudgetFromUsage } from './tool-result-budget.js';
 import { TOOL_OUTPUT_DIR_ENV } from './truncate.js';
 import { countTokens } from '../tokenizer.js';
 import * as tokenizer from '../tokenizer.js';
+import {
+  createTransientTextArtifact,
+  deleteTransientTextArtifact,
+} from '../transient-text-artifacts.js';
 
 describe('tool result guardrail', () => {
   let tempDir = '';
@@ -144,6 +148,30 @@ describe('tool result guardrail', () => {
     expect(guarded.capacityDebt).toBeDefined();
     expect(guarded.capacityDebt!.requiredTokens)
       .toBeGreaterThan(guarded.capacityDebt!.availableTokens);
+  });
+
+  it('never re-persists an in-memory transient capability under forced spill', async () => {
+    const content = 'private oversized input '.repeat(8_000);
+    const artifactPath = createTransientTextArtifact(content);
+    try {
+      const guarded = await applyToolResultBatchGuardrail([{
+        id: 'transient-read',
+        toolName: 'read',
+        content,
+        outputPath: artifactPath,
+      }], {
+        backups: new Map(),
+        executionCwd: process.cwd(),
+      }, {
+        aggregateInlineTokens: 1,
+      });
+
+      expect(guarded.entries[0]?.outputPath).toBe(artifactPath);
+      expect(guarded.entries[0]?.content).toContain(artifactPath);
+      expect(await fs.readdir(tempDir)).toEqual([]);
+    } finally {
+      deleteTransientTextArtifact(artifactPath);
+    }
   });
 
   it('carries a stable code and typed token fields for SDK classification (FEATURE_296 T1)', () => {

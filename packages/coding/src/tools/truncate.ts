@@ -243,8 +243,9 @@ export async function persistToolOutput(
   toolName: string,
   content: string,
   ctx?: Pick<KodaXToolExecutionContext, 'gitRoot' | 'executionCwd'>,
+  outputDirectory?: string,
 ): Promise<string> {
-  const outputDir = resolveToolOutputDir();
+  const outputDir = outputDirectory ?? resolveToolOutputDir();
   const scope = sanitizePathSegment(
     path.basename(ctx?.gitRoot ?? ctx?.executionCwd ?? 'session'),
   );

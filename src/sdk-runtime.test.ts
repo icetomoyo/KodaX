@@ -14961,6 +14961,43 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("omits invalid context token diagnostics from Runtime failure details", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "invalid-capacity-diagnostics-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Invalid Capacity Diagnostics" });
+    const invalidFields: readonly Record<string, number>[] = [
+      { requiredTokens: -1, availableTokens: 300 },
+      { requiredTokens: 901, availableTokens: Number.NaN },
+      { requiredTokens: Number.POSITIVE_INFINITY, availableTokens: 300 },
+      { contextWindow: 100_000, currentTokens: 88_000.5, reservedResponseTokens: 10_000 },
+      {
+        contextWindow: Number.MAX_SAFE_INTEGER,
+        currentTokens: Number.MAX_SAFE_INTEGER,
+        reservedResponseTokens: 1,
+      },
+    ];
+
+    for (const fields of invalidFields) {
+      const capacityError = Object.assign(new Error("invalid token diagnostics"), {
+        code: "KODAX_CONTEXT_CAPACITY_EXCEEDED",
+        ...fields,
+      });
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+        fakeRunningSession(options, Promise.reject(capacityError)));
+      const result = await (await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "invalid capacity diagnostics",
+      })).result;
+      expect(result.failureDetail?.failureKind).toBe("context_capacity");
+      expect(result.failureDetail).not.toHaveProperty("contextTokens");
+    }
+    await runtime.close();
+  });
+
   it("projects active coding cancellation consistently across Runtime surfaces", async () => {
     const {
       captureRuntimeSessionDiagnostics,

@@ -1,11 +1,15 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyToolResultGuardrail } from './tool-result-policy.js';
 import { DEFAULT_TOOL_OUTPUT_MAX_BYTES } from './truncate.js';
 import { toolRead } from './read.js';
 import { getToolDefinition } from './registry.js';
+import {
+  createTransientTextArtifact,
+  deleteTransientTextArtifact,
+} from '../transient-text-artifacts.js';
 
 describe('toolRead', () => {
   let tempDir = '';
@@ -72,6 +76,95 @@ describe('toolRead', () => {
     expect(result).toContain('line-10');
     expect(result).toContain('line-12');
     expect(result).not.toContain('line-9');
+  });
+
+  it('pages opaque process-memory artifacts without filesystem access', async () => {
+    const artifactPath = createTransientTextArtifact('one\ntwo\nthree\nfour');
+    const recordToolResultArtifact = vi.fn();
+    try {
+      const result = await toolRead({ path: artifactPath, offset: 2, limit: 2 }, {
+        backups: new Map(),
+        toolCallId: 'transient-read-1',
+        recordToolResultArtifact,
+        assertReadablePath: () => {
+          throw new Error('filesystem policy must not receive transient capabilities');
+        },
+      });
+
+      expect(result).toContain('two\nthree');
+      expect(result).toContain('Use offset=4');
+      expect(result).not.toContain('one');
+      expect(recordToolResultArtifact).toHaveBeenCalledWith(
+        'transient-read-1',
+        artifactPath,
+      );
+    } finally {
+      deleteTransientTextArtifact(artifactPath);
+    }
+  });
+
+  it('pages one long Unicode line in a transient capability with the normal read bound', async () => {
+    const artifactPath = createTransientTextArtifact('🙂'.repeat(4_500));
+    try {
+      const first = await toolRead({ path: artifactPath, limit: 1 }, {
+        backups: new Map(),
+      });
+      const second = await toolRead({
+        path: artifactPath,
+        offset: 1,
+        limit: 1,
+        line_offset: 2_000,
+      }, {
+        backups: new Map(),
+      });
+
+      expect(first).toContain('Unicode characters 0-1999 of 4500');
+      expect(first).toContain('line_offset=2000');
+      expect(first).not.toContain('End of file');
+      expect(second).toContain('Unicode characters 2000-3999 of 4500');
+      expect(second).toContain('line_offset=4000');
+      expect(Buffer.byteLength(first, 'utf-8')).toBeLessThanOrEqual(
+        DEFAULT_TOOL_OUTPUT_MAX_BYTES,
+      );
+    } finally {
+      deleteTransientTextArtifact(artifactPath);
+    }
+  });
+
+  it('caps a hostile transient line limit before collecting output', async () => {
+    const artifactPath = createTransientTextArtifact('x\n'.repeat(10_000));
+    try {
+      const result = await toolRead({
+        path: artifactPath,
+        limit: Number.MAX_SAFE_INTEGER,
+      }, { backups: new Map() });
+
+      expect(result.split('\n').filter((line) => line === 'x')).toHaveLength(2_000);
+      expect(result).toContain('Use offset=2001 limit=2000');
+      expect(Buffer.byteLength(result, 'utf-8')).toBeLessThanOrEqual(
+        DEFAULT_TOOL_OUTPUT_MAX_BYTES,
+      );
+    } finally {
+      deleteTransientTextArtifact(artifactPath);
+    }
+  });
+
+  it('pages near the end of a giant Unicode line without corrupting the cursor', async () => {
+    const artifactPath = createTransientTextArtifact('🙂'.repeat(1_000_000));
+    try {
+      const result = await toolRead({
+        path: artifactPath,
+        offset: 1,
+        limit: Number.MAX_SAFE_INTEGER,
+        line_offset: 999_000,
+      }, { backups: new Map() });
+
+      expect(result).toContain('🙂'.repeat(1_000));
+      expect(result).toContain('[End of file - 1 lines total]');
+      expect(result).not.toContain('\uFFFD');
+    } finally {
+      deleteTransientTextArtifact(artifactPath);
+    }
   });
 
   it('continues a long Unicode line exactly without claiming end-of-file early', async () => {

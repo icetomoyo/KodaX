@@ -4,7 +4,7 @@
  *
  * - `degradeIrreducibleUserInputs`: a fresh user message that cannot fit the
  *   window even at the floor reserve could never be sent; the request copy is
- *   degraded to a preview head plus a durable artifact pointer so the run
+ *   degraded to a preview head plus a volatile run-scoped artifact pointer so the run
  *   continues and the model pages the full content in slices. The transcript
  *   itself keeps the original — it is the unbounded source of truth.
  * - `applyContextCapacityReserveOverride`: while the assembled request is
@@ -24,16 +24,55 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 
 import { estimateTokens } from './tokenizer.js';
 import { applyToolResultGuardrail } from './tools/tool-result-policy.js';
+import {
+  createTransientTextArtifact,
+  deleteTransientTextArtifact,
+} from './transient-text-artifacts.js';
 import type { KodaXToolExecutionContext } from './types.js';
 
 /** Preview retained inline when a fresh user input is irreducibly oversized. */
 export const IRREDUCIBLE_INPUT_PREVIEW_TOKENS = 2_000;
 
-/** Per-run cache from an original user message to its degraded request copy. */
-export type UserInputDegradationCache = Map<KodaXMessage, KodaXMessage>;
+/** Per-run request copies plus their process-memory artifact capabilities. */
+export interface UserInputDegradationCache {
+  readonly messages: Map<KodaXMessage, KodaXMessage>;
+  readonly artifactPaths: Set<string>;
+}
 
 export function createUserInputDegradationCache(): UserInputDegradationCache {
-  return new Map();
+  return { messages: new Map(), artifactPaths: new Set() };
+}
+
+function isDegradableUserMessage(
+  message: KodaXMessage,
+  irreducibleTokens: number,
+): boolean {
+  if (message.role !== 'user' || typeof message.content !== 'string') return false;
+  const messageTokens = estimateTokens([message]);
+  return messageTokens > irreducibleTokens
+    && messageTokens > IRREDUCIBLE_INPUT_PREVIEW_TOKENS;
+}
+
+export function hasIrreducibleUserInput(
+  messages: readonly KodaXMessage[],
+  contextWindow: number,
+): boolean {
+  const irreducibleTokens = calculateMaxContextInputTokens(
+    contextWindow,
+    RESERVE_SHRINK_FLOOR_TOKENS,
+  );
+  return messages.some((message) => isDegradableUserMessage(message, irreducibleTokens));
+}
+
+/** Remove request-only user-input artifacts at the end of the owning run. */
+export async function cleanupUserInputDegradationCache(
+  cache: UserInputDegradationCache,
+): Promise<void> {
+  for (const artifactPath of cache.artifactPaths) {
+    deleteTransientTextArtifact(artifactPath);
+  }
+  cache.artifactPaths.clear();
+  cache.messages.clear();
 }
 
 /**
@@ -56,17 +95,22 @@ export async function degradeIrreducibleUserInputs(
   let degraded = false;
   const result = await Promise.all(messages.map(async (message) => {
     if (message.role !== 'user' || typeof message.content !== 'string') return message;
-    const cached = cache.get(message);
+    const cached = cache.messages.get(message);
     if (cached) {
       degraded = true;
       return cached;
     }
-    if (estimateTokens([message]) <= irreducibleTokens) return message;
+    if (!isDegradableUserMessage(message, irreducibleTokens)) return message;
     const guarded = await applyToolResultGuardrail('user_input', message.content, ctx, {
       maxInlineTokens: IRREDUCIBLE_INPUT_PREVIEW_TOKENS,
+      persistOutput: async (_toolName, content) => {
+        const artifactPath = createTransientTextArtifact(content);
+        cache.artifactPaths.add(artifactPath);
+        return artifactPath;
+      },
     });
     const replacement: KodaXMessage = { ...message, content: guarded.content };
-    cache.set(message, replacement);
+    cache.messages.set(message, replacement);
     degraded = true;
     return replacement;
   }));
@@ -76,7 +120,6 @@ export async function degradeIrreducibleUserInputs(
 /** Narrow structural slice the reserve override needs from any provider. */
 export interface ContextReserveOverrideProvider {
   getEffectiveMaxOutputTokens(model?: string): number;
-  setMaxOutputTokensOverride(value: number | undefined): void;
 }
 
 /**
@@ -88,11 +131,13 @@ export function applyContextCapacityReserveOverride(
   provider: ContextReserveOverrideProvider,
   input: {
     readonly model?: string;
+    readonly maxOutputTokens?: number;
     readonly contextWindow: number;
     readonly currentTokens: number;
   },
 ): number {
-  const base = provider.getEffectiveMaxOutputTokens(input.model);
+  const base = input.maxOutputTokens
+    ?? provider.getEffectiveMaxOutputTokens(input.model);
   if (
     !exceedsContextCapacity({
       contextWindow: input.contextWindow,
@@ -107,8 +152,5 @@ export function applyContextCapacityReserveOverride(
     currentTokens: input.currentTokens,
     reservedResponseTokens: base,
   });
-  if (reclaimed < base) {
-    provider.setMaxOutputTokensOverride(reclaimed);
-  }
   return reclaimed;
 }

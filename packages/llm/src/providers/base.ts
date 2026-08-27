@@ -19,6 +19,7 @@ import {
   KodaXVerifyCredentialResult,
   KodaXWireReasoningEffort,
 } from '../types.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
@@ -34,6 +35,14 @@ export interface ReasoningRejectionGuard {
   readonly model: string;
   readonly effort?: string;
   readonly onRejected?: (event: { provider: string; model: string; effort: string }) => void;
+}
+
+/** Retry-only state owned by one provider request, never by the provider singleton. */
+export interface ProviderRequestRetryState {
+  maxOutputTokensOverride?: number;
+  /** Effective cap of the original request; overflow recovery may only lower it. */
+  maxOutputTokensLimit?: number;
+  suppressReasoningEffort: boolean;
 }
 import { parseRetryAfter, extractHeadersFromError } from '../retry/retry-after.js';
 import type { RetryAfterSource } from '../retry/retry-after.js';
@@ -119,13 +128,14 @@ function waitForRetryDelay(delayMs: number, signal?: AbortSignal): Promise<void>
 }
 
 function normalizeHttpStatus(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isInteger(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && /^\d{3}$/.test(value)) {
-    return Number(value);
-  }
-  return undefined;
+  const status = typeof value === 'number' && Number.isInteger(value)
+    ? value
+    : typeof value === 'string' && /^\d{3}$/.test(value)
+      ? Number(value)
+      : undefined;
+  return status !== undefined && status >= 100 && status <= 599
+    ? status
+    : undefined;
 }
 
 function extractHttpStatus(error: unknown, depth = 0): number | undefined {
@@ -217,43 +227,26 @@ export abstract class KodaXBaseProvider {
   abstract readonly name: string;
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
+  private readonly activeLegacyRequestOverride = new AsyncLocalStorage<{
+    readonly maxOutputTokensOverride?: number;
+  }>();
+  private pendingLegacyMaxOutputTokensOverride?: number;
 
   /**
-   * Per-request override for `max_tokens` in the next provider call. Consumed
-   * once and cleared in `withRateLimit` after the next successful response.
-   * Two callers set this:
-   *   1. Context-overflow recovery inside `withRateLimit` (reduces budget
-   *      when the model reports "prompt too long").
-   *   2. The agent loop's max_tokens escalation path, which flips this to
-   *      `KODAX_ESCALATED_MAX_OUTPUT_TOKENS` when a capped-budget turn
-   *      returns `stop_reason: max_tokens`. See `coding/src/agent.ts`.
-   */
-  protected maxOutputTokensOverride?: number;
-
-  /**
-   * One-shot flag for the passive-learning self-heal: when a request is
-   * rejected for its reasoning-effort value, `withRateLimit` flips this true
-   * and retries the SAME turn. The reasoning-application path then drops the
-   * effort param so the retry uses the provider default and the user's turn
-   * still completes — no interruption, no re-typed query. Cleared on success.
-   */
-  protected suppressReasoningEffort = false;
-
-  /**
-   * Public setter for the one-shot override above. Callers outside the
-   * provider package (notably the agent loop's escalation branch) use this
-   * to stage a larger budget for the next stream call in the same logical
-   * turn. Pass `undefined` to clear a stale override explicitly.
+   * @deprecated Pass `streamOptions.maxOutputTokensOverride` to `stream()` or
+   * `complete()`. The setter remains a one-shot compatibility shim; concurrent
+   * callers must use the request option. Once admitted, the request value is
+   * async-context-local and cannot leak into sibling requests.
    */
   public setMaxOutputTokensOverride(value: number | undefined): void {
-    this.maxOutputTokensOverride = value;
+    this.pendingLegacyMaxOutputTokensOverride = value;
   }
 
   /**
    * Returns the max_tokens value the provider will currently use on its
    * next request. Precedence (highest to lowest):
-   *   1. One-shot override (agent escalation, context-overflow recovery)
-   *   2. User env var `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
+   *   1. Deprecated one-shot override (compatibility only)
+   *   2. Run-scoped config / `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
    *   3. Active model descriptor's `maxOutputTokens` (FEATURE_098)
    *   4. Provider config default
    *   5. Global `KODAX_MAX_TOKENS` fallback
@@ -261,14 +254,21 @@ export abstract class KodaXBaseProvider {
    * whether escalation is applicable (see `coding/src/agent.ts`).
    */
   public getEffectiveMaxOutputTokens(model?: string): number {
-    if (this.maxOutputTokensOverride !== undefined) {
-      return this.maxOutputTokensOverride;
-    }
     // Run-scoped (concurrency-safe) first, then the global env fallback. Apply
     // the same positive-integer guard `parseEnvInt` uses to the ALS value: an
     // SDK caller passing 0/-1/NaN must NOT reach `max_tokens` verbatim (the
     // provider API rejects it with a 400) — treat a bad value as "unset" so the
     // env / descriptor / default chain still resolves.
+    const legacyMax = this.activeLegacyRequestOverride.getStore()
+      ?.maxOutputTokensOverride
+      ?? this.pendingLegacyMaxOutputTokensOverride;
+    if (
+      typeof legacyMax === 'number'
+      && Number.isFinite(legacyMax)
+      && legacyMax > 0
+    ) {
+      return legacyMax;
+    }
     const scopedMax = getRunScopedConfig()?.maxOutputTokens;
     const envOverride = (typeof scopedMax === 'number' && Number.isFinite(scopedMax) && scopedMax > 0
       ? scopedMax
@@ -922,7 +922,7 @@ export abstract class KodaXBaseProvider {
   }
 
   protected async withRateLimit<T>(
-    fn: () => Promise<T>,
+    fn: (retryState: ProviderRequestRetryState) => Promise<T>,
     signal?: AbortSignal,
     retries = 3,
     onRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void,
@@ -930,20 +930,29 @@ export abstract class KodaXBaseProvider {
     reasoningGuard?: ReasoningRejectionGuard,
   ): Promise<T> {
     let effortRetried = false;
-    // Start each request clean so a prior turn's drop never leaks forward.
-    this.suppressReasoningEffort = false;
+    const legacyMaxOutputTokensOverride = this.pendingLegacyMaxOutputTokensOverride;
+    this.pendingLegacyMaxOutputTokensOverride = undefined;
+    const retryState: ProviderRequestRetryState = {
+      ...(legacyMaxOutputTokensOverride === undefined
+        ? {}
+        : { maxOutputTokensOverride: legacyMaxOutputTokensOverride }),
+      suppressReasoningEffort: false,
+    };
     for (let i = 0; i < retries; i++) {
       try {
-        const result = await fn();
-        this.maxOutputTokensOverride = undefined; // Clear on success
-        this.suppressReasoningEffort = false; // Clear on success
-        return result;
+        return await this.activeLegacyRequestOverride.run(
+          retryState.maxOutputTokensOverride === undefined
+            ? {}
+            : { maxOutputTokensOverride: retryState.maxOutputTokensOverride },
+          () => fn(retryState),
+        );
       } catch (e) {
         // Context window overflow: compute reduced max_tokens and retry once
-        if (this.isContextOverflowError(e) && !this.maxOutputTokensOverride) {
+        if (this.isContextOverflowError(e) && retryState.maxOutputTokensOverride === undefined) {
           const reduced = this.parseContextOverflow(e);
-          if (reduced) {
-            this.maxOutputTokensOverride = reduced;
+          const currentLimit = retryState.maxOutputTokensLimit;
+          if (reduced && (currentLimit === undefined || reduced < currentLimit)) {
+            retryState.maxOutputTokensOverride = reduced;
             onRateLimit?.(i + 1, retries, 0);
             continue; // Retry immediately with reduced max_tokens
           }
@@ -1025,7 +1034,7 @@ export abstract class KodaXBaseProvider {
               model: reasoningGuard.model,
               effort: rejection.rejectedEffort,
             });
-            this.suppressReasoningEffort = true;
+            retryState.suppressReasoningEffort = true;
             effortRetried = true;
             continue; // transparent retry without the rejected effort
           }
@@ -1035,7 +1044,6 @@ export abstract class KodaXBaseProvider {
         if (reasoningGuard && effortRetried) {
           const rejection = classifyReasoningEffortRejection(e, reasoningGuard.effort);
           if (rejection) {
-            this.suppressReasoningEffort = false;
             throw new KodaXReasoningEffortRejectedError(
               `${this.name} rejected reasoning effort "${rejection.rejectedEffort}" even after dropping it.`,
               this.name,

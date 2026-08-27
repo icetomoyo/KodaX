@@ -23,8 +23,8 @@
  * =============================
  * `registerModelProvider` rejects names that collide with built-ins, so we
  * register under a `__recorder_${innerName}__` namespace. The factory
- * returns a fresh `RecorderProvider` wrapping a fresh inner provider so
- * concurrent runs don't share `maxOutputTokensOverride` state.
+ * returns a fresh `RecorderProvider` wrapping a fresh inner provider. Output
+ * token overrides travel in each request envelope and remain concurrency-safe.
  *
  * Usage
  * =====

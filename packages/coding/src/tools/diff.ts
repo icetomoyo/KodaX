@@ -138,14 +138,20 @@ function buildHunks(ops: DiffOp[], contextLines: number): DiffHunk[] {
   for (const op of ops) {
     if (op.kind === 'equal') {
       if (hunk) {
-        hunk.lines.push(`  ${op.line}`);
-        hunk.oldCount++;
-        hunk.newCount++;
-        equalRun++;
-        if (equalRun >= contextLines) {
+        if (contextLines === 0) {
           hunks.push(hunk);
           hunk = null;
           pendingContext = [];
+        } else {
+          hunk.lines.push(`  ${op.line}`);
+          hunk.oldCount++;
+          hunk.newCount++;
+          equalRun++;
+          if (equalRun >= contextLines) {
+            hunks.push(hunk);
+            hunk = null;
+            pendingContext = [];
+          }
         }
       } else {
         pendingContext.push(`  ${op.line}`);
@@ -199,7 +205,8 @@ export function generateDiff(
   const oldLines = oldContent.split('\n');
   const newLines = newContent.split('\n');
 
-  const hunks = buildHunks(alignOps(oldLines, newLines), contextLines);
+  const normalizedContextLines = Math.max(0, Math.floor(contextLines));
+  const hunks = buildHunks(alignOps(oldLines, newLines), normalizedContextLines);
   if (hunks.length === 0) {
     return ''; // No changes - 无变更
   }

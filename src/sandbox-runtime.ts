@@ -321,12 +321,12 @@ export type KodaXSandboxNetworkPolicy =
 export interface KodaXSandboxFilesystemPolicy {
   /**
    * Read roots required by the command. ASRT permits ordinary reads by
-   * default; these roots also carve back access beneath a broader denyRead.
+   * default. An explicit denyRead remains authoritative beneath these roots.
    */
   readonly allowRead: readonly string[];
   /** The only roots in which the command may create, modify, or remove data. */
   readonly allowWrite: readonly string[];
-  /** Read-denied roots; a more specific allowRead entry takes precedence. */
+  /** Read-denied roots; denyRead takes precedence over allowRead. */
   readonly denyRead?: readonly string[];
   /** Write-denied roots; denyWrite takes precedence over allowWrite. */
   readonly denyWrite?: readonly string[];
@@ -4040,8 +4040,8 @@ function boundedWindowsWorkspaceDenies(
     filesystem: {
       ...config.filesystem,
       // Existing sensitive roots are guarded once for the dedicated sandbox
-      // SID. No glob expansion or child enumeration occurs, and exact grants
-      // can still carve back reviewed paths below an inherited deny.
+      // SID. No glob expansion or child enumeration occurs; explicit denies
+      // remain authoritative over any overlapping grant.
       denyRead: config.filesystem.denyRead,
       denyWrite: config.filesystem.denyWrite.filter((denied) => (
         writeRoots.some((granted) => isInside(granted, denied))

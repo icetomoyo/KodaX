@@ -5,23 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   applyContextCapacityReserveOverride,
+  cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
   type ContextReserveOverrideProvider,
 } from './capacity-recovery.js';
+import { readTransientTextArtifact } from './transient-text-artifacts.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
 
-function fakeProvider(base: number): ContextReserveOverrideProvider & {
-  override: number | undefined;
-} {
-  const provider = {
-    override: undefined as number | undefined,
-    getEffectiveMaxOutputTokens: (_model?: string) => provider.override ?? base,
-    setMaxOutputTokensOverride: (value: number | undefined) => {
-      provider.override = value;
-    },
-  };
-  return provider;
+function fakeProvider(base: number): ContextReserveOverrideProvider {
+  return { getEffectiveMaxOutputTokens: (_model?: string) => base };
 }
 
 describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
@@ -38,6 +31,21 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
   });
 
   describe('degradeIrreducibleUserInputs', () => {
+    it('does not treat an ordinary message as degradable merely because the configured window is below the reserve floor', async () => {
+      const message: KodaXMessage = { role: 'user', content: 'hello' };
+      const cache = createUserInputDegradationCache();
+
+      const degraded = await degradeIrreducibleUserInputs(
+        [message],
+        { backups: new Map() },
+        1_000,
+        cache,
+      );
+
+      expect(degraded).toEqual([message]);
+      expect(cache.artifactPaths.size).toBe(0);
+    });
+
     it('degrades an irreducibly oversized user input to preview + pointer', async () => {
       const oversized = `huge log\n${'evidence '.repeat(200_000)}`;
       const messages = [
@@ -46,11 +54,12 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         { role: 'assistant' as const, content: 'ack' },
       ];
 
+      const cache = createUserInputDegradationCache();
       const degraded = await degradeIrreducibleUserInputs(
         messages,
         { backups: new Map() },
         100_000,
-        createUserInputDegradationCache(),
+        cache,
       );
 
       // The request copy is degraded; the original transcript is untouched.
@@ -61,8 +70,14 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
       expect(messages[1]!.content).toBe(oversized);
       expect(degraded[0]!.content).toBe('sys');
       expect(degraded[2]!.content).toBe('ack');
-      const [artifact] = await fs.readdir(tempDir);
-      expect(await fs.readFile(path.join(tempDir, artifact!), 'utf8')).toBe(oversized);
+      expect(cache.artifactPaths.size).toBe(1);
+      const [artifactPath] = cache.artifactPaths;
+      expect(artifactPath).toMatch(/^kodax-transient:\/\/text\/[0-9a-f]{64}$/);
+      expect(readTransientTextArtifact(artifactPath!)).toBe(oversized);
+      expect(await fs.readdir(tempDir)).toEqual([]);
+
+      await cleanupUserInputDegradationCache(cache);
+      expect(readTransientTextArtifact(artifactPath!)).toBeUndefined();
     });
 
     it('keeps ordinary large messages verbatim and reuses the cache', async () => {
@@ -99,7 +114,31 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         cache,
       );
       expect(third[0]!.content).toBe(degradedContent);
-      expect(await fs.readdir(tempDir)).toHaveLength(1);
+      expect(cache.artifactPaths.size).toBe(1);
+      await cleanupUserInputDegradationCache(cache);
+    });
+
+    it('owns and removes every artifact for concurrent oversized messages', async () => {
+      const first = { role: 'user' as const, content: `first\n${'a '.repeat(400_000)}` };
+      const second = { role: 'user' as const, content: `second\n${'b '.repeat(400_000)}` };
+      const cache = createUserInputDegradationCache();
+
+      const degraded = await degradeIrreducibleUserInputs(
+        [first, second],
+        { backups: new Map() },
+        100_000,
+        cache,
+      );
+
+      expect(degraded).toHaveLength(2);
+      expect(cache.artifactPaths.size).toBe(2);
+      const artifactPaths = [...cache.artifactPaths];
+      expect(artifactPaths.map((value) => readTransientTextArtifact(value)))
+        .toEqual(expect.arrayContaining([first.content, second.content]));
+      expect(await fs.readdir(tempDir)).toEqual([]);
+
+      await cleanupUserInputDegradationCache(cache);
+      expect(artifactPaths.every((value) => readTransientTextArtifact(value) === undefined)).toBe(true);
     });
 
     it('skips tool_result-bearing user messages', async () => {
@@ -125,7 +164,6 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         currentTokens: 100_000,
       });
       expect(effective).toBe(32_000);
-      expect(provider.override).toBeUndefined();
     });
 
     it('shrinks the wire reserve while over capacity and never below the floor', () => {
@@ -135,7 +173,6 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         currentTokens: 50_000,
       });
       expect(effective).toBeLessThan(64_000);
-      expect(provider.override).toBe(effective);
 
       const floored = applyContextCapacityReserveOverride(fakeProvider(64_000), {
         contextWindow: 100_000,
@@ -145,14 +182,14 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
     });
 
     it('does not raise an already-shrunk reserve', () => {
-      const provider = fakeProvider(8_000);
+      const provider = fakeProvider(64_000);
       const effective = applyContextCapacityReserveOverride(provider, {
+        maxOutputTokens: 8_000,
         contextWindow: 100_000,
         currentTokens: 90_000,
       });
       // 90k + 8k + margin > 100k → shrink applies.
       expect(effective).toBeLessThanOrEqual(8_000);
-      expect(provider.override).toBe(effective);
     });
   });
 });

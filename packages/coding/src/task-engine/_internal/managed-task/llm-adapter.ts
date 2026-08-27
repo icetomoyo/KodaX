@@ -100,8 +100,8 @@ import type {
 import { resolveContextTokenCount } from '../../../token-accounting.js';
 import {
   applyContextCapacityReserveOverride,
-  createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
+  type UserInputDegradationCache,
 } from '../../../capacity-recovery.js';
 import type { KodaXOutputSegmentMode } from '../../../output-segments.js';
 import {
@@ -347,6 +347,7 @@ export function buildRunnerLlmAdapter(
   },
   /** Volatile request-only context appended after Provider cache breakpoints. */
   getEphemeralSuffix?: () => KodaXEphemeralSuffix | undefined,
+  userInputDegradationCache?: UserInputDegradationCache,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. The iteration
@@ -362,8 +363,14 @@ export function buildRunnerLlmAdapter(
   // FEATURE_296 T5/T6 (ADR-067): per-run request-recovery state — the cache
   // of degraded copies for irreducibly oversized fresh user inputs, and the
   // tool-execution context backing the spill artifact.
-  const userInputDegradationCache = createUserInputDegradationCache();
   const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map() };
+
+  const requireUserInputDegradationCache = (): UserInputDegradationCache => {
+    if (userInputDegradationCache === undefined) {
+      throw new Error('Managed LLM adapter requires a run-owned user-input degradation cache.');
+    }
+    return userInputDegradationCache;
+  };
 
   // Cost tracker — one per session; `recordUsage` is called after every
   // provider.stream usage payload. REPL /cost reads through
@@ -575,6 +582,7 @@ export function buildRunnerLlmAdapter(
           });
       const emitContextBudgetSnapshot = (
         providerMessages: readonly KodaXMessage[],
+        requestReservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel),
       ): void => {
         if (
           options.context?.contextDiagnostics !== true
@@ -624,7 +632,7 @@ export function buildRunnerLlmAdapter(
             systemPrompt: diagnosticEnvelope.system,
             toolDefinitions: wireTools,
             messageTokenBreakdown,
-            reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
+            reservedResponseTokens: requestReservedResponseTokens,
             profile: 'report_only',
           }));
         } catch (error) {
@@ -708,14 +716,15 @@ export function buildRunnerLlmAdapter(
       // the provider receives is legal. The provider stays the authoritative
       // judge; a rejection routes to classification, not a resend.
       const recoveryContextWindow = contextBudgetCatalogs?.contextWindow;
+      let requestMaxOutputTokens = provider.getEffectiveMaxOutputTokens(activeModel);
       if (recoveryContextWindow !== undefined) {
         providerMessages = await degradeIrreducibleUserInputs(
           providerMessages,
           userInputSpillCtx,
           recoveryContextWindow,
-          userInputDegradationCache,
+          requireUserInputDegradationCache(),
         );
-        applyContextCapacityReserveOverride(provider, {
+        requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
           ...(activeModel !== undefined ? { model: activeModel } : {}),
           contextWindow: recoveryContextWindow,
           currentTokens: resolveContextTokenCount(
@@ -808,6 +817,7 @@ export function buildRunnerLlmAdapter(
         const streamOptions = {
           promptCacheKey,
           modelOverride: activeModel,
+          maxOutputTokensOverride: requestMaxOutputTokens,
           ephemeralSuffix: nativeEphemeralSuffix,
           onTextDelta: (text: string) => {
             boundaryTracker.markTextDelta(text);
@@ -857,7 +867,7 @@ export function buildRunnerLlmAdapter(
         };
 
         try {
-          emitContextBudgetSnapshot(providerMessages);
+          emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
           const cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
           raw = await provider.stream(
             wireProviderMessages,
@@ -878,17 +888,18 @@ export function buildRunnerLlmAdapter(
             raw.stopReason === 'max_tokens'
             && !hasEscalatedForCurrentAdapterCall
             && !process.env.KODAX_MAX_OUTPUT_TOKENS
-            && provider.getEffectiveMaxOutputTokens(activeModel) < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
+            && requestMaxOutputTokens < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
           ) {
             throwIfManagedProviderAborted(options.abortSignal, providerMessages);
             hasEscalatedForCurrentAdapterCall = true;
-            provider.setMaxOutputTokensOverride(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
+            requestMaxOutputTokens = KODAX_ESCALATED_MAX_OUTPUT_TOKENS;
             // FEATURE_296 T6 (ADR-067): the escalation must not blanket the
             // capacity floor-shrink — on a squeezed window 64K would re-issue
             // an illegal request. Re-clamp to the floor-bounded reserve.
             if (recoveryContextWindow !== undefined) {
-              applyContextCapacityReserveOverride(provider, {
+              requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
                 ...(activeModel !== undefined ? { model: activeModel } : {}),
+                maxOutputTokens: requestMaxOutputTokens,
                 contextWindow: recoveryContextWindow,
                 currentTokens: resolveContextTokenCount(
                   providerMessages,
@@ -1036,7 +1047,7 @@ export function buildRunnerLlmAdapter(
                 { responseId, providerRequestId: fallbackRequest.requestId, mode: 'replace' },
                 fallbackMeta,
               );
-              emitContextBudgetSnapshot(providerMessages);
+              emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
               const fallbackCacheDiagnostic = beginPromptCacheDiagnostic(
                 providerMessages,
                 attempt,
@@ -1050,6 +1061,7 @@ export function buildRunnerLlmAdapter(
                 {
                   promptCacheKey,
                   modelOverride: activeModel,
+                  maxOutputTokensOverride: requestMaxOutputTokens,
                   ephemeralSuffix: nativeEphemeralSuffix,
                   onTextDelta: (text: string) => {
                     boundaryTracker.markTextDelta(text);
@@ -1228,7 +1240,7 @@ export function buildRunnerLlmAdapter(
             { responseId, providerRequestId: continuationRequest.requestId, mode: 'append' },
             continuationMeta,
           );
-          emitContextBudgetSnapshot(providerMessages);
+          emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
           const cacheDiagnostic = beginPromptCacheDiagnostic(
             providerMessages,
             attempt + l5Retries,
@@ -1241,6 +1253,7 @@ export function buildRunnerLlmAdapter(
             {
               promptCacheKey,
               modelOverride: activeModel,
+              maxOutputTokensOverride: requestMaxOutputTokens,
               ephemeralSuffix: nativeEphemeralSuffix,
               onTextDelta: (text: string) => {
                 const hasMarker = text.includes('```')

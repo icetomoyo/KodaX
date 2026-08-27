@@ -9,6 +9,7 @@ import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 import {
   createRunnerToolResultBatchTransform,
   estimateRunnerToolResultBatchTokens,
+  shouldStampRunnerCapacityDebt,
 } from './runner-tool-result-batch.js';
 
 describe('Runner tool-result batch capacity', () => {
@@ -198,6 +199,12 @@ describe('Runner tool-result batch capacity', () => {
     });
     expect(transformed).toHaveLength(1);
     expect(transformed[0]!.metadata).toMatchObject({ capacityDebt: true });
+  });
+
+  it('stamps debt when the final wire recount exceeds the guardrail estimate', async () => {
+    expect(shouldStampRunnerCapacityDebt(false, 129, 128)).toBe(true);
+    expect(shouldStampRunnerCapacityDebt(false, 128, 128)).toBe(false);
+    expect(shouldStampRunnerCapacityDebt(true, 1, 128)).toBe(true);
   });
 
   it('does not register the legacy per-result truncation guardrail in runner-driven', async () => {
