@@ -151,6 +151,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 320 | High | Resolved | Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link | FEATURE_295 Unix trusted text transaction | v0.7.96 development | 2026-08-28 | 2026-08-28 |
 | 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96 development | 2026-08-28 | 2026-08-28 |
 | 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96 development | 2026-08-27 | 2026-08-27 |
 | 317 | High | Resolved | A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions | FEATURE_295 protected ASRT artifact import | v0.7.96 development | 2026-08-27 | 2026-08-27 |
@@ -358,6 +359,32 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 320: Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 Unix trusted text transaction
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-28
+- **Resolved**: 2026-08-28
+
+#### Original Problem
+
+`commit()` read the target once before acquiring its namespace lock solely to
+obtain a slot ID that was already derived from the namespace. If a peer commit
+atomically replaced the target between `open` and `metadata`, the old open inode
+had zero links. The generic `nlink != 1` check then reported a hard-link policy
+violation instead of allowing the serialized commit to observe a stale
+revision. GitHub's Node 22 trusted-text integration reproduced this race.
+
+#### Resolution
+
+Commit now derives the namespace slot without opening the target, acquires the
+cross-process kernel lock, and performs its first target content/identity read
+inside that lock. Real multi-link targets remain rejected by the unchanged
+locked snapshot check. Concurrent commits against one observed revision return
+one written and one stale result; different namespace slots remain parallel.
 
 ### 319: Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes
 
@@ -13705,11 +13732,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 198 (30 Open, 168 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 199 (30 Open, 169 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-28: Issue 320 resolved (Unix pre-lock target read race)
+
+- Unix trusted text commits derive the namespace slot without opening the
+  target, then perform content and identity validation only after acquiring the
+  cross-process slot lock. A peer atomic replace now yields stale instead of a
+  false hard-link error; real hard links remain denied.
 
 ### 2026-08-28: Issue 319 resolved (Electron ASAR physical native artifacts)
 

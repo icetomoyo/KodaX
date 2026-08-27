@@ -63,7 +63,11 @@ All notable changes to this project will be documented in this file.
   and forbids blind retry. Windows preserves effective DACL entries; the
   filesystem may canonicalize DACL inheritance/protection control during
   replacement. Linux ZFS remains fail-closed until its case and
-  normalization semantics can be proven from a descriptor.
+  normalization semantics can be proven from a descriptor. Unix commits now
+  derive their namespace slot before locking without reading the target; all
+  target bytes and identity are observed under the slot lock, so a concurrent
+  atomic replace becomes the intended stale result instead of a false hard-link
+  rejection (Issue 320).
   The Windows native
   shell runner keeps framed stdin/process containment but drops the
   command-lifetime filesystem-effect owner, uses a nonce-bound per-policy private desktop,

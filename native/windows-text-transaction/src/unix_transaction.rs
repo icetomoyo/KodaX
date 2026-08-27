@@ -384,8 +384,10 @@ impl TrustedRoot {
         let relative = self.validate_target(target)?;
         let canonical_path = self.root_path.join(&relative);
         let canonical_text = path_text(&canonical_path)?;
-        let optimistic = self.snapshot_relative(&relative, &canonical_text)?;
-        let slot_id = optimistic.slot_id.clone();
+        // The slot is namespace-derived. Read target bytes and identity only
+        // after acquiring that slot, so an atomic peer replace cannot turn an
+        // unlinked old descriptor into a false hard-link rejection.
+        let slot_id = self.namespace_slot_id(&relative)?;
         self.ensure_root_location()?;
         let (parents, leaf) = self
             .open_parent(&relative, create_parents)?
