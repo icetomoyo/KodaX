@@ -4,6 +4,189 @@
  * Simple diff display for file changes - 文件变更的简单差异显示
  */
 
+/** Single aligned operation between the two line sequences. */
+interface DiffOp {
+  kind: 'equal' | 'remove' | 'add';
+  line: string;
+}
+
+interface DiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: string[];
+}
+
+/**
+ * Upper bound on old×new cells for the exact LCS table (~4 MB of Uint32).
+ * Above it, the middle falls back to block replacement: every old line is
+ * removed, then every new line added — still grouped, just not matched.
+ */
+const MIDDLE_LCS_CELL_CAP = 1_000_000;
+
+/**
+ * Matched (oldIdx, newIdx) pairs inside the trimmed middle via DP LCS.
+ * Returns [] when either side is empty or the pair budget is exceeded.
+ */
+function matchedPairs(oldMid: string[], newMid: string[]): Array<[number, number]> {
+  const n = oldMid.length;
+  const m = newMid.length;
+  if (n === 0 || m === 0 || n * m > MIDDLE_LCS_CELL_CAP) {
+    return [];
+  }
+
+  const dp: Uint32Array[] = [];
+  for (let i = 0; i <= n; i++) {
+    dp.push(new Uint32Array(m + 1));
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = oldMid[i] === newMid[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const pairs: Array<[number, number]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (oldMid[i] === newMid[j]) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Full op alignment: common prefix/suffix are anchors, the middle goes
+ * through LCS. Within each gap between consecutive matches, all removals
+ * precede all additions — the git/codex display convention.
+ */
+function alignOps(oldLines: string[], newLines: string[]): DiffOp[] {
+  let prefix = 0;
+  while (
+    prefix < oldLines.length && prefix < newLines.length
+    && oldLines[prefix] === newLines[prefix]
+  ) {
+    prefix++;
+  }
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (
+    oldEnd > prefix && newEnd > prefix
+    && oldLines[oldEnd - 1] === newLines[newEnd - 1]
+  ) {
+    oldEnd--;
+    newEnd--;
+  }
+
+  const ops: DiffOp[] = [];
+  for (let k = 0; k < prefix; k++) {
+    ops.push({ kind: 'equal', line: oldLines[k] });
+  }
+
+  const oldMid = oldLines.slice(prefix, oldEnd);
+  const newMid = newLines.slice(prefix, newEnd);
+  let oi = 0;
+  let ni = 0;
+  for (const [pi, pj] of matchedPairs(oldMid, newMid)) {
+    while (oi < pi) {
+      ops.push({ kind: 'remove', line: oldMid[oi++] });
+    }
+    while (ni < pj) {
+      ops.push({ kind: 'add', line: newMid[ni++] });
+    }
+    ops.push({ kind: 'equal', line: oldMid[pi] });
+    oi++;
+    ni++;
+  }
+  while (oi < oldMid.length) {
+    ops.push({ kind: 'remove', line: oldMid[oi++] });
+  }
+  while (ni < newMid.length) {
+    ops.push({ kind: 'add', line: newMid[ni++] });
+  }
+
+  for (let k = oldEnd; k < oldLines.length; k++) {
+    ops.push({ kind: 'equal', line: oldLines[k] });
+  }
+  return ops;
+}
+
+/**
+ * Window ops into hunks with at most `contextLines` context on each side
+ * of a change; regions separated by ≥ contextLines equal lines become
+ * separate hunks. Mirrors the header/count semantics of the previous
+ * greedy implementation.
+ */
+function buildHunks(ops: DiffOp[], contextLines: number): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let hunk: DiffHunk | null = null;
+  let pendingContext: string[] = [];
+  let equalRun = 0;
+  let oldNo = 0;
+  let newNo = 0;
+
+  for (const op of ops) {
+    if (op.kind === 'equal') {
+      if (hunk) {
+        hunk.lines.push(`  ${op.line}`);
+        hunk.oldCount++;
+        hunk.newCount++;
+        equalRun++;
+        if (equalRun >= contextLines) {
+          hunks.push(hunk);
+          hunk = null;
+          pendingContext = [];
+        }
+      } else {
+        pendingContext.push(`  ${op.line}`);
+        if (pendingContext.length > contextLines) {
+          pendingContext.shift();
+        }
+      }
+      oldNo++;
+      newNo++;
+    } else {
+      if (!hunk) {
+        const lead = pendingContext.length;
+        hunk = {
+          oldStart: oldNo - lead + 1,
+          oldCount: lead,
+          newStart: newNo - lead + 1,
+          newCount: lead,
+          lines: [...pendingContext],
+        };
+        pendingContext = [];
+        equalRun = 0;
+      } else {
+        equalRun = 0;
+      }
+      if (op.kind === 'remove') {
+        hunk.lines.push(`- ${op.line}`);
+        hunk.oldCount++;
+        oldNo++;
+      } else {
+        hunk.lines.push(`+ ${op.line}`);
+        hunk.newCount++;
+        newNo++;
+      }
+    }
+  }
+  if (hunk) {
+    hunks.push(hunk);
+  }
+  return hunks;
+}
+
 /**
  * Generate a unified diff-like output - 生成类似 unified diff 的输出
  */
@@ -16,108 +199,7 @@ export function generateDiff(
   const oldLines = oldContent.split('\n');
   const newLines = newContent.split('\n');
 
-  // Find diff hunks - 找出差异块
-  const hunks: Array<{ oldStart: number; oldCount: number; newStart: number; newCount: number; lines: string[] }> = [];
-
-  let oldIdx = 0;
-  let newIdx = 0;
-  let hunkStart: number | null = null;
-  let currentHunkLines: string[] = [];
-  let hunkOldStart = 0;
-  let hunkNewStart = 0;
-  let oldCount = 0;
-  let newCount = 0;
-
-  // Simple LCS-based diff - 简单的基于 LCS 的差异算法
-  while (oldIdx < oldLines.length || newIdx < newLines.length) {
-    if (oldIdx < oldLines.length && newIdx < newLines.length && oldLines[oldIdx] === newLines[newIdx]) {
-      // Lines match - 行匹配
-      if (hunkStart !== null) {
-        currentHunkLines.push(`  ${oldLines[oldIdx]}`);
-        oldCount++;
-        newCount++;
-      }
-      oldIdx++;
-      newIdx++;
-    } else {
-      // Lines differ - 行不同
-      if (hunkStart === null) {
-        // Start new hunk with context - 开始新的差异块，包含上下文
-        hunkStart = Math.max(0, oldIdx - contextLines);
-        hunkOldStart = hunkStart + 1; // 1-indexed
-        hunkNewStart = Math.max(0, newIdx - contextLines) + 1;
-        currentHunkLines = [];
-        oldCount = 0;
-        newCount = 0;
-
-        // Add context lines before - 添加前面的上下文行
-        for (let i = Math.max(0, oldIdx - contextLines); i < oldIdx; i++) {
-          currentHunkLines.push(`  ${oldLines[i]}`);
-          oldCount++;
-          newCount++;
-        }
-      }
-
-      if (oldIdx < oldLines.length && (newIdx >= newLines.length || oldLines[oldIdx] !== newLines[newIdx])) {
-        // Line removed - 行被删除
-        currentHunkLines.push(`- ${oldLines[oldIdx]}`);
-        oldCount++;
-        oldIdx++;
-      }
-
-      if (newIdx < newLines.length && (oldIdx >= oldLines.length || oldLines[oldIdx] !== newLines[newIdx])) {
-        // Line added - 行被添加
-        currentHunkLines.push(`+ ${newLines[newIdx]}`);
-        newCount++;
-        newIdx++;
-      }
-    }
-
-    // End hunk if we have enough matching lines after - 如果后面有足够的匹配行，结束差异块
-    if (hunkStart !== null) {
-      let matchingAfter = 0;
-      for (let i = 0; i < contextLines && oldIdx + i < oldLines.length && newIdx + i < newLines.length; i++) {
-        if (oldLines[oldIdx + i] === newLines[newIdx + i]) {
-          matchingAfter++;
-        }
-      }
-
-      if (matchingAfter === contextLines || (oldIdx >= oldLines.length && newIdx >= newLines.length)) {
-        // Add context lines after - 添加后面的上下文行
-        for (let i = 0; i < matchingAfter && oldIdx + i < oldLines.length; i++) {
-          currentHunkLines.push(`  ${oldLines[oldIdx + i]}`);
-          oldCount++;
-          newCount++;
-        }
-
-        hunks.push({
-          oldStart: hunkOldStart,
-          oldCount,
-          newStart: hunkNewStart,
-          newCount,
-          lines: currentHunkLines
-        });
-
-        hunkStart = null;
-        currentHunkLines = [];
-        oldIdx += matchingAfter;
-        newIdx += matchingAfter;
-      }
-    }
-  }
-
-  // Handle remaining hunk - 处理剩余的差异块
-  if (hunkStart !== null && currentHunkLines.length > 0) {
-    hunks.push({
-      oldStart: hunkOldStart,
-      oldCount,
-      newStart: hunkNewStart,
-      newCount,
-      lines: currentHunkLines
-    });
-  }
-
-  // Build output - 构建输出
+  const hunks = buildHunks(alignOps(oldLines, newLines), contextLines);
   if (hunks.length === 0) {
     return ''; // No changes - 无变更
   }
