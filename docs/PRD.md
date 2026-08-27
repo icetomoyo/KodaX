@@ -147,7 +147,20 @@ Transport disconnect metadata reports only observable connection facts;
 durable Run status remains the authority for crash outcome. After a host
 receives `runId`, reconnect recovery must query and await that same Run and
 must never replay `runs.start()` or its provider/tool effects. Safe failure
-categories remain bounded and credential-redacted.
+diagnostics must use one structured `failureDetail` across applicable failure
+events (including settlement `run.updated`), Run result/status, and Session
+diagnostics whenever a classified fact exists. The contract separates a broad
+`failureKind`, diagnostic `stage`, stable KodaX `providerErrorCode`, and bounded
+KodaX-owned `safeMessage` from optional HTTP status, upstream code, request ID,
+and retry delay. It must distinguish authentication, rate limiting,
+network/TLS/timeout, model/endpoint/resource absence, unknown provider/catalog,
+upstream 4xx/5xx, protocol/stream incompatibility, local request construction,
+user cancellation, provider abort, and Runtime settlement without copying raw
+upstream text. Runtime never copies credentials and registered secret values,
+Authorization/Cookie, URL userinfo/query, bodies, prompts, complete local paths,
+raw header collections, stacks, or raw errors across this boundary. Optional
+identifiers are omitted when invalid or when they contain the run credential, a
+nontrivial prompt, or a registered/sensitive-name environment secret.
 
 The v0.7.95 maintenance release closes the remaining automatic-
 recovery and explicit-Skill gaps without introducing a new feature slot. Stale

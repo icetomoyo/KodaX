@@ -8,8 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Runtime provider failures now expose one credential-safe `failureDetail`
-  across `run.failed`, Run result/status, and Session diagnostics. The stable
+- Classified Runtime failures now expose one credential-safe `failureDetail`
+  across failure events (or settlement `run.updated`), Run result/status, and
+  Session diagnostics. The stable
   KodaX `providerErrorCode` is kept separate from bounded upstream codes and
   request metadata; KodaX-owned `safeMessage` templates never copy provider
   response text, credentials, prompts, headers/bodies, URLs, local paths,

@@ -5,8 +5,9 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide reflects the released `v0.7.95` SDK. npm publication and version
-assignment remain manual maintainer steps. The SDK advertises Windows
+This guide tracks the current source on the `v0.7.95` package line. npm
+publication and version assignment remain manual maintainer steps. The SDK
+advertises Windows
 `sandboxRuntime:5`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`, and
 adds self-healing Windows sandbox cleanup (a recoverable machine-global
 cleanup Job, unattended recovery tickets, generation-checked background
@@ -22,7 +23,8 @@ scheduled shutdown failure reporting, missing-workspace Run start,
 invalid `allowed-tools` / malformed hook JSON, observed text-helper stdin
 failures, byte-bounded git-metadata reads, observed
 Run-finalization and process-cleanup rejections, typed disconnect facts,
-bounded safe failure categories, and exact-`runId` recovery after reconnect
+structured credential-safe Runtime failure details, and exact-`runId` recovery
+after reconnect
 on top of v0.7.93 failed-exit fast settlement, previous-boot ACL recovery, and
 isolated Anthropic/OpenAI abort classification, plus the v0.7.92
 filesystem-effect operation-token coordinator, recorded-release owners,
@@ -3188,6 +3190,192 @@ const result = await handle.result;
 sub.close();
 ```
 
+### Structured, credential-safe Runtime failures
+
+> Availability: current source / `Unreleased`. A host using the published
+> v0.7.95 package must tolerate an absent `failureDetail` until the next npm
+> publication.
+
+Provider text is useful for debugging, but forwarding a raw upstream error is
+not a safe SDK contract: it can contain a response body, echoed prompt or
+credential, request headers, signed URL, local path, or stack. It is also not a
+stable programmatic contract across providers. Runtime therefore normalizes
+the useful facts once. When a classified failure fact exists, it publishes the
+same optional `RuntimeFailureDetail` through all authoritative surfaces:
+
+| Surface | Location |
+|---|---|
+| Event | `event.payload.failureDetail` on `run.failed`, `run.cancelled`, `run.interrupted`, or settlement-uncertainty `run.updated` |
+| Result | `RuntimeRunResult.failureDetail` from `handle.result` or `runtime.runs.await(runId)` |
+| Status | `RuntimeRunStatus.failureDetail` from `runtime.runs.get()` / `runtime.runs.list()` |
+| Diagnostics | `RuntimeSessionDiagnostics.run.failureDetail` from `runtime.sessions.diagnostics()` |
+
+These surfaces are projections of the same Run fact and use the same
+classification and safe values whenever the optional fact is present. A failed
+`KodaXResult` such as a policy-blocked result may have no `failureDetail`.
+Runtime settlement that cannot be persisted remains `phase:'unknown'` and uses
+`run.updated`; it does not emit a false terminal event. Do not infer a more
+specific category from an older `error` or terminal message.
+
+```ts
+import {
+  parseRuntimeEvent,
+  type RuntimeFailureDetail,
+} from '@kodax-ai/kodax/runtime';
+
+function renderRuntimeFailure(detail: RuntimeFailureDetail | undefined): void {
+  if (!detail) {
+    // Older Runtime/daemon or a lifecycle state with no classified failure.
+    showFailure('The run failed without structured diagnostics.');
+    return;
+  }
+
+  switch (detail.providerErrorCode) {
+    case 'authentication_failed':
+    case 'credential_unavailable':
+      showCredentialAction(detail.safeMessage);
+      return;
+    case 'rate_limited':
+      if (detail.retryAfterMs !== undefined) {
+        scheduleRetry(detail.retryAfterMs);
+      } else {
+        showRateLimit(detail.safeMessage);
+      }
+      return;
+    default:
+      showFailure(detail.safeMessage, {
+        code: detail.providerErrorCode,
+        requestId: detail.requestId,
+      });
+  }
+}
+
+const sessionId = session.id;
+const failureSub = runtime.events.subscribe(
+  { sessionId },
+  (event) => {
+    const parsed = parseRuntimeEvent(event);
+    if (!parsed.ok) return;
+    const typed = parsed.event;
+    if (typed.type === 'run.updated') {
+      const settlementCode = typed.payload.lifecycleError?.code;
+      if (
+        typed.payload.phase === 'unknown'
+        && typed.payload.failureDetail?.stage === 'runtime_settlement'
+        && (
+          settlementCode === 'run_settlement_not_persisted'
+          || settlementCode === 'actor_settlement_not_persisted'
+        )
+      ) {
+        renderRuntimeFailure(typed.payload.failureDetail);
+      }
+      return;
+    }
+    if (
+      typed.type === 'run.failed'
+      || typed.type === 'run.cancelled'
+      || typed.type === 'run.interrupted'
+    ) {
+      renderRuntimeFailure(typed.payload.failureDetail);
+    }
+  },
+);
+await failureSub.ready;
+
+const handle = await runtime.runs.start({
+  sessionId,
+  input: { type: 'text', text: 'Review this repository.' },
+});
+const result = await handle.result;
+const status = await runtime.runs.get(handle.runId);
+const diagnostics = await runtime.sessions.diagnostics({
+  sessionId,
+  runId: handle.runId,
+});
+
+if (result.phase !== 'completed') {
+  renderRuntimeFailure(result.failureDetail);
+}
+// `status.failureDetail` and `diagnostics.run.failureDetail` are the equivalent
+// status/support-bundle access paths; choose one observation path for rendering.
+failureSub.close();
+```
+
+#### Field contract
+
+| Field | Stability and use |
+|---|---|
+| `failureKind` | Bounded broad category for UI grouping and coarse policy. |
+| `stage` | Failure boundary: `catalog`, `credential`, `request_build`, `transport`, `response_stream`, `runtime_control`, or `runtime_settlement`. This is separate from the Run lifecycle `stage`. |
+| `providerErrorCode` | Stable KodaX-owned code. Use this field for programmatic handling. |
+| `safeMessage` | Non-empty, at most 1,024 characters, and owned by KodaX. Safe for ordinary user display, but still treat it as text rather than markup. |
+| `httpStatus` | Optional validated HTTP status. It is not sufficient by itself to identify a model or endpoint error. |
+| `upstreamErrorCode` | Optional provider-controlled identifier. Useful for support only; not part of KodaX compatibility. |
+| `requestId` | Optional bounded upstream request identifier for provider support. |
+| `retryAfterMs` | Optional validated retry delay, capped at 24 hours. Absence does not imply immediate retry is safe. |
+
+The stable classification is:
+
+| `failureKind` | `stage` | Stable `providerErrorCode` values |
+|---|---|---|
+| `auth` | `credential` | `credential_unavailable`, `authentication_failed` |
+| `rate_limit` | `transport` | `rate_limited` |
+| `network` | `transport` | `network_error`, `tls_error`, `request_timeout` |
+| `not_found` | `transport` | `model_not_found`, `endpoint_not_found`, `resource_not_found` |
+| `unknown_provider` | `catalog` | `provider_not_registered` |
+| `request` | `request_build` | `request_build_failed` |
+| `upstream` | `transport` | `upstream_client_error`, `upstream_server_error` |
+| `invalid_response` | `response_stream` | `protocol_mismatch`, `response_stream_error` |
+| `cancelled` | `runtime_control` | `cancelled` |
+| `provider_aborted` | `transport` | `cancelled` |
+| `runtime_cleanup` | `runtime_settlement` | `runtime_settlement_failed` |
+| `provider` | `catalog`, `transport`, or `response_stream` | `catalog_error`, `provider_error` |
+
+`providerErrorCode` intentionally describes the KodaX interpretation, while
+`upstreamErrorCode` preserves a safe provider identifier when one exists. For
+example, HTTP 401/403 maps to `authentication_failed`, 429 maps to
+`rate_limited`, 5xx maps to `upstream_server_error`, and other 4xx maps to
+`upstream_client_error`. A 404 becomes `model_not_found` or
+`endpoint_not_found` only when the provider supplies a recognized precise code;
+otherwise it remains `resource_not_found`. This prevents a generic status from
+claiming certainty KodaX does not have. User cancellation and an isolated
+provider-side abort share the stable `cancelled` code but remain distinguishable
+by `failureKind` and `stage`.
+
+#### Security boundary
+
+`safeMessage` comes from a fixed KodaX template and never copies an upstream
+message or response body. Runtime never copies API keys, Authorization/Cookie
+values, URL userinfo/query, request/response bodies, prompts, complete local
+paths, raw header collections, stacks, or raw `Error` objects into
+`failureDetail`. The only header-derived values are the documented allowlisted
+request ID and retry facts. `upstreamErrorCode` and `requestId` accept only the
+bounded identifier character set `[A-Za-z0-9_.:-]` (maximum 200 characters). If one of
+those identifiers contains the run credential, a prompt of at least four
+characters, or the value of a registered credential/sensitive-name environment
+variable, Runtime omits the whole optional field. Runtime does not source
+identifier values from prompts; the prompt comparison is an additional
+coincidence/leak guard. Optional facts are also omitted when unavailable or
+invalid; absence is part of the contract.
+
+Keep unrestricted provider diagnostics inside a provider-owned, privileged
+debug sink if your product explicitly offers one. Do not merge that sink back
+into Runtime events, status, diagnostics, telemetry, or user-visible support
+bundles.
+
+#### Migration and compatibility
+
+- Stop branching on `error.message`, terminal display text, broad
+  `failureKind:'provider'`, or HTTP status alone. Branch on
+  `providerErrorCode`, then use `stage`/`failureKind` for grouping.
+- Render `safeMessage`; append only explicitly needed optional identifiers.
+  Never reconstruct or expose a raw provider body from another channel.
+- `failureDetail` is additive and optional. When connecting to an older SDK or
+  daemon, treat absence as legacy/unclassified and keep the existing terminal
+  phase/lifecycle handling. Do not replay `runs.start()` to obtain diagnostics.
+- Preserve an unknown-code/default UI path at transport boundaries so a newer
+  Runtime cannot turn a diagnostic extension into a failed host UI.
+
 ### Session-scoped event cursors
 
 Runtime event order is defined inside one Session, not across the Runtime.
@@ -4738,9 +4926,11 @@ duplicate event. If neither
 terminal record can be persisted, `handle.result`, `runs.get()`, and
 `runs.await()` converge to `phase:'unknown'` with lifecycle code
 `run_settlement_not_persisted`; the Session execution fence stays closed.
-Credential-scoped failures may include a bounded `failureKind` (`auth`,
-`rate_limit`, `network`, `provider_aborted`, `invalid_response`,
-`runtime_cleanup`, or `provider`) without exposing raw provider text.
+When a classified fact exists, failed/cancelled terminal projections and
+settlement `run.updated` carry the same credential-safe `failureDetail` described in
+[Structured Runtime failures](#structured-credential-safe-runtime-failures),
+including its stable KodaX code, stage, bounded display message, and optional
+sanitized upstream metadata.
 Sandbox and managed-child termination failures are observed and retained as
 diagnostics rather than escaping as process-global unhandled rejections.
 If terminal status persistence fails but the Session event journal remains

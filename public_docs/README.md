@@ -37,6 +37,12 @@ management facade, and the startup/Worker lifecycle boundaries. Issue 256's
 remaining Worker owner-lease boundary remains open after v0.7.89; this release
 assigns no replacement target.
 
+The current source additionally documents structured, credential-safe Runtime
+`failureDetail`. Stable KodaX classification stays separate from optional
+bounded upstream identifiers, and failure/settlement events, Run result/status,
+and Session diagnostics project the same fact when it exists. This additive
+contract is recorded under `Unreleased` until the next npm publication.
+
 The v0.7.90 SDK guidance also documents orderly retirement for timed-out
 workspace sessions, actionable daemon Error/aggregate/cause diagnostics, direct
 clone-predecessor lineage and topology-correct archive markers, and provider-
@@ -95,7 +101,10 @@ stay host-owned when a non-empty CLI `uiHistory` exists.
 
 ## SDK
 
-- [Embedder Guide](./sdk/embedder-guide.md) — Full SDK integration guide for host applications, including explicit-vs-model Skill invocation and dynamic-context policy
+- [Embedder Guide](./sdk/embedder-guide.md) — Full SDK integration guide for
+  host applications, including
+  [structured credential-safe Runtime failures](./sdk/embedder-guide.md#structured-credential-safe-runtime-failures),
+  explicit-vs-model Skill invocation, and dynamic-context policy
 
 ## Guides
 

@@ -93,6 +93,33 @@ data/session root 下的 inline Runtime，不参与 Coder owner fence。capabili
 fail closed，不能静默退回 inline Coder。完整接入说明见
 [SDK Embedder Guide §23](public_docs/sdk/embedder-guide.md#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769)。
 
+### 结构化且凭据安全的 Runtime 错误（未发布）
+
+当前源码把这项增量契约记录在 `Unreleased`；使用已发布 v0.7.95 包的宿主必须在
+下次 npm 发布前兼容字段缺失。当 Runtime 已生成结构化失败事实时，失败和取消 Run
+会在终端事件、
+`handle.result` / `runs.await()`、
+`runs.get()` / `runs.list()` 以及 `sessions.diagnostics()` 中提供一致的
+`failureDetail`；Runtime 收尾失败形成 `unknown` 状态时通过 `run.updated` 透出。
+上述字段是可选的，只在 Runtime 已生成结构化失败事实时出现。宿主应按稳定的
+KodaX `providerErrorCode` 处理错误，向用户展示
+`safeMessage`；`upstreamErrorCode`、`requestId`、`httpStatus` 和
+`retryAfterMs` 仅作为可能缺失的支持信息。
+
+```ts
+const result = await handle.result;
+if (result.failureDetail) {
+  const { providerErrorCode, safeMessage, requestId } = result.failureDetail;
+  showFailure(safeMessage, { providerErrorCode, requestId });
+}
+```
+
+`safeMessage` 是长度受限的 KodaX 固定文案，不复制上游错误正文；Runtime 不会把
+凭据、prompt、请求/响应正文、原始 headers 集合、URL、完整本地路径、stack 或原始
+`Error` 复制进 `failureDetail`，仅提取文档明确列出的 allowlist 元数据。字段定义、
+分类表、迁移方法和安全边界详见
+[Structured Runtime failures](public_docs/sdk/embedder-guide.md#structured-credential-safe-runtime-failures)。
+
 **v0.7.71 Electron 打包修复**：packaged/asar Electron 宿主可以直接自动启动
 daemon，不会再次打开 GUI。`ELECTRON_RUN_AS_NODE` 只存在于子进程启动边界，
 在 daemon 与普通用户子进程代码加载前即被移除。该路径要求 Electron 默认开启的

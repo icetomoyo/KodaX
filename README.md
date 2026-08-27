@@ -433,6 +433,39 @@ const isolated = await createKodaXRuntime({
 });
 ```
 
+### Structured Runtime failures (unreleased)
+
+Current source records this additive contract under `Unreleased`; consumers of
+the published v0.7.95 package must tolerate an absent field until the next npm
+publication. When Runtime has a structured failure fact, failed/cancelled runs
+and unknown settlement states project the same credential-safe `failureDetail`
+through failure or settlement events, `handle.result` / `runs.await()`,
+`runs.get()` / `runs.list()`, and `sessions.diagnostics()`. Branch on the stable
+KodaX `providerErrorCode`; use `safeMessage` for display, and treat
+`upstreamErrorCode`, `requestId`, `httpStatus`, and `retryAfterMs` as optional
+support metadata.
+
+```ts
+const session = await isolated.sessions.create({ title: 'Repository summary' });
+const handle = await isolated.runs.start({
+  sessionId: session.id,
+  input: { type: 'text', text: 'Summarize this repo.' },
+});
+const result = await handle.result;
+
+if (result.failureDetail) {
+  const { providerErrorCode, safeMessage, requestId } = result.failureDetail;
+  showFailure(safeMessage, { providerErrorCode, requestId });
+}
+```
+
+`safeMessage` is a bounded KodaX-owned template, not copied upstream text. The
+Runtime never copies credentials, prompts, request/response bodies, raw header
+collections, URLs, full local paths, stacks, or raw `Error` objects into
+`failureDetail`; only the documented allowlisted metadata may be extracted.
+See [Structured Runtime failures](public_docs/sdk/embedder-guide.md#structured-credential-safe-runtime-failures)
+for the field contract, taxonomy, migration guidance, and security boundary.
+
 Inline is private and lowest-overhead; Worker is private and hard-disposable;
 daemon is process-isolated and shared. `runtime.close()` closes private
 inline/Worker ownership, but only detaches one daemon client. Contradictory
