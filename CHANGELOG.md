@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
+## [0.7.96-alpha.2] - 2026-08-28
+
+### Fixed
+
+- Restored the Windows boot-identity PowerShell resolution helper that the
+  FEATURE_295 cleanup deleted while its last caller stayed (Issue 325). On
+  v0.7.96-alpha.1 every Windows exit settlement crashed with
+  `windowsAclPowerShellExecutable is not defined` and left sandbox cleanup
+  `unverified`. v0.7.96-alpha.1 is broken on Windows; upgrade to
+  v0.7.96-alpha.2.
+
 ## [0.7.96-alpha.1] - 2026-08-28
 
 ### Fixed

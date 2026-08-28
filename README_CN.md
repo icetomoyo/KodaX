@@ -294,6 +294,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-alpha.2 发布（Windows 修复）**：恢复被 FEATURE_295 清理误删的
+Windows boot-identity PowerShell 解析函数（其唯一调用方仍保留）。在
+v0.7.96-alpha.1 上，每次 Windows exit settlement 都会以
+`windowsAclPowerShellExecutable is not defined` 崩溃，sandbox cleanup 只能标记为
+`unverified`；恢复后的实现附带 win32 回归测试，关闭 Issue 325。Windows 用户请
+从 v0.7.96-alpha.1 升级到 v0.7.96-alpha.2。详见
+[v0.7.96-alpha.2 发布清单](docs/release.md#v0796-alpha2-release-preparation)。
+
 **v0.7.96-alpha.1 发布**：所有桌面平台的受控
 文本工具与 shell containment 拆分为两个独立权威。`write`、`edit`、`multi_edit`、`insert_after_anchor`、
 `undo` 在可信 KodaX Runtime 中完成最终路径/identity 策略校验、跨 Runtime

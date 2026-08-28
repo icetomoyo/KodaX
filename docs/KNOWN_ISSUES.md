@@ -7,6 +7,18 @@ _Last Updated: 2026-08-28_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## v0.7.96-alpha.2 Release Corrections
+
+The v0.7.96-alpha.2 hotfix closes Issue 325: the FEATURE_295 cleanup deleted
+the `windowsAclPowerShellExecutable()` helper while its last caller in the
+Windows boot-identity probe stayed. On v0.7.96-alpha.1 every Windows exit
+settlement crashed with `windowsAclPowerShellExecutable is not defined`, so
+cleanup verification could only report `unverified`. The helper is restored
+verbatim and covered by a win32-only regression test that reproduces the
+crash when it is missing. The hotfix ships no feature or protocol changes.
+Issues 256, 307, 308, 309, and 321-324 remain Open as recorded below; none
+block this hotfix.
+
 ## v0.7.96-alpha.1 Release Corrections
 
 The v0.7.96-alpha.1 pre-release ships FEATURE_295 and FEATURE_296 and closes
@@ -173,6 +185,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
 | 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
 | 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
 | 322 | Medium | Open | Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns | FEATURE_296 breaker-bounded hard-pressure compaction | - | 2026-08-28 | - |
@@ -385,6 +398,35 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 325: Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined`
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: FEATURE_295 Windows boot identity probe
+- **Fixed**: v0.7.96-alpha.2
+- **Created**: 2026-08-28
+- **Resolved**: 2026-08-28
+
+#### Original Problem
+
+The FEATURE_295 cleanup commit deleted `windowsAclPowerShellExecutable()`
+together with its old ACL-doctor test path but missed its remaining caller in
+`readWindowsBootIdentity()`. Every Windows exit settlement then crashed with
+`ReferenceError: windowsAclPowerShellExecutable is not defined`, so settlement
+marked sandbox cleanup `unverified` instead of comparing boot identities. The
+bug reached npm `0.7.96-alpha.1` because the runner sources are bundled
+transpile-only (esbuild) and no CI gate type-checks `src/`; the Windows CI
+gates also exercise the clean-stop path that never calls the probe.
+
+#### Resolution
+
+The helper is restored verbatim from the pre-cleanup implementation: PowerShell
+7 under `ProgramFiles` when installed, otherwise Windows PowerShell 5.1. A
+win32-only regression test now drives `readWindowsSandboxBootIdentity()` and
+fails with the same `ReferenceError` when the helper is missing. A
+`tsconfig.typecheck.json` design to type-check `src/` in CI exists but is
+deferred behind pre-existing errors; see the alpha.2 release checklist.
 
 ### 324: Repeated same-file edits with identical line stats still collapse, dropping every diff but the last
 
@@ -13888,6 +13930,13 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-28: Issue 325 resolved (Windows boot-identity helper restore)
+
+- Restored `windowsAclPowerShellExecutable()` so the Windows boot-identity
+  probe resolves PowerShell 7 or Windows PowerShell 5.1 again; exit settlement
+  stops crashing with `ReferenceError` and cleanup verification works on
+  Windows. v0.7.96-alpha.1 is broken on Windows; upgrade to alpha.2.
 
 ### 2026-08-28: Issues 321-324 recorded (post-FEATURE_295 review follow-ups)
 

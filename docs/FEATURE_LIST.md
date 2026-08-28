@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-alpha.1` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-alpha.1` pre-release (npm publication remains manual) |
+| Current released version | `v0.7.96-alpha.2` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-alpha.2` pre-release (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Total tracked features | `80` |
 | InProgress | `1` |
@@ -28,7 +28,7 @@
 |---|---:|---|---|
 | Completed | 57 | `295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `295` (trusted text / native shell authority split) and `296` (capacity-debt admission) shipped in the v0.7.96-alpha.1 pre-release; `293` and `294` completed in v0.7.89. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
-| Planned, near-term | 0 | `-` | No near-term slot is planned after the v0.7.96-alpha.1 pre-release; Issue 256 descendant-closure remains open and npm publication remains manual. |
+| Planned, near-term | 0 | `-` | No near-term slot is planned after the v0.7.96-alpha.2 hotfix; Issue 256 descendant-closure remains open and npm publication remains manual. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -514,6 +514,17 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.96-alpha.2 Release Record
+
+`v0.7.96-alpha.2` is a GitHub pre-release hotfix on top of alpha.1. It
+restores the Windows boot-identity PowerShell resolution helper that the
+FEATURE_295 cleanup deleted while its last caller stayed (Issue 325): on
+alpha.1, every Windows exit settlement crashed with
+`windowsAclPowerShellExecutable is not defined` and left sandbox cleanup
+`unverified`. The hotfix ships no feature or protocol changes; Windows
+`sandboxRuntime:6`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2` are
+unchanged, and npm publication remains a manual maintainer step.
 
 ## v0.7.96-alpha.1 Release Record
 

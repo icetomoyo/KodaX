@@ -2,8 +2,8 @@
 
 > Last updated: 2026-08-28
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.1`
-> (`v0.7.96-alpha.1` Git tag / GitHub pre-release; npm publication remains manual)
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.2`
+> (`v0.7.96-alpha.2` Git tag / GitHub pre-release; npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:6`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >

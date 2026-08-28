@@ -755,6 +755,15 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+**v0.7.96-alpha.2 release (Windows hotfix):** restored the Windows
+boot-identity PowerShell resolution helper that the FEATURE_295 cleanup
+deleted while its last caller stayed. On v0.7.96-alpha.1 every Windows exit
+settlement crashed with `windowsAclPowerShellExecutable is not defined` and
+left sandbox cleanup `unverified`; the restored helper plus a win32 regression
+test close Issue 325. v0.7.96-alpha.1 is broken on Windows — upgrade to
+v0.7.96-alpha.2. See the
+[v0.7.96-alpha.2 release checklist](docs/release.md#v0796-alpha2-release-preparation).
+
 **v0.7.96-alpha.1 release:** controlled
 text tools and shell containment are separate authorities on every desktop
 platform. `write`, `edit`, `multi_edit`,

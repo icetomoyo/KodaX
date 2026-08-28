@@ -134,6 +134,43 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-alpha.2 release preparation
+
+Release state: the root package, all four workspace packages, and every
+`package-lock.json` workspace entry must be version `0.7.96-alpha.2`. This is
+a Windows-only hotfix pre-release for the `v0.7.96-alpha.2` tag and GitHub
+pre-release; npm publication remains a separate manual operator step. It
+includes every commit after `v0.7.96-alpha.1`:
+
+- Issue 325 fix: restore `windowsAclPowerShellExecutable()` in
+  `src/sandbox-runtime.ts` verbatim from the pre-cleanup implementation so the
+  Windows boot-identity probe resolves PowerShell 7 / Windows PowerShell 5.1
+  again, plus a win32-only regression test that reproduces the
+  `ReferenceError` when the helper is missing.
+- Docs: CHANGELOG alpha.2 entry, KNOWN_ISSUES Issue 325 record, this release
+  checklist, README/README_CN hotfix notes, baseline pointers
+  (PRD/HLD/DD/FEATURE_LIST/public_docs), the `alpha.1.1` version
+  normalization in `docs/features/v0.7.96.md`, and the Issue 325 regression
+  guide.
+
+Gates:
+
+1. Version agreement: root + 4 workspace packages + `package-lock.json`
+   workspace entries are `0.7.96-alpha.2`, matching this document and
+   `docs/features`.
+2. Windows regression coverage: the Windows boot identity resolution test
+   passes on real Windows (30 passed / 40 skipped in
+   `src/sandbox-runtime.test.ts`) and fails with the exact `ReferenceError`
+   when the fix is reverted (verified with a `git stash` RED check).
+3. Branch CI green on the hotfix commit on Node 20/22 before tagging. The
+   Release pipeline is unchanged by this hotfix, so the tag-triggered Release
+   workflow reuses the alpha.1 pipeline.
+4. Tag `v0.7.96-alpha.2` on the hotfix commit; the Release workflow publishes
+   the GitHub pre-release with the npm tarball and `SHA256SUMS`. npm
+   publication stays with the maintainer.
+
+Only after these gates pass is the commit tagged `v0.7.96-alpha.2`.
+
 ## v0.7.96-alpha.1 release preparation
 
 Release state: the root package, all four workspace packages, and every
