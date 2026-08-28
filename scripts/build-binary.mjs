@@ -39,6 +39,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -461,7 +462,9 @@ function buildOne(target, version) {
 }
 
 async function verifyHostBinary(binaryPath) {
-  const smokeHome = mkdtempSync(join(tmpdir(), 'kodax-binary-smoke-'));
+  // macOS tmpdir() sits under a /var symlink; the trusted text state root
+  // rejects symlinked agent-home ancestors, so resolve the real path first.
+  const smokeHome = mkdtempSync(join(realpathSync(tmpdir()), 'kodax-binary-smoke-'));
   try {
     const packageDir = join(smokeHome, 'package');
     cpSync(dirname(binaryPath), packageDir, { recursive: true });

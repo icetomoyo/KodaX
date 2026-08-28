@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,9 @@ if (tarballs.length !== 1) {
   throw new Error(`Expected exactly one packed KodaX tarball, found ${tarballs.length}.`);
 }
 
-const installation = mkdtempSync(path.join(os.tmpdir(), 'kodax-packed-native-'));
+// macOS tmpdir() sits under a /var symlink; the trusted text state root
+// rejects symlinked agent-home ancestors, so resolve the real path first.
+const installation = mkdtempSync(path.join(realpathSync(os.tmpdir()), 'kodax-packed-native-'));
 try {
   const configuredNpmCli = process.env.npm_execpath?.trim();
   const bundledNpmCli = path.join(
