@@ -1,5 +1,6 @@
 import type {
   KodaXRuntime,
+  RuntimeDaemonClientSnapshot,
   RuntimeDaemonManagementState,
   RuntimeDaemonPreflight,
   RuntimeDaemonRollbackInput,
@@ -17,7 +18,7 @@ import {
 
 export interface RuntimeDaemonManagementController {
   armOrphanExitAfterReady(): void;
-  attachClient(connectionId: string): void;
+  attachClient(client: RuntimeDaemonClientSnapshot): void;
   detachClient(connectionId: string): void;
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(): Promise<RuntimeDaemonPreflight>;
@@ -43,7 +44,7 @@ export function createRuntimeDaemonManagementController(input: {
 }
 
 class DaemonManagementController implements RuntimeDaemonManagementController {
-  private readonly clients = new Set<string>();
+  private readonly clients = new Map<string, RuntimeDaemonClientSnapshot>();
   private revision = 0;
   private activeMutations = 0;
   private readonly activeMutationMethods = new Map<RuntimeDaemonMethod, number>();
@@ -71,12 +72,12 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.scheduleOrphanExitCheck(this.input.orphanExitMs);
   }
 
-  attachClient(connectionId: string): void {
+  attachClient(client: RuntimeDaemonClientSnapshot): void {
     if (this.draining || this.closed) {
       throw managementError('conflict', 'Runtime daemon is draining and cannot attach another client.');
     }
-    if (this.clients.has(connectionId)) return;
-    this.clients.add(connectionId);
+    if (this.clients.has(client.daemonConnectionId)) return;
+    this.clients.set(client.daemonConnectionId, { ...client });
     this.orphanExitArmed = true;
     this.clientGeneration += 1;
     this.cancelOrphanExitCheck();
@@ -114,7 +115,10 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       const current = await this.input.runtime.status.preflight();
       this.observePreflight(current);
       if (before === this.revision && this.activeMutations === 0) {
-        return withLogicalClients(current, this.clients.size);
+        return withLogicalClients(
+          current,
+          [...this.clients.values()].map((client) => ({ ...client })),
+        );
       }
     }
     throw managementError('conflict', 'Runtime state changed while daemon preflight was being read.');
@@ -351,14 +355,15 @@ function integrationHealth(
 
 function withLogicalClients(
   current: RuntimeDaemonPreflight,
-  clientCount: number,
+  clients: readonly RuntimeDaemonClientSnapshot[],
 ): RuntimeDaemonPreflight {
   const blockers: Array<RuntimeDaemonPreflight['blockers'][number]> = current.blockers
     .filter((blocker) => blocker !== 'connected_clients');
-  if (clientCount > 1) blockers.push('connected_clients');
+  if (clients.length > 1) blockers.push('connected_clients');
   return {
     ...current,
-    clientCount,
+    clientCount: clients.length,
+    clients,
     blockers,
     canStop: blockers.length === 0,
   };

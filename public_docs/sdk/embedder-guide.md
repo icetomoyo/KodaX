@@ -4676,6 +4676,7 @@ const runtime = await connectKodaXRuntime({
   clientInfo: {
     name: 'kodax-space',
     version: '0.1.32',
+    clientType: 'app',
     instanceId: spaceInstallationId,
     instanceSecret: await spaceKeychain.readRuntimeClientSecret(),
   },
@@ -5477,6 +5478,18 @@ and `canStop`. The background-work blockers are `active_workflows` and
 `active_agent_tasks`. The current facade counts as one; daemon self-connections
 and bounded health probes do not count. A second process changes the count to
 two, and its awaited `close()` makes the count converge back to one.
+
+Daemons that advertise `daemonClientInventory:1` also return optional
+`preflight.clients`. Each entry contains a daemon-generated
+`daemonConnectionId`, the connection principal, bounded display metadata,
+`clientType`, and the server-recorded connection time. Connection IDs change
+after reconnect and principals are attribution, not destructive work-ownership
+proof. `name`, `title`, `version`, and `clientType` are self-reported,
+display-only hints; never use them for authorization, work ownership, or process
+control. Inventory never contains `instanceSecret`, daemon tokens, or other
+credentials. Consume it additively: when `clients` is absent, continue using
+`clientCount`. Do not require `daemonClientInventory:1` during a compatibility
+rollout unless the product cannot operate without it.
 
 Preflight is useful for UI, but it is not a stop authorization token. Use
 `runtime.daemon.inspect()` to obtain one consistent management revision,

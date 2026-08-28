@@ -21,6 +21,8 @@ import type {
   RuntimeClientCapabilities,
   RuntimeCompactSessionInput,
   RuntimeCreateSessionInput,
+  RuntimeDaemonClientSnapshot,
+  RuntimeDaemonClientType,
   RuntimeDaemonPreflight,
   RuntimeDaemonRollbackInput,
   RuntimeDiagnosticFilter,
@@ -85,6 +87,14 @@ import {
   type RuntimeDaemonReverseBridgeHub,
   type RuntimeDaemonReverseBridgeHubAttachment,
 } from "./reverse-bridge.js";
+
+const RUNTIME_DAEMON_CLIENT_DISPLAY_LIMITS = {
+  name: 128,
+  title: 256,
+  version: 64,
+} as const;
+const UNSAFE_RUNTIME_DAEMON_CLIENT_DISPLAY_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 export type RuntimeDaemonNotificationSink = (
   notification: RuntimeDaemonNotification,
@@ -722,7 +732,13 @@ export function createRuntimeDaemonDispatcher(
           options.management !== undefined
         ) {
           try {
-            options.management.attachClient(connectionId);
+            options.management.attachClient(
+              runtimeDaemonClientSnapshot(
+                connectionId,
+                principalId,
+                initializeParams?.clientInfo,
+              ),
+            );
             logicalClientAttached = true;
           } catch (error: unknown) {
             reverseBridgeAttachment?.close();
@@ -2179,6 +2195,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.managedRunDurability;
   delete safeOverrides.actorSettlementConvergence;
   delete safeOverrides.sessionEventJournal;
+  delete safeOverrides.daemonClientInventory;
   delete safeOverrides.daemonOrphanExit;
   delete safeOverrides.daemonShutdownVerification;
   delete safeOverrides.runtimeEventCoalescing;
@@ -2322,6 +2339,7 @@ function runtimeDaemonCapabilities(
     },
     ...(daemonManagement
       ? {
+          daemonClientInventory: { version: 1 },
           daemonManagement: {
             version: 1,
             logicalClientCount: true,
@@ -2838,6 +2856,53 @@ function parseRuntimeClientVersion(value: unknown): string | undefined {
     value.version.length > 0
     ? value.version
     : undefined;
+}
+
+function runtimeDaemonClientSnapshot(
+  daemonConnectionId: string,
+  principalId: string,
+  value: unknown,
+): RuntimeDaemonClientSnapshot {
+  const record = isRecord(value) ? value : {};
+  const name = daemonClientDisplayField(
+    record.name,
+    RUNTIME_DAEMON_CLIENT_DISPLAY_LIMITS.name,
+  );
+  const title = daemonClientDisplayField(
+    record.title,
+    RUNTIME_DAEMON_CLIENT_DISPLAY_LIMITS.title,
+  );
+  const version = daemonClientDisplayField(
+    record.version,
+    RUNTIME_DAEMON_CLIENT_DISPLAY_LIMITS.version,
+  );
+  return {
+    daemonConnectionId,
+    principalId,
+    ...(name !== undefined ? { name } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(version !== undefined ? { version } : {}),
+    clientType: runtimeDaemonClientType(record.clientType),
+    connectedAt: new Date().toISOString(),
+  };
+}
+
+function daemonClientDisplayField(value: unknown, limit: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized.length === 0 ||
+    UNSAFE_RUNTIME_DAEMON_CLIENT_DISPLAY_PATTERN.test(normalized)
+    ? undefined
+    : normalized.slice(0, limit);
+}
+
+function runtimeDaemonClientType(value: unknown): RuntimeDaemonClientType {
+  return value === "app" ||
+    value === "cli" ||
+    value === "diagnostic" ||
+    value === "automation"
+    ? value
+    : "unknown";
 }
 
 function requireStringArrayField(

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type {
   KodaXRuntime,
+  RuntimeDaemonClientSnapshot,
   RuntimeDaemonPreflight,
 } from '../sdk-runtime.js';
 import { createRuntimeDaemonManagementController } from './management.js';
@@ -30,11 +31,15 @@ describe('Runtime daemon orphan idle exit', () => {
       },
     });
 
-    controller.attachClient('space');
-    controller.attachClient('other-client');
+    controller.attachClient(client('space'));
+    controller.attachClient(client('other-client'));
     controller.detachClient('space');
     await delay(30);
     expect(stopRequests).toBe(0);
+    await expect(controller.preflight()).resolves.toMatchObject({
+      clientCount: 1,
+      clients: [{ daemonConnectionId: 'other-client' }],
+    });
 
     controller.detachClient('other-client');
     await waitUntil(() => stopRequests === 1);
@@ -60,7 +65,7 @@ describe('Runtime daemon orphan idle exit', () => {
       },
     });
 
-    controller.attachClient('space');
+    controller.attachClient(client('space'));
     controller.detachClient('space');
     await delay(35);
     expect(stopRequests).toBe(0);
@@ -80,10 +85,10 @@ describe('Runtime daemon orphan idle exit', () => {
       },
     });
 
-    controller.attachClient('space');
+    controller.attachClient(client('space'));
     controller.detachClient('space');
     await delay(5);
-    controller.attachClient('replacement-client');
+    controller.attachClient(client('replacement-client'));
     await delay(30);
     expect(stopRequests).toBe(0);
 
@@ -106,10 +111,10 @@ describe('Runtime daemon orphan idle exit', () => {
       },
     });
 
-    controller.attachClient('space');
+    controller.attachClient(client('space'));
     controller.detachClient('space');
     await delay(35);
-    controller.attachClient('replacement-client');
+    controller.attachClient(client('replacement-client'));
     controller.detachClient('replacement-client');
     resolvePreflight(idlePreflight());
     await delay(10);
@@ -196,6 +201,16 @@ function idlePreflight(): RuntimeDaemonPreflight {
     pendingUserInputs: [],
     blockers: [],
     canStop: true,
+  };
+}
+
+function client(daemonConnectionId: string): RuntimeDaemonClientSnapshot {
+  return {
+    daemonConnectionId,
+    principalId: daemonConnectionId,
+    name: daemonConnectionId,
+    clientType: 'unknown',
+    connectedAt: new Date(0).toISOString(),
   };
 }
 

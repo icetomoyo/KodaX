@@ -316,10 +316,20 @@ describe("runtime daemon host", () => {
     const first = await createRuntimeDaemonSocketClientTransport(host.endpoint);
     cleanupTasks.push(async () => internalSocket.close?.());
     cleanupTasks.push(async () => first.close?.());
+    const oversizedName = "s".repeat(160);
+    const oversizedTitle = "t".repeat(300);
+    const oversizedVersion = "v".repeat(80);
     const initialized = await first.request("initialize", {
       profile: "default",
       token,
-      clientInfo: { name: "space", instanceId: "space-client" },
+      clientInfo: {
+        name: oversizedName,
+        instanceId: "space-client",
+        instanceSecret: "space-client-secret-that-must-not-be-exposed",
+        title: oversizedTitle,
+        version: oversizedVersion,
+        clientType: "app",
+      },
     });
     expect(initialized).toMatchObject({
       capabilities: {
@@ -334,11 +344,21 @@ describe("runtime daemon host", () => {
           reverseBridgeDrainingFence: true,
           backgroundWorkPreflight: true,
         },
+        daemonClientInventory: { version: 1 },
       },
     });
 
     await expect(first.request("daemon.preflight")).resolves.toMatchObject({
       clientCount: 1,
+      clients: [{
+        daemonConnectionId: expect.stringMatching(/^connection_/),
+        principalId: "space-client",
+        name: oversizedName.slice(0, 128),
+        title: oversizedTitle.slice(0, 256),
+        version: oversizedVersion.slice(0, 64),
+        clientType: "app",
+        connectedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      }],
       blockers: [],
       canStop: true,
     });
@@ -359,7 +379,11 @@ describe("runtime daemon host", () => {
       runtimeId: string;
       revision: number;
       ownerPolicy: { revision: number };
+      preflight: { clients: readonly Record<string, unknown>[] };
     };
+    expect(stale.preflight.clients).toHaveLength(1);
+    expect(JSON.stringify(stale)).not.toContain("space-client-secret-that-must-not-be-exposed");
+    expect(JSON.stringify(stale)).not.toContain("instanceSecret");
 
     const second = await createRuntimeDaemonSocketClientTransport(
       host.endpoint,
@@ -368,15 +392,44 @@ describe("runtime daemon host", () => {
     await second.request("initialize", {
       profile: "default",
       token,
-      clientInfo: { name: "ide", instanceId: "ide-client" },
+      clientInfo: {
+        name: "space-reconnect",
+        instanceId: "space-client",
+        title: "\u001b[31mspoofed title",
+        version: "\u200F1.2.3",
+        clientType: "bot",
+      },
     });
-    await expect(first.request("daemon.preflight")).resolves.toMatchObject({
+    const concurrent = await first.request("daemon.preflight") as {
+      clientCount: number;
+      clients: readonly Record<string, unknown>[];
+      blockers: readonly string[];
+      canStop: boolean;
+    };
+    expect(concurrent).toMatchObject({
       clientCount: 2,
+      clients: [
+        { principalId: "space-client", name: oversizedName.slice(0, 128) },
+        {
+          principalId: "space-client",
+          name: "space-reconnect",
+          clientType: "unknown",
+        },
+      ],
       blockers: ["connected_clients"],
       canStop: false,
     });
+    expect(new Set(concurrent.clients.map((client) => client.daemonConnectionId)).size).toBe(2);
+    expect(concurrent.clients[1]).not.toHaveProperty("title");
+    expect(concurrent.clients[1]).not.toHaveProperty("version");
     await second.close?.();
     await waitForClientCount(first, 1);
+    const afterReconnectClosed = await first.request("daemon.preflight") as {
+      clients: readonly Record<string, unknown>[];
+    };
+    expect(afterReconnectClosed.clients).toHaveLength(1);
+    expect(afterReconnectClosed.clients[0]).not.toHaveProperty("instanceSecret");
+    expect(afterReconnectClosed.clients[0]).not.toHaveProperty("token");
 
     await expect(
       first.request("daemon.rollbackToInline", {

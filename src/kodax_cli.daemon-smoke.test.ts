@@ -669,6 +669,111 @@ describe('daemon CLI smoke', () => {
     ])).resolves.toMatchObject({ health: 'healthy' });
   }, 180_000);
 
+  it('removes a killed client and reconnects the same instance without a ghost entry', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-inventory-smoke-'));
+    tempRoots.push(homeDir);
+    const profile = `inventory-${process.pid}-${Date.now()}`;
+    const parent = await connectKodaXRuntime({
+      homeDir,
+      profile,
+      autoStart: true,
+      clientInfo: {
+        name: 'inventory-parent',
+        instanceId: 'inventory-parent',
+        clientType: 'diagnostic',
+      },
+      requirements: { daemonClientInventory: 1 },
+    });
+    const readyFile = path.join(homeDir, 'killed-client-ready');
+    const killedClientScript = `
+      const fs = await import('node:fs');
+      const { connectKodaXRuntime } = await import('./src/sdk-runtime.ts');
+      await connectKodaXRuntime({
+        homeDir: process.argv[1], profile: process.argv[2], autoStart: false,
+        clientInfo: {
+          name: 'inventory-killed-client',
+          instanceId: 'inventory-reconnect-instance',
+          clientType: 'automation',
+        },
+        requirements: { daemonClientInventory: 1 },
+      });
+      fs.writeFileSync(process.argv[3], 'ready', 'utf8');
+      setInterval(() => {}, 1000);
+    `;
+    const killedClient = spawn(process.execPath, [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      killedClientScript,
+      homeDir,
+      profile,
+      readyFile,
+    ], {
+      cwd: process.cwd(),
+      detached: process.platform !== 'win32',
+      env: { ...process.env, KODAX_TRACING: '0' },
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    rememberChildProcessTree(killedClient);
+
+    try {
+      await waitForFile(readyFile);
+      await waitForDaemonClientCount(parent, 2);
+      const beforeKill = await parent.status.preflight();
+      const killedEntry = beforeKill.clients?.find(
+        (client) => client.name === 'inventory-killed-client',
+      );
+      expect(killedEntry).toMatchObject({
+        principalId: 'inventory-reconnect-instance',
+        clientType: 'automation',
+      });
+      if (killedEntry === undefined) throw new Error('Killed client inventory entry is missing.');
+
+      await killChildProcessTree(killedClient, { forceMs: 2_000, taskkillMs: 5_000 });
+      await waitForDaemonClientCount(parent, 1);
+      expect((await parent.status.preflight()).clients).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ daemonConnectionId: killedEntry.daemonConnectionId }),
+        ]),
+      );
+
+      const reconnected = await connectKodaXRuntime({
+        homeDir,
+        profile,
+        autoStart: false,
+        clientInfo: {
+          name: 'inventory-reconnected-client',
+          instanceId: 'inventory-reconnect-instance',
+          clientType: 'automation',
+        },
+        requirements: { daemonClientInventory: 1 },
+      });
+      try {
+        const afterReconnect = await parent.status.preflight();
+        const reconnectEntries = afterReconnect.clients?.filter(
+          (client) => client.principalId === 'inventory-reconnect-instance',
+        );
+        expect(reconnectEntries).toHaveLength(1);
+        expect(reconnectEntries?.[0]).toMatchObject({
+          name: 'inventory-reconnected-client',
+          clientType: 'automation',
+        });
+        expect(reconnectEntries?.[0]?.daemonConnectionId)
+          .not.toBe(killedEntry.daemonConnectionId);
+      } finally {
+        await reconnected.close();
+      }
+      await waitForDaemonClientCount(parent, 1);
+    } finally {
+      if (killedClient.exitCode === null && killedClient.signalCode === null) {
+        await killChildProcessTree(killedClient, { forceMs: 2_000, taskkillMs: 5_000 });
+      }
+      await parent.close();
+    }
+  }, 120_000);
+
   it('converges process-distinct SDK clients and brokers a scoped credential without persistence', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-shared-smoke-'));
     tempRoots.push(homeDir);

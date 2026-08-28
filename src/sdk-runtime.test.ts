@@ -672,6 +672,40 @@ describe("createKodaXRuntime", () => {
     ).rejects.toThrow(/does not support.*daemonManagement/i);
   });
 
+  it("requires daemon client inventory only when an embedder explicitly opts in", async () => {
+    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method) {
+        if (method !== "initialize") return null;
+        return {
+          identity: {
+            runtimeId: "daemon-without-client-inventory",
+            mode: "daemon",
+            profile: "default",
+            startedAt: "2026-08-28T00:00:00.000Z",
+            version: "0.7.96-alpha.2",
+          },
+          capabilities: {
+            ...SESSION_EVENT_JOURNAL_CAPABILITY,
+            daemonManagement: { version: 1 },
+          },
+        };
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
+
+    const compatible = await connectKodaXRuntime({ transport });
+    await compatible.close();
+    await expect(
+      connectKodaXRuntime({
+        transport,
+        requirements: { daemonClientInventory: 1 },
+      }),
+    ).rejects.toThrow(/does not support.*daemonClientInventory/i);
+  });
+
   it("fails closed when a daemon lacks resilient integration configuration", async () => {
     const { connectKodaXRuntime } = await import("./sdk-runtime.js");
     const transport: RuntimeDaemonClientTransport = {
@@ -1044,7 +1078,11 @@ describe("createKodaXRuntime", () => {
       mode: "daemon",
       daemonTransport: transport,
       daemonToken: "token-sdk",
-      clientInfo: { name: "sdk-test", version: "0.7.66" },
+      clientInfo: {
+        name: "sdk-test",
+        version: "0.7.66",
+        clientType: "diagnostic",
+      },
       capabilities: { permissionPrompts: true, contextDiagnostics: true },
     });
     const session = await runtime.sessions.create({ title: "Daemon Session" });
@@ -1061,7 +1099,11 @@ describe("createKodaXRuntime", () => {
     expect(calls[0]?.params).toMatchObject({
       profile: "default",
       token: "token-sdk",
-      clientInfo: { name: "sdk-test", version: "0.7.66" },
+      clientInfo: {
+        name: "sdk-test",
+        version: "0.7.66",
+        clientType: "diagnostic",
+      },
       capabilities: { permissionPrompts: true, contextDiagnostics: true },
     });
   });

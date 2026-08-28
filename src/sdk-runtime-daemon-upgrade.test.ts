@@ -213,6 +213,63 @@ describe('Runtime daemon capability upgrade', () => {
     expect(newClose).toHaveBeenCalled();
   });
 
+  it('replaces an idle daemon for inventory only when the embedder explicitly requires it', async () => {
+    const calls: string[] = [];
+    const currentWithoutInventory = {
+      actorSettlementConvergence: { version: 2 },
+      crashOutcomeModel: { version: 2 },
+      daemonManagement: { version: 1 },
+      managedRunDurability: { version: 1 },
+      liveOutputSegments: { version: 1 },
+      runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+      runtimeEventCoalescing: { version: 1 },
+      sandboxRuntime: { version: 6 },
+      sessionEventJournal: { version: 1 },
+      ...(process.platform === 'win32'
+        ? { daemonShutdownVerification: { version: 1 } }
+        : {}),
+    };
+    const oldTransport = createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close: vi.fn(async () => undefined),
+      capabilities: currentWithoutInventory,
+      onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
+    });
+    const oldLease = createLease(
+      oldTransport,
+      initializeResult(RUNTIME_ID, currentWithoutInventory),
+    );
+    const newClose = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(oldLease)
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, newClose)));
+    upgradeMocks.readLockOwner.mockReturnValue({
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon',
+    });
+
+    const runtime = await connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+      requirements: { daemonClientInventory: 1 },
+    });
+
+    expect(runtime.identity.runtimeId).toBe('runtime_current');
+    expect(calls).toEqual([
+      'old:initialize',
+      'old:daemon.management.get',
+      'old:daemon.rollbackToInline',
+      'old:close',
+      'new:initialize',
+    ]);
+    await runtime.close();
+    expect(newClose).toHaveBeenCalled();
+  });
+
   it('replaces an idle v3 daemon when auto-start requires the v4 non-persistent fallback contract', async () => {
     const calls: string[] = [];
     const oldTransport = createLegacyTransport({
@@ -765,6 +822,7 @@ describe('Runtime daemon capability upgrade', () => {
       clientInfo: {
         name: 'kodax-sdk-capability-upgrade',
         instanceId: expect.stringMatching(/^sdk_upgrade_/),
+        clientType: 'automation',
       },
     });
     expect(initializedParams[0]).not.toMatchObject({
@@ -1403,6 +1461,8 @@ function createCurrentTransport(
         actorSettlementConvergence: { version: 2 },
         conversationHistory: { version: 2 },
         crashOutcomeModel: { version: 2 },
+        daemonClientInventory: { version: 1 },
+        daemonManagement: { version: 1 },
         managedRunDurability: { version: 1 },
         liveOutputSegments: { version: 1 },
         sandboxRuntime: { version: 6 },

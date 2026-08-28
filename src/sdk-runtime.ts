@@ -640,6 +640,7 @@ export interface RuntimeIdentity {
   readonly workerThreadId?: number;
 }
 
+/** Client-supplied metadata; display fields are not authenticated identity. */
 export interface RuntimeClientInfo {
   readonly name: string;
   /** Stable host-generated identity used only after daemon authentication. */
@@ -648,6 +649,31 @@ export interface RuntimeClientInfo {
   readonly instanceSecret?: string;
   readonly title?: string;
   readonly version?: string;
+  /** Display-only classification; never use it for authorization or process control. */
+  readonly clientType?: RuntimeDaemonClientType;
+}
+
+export type RuntimeDaemonClientType =
+  | "app"
+  | "cli"
+  | "diagnostic"
+  | "automation"
+  | "unknown";
+
+/**
+ * A read-only connection observation. Display metadata remains client-supplied
+ * and must not authorize work ownership, destructive actions, or process control.
+ */
+export interface RuntimeDaemonClientSnapshot {
+  /** Opaque daemon-generated identity for this connection; changes after reconnect. */
+  readonly daemonConnectionId: string;
+  /** Daemon-authenticated connection's claimed instance identity; not proof of destructive work ownership. */
+  readonly principalId: string;
+  readonly name?: string;
+  readonly title?: string;
+  readonly version?: string;
+  readonly clientType: RuntimeDaemonClientType;
+  readonly connectedAt: string;
 }
 
 export interface RuntimeClientCapabilities {
@@ -814,6 +840,8 @@ export interface RuntimeCapabilityRequirements {
   /** Require Session-local sequences, epoch-bound cursors, and scoped event access. */
   readonly sessionEventJournal?: 1;
   readonly daemonManagement?: 1;
+  /** Require a read-only inventory of initialized logical daemon clients. */
+  readonly daemonClientInventory?: 1;
   /** Require an auto-started daemon whose current host has orphan idle-exit enabled. */
   readonly daemonOrphanExit?: 1;
   /** Require authoritative durable shutdown plus kernel-backed process containment. */
@@ -3049,6 +3077,8 @@ export interface RuntimeStatusSnapshot {
 export interface RuntimeDaemonPreflight {
   readonly runtimeId: string;
   readonly clientCount: number;
+  /** Present only when the daemon advertises daemonClientInventory v1. */
+  readonly clients?: readonly RuntimeDaemonClientSnapshot[];
   readonly activeRuns: readonly RuntimeRunStatus[];
   readonly queuedRuns: readonly RuntimeRunStatus[];
   readonly activeWorkflows: readonly RuntimeWorkflowSummary[];
@@ -4704,6 +4734,7 @@ function assertRuntimeCapabilities(
     requirements?.actorSettlementConvergence === undefined &&
     requirements?.sessionEventJournal === undefined &&
     requirements?.daemonManagement === undefined &&
+    requirements?.daemonClientInventory === undefined &&
     requirements?.daemonOrphanExit === undefined &&
     requirements?.daemonShutdownVerification === undefined &&
     requirements?.runtimeEventCoalescing === undefined &&
@@ -4762,6 +4793,7 @@ function assertRuntimeCapabilities(
     ["actorSettlementConvergence", requirements.actorSettlementConvergence],
     ["sessionEventJournal", requirements.sessionEventJournal],
     ["daemonManagement", requirements.daemonManagement],
+    ["daemonClientInventory", requirements.daemonClientInventory],
     ["daemonOrphanExit", requirements.daemonOrphanExit],
     ["daemonShutdownVerification", requirements.daemonShutdownVerification],
     ["runtimeEventCoalescing", requirements.runtimeEventCoalescing],
@@ -4988,6 +5020,7 @@ function firstUpgradeableCapability(
     "liveOutputSegments",
     "daemonShutdownVerification",
     "sandboxRuntime",
+    "daemonClientInventory",
     "daemonOrphanExit",
   ] as const satisfies readonly (keyof RuntimeCapabilityRequirements)[];
   for (const name of upgradeOrder) {
@@ -5023,6 +5056,7 @@ function capabilityUpgradeClientInfo(): RuntimeClientInfo {
   return {
     name: "kodax-sdk-capability-upgrade",
     instanceId: `sdk_upgrade_${randomUUID().replace(/-/g, "")}`,
+    clientType: "automation",
   };
 }
 
@@ -5166,6 +5200,7 @@ async function connectPreparedExitSettlementRuntime(
       clientInfo: {
         name: "kodax-sdk-exit-settlement",
         instanceId: `sdk_exit_${randomUUID().replace(/-/g, "")}`,
+        clientType: "automation",
       },
       requirements: { daemonManagement: 1 },
     },
@@ -5318,6 +5353,9 @@ async function connectKodaXRuntimeInternal(
         : {}),
       ...(options.clientInfo?.version !== undefined
         ? { version: options.clientInfo.version }
+        : {}),
+      ...(options.clientInfo?.clientType !== undefined
+        ? { clientType: options.clientInfo.clientType }
         : {}),
     };
     // Capability-incompatible daemons get an ephemeral management identity:

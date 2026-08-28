@@ -1021,6 +1021,12 @@ describe('CLI interactive exit lifecycle', () => {
         mode: 'daemon',
         profile: 'default',
         autoStartDaemon: true,
+        clientInfo: {
+          name: 'kodax-cli',
+          title: 'KodaX CLI',
+          version: expect.any(String),
+          clientType: 'cli',
+        },
       });
       expect(harness.runtimeOptions[0]).not.toHaveProperty('homeDir');
       const replOptions = harness.runInkInteractiveMode.mock.calls[0]?.[0] as {

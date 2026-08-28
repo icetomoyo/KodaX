@@ -484,7 +484,7 @@ async function readDaemonRuntimeStatusSummary(
       profile: paths.profile,
       connectionPurpose: 'probe',
       ...(token !== undefined ? { token } : {}),
-      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI' },
+      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI', clientType: 'cli' },
       capabilities: { configAdmin: true },
     });
     return {
@@ -2210,7 +2210,7 @@ async function getDaemonStopResult(input: {
     const initialized = await transport.request('initialize', {
       profile: paths.profile,
       ...(token !== undefined ? { token } : {}),
-      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI' },
+      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI', clientType: 'cli' },
       capabilities: { configAdmin: true },
     });
     if (!daemonStopTargetMatches(initialized, stoppedState)) {
@@ -5267,6 +5267,16 @@ complete -c kodax -l version -d 'Show version'`);
       mode,
       profile: 'default',
       autoStartDaemon: mode === 'daemon',
+      ...(mode === 'daemon'
+        ? {
+            clientInfo: {
+              name: 'kodax-cli',
+              title: 'KodaX CLI',
+              version,
+              clientType: 'cli',
+            },
+          }
+        : {}),
       defaultProvider: options.provider,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
       ...(workerHostedEmbedded
