@@ -151,6 +151,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
+| 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
+| 322 | Medium | Open | Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns | FEATURE_296 breaker-bounded hard-pressure compaction | - | 2026-08-28 | - |
+| 321 | Medium | Open | Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts | v0.7.96 runtime failure-detail cancellation receipt | - | 2026-08-28 | - |
 | 320 | High | Resolved | Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link | FEATURE_295 Unix trusted text transaction | v0.7.96 development | 2026-08-28 | 2026-08-28 |
 | 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96 development | 2026-08-28 | 2026-08-28 |
 | 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96 development | 2026-08-27 | 2026-08-27 |
@@ -359,6 +363,131 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 324: Repeated same-file edits with identical line stats still collapse, dropping every diff but the last
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: FEATURE_067 tool summary collapse
+- **Created**: 2026-08-28
+
+#### Problem
+
+`collapseToolCalls` keys non-progress tools by `${summary}|${error ?? ""}` and a
+repeated hit overwrites `existing.tool` with the later call
+(packages/repl/src/ui/utils/tool-display.ts:847-852). The 39474d9b change made
+edit summaries output-derived (`edit - <path> - +N -M`), so repeated same-file
+edits stop collapsing only while the line stats differ. The common case of N
+sequential single-line edits — each `+1 -1`, e.g. renaming a symbol occurrence
+by occurrence — produces identical keys, collapses to `xN`, and renders only
+the final edit's diff rows. This directly contradicts that commit's stated
+"repeated same-file edits no longer collapse to x2, so every edit keeps its
+diff rows".
+
+#### Fix Direction
+
+Include `tool.id` in the collapse key for mutation tools
+(edit/write/multi_edit/insert_after_anchor), mirroring the existing
+`hasProgress` escape at :846-848, so identical-stat mutation calls never merge.
+Read-only tools keep the shared-key collapse.
+
+### 323: Quota-worded non-429 provider errors retry as rate limits but report as upstream errors
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.96 status-bucketed runtime failure taxonomy
+- **Created**: 2026-08-28
+
+#### Problem
+
+The coding resilience classifier marks `errorClass: "rate_limit"` from
+`KodaXRateLimitError` identity or message patterns
+(packages/coding/src/resilience/classifier.ts:203-218), and the llm retry path
+uses the same keyword family ('limit', 'busy', '1302', '503'…) accumulated
+from real provider quirks (packages/llm/src/providers/base.ts
+`isRateLimitError`). `classifyRuntimeKnownFailure` now requires
+`status === 429` (or an absent status) to report `providerErrorCode:
+rate_limited` (src/sdk-runtime.ts:21578). A provider answering 400/402 with
+quota wording is therefore retried up to three times with 60 s spacing by the
+coding layer, yet surfaced to embedders as `upstream_client_error`.
+`retryAfterMs` is typically absent on such responses, so an embedder keying
+rate-limit backoff UI off `providerErrorCode` loses the signal the retry layer
+acted on. The 503/529 → `upstream_server_error` mapping is pinned as
+intentional by the taxonomy test; the 400/402-with-quota-wording case is
+unpinned drift.
+
+#### Fix Direction
+
+Decide and pin one direction with a taxonomy test. Either accept
+`errorClass === "rate_limit"` into the `rate_limited` branch so reporting
+matches retry behavior — noting the keyword false-positive risk (a 400
+"invalid limit parameter" would enter the taxonomy), which argues for matching
+only when the underlying error is a `KodaXRateLimitError` rather than
+pattern-matched — or keep status-bucketed reporting and document the divergence
+in the embedder guide.
+
+### 322: Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: FEATURE_296 breaker-bounded hard-pressure compaction
+- **Created**: 2026-08-28
+
+#### Problem
+
+`tryIntelligentCompact` resets `nextFailures = 0` whenever
+`hasIrreducibleInput` holds — both in the still-over partial-success branch
+(packages/coding/src/agent-runtime/middleware/compaction-orchestration.ts:346-350)
+and the catch arm (:402-404). The in-code comment justifies only "must not
+consume or trip the summarizer breaker": an irreducible turn should leave the
+counter unchanged, not zero it. With the summarizer endpoint down and a
+workload that interleaves irreducible turns with ordinary hard-pressure turns,
+each irreducible turn resets the count that the following ordinary failures
+must rebuild, so the configured breaker limit may never trip and every
+hard-pressure turn keeps paying a doomed summary call before typed capacity.
+The file header (:9-13) and the function docstring (:134-138) also state
+unconditionally that "an open breaker returns typed capacity without another
+summary", contradicting the deliberate irreducible exception at :156.
+
+#### Fix Direction
+
+In both irreducible branches, keep the counter at
+`input.compactConsecutiveFailures` instead of resetting to 0, and update the
+header/docstring to record the irreducible exception. Do not "fix" this by
+making the :156 throw unconditional for irreducible input: one bounded summary
+attempt per turn is intentional — the request-copy degradation rung owns the
+oversized message, and shrinking history still helps the post-degradation
+request fit — so only the counter reset and the stale comments are defects.
+
+### 321: Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.96 runtime failure-detail cancellation receipt
+- **Created**: 2026-08-28
+
+#### Problem
+
+`runtimeCancellationFailureDetail()` hardcodes
+`safeMessage: "Runtime run was cancelled by the user."`
+(src/sdk-runtime.ts:21804-21811) and is the single constructor for cancelled
+failure details. All cancellation paths use it, including
+`cancelRun(record, "runtime closed", false)` on launch rejection (:9031), the
+internal executor abort "runtime run aborted" (:10281), and `closeAll(reason)`
+shutdown (:10401). A run ended by embedder runtime shutdown therefore ships a
+terminal fact and `safeMessage` asserting user attribution, and the
+host-provided cancel reason no longer appears in `terminal.message`. The
+neutral phrasing already exists in `runtimeFailurePublicMessage`
+("Runtime run was cancelled.", :21836); the cancellation path simply does not
+use it.
+
+#### Fix Direction
+
+Parameterize `runtimeCancellationFailureDetail` by cancellation source, or
+default to the existing neutral message and reserve "by the user" for the
+interactive stop path. Keep the host-provided reason visible in
+`terminal.message` — it is host-authored, not provider-controlled, so it is
+not a leakage surface.
 
 ### 320: Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link
 
@@ -13732,11 +13861,20 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 199 (30 Open, 169 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 203 (34 Open, 169 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-28: Issues 321-324 recorded (post-FEATURE_295 review follow-ups)
+
+- Review of the 13 commits after FEATURE_295 recorded four Medium follow-ups:
+  user attribution on every cancellation terminal (321), irreducible-input
+  compaction resetting the summarizer breaker counter (322), quota-worded
+  non-429 errors reporting as upstream errors while retrying as rate limits
+  (323), and identical-stat same-file edits still collapsing to the last diff
+  (324). All four are follow-up fixes; none block the 0.7.96 release.
 
 ### 2026-08-28: Issue 320 resolved (Unix pre-lock target read race)
 
