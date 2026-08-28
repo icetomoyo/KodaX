@@ -2,8 +2,8 @@
 
 > Last updated: 2026-08-28
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha`
-> (`v0.7.96-alpha` Git tag / GitHub pre-release; npm publication remains manual)
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.1`
+> (`v0.7.96-alpha.1` Git tag / GitHub pre-release; npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:6`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
@@ -178,7 +178,7 @@ signal so A2A cannot publish an empty successful answer, and Windows sandbox
 cleanup keeps ACL-mutating owners recoverable through background retries
 instead of manual marker deletion.
 
-The v0.7.96-alpha pre-release ships FEATURE_295 and FEATURE_296. Trusted text
+The v0.7.96-alpha.1 pre-release ships FEATURE_295 and FEATURE_296. Trusted text
 transactions and platform shell containment are separate authorities on every
 desktop platform: controlled text tools commit in the trusted KodaX Runtime
 with final identity policy, a cross-Runtime per-file kernel lock, revision

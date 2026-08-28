@@ -7,9 +7,9 @@ _Last Updated: 2026-08-28_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
-## v0.7.96-alpha Release Corrections
+## v0.7.96-alpha.1 Release Corrections
 
-The v0.7.96-alpha pre-release ships FEATURE_295 and FEATURE_296 and closes
+The v0.7.96-alpha.1 pre-release ships FEATURE_295 and FEATURE_296 and closes
 Issues 303-306, 310-320 (the sandbox v2, trusted-text, packaging, and review
 fixes recorded below and in [v0.7.96](features/v0.7.96.md)). Trusted text
 transactions and platform shell containment are now separate authorities:
@@ -177,24 +177,24 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
 | 322 | Medium | Open | Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns | FEATURE_296 breaker-bounded hard-pressure compaction | - | 2026-08-28 | - |
 | 321 | Medium | Open | Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts | v0.7.96 runtime failure-detail cancellation receipt | - | 2026-08-28 | - |
-| 320 | High | Resolved | Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link | FEATURE_295 Unix trusted text transaction | v0.7.96-alpha | 2026-08-28 | 2026-08-28 |
-| 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96-alpha | 2026-08-28 | 2026-08-28 |
-| 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 317 | High | Resolved | A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions | FEATURE_295 protected ASRT artifact import | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 316 | High | Resolved | A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5 | FEATURE_295 Windows atomic text replace | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 315 | Medium | Resolved | Native artifact staging exceeds legacy Windows path limits although the final cache path is valid | FEATURE_295 PowerShell 5.1 artifact staging | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 314 | High | Resolved | Per-command propagation of fixed sensitive-root denies serializes independent Windows shells | FEATURE_295 first native-shell draft | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 313 | High | Resolved | Stale inherited shared-account ACEs make every fresh Windows shell fail admission after reboot or setup | pre-FEATURE_295 shared-account ACL grants | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 312 | High | Resolved | A dead Windows shell request makes native control-state repair permanently reject the non-empty directory | FEATURE_295 protected native shell control state | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 311 | High | Resolved | Windows Session event cursor replacement fails under a non-delete-sharing handle and workspace shell authority includes Runtime state | Runtime per-Session sequence cursor / workspace shell root grant | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
-| 310 | High | Resolved | Trusted Write cannot replace a Windows file owned by an old or current sandbox identity | FEATURE_295 Windows metadata preservation | v0.7.96-alpha | 2026-08-27 | 2026-08-27 |
+| 320 | High | Resolved | Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link | FEATURE_295 Unix trusted text transaction | v0.7.96-alpha.1 | 2026-08-28 | 2026-08-28 |
+| 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96-alpha.1 | 2026-08-28 | 2026-08-28 |
+| 318 | High | Resolved | Native shell admission writes traversal ACEs to every allow-root ancestor and can hang while Windows propagates a profile DACL | FEATURE_295 first native capability plan | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 317 | High | Resolved | A hash-correct package hardlink is rejected before ASRT runner import and silently sends Windows Bash to normal permissions | FEATURE_295 protected ASRT artifact import | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 316 | High | Resolved | A concurrent Windows reader can win the final replace race and make trusted Write return Win32 error 5 | FEATURE_295 Windows atomic text replace | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 315 | Medium | Resolved | Native artifact staging exceeds legacy Windows path limits although the final cache path is valid | FEATURE_295 PowerShell 5.1 artifact staging | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 314 | High | Resolved | Per-command propagation of fixed sensitive-root denies serializes independent Windows shells | FEATURE_295 first native-shell draft | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 313 | High | Resolved | Stale inherited shared-account ACEs make every fresh Windows shell fail admission after reboot or setup | pre-FEATURE_295 shared-account ACL grants | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 312 | High | Resolved | A dead Windows shell request makes native control-state repair permanently reject the non-empty directory | FEATURE_295 protected native shell control state | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 311 | High | Resolved | Windows Session event cursor replacement fails under a non-delete-sharing handle and workspace shell authority includes Runtime state | Runtime per-Session sequence cursor / workspace shell root grant | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
+| 310 | High | Resolved | Trusted Write cannot replace a Windows file owned by an old or current sandbox identity | FEATURE_295 Windows metadata preservation | v0.7.96-alpha.1 | 2026-08-27 | 2026-08-27 |
 | 309 | Medium | Open | An explicit ambient compatibility ACE can bypass a later Windows root capability | Windows v2 Codex-compatible restricted token | - | 2026-08-27 | - |
 | 308 | Medium | Open | ASRT's fixed Windows proxy range caps simultaneous distinct network-policy brokers | ASRT 0.0.65 Windows network proxy | - | 2026-08-27 | - |
 | 307 | High | Open | ASRT launches the shared-account Windows shell runner before KodaX can attach a creation-time process DACL or Job | Windows v2 ASRT runner bootstrap | - | 2026-08-26 | - |
-| 306 | High | Resolved | ASRT Windows consumes runner stdin as control data, so sandboxed text helpers inherit EOF and every real write fails | Windows ASRT process backend through 0.0.73 | v0.7.96-alpha | 2026-08-25 | 2026-08-26 |
-| 305 | Medium | Resolved | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | v0.7.96-alpha | 2026-08-25 | 2026-08-26 |
-| 304 | High | Resolved | A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable | v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5) | v0.7.96-alpha | 2026-08-24 | 2026-08-25 |
-| 303 | High | Resolved | Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable | bundled (Bun `--compile`) Windows builds | v0.7.96-alpha | 2026-08-24 | 2026-08-24 |
+| 306 | High | Resolved | ASRT Windows consumes runner stdin as control data, so sandboxed text helpers inherit EOF and every real write fails | Windows ASRT process backend through 0.0.73 | v0.7.96-alpha.1 | 2026-08-25 | 2026-08-26 |
+| 305 | Medium | Resolved | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | v0.7.96-alpha.1 | 2026-08-25 | 2026-08-26 |
+| 304 | High | Resolved | A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable | v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5) | v0.7.96-alpha.1 | 2026-08-24 | 2026-08-25 |
+| 303 | High | Resolved | Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable | bundled (Bun `--compile`) Windows builds | v0.7.96-alpha.1 | 2026-08-24 | 2026-08-24 |
 | 302 | High | Resolved | Runtime completion fallback could publish an empty A2A answer before the coding result settled | v0.7.79 Runtime completion fallback | v0.7.95 release | 2026-08-23 | 2026-08-23 |
 | 301 | High | Resolved | Stale invalid learning lock could stall interactive work and TUI teardown lacked a direct terminal restore fallback | shared learning lock / fullscreen TUI | v0.7.95 release | 2026-08-23 | 2026-08-23 |
 | 300 | Medium | Resolved | Sandboxed git `safe.directory` trust set misaligned with authorized roots | v0.7.93 ASRT 0.0.65 git trust | v0.7.94 | 2026-08-20 | 2026-08-21 |
@@ -516,7 +516,7 @@ not a leakage surface.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 Unix trusted text transaction
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-28
 - **Resolved**: 2026-08-28
 
@@ -542,7 +542,7 @@ one written and one stale result; different namespace slots remain parallel.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 packaged Electron native verification
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-28
 - **Resolved**: 2026-08-28
 
@@ -570,7 +570,7 @@ embedder guide publishes the same packaging contract for host applications.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 first native capability plan
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -602,7 +602,7 @@ under the original 15-second budget.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 protected ASRT artifact import
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -634,7 +634,7 @@ rejects later source-byte tampering.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 Windows atomic text replace
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -658,7 +658,7 @@ that every successful read is exactly an old or new revision, never partial.
 - **Priority**: Medium
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 PowerShell 5.1 artifact staging
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -677,7 +677,7 @@ test covers the exact boundary.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 first native-shell draft
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -699,7 +699,7 @@ artifact-cache parents are not recursively stamped.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: pre-FEATURE_295 shared-account ACL grants
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -728,7 +728,7 @@ remains open as Issue 309.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 protected native shell control state
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -771,7 +771,7 @@ the DACL. Doctor remains verify-only.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: Runtime per-Session sequence cursor / workspace shell root grant
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -818,7 +818,7 @@ records, or grants while ordinary workspace files remain writable.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: FEATURE_295 Windows metadata preservation
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-27
 - **Resolved**: 2026-08-27
 
@@ -986,7 +986,7 @@ independence of trusted text transactions.
 - **Priority**: Medium
 - **Status**: Resolved
 - **Introduced**: v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review)
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-25
 - **Resolved**: 2026-08-26
 
@@ -1020,7 +1020,7 @@ provisioning cannot recreate a cross-Runtime admission lock.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: Windows ASRT process backend through 0.0.73
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-25
 - **Resolved**: 2026-08-26
 
@@ -1054,7 +1054,7 @@ fallback remains.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5)
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-24
 - **Resolved**: 2026-08-25
 
@@ -1142,7 +1142,7 @@ session execution model is superseded.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: bundled (Bun `--compile`) Windows builds
-- **Fixed**: v0.7.96-alpha
+- **Fixed**: v0.7.96-alpha.1
 - **Created**: 2026-08-24
 - **Resolved**: 2026-08-24
 
@@ -14013,7 +14013,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
   this same upstream bootstrap window. FEATURE_295 does
   not broaden this residual to trusted text tools, which never use ASRT.
 
-### 2026-08-25: Issue 304 resolved (v0.7.96-alpha)
+### 2026-08-25: Issue 304 resolved (v0.7.96-alpha.1)
 - Workspace session closes now defer behind live leases (defer-before-evict,
   lease re-check at fence commit, entry-registered in-flight drain set) so a
   long-lived background command keeps its session reusable instead of parking
@@ -14035,7 +14035,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
   a design decision (bounded wait, lease-aware close abandonment, or fence-owner
   sharing).
 
-### 2026-08-24: Issue 303 resolved (v0.7.96-alpha)
+### 2026-08-24: Issue 303 resolved (v0.7.96-alpha.1)
 - Bundled Windows builds now ship a `vendor/srt-win/<arch>/srt-win.exe` sidecar
   and resolve it from `resolveSrtWinSourcePath()` instead of the ASRT
   library's module-relative lookup, which points onto Bun's virtual `B:\`

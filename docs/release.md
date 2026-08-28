@@ -134,11 +134,11 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-alpha release preparation
+## v0.7.96-alpha.1 release preparation
 
 Release state: the root package, all four workspace packages, and every
-`package-lock.json` workspace entry must be version `0.7.96-alpha`. This
-pre-release is prepared for the `v0.7.96-alpha` tag and GitHub Release (marked
+`package-lock.json` workspace entry must be version `0.7.96-alpha.1`. This
+pre-release is prepared for the `v0.7.96-alpha.1` tag and GitHub Release (marked
 as a pre-release); npm publication remains a separate manual operator step. It
 includes every commit after `v0.7.95`:
 
@@ -184,7 +184,7 @@ Before tagging, all of the following must be true:
 
 1. all package versions, `CHANGELOG.md`, README/README_CN, PRD/HLD/DD/ADR,
    feature tracker, known-issue record, public docs, this checklist,
-   `docs/features`, and `kodax_manual` agree on v0.7.96-alpha;
+   `docs/features`, and `kodax_manual` agree on v0.7.96-alpha.1;
 2. focused tests cover the trusted-text/native-shell authority split, the
    `sandboxRuntime:6` cutover fencing, capacity-debt admission and the
    recovery ladder, `context_capacity` terminal classification,
@@ -192,7 +192,7 @@ Before tagging, all of the following must be true:
    v0.7.95 regression contracts;
 3. TypeScript, config-template checks, bundled SDK/Worker/sidecar builds, fast,
    unit, contract, and system suites pass;
-4. the packed `kodax-ai-kodax-0.7.96-alpha.tgz` is inspected and
+4. the packed `kodax-ai-kodax-0.7.96-alpha.1.tgz` is inspected and
    smoke-installed into an empty consumer for the root package and all 12 SDK
    subpaths;
 5. root and `docs/features` are clean, with the submodule commit reachable from
@@ -203,7 +203,7 @@ Before tagging, all of the following must be true:
    produces all platform archives, sidecars, and `SHA256SUMS` as a GitHub
    pre-release. npm publication is left to the maintainer.
 
-Only after these gates pass may the exact commit be tagged `v0.7.96-alpha`.
+Only after these gates pass may the exact commit be tagged `v0.7.96-alpha.1`.
 
 ## v0.7.95 release preparation
 

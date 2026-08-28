@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
-## [0.7.96-alpha] - 2026-08-28
+## [0.7.96-alpha.1] - 2026-08-28
 
 ### Fixed
 

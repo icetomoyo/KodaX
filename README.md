@@ -755,7 +755,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-alpha release:** controlled
+**v0.7.96-alpha.1 release:** controlled
 text tools and shell containment are separate authorities on every desktop
 platform. `write`, `edit`, `multi_edit`,
 `insert_after_anchor`, and `undo` run in the trusted KodaX Runtime with final
@@ -840,7 +840,7 @@ exposes one credential-safe `failureDetail` across failure events, Run
 result/status, and Session diagnostics. It advertises Windows
 `sandboxRuntime:6`; `runtimeExitSettlement:2` and `crashOutcomeModel:2` are
 unchanged. See the
-[v0.7.96-alpha release checklist](docs/release.md#v0796-alpha-release-preparation).
+[v0.7.96-alpha.1 release checklist](docs/release.md#v0796-alpha1-release-preparation).
 
 **v0.7.95 release:** stale learning locks with zero-byte,
 malformed, or truncated owner records self-recover after an unchanged

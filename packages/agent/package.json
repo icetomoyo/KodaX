@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/agent",
-  "version": "0.7.96-alpha",
+  "version": "0.7.96-alpha.1",
   "description": "KodaX Agent — 通用 Agent 框架（智能体底座）。Agent / Runner / Handoff / Guardrail / Admission / Messaging / Orchestration / Memory / Team / Scratchpad / Construction / Runtime middleware。不绑定 coding。",
   "private": true,
   "type": "module",

@@ -2,7 +2,7 @@
 
 > Last updated: 2026-08-28
 >
-> **v0.7.96-alpha release addendum:** trusted text transactions and platform
+> **v0.7.96-alpha.1 release addendum:** trusted text transactions and platform
 > shell containment are separate authorities on Windows, Linux, and macOS
 > (ADR-066). Controlled text tools commit in the trusted KodaX Runtime with
 > final identity policy, a cross-Runtime per-file kernel lock, revision CAS,
@@ -5406,7 +5406,7 @@ team, codex cross-check) in this repository's session records.
 
 ## ADR-066: Trusted Text Transactions and a Native Windows Shell Sandbox Are Separate Authorities
 
-**Status**: Accepted and shipped in v0.7.96-alpha (revised 2026-08-27).
+**Status**: Accepted and shipped in v0.7.96-alpha.1 (revised 2026-08-27).
 
 **Driver**: the production `write` failure in session
 `20260825_215704_r8107f13f0eec3` exposed two concerns that the legacy design
@@ -5729,7 +5729,7 @@ concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
 
-**Status**: Accepted and shipped in v0.7.96-alpha (2026-08-27); supersedes
+**Status**: Accepted and shipped in v0.7.96-alpha.1 (2026-08-27); supersedes
 the Issue 158 closure record's hard-gate defaults.
 
 **Driver**: an SDK embedder lost runs to `ToolResultBatchCapacityError`

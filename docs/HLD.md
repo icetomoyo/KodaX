@@ -2,8 +2,8 @@
 
 > Last updated: 2026-08-28
 >
-> Current published baseline: `v0.7.96-alpha`
-> (`@kodax-ai/kodax@0.7.96-alpha`; Windows `sandboxRuntime:6`,
+> Current published baseline: `v0.7.96-alpha.1`
+> (`@kodax-ai/kodax@0.7.96-alpha.1`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
 >

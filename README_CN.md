@@ -294,7 +294,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96-alpha 发布**：所有桌面平台的受控
+**v0.7.96-alpha.1 发布**：所有桌面平台的受控
 文本工具与 shell containment 拆分为两个独立权威。`write`、`edit`、`multi_edit`、`insert_after_anchor`、
 `undo` 在可信 KodaX Runtime 中完成最终路径/identity 策略校验、跨 Runtime
 逐文件内核锁、revision CAS、元数据保留的 flush 后原子替换与受保护 native 状态根；它们不进入 ASRT、workspace
@@ -354,7 +354,7 @@ tool-result 容量硬门禁（ADR-067），本地容量终态归类为
 结果/状态与 Session 诊断提供同一份凭据安全的 `failureDetail`。本版本广告
 Windows `sandboxRuntime:6`；`runtimeExitSettlement:2` 与 `crashOutcomeModel:2`
 不变。详见
-[v0.7.96-alpha 发布清单](docs/release.md#v0796-alpha-release-preparation)。
+[v0.7.96-alpha.1 发布清单](docs/release.md#v0796-alpha1-release-preparation)。
 
 **v0.7.95 发布**：零字节、畸形或截断 owner 的过期 learning lock
 会在字节与 stat 二次确认未变后自动恢复。同一次 Windows 启动内的
