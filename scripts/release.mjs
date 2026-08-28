@@ -8,32 +8,54 @@
 // Why one script now: ADR-022 — npm distribution is a single bundle. There
 // is no longer a multi-package dependency-order publish to orchestrate.
 //
-// Usage:
-//   node scripts/release.mjs --dry-run    # full sweep, no real publish
-//   node scripts/release.mjs              # real publish (irreversible)
-//   node scripts/release.mjs --otp=123456 # pass OTP for npm 2FA
-//   node scripts/release.mjs --skip-build # assume dist/ is already built (advanced)
-//   node scripts/release.mjs --pack-only  # produce kodax-ai-kodax-<v>.tgz at repo root
-//                                         # for local `npm install <path>` SDK consumer testing
-//                                         # (no publish; package.json restored via try/finally)
+// FEATURE_295 (v0.7.96): the package embeds prebuilt native authorities for
+// five platforms, and Rust artifacts must be compiled on their target
+// OS/arch — a single machine can never assemble the universal tarball. The
+// publishable bytes are therefore built by the Release workflow (tag push →
+// five platform runners → npm-package job) and attached to the GitHub
+// Release; this script fetches those exact audited bytes for publishing.
 //
-// Steps:
+// Usage:
+//   node scripts/release.mjs              # real publish (irreversible):
+//                                          # download the CI-built universal tarball
+//                                          # from the GitHub Release for v<version>,
+//                                          # verify sha256 + sidecar audit, then
+//                                          # npm publish those exact bytes. Requires
+//                                          # tag v<version> pushed and the Release
+//                                          # workflow green.
+//   node scripts/release.mjs --dry-run    # same download + verification, publish --dry-run
+//   node scripts/release.mjs --otp=123456 # pass OTP for npm 2FA
+//   node scripts/release.mjs --pack-only  # local `npm install <path>` SDK consumer
+//                                          # testing tarball at repo root (no publish).
+//                                          # All five authorities present (CI): the
+//                                          # audited universal publish candidate.
+//                                          # Host authority only (local machine): a
+//                                          # LOCAL TEST TARBALL that keeps private:true,
+//                                          # so npm refuses to publish it.
+//   node scripts/release.mjs --skip-build --pack-only
+//                                         # assume dist/ is already built (advanced)
+//
+// Publish steps (default mode):
 //   1. Verify git is clean (no uncommitted changes).
-//   2. Build sub-package dist/ via `npm run build:packages` (esbuild needs them).
-//   3. Build root bundle via `npm run build:bundle`.
-//   4. Toggle root package.json `private: true` → `private: false` so npm
-//      will accept the publish. Capture pristine bytes for restore.
-//      Name / exports / bin / publishConfig are NOT rewritten — root
-//      package.json is already in published shape (v0.7.43 SDK consumer
-//      `npm link` ergonomics: name=@kodax-ai/kodax, all SDK subpath
-//      exports baked in, bin path published-clean). See ADR-024.
-//   5. Pack and audit the exact candidate archive, then publish that same
-//      tarball (or stop after pack / run npm's dry-run).
-//   6. Restore pristine package.json bytes — re-asserts `private: true`
-//      so the dev tree cannot be accidentally re-published bare.
+//   2. Download kodax-ai-kodax-<v>.tgz + kodax-ai-kodax-npm.sha256 from the
+//      GitHub Release for tag v<version> (built by the Release workflow).
+//   3. Verify the tarball sha256 against the checksum asset, then re-run
+//      the sidecar tarball audit on the downloaded bytes.
+//   4. `npm publish <tgz> --registry=https://registry.npmjs.org/` — the CI
+//      pack already set private:false inside the tarball; no local toggle.
+//
+// Pack-only steps:
+//   1. Build (unless --skip-build) and guard the local dist/ (bundle import,
+//      worker sidecar, native authorities — all five on CI, host-only check
+//      on a local machine).
+//   2. Universal (CI): toggle private:true → false for the publish
+//      candidate, `npm pack`, audit the exact candidate bytes, restore
+//      package.json via try/finally.
+//      Host-only (local): `npm pack` with private still true — the tarball
+//      is consumable via `npm install <path>` but npm refuses to publish it.
 //
 // Idempotent failure mode: pristine bytes are captured BEFORE any mutation;
-// restore writes them back verbatim even if npm publish throws.
+// restore writes them back verbatim even if npm pack throws.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -116,7 +138,7 @@ function assertSemanticWorkerSidecar(dir) {
   }
 }
 
-function assertNativeArtifacts(dir) {
+function assertNativeArtifacts(dir, platformFilter = null) {
   const platforms = [
     ['win32', 'x64', 'kodax-windows-text-transaction.node'],
     ['linux', 'x64', 'kodax-text-transaction.node'],
@@ -124,7 +146,16 @@ function assertNativeArtifacts(dir) {
     ['darwin', 'x64', 'kodax-text-transaction.node'],
     ['darwin', 'arm64', 'kodax-text-transaction.node'],
   ];
-  for (const [platform, arch, textFilename] of platforms) {
+  // platformFilter narrows the assertion to the given [platform, arch] pairs —
+  // used by the LOCAL TEST TARBALL path where only the host authority can
+  // exist. A filter that matches nothing is always a caller bug.
+  const selected = platformFilter === null
+    ? platforms
+    : platforms.filter(([p, a]) => platformFilter.some(([fp, fa]) => fp === p && fa === a));
+  if (selected.length === 0) {
+    throw new Error('assertNativeArtifacts platform filter matched no supported platform');
+  }
+  for (const [platform, arch, textFilename] of selected) {
     const nativeDirectory = path.join(dir, 'native', `${platform}-${arch}`);
     const manifestPath = path.join(nativeDirectory, 'manifest.json');
     if (!existsSync(manifestPath)) {
@@ -285,7 +316,68 @@ function findPackageLockVersionMismatches(version) {
 
 // ---- main ----------------------------------------------------------------
 
-function main() {
+const REQUIRED_NATIVE_TARBALL_ENTRIES = [
+  'package/dist/native/win32-x64/manifest.json',
+  'package/dist/native/win32-x64/kodax-windows-text-transaction.node',
+  'package/dist/native/win32-x64/kodax-windows-sandbox.exe',
+  'package/dist/native/linux-x64/manifest.json',
+  'package/dist/native/linux-x64/kodax-text-transaction.node',
+  'package/dist/native/linux-arm64/manifest.json',
+  'package/dist/native/linux-arm64/kodax-text-transaction.node',
+  'package/dist/native/darwin-x64/manifest.json',
+  'package/dist/native/darwin-x64/kodax-text-transaction.node',
+  'package/dist/native/darwin-arm64/manifest.json',
+  'package/dist/native/darwin-arm64/kodax-text-transaction.node',
+];
+
+const NATIVE_PLATFORM_DIRECTORIES = [
+  'win32-x64',
+  'linux-x64',
+  'linux-arm64',
+  'darwin-x64',
+  'darwin-arm64',
+];
+
+function universalNativeAuthoritiesPresent() {
+  return NATIVE_PLATFORM_DIRECTORIES.every((directory) => existsSync(
+    path.join(repoRoot, 'dist', 'native', directory, 'manifest.json'),
+  ));
+}
+
+function hostNativeTarballEntries() {
+  const prefix = `package/dist/native/${process.platform}-${process.arch}/`;
+  const entries = REQUIRED_NATIVE_TARBALL_ENTRIES.filter((entry) => entry.startsWith(prefix));
+  if (entries.length === 0) {
+    throw new Error(`${process.platform}-${process.arch} has no native text authority entries`);
+  }
+  return entries;
+}
+
+function githubRepositorySlug(pkg) {
+  const url = typeof pkg.repository?.url === 'string' ? pkg.repository.url : '';
+  const match = /^git\+https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url)
+    ?? /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
+  if (match === null) {
+    throw new Error('root package.json#repository.url must point at github.com to publish the CI-built tarball');
+  }
+  return `${match[1]}/${match[2]}`;
+}
+
+async function downloadReleaseAsset(slug, version, filename) {
+  const url = `https://github.com/${slug}/releases/download/v${version}/${filename}`;
+  const response = await fetch(url);
+  if (response.status === 404) {
+    throw new Error(
+      `GitHub Release v${version} has no asset ${filename}. Push tag v${version} and wait for the Release workflow to complete, then retry.`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`Downloading ${url} failed with HTTP ${response.status}.`);
+  }
+  return response;
+}
+
+async function main() {
   // Sanity: git clean (uncommitted changes risk shipping unexpected dist).
   // Hard fail for real publish; warn-only for dry-run / pack-only (so
   // operators can still produce a local tarball or validate the pipeline
@@ -303,7 +395,11 @@ function main() {
   const version = pkg.version;
 
   log(`Version: ${version}`);
-  log(`Mode: ${packOnly ? 'PACK-ONLY (local tarball for SDK consumer testing)' : isDryRun ? 'DRY RUN' : 'REAL PUBLISH (irreversible)'}`);
+  if (packOnly) {
+    log('Mode: PACK-ONLY (local tarball for SDK consumer testing)');
+  } else {
+    log(`Mode: ${isDryRun ? 'DRY RUN' : 'REAL PUBLISH (irreversible)'} — CI-built universal tarball`);
+  }
   log('');
 
   // Sanity: package-lock must agree with package.json on the version (root +
@@ -320,79 +416,111 @@ function main() {
     }
   }
 
-  // Step 1: build sub-packages, esbuild bundle, and root .d.ts.
-  // `npm run build` is the single safe entry — it chains
-  // build:packages → build:bundle → `tsc --emitDeclarationOnly`. The
-  // trailing tsc step adds dist/*.d.ts WITHOUT touching dist/*.js
-  // (--emitDeclarationOnly is the critical guard — plain `tsc` would
-  // overwrite the esbuild bundle with unbundled tsc output and ship
-  // a broken tarball).
+  if (packOnly) {
+    packLocalTarball(version);
+    return;
+  }
+  await publishCiTarball(pkg, version);
+}
+
+function packLocalTarball(version) {
+  const dist = path.join(repoRoot, 'dist');
+  const tarballPath = path.join(repoRoot, `kodax-ai-kodax-${version}.tgz`);
+
+  // `npm run build` is the single safe entry — it chains build:packages →
+  // build:bundle → `tsc --emitDeclarationOnly`. The trailing tsc step adds
+  // dist/*.d.ts WITHOUT touching dist/*.js (--emitDeclarationOnly is the
+  // critical guard — plain `tsc` would overwrite the esbuild bundle with
+  // unbundled tsc output and ship a broken tarball).
   if (!skipBuild) {
     log('-- npm run build (packages + esbuild bundle + .d.ts)');
     runCmd('npm', ['run', 'build']);
   } else {
     log('-- --skip-build: assuming dist/ is already current');
   }
-  assertNoRawAgentDynamicImport(path.join(repoRoot, 'dist'));
-  assertSemanticWorkerSidecar(path.join(repoRoot, 'dist'));
-  assertNativeArtifacts(path.join(repoRoot, 'dist'));
-  log('-- bundle import, worker sidecar, and cross-platform native artifact guards passed');
+  assertNoRawAgentDynamicImport(dist);
+  assertSemanticWorkerSidecar(dist);
 
-  // Step 3: toggle private:true → false (root package.json is already in
-  // published shape; this is the only mutation needed).
-  log('-- toggling root package.json#private: true → false (will restore via try/finally)');
-  const pristineBytes = toggleRootPackageJsonForPublish();
-
-  // Step 4: pack and audit the exact publish bytes, then optionally publish
-  // that same tarball. Restore package.json in all cases.
-  try {
-    const tarballPath = path.join(repoRoot, `kodax-ai-kodax-${version}.tgz`);
-    // Consumer flow: `npm install /abs/path/to/kodax-ai-kodax-<version>.tgz`.
-    // Real publish also uses this exact audited archive, eliminating drift
-    // between SDK validation bytes and registry bytes.
-    log('-- npm pack (exact candidate bytes)');
+  if (universalNativeAuthoritiesPresent()) {
+    // CI npm-package job: all five authorities are staged — pack the
+    // audited universal publish candidate (the exact bytes the GitHub
+    // Release later exposes and `node scripts/release.mjs` publishes).
+    assertNativeArtifacts(dist);
+    log('-- bundle import, worker sidecar, and cross-platform native artifact guards passed');
+    const pristineBytes = toggleRootPackageJsonForPublish();
+    try {
+      log('-- toggling root package.json#private: true → false (will restore via try/finally)');
+      // Consumer flow: `npm install /abs/path/to/kodax-ai-kodax-<version>.tgz`.
+      log('-- npm pack (exact candidate bytes)');
+      runCmd('npm', ['pack']);
+      auditSidecarTarball(tarballPath, {
+        requiredEntries: REQUIRED_NATIVE_TARBALL_ENTRIES,
+      });
+      log('-- ✓ npm pack + Sidecar tarball audit succeeded');
+    } finally {
+      log('-- restoring root package.json (pristine bytes)');
+      restoreRootPackageJson(pristineBytes);
+    }
+  } else {
+    // Local machine: only the host authority exists. Pack a LOCAL TEST
+    // TARBALL and keep private:true so npm physically refuses to publish
+    // it — consumers can still `npm install <path>` it for SDK testing.
+    log('-- LOCAL TEST TARBALL (host native authority only): private stays true, npm publish will refuse it');
+    assertNativeArtifacts(dist, [[process.platform, process.arch]]);
+    log('-- npm pack (host-only test bytes)');
     runCmd('npm', ['pack']);
     auditSidecarTarball(tarballPath, {
-      requiredEntries: [
-        'package/dist/native/win32-x64/manifest.json',
-        'package/dist/native/win32-x64/kodax-windows-text-transaction.node',
-        'package/dist/native/win32-x64/kodax-windows-sandbox.exe',
-        'package/dist/native/linux-x64/manifest.json',
-        'package/dist/native/linux-x64/kodax-text-transaction.node',
-        'package/dist/native/linux-arm64/manifest.json',
-        'package/dist/native/linux-arm64/kodax-text-transaction.node',
-        'package/dist/native/darwin-x64/manifest.json',
-        'package/dist/native/darwin-x64/kodax-text-transaction.node',
-        'package/dist/native/darwin-arm64/manifest.json',
-        'package/dist/native/darwin-arm64/kodax-text-transaction.node',
-      ],
+      requiredEntries: hostNativeTarballEntries(),
     });
-    log('-- ✓ npm pack + Sidecar tarball audit succeeded');
-
-    if (!packOnly) {
-      // Force official npm registry — repo .npmrc pins npmmirror for fast
-      // dev installs, but publish must always go to registry.npmjs.org.
-      const args = [
-        'publish',
-        tarballPath,
-        '--registry=https://registry.npmjs.org/',
-      ];
-      if (isDryRun) args.push('--dry-run');
-      if (otp) args.push(`--otp=${otp}`);
-      log(`-- npm ${args.join(' ')}`);
-      runCmd('npm', args);
-      log('-- ✓ npm publish succeeded');
-    }
-  } finally {
-    log('-- restoring root package.json (pristine bytes)');
-    restoreRootPackageJson(pristineBytes);
+    log('-- ✓ host-only test tarball + sidecar audit succeeded');
   }
 
   log('');
-  if (packOnly) {
-    log(`Tarball produced: kodax-ai-kodax-${version}.tgz`);
-    log(`Consumer install: npm install ${path.join(repoRoot, `kodax-ai-kodax-${version}.tgz`)}`);
-  } else if (isDryRun) {
+  log(`Tarball produced: kodax-ai-kodax-${version}.tgz`);
+  log(`Consumer install: npm install ${path.join(repoRoot, `kodax-ai-kodax-${version}.tgz`)}`);
+}
+
+async function publishCiTarball(pkg, version) {
+  const slug = githubRepositorySlug(pkg);
+  const tarballName = `kodax-ai-kodax-${version}.tgz`;
+  const tarballPath = path.join(repoRoot, tarballName);
+
+  log(`-- downloading ${tarballName} + checksum from GitHub Release v${version} (${slug})`);
+  const checksumResponse = await downloadReleaseAsset(slug, version, 'kodax-ai-kodax-npm.sha256');
+  const checksumText = await checksumResponse.text();
+  const checksum = /^([0-9a-f]{64})\s+\*?([^\s]+)$/m.exec(checksumText.trim());
+  if (checksum === null || checksum[2] !== tarballName) {
+    throw new Error(`kodax-ai-kodax-npm.sha256 does not anchor ${tarballName}`);
+  }
+  const tarballResponse = await downloadReleaseAsset(slug, version, tarballName);
+  const bytes = Buffer.from(await tarballResponse.arrayBuffer());
+  const actual = createHash('sha256').update(bytes).digest('hex');
+  if (actual !== checksum[1]) {
+    throw new Error(`sha256 checksum mismatch for ${tarballName}: expected ${checksum[1]}, got ${actual}`);
+  }
+  writeFileSync(tarballPath, bytes);
+  auditSidecarTarball(tarballPath, {
+    requiredEntries: REQUIRED_NATIVE_TARBALL_ENTRIES,
+  });
+  log('-- ✓ sha256 + sidecar audit of the CI-built universal tarball passed');
+
+  // Force official npm registry — repo .npmrc pins npmmirror for fast
+  // dev installs, but publish must always go to registry.npmjs.org.
+  // The CI pack already set private:false inside the tarball, so no local
+  // package.json toggle is needed here.
+  const args = [
+    'publish',
+    tarballPath,
+    '--registry=https://registry.npmjs.org/',
+  ];
+  if (isDryRun) args.push('--dry-run');
+  if (otp) args.push(`--otp=${otp}`);
+  log(`-- npm ${args.join(' ')}`);
+  runCmd('npm', args);
+  log('-- ✓ npm publish succeeded');
+
+  log('');
+  if (isDryRun) {
     log('Dry run complete. Nothing was actually published.');
   } else {
     log(`Published @kodax-ai/kodax@${version}.`);
@@ -402,7 +530,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (err) {
   logError(err.stack || err.message);
   process.exit(1);

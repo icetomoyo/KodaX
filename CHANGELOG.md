@@ -158,6 +158,16 @@ All notable changes to this project will be documented in this file.
   announcement at $0.15 input / $0.50 output / $0.03 cached input per million
   tokens. Defaults stay on `glm-5.3`; `glm-5.3` / `glm-5.2` remain text-only
   image-unsupported.
+- Release publication now ships CI-built bytes. The npm package embeds
+  prebuilt native authorities for five platforms, which only the Release
+  workflow's cross-platform matrix can assemble, so the universal tarball is
+  built by its `npm-package` job and attached to the GitHub Release as
+  `kodax-ai-kodax-<version>.tgz` + `kodax-ai-kodax-npm.sha256`. `node
+  scripts/release.mjs` (no arguments) downloads those exact assets, verifies
+  the sha256 checksum and sidecar audit, and publishes them; on a local
+  machine `--pack-only` produces a host-only LOCAL TEST TARBALL that keeps
+  `private: true` (npm refuses to publish it) for `npm install <path>` SDK
+  consumer testing.
 
 ---
 

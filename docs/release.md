@@ -192,16 +192,25 @@ Before tagging, all of the following must be true:
    v0.7.95 regression contracts;
 3. TypeScript, config-template checks, bundled SDK/Worker/sidecar builds, fast,
    unit, contract, and system suites pass;
-4. the packed `kodax-ai-kodax-0.7.96-alpha.1.tgz` is inspected and
-   smoke-installed into an empty consumer for the root package and all 12 SDK
-   subpaths;
+4. the packed tarball is inspected and smoke-installed into an empty consumer
+   for the root package and all 12 SDK subpaths — locally, `node
+   scripts/release.mjs --pack-only` produces a host-only LOCAL TEST TARBALL
+   that keeps `private: true` (npm refuses to publish it) for `npm install
+   <path>` consumer testing; the universal publish candidate is assembled,
+   audited, and installed by the Release workflow's `npm-package` job from
+   all five platform authorities;
 5. root and `docs/features` are clean, with the submodule commit reachable from
    its remote; `.codex*` local artifacts and alternate pnpm metadata are ignored
    and not tracked;
 6. GitHub CI is green for the exact commit on Node 20/22, Unix Runtime,
-   Windows Shell, and packaged Electron gates; the tag-triggered Release job
-   produces all platform archives, sidecars, and `SHA256SUMS` as a GitHub
-   pre-release. npm publication is left to the maintainer.
+   Windows Shell, and packaged Electron gates; a manual `release.yml`
+   `workflow_dispatch` for `target=all` (no release created) is green before
+   tagging; the tag-triggered Release job produces all platform archives,
+   sidecars, `SHA256SUMS`, and the CI-built universal npm tarball
+   (`kodax-ai-kodax-0.7.96-alpha.1.tgz` + `kodax-ai-kodax-npm.sha256`) as
+   GitHub pre-release assets. npm publication remains a manual maintainer
+   step: `node scripts/release.mjs` downloads those exact Release assets,
+   verifies the sha256 checksum and sidecar audit, and publishes those bytes.
 
 Only after these gates pass may the exact commit be tagged `v0.7.96-alpha.1`.
 
@@ -1582,7 +1591,13 @@ on: push tag v*  ─┐
 on: workflow_dispatch ─┘     │
                              ├─→ smoke test (--version)
                              ├─→ archive (tar.gz / zip + .sha256)
-                             └─→ upload-artifact
+                             ├─→ upload native-authority-<target>
+                             └─→ npm-package job
+                                 ├─→ download all 5 native authorities
+                                 ├─→ build neutral bundles
+                                 ├─→ release.mjs --skip-build --pack-only
+                                 ├─→ test:packed-native (empty-consumer install)
+                                 └─→ sha256 + upload kodax-npm-package
 
                              [tag push only]
                              └─→ release job
@@ -1590,7 +1605,38 @@ on: workflow_dispatch ─┘     │
                                  ├─→ aggregate SHA256SUMS
                                  ├─→ generate notes from git log
                                  └─→ softprops/action-gh-release
+                                     (archives + SHA256SUMS +
+                                      kodax-ai-kodax-<version>.tgz +
+                                      kodax-ai-kodax-npm.sha256)
 ```
+
+### npm publication (maintainer step)
+
+The npm package embeds prebuilt native authorities for five platforms, and
+Rust artifacts must be compiled on their target OS/arch — a single machine
+can never assemble the universal tarball. The publishable bytes therefore
+come from the Release workflow's `npm-package` job and are attached to the
+GitHub Release as `kodax-ai-kodax-<version>.tgz` plus
+`kodax-ai-kodax-npm.sha256`.
+
+After the tag-triggered Release workflow is green:
+
+```bash
+node scripts/release.mjs            # download + verify + publish CI bytes
+```
+
+The script refuses to proceed while the git tree is dirty or the lockfile is
+out of sync, verifies the tarball sha256 against the checksum asset, re-runs
+the sidecar audit on the downloaded bytes, and publishes exactly those bytes
+to `registry.npmjs.org` (the CI pack already sets `private: false` inside the
+tarball, so the local development manifest is never mutated). Use `--dry-run`
+to rehearse and `--otp=<code>` for npm 2FA.
+
+`node scripts/release.mjs --pack-only` on a local machine now produces a
+host-only LOCAL TEST TARBALL that keeps `private: true`, so npm physically
+refuses to publish it; consumers can still `npm install <path>` it for SDK
+testing. On CI (where all five authorities are staged) the same command packs
+the audited universal publish candidate.
 
 ## Build-time defines
 

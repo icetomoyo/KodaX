@@ -1059,7 +1059,7 @@ KodaX/
 │   ├── kodax_cli.ts         # Main CLI entry point (bin: `kodax`)
 │   └── sdk-*.ts             # SDK subpath re-exports → @kodax-ai/kodax/{agent,llm,coding,media,repl,skills,mcp,session,runtime,sandbox,a2a,experimental-memory}
 │
-└── package.json             # Publish-shaped exports; release.mjs only toggles private during pack/publish
+└── package.json             # Publish-shaped exports; publish ships the CI-built tarball (release.mjs), local --pack-only keeps private:true
 ```
 
 ### Package Dependencies

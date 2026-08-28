@@ -46,6 +46,31 @@ describe('GitHub release workflow', () => {
     expect(source).toContain('tarballPath,');
   });
 
+  it('publishes the CI-built universal tarball fetched from the GitHub Release', () => {
+    const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
+
+    expect(source).toContain('/releases/download/');
+    expect(source).toContain('kodax-ai-kodax-npm.sha256');
+    expect(source).toContain('sha256 checksum mismatch');
+    expect(source).toContain('has no asset');
+    expect(source).toContain('REQUIRED_NATIVE_TARBALL_ENTRIES');
+  });
+
+  it('packs an unpublishable host-only test tarball when only the host authority exists', () => {
+    const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
+
+    expect(source).toContain('LOCAL TEST TARBALL');
+    expect(source).toContain('hostNativeTarballEntries');
+    expect(source).toContain('universalNativeAuthoritiesPresent');
+    // The host-only branch must keep private:true: the publish toggle lives
+    // only in the universal (CI) branch, so npm refuses the local tarball.
+    const hostOnlyBranch = source.slice(
+      source.indexOf('-- LOCAL TEST TARBALL'),
+      source.indexOf('requiredEntries: hostNativeTarballEntries()'),
+    );
+    expect(hostOnlyBranch).not.toContain('toggleRootPackageJsonForPublish');
+  });
+
   it('packages every runtime sidecar with the standalone binary', () => {
     const source = readFileSync(resolve('.github/workflows/release.yml'), 'utf8');
     const workflow = parse(source) as ReleaseWorkflow;

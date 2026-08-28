@@ -1230,7 +1230,7 @@ KodaX/                       # 4 workspace packages(FEATURE_194 v0.7.43)
 ├── scripts/
 │   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 12 SDK subpath + chunks）
 │   ├── build-binary.mjs     # Bun --compile 单文件二进制打包
-│   └── release.mjs          # 构建/审计后仅临时切换 private 以 pack/publish
+│   └── release.mjs          # 发布 CI 构建的通用 tarball；本地 --pack-only 保持 private:true
 └── .github/workflows/
     └── release.yml          # 推 v* tag 自动发布 GitHub Release
 ```

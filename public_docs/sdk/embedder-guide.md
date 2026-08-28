@@ -1305,9 +1305,13 @@ npm unlink -g @kodax-ai/kodax    # remove the global symlink
 
 The dev `package.json` carries `"private": true` so a bare `npm publish`
 from the repo refuses — `scripts/release.mjs` is the only sanctioned
-publish path, and it briefly toggles `private: false` (via try/finally)
-just for the publish call. `"private"` does **not** block `npm link` —
-it only gates `npm publish` — so the linked-build flow is unaffected.
+publish path. As of v0.7.96 the package embeds prebuilt native authorities
+for five platforms, which only the Release workflow's cross-platform matrix
+can assemble; `node scripts/release.mjs` therefore downloads the CI-built
+universal tarball from the GitHub Release (sha256-verified) and publishes
+those exact bytes — the local dev manifest is never toggled. `"private"`
+does **not** block `npm link` — it only gates `npm publish` — so the
+linked-build flow is unaffected.
 
 ### Alternative: tarball install
 
@@ -1322,8 +1326,12 @@ node scripts/release.mjs --pack-only           # produces kodax-ai-kodax-<v>.tgz
 npm install /path/to/KodaX/kodax-ai-kodax-<version>.tgz
 ```
 
-The tarball is byte-identical to what `npm publish` would ship, so it
-exercises exactly the published shape.
+A locally packed tarball is a LOCAL TEST TARBALL: it keeps
+`"private": true` (npm refuses to publish it) and embeds only the native
+authority for the machine that packed it — sufficient to exercise the
+published package shape and SDK subpaths on that platform. The
+npm-published universal tarball (all five authorities, `private: false`)
+is assembled by the Release workflow's `npm-package` job.
 
 ---
 
