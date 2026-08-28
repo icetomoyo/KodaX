@@ -1508,6 +1508,19 @@ function readWindowsSandboxAclPoisonOwners(configHome = getAgentConfigHome()): A
   });
 }
 
+function windowsAclPowerShellExecutable(): string {
+  const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+  const pwsh = path.join(programFiles, 'PowerShell', '7', 'pwsh.exe');
+  if (existsSync(pwsh)) return pwsh;
+  return path.join(
+    process.env.SystemRoot ?? 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+}
+
 function readWindowsBootIdentity(): string | undefined {
   if (process.platform !== 'win32') return undefined;
   if (cachedWindowsBootIdentity !== undefined) {

@@ -1208,6 +1208,7 @@ import {
   clearPreviousBootWindowsSandboxAclMarkers,
   overrideWindowsNullDeviceInstallerForTest,
   prepareSandboxRuntimeForSetup,
+  readWindowsSandboxBootIdentity,
   recoverPreviousBootWindowsSandboxAcls,
   recoverWindowsSandboxAclsForRuntimeOwner,
   runKodaXSandboxed,
@@ -1989,6 +1990,23 @@ describe('ASRT setup guidance', () => {
       setupRequired: true,
     });
     expect(lines.join('\n')).toContain(expected);
+  });
+});
+
+describe.runIf(process.platform === 'win32')('Windows boot identity resolution', () => {
+  it('uses PowerShell 7 for the boot identity probe when it is installed', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-pwsh-boot-'));
+    tempRoots.push(root);
+    const pwsh = path.join(root, 'PowerShell', '7', 'pwsh.exe');
+    await mkdir(path.dirname(pwsh), { recursive: true });
+    await writeFile(pwsh, '', 'utf8');
+    vi.stubEnv('ProgramFiles', root);
+    const spawnsBefore = capturedSyncSpawns.length;
+    expect(readWindowsSandboxBootIdentity()).toBe('windows-boot-100');
+    expect(capturedSyncSpawns.slice(spawnsBefore).some(({ command, args }) => (
+      command === pwsh && args.includes('-EncodedCommand')
+    ))).toBe(true);
   });
 });
 
