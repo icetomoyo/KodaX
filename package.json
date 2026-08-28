@@ -187,6 +187,7 @@
     "ink-testing-library": "^4.0.0",
     "rollup": "^4.60.4",
     "rollup-plugin-dts": "^6.4.1",
+    "undici": "^6.28.0",
     "vitest": "^3.2.4"
   },
   "engines": {

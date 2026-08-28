@@ -1632,6 +1632,11 @@ to `registry.npmjs.org` (the CI pack already sets `private: false` inside the
 tarball, so the local development manifest is never mutated). Use `--dry-run`
 to rehearse and `--otp=<code>` for npm 2FA.
 
+The asset download honors `HTTPS_PROXY` / `https_proxy` via undici's
+`ProxyAgent` (Node's global fetch ignores proxy env vars, which would fail
+with an opaque connect timeout on machines that reach github.com only
+through a local proxy). Proxy-free environments never load undici.
+
 `node scripts/release.mjs --pack-only` on a local machine now produces a
 host-only LOCAL TEST TARBALL that keeps `private: true`, so npm physically
 refuses to publish it; consumers can still `npm install <path>` it for SDK

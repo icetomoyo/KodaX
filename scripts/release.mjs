@@ -39,6 +39,7 @@
 //   1. Verify git is clean (no uncommitted changes).
 //   2. Download kodax-ai-kodax-<v>.tgz + kodax-ai-kodax-npm.sha256 from the
 //      GitHub Release for tag v<version> (built by the Release workflow).
+//      Honors HTTPS_PROXY / https_proxy (Node's global fetch does not).
 //   3. Verify the tarball sha256 against the checksum asset, then re-run
 //      the sidecar tarball audit on the downloaded bytes.
 //   4. `npm publish <tgz> --registry=https://registry.npmjs.org/` — the CI
@@ -363,9 +364,36 @@ function githubRepositorySlug(pkg) {
   return `${match[1]}/${match[2]}`;
 }
 
+// Node's global fetch ignores HTTP(S)_PROXY env vars, so machines that can
+// only reach github.com through a local proxy fail with an opaque
+// UND_ERR_CONNECT_TIMEOUT. undici's fetch honors a ProxyAgent dispatcher;
+// it is imported lazily so proxy-free environments (CI) need nothing extra.
+function httpsProxyUrl() {
+  return process.env.HTTPS_PROXY ?? process.env.https_proxy ?? '';
+}
+
+async function fetchReleaseAsset(url) {
+  const proxyUrl = httpsProxyUrl();
+  if (proxyUrl === '') {
+    return fetch(url);
+  }
+  const { fetch: fetchWithProxy, ProxyAgent } = await import('undici');
+  return fetchWithProxy(url, { dispatcher: new ProxyAgent(proxyUrl) });
+}
+
 async function downloadReleaseAsset(slug, version, filename) {
   const url = `https://github.com/${slug}/releases/download/v${version}/${filename}`;
-  const response = await fetch(url);
+  let response;
+  try {
+    response = await fetchReleaseAsset(url);
+  } catch (err) {
+    const cause = err?.cause
+      ? ` (${err.cause.code ?? err.cause.message ?? String(err.cause)})`
+      : '';
+    throw new Error(
+      `Downloading ${url} failed at the network layer${cause}. If this machine needs a proxy to reach github.com, set HTTPS_PROXY to it.`,
+    );
+  }
   if (response.status === 404) {
     throw new Error(
       `GitHub Release v${version} has no asset ${filename}. Push tag v${version} and wait for the Release workflow to complete, then retry.`,

@@ -167,7 +167,10 @@ All notable changes to this project will be documented in this file.
   the sha256 checksum and sidecar audit, and publishes them; on a local
   machine `--pack-only` produces a host-only LOCAL TEST TARBALL that keeps
   `private: true` (npm refuses to publish it) for `npm install <path>` SDK
-  consumer testing.
+  consumer testing. The asset download honors `HTTPS_PROXY` / `https_proxy`
+  through undici's `ProxyAgent` (Node's global fetch ignores proxy env vars,
+  so proxy-only machines previously failed with an opaque connect timeout);
+  network-layer download errors now surface the underlying cause.
 
 ---
 

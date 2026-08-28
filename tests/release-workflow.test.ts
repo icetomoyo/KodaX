@@ -56,6 +56,19 @@ describe('GitHub release workflow', () => {
     expect(source).toContain('REQUIRED_NATIVE_TARBALL_ENTRIES');
   });
 
+  it('downloads release assets through HTTPS_PROXY when one is configured', () => {
+    const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
+
+    expect(source).toContain('ProxyAgent');
+    expect(source).toContain('HTTPS_PROXY');
+    // undici must be imported lazily: proxy-free environments (CI) never
+    // install it into the download path.
+    expect(source).toContain("await import('undici')");
+    // Network-layer failures must surface the underlying cause instead of a
+    // bare "fetch failed".
+    expect(source).toContain('failed at the network layer');
+  });
+
   it('packs an unpublishable host-only test tarball when only the host authority exists', () => {
     const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
 
