@@ -165,6 +165,19 @@ describe('FEATURE_218 manual registry', () => {
     expect(tools).toContain('Shell writes do not join that lock');
   });
 
+  it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+
+    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:6`');
+    expect(sdk).toContain('`runtimeExitSettlement:2`');
+    expect(sdk).toContain('bounded `capacityDebt`');
+    expect(sdk).toContain('commits through the recovery ladder instead of aborting the Run');
+    expect(sdk).toContain('irreducible overflow');
+    expect(sandbox).toContain('Since v0.7.96, trusted text transactions and platform shell containment are');
+    expect(sandbox).toContain('v0.7.96 raises it to version 6');
+  });
+
   it('documents the v0.7.95 self-healing cleanup and finalization contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
@@ -178,7 +191,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('cannot observe an empty successful answer');
     expect(sdk).toContain('Since v0.7.95, KodaX-created linked worktree roots persist');
     expect(sdk).toContain('Since v0.7.95, Runtime rereads a terminal status');
-    expect(sandbox).toContain('capability metadata is version 5');
+    expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('Windows sandbox cleanup is self-healing');
     expect(sandbox).toContain('machine-global cleanup Job is recoverable');
     expect(sandbox).toContain('dynamic worktrees register their cleanup policy');
@@ -267,7 +280,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('Run-scoped');
     expect(sandbox).toContain('case-insensitive PATH/Path');
     expect(sandbox).toContain('verbatim-argument contract');
-    expect(sandbox).toContain('capability metadata is version 5');
+    expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('Windows sandbox cleanup is self-healing');
     expect(sandbox).toContain('already-approved normal permission path');
     expect(sandbox).toContain('only the last owner recovers');

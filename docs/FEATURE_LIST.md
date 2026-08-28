@@ -11,13 +11,13 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.95` (Git tag / GitHub Release) |
-| Current package version | `@kodax-ai/kodax@0.7.95` release (npm publication remains manual) |
+| Current released version | `v0.7.96-alpha` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-alpha` pre-release (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Total tracked features | `80` |
-| InProgress | `3` |
+| InProgress | `1` |
 | Planned | `16` |
-| Completed | `55` |
+| Completed | `57` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -26,9 +26,9 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 55 | `294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `293` and `294` are complete in the v0.7.89 release; `292`, `291`, `290`, and `289` shipped in v0.7.85. npm publication remains manual. |
-| InProgress | 3 | `225, 295, 296` | `295` implements cross-platform trusted text transactions plus the v0.7.96 Windows sandbox v2 atomic cutover; `296` replaces the local tool-result capacity hard gate with capacity-debt admission plus a bounded recovery ladder; `225` remains the bounded v0.8.25 cleanup. |
-| Planned, near-term | 0 | `-` | `v0.7.96` development is occupied by in-progress FEATURE_295 and FEATURE_296; Issue 256 descendant-closure remains open and npm publication remains manual. |
+| Completed | 57 | `295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `295` (trusted text / native shell authority split) and `296` (capacity-debt admission) shipped in the v0.7.96-alpha pre-release; `293` and `294` completed in v0.7.89. npm publication remains manual. |
+| InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
+| Planned, near-term | 0 | `-` | No near-term slot is planned after the v0.7.96-alpha pre-release; Issue 256 descendant-closure remains open and npm publication remains manual. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -79,7 +79,7 @@
 | `v0.7.93` | `0` |
 | `v0.7.94` | `0` |
 | `v0.7.95` | `0` |
-| `v0.7.96` | `2` |
+| `v0.7.96` | `0` |
 | `v0.7.100` | `0` |
 | `v0.7.105` | `0` |
 | `v0.8.10` | `5` |
@@ -511,9 +511,43 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `295` | Separate Trusted Text Mutation from Native Shell Containment | Core / Sandbox + Filesystem Reliability | High | `v0.7.96` | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) |
-| `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | Core / Runtime + SDK Reliability | High | `v0.7.96` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
+
+---
+
+## v0.7.96-alpha Release Record
+
+`v0.7.96-alpha` is a GitHub pre-release. It ships `FEATURE_295` and
+`FEATURE_296`, closes Issues 303-320 (except the Open residuals listed below),
+and advances Windows `sandboxRuntime` to `6` (`runtimeExitSettlement:2` and
+`crashOutcomeModel:2` unchanged). npm publication remains a manual maintainer
+step.
+
+`FEATURE_295` (ADR-066) separates trusted text transactions from platform
+shell containment on Windows, Linux, and macOS: controlled text tools commit
+in the trusted KodaX Runtime with final identity policy, a cross-Runtime
+per-file kernel lock, revision CAS, and flushed atomic replacement, while
+Windows shell commands keep ASRT for network/account services and run through
+the native restricted-token runner (native shell protocol version 7). Existing
+Windows installations run `kodax sandbox setup` once for the account/SID
+cutover; missing migration state blocks only native shell admission.
+
+`FEATURE_296` (ADR-067) replaces the local tool-result capacity hard gate with
+capacity-debt admission and a bounded recovery ladder: executed
+`tool_use`/`tool_result` pairs always commit, over-budget batches record
+`capacityDebt` metadata, compaction relieves the debt, the output reserve
+shrinks floor-bounded (3000), irreducibly oversized fresh input degrades to a
+paged volatile pointer, and local capacity terminals classify as
+`failureKind: "context_capacity"` with structured `contextTokens`.
+
+Issues 256, 307, 308, 309, and 321-324 remain Open and documented in
+`KNOWN_ISSUES.md`; none block this pre-release.
+
+The release checklist is [docs/release.md](release.md#v0796-alpha-release-preparation).
+The completed F295 human verification is
+[FEATURE_295_v0.7.96_TEST_GUIDE](test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md).
+The completed F296 human verification is
+[FEATURE_296_v0.7.96_TEST_GUIDE](test-guides/FEATURE_296_v0.7.96_TEST_GUIDE.md).
 
 ---
 
@@ -1508,6 +1542,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha` | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment on Windows/Linux/macOS; Windows sandbox v2 native restricted-token runner, `sandboxRuntime:6`, native shell protocol v7, and the one-time `kodax sandbox setup` cutover (ADR-066). |
+| `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | `v0.7.96-alpha` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) | Replaces the local tool-result capacity hard gate with capacity-debt admission, a bounded recovery ladder, floor-bounded output reserve, paged oversized-input degradation, and `context_capacity` terminal classification (ADR-067). |
 | `294` | Host Tools First-Class Visibility | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_294--host-tools-first-class-visibility-2026-08-16) | Materializes leased Host Tools as run-scoped model tools, adds cache-stable host capability context, conservative plan-mode metadata, registry-first dispatch, revoke/collision hardening, and exact A2A `host:` authorization. |
 | `293` | Resilient Zero-Service Web Search Fallback | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_293-resilient-zero-service-web-search-fallback) | Adds the bounded DuckDuckGo HTML → Bing RSS → Bing HTML zero-service fallback, truthful failure diagnostics and freshness metadata, normalized deduplicated locators, isolated custom endpoints, and removal of the invalid `provider_id` contract. |
 | `292` | Natural-Language-First Memory Management | `v0.7.85` | [v0.7.85](features/v0.7.85.md#feature_292-natural-language-first-memory-management) | Makes ordinary remember, recall, correction, and forgetting conversational and immediate; reserves decisions for exceptional cases, keeps slash commands as an advanced escape hatch, and exposes the same governed operations through the experimental SDK. |

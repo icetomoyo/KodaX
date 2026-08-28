@@ -5,11 +5,17 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the current source on the `v0.7.95` package line. npm
+This guide tracks the current source on the `v0.7.96-alpha` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows
-`sandboxRuntime:5`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`, and
-adds self-healing Windows sandbox cleanup (a recoverable machine-global
+`sandboxRuntime:6`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`;
+trusted text transactions are split from platform shell containment
+(cross-Runtime per-file kernel locking, revision CAS, flushed atomic
+replacement, and a native restricted-token Windows shell runner behind
+native shell protocol version 7), and local tool-result capacity overflow
+records bounded `capacityDebt` and commits through a bounded recovery ladder
+instead of aborting the Run. On top of v0.7.95: self-healing Windows sandbox
+cleanup (a recoverable machine-global
 cleanup Job, unattended recovery tickets, generation-checked background
 retries, dynamic-worktree policy registration), stale learning-lock
 reclamation with fullscreen terminal teardown, exact-input Explicit Skill
@@ -3192,9 +3198,8 @@ sub.close();
 
 ### Structured, credential-safe Runtime failures
 
-> Availability: current source / `Unreleased`. A host using the published
-> v0.7.95 package must tolerate an absent `failureDetail` until the next npm
-> publication.
+> Availability: v0.7.96-alpha. A host using a published pre-v0.7.96 package
+> must tolerate an absent `failureDetail`.
 
 Provider text is useful for debugging, but forwarding a raw upstream error is
 not a safe SDK contract: it can contain a response body, echoed prompt or
@@ -4748,7 +4753,7 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `6` in v0.7.96 development
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `6` since v0.7.96
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
 `sandboxRuntime:6`, so an idle v5-or-older daemon is replaced; a busy or
 multi-client daemon fails closed with restart guidance. Version 6 means that

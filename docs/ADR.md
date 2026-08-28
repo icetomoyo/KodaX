@@ -1,6 +1,27 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-08-21
+> Last updated: 2026-08-28
+>
+> **v0.7.96-alpha release addendum:** trusted text transactions and platform
+> shell containment are separate authorities on Windows, Linux, and macOS
+> (ADR-066). Controlled text tools commit in the trusted KodaX Runtime with
+> final identity policy, a cross-Runtime per-file kernel lock, revision CAS,
+> and flushed atomic replacement; they never enter ASRT or workspace-session
+> state. Windows shell commands keep ASRT for network/account services and run
+> through the native restricted-token runner with nonce-bound per-policy
+> private desktops, creation-time Job containment, and framed stdio; the
+> native shell protocol is version 7 and Windows `sandboxRuntime` advances to
+> `6` (one-time `kodax sandbox setup` cutover). Capacity-debt admission
+> replaces the local tool-result capacity hard gate (ADR-067): executed
+> `tool_use`/`tool_result` pairs always commit, over-budget batches record
+> `capacityDebt` metadata, the next iteration's compaction relieves the debt,
+> the output reserve shrinks floor-bounded (3000), irreducibly oversized fresh
+> input degrades to a paged volatile pointer, and local capacity terminals
+> classify as `failureKind: "context_capacity"` with structured
+> `contextTokens`. Classified Runtime failures expose one credential-safe
+> `failureDetail` across failure events, Run result/status, and Session
+> diagnostics. `runtimeExitSettlement:2` and `crashOutcomeModel:2` are
+> unchanged; Issue 256 remains Open.
 >
 > **v0.7.94 release addendum:** a direct text mutation may overlap a
 > model-started shell only after Runtime has acquired the same workspace ASRT
@@ -5385,7 +5406,7 @@ team, codex cross-check) in this repository's session records.
 
 ## ADR-066: Trusted Text Transactions and a Native Windows Shell Sandbox Are Separate Authorities
 
-**Status**: Accepted and implementation authorized (revised 2026-08-27).
+**Status**: Accepted and shipped in v0.7.96-alpha (revised 2026-08-27).
 
 **Driver**: the production `write` failure in session
 `20260825_215704_r8107f13f0eec3` exposed two concerns that the legacy design
@@ -5708,7 +5729,7 @@ concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
 
-**Status**: Accepted and implementation authorized (2026-08-27); supersedes
+**Status**: Accepted and shipped in v0.7.96-alpha (2026-08-27); supersedes
 the Issue 158 closure record's hard-gate defaults.
 
 **Driver**: an SDK embedder lost runs to `ToolResultBatchCapacityError`

@@ -93,10 +93,9 @@ data/session root 下的 inline Runtime，不参与 Coder owner fence。capabili
 fail closed，不能静默退回 inline Coder。完整接入说明见
 [SDK Embedder Guide §23](public_docs/sdk/embedder-guide.md#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769)。
 
-### 结构化且凭据安全的 Runtime 错误（未发布）
+### 结构化且凭据安全的 Runtime 错误
 
-当前源码把这项增量契约记录在 `Unreleased`；使用已发布 v0.7.95 包的宿主必须在
-下次 npm 发布前兼容字段缺失。当 Runtime 已生成结构化失败事实时，失败和取消 Run
+自 v0.7.96 起，当 Runtime 已生成结构化失败事实时，失败和取消 Run
 会在终端事件、
 `handle.result` / `runs.await()`、
 `runs.get()` / `runs.list()` 以及 `sessions.diagnostics()` 中提供一致的
@@ -295,7 +294,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96 可信文本事务与 Windows sandbox v2（开发中）**：所有桌面平台的受控
+**v0.7.96-alpha 发布**：所有桌面平台的受控
 文本工具与 shell containment 拆分为两个独立权威。`write`、`edit`、`multi_edit`、`insert_after_anchor`、
 `undo` 在可信 KodaX Runtime 中完成最终路径/identity 策略校验、跨 Runtime
 逐文件内核锁、revision CAS、元数据保留的 flush 后原子替换与受保护 native 状态根；它们不进入 ASRT、workspace
@@ -349,6 +348,13 @@ Issue 307 记录 ASRT 所有的 runner 在 KodaX 代码运行前启动这一更�
 不经过该边界。Issue 309 记录另一个与 Codex 相同的 Windows 残余：稳定 root
 capability 无法覆盖显式 ambient loader-compatibility ACE；该 ACE 既可能由此前
 sandbox 命令留下，也可能原本就存在于 external 或 host-owned descendant 上。
+本版本同时以容量债务准入（capacity-debt admission）和有界恢复阶梯取代本地
+tool-result 容量硬门禁（ADR-067），本地容量终态归类为
+`failureKind: "context_capacity"` 并附带结构化 `contextTokens`，失败事件、Run
+结果/状态与 Session 诊断提供同一份凭据安全的 `failureDetail`。本版本广告
+Windows `sandboxRuntime:6`；`runtimeExitSettlement:2` 与 `crashOutcomeModel:2`
+不变。详见
+[v0.7.96-alpha 发布清单](docs/release.md#v0796-alpha-release-preparation)。
 
 **v0.7.95 发布**：零字节、畸形或截断 owner 的过期 learning lock
 会在字节与 stat 二次确认未变后自动恢复。同一次 Windows 启动内的

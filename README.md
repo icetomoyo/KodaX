@@ -433,11 +433,9 @@ const isolated = await createKodaXRuntime({
 });
 ```
 
-### Structured Runtime failures (unreleased)
+### Structured Runtime failures
 
-Current source records this additive contract under `Unreleased`; consumers of
-the published v0.7.95 package must tolerate an absent field until the next npm
-publication. When Runtime has a structured failure fact, failed/cancelled runs
+Since v0.7.96, when Runtime has a structured failure fact, failed/cancelled runs
 and unknown settlement states project the same credential-safe `failureDetail`
 through failure or settlement events, `handle.result` / `runs.await()`,
 `runs.get()` / `runs.list()`, and `sessions.diagnostics()`. Branch on the stable
@@ -757,7 +755,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96 trusted text and Windows sandbox v2 (in development):** controlled
+**v0.7.96-alpha release:** controlled
 text tools and shell containment are separate authorities on every desktop
 platform. `write`, `edit`, `multi_edit`,
 `insert_after_anchor`, and `undo` run in the trusted KodaX Runtime with final
@@ -834,7 +832,15 @@ Job at process creation, and trusted text tools never enter that boundary.
 Issue 309 records the other Codex-compatible Windows residual: stable root
 capabilities do not override an explicit ambient loader-compatibility ACE,
 whether left by an earlier sandbox command or already present on an external or
-host-owned descendant.
+host-owned descendant. This release also replaces the local tool-result
+capacity hard gate with capacity-debt admission and a bounded recovery
+ladder (ADR-067), classifies local capacity terminals as
+`failureKind: "context_capacity"` with structured `contextTokens`, and
+exposes one credential-safe `failureDetail` across failure events, Run
+result/status, and Session diagnostics. It advertises Windows
+`sandboxRuntime:6`; `runtimeExitSettlement:2` and `crashOutcomeModel:2` are
+unchanged. See the
+[v0.7.96-alpha release checklist](docs/release.md#v0796-alpha-release-preparation).
 
 **v0.7.95 release:** stale learning locks with zero-byte,
 malformed, or truncated owner records self-recover after an unchanged

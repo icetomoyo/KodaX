@@ -2,8 +2,22 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.95`. Its SDK guidance carries self-healing
-Windows sandbox cleanup (Windows `sandboxRuntime:5`, `runtimeExitSettlement:2`),
+The current release is `v0.7.96-alpha` (GitHub pre-release; npm publication
+remains manual). It separates trusted text transactions from platform shell
+containment on Windows, Linux, and macOS: controlled text tools commit in the
+trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
+atomic replacement, while Windows shell commands run through the native
+restricted-token runner (native shell protocol version 7, Windows
+`sandboxRuntime:6`, one-time `kodax sandbox setup` cutover). It replaces the
+local tool-result capacity hard gate with capacity-debt admission and a
+bounded recovery ladder (`capacityDebt` metadata, floor-bounded output
+reserve, `failureKind: "context_capacity"` with structured `contextTokens`),
+exposes one credential-safe `failureDetail` across failure events, Run
+result/status, and Session diagnostics, and registers the
+`deepseek-v4-flash-vision-exp` and `glm-5.3-flash` models plus the custom
+provider `imageInput` flag. On top of v0.7.95: self-healing
+Windows sandbox cleanup (Windows `sandboxRuntime:5`,
+`runtimeExitSettlement:2`),
 Issue 301 learning-lock / fullscreen-terminal / Explicit-Skill recovery, and
 Issue 302 coding-result finalization before the public completion signal, on
 top of the v0.7.94 concurrent
@@ -41,7 +55,8 @@ The current source additionally documents structured, credential-safe Runtime
 `failureDetail`. Stable KodaX classification stays separate from optional
 bounded upstream identifiers, and failure/settlement events, Run result/status,
 and Session diagnostics project the same fact when it exists. This additive
-contract is recorded under `Unreleased` until the next npm publication.
+contract ships in `v0.7.96-alpha`; consumers of older published packages must
+tolerate an absent field.
 
 The v0.7.90 SDK guidance also documents orderly retirement for timed-out
 workspace sessions, actionable daemon Error/aggregate/cause diagnostics, direct

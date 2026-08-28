@@ -134,6 +134,77 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-alpha release preparation
+
+Release state: the root package, all four workspace packages, and every
+`package-lock.json` workspace entry must be version `0.7.96-alpha`. This
+pre-release is prepared for the `v0.7.96-alpha` tag and GitHub Release (marked
+as a pre-release); npm publication remains a separate manual operator step. It
+includes every commit after `v0.7.95`:
+
+- FEATURE_295 (ADR-066): trusted text transactions and platform shell
+  containment are separate authorities on Windows, Linux, and macOS.
+  `write`/`edit`/`multi_edit`/`insert_after_anchor`/`undo` commit in the
+  trusted KodaX Runtime with final identity policy, a cross-Runtime per-file
+  kernel lock, revision CAS, and flushed atomic replacement, never entering
+  ASRT/workspace-session state. Windows shell keeps ASRT for network/account
+  services and runs through the native restricted-token runner with
+  nonce-bound per-policy private desktops and creation-time Job containment;
+  the native shell protocol is version 7 and Windows `sandboxRuntime` advances
+  `5 -> 6` (one-time `kodax sandbox setup` cutover), while
+  `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged;
+- FEATURE_296 (ADR-067): capacity-debt admission replaces the local
+  tool-result capacity hard gate. Executed `tool_use`/`tool_result` pairs
+  commit; an over-budget batch records `capacityDebt` metadata, the next
+  iteration's compaction relieves the debt through a bounded recovery ladder,
+  the output reserve shrinks floor-bounded (3000), an irreducibly oversized
+  fresh user input degrades to a paged volatile pointer, and local capacity
+  terminals classify as `failureKind: "context_capacity"` with structured
+  `contextTokens`;
+- classified Runtime failures expose one credential-safe `failureDetail`
+  across failure events, Run result/status, and Session diagnostics;
+- unified text diff rendering anchors LCS matches so unchanged regions render
+  stably across sequential edits;
+- Issue 303: the bundled `srt-win` sidecar is loaded from its physical
+  packaged location; Issue 304: trusted-text targets are read under lock on
+  Unix; Issue 305/306: controller pipe ownership and packaged Electron native
+  artifact loading are pinned; Issue 317: ASRT package-store hardlinks are
+  verified against the embedded release digest; Issue 318: traversal-named ACE
+  entries are rejected; Issues 310-316/319/320: sandbox v2 hardening and
+  review fixes recorded in `docs/KNOWN_ISSUES.md`;
+- custom providers can opt into image input with `"imageInput": true`;
+  `deepseek-v4-flash-vision-exp` and `glm-5.3-flash` are registered;
+- synchronized product, architecture, detailed-design, public SDK, release
+  checklist, feature index, known-issue, and `kodax_manual` content.
+
+Issues 256, 307, 308, 309, and 321-324 remain open and documented; none block
+this pre-release.
+
+Before tagging, all of the following must be true:
+
+1. all package versions, `CHANGELOG.md`, README/README_CN, PRD/HLD/DD/ADR,
+   feature tracker, known-issue record, public docs, this checklist,
+   `docs/features`, and `kodax_manual` agree on v0.7.96-alpha;
+2. focused tests cover the trusted-text/native-shell authority split, the
+   `sandboxRuntime:6` cutover fencing, capacity-debt admission and the
+   recovery ladder, `context_capacity` terminal classification,
+   credential-safe `failureDetail`, anchored diff rendering, and the existing
+   v0.7.95 regression contracts;
+3. TypeScript, config-template checks, bundled SDK/Worker/sidecar builds, fast,
+   unit, contract, and system suites pass;
+4. the packed `kodax-ai-kodax-0.7.96-alpha.tgz` is inspected and
+   smoke-installed into an empty consumer for the root package and all 12 SDK
+   subpaths;
+5. root and `docs/features` are clean, with the submodule commit reachable from
+   its remote; `.codex*` local artifacts and alternate pnpm metadata are ignored
+   and not tracked;
+6. GitHub CI is green for the exact commit on Node 20/22, Unix Runtime,
+   Windows Shell, and packaged Electron gates; the tag-triggered Release job
+   produces all platform archives, sidecars, and `SHA256SUMS` as a GitHub
+   pre-release. npm publication is left to the maintainer.
+
+Only after these gates pass may the exact commit be tagged `v0.7.96-alpha`.
+
 ## v0.7.95 release preparation
 
 Release state: the root package, all four workspace packages, and every

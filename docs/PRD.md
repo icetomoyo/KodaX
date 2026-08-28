@@ -1,11 +1,11 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-08-23
+> Last updated: 2026-08-28
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.95`
-> (`v0.7.95` Git tag / GitHub Release; npm publication remains manual)
-> This baseline advertises Windows `sandboxRuntime:5` and
-> `runtimeExitSettlement:2`; `crashOutcomeModel:2` is unchanged.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha`
+> (`v0.7.96-alpha` Git tag / GitHub pre-release; npm publication remains manual)
+> This baseline advertises Windows `sandboxRuntime:6`;
+> `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
 > This document describes the current product. Historical pre-v0.7.43
 > chain/harness designs have been removed from this current PRD because they no
@@ -177,6 +177,21 @@ finalizes its authoritative result before emitting the public completion
 signal so A2A cannot publish an empty successful answer, and Windows sandbox
 cleanup keeps ACL-mutating owners recoverable through background retries
 instead of manual marker deletion.
+
+The v0.7.96-alpha pre-release ships FEATURE_295 and FEATURE_296. Trusted text
+transactions and platform shell containment are separate authorities on every
+desktop platform: controlled text tools commit in the trusted KodaX Runtime
+with final identity policy, a cross-Runtime per-file kernel lock, revision
+CAS, and flushed atomic replacement, while Windows shell commands keep ASRT
+for network/account services and run through the native restricted-token
+runner (native shell protocol version 7, `sandboxRuntime:6` with a one-time
+`kodax sandbox setup` cutover). Local tool-result capacity overflow no longer
+aborts a Run: over-budget batches record `capacityDebt` and commit through a
+bounded recovery ladder, irreducibly oversized fresh input degrades to a paged
+volatile pointer, and local capacity terminals classify as
+`failureKind: "context_capacity"` with structured `contextTokens`. Classified
+Runtime failures expose one credential-safe `failureDetail` across failure
+events, Run result/status, and Session diagnostics.
 
 ## 2. Target Users
 
