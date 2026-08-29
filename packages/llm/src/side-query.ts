@@ -122,6 +122,7 @@ function resolveDefaultSideQueryReasoning(
   if (!profile) return { effort: 'none' };
 
   const rejected = new Set(profile.localRejectEfforts ?? []);
+  const disabled = new Set(profile.disabledEfforts ?? []);
   const visibleEfforts = profile.supportedEfforts
     ?.filter((preset) => preset.isUserVisible !== false)
     .map((preset) => preset.value)
@@ -135,10 +136,20 @@ function resolveDefaultSideQueryReasoning(
     return { effort: 'none' };
   }
 
-  const lowestEnabledEffort = visibleEfforts?.find((effort) => effort !== 'none');
-  return lowestEnabledEffort === undefined
-    ? undefined
-    : { effort: lowestEnabledEffort };
+  const lowestEnabledEffort = visibleEfforts?.find((effort) => {
+    const aliasedEffort = profile.effortAliases?.[effort] ?? effort;
+    return effort !== 'none'
+      && aliasedEffort !== 'none'
+      && !disabled.has(effort)
+      && !disabled.has(aliasedEffort)
+      && !rejected.has(aliasedEffort);
+  });
+  if (lowestEnabledEffort !== undefined) {
+    return { effort: lowestEnabledEffort };
+  }
+  return profile.supportsDisabledThinking === false || rejected.has('none')
+    ? { effort: 'auto' }
+    : undefined;
 }
 
 function resolveSideQueryMaxOutputTokens(

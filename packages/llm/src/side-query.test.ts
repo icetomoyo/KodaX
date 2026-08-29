@@ -282,6 +282,122 @@ describe('sideQuery — happy path', () => {
     expect(call.streamOptions?.maxOutputTokensOverride).toBe(1280);
   });
 
+  it('keeps the legacy visible-none default when disable support is unspecified', async () => {
+    const provider = new StubProvider(async () => okResult(), {
+      effortStrategy: 'openai-chat-effort',
+      supportedEfforts: [
+        { value: 'none' },
+        { value: 'low' },
+      ],
+    });
+
+    await sideQuery({
+      provider,
+      model: 'legacy-toggle-model',
+      system: 'sys',
+      messages: baseMessages,
+      querySource: 'auto_mode',
+      maxOutputTokens: 256,
+    });
+
+    const call = provider.capturedCalls[0]!;
+    expect(call.reasoning).toEqual({ effort: 'none' });
+    expect(call.streamOptions?.maxOutputTokensOverride).toBe(256);
+  });
+
+  it.each([
+    {
+      name: 'missing efforts',
+      profile: {
+        effortStrategy: 'openai-chat-effort',
+        thinkingStrategy: 'provider-toggle',
+        supportsDisabledThinking: false,
+      },
+    },
+    {
+      name: 'empty efforts',
+      profile: {
+        effortStrategy: 'openai-chat-effort',
+        thinkingStrategy: 'provider-toggle',
+        supportedEfforts: [],
+        supportsDisabledThinking: false,
+      },
+    },
+    {
+      name: 'hidden efforts',
+      profile: {
+        effortStrategy: 'openai-chat-effort',
+        thinkingStrategy: 'provider-toggle',
+        supportedEfforts: [
+          { value: 'none' },
+          { value: 'low', isUserVisible: false },
+        ],
+        supportsDisabledThinking: false,
+      },
+    },
+    {
+      name: 'rejected efforts',
+      profile: {
+        effortStrategy: 'openai-chat-effort',
+        thinkingStrategy: 'provider-toggle',
+        supportedEfforts: [
+          { value: 'none' },
+          { value: 'low' },
+        ],
+        localRejectEfforts: ['low'],
+        supportsDisabledThinking: false,
+      },
+    },
+  ] satisfies readonly { name: string; profile: KodaXReasoningProfile }[])(
+    'uses enabled auto for an always-on profile with $name',
+    async ({ profile }) => {
+      const provider = new StubProvider(async () => okResult(), profile);
+
+      await sideQuery({
+        provider,
+        model: 'always-on-incomplete-profile',
+        system: 'sys',
+        messages: baseMessages,
+        querySource: 'auto_mode',
+        maxOutputTokens: 256,
+      });
+
+      const call = provider.capturedCalls[0]!;
+      expect(call.reasoning).toEqual({ effort: 'auto' });
+      expect(call.streamOptions?.maxOutputTokensOverride).toBe(1280);
+    },
+  );
+
+  it('skips efforts whose raw or aliased meaning cannot enable thinking', async () => {
+    const provider = new StubProvider(async () => okResult(), {
+      effortStrategy: 'openai-chat-effort',
+      thinkingStrategy: 'provider-toggle',
+      supportedEfforts: [
+        { value: 'none' },
+        { value: 'low' },
+        { value: 'medium' },
+        { value: 'high' },
+      ],
+      effortAliases: { low: 'blocked' },
+      disabledEfforts: ['none', 'medium'],
+      localRejectEfforts: ['blocked'],
+      supportsDisabledThinking: false,
+    });
+
+    await sideQuery({
+      provider,
+      model: 'always-on-filtered-model',
+      system: 'sys',
+      messages: baseMessages,
+      querySource: 'auto_mode',
+      maxOutputTokens: 256,
+    });
+
+    const call = provider.capturedCalls[0]!;
+    expect(call.reasoning).toEqual({ effort: 'high' });
+    expect(call.streamOptions?.maxOutputTokensOverride).toBe(1280);
+  });
+
   it('preserves an explicit reasoning request and output cap', async () => {
     const provider = new StubProvider(async () => okResult(), {
       effortStrategy: 'provider-budget',
