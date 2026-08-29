@@ -5,8 +5,7 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks current source after `v0.7.96-alpha.2`; the next package is
-planned as `v0.7.96-alpha.3`. npm
+This guide tracks the current source on the `v0.7.96-alpha.3` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows
 `sandboxRuntime:6`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`;
@@ -3207,7 +3206,7 @@ sub.close();
 
 ### Structured, credential-safe Runtime failures
 
-> Availability: v0.7.96-alpha.2. A host using a published pre-v0.7.96 package
+> Availability: v0.7.96-alpha.3. A host using a published pre-v0.7.96 package
 > must tolerate an absent `failureDetail`.
 
 Provider text is useful for debugging, but forwarding a raw upstream error is

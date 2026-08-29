@@ -134,6 +134,46 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-alpha.3 release preparation
+
+Release state: the root package, all four workspace packages, and every
+`package-lock.json` workspace entry must be version `0.7.96-alpha.3`. This
+pre-release is prepared for the `v0.7.96-alpha.3` tag and GitHub pre-release;
+npm publication remains a separate manual operator step. It includes every
+commit after `v0.7.96-alpha.2`:
+
+- Scoped Provider credential leases (ADR-068, `9587ab29` + `141d2c1f`): the
+  v2 broker keeps Provider secrets in the OS keychain and resolves them
+  lazily, per wire call, for one closed purpose inside revocable leases;
+  manual compaction runs keychain-only through a stable `session.compact`
+  operation target; native/constructed child Agents derive the intersection
+  of the live parent authorization and their concrete capabilities; detached
+  Workflows receive closable derived leases; `config.readEffective()` exposes
+  credential presence and source without values. Admission hardening makes
+  shared-daemon native/constructed/workflow Agent turns require an explicit
+  scoped binding and fail closed without one, closes Agent authority wire
+  records against unknown fields, and keeps the v1 exact-Provider broker
+  compatible.
+- Bounded daemon client inventory (`d05f07e1`): daemons advertising
+  `daemonClientInventory:1` return display-only connected-client diagnostics
+  through `preflight.clients`.
+- Docs: ADR-068, DD credential sections, embedder-guide binding/inventory
+  contracts, and the self-knowledge manual topics (`sdk`, `agents`).
+
+Gates:
+
+1. Version agreement: root + 4 workspace packages + `package-lock.json`
+   workspace entries are `0.7.96-alpha.3`, matching this document,
+   `docs/features`, and the embedder guide.
+2. Branch CI green on the release commit on Node 20/22 before tagging. The
+   Release pipeline is unchanged, so the tag-triggered Release workflow
+   reuses the validated alpha pipeline.
+3. Tag `v0.7.96-alpha.3` on the release commit; the Release workflow
+   publishes the GitHub pre-release with the npm tarball and `SHA256SUMS`.
+   npm publication stays with the maintainer.
+
+Only after these gates pass is the commit tagged `v0.7.96-alpha.3`.
+
 ## v0.7.96-alpha.2 release preparation
 
 Release state: the root package, all four workspace packages, and every

@@ -1,9 +1,9 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-08-28
+> Last updated: 2026-08-29
 >
-> Current published baseline: `v0.7.96-alpha.2`
-> (`@kodax-ai/kodax@0.7.96-alpha.2`; Windows `sandboxRuntime:6`,
+> Current published baseline: `v0.7.96-alpha.3`
+> (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
 >

@@ -1,9 +1,9 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-08-28
+> Last updated: 2026-08-29
 >
-> Current published baseline: `v0.7.96-alpha.2`
-> (`@kodax-ai/kodax@0.7.96-alpha.2`; Windows `sandboxRuntime:6`,
+> Current published baseline: `v0.7.96-alpha.3`
+> (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
 >
@@ -22,8 +22,10 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The published package is `@kodax-ai/kodax@0.7.96-alpha.2`, a Windows hotfix
-restoring the boot-identity PowerShell helper lost in alpha.1. The v0.7.96-alpha.1
+The published package is `@kodax-ai/kodax@0.7.96-alpha.3`, which adds the v2
+scoped Provider credential broker (ADR-068) and bounded daemon client
+inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
+Windows boot-identity hotfix. The v0.7.96-alpha.1
 pre-release separates trusted text transactions from platform shell
 containment (FEATURE_295, Windows `sandboxRuntime:6`) and replaces the local
 tool-result capacity hard gate with capacity-debt admission and a bounded

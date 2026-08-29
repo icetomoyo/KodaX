@@ -1,6 +1,21 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-08-28
+> Last updated: 2026-08-29
+>
+> **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
+> scoped, revocable capabilities (ADR-068). The v2 credential broker keeps
+> Provider secrets in the OS keychain and resolves them lazily, per wire
+> call, for one closed purpose inside revocable leases; manual compaction
+> runs keychain-only through a stable `session.compact` operation; native and
+> constructed child Agents derive the intersection of the live parent
+> authorization and their concrete capabilities; detached Workflows receive
+> closable derived leases; `config.readEffective()` exposes credential
+> presence and source without values. Shared-daemon native, constructed, and
+> workflow Agent turns require an explicit scoped binding and fail closed
+> without one, External Agents remain on their independent `credentialRef`
+> plane, Agent authority wire records are closed against unknown fields, and
+> a v2 client fails closed against an older daemon. Bounded, display-only
+> shared-daemon client inventory ships as `daemonClientInventory:1`.
 >
 > **v0.7.96-alpha.1 release addendum:** trusted text transactions and platform
 > shell containment are separate authorities on Windows, Linux, and macOS

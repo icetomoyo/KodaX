@@ -1,9 +1,9 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-08-28
+> Last updated: 2026-08-29
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.2`
-> (`v0.7.96-alpha.2` Git tag / GitHub pre-release; npm publication remains manual)
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.3`
+> (`v0.7.96-alpha.3` Git tag / GitHub pre-release; npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:6`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
@@ -192,6 +192,15 @@ volatile pointer, and local capacity terminals classify as
 `failureKind: "context_capacity"` with structured `contextTokens`. Classified
 Runtime failures expose one credential-safe `failureDetail` across failure
 events, Run result/status, and Session diagnostics.
+
+The v0.7.96-alpha.3 pre-release adds the v2 scoped Provider credential
+broker (ADR-068) and bounded shared-daemon client inventory: Provider
+secrets stay in the OS keychain and resolve lazily per wire call for one
+closed purpose inside revocable leases, manual compaction runs keychain-only,
+shared-daemon native, constructed, and workflow Agent turns require explicit
+scoped bindings and fail closed without one, External Agents remain on their
+independent `credentialRef` plane, and Agent authority wire records are
+closed against unknown fields.
 
 ## 2. Target Users
 

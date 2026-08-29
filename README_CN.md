@@ -294,6 +294,18 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
+credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
+用途（primary/fallback/classifier/sidecar/compaction/agent/workflow/utility）在可撤销
+lease 内惰性解析；手动 compaction 通过稳定的 `session.compact` 操作纯 keychain 运行；
+native/constructed 子 Agent 的凭据取父授权与自身能力的交集；detached Workflow 获得
+可显式关闭的派生 lease。共享 daemon 的 native/constructed/workflow Agent turn 现在
+必须携带显式 scoped binding，缺失即 fail closed；External Agent 保持独立的
+`credentialRef` 平面，v2 客户端对旧 daemon 同样 fail closed。Agent 权威 wire 记录
+关闭并拒绝未知字段（宿主扩展数据放在 `metadata`）。广告
+`daemonClientInventory:1` 的 daemon 提供有界、仅展示用途的连接客户端诊断。详见
+[v0.7.96-alpha.3 发布清单](docs/release.md#v0796-alpha3-release-preparation)。
+
 **v0.7.96-alpha.2 发布（Windows 修复）**：恢复被 FEATURE_295 清理误删的
 Windows boot-identity PowerShell 解析函数（其唯一调用方仍保留）。在
 v0.7.96-alpha.1 上，每次 Windows exit settlement 都会以

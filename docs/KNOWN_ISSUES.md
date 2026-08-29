@@ -1,11 +1,23 @@
 # Known Issues
 
-_Last Updated: 2026-08-28_
+_Last Updated: 2026-08-29_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## v0.7.96-alpha.3 Release Corrections
+
+The v0.7.96-alpha.3 pre-release ships the v2 scoped Provider credential
+broker (ADR-068) and bounded shared-daemon client inventory
+(`daemonClientInventory:1`). It closes no issues and records no new ones.
+Shared-daemon native, constructed, and workflow Agent turns now require an
+explicit scoped credential binding and fail closed without one, External
+Agents remain on their independent `credentialRef` plane, Agent authority
+wire records are closed against unknown fields, and a v2 client fails closed
+against an older daemon. Issues 256, 307, 308, 309, and 321-324 remain Open
+as recorded below; none block this pre-release.
 
 ## v0.7.96-alpha.2 Release Corrections
 

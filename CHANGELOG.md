@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
-## [Unreleased]
+## [0.7.96-alpha.3] - 2026-08-29
 
 ### Added
 
@@ -15,12 +15,18 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- The next package is planned as `0.7.96-alpha.3`. Shared-daemon native,
-  constructed, and workflow Agent turns now require an explicit scoped
+- `0.7.96-alpha.3` ships this change. Shared-daemon native, constructed, and
+  workflow Agent turns now require an explicit scoped
   credential binding; External Agents remain on their independent
   `credentialRef` plane. Restart an older daemon before using v2 bindings.
 - Agent authority wire records are closed and reject unknown fields. Existing
   host extension data must remain under `metadata`.
+
+### Fixed
+
+- Internal side queries (auto-mode classifier, fallback verification) now
+  resolve the lowest enabled reasoning effort for models that cannot disable
+  thinking, instead of requesting a disabled `none` effort through its alias.
 
 ## [0.7.96-alpha.2] - 2026-08-28
 

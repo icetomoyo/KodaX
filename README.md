@@ -755,6 +755,23 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+**v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
+revocable capabilities (ADR-068). The v2 credential broker keeps Provider
+secrets in the OS keychain and resolves them per wire call for one closed
+purpose (primary, fallback, classifier, sidecar, compaction, agent, workflow,
+utility) inside revocable leases; manual compaction runs keychain-only
+through a stable `session.compact` operation, native/constructed child Agents
+derive the intersection of the live parent authorization and their own
+capabilities, and detached Workflows receive closable derived leases.
+Shared-daemon native, constructed, and workflow Agent turns now require an
+explicit scoped binding and fail closed without one; External Agents stay on
+their independent `credentialRef` plane, and a v2 client fails closed against
+an older daemon. Agent authority wire records are closed and reject unknown
+fields (host extension data belongs in `metadata`). Daemons advertising
+`daemonClientInventory:1` expose bounded, display-only connected-client
+diagnostics. See the
+[v0.7.96-alpha.3 release checklist](docs/release.md#v0796-alpha3-release-preparation).
+
 **v0.7.96-alpha.2 release (Windows hotfix):** restored the Windows
 boot-identity PowerShell resolution helper that the FEATURE_295 cleanup
 deleted while its last caller stayed. On v0.7.96-alpha.1 every Windows exit
