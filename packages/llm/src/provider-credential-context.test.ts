@@ -264,7 +264,7 @@ describe('provider credential context', () => {
         expect(hasScopedProviderCredentialAuthority('openai')).toBe(false);
         await withProviderRequestCredential(
           'anthropic',
-          'agent',
+          'primary',
           undefined,
           () => undefined,
         );

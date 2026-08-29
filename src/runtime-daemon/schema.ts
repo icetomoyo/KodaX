@@ -1,3 +1,5 @@
+import type { AgentSpawnInput } from '@kodax-ai/agent';
+
 import {
   KODAX_DAEMON_PROTOCOL,
   KODAX_DAEMON_PROTOCOL_VERSION,
@@ -1192,6 +1194,14 @@ function compactSessionParamsSchema(): RuntimeDaemonJsonSchema {
   }, ['sessionId']);
 }
 
+type SchemaProperties<T> = {
+  readonly [Key in keyof T]-?: RuntimeDaemonJsonSchema;
+};
+
+type RequiredKeys<T> = {
+  [Key in keyof T]-?: Record<string, never> extends Pick<T, Key> ? never : Key;
+}[keyof T];
+
 function credentialBindingSchema(): RuntimeDaemonJsonSchema {
   return {
     oneOf: [
@@ -1248,7 +1258,33 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
 }
 
 function agentSpawnInputSchema(): RuntimeDaemonJsonSchema {
-  return objectSchema({
+  type SpawnCapabilities = NonNullable<AgentSpawnInput['capabilities']>;
+  type SpawnControl = NonNullable<SpawnCapabilities['control']>;
+  const controlRequired = {
+    followup: true,
+    interrupt: true,
+    streaming: true,
+    artifacts: true,
+  } satisfies Record<RequiredKeys<SpawnControl>, true>;
+  const controlProperties = {
+    followup: booleanSchema,
+    interrupt: booleanSchema,
+    streaming: booleanSchema,
+    artifacts: booleanSchema,
+  } satisfies SchemaProperties<SpawnControl>;
+  const capabilityProperties = {
+    tools: arraySchema(stringSchema),
+    filesystem: { enum: ['none', 'read', 'write'] },
+    network: booleanSchema,
+    providers: arraySchema(stringSchema),
+    canAskUser: booleanSchema,
+    control: objectSchema(controlProperties, Object.keys(controlRequired)),
+  } satisfies SchemaProperties<SpawnCapabilities>;
+  const spawnRequired = {
+    taskName: true,
+    objective: true,
+  } satisfies Record<RequiredKeys<AgentSpawnInput>, true>;
+  const spawnProperties = {
     taskName: stringSchema,
     objective: stringSchema,
     kind: { enum: ['native', 'constructed', 'workflow', 'external'] },
@@ -1258,21 +1294,10 @@ function agentSpawnInputSchema(): RuntimeDaemonJsonSchema {
         { type: 'integer', minimum: 1 },
       ],
     },
-    capabilities: objectSchema({
-      tools: arraySchema(stringSchema),
-      filesystem: { enum: ['none', 'read', 'write'] },
-      network: booleanSchema,
-      providers: arraySchema(stringSchema),
-      canAskUser: booleanSchema,
-      control: objectSchema({
-        followup: booleanSchema,
-        interrupt: booleanSchema,
-        streaming: booleanSchema,
-        artifacts: booleanSchema,
-      }),
-    }),
+    capabilities: objectSchema(capabilityProperties),
     metadata: objectAnySchema,
-  }, ['taskName', 'objective']);
+  } satisfies SchemaProperties<AgentSpawnInput>;
+  return objectSchema(spawnProperties, Object.keys(spawnRequired));
 }
 
 function runFilterSchema(): RuntimeDaemonJsonSchema {

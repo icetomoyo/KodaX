@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
+## [Unreleased]
+
+### Added
+
+- Added the v2 scoped Provider credential broker for keychain-only manual
+  compaction, lazy multi-Provider routing, internal Agent turns, detached
+  Workflows, and secret-safe effective-config provenance. Added bounded daemon
+  client inventory for shared-daemon diagnostics.
+
+### Changed
+
+- The next package is planned as `0.7.96-alpha.3`. Shared-daemon native,
+  constructed, and workflow Agent turns now require an explicit scoped
+  credential binding; External Agents remain on their independent
+  `credentialRef` plane. Restart an older daemon before using v2 bindings.
+- Agent authority wire records are closed and reject unknown fields. Existing
+  host extension data must remain under `metadata`.
+
 ## [0.7.96-alpha.2] - 2026-08-28
 
 ### Fixed

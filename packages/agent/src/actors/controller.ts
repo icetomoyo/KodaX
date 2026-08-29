@@ -155,6 +155,8 @@ interface StartPlan {
 }
 
 interface AgentHostMutationOptions extends AgentMutationOptions {
+  /** Trusted host validation inside the serialized follow-up mutation. */
+  readonly validateTarget?: (actor: AgentActor) => void;
   /** Process-local hook invoked before the admitted turn is durably committed. */
   readonly beforeLaunch?: (plan: StartPlan) => void;
   /** Fail without delivering a message when an explicit scope requires a new turn. */
@@ -439,8 +441,8 @@ export class AgentActorController {
         this.assertExpectedTreeRevision(options);
         this.assertExpectedAdmissionRevision(options);
         const created = await this.prepareSpawn(callerPath, input);
-        options?.beforeLaunch?.(created);
         admittedTurnId = created.turn.turnId;
+        options?.beforeLaunch?.(created);
         return created;
       });
       this.launch(plan);
@@ -516,6 +518,7 @@ export class AgentActorController {
         this.assertExpectedTreeRevision(options);
         this.assertExpectedAdmissionRevision(options);
         const actor = this.requireControl(callerPath, targetPath);
+        options?.validateTarget?.(actor);
         if (
           options?.expectedRevision !== undefined
           && actor.revision !== options.expectedRevision
@@ -555,8 +558,8 @@ export class AgentActorController {
           return { delivery: 'current_turn' as const, turn: turnRef(turn) };
         }
         const plan = await this.prepareExistingTurn(actor, objective, metadata);
-        options?.beforeLaunch?.(plan);
         admittedTurnId = plan.turn.turnId;
+        options?.beforeLaunch?.(plan);
         return { delivery: 'started_turn' as const, turn: turnRef(plan.turn), plan };
       });
       if (result.delivery === 'started_turn') this.launch(result.plan);

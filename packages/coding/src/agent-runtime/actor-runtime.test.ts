@@ -120,13 +120,13 @@ describe('F270 coding Actor runtime adapter', () => {
     executeChildAgentsMock.mockImplementation(async () => {
       await expect(withProviderRequestCredential(
         'anthropic',
-        'agent',
+        'primary',
         undefined,
         () => getScopedProviderCredential('anthropic'),
       )).resolves.toBe('anthropic-secret');
       await expect(withProviderRequestCredential(
         'openai',
-        'agent',
+        'primary',
         undefined,
         () => 'must-not-run',
       )).rejects.toThrow('does not allow provider openai');
@@ -134,7 +134,7 @@ describe('F270 coding Actor runtime adapter', () => {
         releaseDelayed = resolve;
       }).then(() => withProviderRequestCredential(
         'anthropic',
-        'agent',
+        'primary',
         undefined,
         () => getScopedProviderCredential('anthropic'),
       )).catch((error: unknown) => error);
@@ -173,7 +173,7 @@ describe('F270 coding Actor runtime adapter', () => {
     executeChildAgentsMock.mockImplementation(async () => {
       await expect(withProviderRequestCredential(
         'anthropic',
-        'agent',
+        'primary',
         undefined,
         () => getScopedProviderCredential('anthropic'),
       )).resolves.toBe('anthropic-explicit-secret');
@@ -241,6 +241,82 @@ describe('F270 coding Actor runtime adapter', () => {
     await session.close();
   });
 
+  it('atomically rejects Runtime credentials for idle and running external follow-ups', async () => {
+    let finishRunning: (() => void) | undefined;
+    const externalExecutor: AgentTurnExecutor = {
+      execute: vi.fn((input) => input.actor.taskName !== 'running-remote'
+        ? Promise.resolve({ output: 'idle' })
+        : new Promise<AgentExecutionResult>((resolve) => {
+            finishRunning = () => resolve({ output: 'running complete' });
+          })),
+    };
+    const credentialFactory = vi.fn(() => ({
+      allowedProviders: ['anthropic'],
+      async acquire() { return 'must-not-be-requested'; },
+    }));
+    const session = new CodingActorSession({
+      executor: externalExecutor,
+      sessionId: 'session-1',
+    });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const idle = await root.spawn({
+      taskName: 'idle-remote',
+      objective: 'Finish immediately.',
+      kind: 'external',
+    });
+    await settle();
+
+    await expect(session.followupRoot(
+      idle.actorPath,
+      'Must stay on the external credential plane.',
+      { expectedRevision: 999 },
+      credentialFactory,
+    )).rejects.toMatchObject({ code: 'invalid_params' });
+    await session.closeActor(idle.actorPath);
+    await expect(session.followupRoot(
+      idle.actorPath,
+      'Closed external Agents stay on the external credential plane.',
+      undefined,
+      credentialFactory,
+    )).rejects.toMatchObject({ code: 'invalid_params' });
+
+    const noFollowup = await root.spawn({
+      taskName: 'no-followup-remote',
+      objective: 'Finish without follow-up authority.',
+      kind: 'external',
+      capabilities: {
+        control: { followup: false, interrupt: true, streaming: true, artifacts: true },
+      },
+    });
+    await settle();
+    await expect(session.followupRoot(
+      noFollowup.actorPath,
+      'Disabled follow-up cannot change the credential plane.',
+      undefined,
+      credentialFactory,
+    )).rejects.toMatchObject({ code: 'invalid_params' });
+
+    const running = await root.spawn({
+      taskName: 'running-remote',
+      objective: 'Keep running.',
+      kind: 'external',
+    });
+    await vi.waitFor(() => expect(externalExecutor.execute).toHaveBeenCalledTimes(3));
+    await expect(session.followupRoot(
+      running.actorPath,
+      'Must not replace the current credential plane.',
+      undefined,
+      credentialFactory,
+    )).rejects.toMatchObject({ code: 'invalid_params' });
+
+    expect(credentialFactory).not.toHaveBeenCalled();
+    expect(root.get(running.actorPath).mailbox).toEqual([]);
+    finishRunning?.();
+    await settle();
+    await session.close();
+  });
+
   it('atomically requires a daemon credential only when follow-up admits a new internal turn', async () => {
     executeChildAgentsMock.mockResolvedValue(completedChild('first turn complete'));
     const session = new CodingActorSession({ sessionId: 'session-1' });
@@ -289,7 +365,7 @@ describe('F270 coding Actor runtime adapter', () => {
       });
       postAbortAcquire = aborted.then(() => withProviderRequestCredential(
             'anthropic',
-            'agent',
+            'primary',
             undefined,
             () => getScopedProviderCredential('anthropic'),
           )).catch((error: unknown) => error);
@@ -326,7 +402,7 @@ describe('F270 coding Actor runtime adapter', () => {
       execute: vi.fn(async (): Promise<AgentExecutionResult> => {
         const observed = await withProviderRequestCredential(
           'anthropic',
-          'agent',
+          'primary',
           undefined,
           () => getScopedProviderCredential('anthropic'),
         ).catch((error: unknown) => error);

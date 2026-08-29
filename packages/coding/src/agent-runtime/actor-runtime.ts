@@ -90,6 +90,7 @@ type ActorFollowupHostOptions = NonNullable<
   Parameters<AgentActorController['followup']>[4]
 >;
 type ActorStartPlan = Parameters<NonNullable<ActorFollowupHostOptions['beforeLaunch']>>[0];
+type ActorFollowupTarget = Parameters<NonNullable<ActorFollowupHostOptions['validateTarget']>>[0];
 
 /** One Runtime-owned Actor tree for one KodaX session. */
 export class CodingActorSession {
@@ -243,14 +244,21 @@ export class CodingActorSession {
     requireCredentialForNewTurn = false,
   ): Promise<AgentFollowupResult> {
     let credentialTurnId: string | undefined;
-    const beforeLaunch = credentialAccess === undefined
+    const validateTarget = credentialAccess === undefined
       ? requireCredentialForNewTurn
-        ? (plan: ActorStartPlan) => {
-            if (plan.actor.kind !== 'external') throw missingAgentCredentialBindingError();
+        ? (actor: ActorFollowupTarget) => {
+            if (actor.kind !== 'external' && actor.currentTurnId === undefined) {
+              throw missingAgentCredentialBindingError();
+            }
           }
         : undefined
+      : (actor: ActorFollowupTarget) => {
+          if (actor.kind === 'external') throw externalCredentialBindingError();
+          if (actor.currentTurnId !== undefined) throw currentTurnCredentialBindingError(actor.path);
+        };
+    const beforeLaunch = credentialAccess === undefined
+      ? undefined
       : (plan: ActorStartPlan) => {
-          if (plan.actor.kind === 'external') throw externalCredentialBindingError();
           credentialTurnId = plan.turn.turnId;
           this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
             actorPath: plan.actor.path,
@@ -266,6 +274,7 @@ export class CodingActorSession {
     const admission = this.controller.followup('/root', actorPath, objective, undefined, {
       ...options,
       ...(credentialAccess === undefined ? {} : { requireNewTurn: true }),
+      ...(validateTarget === undefined ? {} : { validateTarget }),
       ...(beforeLaunch === undefined ? {} : { beforeLaunch }),
     });
     return admission.catch((error: unknown) => {
@@ -372,8 +381,16 @@ function runActorTurnInCredentialScope(
 }
 
 function externalCredentialBindingError(): Error {
-  return new Error(
-    'External Agent turns cannot bind Runtime Provider credentials; use credentialRef.',
+  return Object.assign(
+    new Error('External Agent turns cannot bind Runtime Provider credentials; use credentialRef.'),
+    { code: 'invalid_params' as const },
+  );
+}
+
+function currentTurnCredentialBindingError(actorPath: string): Error {
+  return Object.assign(
+    new Error(`${actorPath} already has a credential-bound turn; follow-up credentials cannot replace it.`),
+    { code: 'invalid_params' as const },
   );
 }
 

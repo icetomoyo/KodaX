@@ -79,7 +79,6 @@ export {
   createProviderCredentialLeaseScope,
   currentProviderCredentialLeaseProviders,
   deriveCurrentProviderCredentialLeaseScope,
-  deriveProviderCredentialLeaseScope,
   getScopedProviderCredential,
   hasProviderCredentialContext,
   hasScopedProviderCredentialAuthority,

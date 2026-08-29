@@ -1492,6 +1492,10 @@ legacy exact binding `{ leaseId, provider }` for one Run. V2 uses
 `{ leaseId, mode: 'scoped', providers }`; the binding Provider set must be a
 non-empty subset of the registered lease allowlist.
 
+V1 keeps its exact Run request shape, but registration rejects a lease whose
+`expiresAt` is already past. This prevents a transient unusable record without
+changing v1 acquisition or binding semantics.
+
 The daemon mints every trusted target and asks the host separately for every
 actual Provider wire request:
 
@@ -1538,6 +1542,11 @@ snapshot contains only whitelisted effective keys with `present`, `applied`,
 `source`, and `priority`; credential environment names contain only
 `present/source`. Persisted config state is `loaded`, `missing`, or `invalid`,
 and no arbitrary persisted object or credential value is serialized.
+
+Agent operation, capability, control, and credential-binding records are
+closed wire objects. Unknown authority fields fail validation; `metadata` is
+the sole open host-extension field. Compile-time key guards keep the daemon
+spawn schema aligned with `AgentSpawnInput`, including required control keys.
 
 ## 23. Related Documents
 

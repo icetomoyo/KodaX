@@ -1423,6 +1423,57 @@ describe('F270 actor tree and scheduler', () => {
     expect(controller.list('/root').actors.some((actor) => actor.path === '/root/costly')).toBe(false);
   });
 
+  it('refunds admitted budget when a trusted spawn launch hook rejects', async () => {
+    const refund = vi.fn(async () => {});
+    const controller = await createAgentActorController({
+      budget: {
+        async admit() { return { admitted: true }; },
+        refund,
+      },
+    });
+
+    await expect(controller.spawn(
+      '/root',
+      { taskName: 'rejected', objective: 'Do not launch.' },
+      { beforeLaunch() { throw new Error('trusted launch rejected'); } },
+    )).rejects.toThrow('trusted launch rejected');
+
+    expect(refund).toHaveBeenCalledOnce();
+    expect(controller.list('/root').actors.some((actor) => actor.path === '/root/rejected')).toBe(false);
+  });
+
+  it('refunds admitted budget when a trusted follow-up launch hook rejects', async () => {
+    const executor = new DeferredExecutor();
+    const refund = vi.fn(async () => {});
+    const controller = await createAgentActorController({
+      executor,
+      budget: {
+        async admit() { return { admitted: true }; },
+        refund,
+      },
+    });
+    const first = await controller.spawn('/root', {
+      taskName: 'reusable',
+      objective: 'Finish the first turn.',
+    });
+    executor.pending[0]?.resolve({ output: 'done' });
+    await settle();
+
+    await expect(controller.followup(
+      '/root',
+      first.actorPath,
+      'Do not launch the second turn.',
+      undefined,
+      { beforeLaunch() { throw new Error('trusted follow-up rejected'); } },
+    )).rejects.toThrow('trusted follow-up rejected');
+
+    expect(refund).toHaveBeenCalledOnce();
+    expect(controller.get('/root', first.actorPath).actor).toMatchObject({
+      state: 'idle',
+      currentTurnId: undefined,
+    });
+  });
+
   it('rejects unsafe names, sibling collisions, and invalid fork windows', async () => {
     const executor = new DeferredExecutor();
     const controller = await createAgentActorController({ executor });

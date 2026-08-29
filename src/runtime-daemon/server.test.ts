@@ -60,6 +60,9 @@ describe('runtime daemon dispatcher', () => {
 
   it('passes Agent revision fences and maps stale follow-ups to conflict', async () => {
     const runtime = makeRuntime();
+    const detail = vi.spyOn(runtime.agents, 'detail').mockRejectedValue(
+      new Error('agents.followup must not pre-read Actor detail'),
+    );
     const followup = vi.spyOn(runtime.agents, 'followup').mockRejectedValue(Object.assign(
       new Error('Actor revision 4 is stale; current revision is 5.'),
       { code: 'revision_conflict' as const, expectedRevision: 4, currentRevision: 5 },
@@ -87,6 +90,7 @@ describe('runtime daemon dispatcher', () => {
         requireCredentialForNewTurn: true,
       },
     );
+    expect(detail).not.toHaveBeenCalled();
     expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
     if (!isRuntimeDaemonSuccessResponse(response)) {
       expect(response.error).toMatchObject({
@@ -1180,7 +1184,7 @@ describe('runtime daemon dispatcher', () => {
             readonly providers: readonly string[];
           }) => {
             readonly allowedProviders: readonly string[];
-            acquire(provider: string, purpose: 'agent', signal: AbortSignal): Promise<string>;
+            acquire(provider: string, purpose: 'primary', signal: AbortSignal): Promise<string>;
           };
         };
         expect(actorInput).not.toHaveProperty('credential');
@@ -1200,7 +1204,7 @@ describe('runtime daemon dispatcher', () => {
         expect(access?.allowedProviders).toEqual(['openai']);
         await expect(access?.acquire(
           'openai',
-          'agent',
+          'primary',
           new AbortController().signal,
         )).resolves.toBe('keychain-agent-secret');
         return {
@@ -1210,29 +1214,17 @@ describe('runtime daemon dispatcher', () => {
         };
       },
     );
-    const readAgentDetail = runtime.agents.detail.bind(runtime.agents);
     let exposeCurrentTurn = false;
-    vi.spyOn(runtime.agents, 'detail').mockImplementation(async (sessionId, actorPath) => {
-      const detail = await readAgentDetail(sessionId, actorPath);
-      return {
-        ...detail,
-        actor: {
-          ...detail.actor,
-          path: actorPath,
-          kind: 'native',
-          ...(exposeCurrentTurn ? { currentTurnId: 'turn-agent-followup' } : {}),
-        },
-      };
-    });
     const followup = vi.spyOn(runtime.agents, 'followup').mockImplementation(
       async (_sessionId, actorPath, _objective, options) => {
         const trusted = options as typeof options & {
+          readonly requireCredentialForNewTurn?: true;
           readonly providerCredentialAccessFactory?: (target: {
             readonly actorPath: string;
             readonly turnId: string;
             readonly providers: readonly string[];
           }) => {
-            acquire(provider: string, purpose: 'agent', signal: AbortSignal): Promise<string>;
+            acquire(provider: string, purpose: 'primary', signal: AbortSignal): Promise<string>;
           };
         };
         const access = trusted?.providerCredentialAccessFactory?.({
@@ -1241,6 +1233,12 @@ describe('runtime daemon dispatcher', () => {
           providers: ['openai'],
         });
         if (access === undefined) {
+          if (trusted?.requireCredentialForNewTurn === true && !exposeCurrentTurn) {
+            throw Object.assign(
+              new Error('A new internal Agent turn requires an explicit scoped credential binding.'),
+              { code: 'credential_unavailable' as const },
+            );
+          }
           return {
             delivery: 'current_turn',
             turn: { actorPath, turnId: 'turn-agent-followup', state: 'running' },
@@ -1248,7 +1246,7 @@ describe('runtime daemon dispatcher', () => {
         }
         await expect(access?.acquire(
           'openai',
-          'agent',
+          'primary',
           new AbortController().signal,
         )).resolves.toBe('keychain-agent-secret');
         return {
@@ -1342,7 +1340,7 @@ describe('runtime daemon dispatcher', () => {
           actorPath: '/root/reviewer',
           turnId: 'turn-agent-1',
         },
-        purpose: 'agent',
+        purpose: 'primary',
       }),
       expect.objectContaining({
         provider: 'openai',
@@ -1352,11 +1350,11 @@ describe('runtime daemon dispatcher', () => {
           actorPath: '/root/reviewer',
           turnId: 'turn-agent-followup',
         },
-        purpose: 'agent',
+        purpose: 'primary',
       }),
     ]);
     expect(spawn).toHaveBeenCalledTimes(2);
-    expect(followup).toHaveBeenCalledTimes(2);
+    expect(followup).toHaveBeenCalledTimes(3);
     await client.close();
     dispatcher.close();
     reverseBridgeHub.close();

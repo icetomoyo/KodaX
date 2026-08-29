@@ -5,7 +5,8 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the current source on the `v0.7.96-alpha.2` package line. npm
+This guide tracks current source after `v0.7.96-alpha.2`; the next package is
+planned as `v0.7.96-alpha.3`. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows
 `sandboxRuntime:6`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`;
@@ -5391,7 +5392,7 @@ const run = await runtime.runs.start({
 
 The allowlist is a ceiling: an operation binding can narrow it but cannot add a
 Provider. The daemon asks only when an actual primary, fallback, classifier,
-sidecar, compaction, Agent, Workflow, or utility wire call needs that Provider.
+sidecar, compaction, Workflow, or utility wire call needs that Provider.
 An unauthorized Provider fails before the host callback. The secret crosses
 only the authenticated reverse frame and exists in a transient exact-Provider
 scope for that wire call. It is excluded from Provider caches, SDK-client
@@ -5424,6 +5425,10 @@ read daemon ambient Provider keys. Detached
 Workflow work receives a derived,
 revocable Workflow scope; it closes on completion, failure, cancellation, or
 parent closure. ALS propagates the handle but does not define its lifetime.
+
+Agent operation, capability, control, and credential-binding objects are
+closed protocol records. Put host-specific extension data only in `metadata`;
+unknown authority fields are rejected instead of being ignored.
 
 Use the separate admin-only effective-config API to diagnose startup source
 without reading secrets:

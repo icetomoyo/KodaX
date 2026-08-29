@@ -6,7 +6,6 @@ export type ProviderCredentialPurpose =
   | 'classifier'
   | 'sidecar'
   | 'compaction'
-  | 'agent'
   | 'workflow'
   | 'utility';
 
@@ -132,40 +131,6 @@ export function runWithProviderCredentialLeaseScope<T>(
 /** Run outside any Runtime Provider credential authority (for external executors). */
 export function runWithoutProviderCredentialScope<T>(operation: () => T): T {
   return providerCredentialStorage.run({ kind: 'deny' }, operation);
-}
-
-/** Derive a child scope whose Provider authority can only shrink. */
-export function deriveProviderCredentialLeaseScope(
-  parent: ProviderCredentialLeaseScope,
-  allowedProviders: readonly string[],
-  attribution?: ProviderCredentialAttribution,
-): ProviderCredentialLeaseScope {
-  const parentInternal = leaseScopeInternals.get(parent);
-  if (!parentInternal) throw new Error('Unknown provider credential lease scope.');
-  const normalized = normalizeAllowedProviders(allowedProviders, true);
-  for (const provider of normalized) {
-    if (!parentInternal.allowedProviders.has(provider)) {
-      throw new Error(`Parent credential scope does not allow provider ${provider}.`);
-    }
-  }
-  const internal: LeaseProviderCredentialScope = {
-    kind: 'lease',
-    allowedProviders: new Set(normalized),
-    access: parentInternal.access,
-    controller: new AbortController(),
-    parent: parentInternal,
-    ...(attribution === undefined ? {} : { attribution }),
-  };
-  const scope: ProviderCredentialLeaseScope = {
-    allowedProviders: normalized,
-    close(reason = 'derived credential operation completed') {
-      if (!internal.controller.signal.aborted) {
-        internal.controller.abort(new Error(reason));
-      }
-    },
-  };
-  leaseScopeInternals.set(scope, internal);
-  return scope;
 }
 
 /** Derive a short-lived child from the active lazy lease without exposing its resolver. */

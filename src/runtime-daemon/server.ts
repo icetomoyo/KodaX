@@ -1341,10 +1341,6 @@ async function dispatchRuntimeDaemonRequest(
       const sessionId = requireStringField(params, "sessionId");
       const actorPath = requireStringField(params, "actorPath");
       const credentialBinding = optionalRecord(params.credential);
-      const detail = await runtime.agents.detail(sessionId, actorPath);
-      if (detail.actor.currentTurnId === undefined || credentialBinding !== undefined) {
-        assertDaemonAgentCredentialBinding(detail.actor.kind, credentialBinding);
-      }
       const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
         binding: credentialBinding,
         sessionId,

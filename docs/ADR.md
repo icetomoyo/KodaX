@@ -5857,12 +5857,14 @@ explain which startup source the daemon actually applied.
 
 **Decision**:
 
-1. Keep the v1 exact-Provider broker unchanged for compatibility. Add a v2
-   scoped broker whose lease owns a non-empty Provider allowlist and whose
-   operation binding may only narrow it. Every actual Provider wire request is
-   resolved lazily for one closed purpose (`primary`, `fallback`, `classifier`,
-   `sidecar`, `compaction`, `agent`, `workflow`, or `utility`). An unauthorized
-   Provider fails before the host broker is notified.
+1. Keep the v1 exact-Provider Run binding and request shape for compatibility,
+   while rejecting an already-expired lease at registration instead of briefly
+   accepting an unusable record. Add a v2 scoped broker whose lease owns a
+   non-empty Provider allowlist and whose operation binding may only narrow it.
+   Every actual Provider wire request is resolved lazily for one closed purpose
+   (`primary`, `fallback`, `classifier`, `sidecar`, `compaction`, `workflow`, or
+   `utility`). An unauthorized Provider fails before the host broker is
+   notified.
 2. The daemon, not model-visible input, creates the target identity: `run`,
    stable `session.compact` operation, `actor_turn`, or `workflow`. Broker
    requests include the target, Session, Provider, purpose, and a unique request
@@ -5876,9 +5878,11 @@ explain which startup source the daemon actually applied.
    the enforceable guarantee is no Runtime cache/map/persistence reachability
    after the call and no successful resolution through a stale async context.
 4. Manual and automatic compaction share the same credential-aware summary
-   seam. Manual compaction requires a v2 scoped binding and a caller-stable
-   operation ID; its target is the Session plus `session.compact` operation,
-   never a fabricated Run.
+   seam. Credential-bound/keychain-only manual compaction requires a v2 scoped
+   binding and a caller-stable operation ID; its target is the Session plus
+   `session.compact` operation, never a fabricated Run. An unbound legacy
+   manual compact remains in configuration/environment mode and receives no
+   broker authority.
 5. Native/constructed child Agents derive the intersection of the live parent
    authorization and their concrete Provider capabilities. A wildcard never
    expands authority. Host spawn and a newly admitted follow-up turn may carry
@@ -5898,9 +5902,14 @@ explain which startup source the daemon actually applied.
    admin-only `config.readEffective()` returns a strict whitelist of applied
    values and source/priority metadata. Credential entries expose only
    presence and source, never a value; arbitrary config fields are omitted.
+8. Agent operation, capability, control, and credential-binding wire records
+   are intentionally closed. Host extension data belongs only in `metadata`;
+   an unknown authority field fails `invalid_params` instead of being silently
+   ignored. Adding a typed field is therefore a protocol/capability change and
+   the daemon schema is compile-time checked against `AgentSpawnInput`.
 
 **Consequences**: Space can keep all Provider credentials in keychain while
-manual compaction and multi-Provider internal routing remain least-authority,
+credential-bound manual compaction and multi-Provider internal routing remain least-authority,
 auditable, and revocable. Existing v1 clients continue to work for exact Run
 bindings, but a client requiring v2 fails closed against an older daemon.
 Provider requests perform one broker round trip per actual wire call; this is

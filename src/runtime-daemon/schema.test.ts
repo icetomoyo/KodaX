@@ -143,6 +143,50 @@ describe('runtime daemon protocol schema', () => {
     expect(JSON.stringify(schema)).not.toContain('secret');
   });
 
+  it('requires the complete typed Agent control capability and rejects unknown authority fields', () => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['agents.spawn'].params;
+    const base = {
+      sessionId: 'session-1',
+      input: {
+        taskName: 'reviewer',
+        objective: 'Review the change.',
+        capabilities: {
+          control: {
+            followup: true,
+            interrupt: true,
+            streaming: true,
+            artifacts: true,
+          },
+        },
+      },
+    };
+
+    expect(validateRuntimeDaemonJsonSchema(schema, base)).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      ...base,
+      input: {
+        ...base.input,
+        capabilities: {
+          control: { followup: true },
+        },
+      },
+    })).toEqual(expect.arrayContaining([
+      '$.input.capabilities.control.interrupt is required.',
+      '$.input.capabilities.control.streaming is required.',
+      '$.input.capabilities.control.artifacts is required.',
+    ]));
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      ...base,
+      input: {
+        ...base.input,
+        capabilities: {
+          ...base.input.capabilities,
+          credential: 'must-not-cross',
+        },
+      },
+    })).toContain('$.input.capabilities.credential is not allowed.');
+  });
+
   it('allows effective credential provenance but never a credential value', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['config.effective'].result;
     const snapshot = {

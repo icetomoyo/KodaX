@@ -3076,7 +3076,6 @@ export type RuntimeScopedCredentialPurpose =
   | "classifier"
   | "sidecar"
   | "compaction"
-  | "agent"
   | "workflow"
   | "utility";
 
@@ -7891,8 +7890,8 @@ function createRuntimeSessionService(
         try {
           const settings = (await settingsOwner.read(input.sessionId)).value;
           const compactOperation = () => manager.compactSession(input.sessionId, {
+            provider: compactProvider,
             ...(providerCredentialScope === undefined ? {} : { propagateErrors: true }),
-            ...(input.provider !== undefined ? { provider: input.provider } : {}),
             ...(input.model !== undefined ? { model: input.model } : {}),
             ...(input.customInstructions !== undefined
               ? { customInstructions: input.customInstructions }

@@ -1585,7 +1585,6 @@ function parseScopedCredentialPurpose(value: unknown): RuntimeScopedCredentialPu
     || value === 'classifier'
     || value === 'sidecar'
     || value === 'compaction'
-    || value === 'agent'
     || value === 'workflow'
     || value === 'utility'
   ) return value;
