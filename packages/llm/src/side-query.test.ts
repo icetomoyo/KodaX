@@ -253,6 +253,35 @@ describe('sideQuery — happy path', () => {
     expect(call.streamOptions?.maxOutputTokensOverride).toBe(1280);
   });
 
+  it('uses the lowest enabled effort when none aliases to an always-on effort', async () => {
+    const provider = new StubProvider(async () => okResult(), {
+      effortStrategy: 'openai-chat-effort',
+      thinkingStrategy: 'provider-toggle',
+      defaultEffort: 'low',
+      supportedEfforts: [
+        { value: 'none' },
+        { value: 'low', isDefault: true },
+        { value: 'high' },
+      ],
+      effortAliases: { none: 'low' },
+      disabledEfforts: ['none'],
+      supportsDisabledThinking: false,
+    });
+
+    await sideQuery({
+      provider,
+      model: 'always-on-aliased-model',
+      system: 'sys',
+      messages: baseMessages,
+      querySource: 'auto_mode',
+      maxOutputTokens: 256,
+    });
+
+    const call = provider.capturedCalls[0]!;
+    expect(call.reasoning).toEqual({ effort: 'low' });
+    expect(call.streamOptions?.maxOutputTokensOverride).toBe(1280);
+  });
+
   it('preserves an explicit reasoning request and output cap', async () => {
     const provider = new StubProvider(async () => okResult(), {
       effortStrategy: 'provider-budget',

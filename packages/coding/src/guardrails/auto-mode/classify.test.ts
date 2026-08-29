@@ -12,6 +12,7 @@ import type {
   KodaXMessage,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
+  KodaXReasoningProfile,
   KodaXReasoningRequest,
   KodaXStreamResult,
   KodaXTextBlock,
@@ -36,8 +37,13 @@ class StubProvider extends KodaXBaseProvider {
       signal?: AbortSignal,
       messages?: KodaXMessage[],
     ) => Promise<KodaXStreamResult>,
+    private readonly reasoningProfile?: KodaXReasoningProfile,
   ) {
     super();
+  }
+
+  override getReasoningProfile(): KodaXReasoningProfile | undefined {
+    return this.reasoningProfile ?? super.getReasoningProfile();
   }
 
   async stream(
@@ -598,6 +604,58 @@ describe('classify', () => {
       .toEqual([45_000, 90_000]);
     expect(result.attempts.map((attempt) => attempt.outcome))
       .toEqual(['contract_error', 'allow']);
+  });
+
+  it('reserves thinking tokens when an always-on model retries the classifier', async () => {
+    let providerCalls = 0;
+    const outputBudgets: number[] = [];
+    const reasoningEfforts: string[] = [];
+    const provider = new StubProvider(async () => {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        return {
+          ...okStream('The request appears safe, but the verdict is incomplete.'),
+          stopReason: 'max_tokens',
+        };
+      }
+      return okStream(
+        '<decision>allow</decision><hazard>none</hazard><reason>read-only metadata</reason>',
+      );
+    }, {
+      effortStrategy: 'openai-chat-effort',
+      thinkingStrategy: 'provider-toggle',
+      defaultEffort: 'low',
+      supportedEfforts: [
+        { value: 'none' },
+        { value: 'low', isDefault: true },
+        { value: 'high' },
+      ],
+      effortAliases: { none: 'low' },
+      disabledEfforts: ['none'],
+      supportsDisabledThinking: false,
+    });
+    const original = provider.stream.bind(provider);
+    provider.stream = async (msgs, tools, system, reasoning, streamOptions, signal) => {
+      if (typeof reasoning === 'object' && reasoning.effort !== undefined) {
+        reasoningEfforts.push(reasoning.effort);
+      }
+      if (streamOptions?.maxOutputTokensOverride !== undefined) {
+        outputBudgets.push(streamOptions.maxOutputTokensOverride);
+      }
+      return original(msgs, tools, system, reasoning, streamOptions, signal);
+    };
+
+    const result = await classify({
+      provider,
+      model: 'always-on-aliased-model',
+      rules: emptyRules,
+      transcript: [],
+      action: 'Bash: git log --oneline -5',
+    });
+
+    expect(result.kind).toBe('allow');
+    expect(reasoningEfforts).toEqual(['low', 'low']);
+    expect(outputBudgets).toEqual([1280, 2048]);
   });
 
   it('bounds a 1.6 MB resumed-session tool result before calling the provider', async () => {

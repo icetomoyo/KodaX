@@ -129,6 +129,7 @@ function resolveDefaultSideQueryReasoning(
 
   if (
     !rejected.has('none') &&
+    profile.supportsDisabledThinking !== false &&
     (profile.supportsDisabledThinking === true || visibleEfforts?.includes('none'))
   ) {
     return { effort: 'none' };
