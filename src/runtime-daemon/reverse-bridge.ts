@@ -14,6 +14,8 @@ import type {
   RuntimeHostToolResult,
   RuntimeHostToolInvocationStatus,
   RuntimeRunRequirements,
+  RuntimeScopedCredentialPurpose,
+  RuntimeScopedCredentialTarget,
   RuntimeSubscription,
 } from '../sdk-runtime.js';
 import {
@@ -27,6 +29,7 @@ const DEFAULT_HOST_TOOL_MAX_RESULT_BYTES = 1_048_576;
 const MAX_HOST_TOOLS_PER_LEASE = 64;
 const MAX_HOST_TOOL_TEXT_LENGTH = 4_096;
 const MAX_HOST_TOOL_INVOCATION_STATES = 1_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** Model-visible description budget for a materialized host tool (chars). */
 const HOST_TOOL_DESCRIPTION_PROMPT_BUDGET = 200;
 /** Budget for the cached-catalog host name list (chars). */
@@ -34,6 +37,8 @@ const HOST_TOOL_PROMPT_NAME_BUDGET = 600;
 const HOST_TOOL_LEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 interface CredentialLeaseRecord extends RuntimeCredentialLease {
   readonly providerSet: ReadonlySet<string>;
+  readonly brokerVersion: 1 | 2;
+  readonly controller: AbortController;
 }
 
 interface HostToolLeaseRecord extends RuntimeHostToolLease {
@@ -41,9 +46,11 @@ interface HostToolLeaseRecord extends RuntimeHostToolLease {
 }
 
 interface PendingCredential {
+  readonly lease: CredentialLeaseRecord;
   readonly resolve: (credential: string) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  readonly releaseAbort?: () => void;
 }
 
 interface PendingHostTool {
@@ -82,6 +89,7 @@ export interface RuntimeDaemonReverseBridge {
     readonly leaseId: string;
     readonly providers: readonly string[];
     readonly expiresAt?: string;
+    readonly brokerVersion?: 1 | 2;
   }): RuntimeCredentialLease;
   getCredential(leaseId: string): RuntimeCredentialLease | undefined;
   revokeCredential(leaseId: string): boolean;
@@ -96,6 +104,16 @@ export interface RuntimeDaemonReverseBridge {
     readonly sessionId: string;
     readonly runId: string;
   }): Promise<string>;
+  acquireScopedCredential(input: {
+    readonly leaseId: string;
+    readonly provider: string;
+    readonly sessionId: string;
+    readonly target: RuntimeScopedCredentialTarget;
+    readonly purpose: RuntimeScopedCredentialPurpose;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
+  isCredentialActive(leaseId: string): boolean;
+  credentialSignal(leaseId: string): AbortSignal | undefined;
   registerHostTools(input: {
     readonly leaseId: string;
     readonly tools: readonly RuntimeHostToolDescriptor[];
@@ -145,12 +163,22 @@ interface RuntimeDaemonReverseBridgeOptions {
   ) => void;
 }
 
+type CredentialRequestTarget =
+  | { readonly version: 1; readonly runId: string }
+  | {
+      readonly version: 2;
+      readonly target: RuntimeScopedCredentialTarget;
+      readonly purpose: RuntimeScopedCredentialPurpose;
+      readonly signal?: AbortSignal;
+    };
+
 export function createRuntimeDaemonReverseBridge(
   initialNotify: ((notification: RuntimeDaemonNotification) => void) | undefined,
   options: RuntimeDaemonReverseBridgeOptions = {},
 ): RuntimeDaemonReverseBridge {
   const limits = runtimeDaemonReverseBridgeLimits();
   const credentials = new Map<string, CredentialLeaseRecord>();
+  const credentialExpiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const hostTools = new Map<string, HostToolLeaseRecord>();
   const pendingCredentials = new Map<string, PendingCredential>();
   const pendingHostTools = new Map<string, PendingHostTool>();
@@ -170,18 +198,71 @@ export function createRuntimeDaemonReverseBridge(
     if (closed) throw bridgeError('host_tool_unavailable', 'Host bridge connection is closed.');
   };
 
+  const clearCredentialRunsForLease = (leaseId: string): void => {
+    for (const [runId, binding] of credentialRuns) {
+      if (binding.leaseId === leaseId) credentialRuns.delete(runId);
+    }
+  };
+
+  const rejectPendingCredentialsForLease = (
+    lease: CredentialLeaseRecord,
+    message: string,
+  ): void => {
+    for (const [requestId, pending] of pendingCredentials) {
+      if (pending.lease !== lease) continue;
+      pendingCredentials.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.releaseAbort?.();
+      pending.reject(bridgeError('credential_unavailable', message));
+    }
+  };
+
+  const retireCredentialLease = (
+    leaseId: string,
+    lease: CredentialLeaseRecord,
+    message: string,
+  ): boolean => {
+    if (credentials.get(leaseId) !== lease) return false;
+    credentials.delete(leaseId);
+    const expiryTimer = credentialExpiryTimers.get(leaseId);
+    if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+    credentialExpiryTimers.delete(leaseId);
+    lease.controller.abort(new Error(message));
+    rejectPendingCredentialsForLease(lease, message);
+    clearCredentialRunsForLease(leaseId);
+    return true;
+  };
+
   const pruneExpiredCredentials = (): void => {
     const now = Date.now();
     for (const [leaseId, lease] of credentials) {
       if (lease.expiresAt !== undefined && Date.parse(lease.expiresAt) <= now) {
-        credentials.delete(leaseId);
+        retireCredentialLease(leaseId, lease, 'Credential lease expired.');
       }
     }
+  };
+
+  const scheduleCredentialExpiry = (lease: CredentialLeaseRecord): void => {
+    if (lease.expiresAt === undefined) return;
+    const expiresAt = Date.parse(lease.expiresAt);
+    const expire = (): void => {
+      if (credentials.get(lease.id) !== lease) return;
+      const remainingMs = expiresAt - Date.now();
+      if (remainingMs <= 0) {
+        retireCredentialLease(lease.id, lease, 'Credential lease expired.');
+        return;
+      }
+      const timer = setTimeout(expire, Math.min(remainingMs, MAX_TIMER_DELAY_MS));
+      timer.unref?.();
+      credentialExpiryTimers.set(lease.id, timer);
+    };
+    expire();
   };
 
   const rejectPendingCredentialRequests = (message: string): void => {
     for (const pending of pendingCredentials.values()) {
       clearTimeout(pending.timer);
+      pending.releaseAbort?.();
       pending.reject(bridgeError('credential_unavailable', message));
     }
     pendingCredentials.clear();
@@ -318,6 +399,98 @@ export function createRuntimeDaemonReverseBridge(
     return result;
   };
 
+  const acquireCredentialFromHost = async (input: {
+    readonly leaseId: string;
+    readonly provider: string;
+    readonly sessionId: string;
+    readonly request: CredentialRequestTarget;
+  }): Promise<string> => {
+    requireOpen();
+    pruneExpiredCredentials();
+    const lease = credentials.get(input.leaseId);
+    if (
+      !lease
+      || lease.brokerVersion !== input.request.version
+      || !lease.providerSet.has(input.provider)
+    ) {
+      throw bridgeError(
+        'credential_unavailable',
+        'Credential lease is missing, incompatible, or does not allow this provider.',
+      );
+    }
+    const transport = activeTransport;
+    if (!transport) {
+      throw bridgeError('credential_unavailable', 'Credential broker transport is unavailable.');
+    }
+    const operationSignal = input.request.version === 2 ? input.request.signal : undefined;
+    if (operationSignal?.aborted) {
+      throw bridgeError('credential_unavailable', 'Credential operation was cancelled.');
+    }
+    const requestId = `credreq_${randomUUID().replace(/-/g, '')}`;
+    const timeoutMs = lease.expiresAt === undefined
+      ? limits.callTimeoutMs
+      : Math.min(
+          limits.callTimeoutMs,
+          Math.max(1, Date.parse(lease.expiresAt) - Date.now()),
+        );
+    const result = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const pending = pendingCredentials.get(requestId);
+        if (pending === undefined) return;
+        pendingCredentials.delete(requestId);
+        pending.releaseAbort?.();
+        reject(bridgeError('credential_unavailable', 'Credential lease expired or broker timed out.'));
+      }, timeoutMs);
+      timer.unref?.();
+      const onAbort = (): void => {
+        const pending = pendingCredentials.get(requestId);
+        if (pending === undefined) return;
+        pendingCredentials.delete(requestId);
+        clearTimeout(timer);
+        pending.releaseAbort?.();
+        reject(bridgeError('credential_unavailable', 'Credential operation was cancelled.'));
+      };
+      const releaseAbort = operationSignal === undefined
+        ? undefined
+        : () => operationSignal.removeEventListener('abort', onAbort);
+      pendingCredentials.set(requestId, { lease, resolve, reject, timer, releaseAbort });
+      if (operationSignal?.aborted) onAbort();
+      else operationSignal?.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      if (!pendingCredentials.has(requestId)) return await result;
+      transport.notify(createRuntimeDaemonNotification('credential.request', {
+        requestId,
+        leaseId: lease.id,
+        provider: input.provider,
+        sessionId: input.sessionId,
+        ...(input.request.version === 1
+          ? { runId: input.request.runId }
+          : {
+              brokerVersion: 2,
+              target: input.request.target,
+              purpose: input.request.purpose,
+            }),
+      }));
+    } catch {
+      const pending = pendingCredentials.get(requestId);
+      if (pending) {
+        pendingCredentials.delete(requestId);
+        clearTimeout(pending.timer);
+        pending.releaseAbort?.();
+        pending.reject(bridgeError(
+          'credential_unavailable',
+          'Credential request was not dispatched.',
+        ));
+      }
+    }
+    const credential = await result;
+    if (credentials.get(lease.id) !== lease) {
+      throw bridgeError('credential_unavailable', 'Credential lease is no longer active.');
+    }
+    return credential;
+  };
+
   if (initialNotify !== undefined) {
     activeTransport = { id: `bridge_${randomUUID().replace(/-/g, '')}`, notify: initialNotify };
   }
@@ -352,8 +525,14 @@ export function createRuntimeDaemonReverseBridge(
       ) {
         throw bridgeError('invalid_params', 'Credential lease providers must be non-empty and unique.');
       }
-      if (input.expiresAt !== undefined && !Number.isFinite(Date.parse(input.expiresAt))) {
-        throw bridgeError('invalid_params', 'Credential lease expiresAt must be an ISO timestamp.');
+      if (input.expiresAt !== undefined) {
+        const expiresAt = Date.parse(input.expiresAt);
+        if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+          throw bridgeError(
+            'invalid_params',
+            'Credential lease expiresAt must be a future ISO timestamp.',
+          );
+        }
       }
       if (credentials.has(input.leaseId)) {
         throw bridgeError('conflict', 'Credential lease ID is already registered on this connection.');
@@ -362,9 +541,15 @@ export function createRuntimeDaemonReverseBridge(
         id: input.leaseId,
         providers: [...input.providers],
         ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        brokerVersion: input.brokerVersion ?? 1,
         providerSet: new Set(input.providers),
+        controller: new AbortController(),
       };
       credentials.set(input.leaseId, lease);
+      scheduleCredentialExpiry(lease);
+      if (!credentials.has(input.leaseId)) {
+        throw bridgeError('credential_unavailable', 'Credential lease expired during registration.');
+      }
       return publicCredentialLease(lease);
     },
     getCredential(leaseId) {
@@ -373,13 +558,21 @@ export function createRuntimeDaemonReverseBridge(
       return lease === undefined ? undefined : publicCredentialLease(lease);
     },
     revokeCredential(leaseId) {
-      return credentials.delete(leaseId);
+      const lease = credentials.get(leaseId);
+      if (lease === undefined) return false;
+      return retireCredentialLease(leaseId, lease, 'Credential lease was revoked.');
     },
     supplyCredential(input) {
+      pruneExpiredCredentials();
       const pending = pendingCredentials.get(input.requestId);
       if (!pending) return false;
       pendingCredentials.delete(input.requestId);
       clearTimeout(pending.timer);
+      pending.releaseAbort?.();
+      if (credentials.get(pending.lease.id) !== pending.lease) {
+        pending.reject(bridgeError('credential_unavailable', 'Credential lease is no longer active.'));
+        return false;
+      }
       if (input.credential !== undefined && input.credential.length > 0) {
         pending.resolve(input.credential);
       } else {
@@ -391,55 +584,36 @@ export function createRuntimeDaemonReverseBridge(
       return true;
     },
     async acquireCredential(input) {
-      requireOpen();
-      const lease = credentials.get(input.leaseId);
-      if (!lease || !lease.providerSet.has(input.provider)) {
-        throw bridgeError('credential_unavailable', 'Credential lease is missing or does not allow this provider.');
-      }
-      if (lease.expiresAt !== undefined && Date.parse(lease.expiresAt) <= Date.now()) {
-        credentials.delete(lease.id);
-        throw bridgeError('credential_unavailable', 'Credential lease expired.');
-      }
-      const transport = activeTransport;
-      if (!transport) throw bridgeError('credential_unavailable', 'Credential broker transport is unavailable.');
-      const requestId = `credreq_${randomUUID().replace(/-/g, '')}`;
-      const timeoutMs = lease.expiresAt === undefined
-        ? limits.callTimeoutMs
-        : Math.min(
-            limits.callTimeoutMs,
-            Math.max(1, Date.parse(lease.expiresAt) - Date.now()),
-          );
-      const result = new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pendingCredentials.delete(requestId);
-          reject(bridgeError('credential_unavailable', 'Credential lease expired or broker timed out.'));
-        }, timeoutMs);
-        timer.unref?.();
-        pendingCredentials.set(requestId, { resolve, reject, timer });
-      });
-      try {
-        transport.notify(createRuntimeDaemonNotification('credential.request', {
-          requestId,
-          leaseId: lease.id,
-          provider: input.provider,
-          sessionId: input.sessionId,
-          runId: input.runId,
-        }));
-      } catch {
-        const pending = pendingCredentials.get(requestId);
-        if (pending) {
-          pendingCredentials.delete(requestId);
-          clearTimeout(pending.timer);
-          pending.reject(bridgeError(
-            'credential_unavailable',
-            'Credential request was not dispatched.',
-          ));
-        }
-      }
-      return result.then((credential) => {
+      return acquireCredentialFromHost({
+        leaseId: input.leaseId,
+        provider: input.provider,
+        sessionId: input.sessionId,
+        request: { version: 1, runId: input.runId },
+      }).then((credential) => {
         credentialRuns.set(input.runId, { leaseId: input.leaseId, provider: input.provider });
         return credential;
       });
+    },
+    acquireScopedCredential(input) {
+      return acquireCredentialFromHost({
+        leaseId: input.leaseId,
+        provider: input.provider,
+        sessionId: input.sessionId,
+        request: {
+          version: 2,
+          target: input.target,
+          purpose: input.purpose,
+          ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        },
+      });
+    },
+    isCredentialActive(leaseId) {
+      pruneExpiredCredentials();
+      return credentials.has(leaseId);
+    },
+    credentialSignal(leaseId) {
+      pruneExpiredCredentials();
+      return credentials.get(leaseId)?.controller.signal;
     },
     registerHostTools(input) {
       requireOpen();
@@ -612,8 +786,14 @@ export function createRuntimeDaemonReverseBridge(
       closed = true;
       activeTransport = undefined;
       activeHostLeases.clear();
+      for (const lease of credentials.values()) {
+        lease.controller.abort(new Error('Credential bridge closed.'));
+      }
+      for (const timer of credentialExpiryTimers.values()) clearTimeout(timer);
+      credentialExpiryTimers.clear();
       credentials.clear();
       hostTools.clear();
+      credentialRuns.clear();
       hostToolRuns.clear();
       rejectPendingCredentialRequests('Credential client disconnected.');
       for (const pending of pendingHostTools.values()) {
@@ -656,7 +836,8 @@ export function createRuntimeDaemonReverseBridgeHub(
       const key = input.instanceSecret === undefined
         ? `ephemeral:${input.connectionId}`
         : `stable:${input.principalId}:${createHash('sha256').update(input.instanceSecret).digest('hex')}`;
-      const recovered = key.startsWith('stable:')
+      const stable = key.startsWith('stable:');
+      const recovered = stable
         ? recoverHostToolInvocationStates(persistedInvocations.get(key) ?? [])
         : [];
       const bridge = bridges.get(key) ?? createRuntimeDaemonReverseBridge(undefined, {
@@ -680,6 +861,10 @@ export function createRuntimeDaemonReverseBridgeHub(
         bridge,
         close() {
           transport.close();
+          if (!stable && bridges.get(key) === bridge) {
+            bridges.delete(key);
+            bridge.close();
+          }
         },
       };
     },
@@ -800,6 +985,7 @@ function publicCredentialLease(lease: CredentialLeaseRecord): RuntimeCredentialL
   return {
     id: lease.id,
     providers: lease.providers,
+    ...(lease.brokerVersion === 2 ? { brokerVersion: 2 as const } : {}),
     ...(lease.expiresAt !== undefined ? { expiresAt: lease.expiresAt } : {}),
   };
 }

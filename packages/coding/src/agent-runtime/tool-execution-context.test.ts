@@ -1,7 +1,29 @@
-import { describe, expect, it } from 'vitest';
-import { registerCustomProviders } from '@kodax-ai/llm';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createProviderCredentialLeaseScope,
+  getScopedProviderCredential,
+  registerCustomProviders,
+  runWithProviderCredentialLeaseScope,
+  withProviderRequestCredential,
+} from '@kodax-ai/llm';
+
+const workflowHostMock = vi.hoisted(() => ({
+  startManagedWorkflow: vi.fn(),
+}));
+
+vi.mock('../workflows/host.js', () => ({
+  startManagedWorkflow: workflowHostMock.startManagedWorkflow,
+}));
+
+vi.mock('../workflows/run-manager.js', () => ({
+  getDefaultWorkflowRunManager: () => ({}),
+}));
 
 import { buildToolExecutionContext, resolveResumeFromRunDir } from './tool-execution-context.js';
+
+afterEach(() => {
+  workflowHostMock.startManagedWorkflow.mockReset();
+});
 
 /**
  * Path-traversal guard for the model-supplied `resumeFromRunId` (FEATURE_246
@@ -41,6 +63,222 @@ describe('resolveResumeFromRunDir (path-traversal guard)', () => {
 });
 
 describe('F270 actor principal wiring', () => {
+  it.each(['completed', 'failed'] as const)(
+    'closes a detached Workflow credential scope after %s settlement',
+    async (status) => {
+      const attributions: unknown[] = [];
+      let settleWorkflow: ((value: unknown) => void) | undefined;
+      let releaseDelayed: (() => void) | undefined;
+      let delayedRequest: Promise<unknown> | undefined;
+      const parentScope = createProviderCredentialLeaseScope({
+        allowedProviders: ['openai'],
+        async acquire(provider, _purpose, _signal, attribution) {
+          attributions.push(attribution);
+          return `${provider}-workflow-secret`;
+        },
+      });
+      workflowHostMock.startManagedWorkflow.mockImplementation(async (input) => {
+        await expect(withProviderRequestCredential(
+          'openai',
+          'workflow',
+          undefined,
+          () => getScopedProviderCredential('openai'),
+        )).resolves.toBe('openai-workflow-secret');
+        delayedRequest = new Promise<void>((resolve) => {
+          releaseDelayed = resolve;
+        }).then(() => withProviderRequestCredential(
+          'openai',
+          'workflow',
+          undefined,
+          () => getScopedProviderCredential('openai'),
+        )).catch((error: unknown) => error);
+        const done = new Promise<unknown>((resolve) => {
+          settleWorkflow = resolve;
+        });
+        return {
+          kind: 'started',
+          runId: input.runId,
+          managed: {
+            done,
+            getSnapshot: () => ({ status }),
+          },
+        };
+      });
+      const ctx = buildToolExecutionContext({
+        options: {
+          provider: 'openai',
+          agentMode: 'ama',
+          workflowRunsBaseDir: '/workflow-runs',
+          context: { workflowIntent: 'explicit' },
+        },
+        runtime: undefined,
+        managedProtocolPayloadRef: { current: undefined },
+      });
+
+      const started = await runWithProviderCredentialLeaseScope(parentScope, () =>
+        ctx.workflowHost!.startInline({
+          manifest: {
+            name: 'credential-lifecycle',
+            description: 'Credential lifecycle fixture',
+            readOnly: true,
+          },
+          source: 'async function run() { return {}; }',
+          args: {},
+        }));
+      expect(started.kind).toBe('started');
+      const [attribution] = attributions as Array<{
+        readonly kind: string;
+        readonly workflowRunId: string;
+      }>;
+      expect(attribution).toMatchObject({
+        kind: 'workflow',
+        workflowRunId: expect.stringMatching(/^run-/),
+      });
+      settleWorkflow?.(status === 'completed'
+        ? {
+            kind: 'completed',
+            result: {},
+            state: { events: [] },
+          }
+        : {
+            kind: 'failed',
+            error: new Error('workflow failed'),
+            state: { events: [] },
+          });
+      if (started.kind === 'started') await started.done;
+      releaseDelayed?.();
+      await expect(delayedRequest).resolves.toMatchObject({
+        message: expect.stringContaining('no longer active'),
+      });
+      expect(attributions).toHaveLength(1);
+      parentScope.close();
+    },
+  );
+
+  it('closes a detached Workflow credential scope immediately on cancellation', async () => {
+    const abortController = new AbortController();
+    let postAbortAcquire: Promise<unknown> | undefined;
+    let settleWorkflow: ((value: unknown) => void) | undefined;
+    const parentScope = createProviderCredentialLeaseScope({
+      allowedProviders: ['openai'],
+      async acquire() { return 'openai-workflow-secret'; },
+    });
+    workflowHostMock.startManagedWorkflow.mockImplementation(async (input) => {
+      const aborted = new Promise<void>((resolve) => {
+        input.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      postAbortAcquire = aborted.then(() => withProviderRequestCredential(
+          'openai',
+          'workflow',
+          undefined,
+          () => getScopedProviderCredential('openai'),
+        )).catch((error: unknown) => error);
+      return {
+        kind: 'started',
+        runId: input.runId,
+        managed: {
+          done: new Promise((resolve) => { settleWorkflow = resolve; }),
+          getSnapshot: () => ({ status: 'running' }),
+        },
+      };
+    });
+    const ctx = buildToolExecutionContext({
+      options: {
+        provider: 'openai',
+        agentMode: 'ama',
+        workflowRunsBaseDir: '/workflow-runs',
+        abortSignal: abortController.signal,
+        context: { workflowIntent: 'explicit' },
+      },
+      runtime: undefined,
+      managedProtocolPayloadRef: { current: undefined },
+    });
+    const started = await runWithProviderCredentialLeaseScope(parentScope, () =>
+      ctx.workflowHost!.startInline({
+        manifest: {
+          name: 'credential-cancellation',
+          description: 'Credential cancellation fixture',
+          readOnly: true,
+        },
+        source: 'async function run() { return {}; }',
+        args: {},
+      }));
+
+    abortController.abort(new Error('cancel workflow'));
+    await expect(postAbortAcquire).resolves.toMatchObject({
+      message: expect.stringContaining('no longer active'),
+    });
+    settleWorkflow?.({
+      kind: 'failed',
+      error: new Error('cancelled'),
+      state: { events: [] },
+    });
+    if (started.kind === 'started') await started.done;
+    parentScope.close();
+  });
+
+  it('invalidates detached Workflow authority immediately when the parent lease is revoked', async () => {
+    const brokerController = new AbortController();
+    let postRevokeAcquire: Promise<unknown> | undefined;
+    let settleWorkflow: ((value: unknown) => void) | undefined;
+    const parentScope = createProviderCredentialLeaseScope({
+      allowedProviders: ['openai'],
+      signal: brokerController.signal,
+      async acquire() { return 'openai-workflow-secret'; },
+    });
+    workflowHostMock.startManagedWorkflow.mockImplementation(async (input) => {
+      const revoked = new Promise<void>((resolve) => {
+        brokerController.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      postRevokeAcquire = revoked.then(() => withProviderRequestCredential(
+        'openai',
+        'workflow',
+        undefined,
+        () => getScopedProviderCredential('openai'),
+      )).catch((error: unknown) => error);
+      return {
+        kind: 'started',
+        runId: input.runId,
+        managed: {
+          done: new Promise((resolve) => { settleWorkflow = resolve; }),
+          getSnapshot: () => ({ status: 'running' }),
+        },
+      };
+    });
+    const ctx = buildToolExecutionContext({
+      options: {
+        provider: 'openai',
+        agentMode: 'ama',
+        workflowRunsBaseDir: '/workflow-runs',
+        context: { workflowIntent: 'explicit' },
+      },
+      runtime: undefined,
+      managedProtocolPayloadRef: { current: undefined },
+    });
+    const started = await runWithProviderCredentialLeaseScope(parentScope, () =>
+      ctx.workflowHost!.startInline({
+        manifest: {
+          name: 'credential-revocation',
+          description: 'Credential revocation fixture',
+          readOnly: true,
+        },
+        source: 'async function run() { return {}; }',
+        args: {},
+      }));
+
+    brokerController.abort(new Error('lease revoked'));
+    await expect(postRevokeAcquire).resolves.toMatchObject({
+      message: expect.stringContaining('no longer active'),
+    });
+    settleWorkflow?.({
+      kind: 'failed',
+      error: new Error('revoked'),
+      state: { events: [] },
+    });
+    if (started.kind === 'started') await started.done;
+    parentScope.close();
+  });
+
   it('binds Provider credentials into default-shell filtering', () => {
     const ctx = buildToolExecutionContext({
       options: {

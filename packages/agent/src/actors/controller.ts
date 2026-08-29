@@ -154,6 +154,13 @@ interface StartPlan {
   readonly abortController: AbortController;
 }
 
+interface AgentHostMutationOptions extends AgentMutationOptions {
+  /** Process-local hook invoked before the admitted turn is durably committed. */
+  readonly beforeLaunch?: (plan: StartPlan) => void;
+  /** Fail without delivering a message when an explicit scope requires a new turn. */
+  readonly requireNewTurn?: boolean;
+}
+
 interface ActorMutationPersistenceOptions {
   readonly allowOwnershipClaim?: boolean;
   readonly commitStillValid?: () => boolean;
@@ -424,7 +431,7 @@ export class AgentActorController {
   async spawn(
     callerPath: string,
     input: AgentSpawnInput,
-    options?: AgentMutationOptions,
+    options?: AgentHostMutationOptions,
   ): Promise<AgentTurnRef> {
     let admittedTurnId: string | undefined;
     try {
@@ -432,6 +439,7 @@ export class AgentActorController {
         this.assertExpectedTreeRevision(options);
         this.assertExpectedAdmissionRevision(options);
         const created = await this.prepareSpawn(callerPath, input);
+        options?.beforeLaunch?.(created);
         admittedTurnId = created.turn.turnId;
         return created;
       });
@@ -500,7 +508,7 @@ export class AgentActorController {
     targetPath: string,
     objective: string,
     metadata?: Readonly<Record<string, AgentMetadataValue>>,
-    options?: AgentMutationOptions,
+    options?: AgentHostMutationOptions,
   ): Promise<AgentFollowupResult> {
     let admittedTurnId: string | undefined;
     try {
@@ -519,6 +527,12 @@ export class AgentActorController {
           throw new AgentControlError('unsupported_operation', `${targetPath} does not support follow-up`);
         }
         if (actor.currentTurnId) {
+          if (options?.requireNewTurn === true) {
+            throw new AgentControlError(
+              'unsupported_operation',
+              `${targetPath} already has a credential-bound turn`,
+            );
+          }
           const turn = this.requireTurn(actor.currentTurnId);
           const requestedStrategy = metadata?.qualityStrategy;
           if (
@@ -541,6 +555,7 @@ export class AgentActorController {
           return { delivery: 'current_turn' as const, turn: turnRef(turn) };
         }
         const plan = await this.prepareExistingTurn(actor, objective, metadata);
+        options?.beforeLaunch?.(plan);
         admittedTurnId = plan.turn.turnId;
         return { delivery: 'started_turn' as const, turn: turnRef(plan.turn), plan };
       });

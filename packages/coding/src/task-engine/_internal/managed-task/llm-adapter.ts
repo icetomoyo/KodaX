@@ -36,6 +36,7 @@ import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
   resolvePromptCacheDisabled,
+  withProviderRequestCredential,
 } from '@kodax-ai/llm';
 import {
   attachRunnerRecoveryTranscript,
@@ -869,13 +870,18 @@ export function buildRunnerLlmAdapter(
         try {
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
           const cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
-          raw = await provider.stream(
-            wireProviderMessages,
-            [...wireTools],
-            system,
-            providerReasoning,
-            streamOptions,
+          raw = await withProviderRequestCredential(
+            provider.name,
+            'primary',
             retrySignal,
+            (credentialSignal) => provider.stream(
+              wireProviderMessages,
+              [...wireTools],
+              system,
+              providerReasoning,
+              { ...streamOptions, signal: credentialSignal },
+              credentialSignal,
+            ),
           );
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
           // max_tokens escalation: if the capped budget hit the cap and
@@ -1053,30 +1059,35 @@ export function buildRunnerLlmAdapter(
                 attempt,
                 'complete',
               );
-              raw = await provider.complete(
-                wireFallbackMessages,
-                [...wireTools],
-                system,
-                providerReasoning,
-                {
-                  promptCacheKey,
-                  modelOverride: activeModel,
-                  maxOutputTokensOverride: requestMaxOutputTokens,
-                  ephemeralSuffix: nativeEphemeralSuffix,
-                  onTextDelta: (text: string) => {
-                    boundaryTracker.markTextDelta(text);
-                    options.events?.onTextDelta?.(text, fallbackMeta);
-                  },
-                  onThinkingDelta: (text: string) => {
-                    boundaryTracker.markThinkingDelta(text);
-                    options.events?.onThinkingDelta?.(text, fallbackMeta);
-                  },
-                  onThinkingEnd: (thinking: string) => {
-                    options.events?.onThinkingEnd?.(thinking, fallbackMeta);
-                  },
-                  signal: fallbackSignal,
-                },
+              raw = await withProviderRequestCredential(
+                provider.name,
+                'fallback',
                 fallbackSignal,
+                (credentialSignal) => provider.complete(
+                  wireFallbackMessages,
+                  [...wireTools],
+                  system,
+                  providerReasoning,
+                  {
+                    promptCacheKey,
+                    modelOverride: activeModel,
+                    maxOutputTokensOverride: requestMaxOutputTokens,
+                    ephemeralSuffix: nativeEphemeralSuffix,
+                    onTextDelta: (text: string) => {
+                      boundaryTracker.markTextDelta(text);
+                      options.events?.onTextDelta?.(text, fallbackMeta);
+                    },
+                    onThinkingDelta: (text: string) => {
+                      boundaryTracker.markThinkingDelta(text);
+                      options.events?.onThinkingDelta?.(text, fallbackMeta);
+                    },
+                    onThinkingEnd: (thinking: string) => {
+                      options.events?.onThinkingEnd?.(thinking, fallbackMeta);
+                    },
+                    signal: credentialSignal,
+                  },
+                  credentialSignal,
+                ),
               );
               completePromptCacheDiagnostic(fallbackCacheDiagnostic, raw.usage);
               break;
@@ -1245,49 +1256,54 @@ export function buildRunnerLlmAdapter(
             providerMessages,
             attempt + l5Retries,
           );
-          raw = await provider.stream(
-            wireContinuationMessages,
-            [...wireTools],
-            system,
-            providerReasoning,
-            {
-              promptCacheKey,
-              modelOverride: activeModel,
-              maxOutputTokensOverride: requestMaxOutputTokens,
-              ephemeralSuffix: nativeEphemeralSuffix,
-              onTextDelta: (text: string) => {
-                const hasMarker = text.includes('```')
-                  || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
-                const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
-                if (outText.length === 0) return;
-                continuationText += outText;
-                boundaryTracker.markTextDelta(text);
-                options.events?.onTextDelta?.(outText, continuationMeta);
-              },
-              onThinkingDelta: (text: string) => {
-                boundaryTracker.markThinkingDelta(text);
-                options.events?.onThinkingDelta?.(text, continuationMeta);
-              },
-              onThinkingEnd: (thinking: string) => {
-                options.events?.onThinkingEnd?.(thinking, continuationMeta);
-              },
-              onToolInputDelta: options.events?.onToolInputDelta,
-              onRateLimit: (rateAttempt: number, maxRetries: number, delayMs: number) => {
-                if (options.events) {
-                  emitProviderRateLimit(options.events, rateAttempt, maxRetries, delayMs);
-                }
-              },
-              onRetryAfter: (event: KodaXRetryAfterEvent) => {
-                costTracker = recordCostRetry(costTracker, {
-                  provider: event.provider,
-                  waitMs: event.waitMs,
-                  reason: event.reason,
-                  source: event.source,
-                });
-                options.events?.onRetryAfter?.(event);
-              },
-            },
+          raw = await withProviderRequestCredential(
+            provider.name,
+            'primary',
             l5Signal,
+            (credentialSignal) => provider.stream(
+              wireContinuationMessages,
+              [...wireTools],
+              system,
+              providerReasoning,
+              {
+                promptCacheKey,
+                modelOverride: activeModel,
+                maxOutputTokensOverride: requestMaxOutputTokens,
+                ephemeralSuffix: nativeEphemeralSuffix,
+                onTextDelta: (text: string) => {
+                  const hasMarker = text.includes('```')
+                    || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
+                  const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
+                  if (outText.length === 0) return;
+                  continuationText += outText;
+                  boundaryTracker.markTextDelta(text);
+                  options.events?.onTextDelta?.(outText, continuationMeta);
+                },
+                onThinkingDelta: (text: string) => {
+                  boundaryTracker.markThinkingDelta(text);
+                  options.events?.onThinkingDelta?.(text, continuationMeta);
+                },
+                onThinkingEnd: (thinking: string) => {
+                  options.events?.onThinkingEnd?.(thinking, continuationMeta);
+                },
+                onToolInputDelta: options.events?.onToolInputDelta,
+                onRateLimit: (rateAttempt: number, maxRetries: number, delayMs: number) => {
+                  if (options.events) {
+                    emitProviderRateLimit(options.events, rateAttempt, maxRetries, delayMs);
+                  }
+                },
+                onRetryAfter: (event: KodaXRetryAfterEvent) => {
+                  costTracker = recordCostRetry(costTracker, {
+                    provider: event.provider,
+                    waitMs: event.waitMs,
+                    reason: event.reason,
+                    source: event.source,
+                  });
+                  options.events?.onRetryAfter?.(event);
+                },
+              },
+              credentialSignal,
+            ),
           );
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
         } catch (error: unknown) {

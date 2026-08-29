@@ -13,6 +13,7 @@ import type {
   KodaXTokenUsage,
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
+import { withProviderRequestCredential } from '@kodax-ai/llm';
 import type { CompactionDetails } from './types.js';
 import type { KodaXCompactMemorySeed } from '../../index.js';
 import { serializeConversation } from './utils.js';
@@ -501,19 +502,24 @@ export async function generateSummary(
   } catch {
     // Diagnostics are fail-open and must never block compaction.
   }
-  const result = await provider.stream(
-    [...request.messages],
-    [...request.tools],
-    request.system,
-    request.reasoning,
-    request.modelOverride || request.ephemeralSuffix || request.promptCacheKey
-      ? {
-          ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
-          ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
-          ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
-        }
-      : undefined,
+  const result = await withProviderRequestCredential(
+    provider.name,
+    'compaction',
     undefined,
+    (credentialSignal) => provider.stream(
+      [...request.messages],
+      [...request.tools],
+      request.system,
+      request.reasoning,
+      request.modelOverride || request.ephemeralSuffix || request.promptCacheKey
+        ? {
+            ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
+            ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
+            ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
+          }
+        : undefined,
+      credentialSignal,
+    ),
   );
   try {
     (cacheContext?.observer ?? observer)?.onResponse?.(request, result.usage);

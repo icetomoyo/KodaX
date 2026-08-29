@@ -8,7 +8,11 @@ import type {
   KodaXToolDefinition,
   KodaXToolResultBlock,
 } from '@kodax-ai/llm';
-import { KodaXBaseProvider } from '@kodax-ai/llm';
+import {
+  createProviderCredentialLeaseScope,
+  KodaXBaseProvider,
+  runWithProviderCredentialLeaseScope,
+} from '@kodax-ai/llm';
 import { ContextCapacityError } from '../../context-capacity.js';
 import { compact, isEmptyLikeSummary, needsCompaction, PROTECTED_TOOL_NAMES, truncateUserText } from './compaction.js';
 import { generateSummary } from './summary-generator.js';
@@ -535,6 +539,27 @@ describe('user message protection', () => {
 });
 
 describe('summary generator', () => {
+  it('uses the same lazy credential seam for manual and automatic compaction', async () => {
+    const provider = new FakeSummaryProvider('summary');
+    const acquisitions: string[] = [];
+    const scope = createProviderCredentialLeaseScope({
+      allowedProviders: ['fake-summary'],
+      async acquire(providerName) {
+        acquisitions.push(providerName);
+        return 'keychain-only-secret';
+      },
+    });
+
+    await runWithProviderCredentialLeaseScope(scope, () => generateSummary(
+      [{ role: 'user', content: 'continue the work' }],
+      provider,
+      { readFiles: [], modifiedFiles: [] },
+    ));
+
+    expect(acquisitions).toEqual(['fake-summary']);
+    scope.close();
+  });
+
   it('uses continuation-focused update instructions instead of preserving all history', async () => {
     const provider = new FakeSummaryProvider('summary');
 

@@ -32,6 +32,7 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
+import { withProviderRequestCredential } from '@kodax-ai/llm';
 
 import type { StopHookContext, StopHookFn, StopHookResult } from '../primitives/runner.js';
 
@@ -164,21 +165,26 @@ export async function invokeLlmJudge<TVerdict>(
   const streamPromise = (async (): Promise<TVerdict> => {
     let result;
     try {
-      result = await options.provider.stream(
-        messages,
-        [options.reportTool],
-        options.systemPrompt,
-        false,
-        {
-          ...(options.model ? { modelOverride: options.model } : {}),
-          forcedToolName: options.reportToolName,
-          maxOutputTokensOverride: maxOutputTokens,
-          ...(options.promptCacheKey === undefined
-            ? {}
-            : { promptCacheKey: options.promptCacheKey }),
-          signal: streamSignal,
-        },
+      result = await withProviderRequestCredential(
+        options.provider.name,
+        'sidecar',
         streamSignal,
+        (credentialSignal) => options.provider.stream(
+          messages,
+          [options.reportTool],
+          options.systemPrompt,
+          false,
+          {
+            ...(options.model ? { modelOverride: options.model } : {}),
+            forcedToolName: options.reportToolName,
+            maxOutputTokensOverride: maxOutputTokens,
+            ...(options.promptCacheKey === undefined
+              ? {}
+              : { promptCacheKey: options.promptCacheKey }),
+            signal: credentialSignal,
+          },
+          credentialSignal,
+        ),
       );
     } catch {
       return options.defaultVerdict('provider_error');

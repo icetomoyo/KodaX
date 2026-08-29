@@ -258,6 +258,152 @@ describe('runtime daemon reverse bridge', () => {
     }
   });
 
+  it('revokes ephemeral credentials on disconnect but preserves stable leases for resume', () => {
+    const hub = createRuntimeDaemonReverseBridgeHub();
+    const ephemeral = hub.attach({
+      principalId: 'space-client',
+      connectionId: 'ephemeral-1',
+      notify: () => undefined,
+    });
+    ephemeral.bridge.registerCredential({
+      leaseId: 'ephemeral-credential',
+      providers: ['openai'],
+      brokerVersion: 2,
+    });
+    const ephemeralSignal = ephemeral.bridge.credentialSignal('ephemeral-credential');
+    ephemeral.close();
+    expect(ephemeralSignal?.aborted).toBe(true);
+    expect(ephemeral.bridge.getCredential('ephemeral-credential')).toBeUndefined();
+
+    const stable = hub.attach({
+      principalId: 'space-client',
+      connectionId: 'stable-1',
+      instanceSecret: 's'.repeat(32),
+      notify: () => undefined,
+    });
+    stable.bridge.registerCredential({
+      leaseId: 'stable-credential',
+      providers: ['openai'],
+      brokerVersion: 2,
+    });
+    const stableSignal = stable.bridge.credentialSignal('stable-credential');
+    stable.close();
+    expect(stableSignal?.aborted).toBe(false);
+    const resumed = hub.attach({
+      principalId: 'space-client',
+      connectionId: 'stable-2',
+      instanceSecret: 's'.repeat(32),
+      notify: () => undefined,
+    });
+    expect(resumed.bridge.getCredential('stable-credential')).toMatchObject({
+      id: 'stable-credential',
+    });
+    resumed.close();
+    hub.close();
+  });
+
+  it('dispatches v2 credential requests with an operation target and no synthetic run', async () => {
+    const notifications: RuntimeDaemonNotification[] = [];
+    const bridge = createRuntimeDaemonReverseBridge((notification) => notifications.push(notification));
+    const lease = bridge.registerCredential({
+      leaseId: 'credential-operation',
+      providers: ['openai', 'anthropic'],
+      brokerVersion: 2,
+    });
+    expect(lease).toMatchObject({ brokerVersion: 2 });
+
+    const acquired = bridge.acquireScopedCredential({
+      leaseId: lease.id,
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'compact-op-1',
+      },
+      purpose: 'compaction',
+    });
+    const request = notifications[0];
+    expect(request?.params).toMatchObject({
+      brokerVersion: 2,
+      leaseId: lease.id,
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'compact-op-1',
+      },
+      purpose: 'compaction',
+    });
+    expect(request?.params).not.toHaveProperty('runId');
+    expect(bridge.supplyCredential({
+      requestId: readString(request?.params, 'requestId'),
+      credential: 'operation-secret',
+    })).toBe(true);
+    await expect(acquired).resolves.toBe('operation-secret');
+    await expect(bridge.acquireCredential({
+      leaseId: lease.id,
+      provider: 'openai',
+      sessionId: 'session-1',
+      runId: 'run-1',
+    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    bridge.close();
+  });
+
+  it('does not dispatch a credential request for an already-cancelled operation', async () => {
+    const notifications: RuntimeDaemonNotification[] = [];
+    const bridge = createRuntimeDaemonReverseBridge((notification) => notifications.push(notification));
+    bridge.registerCredential({
+      leaseId: 'credential-cancelled-before-acquire',
+      providers: ['openai'],
+      brokerVersion: 2,
+    });
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+
+    await expect(bridge.acquireScopedCredential({
+      leaseId: 'credential-cancelled-before-acquire',
+      provider: 'openai',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'cancelled-op',
+      },
+      purpose: 'compaction',
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    expect(notifications).toEqual([]);
+    bridge.close();
+  });
+
+  it('linearizes revocation before a late credential supply', async () => {
+    const notifications: RuntimeDaemonNotification[] = [];
+    const bridge = createRuntimeDaemonReverseBridge((notification) => notifications.push(notification));
+    bridge.registerCredential({
+      leaseId: 'credential-revoked-in-flight',
+      providers: ['openai'],
+    });
+    const acquired = bridge.acquireCredential({
+      leaseId: 'credential-revoked-in-flight',
+      provider: 'openai',
+      sessionId: 'session-1',
+      runId: 'run-1',
+    });
+    const outcome = acquired.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    const requestId = readString(notifications[0]?.params, 'requestId');
+
+    expect(bridge.revokeCredential('credential-revoked-in-flight')).toBe(true);
+    expect(bridge.supplyCredential({ requestId, credential: 'too-late' })).toBe(false);
+    await expect(outcome).resolves.toMatchObject({ code: 'credential_unavailable' });
+    expect(bridge.getRunRequirements('run-1')).toBeUndefined();
+    bridge.close();
+  });
+
   it('prunes expired credential leases before registering a replacement', () => {
     vi.useFakeTimers();
     try {
@@ -273,6 +419,29 @@ describe('runtime daemon reverse bridge', () => {
         leaseId: 'credential-renewed',
         providers: ['anthropic'],
       })).toMatchObject({ id: 'credential-renewed', providers: ['anthropic'] });
+      bridge.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts an active scoped credential signal exactly when the lease expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createRuntimeDaemonReverseBridge(() => undefined);
+      bridge.registerCredential({
+        leaseId: 'credential-active-expiry',
+        providers: ['openai'],
+        brokerVersion: 2,
+        expiresAt: new Date(Date.now() + 100).toISOString(),
+      });
+      const signal = bridge.credentialSignal('credential-active-expiry');
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(101);
+
+      expect(signal?.aborted).toBe(true);
+      expect(bridge.getCredential('credential-active-expiry')).toBeUndefined();
       bridge.close();
     } finally {
       vi.useRealTimers();

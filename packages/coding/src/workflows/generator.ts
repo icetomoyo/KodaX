@@ -1253,6 +1253,7 @@ export async function generateWorkflowFromOptions(
         system: request.system,
         messages,
         querySource: 'workflow-generation',
+        credentialPurpose: 'workflow',
         timeoutMs,
         ...(effort ? { reasoning: { effort } } : {}),
         ...(request.signal ? { abortSignal: request.signal } : {}),

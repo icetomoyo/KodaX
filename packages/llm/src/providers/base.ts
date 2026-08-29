@@ -23,7 +23,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
-import { resolveProviderCredential } from '../provider-credential-context.js';
+import {
+  hasScopedProviderCredentialAuthority,
+  resolveProviderCredential,
+} from '../provider-credential-context.js';
 
 /**
  * Passive-learning guard threaded into `withRateLimit`: when the request fails
@@ -382,6 +385,8 @@ export abstract class KodaXBaseProvider {
   }
 
   isConfigured(): boolean {
+    const scopedAuthority = hasScopedProviderCredentialAuthority(this.name);
+    if (scopedAuthority !== undefined) return scopedAuthority;
     return resolveProviderCredential(
       this.name,
       process.env[this.config.apiKeyEnv],

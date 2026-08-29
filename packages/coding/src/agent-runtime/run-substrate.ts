@@ -33,6 +33,7 @@ import {
   formatCostReport,
   mapLegacyReasoningModeToEffortIntent,
   resolvePromptCacheDisabled,
+  withProviderRequestCredential,
   type CostTracker,
 } from '@kodax-ai/llm';
 import path from 'path';
@@ -1835,21 +1836,26 @@ export async function runSubstrate(
             ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
             attempt,
           });
-          result = await streamProvider.stream(
-            wireMessages,
-            activeToolDefinitions,
-            effectiveSystemPrompt,
-            effectiveProviderReasoning,
-            {
-              ...streamCallbacks,
-              promptCacheKey,
-              onRetryAfter: wrappedRetryAfter,
-              modelOverride: turnState.currentModelOverride,
-              maxOutputTokensOverride: requestMaxOutputTokens,
-              ephemeralSuffix: memorySuffix,
-              signal: retrySignal,
-            },
+          result = await withProviderRequestCredential(
+            streamProvider.name,
+            'primary',
             retrySignal,
+            (credentialSignal) => streamProvider.stream(
+              wireMessages,
+              activeToolDefinitions,
+              effectiveSystemPrompt,
+              effectiveProviderReasoning,
+              {
+                ...streamCallbacks,
+                promptCacheKey,
+                onRetryAfter: wrappedRetryAfter,
+                modelOverride: turnState.currentModelOverride,
+                maxOutputTokensOverride: requestMaxOutputTokens,
+                ephemeralSuffix: memorySuffix,
+                signal: credentialSignal,
+              },
+              credentialSignal,
+            ),
           );
           emitPromptCacheDiagnosticResponse(events, cacheDiagnostic, result.usage);
 

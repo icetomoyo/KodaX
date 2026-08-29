@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { sideQuery } from './side-query.js';
 import { KodaXBaseProvider } from './providers/base.js';
 import { createCostTracker } from './cost-tracker.js';
+import {
+  createProviderCredentialLeaseScope,
+  runWithProviderCredentialLeaseScope,
+} from './provider-credential-context.js';
 import type {
   KodaXMessage,
   KodaXProviderConfig,
@@ -108,6 +112,34 @@ describe('sideQuery — happy path', () => {
     expect(result.usage.totalTokens).toBe(120);
     expect(result.stopReason).toBe('end_turn');
     expect(result.error).toBeUndefined();
+  });
+
+  it.each([
+    { requested: 'workflow' as const, expected: 'workflow' },
+    { requested: undefined, expected: 'utility' },
+  ])('reports the $expected credential purpose to a lazy broker', async ({ requested, expected }) => {
+    const purposes: string[] = [];
+    const provider = new StubProvider(async () => okResult());
+    const scope = createProviderCredentialLeaseScope({
+      allowedProviders: ['stub'],
+      async acquire(_provider, purpose) {
+        purposes.push(purpose);
+        return 'stub-secret';
+      },
+    });
+
+    const result = await runWithProviderCredentialLeaseScope(scope, () => sideQuery({
+      provider,
+      model: 'stub-default',
+      system: 'sys',
+      messages: baseMessages,
+      querySource: 'purpose-test',
+      ...(requested === undefined ? {} : { credentialPurpose: requested }),
+    }));
+
+    expect(result.stopReason).toBe('end_turn');
+    expect(purposes).toEqual([expected]);
+    scope.close();
   });
 
   it('passes empty tools, model override via streamOptions, and reasoning off by default', async () => {

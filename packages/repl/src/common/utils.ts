@@ -1263,6 +1263,15 @@ export function ensureExampleConfigFile(): string | undefined {
 
 const projectedConfigEnvironment = new Map<string, string>();
 
+export type ConfigEnvironmentSource = 'environment' | 'persisted' | 'unset';
+
+/** Report provenance for a bridged env value without returning the value itself. */
+export function inspectConfigEnvironmentSource(env: string): ConfigEnvironmentSource {
+  const value = process.env[env];
+  if (value === undefined) return 'unset';
+  return projectedConfigEnvironment.get(env) === value ? 'persisted' : 'environment';
+}
+
 function projectConfigEnvironment(env: string, value: string | undefined): void {
   const current = process.env[env];
   const previousProjection = projectedConfigEnvironment.get(env);

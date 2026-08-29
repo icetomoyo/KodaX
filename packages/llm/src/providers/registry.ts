@@ -22,7 +22,11 @@ import {
   KodaXVerifyStrategy,
 } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
-import { resolveProviderCredential } from '../provider-credential-context.js';
+import {
+  hasProviderCredentialContext,
+  hasScopedProviderCredentialAuthority,
+  resolveProviderCredential,
+} from '../provider-credential-context.js';
 import {
   cloneCapabilityProfile,
   normalizeCapabilityProfile,
@@ -389,6 +393,8 @@ export function getProvider(name?: string): KodaXBaseProvider {
     );
   }
 
+  if (hasProviderCredentialContext()) return factory();
+
   const apiKeyEnv = resolveApiKeyEnvForProvider(n);
   const currentApiKey = resolveProviderCredential(
     n,
@@ -420,6 +426,8 @@ export function isProviderConfigured(name: string): boolean {
   if (!isProviderName(name)) {
     return false;
   }
+  const scopedAuthority = hasScopedProviderCredentialAuthority(name);
+  if (scopedAuthority !== undefined) return scopedAuthority;
   return resolveProviderCredential(
     name,
     process.env[KODAX_PROVIDER_SNAPSHOTS[name].apiKeyEnv],

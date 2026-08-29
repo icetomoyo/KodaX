@@ -9,6 +9,12 @@ import {
   type AgentTurnExecutor,
 } from '@kodax-ai/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createProviderCredentialLeaseScope,
+  getScopedProviderCredential,
+  runWithProviderCredentialLeaseScope,
+  withProviderRequestCredential,
+} from '@kodax-ai/llm';
 
 import type {
   KodaXChildExecutionResult,
@@ -108,6 +114,264 @@ afterEach(() => {
 });
 
 describe('F270 coding Actor runtime adapter', () => {
+  it('derives and closes a concrete Provider lease for each native child turn', async () => {
+    let delayedRequest: Promise<unknown> | undefined;
+    let releaseDelayed: (() => void) | undefined;
+    executeChildAgentsMock.mockImplementation(async () => {
+      await expect(withProviderRequestCredential(
+        'anthropic',
+        'agent',
+        undefined,
+        () => getScopedProviderCredential('anthropic'),
+      )).resolves.toBe('anthropic-secret');
+      await expect(withProviderRequestCredential(
+        'openai',
+        'agent',
+        undefined,
+        () => 'must-not-run',
+      )).rejects.toThrow('does not allow provider openai');
+      delayedRequest = new Promise<void>((resolve) => {
+        releaseDelayed = resolve;
+      }).then(() => withProviderRequestCredential(
+        'anthropic',
+        'agent',
+        undefined,
+        () => getScopedProviderCredential('anthropic'),
+      )).catch((error: unknown) => error);
+      return completedChild('native result');
+    });
+    const parentScope = createProviderCredentialLeaseScope({
+      allowedProviders: ['anthropic', 'openai'],
+      async acquire(provider) {
+        return `${provider}-secret`;
+      },
+    });
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+
+    const turn = await runWithProviderCredentialLeaseScope(parentScope, () => root.spawn({
+      taskName: 'worker',
+      objective: 'Use only Anthropic.',
+      capabilities: { providers: ['anthropic'] },
+    }));
+    await settle();
+    expect(root.output(turn.actorPath, turn.turnId)).toMatchObject({
+      state: 'completed',
+      output: 'native result',
+    });
+    releaseDelayed?.();
+    await expect(delayedRequest).resolves.toMatchObject({
+      message: expect.stringContaining('no longer active'),
+    });
+    await session.close();
+    parentScope.close();
+  });
+
+  it('binds an explicit lazy credential lease to the exact admitted Actor turn', async () => {
+    const acquire = vi.fn(async (provider: string) => `${provider}-explicit-secret`);
+    executeChildAgentsMock.mockImplementation(async () => {
+      await expect(withProviderRequestCredential(
+        'anthropic',
+        'agent',
+        undefined,
+        () => getScopedProviderCredential('anthropic'),
+      )).resolves.toBe('anthropic-explicit-secret');
+      return completedChild('explicit credential result');
+    });
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+
+    const turn = await session.spawnRoot(
+      {
+        taskName: 'worker',
+        objective: 'Use the explicit lease.',
+        capabilities: { providers: ['anthropic'] },
+      },
+      undefined,
+      ({ actorPath, turnId, providers }) => {
+        expect(actorPath).toBe('/root/worker');
+        expect(turnId).toMatch(/^turn_/);
+        expect(providers).toEqual(['anthropic']);
+        return { allowedProviders: ['anthropic'], acquire };
+      },
+    );
+    await settle();
+
+    expect(root.output(turn.actorPath, turn.turnId)).toMatchObject({
+      state: 'completed',
+      output: 'explicit credential result',
+    });
+    expect(acquire).toHaveBeenCalledOnce();
+    await session.close();
+  });
+
+  it('refuses to widen a running Actor turn with a follow-up credential lease', async () => {
+    executeChildAgentsMock.mockImplementation((_bundles, _ctx, childOptions) =>
+      new Promise((resolve) => {
+        childOptions.abortSignal?.addEventListener(
+          'abort',
+          () => resolve(completedChild('interrupted')),
+          { once: true },
+        );
+      }));
+    const credentialFactory = vi.fn(() => ({
+      allowedProviders: ['anthropic'],
+      async acquire() { return 'must-not-be-requested'; },
+    }));
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const turn = await root.spawn({
+      taskName: 'worker',
+      objective: 'Keep running.',
+      capabilities: { providers: ['anthropic'] },
+    });
+
+    await expect(session.followupRoot(
+      turn.actorPath,
+      'Do more with a new lease.',
+      undefined,
+      credentialFactory,
+    )).rejects.toThrow('already has a credential-bound turn');
+    expect(credentialFactory).not.toHaveBeenCalled();
+    expect(root.get(turn.actorPath).mailbox).toEqual([]);
+    await root.interrupt(turn.actorPath);
+    await session.close();
+  });
+
+  it('atomically requires a daemon credential only when follow-up admits a new internal turn', async () => {
+    executeChildAgentsMock.mockResolvedValue(completedChild('first turn complete'));
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const first = await root.spawn({ taskName: 'worker', objective: 'Finish once.' });
+    await settle();
+    expect(root.output(first.actorPath, first.turnId)).toMatchObject({ state: 'completed' });
+
+    await expect(session.followupRoot(
+      first.actorPath,
+      'This would start a new unbound turn.',
+      undefined,
+      undefined,
+      true,
+    )).rejects.toMatchObject({ code: 'credential_unavailable' });
+    expect(root.get(first.actorPath).mailbox).toEqual([]);
+
+    executeChildAgentsMock.mockImplementation((_bundles, _ctx, childOptions) =>
+      new Promise((resolve) => {
+        childOptions.abortSignal?.addEventListener(
+          'abort',
+          () => resolve(completedChild('interrupted')),
+          { once: true },
+        );
+      }));
+    const active = await root.spawn({ taskName: 'active', objective: 'Keep running.' });
+    await vi.waitFor(() => expect(executeChildAgentsMock).toHaveBeenCalledTimes(2));
+    await expect(session.followupRoot(
+      active.actorPath,
+      'Continue the already-bound current turn.',
+      undefined,
+      undefined,
+      true,
+    )).resolves.toMatchObject({ delivery: 'current_turn' });
+    await root.interrupt(active.actorPath);
+    await session.close();
+  });
+
+  it('closes an Actor credential scope as soon as its turn is interrupted', async () => {
+    let postAbortAcquire: Promise<unknown> | undefined;
+    let releaseExecutor: (() => void) | undefined;
+    executeChildAgentsMock.mockImplementation((_bundles, _ctx, childOptions) => {
+      const aborted = new Promise<void>((resolve) => {
+        childOptions.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      postAbortAcquire = aborted.then(() => withProviderRequestCredential(
+            'anthropic',
+            'agent',
+            undefined,
+            () => getScopedProviderCredential('anthropic'),
+          )).catch((error: unknown) => error);
+      return new Promise((resolve) => {
+        releaseExecutor = () => resolve(completedChild('interrupted'));
+      });
+    });
+    const parentScope = createProviderCredentialLeaseScope({
+      allowedProviders: ['anthropic'],
+      async acquire() { return 'anthropic-secret'; },
+    });
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const turn = await runWithProviderCredentialLeaseScope(parentScope, () => root.spawn({
+      taskName: 'worker',
+      objective: 'Keep the executor pending after cancellation.',
+      capabilities: { providers: ['anthropic'] },
+    }));
+
+    await vi.waitFor(() => expect(executeChildAgentsMock).toHaveBeenCalled());
+    await root.interrupt(turn.actorPath, 'cancel now');
+    await expect(postAbortAcquire).resolves.toMatchObject({
+      message: expect.stringContaining('no longer active'),
+    });
+    releaseExecutor?.();
+    await session.close();
+    parentScope.close();
+  });
+
+  it('never propagates Runtime Provider credentials into an external Agent executor', async () => {
+    const acquire = vi.fn(async () => 'must-not-be-resolved');
+    const externalExecutor: AgentTurnExecutor = {
+      execute: vi.fn(async (): Promise<AgentExecutionResult> => {
+        const observed = await withProviderRequestCredential(
+          'anthropic',
+          'agent',
+          undefined,
+          () => getScopedProviderCredential('anthropic'),
+        ).catch((error: unknown) => error);
+        return {
+          output: observed instanceof Error ? observed.message : String(observed),
+        };
+      }),
+    };
+    const parentScope = createProviderCredentialLeaseScope({
+      allowedProviders: ['anthropic'],
+      acquire,
+    });
+    const session = new CodingActorSession({
+      executor: externalExecutor,
+      sessionId: 'session-1',
+    });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+
+    const turn = await runWithProviderCredentialLeaseScope(parentScope, () => root.spawn({
+      taskName: 'remote-reviewer',
+      objective: 'Use only the external credentialRef broker.',
+      kind: 'external',
+    }));
+    await settle();
+
+    expect(root.output(turn.actorPath, turn.turnId)).toMatchObject({
+      state: 'completed',
+      output: expect.stringContaining('does not allow provider anthropic'),
+    });
+    expect(acquire).not.toHaveBeenCalled();
+    await expect(session.spawnRoot(
+      {
+        taskName: 'bound-remote',
+        objective: 'Must reject Runtime credentials.',
+        kind: 'external',
+      },
+      undefined,
+      () => ({ allowedProviders: ['anthropic'], acquire }),
+    )).rejects.toThrow(/external Agent.*credential/i);
+    expect(root.list().actors.some((actor) => actor.path === '/root/bound-remote')).toBe(false);
+    await session.close();
+    parentScope.close();
+  });
+
   it('keeps native turns on the coding executor when an external plane executor exists', async () => {
     executeChildAgentsMock.mockResolvedValue(completedChild('native result'));
     const externalExecutor: AgentTurnExecutor = {

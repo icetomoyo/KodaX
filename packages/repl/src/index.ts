@@ -100,6 +100,8 @@ export {
   getConfigTemplate,
   CONFIG_TEMPLATES,
   prepareRuntimeConfig,
+  inspectConfigEnvironmentSource,
+  KODAX_CONFIG_ENV_BINDINGS,
   resolveRuntimeProviderSelection,
   resolveRuntimeModelSelection,
   resolveRuntimeEffortSelection,
@@ -114,7 +116,10 @@ export {
   KODAX_INTEGRATION_EXAMPLE_FILES,
   PREVIEW_MAX_LENGTH,
 } from "./common/utils.js";
-export type { ConfigTemplateName } from "./common/utils.js";
+export type {
+  ConfigEnvironmentSource,
+  ConfigTemplateName,
+} from "./common/utils.js";
 
 // === Typed Auto-mode settings resolver (FEATURE_271, v0.7.73) ===
 export {

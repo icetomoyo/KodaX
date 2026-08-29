@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   applyConfigEnvironment,
+  inspectConfigEnvironmentSource,
   KODAX_CONFIG_ENV_BINDINGS,
 } from './utils.js';
 
@@ -65,6 +66,7 @@ describe('config.json environment bindings', () => {
 
     applyConfigEnvironment({ effort: 'high' });
     expect(process.env.KODAX_EFFORT).toBe('high');
+    expect(inspectConfigEnvironmentSource('KODAX_EFFORT')).toBe('persisted');
 
     applyConfigEnvironment({ effort: 'low' });
     expect(process.env.KODAX_EFFORT).toBe('low');
@@ -78,6 +80,7 @@ describe('config.json environment bindings', () => {
     applyConfigEnvironment({ effort: 'high' });
 
     process.env.KODAX_EFFORT = 'shell-value';
+    expect(inspectConfigEnvironmentSource('KODAX_EFFORT')).toBe('environment');
     applyConfigEnvironment({ effort: 'low' });
 
     expect(process.env.KODAX_EFFORT).toBe('shell-value');

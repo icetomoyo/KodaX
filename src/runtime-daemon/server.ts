@@ -7,6 +7,7 @@ import {
 } from "@kodax-ai/coding";
 import type {
   CapabilitySearchSnapshot,
+  CodingActorCredentialAccessFactory,
   ExtensionRuntimeContract,
 } from "@kodax-ai/coding";
 import {
@@ -14,6 +15,10 @@ import {
   ExternalAgentRegistrationConflictError,
   isCurrentProcessWindowsJobContained,
 } from "@kodax-ai/agent";
+import type {
+  ProviderCredentialAttribution,
+  ProviderCredentialLeaseAccess,
+} from "@kodax-ai/llm";
 
 import type {
   KodaXRuntime,
@@ -33,6 +38,8 @@ import type {
   RuntimeForkSessionInput,
   RuntimeGrantedScope,
   RuntimeHostToolDescriptor,
+  RuntimeAgentFollowupOptions,
+  RuntimeAgentOperationOptions,
   RuntimePermissionDecision,
   RuntimePermissionFilter,
   RuntimePermissionRequestInput,
@@ -52,6 +59,7 @@ import type {
   RuntimeConversationHistoryEntryChunkInput,
   RuntimeConversationHistoryPageInput,
   RuntimeStartRunInput,
+  RuntimeScopedCredentialTarget,
   RuntimeSubmitInput,
   RuntimeSubscription,
   RuntimeWorkflowFilter,
@@ -283,6 +291,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "host_tool.complete",
   ]),
   ...scopeEntries("integration:admin", [
+    "config.effective",
     "config.patch",
     "config.reload",
     "provider.custom.upsert",
@@ -1086,6 +1095,8 @@ async function dispatchRuntimeDaemonRequest(
       return options.config
         ? redactRuntimeConfig(await options.config())
         : runtime.config.read();
+    case "config.effective":
+      return runtime.config.readEffective();
     case "config.patch": {
       const patch = requireRecordField(requireRecord(request.params), "patch");
       return runtime.config.patch(patch);
@@ -1279,11 +1290,28 @@ async function dispatchRuntimeDaemonRequest(
     }
     case "agents.spawn": {
       const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      const actorInput = requireRecord(params.input);
+      const actorKind = optionalStringField(actorInput, "kind") ?? "native";
+      const credentialBinding = optionalRecord(params.credential);
+      assertDaemonAgentCredentialBinding(actorKind, credentialBinding);
+      const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
+        binding: credentialBinding,
+        sessionId,
+        reverseBridge,
+      });
       return runtime.agents.spawn(
-        requireStringField(params, "sessionId"),
-        requireRecord(params.input) as unknown as Parameters<
+        sessionId,
+        actorInput as unknown as Parameters<
           KodaXRuntime["agents"]["spawn"]
         >[1],
+        credentialAccessFactory === undefined
+          ? undefined
+          : {
+              providerCredentialAccessFactory: credentialAccessFactory,
+            } as RuntimeAgentOperationOptions & {
+              readonly providerCredentialAccessFactory: CodingActorCredentialAccessFactory;
+            },
       );
     }
     case "agents.send": {
@@ -1310,11 +1338,32 @@ async function dispatchRuntimeDaemonRequest(
     case "agents.followup": {
       const params = requireRecord(request.params);
       const expectedRevision = optionalIntegerField(params, "expectedRevision");
+      const sessionId = requireStringField(params, "sessionId");
+      const actorPath = requireStringField(params, "actorPath");
+      const credentialBinding = optionalRecord(params.credential);
+      const detail = await runtime.agents.detail(sessionId, actorPath);
+      if (detail.actor.currentTurnId === undefined || credentialBinding !== undefined) {
+        assertDaemonAgentCredentialBinding(detail.actor.kind, credentialBinding);
+      }
+      const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
+        binding: credentialBinding,
+        sessionId,
+        reverseBridge,
+      });
       return runtime.agents.followup(
-        requireStringField(params, "sessionId"),
-        requireStringField(params, "actorPath"),
+        sessionId,
+        actorPath,
         requireStringField(params, "objective"),
-        expectedRevision === undefined ? undefined : { expectedRevision },
+        {
+          ...(expectedRevision === undefined ? {} : { expectedRevision }),
+          ...(credentialAccessFactory === undefined
+            ? {}
+            : { providerCredentialAccessFactory: credentialAccessFactory }),
+          requireCredentialForNewTurn: true,
+        } as RuntimeAgentFollowupOptions & {
+          readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
+          readonly requireCredentialForNewTurn: true;
+        },
       );
     }
     case "agents.interrupt": {
@@ -1504,10 +1553,51 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.sessions.setActiveEntry(
         requireRecord(request.params) as unknown as RuntimeSetActiveEntryInput,
       );
-    case "session.compact":
-      return runtime.sessions.compact(
-        requireRecord(request.params) as unknown as RuntimeCompactSessionInput,
-      );
+    case "session.compact": {
+      const params = requireRecord(request.params);
+      const credentialBinding = optionalRecord(params.credential);
+      if (credentialBinding === undefined) {
+        return runtime.sessions.compact(
+          params as unknown as RuntimeCompactSessionInput,
+        );
+      }
+      if (credentialBinding.mode !== "scoped") {
+        throw daemonError(
+          "client_upgrade_required",
+          "Manual compaction requires a scoped v2 credential binding.",
+        );
+      }
+      if (request.operation === undefined) {
+        throw daemonError(
+          "operation_required",
+          "Credential-bound compaction requires a stable operation envelope.",
+        );
+      }
+      const sessionId = requireStringField(params, "sessionId");
+      const compactProvider = optionalStringField(params, "provider");
+      const boundProviders = requireStringArrayField(credentialBinding, "providers");
+      if (compactProvider !== undefined && !boundProviders.includes(compactProvider)) {
+        throw daemonError(
+          "credential_unavailable",
+          "Manual compaction Provider is outside the scoped credential binding.",
+        );
+      }
+      const providerCredentialAccess = bindTrustedScopedCredentialAccess({
+        binding: credentialBinding,
+        sessionId,
+        target: {
+          kind: "operation",
+          operation: "session.compact",
+          operationId: request.operation.operationId,
+        },
+        reverseBridge,
+      });
+      return runtime.sessions.compact({
+        ...params,
+        sessionId,
+        providerCredentialAccess,
+      } as unknown as RuntimeCompactSessionInput);
+    }
     case "session.archive":
       await runtime.sessions.archive(
         requireStringParam(request.params, "sessionId"),
@@ -1818,6 +1908,13 @@ async function dispatchRuntimeDaemonRequest(
       return reverseBridge.registerCredential({
         leaseId: requireStringField(params, "leaseId"),
         providers: requireStringArrayField(params, "providers"),
+        ...(optionalIntegerField(params, "brokerVersion") !== undefined
+          ? {
+              brokerVersion: requireCredentialBrokerVersion(
+                optionalIntegerField(params, "brokerVersion")!,
+              ),
+            }
+          : {}),
         ...(optionalStringField(params, "expiresAt") !== undefined
           ? { expiresAt: optionalStringField(params, "expiresAt")! }
           : {}),
@@ -2044,15 +2141,26 @@ async function bindTrustedRunInput(input: {
 }): Promise<Record<string, unknown>> {
   const credentialBinding = optionalRecord(input.params.credential);
   const hostToolBinding = optionalRecord(input.params.hostTools);
-  const providerCredential =
-    credentialBinding === undefined
-      ? undefined
-      : await input.reverseBridge.acquireCredential({
-          leaseId: requireStringField(credentialBinding, "leaseId"),
-          provider: requireStringField(credentialBinding, "provider"),
-          sessionId: input.sessionId,
+  const scopedCredentialAccess = credentialBinding?.mode === "scoped"
+    ? bindTrustedScopedCredentialAccess({
+        binding: credentialBinding,
+        sessionId: input.sessionId,
+        target: {
+          kind: "run",
           runId: input.trustedRunId,
-        });
+          ...(input.operationId !== undefined ? { operationId: input.operationId } : {}),
+        },
+        reverseBridge: input.reverseBridge,
+      })
+    : undefined;
+  const providerCredential = credentialBinding === undefined || scopedCredentialAccess !== undefined
+    ? undefined
+    : await input.reverseBridge.acquireCredential({
+        leaseId: requireStringField(credentialBinding, "leaseId"),
+        provider: requireStringField(credentialBinding, "provider"),
+        sessionId: input.sessionId,
+        runId: input.trustedRunId,
+      });
   const hostToolLeaseId =
     hostToolBinding === undefined
       ? undefined
@@ -2105,7 +2213,10 @@ async function bindTrustedRunInput(input: {
         : {}),
     },
     ...(providerCredential !== undefined ? { providerCredential } : {}),
-    ...(credentialBinding !== undefined
+    ...(scopedCredentialAccess !== undefined
+      ? { providerCredentialAccess: scopedCredentialAccess }
+      : {}),
+    ...(credentialBinding !== undefined && scopedCredentialAccess === undefined
       ? {
           providerCredentialProvider: requireStringField(
             credentialBinding,
@@ -2418,12 +2529,23 @@ function runtimeDaemonCapabilities(
     askUserTransport: { version: 1 },
     permissionCas: { version: 1 },
     providerCredentialBroker: {
-      version: 1,
+      version: 2,
       registrationConnectionBound: !reverseBridgeResume,
       stableClientResume: reverseBridgeResume,
       runtimeRestartExpiresLease: true,
-      acquiredCredentialSurvivesDisconnect: true,
+      credentialLifetime: "provider_request",
+      lazyProviderResolution: true,
+      providerAllowlist: true,
+      operationTargets: ["run", "session.compact", "actor_turn", "workflow"],
+      revocationAbortsPendingRequests: true,
+      detachedWorkflowScope: "derived_revocable_lease",
       requestTimeoutMs: reverseBridgeLimits.callTimeoutMs,
+    },
+    effectiveConfig: {
+      version: 1,
+      credentialValues: false,
+      sourceMetadata: true,
+      scope: "integration:admin",
     },
     runBoundHostTools: {
       version: 2,
@@ -2858,6 +2980,11 @@ function parseRuntimeClientVersion(value: unknown): string | undefined {
     : undefined;
 }
 
+function requireCredentialBrokerVersion(value: number): 1 | 2 {
+  if (value === 1 || value === 2) return value;
+  throw daemonError("invalid_params", "Credential broker version must be 1 or 2.");
+}
+
 function runtimeDaemonClientSnapshot(
   daemonConnectionId: string,
   principalId: string,
@@ -2885,6 +3012,132 @@ function runtimeDaemonClientSnapshot(
     clientType: runtimeDaemonClientType(record.clientType),
     connectedAt: new Date().toISOString(),
   };
+}
+
+function bindTrustedScopedCredentialAccess(input: {
+  readonly binding: Record<string, unknown>;
+  readonly sessionId: string;
+  readonly target: RuntimeScopedCredentialTarget;
+  readonly reverseBridge: RuntimeDaemonReverseBridge;
+}): ProviderCredentialLeaseAccess {
+  const leaseId = requireStringField(input.binding, "leaseId");
+  const providers = requireStringArrayField(input.binding, "providers");
+  if (
+    providers.length === 0
+    || providers.some((provider) => provider.trim().length === 0)
+    || new Set(providers).size !== providers.length
+  ) {
+    throw daemonError(
+      "invalid_params",
+      "Scoped credential binding Providers must be non-empty and unique.",
+    );
+  }
+  const lease = input.reverseBridge.getCredential(leaseId);
+  if (lease?.brokerVersion !== 2) {
+    throw daemonError(
+      "credential_unavailable",
+      "Scoped credential binding requires an active v2 credential lease.",
+    );
+  }
+  const leaseProviders = new Set(lease.providers);
+  if (providers.some((provider) => !leaseProviders.has(provider))) {
+    throw daemonError(
+      "credential_unavailable",
+      "Scoped credential binding exceeds the registered Provider allowlist.",
+    );
+  }
+  return {
+    allowedProviders: providers,
+    signal: input.reverseBridge.credentialSignal(leaseId),
+    isActive: () => input.reverseBridge.isCredentialActive(leaseId),
+    acquire: (provider, purpose, signal, attribution) => input.reverseBridge.acquireScopedCredential({
+      leaseId,
+      provider,
+      sessionId: input.sessionId,
+      target: attributedCredentialTarget(input.target, attribution),
+      purpose,
+      signal,
+    }),
+  };
+}
+
+function attributedCredentialTarget(
+  base: RuntimeScopedCredentialTarget,
+  attribution: ProviderCredentialAttribution | undefined,
+): RuntimeScopedCredentialTarget {
+  if (attribution === undefined) return base;
+  const parentRunId = base.kind === "run"
+    ? base.runId
+    : base.kind === "actor_turn" || base.kind === "workflow"
+      ? base.parentRunId
+      : undefined;
+  if (attribution.kind === "actor_turn") {
+    return {
+      kind: "actor_turn",
+      actorPath: attribution.actorPath,
+      turnId: attribution.turnId,
+      ...(parentRunId === undefined ? {} : { parentRunId }),
+    };
+  }
+  return {
+    kind: "workflow",
+    workflowRunId: attribution.workflowRunId,
+    ...(parentRunId === undefined ? {} : { parentRunId }),
+  };
+}
+
+function bindTrustedAgentCredentialAccessFactory(input: {
+  readonly binding: Record<string, unknown> | undefined;
+  readonly sessionId: string;
+  readonly reverseBridge: RuntimeDaemonReverseBridge;
+}): CodingActorCredentialAccessFactory | undefined {
+  if (input.binding === undefined) return undefined;
+  const binding = input.binding;
+  if (binding.mode !== "scoped") {
+    throw daemonError(
+      "client_upgrade_required",
+      "Agent credential binding requires a scoped v2 credential lease.",
+    );
+  }
+  const boundProviders = requireStringArrayField(binding, "providers");
+  return ({ actorPath, turnId, providers }) => {
+    if (
+      !providers.includes("*")
+      && boundProviders.some((provider) => !providers.includes(provider))
+    ) {
+      throw daemonError(
+        "credential_unavailable",
+        "Agent credential binding exceeds the admitted Actor Provider authority.",
+      );
+    }
+    return bindTrustedScopedCredentialAccess({
+      binding,
+      sessionId: input.sessionId,
+      target: { kind: "actor_turn", actorPath, turnId },
+      reverseBridge: input.reverseBridge,
+    });
+  };
+}
+
+function assertDaemonAgentCredentialBinding(
+  actorKind: string,
+  binding: Record<string, unknown> | undefined,
+): void {
+  if (actorKind === "external") {
+    if (binding !== undefined) {
+      throw daemonError(
+        "invalid_params",
+        "External Agents use credentialRef and cannot bind Runtime Provider credentials.",
+      );
+    }
+    return;
+  }
+  if (binding === undefined) {
+    throw daemonError(
+      "credential_unavailable",
+      "Native, constructed, and workflow Agent turns require an explicit scoped credential binding.",
+    );
+  }
 }
 
 function daemonClientDisplayField(value: unknown, limit: number): string | undefined {

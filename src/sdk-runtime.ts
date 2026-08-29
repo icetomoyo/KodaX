@@ -45,11 +45,18 @@ import {
   startKodaX,
   ToolResultBatchCapacityError,
   validateCustomProviderConfig,
+  type CodingActorCredentialAccessFactory,
 } from "@kodax-ai/coding";
 import {
+  createProviderCredentialLeaseScope,
   getProviderCredentialEnvironmentNames,
   redactScopedProviderCredential,
+  runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
+} from "@kodax-ai/llm";
+import type {
+  ProviderCredentialLeaseAccess,
+  ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
 import type {
@@ -787,6 +794,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   crashOutcomeModel: 2,
   daemonOrphanExit: 1,
   daemonShutdownVerification: 1,
+  effectiveConfig: 1,
   managedRunDurability: 1,
   runtimeExitSettlement: 2,
   sandboxRuntime: 6,
@@ -812,7 +820,7 @@ export interface RuntimeCapabilityRequirements {
   readonly interruptInput?: 1;
   readonly askUserTransport?: 1;
   readonly permissionCas?: 1;
-  readonly providerCredentialBroker?: 1;
+  readonly providerCredentialBroker?: 1 | 2;
   /** v1: run-bound host tool leases. v2 additionally materializes bound host tools into the agent tool table and cached capability catalog. */
   readonly runBoundHostTools?: 1 | 2;
   readonly coderOwnerFencing?: 1;
@@ -852,6 +860,8 @@ export interface RuntimeCapabilityRequirements {
   readonly liveOutputSegments?: 1;
   /** Optional integration failures are isolated, observable, and hot-recoverable. */
   readonly integrationConfigResilience?: 1;
+  /** Require a secret-safe snapshot of applied Runtime configuration provenance. */
+  readonly effectiveConfig?: 1;
   readonly actorControlPlane?: 1;
   /** Require the sandbox-first execution chain and permission fallback revision. */
   readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6;
@@ -978,7 +988,11 @@ export interface RuntimeAgentService {
   preflight(input: AgentPreflightInput): Promise<AgentPreflightResult>;
   tree(sessionId: string): Promise<AgentTreeSnapshot>;
   detail(sessionId: string, actorPath: string): Promise<AgentDetail>;
-  spawn(sessionId: string, input: AgentSpawnInput): Promise<AgentTurnRef>;
+  spawn(
+    sessionId: string,
+    input: AgentSpawnInput,
+    options?: RuntimeAgentOperationOptions,
+  ): Promise<AgentTurnRef>;
   send(
     sessionId: string,
     actorPath: string,
@@ -989,7 +1003,7 @@ export interface RuntimeAgentService {
     sessionId: string,
     actorPath: string,
     objective: string,
-    options?: { readonly expectedRevision?: number },
+    options?: RuntimeAgentFollowupOptions,
   ): Promise<AgentFollowupResult>;
   interrupt(
     sessionId: string,
@@ -1022,8 +1036,39 @@ export interface RuntimeConfigReloadResult {
   readonly config: unknown;
 }
 
+export type RuntimeEffectiveConfigSource =
+  | "runtime_override"
+  | "environment"
+  | "persisted"
+  | "unset";
+
+export interface RuntimeEffectiveConfigEntry {
+  readonly present: boolean;
+  readonly applied: boolean;
+  readonly source: RuntimeEffectiveConfigSource;
+  readonly priority: number;
+  readonly value?: unknown;
+}
+
+export interface RuntimeEffectiveCredentialEntry {
+  readonly present: boolean;
+  readonly source: "environment" | "unset";
+}
+
+export interface RuntimeEffectiveConfigSnapshot {
+  readonly schemaVersion: 1;
+  readonly capturedAt: string;
+  readonly persistedConfig: {
+    readonly state: "loaded" | "missing" | "invalid";
+  };
+  readonly entries: Readonly<Record<string, RuntimeEffectiveConfigEntry>>;
+  /** Credential values are deliberately never included. */
+  readonly credentials: Readonly<Record<string, RuntimeEffectiveCredentialEntry>>;
+}
+
 export interface RuntimeConfigService {
   read(): Promise<unknown>;
+  readEffective(): Promise<RuntimeEffectiveConfigSnapshot>;
   patch(patch: RuntimeConfigPatch): Promise<unknown>;
   reload(): Promise<RuntimeConfigReloadResult>;
 }
@@ -1498,6 +1543,32 @@ export interface RuntimeCompactSessionInput {
   readonly triggerPercent?: number;
   /** Override the Session absolute threshold used to size the protected tail. */
   readonly triggerTokens?: number;
+  /** Daemon-issued credential lease used only by this compaction operation. */
+  readonly credential?: RuntimeCredentialBinding;
+  /** Stable mutation identity for safe retry after a lost daemon response. */
+  readonly operation?: RuntimeOperationOptions;
+}
+
+export interface RuntimeAgentOperationOptions {
+  readonly credential?: RuntimeCredentialBinding;
+  readonly operation?: RuntimeOperationOptions;
+}
+
+export interface RuntimeAgentFollowupOptions extends RuntimeAgentOperationOptions {
+  readonly expectedRevision?: number;
+}
+
+interface RuntimeTrustedAgentOperationOptions extends RuntimeAgentOperationOptions {
+  readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
+}
+
+interface RuntimeTrustedAgentFollowupOptions extends RuntimeAgentFollowupOptions {
+  readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
+  readonly requireCredentialForNewTurn?: true;
+}
+
+interface RuntimeTrustedCompactSessionInput extends RuntimeCompactSessionInput {
+  readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
 }
 
 export interface RuntimeCompactSessionResult extends CompactSessionResult {
@@ -1754,7 +1825,7 @@ export interface RuntimeStartRunInput {
   /** Host-derived dispatch identity; never accepted from an LLM tool payload. */
   readonly agentContext?: AgentDispatchContext;
   /** Daemon-issued lease binding; contains no credential material. */
-  readonly credential?: { readonly leaseId: string; readonly provider: string };
+  readonly credential?: RuntimeCredentialBinding;
   /** Daemon-issued host capability binding. Unbound runs never inherit it. */
   readonly hostTools?: { readonly leaseId: string };
   readonly operation?: RuntimeOperationOptions;
@@ -1763,6 +1834,7 @@ export interface RuntimeStartRunInput {
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
   readonly providerCredential?: string;
   readonly providerCredentialProvider?: string;
+  readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
   readonly origin?: RuntimeRunStatus["origin"];
   readonly trustedRunId?: string;
   readonly requiredAfterRunId?: string;
@@ -1774,7 +1846,7 @@ export interface RuntimeSubmitInput {
   readonly delivery: "after_turn" | "interrupt";
   readonly input: RuntimeInput | readonly RuntimeInput[];
   /** Continuations receive only bindings explicitly supplied for this input. */
-  readonly credential?: { readonly leaseId: string; readonly provider: string };
+  readonly credential?: RuntimeCredentialBinding;
   readonly hostTools?: { readonly leaseId: string };
   readonly operation?: RuntimeOperationOptions;
 }
@@ -1782,6 +1854,7 @@ export interface RuntimeSubmitInput {
 interface RuntimeTrustedSubmitInput extends RuntimeSubmitInput {
   readonly providerCredential?: string;
   readonly providerCredentialProvider?: string;
+  readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
   readonly origin?: RuntimeRunStatus["origin"];
   readonly trustedRunId?: string;
   readonly trustedInputId?: string;
@@ -2960,10 +3033,72 @@ export type RuntimeCredentialBroker = (
   request: RuntimeCredentialRequest,
 ) => Promise<string | undefined>;
 
+/** Public binding only carries authority; credential material never crosses this input. */
+export type RuntimeCredentialBinding =
+  | {
+      readonly leaseId: string;
+      /** v1 compatibility: one credential is acquired for the complete Run. */
+      readonly provider: string;
+    }
+  | {
+      readonly leaseId: string;
+      readonly mode: "scoped";
+      /** Operation-local narrowing of the registered v2 lease allowlist. */
+      readonly providers: readonly string[];
+    };
+
+export type RuntimeScopedCredentialTarget =
+  | {
+      readonly kind: "run";
+      readonly runId: string;
+      readonly operationId?: string;
+    }
+  | {
+      readonly kind: "operation";
+      readonly operationId: string;
+      readonly operation: "session.compact";
+    }
+  | {
+      readonly kind: "actor_turn";
+      readonly actorPath: string;
+      readonly turnId: string;
+      readonly parentRunId?: string;
+    }
+  | {
+      readonly kind: "workflow";
+      readonly workflowRunId: string;
+      readonly parentRunId?: string;
+    };
+
+export type RuntimeScopedCredentialPurpose =
+  | "primary"
+  | "fallback"
+  | "classifier"
+  | "sidecar"
+  | "compaction"
+  | "agent"
+  | "workflow"
+  | "utility";
+
+export interface RuntimeScopedCredentialRequest {
+  readonly requestId: string;
+  readonly leaseId: string;
+  readonly provider: string;
+  readonly sessionId: string;
+  readonly target: RuntimeScopedCredentialTarget;
+  readonly purpose: RuntimeScopedCredentialPurpose;
+}
+
+export type RuntimeScopedCredentialBroker = (
+  request: RuntimeScopedCredentialRequest,
+) => Promise<string | undefined>;
+
 export interface RuntimeCredentialLease {
   readonly id: string;
   readonly providers: readonly string[];
   readonly expiresAt?: string;
+  /** Absent on legacy v1 daemons. */
+  readonly brokerVersion?: 1 | 2;
 }
 
 export interface RuntimeCredentialService {
@@ -2977,6 +3112,17 @@ export interface RuntimeCredentialService {
   resume(
     leaseId: string,
     broker: RuntimeCredentialBroker,
+  ): Promise<RuntimeCredentialLease>;
+  registerScoped(
+    input: {
+      readonly providers: readonly string[];
+      readonly expiresAt?: string;
+    },
+    broker: RuntimeScopedCredentialBroker,
+  ): Promise<RuntimeCredentialLease>;
+  resumeScoped(
+    leaseId: string,
+    broker: RuntimeScopedCredentialBroker,
   ): Promise<RuntimeCredentialLease>;
   revoke(leaseId: string): Promise<boolean>;
 }
@@ -3375,6 +3521,7 @@ interface RuntimeRunRecord {
   readonly interruptInputs: RuntimeInterruptInputRecord[];
   stop?: RuntimeRunStopStatus;
   providerCredential?: string;
+  readonly providerCredentialScope?: ProviderCredentialLeaseScope;
   readonly hadProviderCredential: boolean;
   readonly agentContext?: AgentDispatchContext;
   readonly actorSession?: CodingActorSession;
@@ -3907,6 +4054,11 @@ export async function createKodaXRuntime(
       rollback: true,
     },
     actorControlPlane: { version: 1, methodNamespace: "agents" },
+    effectiveConfig: {
+      version: 1,
+      credentialValues: false,
+      sourceMetadata: true,
+    },
     sandboxRuntime: sandboxRuntimeCapability(),
     managedRunDurability: {
       version: 1,
@@ -4457,7 +4609,11 @@ export async function createKodaXRuntime(
     },
     workflows,
     learning,
-    config: createRuntimeConfigService(ensureOpen, configFile),
+    config: createRuntimeConfigService(ensureOpen, {
+      configFile,
+      defaultProvider: options.defaultProvider,
+      defaultModel: options.defaultModel,
+    }),
     catalog: createRuntimeCatalogService(ensureOpen, configFile),
     mcp: createRuntimeMcpService(ensureOpen, configFile),
     artifacts: artifacts.service,
@@ -4740,6 +4896,7 @@ function assertRuntimeCapabilities(
     requirements?.runtimeEventCoalescing === undefined &&
     requirements?.liveOutputSegments === undefined &&
     requirements?.integrationConfigResilience === undefined &&
+    requirements?.effectiveConfig === undefined &&
     requirements?.actorControlPlane === undefined &&
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined
@@ -4799,6 +4956,7 @@ function assertRuntimeCapabilities(
     ["runtimeEventCoalescing", requirements.runtimeEventCoalescing],
     ["liveOutputSegments", requirements.liveOutputSegments],
     ["integrationConfigResilience", requirements.integrationConfigResilience],
+    ["effectiveConfig", requirements.effectiveConfig],
     ["actorControlPlane", requirements.actorControlPlane],
     ["sandboxRuntime", requirements.sandboxRuntime],
     ["runtimeAutoModeGuardrail", requirements.runtimeAutoModeGuardrail],
@@ -7700,6 +7858,19 @@ function createRuntimeSessionService(
     async compact(input) {
       return mutateActiveSession(input.sessionId, async (admitted) => {
         assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+        const trustedInput = input as RuntimeTrustedCompactSessionInput;
+        const compactProvider = input.provider ?? admitted.runtimeInfo?.provider ?? "anthropic";
+        if (
+          trustedInput.providerCredentialAccess !== undefined
+          && !trustedInput.providerCredentialAccess.allowedProviders.includes(compactProvider)
+        ) {
+          throw createRuntimeCredentialUnavailableError(
+            `Credential lease does not allow the compaction Provider ${compactProvider}.`,
+          );
+        }
+        const providerCredentialScope = trustedInput.providerCredentialAccess === undefined
+          ? undefined
+          : createProviderCredentialLeaseScope(trustedInput.providerCredentialAccess);
         const startedAt = Date.now();
         const beforeRevision =
           admitted.lineage?.entries.filter(
@@ -7719,30 +7890,35 @@ function createRuntimeSessionService(
         let finalRevision = beforeRevision;
         try {
           const settings = (await settingsOwner.read(input.sessionId)).value;
-          const result = await manager.compactSession(input.sessionId, {
-          ...(input.provider !== undefined ? { provider: input.provider } : {}),
-          ...(input.model !== undefined ? { model: input.model } : {}),
-          ...(input.customInstructions !== undefined
-            ? { customInstructions: input.customInstructions }
-            : {}),
-          ...(input.contextWindow !== undefined
-            ? { contextWindow: input.contextWindow }
-            : {}),
-          ...((input.triggerPercent ?? settings.compactionTriggerPercent) !==
-          undefined
-            ? {
-                triggerPercent:
-                  input.triggerPercent ?? settings.compactionTriggerPercent,
-              }
-            : {}),
-          ...((input.triggerTokens ?? settings.compactionTriggerTokens) !==
-          undefined
-            ? {
-                triggerTokens:
-                  input.triggerTokens ?? settings.compactionTriggerTokens,
-              }
-            : {}),
+          const compactOperation = () => manager.compactSession(input.sessionId, {
+            ...(providerCredentialScope === undefined ? {} : { propagateErrors: true }),
+            ...(input.provider !== undefined ? { provider: input.provider } : {}),
+            ...(input.model !== undefined ? { model: input.model } : {}),
+            ...(input.customInstructions !== undefined
+              ? { customInstructions: input.customInstructions }
+              : {}),
+            ...(input.contextWindow !== undefined
+              ? { contextWindow: input.contextWindow }
+              : {}),
+            ...((input.triggerPercent ?? settings.compactionTriggerPercent) !== undefined
+              ? {
+                  triggerPercent:
+                    input.triggerPercent ?? settings.compactionTriggerPercent,
+                }
+              : {}),
+            ...((input.triggerTokens ?? settings.compactionTriggerTokens) !== undefined
+              ? {
+                  triggerTokens:
+                    input.triggerTokens ?? settings.compactionTriggerTokens,
+                }
+              : {}),
           });
+          const result = providerCredentialScope === undefined
+            ? await compactOperation()
+            : await runWithProviderCredentialLeaseScope(
+                providerCredentialScope,
+                compactOperation,
+              );
           const loaded = await manager.loadSession(input.sessionId);
           const session = loaded
             ? toRuntimeSession(input.sessionId, loaded)
@@ -7789,6 +7965,7 @@ function createRuntimeSessionService(
             ...(session !== undefined ? { session } : {}),
           };
         } finally {
+          providerCredentialScope?.close("manual compaction settled");
           bus.emit(
             "context.compaction.ended",
             {
@@ -8071,6 +8248,7 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): void => {
+    record.providerCredentialScope?.close("Runtime Run settled");
     record.start?.resolve(result);
     record.start = undefined;
     delete record.providerCredential;
@@ -8929,6 +9107,7 @@ function createRuntimeRunService(deps: {
       ...(wasQueued ? { resolvedAt: requestedAt } : {}),
     };
     releaseAbortSignalSubscription(record);
+    record.providerCredentialScope?.close(reason);
     record.running?.abort(new Error(reason));
     record.abortController?.abort(new Error(reason));
     void requestManagedActorCancellation(record, reason);
@@ -9285,7 +9464,12 @@ function createRuntimeRunService(deps: {
           record.start!.prompt,
         );
       const managedResult =
-        record.providerCredential !== undefined
+        record.providerCredentialScope !== undefined
+          ? runWithProviderCredentialLeaseScope(
+              record.providerCredentialScope,
+              managedOperation,
+            )
+          : record.providerCredential !== undefined
           ? runWithProviderCredential(
               record.provider,
               record.providerCredential,
@@ -9356,14 +9540,30 @@ function createRuntimeRunService(deps: {
     }
 
     const codingOperation = () => startKodaX(runOptions, record.start!.prompt);
-    const running =
-      record.providerCredential !== undefined
-        ? runWithProviderCredential(
-            record.provider,
-            record.providerCredential,
-            codingOperation,
-          )
-        : codingOperation();
+    let running: RunningSession;
+    if (record.providerCredentialScope !== undefined) {
+      running = runWithProviderCredentialLeaseScope(
+        record.providerCredentialScope,
+        codingOperation,
+      );
+    } else if (record.providerCredential !== undefined) {
+      let scopedRunning: RunningSession | undefined;
+      const credentialLifetime = runWithProviderCredential(
+        record.provider,
+        record.providerCredential,
+        () => {
+          scopedRunning = codingOperation();
+          return scopedRunning.result.then(() => undefined);
+        },
+      );
+      void credentialLifetime.catch(() => undefined);
+      if (scopedRunning === undefined) {
+        throw new Error('Credential-bound coding Run did not start synchronously.');
+      }
+      running = scopedRunning;
+    } else {
+      running = codingOperation();
+    }
     record.running = running;
     const upstreamSignal = runOptions.abortSignal;
     const handleUpstreamAbort = (): void => {
@@ -9774,6 +9974,18 @@ function createRuntimeRunService(deps: {
         `Credential lease is bound to ${trustedInput.providerCredentialProvider}, not ${provider}.`,
       );
     }
+    const providerCredentialScope = trustedInput.providerCredentialAccess === undefined
+      ? undefined
+      : createProviderCredentialLeaseScope(trustedInput.providerCredentialAccess);
+    if (
+      providerCredentialScope !== undefined
+      && !providerCredentialScope.allowedProviders.includes(provider)
+    ) {
+      providerCredentialScope.close("primary Provider is not authorized");
+      throw createRuntimeCredentialUnavailableError(
+        `Credential lease does not allow the selected Provider ${provider}.`,
+      );
+    }
     const model =
       options.modelOverride ??
       options.model ??
@@ -9925,8 +10137,12 @@ function createRuntimeRunService(deps: {
               .providerCredential,
           }
         : {}),
+      ...(providerCredentialScope !== undefined
+        ? { providerCredentialScope }
+        : {}),
       hadProviderCredential:
-        (input as RuntimeTrustedStartRunInput).providerCredential !== undefined,
+        (input as RuntimeTrustedStartRunInput).providerCredential !== undefined
+        || providerCredentialScope !== undefined,
       ...((input as RuntimeTrustedStartRunInput).origin !== undefined
         ? { origin: (input as RuntimeTrustedStartRunInput).origin }
         : {}),
@@ -10136,6 +10352,9 @@ function createRuntimeRunService(deps: {
                   providerCredentialProvider:
                     trusted.providerCredentialProvider,
                 }
+              : {}),
+            ...(trusted.providerCredentialAccess !== undefined
+              ? { providerCredentialAccess: trusted.providerCredentialAccess }
               : {}),
             ...(trusted.origin !== undefined ? { origin: trusted.origin } : {}),
             ...(trusted.trustedRunId !== undefined
@@ -10513,12 +10732,22 @@ function createRuntimeWorkflowService(): RuntimeWorkflowService {
 
 function createRuntimeConfigService(
   ensureOpen: () => void,
-  configFile: string | undefined,
+  options: {
+    readonly configFile: string | undefined;
+    readonly defaultProvider?: string;
+    readonly defaultModel?: string;
+  },
 ): RuntimeConfigService {
+  const { configFile } = options;
   return {
     async read() {
       ensureOpen();
       return redactRuntimeConfig(readRuntimeConfig(configFile));
+    },
+
+    async readEffective() {
+      ensureOpen();
+      return buildRuntimeEffectiveConfigSnapshot(options);
     },
 
     async patch(patch) {
@@ -11778,15 +12007,35 @@ function createRuntimeAgentService(
   sessionOperations: RuntimeSessionOperationGate,
   ensureOpen: () => void,
 ): RuntimeAgentService {
-  const withRoot = <T>(
+  const withActorSession = <T>(
     sessionId: string,
-    operation: (root: AgentActorClient) => Promise<T> | T,
+    operation: (session: CodingActorSession) => Promise<T> | T,
   ): Promise<T> =>
     sessionOperations.run(sessionId, async () => {
       ensureOpen();
       await admission.loadExecutable(sessionId);
-      return operation(await actors.root(sessionId));
+      return operation(await actors.forSession(sessionId));
     });
+  const withRoot = <T>(
+    sessionId: string,
+    operation: (root: AgentActorClient) => Promise<T> | T,
+  ): Promise<T> =>
+    withActorSession(sessionId, (session) => operation(session.rootControl()));
+
+  const trustedCredentialFactory = (
+    options: RuntimeAgentOperationOptions | undefined,
+  ): CodingActorCredentialAccessFactory | undefined => {
+    const trusted = options as RuntimeTrustedAgentOperationOptions | undefined;
+    if (
+      options?.credential !== undefined
+      && trusted?.providerCredentialAccessFactory === undefined
+    ) {
+      throw createRuntimeCredentialUnavailableError(
+        "Embedded Agent operations cannot resolve daemon credential bindings.",
+      );
+    }
+    return trusted?.providerCredentialAccessFactory;
+  };
 
   return {
     execution: bindings,
@@ -11839,8 +12088,10 @@ function createRuntimeAgentService(
     async detail(sessionId, actorPath) {
       return withRoot(sessionId, (root) => root.get(actorPath));
     },
-    async spawn(sessionId, input) {
-      return withRoot(sessionId, (root) => root.spawn(input));
+    async spawn(sessionId, input, options) {
+      const credentialFactory = trustedCredentialFactory(options);
+      return withActorSession(sessionId, (session) =>
+        session.spawnRoot(input, undefined, credentialFactory));
     },
     async send(sessionId, actorPath, content, classification) {
       await withRoot(sessionId, (root) =>
@@ -11848,14 +12099,18 @@ function createRuntimeAgentService(
       );
     },
     async followup(sessionId, actorPath, objective, options) {
-      return withRoot(sessionId, (root) =>
-        root.followup(
+      const credentialFactory = trustedCredentialFactory(options);
+      const trusted = options as RuntimeTrustedAgentFollowupOptions | undefined;
+      return withActorSession(sessionId, (session) =>
+        session.followupRoot(
           actorPath,
           objective,
-          undefined,
-          options,
-        ),
-      );
+          trusted?.expectedRevision === undefined
+            ? undefined
+            : { expectedRevision: trusted.expectedRevision },
+          credentialFactory,
+          trusted?.requireCredentialForNewTurn === true,
+        ));
     },
     async interrupt(sessionId, actorPath, reason) {
       await withRoot(sessionId, (root) => root.interrupt(actorPath, reason));
@@ -20383,16 +20638,140 @@ function resolveRuntimeConfigFile(
 function readRuntimeConfig(
   configFile: string | undefined,
 ): Record<string, unknown> {
+  return readRuntimeConfigDocument(configFile).config;
+}
+
+function readRuntimeConfigDocument(
+  configFile: string | undefined,
+): {
+  readonly config: Record<string, unknown>;
+  readonly state: "loaded" | "missing" | "invalid";
+} {
   if (configFile === undefined) {
-    return loadConfig() as unknown as Record<string, unknown>;
+    return {
+      config: loadConfig() as unknown as Record<string, unknown>,
+      state: "loaded",
+    };
   }
-  if (!fs.existsSync(configFile)) return {};
+  if (!fs.existsSync(configFile)) return { config: {}, state: "missing" };
   try {
     const parsed = JSON.parse(fs.readFileSync(configFile, "utf8")) as unknown;
-    return isRecord(parsed) ? parsed : {};
+    return isRecord(parsed)
+      ? { config: parsed, state: "loaded" }
+      : { config: {}, state: "invalid" };
   } catch {
-    return {};
+    return { config: {}, state: "invalid" };
   }
+}
+
+function buildRuntimeEffectiveConfigSnapshot(options: {
+  readonly configFile: string | undefined;
+  readonly defaultProvider?: string;
+  readonly defaultModel?: string;
+}): RuntimeEffectiveConfigSnapshot {
+  const persisted = readRuntimeConfigDocument(
+    options.configFile ?? replApi.KODAX_CONFIG_FILE,
+  );
+  const bindings = new Map(
+    replApi.KODAX_CONFIG_ENV_BINDINGS.map((binding) => [
+      binding.configPath,
+      binding.env,
+    ] as const),
+  );
+  const paths = new Set([...bindings.keys(), "model"]);
+  const entries: Record<string, RuntimeEffectiveConfigEntry> = {};
+  for (const configPath of paths) {
+    const override = configPath === "provider"
+      ? options.defaultProvider
+      : configPath === "model"
+        ? options.defaultModel
+        : undefined;
+    const envName = bindings.get(configPath);
+    const environmentValue = envName === undefined ? undefined : process.env[envName];
+    const persistedValue = runtimeConfigPathValue(persisted.config, configPath);
+    if (override !== undefined) {
+      entries[configPath] = effectiveConfigEntry(
+        override,
+        "runtime_override",
+        true,
+        400,
+        configPath,
+      );
+      continue;
+    }
+    if (environmentValue !== undefined && envName !== undefined) {
+      const source = replApi.inspectConfigEnvironmentSource(envName);
+      entries[configPath] = effectiveConfigEntry(
+        environmentValue,
+        source === "persisted" ? "persisted" : "environment",
+        true,
+        source === "persisted" ? 200 : 300,
+        configPath,
+      );
+      continue;
+    }
+    if (persistedValue !== undefined) {
+      entries[configPath] = effectiveConfigEntry(
+        persistedValue,
+        "persisted",
+        false,
+        200,
+        configPath,
+      );
+      continue;
+    }
+    entries[configPath] = {
+      present: false,
+      applied: false,
+      source: "unset",
+      priority: 0,
+    };
+  }
+  const credentials = Object.fromEntries(
+    getProviderCredentialEnvironmentNames().map((envName) => [
+      envName,
+      process.env[envName] === undefined
+        ? { present: false, source: "unset" as const }
+        : { present: true, source: "environment" as const },
+    ]),
+  );
+  return {
+    schemaVersion: 1,
+    capturedAt: new Date().toISOString(),
+    persistedConfig: { state: persisted.state },
+    entries,
+    credentials,
+  };
+}
+
+function effectiveConfigEntry(
+  value: unknown,
+  source: RuntimeEffectiveConfigSource,
+  applied: boolean,
+  priority: number,
+  configPath: string,
+): RuntimeEffectiveConfigEntry {
+  return {
+    present: true,
+    applied,
+    source,
+    priority,
+    ...(isSensitiveConfigKey(configPath)
+      ? {}
+      : { value: redactRuntimeConfig(value) }),
+  };
+}
+
+function runtimeConfigPathValue(
+  config: Record<string, unknown>,
+  configPath: string,
+): unknown {
+  let current: unknown = config;
+  for (const segment of configPath.split(".")) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
 }
 
 function patchRuntimeConfig(

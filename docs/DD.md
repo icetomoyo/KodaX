@@ -1484,7 +1484,62 @@ The release candidate also retains the Sidecar/Runtime completion boundary:
 - the release script audits those prompt and budget guards in the exact
   tarball it can publish.
 
-## 22. Related Documents
+## 22. Scoped Provider Credential Runtime
+
+The Runtime credential bridge has two additive protocol versions. V1 keeps the
+legacy exact binding `{ leaseId, provider }` for one Run. V2 uses
+`registerScoped()` / `resumeScoped()` and binds
+`{ leaseId, mode: 'scoped', providers }`; the binding Provider set must be a
+non-empty subset of the registered lease allowlist.
+
+The daemon mints every trusted target and asks the host separately for every
+actual Provider wire request:
+
+```text
+lease allowlist
+  └─ operation binding intersection
+       └─ run | session.compact | actor_turn | workflow target
+            └─ provider + closed purpose
+                 └─ one transient exact-secret wire scope
+```
+
+The outer async context contains a revocable resolver handle, not a secret.
+While it is active, Provider discovery is fail-closed: an unauthorized Provider
+does not fall back to process environment. Built-in Provider instances and
+Anthropic/OpenAI SDK clients bypass credential-bearing global caches. All
+production request seams—primary, fallback, continuation, classifier,
+compaction, sidecar judgment, and utility summarization—enter the transient
+scope before calling a Provider.
+
+Lease revoke/expiry aborts related pending acquisition and active request
+signals. Credential supply checks the original lease record again, so a host
+reply arriving after revoke cannot revive the request. Run, Actor-turn, and
+Workflow handles are closed at their terminal boundary; derived handles also
+check the live parent. A stale async resource can retain the inert handle but
+cannot resolve a credential.
+
+`sessions.compact()` sends its optional `operation` in the RPC envelope and
+uses a stable `operationId`. The daemon validates lease, Provider, Session, and
+the `session.compact` operation target before the shared compaction summarizer
+requests a credential. Agent credentials live only in host operation options,
+never `AgentSpawnInput`; internal child authority is an intersection and a
+current-turn follow-up cannot replace it. Detached Workflow execution derives
+a Workflow-targeted handle and closes it on success, failure, cancellation, or
+parent closure.
+
+Shared-daemon `agents.spawn` and newly admitted internal `agents.followup`
+turns fail before admission when no scoped binding is supplied. External turns
+use only their independent `credentialRef` plane and reject a Runtime Provider
+binding; their executor scope also suppresses daemon ambient Provider keys.
+Embedded/local Agent calls retain their existing configuration model.
+
+`config.readEffective()` is a separate `integration:admin` operation. Its
+snapshot contains only whitelisted effective keys with `present`, `applied`,
+`source`, and `priority`; credential environment names contain only
+`present/source`. Persisted config state is `loaded`, `missing`, or `invalid`,
+and no arbitrary persisted object or credential value is serialized.
+
+## 23. Related Documents
 
 - Product requirements: [PRD.md](PRD.md)
 - High-level design: [HLD.md](HLD.md)

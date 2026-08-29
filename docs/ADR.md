@@ -5842,3 +5842,67 @@ compaction thrash guards (code.claude.com/docs error reference, context
 window, model configuration, how-claude-code-works); the SDK embedder
 report that initiated FEATURE_296; the Issue 158 closure record
 (docs/KNOWN_ISSUES.md) whose defaults this ADR explicitly supersedes.
+
+## ADR-068: Runtime Credentials Are Lazy, Scoped, Revocable Capabilities
+
+**Status**: Accepted.
+
+**Context**: Space keeps Provider secrets in the OS keychain. The original
+Runtime reverse bridge bound one exact Provider credential to one Run and
+resolved it eagerly. That contract could not authorize a standalone manual
+compaction, could not safely resolve a fallback/classifier/sidecar Provider,
+and left native Agent and detached Workflow inheritance as an
+`AsyncLocalStorage` implementation accident. Persisted config also did not
+explain which startup source the daemon actually applied.
+
+**Decision**:
+
+1. Keep the v1 exact-Provider broker unchanged for compatibility. Add a v2
+   scoped broker whose lease owns a non-empty Provider allowlist and whose
+   operation binding may only narrow it. Every actual Provider wire request is
+   resolved lazily for one closed purpose (`primary`, `fallback`, `classifier`,
+   `sidecar`, `compaction`, `agent`, `workflow`, or `utility`). An unauthorized
+   Provider fails before the host broker is notified.
+2. The daemon, not model-visible input, creates the target identity: `run`,
+   stable `session.compact` operation, `actor_turn`, or `workflow`. Broker
+   requests include the target, Session, Provider, purpose, and a unique request
+   ID. Secrets exist only in an inner exact-Provider async scope around one wire
+   call; they are never injected into the daemon environment or retained in
+   Provider/SDK-client caches.
+3. Revocation, expiry, terminal Run/turn/Workflow settlement, and daemon restart
+   close the relevant resolver handles. Pending acquisition is rejected,
+   delayed supply is revalidated and rejected, and active requests receive the
+   combined abort signal. JavaScript strings cannot be physically zeroed, so
+   the enforceable guarantee is no Runtime cache/map/persistence reachability
+   after the call and no successful resolution through a stale async context.
+4. Manual and automatic compaction share the same credential-aware summary
+   seam. Manual compaction requires a v2 scoped binding and a caller-stable
+   operation ID; its target is the Session plus `session.compact` operation,
+   never a fabricated Run.
+5. Native/constructed child Agents derive the intersection of the live parent
+   authorization and their concrete Provider capabilities. A wildcard never
+   expands authority. Host spawn and a newly admitted follow-up turn may carry
+   an explicit host-only binding; a follow-up delivered to an already-running
+   turn cannot replace or widen its binding. External Agent credentials remain
+   on their independent `credentialRef` broker. At the shared-daemon boundary,
+   every newly admitted native/constructed/workflow turn must carry a scoped
+   binding; missing bindings fail closed instead of reading daemon environment
+   credentials, while External turns reject Runtime Provider bindings and run
+   under an explicit deny scope that suppresses daemon ambient Provider keys.
+6. A detached Workflow receives a derived, explicitly closable lease handle.
+   ALS propagates that handle but is not the authority or lifetime boundary.
+   Completion, failure, cancellation, parent revocation, and parent settlement
+   invalidate it; resuming historical Workflow results does not resurrect an
+   old credential scope.
+7. `config.read()` remains the persisted/redacted document API. The separate
+   admin-only `config.readEffective()` returns a strict whitelist of applied
+   values and source/priority metadata. Credential entries expose only
+   presence and source, never a value; arbitrary config fields are omitted.
+
+**Consequences**: Space can keep all Provider credentials in keychain while
+manual compaction and multi-Provider internal routing remain least-authority,
+auditable, and revocable. Existing v1 clients continue to work for exact Run
+bindings, but a client requiring v2 fails closed against an older daemon.
+Provider requests perform one broker round trip per actual wire call; this is
+intentional because retaining secrets across calls would weaken revocation and
+cross-Run isolation.

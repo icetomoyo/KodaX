@@ -58,6 +58,10 @@ import {
   CANCELLED_TOOL_RESULT_MESSAGE,
   resolveProviderModelDescriptors,
 } from "@kodax-ai/coding";
+import {
+  getScopedProviderCredential,
+  withProviderRequestCredential,
+} from "@kodax-ai/llm";
 import { FileSessionStorage, SessionReadError } from "@kodax-ai/repl";
 import type { AutoModeBootstrapDeps } from "@kodax-ai/repl";
 import type {
@@ -4911,6 +4915,39 @@ describe("createKodaXRuntime", () => {
         contextRevision: 0,
       },
     });
+    await runtime.close();
+  });
+
+  it("rejects the effective manual-compaction Provider outside its lease before a no-op", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Compact Provider Binding" });
+    const acquire = vi.fn(async () => "must-not-be-requested");
+    const trustedInput = {
+      sessionId: session.id,
+      providerCredentialAccess: {
+        allowedProviders: ["openai"],
+        acquire,
+      },
+    } as Parameters<typeof runtime.sessions.compact>[0] & {
+      readonly providerCredentialAccess: {
+        readonly allowedProviders: readonly string[];
+        acquire(
+          provider: string,
+          purpose: "compaction",
+          signal: AbortSignal,
+        ): Promise<string>;
+      };
+    };
+
+    await expect(runtime.sessions.compact(trustedInput)).rejects.toMatchObject({
+      code: "credential_unavailable",
+    });
+    expect(acquire).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -14576,6 +14613,48 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("keeps a v1 exact credential active until a nonblocking coding Run settles", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "V1 Credential Lifetime" });
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+      const result = Promise.resolve()
+        .then(() => withProviderRequestCredential(
+          "mock-provider",
+          "primary",
+          undefined,
+          () => getScopedProviderCredential("mock-provider"),
+        ))
+        .then((credential): KodaXResult => ({
+          success: credential === "v1-secret",
+          lastText: String(credential),
+          messages: [],
+          sessionId: options.session?.id ?? session.id,
+        }));
+      return fakeRunningSession(options, result);
+    });
+    const trustedInput = {
+      sessionId: session.id,
+      prompt: "use v1 credential after start returns",
+      providerCredential: "v1-secret",
+      providerCredentialProvider: "mock-provider",
+    } as RuntimeStartRunInput & {
+      readonly providerCredential: string;
+      readonly providerCredentialProvider: string;
+    };
+
+    const handle = await runtime.runs.start(trustedInput);
+    await expect(handle.result).resolves.toMatchObject({
+      phase: "completed",
+      result: { lastText: "v1-secret" },
+    });
+    await runtime.close();
+  });
+
   it("never persists a provider error that may echo a run-scoped credential", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const secret = "F269_PROVIDER_ERROR_SECRET";
@@ -15000,6 +15079,149 @@ describe("createKodaXRuntime", () => {
       failureKind: "context_capacity",
       contextTokens: { required: 98_000, available: 100_000 },
     });
+    await runtime.close();
+  });
+
+  it("reports effective config provenance without exposing credential values", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const priorEffort = process.env.KODAX_EFFORT;
+    const priorOpenAiKey = process.env.OPENAI_API_KEY;
+    const credentialSecret = "EFFECTIVE_CONFIG_CREDENTIAL_SECRET";
+    const arbitrarySecret = "EFFECTIVE_CONFIG_ARBITRARY_SECRET";
+    process.env.KODAX_EFFORT = "effective-env-effort";
+    process.env.OPENAI_API_KEY = credentialSecret;
+    const configDir = path.join(tempRoot, ".kodax");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(path.join(configDir, "config.json"), JSON.stringify({
+      provider: "persisted-provider",
+      model: "persisted-model",
+      effort: "persisted-effort",
+      apiKey: credentialSecret,
+      privateEndpoint: `https://example.test/?token=${arbitrarySecret}`,
+    }));
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "runtime-provider",
+    });
+    try {
+      const effective = await runtime.config.readEffective();
+      expect(effective).toMatchObject({
+        schemaVersion: 1,
+        persistedConfig: { state: "loaded" },
+        entries: {
+          provider: {
+            value: "runtime-provider",
+            source: "runtime_override",
+            priority: 400,
+            applied: true,
+          },
+          model: {
+            value: "persisted-model",
+            source: "persisted",
+            priority: 200,
+            applied: false,
+          },
+          effort: {
+            value: "effective-env-effort",
+            source: "environment",
+            priority: 300,
+            applied: true,
+          },
+        },
+        credentials: {
+          OPENAI_API_KEY: { present: true, source: "environment" },
+        },
+      });
+      const serialized = JSON.stringify(effective);
+      expect(serialized).not.toContain(credentialSecret);
+      expect(serialized).not.toContain(arbitrarySecret);
+      expect(serialized).not.toContain("privateEndpoint");
+    } finally {
+      await runtime.close();
+      if (priorEffort === undefined) delete process.env.KODAX_EFFORT;
+      else process.env.KODAX_EFFORT = priorEffort;
+      if (priorOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = priorOpenAiKey;
+    }
+  });
+
+  it("resolves each authorized Run Provider lazily and closes inherited scope at settlement", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const acquisitions: Array<{ provider: string; purpose: string }> = [];
+    let releaseLateRequest: (() => void) | undefined;
+    let lateRequest: Promise<unknown> | undefined;
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Lazy Credentials" });
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+      lateRequest = new Promise<void>((resolve) => {
+        releaseLateRequest = resolve;
+      }).then(() => withProviderRequestCredential(
+        "mock-provider",
+        "primary",
+        undefined,
+        () => getScopedProviderCredential("mock-provider"),
+      )).catch((error: unknown) => error);
+      const result = (async (): Promise<KodaXResult> => {
+        await expect(withProviderRequestCredential(
+          "mock-provider",
+          "primary",
+          undefined,
+          () => getScopedProviderCredential("mock-provider"),
+        )).resolves.toBe("mock-provider-secret");
+        await expect(withProviderRequestCredential(
+          "fallback-provider",
+          "fallback",
+          undefined,
+          () => getScopedProviderCredential("fallback-provider"),
+        )).resolves.toBe("fallback-provider-secret");
+        await expect(withProviderRequestCredential(
+          "unauthorized-provider",
+          "sidecar",
+          undefined,
+          () => "must-not-run",
+        )).rejects.toThrow("does not allow provider unauthorized-provider");
+        return {
+          success: true,
+          lastText: "lazy credential run done",
+          messages: [],
+          sessionId: session.id,
+        };
+      })();
+      return fakeRunningSession(options, result);
+    });
+    const trustedInput = {
+      sessionId: session.id,
+      prompt: "use two providers",
+      providerCredentialAccess: {
+        allowedProviders: ["mock-provider", "fallback-provider"],
+        async acquire(provider: string, purpose: string) {
+          acquisitions.push({ provider, purpose });
+          return `${provider}-secret`;
+        },
+      },
+    } as RuntimeStartRunInput & {
+      readonly providerCredentialAccess: {
+        readonly allowedProviders: readonly string[];
+        acquire(provider: string, purpose: string): Promise<string>;
+      };
+    };
+
+    const handle = await runtime.runs.start(trustedInput);
+    await expect(handle.result).resolves.toMatchObject({ phase: "completed" });
+    expect(acquisitions).toEqual([
+      { provider: "mock-provider", purpose: "primary" },
+      { provider: "fallback-provider", purpose: "fallback" },
+    ]);
+    releaseLateRequest?.();
+    await expect(lateRequest).resolves.toMatchObject({
+      message: expect.stringContaining("no longer active"),
+    });
+    expect(acquisitions).toHaveLength(2);
     await runtime.close();
   });
 

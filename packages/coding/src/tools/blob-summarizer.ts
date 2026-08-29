@@ -30,6 +30,7 @@ import type {
   KodaXProviderStreamOptions,
   KodaXTextBlock,
 } from '@kodax-ai/llm';
+import { withProviderRequestCredential } from '@kodax-ai/llm';
 import type { KodaXEvents } from '../types.js';
 import { emitProviderRateLimit } from '../agent-runtime/event-emitter.js';
 
@@ -180,13 +181,18 @@ export function createBlobSummarizer(
         : undefined;
 
     try {
-      const result = await opts.provider.stream(
-        messages,
-        [],
-        SUMMARIZER_SYSTEM_PROMPT,
-        undefined,
-        effectiveStreamOptions,
+      const result = await withProviderRequestCredential(
+        opts.provider.name,
+        'utility',
         combinedSignal,
+        (credentialSignal) => opts.provider.stream(
+          messages,
+          [],
+          SUMMARIZER_SYSTEM_PROMPT,
+          undefined,
+          effectiveStreamOptions,
+          credentialSignal,
+        ),
       );
       const text = (result.textBlocks as readonly KodaXTextBlock[])
         .map((b) => b.text)

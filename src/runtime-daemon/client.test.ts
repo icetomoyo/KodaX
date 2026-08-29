@@ -27,6 +27,117 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it('sends a stable compact operation in the envelope, never in params', async () => {
+    let captured: {
+      readonly params?: unknown;
+      readonly operation?: { readonly operationId: string; readonly journalEpoch: string };
+    } | undefined;
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params, operation) {
+        if (method === 'session.compact') captured = { params, operation };
+        return { compacted: false, reason: 'below threshold' };
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-compact-operation',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-08-29T00:00:00.000Z',
+        version: '0.7.96',
+      },
+      journalEpoch: 'journal-1',
+      transport,
+    });
+
+    await client.sessions.compact({
+      sessionId: 'session-1',
+      triggerPercent: 75,
+      triggerTokens: 150_000,
+      operation: { operationId: 'compact-op-1', journalEpoch: 'journal-1' },
+    });
+
+    expect(captured).toEqual({
+      params: {
+        sessionId: 'session-1',
+        triggerPercent: 75,
+        triggerTokens: 150_000,
+      },
+      operation: {
+        operationId: 'compact-op-1',
+        journalEpoch: 'journal-1',
+      },
+    });
+  });
+
+  it('keeps Agent credential binding host-only and sends its operation in the envelope', async () => {
+    let captured: {
+      readonly params?: unknown;
+      readonly operation?: { readonly operationId: string; readonly journalEpoch: string };
+    } | undefined;
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params, operation) {
+        if (method === 'agents.spawn') captured = { params, operation };
+        return { actorPath: '/root/reviewer', turnId: 'turn-1', state: 'accepted' };
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-agent-operation',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-08-29T00:00:00.000Z',
+        version: '0.7.96',
+      },
+      transport,
+      journalEpoch: 'journal-agent',
+      capabilities: {
+        actorControlPlane: { version: 1, methodNamespace: 'agents' },
+      },
+    });
+
+    await client.agents.spawn('session-1', {
+      taskName: 'reviewer',
+      objective: 'Review the change.',
+      capabilities: { providers: ['openai'] },
+    }, {
+      credential: {
+        leaseId: 'lease-1',
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+      operation: { operationId: 'agent-op-1' },
+    });
+
+    expect(captured).toEqual({
+      params: {
+        sessionId: 'session-1',
+        input: {
+          taskName: 'reviewer',
+          objective: 'Review the change.',
+          capabilities: { providers: ['openai'] },
+        },
+        credential: {
+          leaseId: 'lease-1',
+          mode: 'scoped',
+          providers: ['openai'],
+        },
+      },
+      operation: {
+        operationId: 'agent-op-1',
+        journalEpoch: 'journal-agent',
+      },
+    });
+    expect(JSON.stringify((captured?.params as { input?: unknown }).input)).not.toContain('credential');
+    await client.close();
+  });
+
   it('shares concurrent close attempts and retries a transient transport failure', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const base = fakeTransport(calls);
@@ -1547,6 +1658,88 @@ describe('runtime daemon client proxy', () => {
     await client.close();
   });
 
+  it('routes scoped credential requests only to the v2 broker', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const transport = fakeTransport(calls);
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-client',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-08-29T00:00:00.000Z',
+        version: '0.7.96',
+      },
+      transport,
+      capabilities: { providerCredentialBroker: { version: 2 } },
+    });
+    const requests: unknown[] = [];
+    const lease = await client.credentials.registerScoped(
+      { providers: ['openai', 'anthropic'] },
+      async (request) => {
+        requests.push(request);
+        return 'scoped-secret';
+      },
+    );
+
+    transport.emit(createRuntimeDaemonNotification('credential.request', {
+      requestId: 'credential-request-v2',
+      brokerVersion: 2,
+      leaseId: lease.id,
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'compact-op-1',
+      },
+      purpose: 'compaction',
+    }));
+    await flushAsyncNotifications();
+
+    expect(requests).toEqual([{
+      requestId: 'credential-request-v2',
+      leaseId: lease.id,
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'compact-op-1',
+      },
+      purpose: 'compaction',
+    }]);
+    expect(calls).toContainEqual({
+      method: 'credential.supply',
+      params: { requestId: 'credential-request-v2', credential: 'scoped-secret' },
+    });
+    await client.close();
+  });
+
+  it('does not send a scoped lease registration to a v1 daemon', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-client-v1',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-08-29T00:00:00.000Z',
+        version: '0.7.95',
+      },
+      transport: fakeTransport(calls),
+      capabilities: { providerCredentialBroker: { version: 1 } },
+    });
+
+    await expect(client.credentials.registerScoped(
+      { providers: ['openai'] },
+      async () => 'must-not-run',
+    )).rejects.toMatchObject({
+      code: 'daemon_upgrade_required',
+      capability: 'providerCredentialBroker',
+    });
+    expect(calls).toEqual([]);
+    await client.close();
+  });
+
   it('never evicts pending host-tool invocations into duplicate side effects', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const transport = fakeTransport(calls);
@@ -1664,6 +1857,38 @@ describe('runtime daemon client proxy', () => {
       'host_tool.get',
       'host_tool.invocation.get',
     ]);
+    await client.close();
+  });
+
+  it('rejects a scoped v2 lease before installing a legacy v1 broker', async () => {
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method) {
+        if (method === 'credential.get') {
+          return {
+            id: 'credential-scoped',
+            providers: ['openai'],
+            brokerVersion: 2,
+          };
+        }
+        return undefined;
+      },
+      subscribe() { return { close() {} }; },
+    };
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-client',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-07-09T00:00:00.000Z',
+        version: '0.7.96',
+      },
+      transport,
+    });
+
+    await expect(client.credentials.resume(
+      'credential-scoped',
+      async () => 'must-not-run',
+    )).rejects.toMatchObject({ code: 'credential_unavailable' });
     await client.close();
   });
 
@@ -1852,8 +2077,16 @@ function fakeTransport(
         };
       }
       if (method === 'credential.register') {
-        const input = params as { readonly leaseId: string; readonly providers: readonly string[] };
-        return { id: input.leaseId, providers: input.providers };
+        const input = params as {
+          readonly leaseId: string;
+          readonly providers: readonly string[];
+          readonly brokerVersion?: 2;
+        };
+        return {
+          id: input.leaseId,
+          providers: input.providers,
+          ...(input.brokerVersion === 2 ? { brokerVersion: 2 } : {}),
+        };
       }
       if (method === 'credential.get') {
         return { id: 'credential-resumed', providers: ['openai'] };

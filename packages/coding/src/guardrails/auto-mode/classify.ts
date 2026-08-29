@@ -184,6 +184,7 @@ export async function classify(opts: ClassifyOptions): Promise<ClassifyDecision>
       timeoutMs,
       abortSignal: opts.abortSignal,
       querySource: QUERY_SOURCE,
+      credentialPurpose: 'classifier',
       costTracker,
     });
     costTracker = result.costTracker ?? costTracker;

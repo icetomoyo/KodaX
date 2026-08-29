@@ -273,8 +273,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       afterRunId: stringSchema,
       delivery: { type: 'string', enum: ['after_turn', 'interrupt'] },
       input: anyValueSchema,
-      credential: objectAnySchema,
-      hostTools: objectAnySchema,
+      credential: credentialBindingSchema(),
+      hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     }, ['sessionId', 'afterRunId', 'delivery', 'input']),
     result: objectAnySchema,
   },
@@ -361,6 +361,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       leaseId: stringSchema,
       providers: { type: 'array', items: stringSchema },
       expiresAt: stringSchema,
+      brokerVersion: { type: 'integer', enum: [1, 2] },
     }, ['leaseId', 'providers'], true),
     result: objectAnySchema,
   },
@@ -462,6 +463,10 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 
   'config.read': { params: noParamsSchema, result: objectAnySchema },
+  'config.effective': {
+    params: noParamsSchema,
+    result: effectiveConfigSnapshotSchema(),
+  },
   'config.patch': { params: objectSchema({ patch: objectAnySchema }, ['patch']), result: objectAnySchema },
   'config.reload': { params: noParamsSchema, result: objectSchema({ ok: booleanSchema, config: objectAnySchema }, ['ok', 'config']) },
   'model.list': {
@@ -583,7 +588,11 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     result: objectAnySchema,
   },
   'agents.spawn': {
-    params: objectSchema({ sessionId: stringSchema, input: objectAnySchema }, ['sessionId', 'input']),
+    params: objectSchema({
+      sessionId: stringSchema,
+      input: agentSpawnInputSchema(),
+      credential: credentialBindingSchema(),
+    }, ['sessionId', 'input']),
     result: objectAnySchema,
   },
   'agents.send': {
@@ -601,7 +610,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       actorPath: stringSchema,
       objective: stringSchema,
       expectedRevision: integerSchema,
-    }, ['sessionId', 'actorPath', 'objective'], true),
+      credential: credentialBindingSchema(),
+    }, ['sessionId', 'actorPath', 'objective']),
     result: objectAnySchema,
   },
   'agents.interrupt': {
@@ -1176,7 +1186,49 @@ function compactSessionParamsSchema(): RuntimeDaemonJsonSchema {
     model: stringSchema,
     customInstructions: stringSchema,
     contextWindow: integerSchema,
+    triggerPercent: { type: 'number' },
+    triggerTokens: integerSchema,
+    credential: credentialBindingSchema(),
   }, ['sessionId']);
+}
+
+function credentialBindingSchema(): RuntimeDaemonJsonSchema {
+  return {
+    oneOf: [
+      objectSchema({
+        leaseId: stringSchema,
+        provider: stringSchema,
+      }, ['leaseId', 'provider']),
+      objectSchema({
+        leaseId: stringSchema,
+        mode: { type: 'string', enum: ['scoped'] },
+        providers: arraySchema(stringSchema),
+      }, ['leaseId', 'mode', 'providers']),
+    ],
+  };
+}
+
+function effectiveConfigSnapshotSchema(): RuntimeDaemonJsonSchema {
+  const entry = objectSchema({
+    present: booleanSchema,
+    applied: booleanSchema,
+    source: { enum: ['runtime_override', 'environment', 'persisted', 'unset'] },
+    priority: integerSchema,
+    value: anyValueSchema,
+  }, ['present', 'applied', 'source', 'priority']);
+  const credential = objectSchema({
+    present: booleanSchema,
+    source: { enum: ['environment', 'unset'] },
+  }, ['present', 'source']);
+  return objectSchema({
+    schemaVersion: { type: 'integer', enum: [1] },
+    capturedAt: stringSchema,
+    persistedConfig: objectSchema({
+      state: { enum: ['loaded', 'missing', 'invalid'] },
+    }, ['state']),
+    entries: objectSchema({}, [], entry),
+    credentials: objectSchema({}, [], credential),
+  }, ['schemaVersion', 'capturedAt', 'persistedConfig', 'entries', 'credentials']);
 }
 
 function startRunParamsSchema(): RuntimeDaemonJsonSchema {
@@ -1189,7 +1241,38 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
     mode: { enum: ['coding', 'managed_task'] },
     permissionBroker: { enum: ['runtime', 'client'] },
     options: objectAnySchema,
-  }, ['sessionId'], true);
+    agentContext: objectAnySchema,
+    credential: credentialBindingSchema(),
+    hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
+  }, ['sessionId']);
+}
+
+function agentSpawnInputSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({
+    taskName: stringSchema,
+    objective: stringSchema,
+    kind: { enum: ['native', 'constructed', 'workflow', 'external'] },
+    forkTurns: {
+      oneOf: [
+        { enum: ['all', 'none'] },
+        { type: 'integer', minimum: 1 },
+      ],
+    },
+    capabilities: objectSchema({
+      tools: arraySchema(stringSchema),
+      filesystem: { enum: ['none', 'read', 'write'] },
+      network: booleanSchema,
+      providers: arraySchema(stringSchema),
+      canAskUser: booleanSchema,
+      control: objectSchema({
+        followup: booleanSchema,
+        interrupt: booleanSchema,
+        streaming: booleanSchema,
+        artifacts: booleanSchema,
+      }),
+    }),
+    metadata: objectAnySchema,
+  }, ['taskName', 'objective']);
 }
 
 function runFilterSchema(): RuntimeDaemonJsonSchema {

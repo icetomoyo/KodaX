@@ -6,6 +6,9 @@ import type {
   RuntimeCompactSessionResult,
   RuntimeCredentialBroker,
   RuntimeCredentialLease,
+  RuntimeScopedCredentialBroker,
+  RuntimeScopedCredentialPurpose,
+  RuntimeScopedCredentialTarget,
   RuntimeConfigReloadResult,
   RuntimeConfigPatch,
   RuntimeConnectionState,
@@ -172,6 +175,19 @@ export class RuntimePermissionScopeUpgradeRequiredError extends Error {
   }
 }
 
+export class RuntimeCredentialBrokerUpgradeRequiredError extends Error {
+  readonly code = 'daemon_upgrade_required' as const;
+  readonly capability = 'providerCredentialBroker' as const;
+  readonly restartRequired = true as const;
+
+  constructor() {
+    super(
+      'Runtime daemon does not advertise providerCredentialBroker v2. Upgrade KodaX and restart the daemon before using scoped credential leases.',
+    );
+    this.name = 'RuntimeCredentialBrokerUpgradeRequiredError';
+  }
+}
+
 export class RuntimeRunLifecycleUpgradeRequiredError extends Error {
   readonly code = 'daemon_upgrade_required' as const;
   readonly capability = 'runLifecycleControl' as const;
@@ -319,7 +335,11 @@ export function createRuntimeDaemonClient(
     }
     return undefined;
   };
-  const credentialBrokers = new Map<string, RuntimeCredentialBroker>();
+  const credentialBrokers = new Map<
+    string,
+    | { readonly version: 1; readonly broker: RuntimeCredentialBroker }
+    | { readonly version: 2; readonly broker: RuntimeScopedCredentialBroker }
+  >();
   const hostToolHandlers = new Map<string, Readonly<Record<string, RuntimeHostToolHandler>>>();
   const hostToolResults = new Map<string, HostToolInvocationResult>();
   const connectionListeners = new Set<(state: RuntimeConnectionState) => void>();
@@ -496,7 +516,12 @@ export function createRuntimeDaemonClient(
         return request('session.active_entry.set', input) as Promise<RuntimeSession | null>;
       },
       compact(input) {
-        return request('session.compact', input) as Promise<RuntimeCompactSessionResult>;
+        const { operation, ...transportInput } = input;
+        return request(
+          'session.compact',
+          transportInput,
+          operation,
+        ) as Promise<RuntimeCompactSessionResult>;
       },
       async archive(sessionId) {
         await request('session.archive', { sessionId });
@@ -623,7 +648,7 @@ export function createRuntimeDaemonClient(
     credentials: {
       async register(input, broker) {
         const leaseId = `credlease_${randomUUID().replace(/-/g, '')}`;
-        credentialBrokers.set(leaseId, broker);
+        credentialBrokers.set(leaseId, { version: 1, broker });
         try {
           return await request('credential.register', {
             leaseId,
@@ -636,7 +661,7 @@ export function createRuntimeDaemonClient(
         }
       },
       async resume(leaseId, broker) {
-        credentialBrokers.set(leaseId, broker);
+        credentialBrokers.set(leaseId, { version: 1, broker });
         try {
           const value = await request('credential.get', { leaseId });
           if (value === null || value === undefined) {
@@ -645,7 +670,58 @@ export function createRuntimeDaemonClient(
               { code: 'credential_unavailable' as const },
             );
           }
-          return requireRecord(value) as unknown as RuntimeCredentialLease;
+          const lease = requireRecord(value) as unknown as RuntimeCredentialLease;
+          if (lease.brokerVersion === 2) {
+            throw Object.assign(
+              new Error(`Credential lease is scoped v2 and cannot use the v1 broker: ${leaseId}`),
+              { code: 'credential_unavailable' as const },
+            );
+          }
+          return lease;
+        } catch (error: unknown) {
+          credentialBrokers.delete(leaseId);
+          throw error;
+        }
+      },
+      async registerScoped(input, broker) {
+        if (!supportsScopedCredentialBroker(options.capabilities)) {
+          throw new RuntimeCredentialBrokerUpgradeRequiredError();
+        }
+        const leaseId = `credlease_${randomUUID().replace(/-/g, '')}`;
+        credentialBrokers.set(leaseId, { version: 2, broker });
+        try {
+          return await request('credential.register', {
+            leaseId,
+            providers: input.providers,
+            brokerVersion: 2,
+            ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          }) as RuntimeCredentialLease;
+        } catch (error: unknown) {
+          credentialBrokers.delete(leaseId);
+          throw error;
+        }
+      },
+      async resumeScoped(leaseId, broker) {
+        if (!supportsScopedCredentialBroker(options.capabilities)) {
+          throw new RuntimeCredentialBrokerUpgradeRequiredError();
+        }
+        credentialBrokers.set(leaseId, { version: 2, broker });
+        try {
+          const value = await request('credential.get', { leaseId });
+          if (value === null || value === undefined) {
+            throw Object.assign(
+              new Error(`Credential lease is unavailable after Runtime reconnect: ${leaseId}`),
+              { code: 'credential_unavailable' as const },
+            );
+          }
+          const lease = requireRecord(value) as unknown as RuntimeCredentialLease;
+          if (lease.brokerVersion !== 2) {
+            throw Object.assign(
+              new Error(`Credential lease is not a scoped v2 lease: ${leaseId}`),
+              { code: 'credential_unavailable' as const },
+            );
+          }
+          return lease;
         } catch (error: unknown) {
           credentialBrokers.delete(leaseId);
           throw error;
@@ -653,7 +729,7 @@ export function createRuntimeDaemonClient(
       },
       async revoke(leaseId) {
         const revoked = await request('credential.revoke', { leaseId }) as boolean;
-        if (revoked) credentialBrokers.delete(leaseId);
+        credentialBrokers.delete(leaseId);
         return revoked;
       },
     },
@@ -769,6 +845,11 @@ export function createRuntimeDaemonClient(
     config: {
       read() {
         return request('config.read');
+      },
+      readEffective() {
+        return request('config.effective') as ReturnType<
+          KodaXRuntime['config']['readEffective']
+        >;
       },
       patch(patch: RuntimeConfigPatch) {
         return request('config.patch', { patch });
@@ -911,11 +992,18 @@ export function createRuntimeDaemonClient(
           KodaXRuntime['agents']['detail']
         >;
       },
-      spawn(sessionId, input) {
+      spawn(sessionId, input, options) {
         const unavailable = actorControlPlaneError();
         if (unavailable) return Promise.reject(unavailable);
         assertRuntimeTransportSafe(input, 'agents.spawn');
-        return request('agents.spawn', { sessionId, input }) as ReturnType<
+        assertRuntimeTransportSafe(options?.credential, 'agents.spawn.credential');
+        return request('agents.spawn', {
+          sessionId,
+          input,
+          ...(options?.credential !== undefined
+            ? { credential: options.credential }
+            : {}),
+        }, options?.operation) as ReturnType<
           KodaXRuntime['agents']['spawn']
         >;
       },
@@ -932,6 +1020,7 @@ export function createRuntimeDaemonClient(
       followup(sessionId, actorPath, objective, options) {
         const unavailable = actorControlPlaneError();
         if (unavailable) return Promise.reject(unavailable);
+        assertRuntimeTransportSafe(options?.credential, 'agents.followup.credential');
         return request('agents.followup', {
           sessionId,
           actorPath,
@@ -939,7 +1028,10 @@ export function createRuntimeDaemonClient(
           ...(options?.expectedRevision !== undefined
             ? { expectedRevision: options.expectedRevision }
             : {}),
-        }) as ReturnType<
+          ...(options?.credential !== undefined
+            ? { credential: options.credential }
+            : {}),
+        }, options?.operation) as ReturnType<
           KodaXRuntime['agents']['followup']
         >;
       },
@@ -1070,7 +1162,11 @@ function reportReverseBridgeFailure(kind: string): void {
 
 async function answerCredentialRequest(
   params: unknown,
-  brokers: ReadonlyMap<string, RuntimeCredentialBroker>,
+  brokers: ReadonlyMap<
+    string,
+    | { readonly version: 1; readonly broker: RuntimeCredentialBroker }
+    | { readonly version: 2; readonly broker: RuntimeScopedCredentialBroker }
+  >,
   request: (
     method: RuntimeDaemonMethod,
     params?: unknown,
@@ -1080,18 +1176,27 @@ async function answerCredentialRequest(
   const payload = requireRecord(params);
   const requestId = requireStringField(payload, 'requestId');
   const leaseId = requireStringField(payload, 'leaseId');
-  const broker = brokers.get(leaseId);
-  if (!broker) {
+  const registered = brokers.get(leaseId);
+  if (!registered) {
     await request('credential.supply', { requestId, error: 'credential_lease_unavailable' });
     return;
   }
   try {
-    const credential = await broker({
-      leaseId,
-      provider: requireStringField(payload, 'provider'),
-      sessionId: requireStringField(payload, 'sessionId'),
-      runId: requireStringField(payload, 'runId'),
-    });
+    const credential = registered.version === 1
+      ? await registered.broker({
+          leaseId,
+          provider: requireStringField(payload, 'provider'),
+          sessionId: requireStringField(payload, 'sessionId'),
+          runId: requireStringField(payload, 'runId'),
+        })
+      : await registered.broker({
+          requestId,
+          leaseId,
+          provider: requireStringField(payload, 'provider'),
+          sessionId: requireStringField(payload, 'sessionId'),
+          target: parseScopedCredentialTarget(payload.target),
+          purpose: parseScopedCredentialPurpose(payload.purpose),
+        });
     await request('credential.supply', {
       requestId,
       ...(credential !== undefined ? { credential } : { error: 'credential_unavailable' }),
@@ -1473,6 +1578,63 @@ async function observeDaemonSession(
   }
 }
 
+function parseScopedCredentialPurpose(value: unknown): RuntimeScopedCredentialPurpose {
+  if (
+    value === 'primary'
+    || value === 'fallback'
+    || value === 'classifier'
+    || value === 'sidecar'
+    || value === 'compaction'
+    || value === 'agent'
+    || value === 'workflow'
+    || value === 'utility'
+  ) return value;
+  throw new Error('Invalid scoped credential purpose.');
+}
+
+function parseScopedCredentialTarget(value: unknown): RuntimeScopedCredentialTarget {
+  const target = requireRecord(value);
+  const kind = requireStringField(target, 'kind');
+  if (kind === 'run') {
+    return {
+      kind,
+      runId: requireStringField(target, 'runId'),
+      ...(optionalStringField(target, 'operationId') !== undefined
+        ? { operationId: optionalStringField(target, 'operationId') }
+        : {}),
+    };
+  }
+  if (kind === 'operation') {
+    const operation = requireStringField(target, 'operation');
+    if (operation !== 'session.compact') throw new Error('Invalid credential operation target.');
+    return {
+      kind,
+      operation,
+      operationId: requireStringField(target, 'operationId'),
+    };
+  }
+  if (kind === 'actor_turn') {
+    return {
+      kind,
+      actorPath: requireStringField(target, 'actorPath'),
+      turnId: requireStringField(target, 'turnId'),
+      ...(optionalStringField(target, 'parentRunId') !== undefined
+        ? { parentRunId: optionalStringField(target, 'parentRunId') }
+        : {}),
+    };
+  }
+  if (kind === 'workflow') {
+    return {
+      kind,
+      workflowRunId: requireStringField(target, 'workflowRunId'),
+      ...(optionalStringField(target, 'parentRunId') !== undefined
+        ? { parentRunId: optionalStringField(target, 'parentRunId') }
+        : {}),
+    };
+  }
+  throw new Error('Invalid scoped credential target.');
+}
+
 async function raceRuntimeDaemonRead<T>(
   operation: Promise<T>,
   options: RuntimeReadOptions | undefined,
@@ -1733,6 +1895,18 @@ function supportsRunLifecycleControl(
     && value.structuredStopReceipt === true
     && value.protocolCancellation === true
     && value.responseAcknowledgement === true;
+}
+
+function supportsScopedCredentialBroker(
+  capabilities: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+  const broker = capabilities?.providerCredentialBroker;
+  return broker !== null
+    && typeof broker === 'object'
+    && !Array.isArray(broker)
+    && 'version' in broker
+    && Number.isSafeInteger(broker.version)
+    && Number(broker.version) >= 2;
 }
 
 function parseRuntimeRunStopReceipt(

@@ -18,6 +18,7 @@ import {
 import type {
   KodaXRuntime,
   RuntimeClientCapabilities,
+  RuntimeCompactSessionInput,
   RuntimeCompactSessionResult,
   RuntimeEvent,
   RuntimeEventFilter,
@@ -81,7 +82,10 @@ describe('runtime daemon dispatcher', () => {
       'session-1',
       '/root/worker',
       'Distinct stale follow-up.',
-      { expectedRevision: 4 },
+      {
+        expectedRevision: 4,
+        requireCredentialForNewTurn: true,
+      },
     );
     expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
     if (!isRuntimeDaemonSuccessResponse(response)) {
@@ -1023,6 +1027,341 @@ describe('runtime daemon dispatcher', () => {
     await legacyExtensionRuntime.dispose();
   });
 
+  it('binds manual compaction to a stable v2 operation without exposing the secret', async () => {
+    const runtime = makeRuntime();
+    const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+    let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime,
+      reverseBridgeHub,
+      notify(notification) {
+        notificationListener?.(notification);
+      },
+    });
+    await initializeDispatcher(dispatcher);
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params, operation) {
+        const response = await dispatcher.handle(createRuntimeDaemonRequest(
+          `req-compact-${randomRequestSuffix()}`,
+          method,
+          params,
+          operation,
+        ));
+        if (isRuntimeDaemonSuccessResponse(response)) return response.result;
+        throw Object.assign(new Error(response.error.message), { code: response.error.code });
+      },
+      subscribe(listener) {
+        notificationListener = listener;
+        return {
+          close() {
+            if (notificationListener === listener) notificationListener = undefined;
+          },
+        };
+      },
+    };
+    const compact = vi.spyOn(runtime.sessions, 'compact').mockImplementation(async (input) => {
+      const trusted = input as RuntimeCompactSessionInput & {
+        readonly providerCredentialAccess?: {
+          readonly allowedProviders: readonly string[];
+          acquire(provider: string, purpose: 'compaction', signal: AbortSignal): Promise<string>;
+        };
+      };
+      expect(JSON.stringify(input)).not.toContain('keychain-secret');
+      expect(trusted.providerCredentialAccess?.allowedProviders).toEqual(['openai']);
+      const credential = await trusted.providerCredentialAccess?.acquire(
+        'openai',
+        'compaction',
+        new AbortController().signal,
+      );
+      expect(credential).toBe('keychain-secret');
+      return {
+        compacted: true,
+        tokensBefore: 1_000,
+        tokensAfter: 100,
+      } as RuntimeCompactSessionResult;
+    });
+    const client = createRuntimeDaemonClient({
+      identity: runtime.identity,
+      transport,
+      journalEpoch: 'journal-compact',
+      capabilities: { providerCredentialBroker: { version: 2 } },
+    });
+    const requests: unknown[] = [];
+    const lease = await client.credentials.registerScoped(
+      { providers: ['openai'] },
+      async (request) => {
+        requests.push(request);
+        return 'keychain-secret';
+      },
+    );
+
+    await expect(client.sessions.compact({
+      sessionId: 'session-1',
+      provider: 'openai',
+      credential: {
+        leaseId: lease.id,
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+      operation: {
+        operationId: 'compact-op-1',
+        journalEpoch: 'journal-compact',
+      },
+    })).resolves.toMatchObject({ compacted: true });
+
+    await expect(client.sessions.compact({
+      sessionId: 'session-1',
+      provider: 'anthropic',
+      credential: {
+        leaseId: lease.id,
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+      operation: {
+        operationId: 'compact-op-provider-mismatch',
+        journalEpoch: 'journal-compact',
+      },
+    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+
+    expect(requests).toEqual([expect.objectContaining({
+      provider: 'openai',
+      sessionId: 'session-1',
+      target: {
+        kind: 'operation',
+        operation: 'session.compact',
+        operationId: 'compact-op-1',
+      },
+      purpose: 'compaction',
+    })]);
+    expect(compact).toHaveBeenCalledTimes(1);
+    await client.close();
+    dispatcher.close();
+    reverseBridgeHub.close();
+  });
+
+  it('binds a scoped credential to the exact admitted Agent turn', async () => {
+    const runtime = makeRuntime();
+    const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+    let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime,
+      reverseBridgeHub,
+      notify(notification) {
+        notificationListener?.(notification);
+      },
+    });
+    await initializeDispatcher(dispatcher);
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params, operation) {
+        const response = await dispatcher.handle(createRuntimeDaemonRequest(
+          `req-agent-credential-${randomRequestSuffix()}`,
+          method,
+          params,
+          operation,
+        ));
+        if (isRuntimeDaemonSuccessResponse(response)) return response.result;
+        throw Object.assign(new Error(response.error.message), { code: response.error.code });
+      },
+      subscribe(listener) {
+        notificationListener = listener;
+        return {
+          close() {
+            if (notificationListener === listener) notificationListener = undefined;
+          },
+        };
+      },
+    };
+    const spawn = vi.spyOn(runtime.agents, 'spawn').mockImplementation(
+      async (_sessionId, actorInput, options) => {
+        const trusted = options as typeof options & {
+          readonly providerCredentialAccessFactory?: (target: {
+            readonly actorPath: string;
+            readonly turnId: string;
+            readonly providers: readonly string[];
+          }) => {
+            readonly allowedProviders: readonly string[];
+            acquire(provider: string, purpose: 'agent', signal: AbortSignal): Promise<string>;
+          };
+        };
+        expect(actorInput).not.toHaveProperty('credential');
+        if (actorInput.kind === 'external') {
+          expect(trusted?.providerCredentialAccessFactory).toBeUndefined();
+          return {
+            actorPath: '/root/remote',
+            turnId: 'turn-agent-1',
+            state: 'accepted',
+          };
+        }
+        const access = trusted?.providerCredentialAccessFactory?.({
+          actorPath: '/root/reviewer',
+          turnId: 'turn-agent-1',
+          providers: ['openai'],
+        });
+        expect(access?.allowedProviders).toEqual(['openai']);
+        await expect(access?.acquire(
+          'openai',
+          'agent',
+          new AbortController().signal,
+        )).resolves.toBe('keychain-agent-secret');
+        return {
+          actorPath: '/root/reviewer',
+          turnId: 'turn-agent-1',
+          state: 'accepted',
+        };
+      },
+    );
+    const readAgentDetail = runtime.agents.detail.bind(runtime.agents);
+    let exposeCurrentTurn = false;
+    vi.spyOn(runtime.agents, 'detail').mockImplementation(async (sessionId, actorPath) => {
+      const detail = await readAgentDetail(sessionId, actorPath);
+      return {
+        ...detail,
+        actor: {
+          ...detail.actor,
+          path: actorPath,
+          kind: 'native',
+          ...(exposeCurrentTurn ? { currentTurnId: 'turn-agent-followup' } : {}),
+        },
+      };
+    });
+    const followup = vi.spyOn(runtime.agents, 'followup').mockImplementation(
+      async (_sessionId, actorPath, _objective, options) => {
+        const trusted = options as typeof options & {
+          readonly providerCredentialAccessFactory?: (target: {
+            readonly actorPath: string;
+            readonly turnId: string;
+            readonly providers: readonly string[];
+          }) => {
+            acquire(provider: string, purpose: 'agent', signal: AbortSignal): Promise<string>;
+          };
+        };
+        const access = trusted?.providerCredentialAccessFactory?.({
+          actorPath,
+          turnId: 'turn-agent-followup',
+          providers: ['openai'],
+        });
+        if (access === undefined) {
+          return {
+            delivery: 'current_turn',
+            turn: { actorPath, turnId: 'turn-agent-followup', state: 'running' },
+          };
+        }
+        await expect(access?.acquire(
+          'openai',
+          'agent',
+          new AbortController().signal,
+        )).resolves.toBe('keychain-agent-secret');
+        return {
+          delivery: 'started_turn',
+          turn: { actorPath, turnId: 'turn-agent-followup', state: 'accepted' },
+        };
+      },
+    );
+    const client = createRuntimeDaemonClient({
+      identity: runtime.identity,
+      transport,
+      journalEpoch: 'journal-agent',
+      capabilities: {
+        actorControlPlane: { version: 1, methodNamespace: 'agents' },
+        providerCredentialBroker: { version: 2 },
+      },
+    });
+    const requests: unknown[] = [];
+    const lease = await client.credentials.registerScoped(
+      { providers: ['openai'] },
+      async (request) => {
+        requests.push(request);
+        return 'keychain-agent-secret';
+      },
+    );
+
+    await expect(client.agents.spawn('session-1', {
+      taskName: 'reviewer',
+      objective: 'Review with an explicit lease.',
+      capabilities: { providers: ['openai'] },
+    }, {
+      credential: {
+        leaseId: lease.id,
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+      operation: { operationId: 'agent-op-1' },
+    })).resolves.toMatchObject({ turnId: 'turn-agent-1' });
+
+    await expect(client.agents.spawn('session-1', {
+      taskName: 'unbound-native',
+      objective: 'Must not use daemon environment credentials.',
+    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    await expect(client.agents.spawn('session-1', {
+      taskName: 'remote',
+      objective: 'Use the external credentialRef plane.',
+      kind: 'external',
+    })).resolves.toMatchObject({ turnId: 'turn-agent-1' });
+    await expect(client.agents.spawn('session-1', {
+      taskName: 'bound-remote',
+      objective: 'Must not cross credential planes.',
+      kind: 'external',
+    }, {
+      credential: {
+        leaseId: lease.id,
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(client.agents.followup(
+      'session-1',
+      '/root/reviewer',
+      'Continue with the same narrow Provider set.',
+      {
+        credential: {
+          leaseId: lease.id,
+          mode: 'scoped',
+          providers: ['openai'],
+        },
+      },
+    )).resolves.toMatchObject({ turn: { turnId: 'turn-agent-followup' } });
+    await expect(client.agents.followup(
+      'session-1',
+      '/root/reviewer',
+      'Must not use the daemon environment.',
+    )).rejects.toMatchObject({ code: 'credential_unavailable' });
+    exposeCurrentTurn = true;
+    await expect(client.agents.followup(
+      'session-1',
+      '/root/reviewer',
+      'Continue the already credential-bound turn.',
+    )).resolves.toMatchObject({ delivery: 'current_turn' });
+
+    expect(requests).toEqual([
+      expect.objectContaining({
+        provider: 'openai',
+        sessionId: 'session-1',
+        target: {
+          kind: 'actor_turn',
+          actorPath: '/root/reviewer',
+          turnId: 'turn-agent-1',
+        },
+        purpose: 'agent',
+      }),
+      expect.objectContaining({
+        provider: 'openai',
+        sessionId: 'session-1',
+        target: {
+          kind: 'actor_turn',
+          actorPath: '/root/reviewer',
+          turnId: 'turn-agent-followup',
+        },
+        purpose: 'agent',
+      }),
+    ]);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(followup).toHaveBeenCalledTimes(2);
+    await client.close();
+    dispatcher.close();
+    reverseBridgeHub.close();
+  });
+
   it('rejects a host tool binding whose names collide with registered tools', async () => {
     // FEATURE_294: materialized host tools must never shadow a registry tool,
     // so the binding is rejected up front (before any hostToolRuns record).
@@ -1252,12 +1591,21 @@ describe('runtime daemon dispatcher', () => {
     const write = await dispatcher.handle(createRuntimeDaemonRequest('req-scoped-write', 'config.patch', {
       patch: { model: 'mock-model' },
     }));
+    const effective = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-scoped-effective',
+      'config.effective',
+    ));
 
     expect(isRuntimeDaemonSuccessResponse(read)).toBe(true);
     expect(isRuntimeDaemonSuccessResponse(write)).toBe(false);
+    expect(isRuntimeDaemonSuccessResponse(effective)).toBe(false);
     if (!isRuntimeDaemonSuccessResponse(write)) {
       expect(write.error.code).toBe('unauthorized');
       expect(write.error.message).toContain('integration:admin');
+    }
+    if (!isRuntimeDaemonSuccessResponse(effective)) {
+      expect(effective.error.code).toBe('unauthorized');
+      expect(effective.error.message).toContain('integration:admin');
     }
   });
 
@@ -1383,7 +1731,16 @@ describe('runtime daemon dispatcher', () => {
           },
           askUserTransport: { version: 1 },
           permissionCas: { version: 1 },
-          providerCredentialBroker: { version: 1 },
+          providerCredentialBroker: {
+            version: 2,
+            credentialLifetime: 'provider_request',
+            lazyProviderResolution: true,
+          },
+          effectiveConfig: {
+            version: 1,
+            credentialValues: false,
+            sourceMetadata: true,
+          },
           runBoundHostTools: { version: 2, materializedAgentTools: true },
           coderOwnerFencing: { version: 1 },
           crashOutcomeModel: { version: 2 },
@@ -3077,6 +3434,7 @@ const METHOD_SMOKE_PARAMS = {
   'learning.review': { nameOrSlug: 'runtime-test-skill' },
   'learning.trust': { nameOrSlug: 'runtime-test-skill' },
   'config.read': undefined,
+  'config.effective': undefined,
   'config.patch': { patch: { model: 'mock-model' } },
   'config.reload': undefined,
   'model.list': { provider: 'mock' },
@@ -3142,7 +3500,7 @@ const METHOD_SMOKE_PARAMS = {
   'agents.detail': { sessionId: 'session-1', actorPath: '/root' },
   'agents.spawn': {
     sessionId: 'session-1',
-    input: { taskName: 'smoke', objective: 'Smoke test' },
+    input: { taskName: 'smoke', objective: 'Smoke test', kind: 'external' },
   },
   'agents.send': {
     sessionId: 'session-1', actorPath: '/root/smoke', content: 'continue',
@@ -3506,6 +3864,25 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async read() {
         return { provider: 'mock' };
       },
+      async readEffective() {
+        return {
+          schemaVersion: 1 as const,
+          capturedAt: '2026-08-29T00:00:00.000Z',
+          persistedConfig: { state: 'loaded' as const },
+          entries: {
+            provider: {
+              present: true,
+              applied: true,
+              source: 'runtime_override' as const,
+              priority: 400,
+              value: 'mock',
+            },
+          },
+          credentials: {
+            OPENAI_API_KEY: { present: false, source: 'unset' as const },
+          },
+        };
+      },
       async patch(patch) {
         return { provider: 'mock', ...patch };
       },
@@ -3688,12 +4065,12 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
           revision: 0,
         };
       },
-      async detail() {
+      async detail(_sessionId, actorPath) {
         return {
           actor: {
             path: '/root',
             taskName: 'root',
-            kind: 'native' as const,
+            kind: actorPath === '/root' ? 'native' as const : 'external' as const,
             state: 'idle' as const,
             capabilities: {
               tools: [], filesystem: 'write' as const, network: true, providers: [], canAskUser: true,

@@ -76,9 +76,24 @@ export type {
 } from './types.js';
 
 export {
+  createProviderCredentialLeaseScope,
+  currentProviderCredentialLeaseProviders,
+  deriveCurrentProviderCredentialLeaseScope,
+  deriveProviderCredentialLeaseScope,
   getScopedProviderCredential,
+  hasProviderCredentialContext,
+  hasScopedProviderCredentialAuthority,
   redactScopedProviderCredential,
+  runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
+  runWithoutProviderCredentialScope,
+  withProviderRequestCredential,
+} from './provider-credential-context.js';
+export type {
+  ProviderCredentialLeaseAccess,
+  ProviderCredentialLeaseScope,
+  ProviderCredentialAttribution,
+  ProviderCredentialPurpose,
 } from './provider-credential-context.js';
 
 // ============== Errors ==============

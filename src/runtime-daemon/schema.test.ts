@@ -86,6 +86,96 @@ describe('runtime daemon protocol schema', () => {
     })).toContain('$.unexpected is not allowed.');
   });
 
+  it('accepts the complete public compact input without admitting credential material', () => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.compact'].params;
+    const input = {
+      sessionId: 'session-1',
+      provider: 'openai',
+      model: 'gpt-5',
+      customInstructions: 'Keep decisions.',
+      contextWindow: 200_000,
+      triggerPercent: 75,
+      triggerTokens: 150_000,
+      credential: {
+        leaseId: 'lease-1',
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+    };
+
+    expect(validateRuntimeDaemonJsonSchema(schema, input)).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      ...input,
+      credential: {
+        leaseId: 'lease-1',
+        mode: 'scoped',
+        providers: ['openai'],
+        secret: 'must-not-cross-the-wire',
+      },
+    })).toContain('$.credential must match exactly one allowed schema.');
+    expect(JSON.stringify(schema)).not.toContain('secret');
+  });
+
+  it('keeps Agent credential authority outside the model-visible spawn input', () => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['agents.spawn'].params;
+    const credential = {
+      leaseId: 'lease-1',
+      mode: 'scoped',
+      providers: ['openai'],
+    };
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      sessionId: 'session-1',
+      input: {
+        taskName: 'reviewer',
+        objective: 'Review the change.',
+        capabilities: { providers: ['openai'] },
+      },
+      credential,
+    })).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      sessionId: 'session-1',
+      input: {
+        taskName: 'reviewer',
+        objective: 'Review the change.',
+        credential,
+      },
+    })).toContain('$.input.credential is not allowed.');
+    expect(JSON.stringify(schema)).not.toContain('secret');
+  });
+
+  it('allows effective credential provenance but never a credential value', () => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['config.effective'].result;
+    const snapshot = {
+      schemaVersion: 1,
+      capturedAt: '2026-08-29T00:00:00.000Z',
+      persistedConfig: { state: 'loaded' },
+      entries: {
+        provider: {
+          present: true,
+          applied: true,
+          source: 'runtime_override',
+          priority: 400,
+          value: 'openai',
+        },
+      },
+      credentials: {
+        OPENAI_API_KEY: { present: true, source: 'environment' },
+      },
+    };
+    expect(validateRuntimeDaemonJsonSchema(schema, snapshot)).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, {
+      ...snapshot,
+      credentials: {
+        OPENAI_API_KEY: {
+          present: true,
+          source: 'environment',
+          value: 'must-not-cross-the-wire',
+        },
+      },
+    })).toContain('$.credentials.OPENAI_API_KEY.value is not allowed.');
+    expect(JSON.stringify(schema)).not.toContain('secret');
+  });
+
   it('admits credential-safe terminal failure classifications', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result;
     expect(schema).toMatchObject({

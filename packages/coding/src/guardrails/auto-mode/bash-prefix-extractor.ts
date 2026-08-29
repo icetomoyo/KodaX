@@ -204,6 +204,7 @@ export async function extractCommandPrefix(
     timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     abortSignal: opts.abortSignal,
     querySource: QUERY_SOURCE,
+    credentialPurpose: 'classifier',
     costTracker: opts.costTracker,
   });
 

@@ -43,6 +43,7 @@ import {
   resolveImageMediaType,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
+import { hasProviderCredentialContext } from '../provider-credential-context.js';
 
 const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
 const KODAX_ANTHROPIC_EFFORT_BETA_HEADER = 'effort-2025-11-24';
@@ -200,6 +201,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
    * tests (which mock the actual LLM calls) from failing at construction time.
    */
   protected async getClient(): Promise<Anthropic> {
+    if (hasProviderCredentialContext()) return this.buildClient();
     if (this._client) return this._client;
     const clientPromise = this._clientPromise ??= Promise.resolve(this.buildClient());
     try {

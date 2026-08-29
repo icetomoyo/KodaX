@@ -37,6 +37,7 @@ import {
   resolveThinkingBudget,
 } from '../reasoning.js';
 import { stripCacheBoundaries } from '../cache-control.js';
+import { hasProviderCredentialContext } from '../provider-credential-context.js';
 import {
   buildImageDataUrlIfAvailable,
   isImageFileMissing,
@@ -329,6 +330,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
    * tests (which mock the actual LLM calls) from failing at construction time.
    */
   protected async getClient(): Promise<OpenAI> {
+    if (hasProviderCredentialContext()) return this.buildClient();
     if (this._client) return this._client;
     const clientPromise = this._clientPromise ??= Promise.resolve(this.buildClient());
     try {

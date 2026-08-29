@@ -8,8 +8,8 @@
  * applies the result to the session lineage (so `loadFullTranscript` / resume
  * see the compaction entry), and writes it back.
  *
- * Applies uniformly to Partner and Coder sessions. Never throws — failures
- * return `{ compacted: false, reason }`.
+ * Applies uniformly to Partner and Coder sessions. Failures normally return
+ * `{ compacted: false, reason }`; trusted Runtime callers may request propagation.
  */
 
 import {
@@ -50,6 +50,8 @@ export interface CompactSessionOptions {
   readonly sessionsDir?: string;
   /** Injected storage instance (takes precedence over sessionsDir). */
   readonly storage?: FileSessionStorage;
+  /** Trusted Runtime seam used to preserve broker/lease failures as RPC errors. */
+  readonly propagateErrors?: boolean;
 }
 
 export interface CompactSessionResult {
@@ -196,6 +198,7 @@ export async function compactSession(
       report: result.report,
     };
   } catch (error) {
+    if (options?.propagateErrors === true) throw error;
     return {
       ...empty,
       reason: error instanceof Error ? error.message : String(error),

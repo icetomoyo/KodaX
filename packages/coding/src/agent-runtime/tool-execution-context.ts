@@ -30,10 +30,16 @@
  * and still observe accumulating mutations.
  */
 
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
-import { getProviderCredentialEnvironmentNames } from '@kodax-ai/llm';
+import {
+  currentProviderCredentialLeaseProviders,
+  deriveCurrentProviderCredentialLeaseScope,
+  getProviderCredentialEnvironmentNames,
+  runWithProviderCredentialLeaseScope,
+} from '@kodax-ai/llm';
 
 import type {
   KodaXManagedProtocolPayload,
@@ -349,11 +355,32 @@ function buildWorkflowToolHost(
           context: { ...options.context, actorControl, actorHost },
         }
       : options;
-    const started = await startManagedWorkflow({
+    const parentCredentialProviders = currentProviderCredentialLeaseProviders();
+    const workflowRunId = parentCredentialProviders === undefined
+      ? undefined
+      : `run-${Date.now().toString(36)}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const credentialScope = parentCredentialProviders === undefined || workflowRunId === undefined
+      ? undefined
+      : deriveCurrentProviderCredentialLeaseScope(parentCredentialProviders, {
+          kind: 'workflow',
+          workflowRunId,
+        });
+    const closeCredentialScopeOnAbort = (): void => {
+      credentialScope?.close('Workflow cancelled');
+    };
+    if (credentialScope !== undefined && combinedSignal !== undefined) {
+      if (combinedSignal.aborted) closeCredentialScopeOnAbort();
+      else combinedSignal.addEventListener('abort', closeCredentialScopeOnAbort, { once: true });
+    }
+    const releaseCredentialAbort = (): void => {
+      combinedSignal?.removeEventListener('abort', closeCredentialScopeOnAbort);
+    };
+    const startWorkflow = () => startManagedWorkflow({
       source: { kind: 'inline', manifest, source },
       args,
       options: workflowOptions,
       runsBaseDir,
+      ...(workflowRunId === undefined ? {} : { runId: workflowRunId }),
       manager: getDefaultWorkflowRunManager(),
       // FEATURE_246 Part D: resume seeds the result cache from the prior run.
       // Path-traversal guard lives in resolveResumeFromRunDir (model-supplied id).
@@ -369,13 +396,31 @@ function buildWorkflowToolHost(
       // inline-started run belongs to.
       processMetadata: { hostMetadata: buildWorkflowHostMetadata(options, sessionId) },
     });
+    let started: Awaited<ReturnType<typeof startManagedWorkflow>>;
+    try {
+      started = credentialScope === undefined
+        ? await startWorkflow()
+        : await runWithProviderCredentialLeaseScope(credentialScope, startWorkflow);
+    } catch (error: unknown) {
+      releaseCredentialAbort();
+      credentialScope?.close('Workflow start failed');
+      throw error;
+    }
     if (started.kind === 'declined') {
+      releaseCredentialAbort();
+      credentialScope?.close('Workflow declined');
       return { kind: 'declined', reason: started.reason };
     }
     const workflowQualityWarnings = started.qualityWarnings?.map(
       (warning) => `${warning.code}: ${warning.message}`,
     );
-    const done = started.managed.done.then((outcome): WorkflowToolHostResult => {
+    const managedDone = credentialScope === undefined
+      ? started.managed.done
+      : started.managed.done.finally(() => {
+          releaseCredentialAbort();
+          credentialScope.close('Workflow settled');
+        });
+    const done = managedDone.then((outcome): WorkflowToolHostResult => {
       const snap = started.managed.getSnapshot?.();
       // A child agent that completes but fails its sidecar verifier in warn-only
       // mode settles as `completed_unverified` and emits an `agent_unverified`

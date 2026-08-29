@@ -4692,7 +4692,8 @@ const runtime = await connectKodaXRuntime({
     interruptInput: 1,
     askUserTransport: 1,
     permissionCas: 1,
-    providerCredentialBroker: 1,
+    providerCredentialBroker: 2,
+    effectiveConfig: 1,
     runBoundHostTools: 1,
     coderOwnerFencing: 1,
     crashOutcomeModel: 2,
@@ -5353,17 +5354,24 @@ retry/Accept-edits behavior that never changes the engine to rules. Embedded,
 Worker, and daemon hosts all report `fallbackPersistsEngine:false`; restart or
 upgrade an older daemon instead of falling back to a client-side alias.
 
-### Broker a Space keychain credential
+### Broker Space keychain credentials
 
 Credentials remain owned by Space's OS keychain. Register a broker in Electron
-Main, bind the returned lease only to runs that Space starts, and return the
-key only after checking the daemon-provided provider/session/run context.
+Main, bind the returned lease only to operations that Space starts, and return
+one key only after checking the daemon-provided Provider, Session, target, and
+purpose. The v2 broker resolves Providers lazily and never preloads credentials
+into the daemon environment.
 
 ```ts
-const credentialLease = await runtime.credentials.register(
-  { providers: ['anthropic'] },
-  async ({ provider, sessionId: requestedSession, runId }) => {
-    authorizeSpaceRunCredential({ provider, sessionId: requestedSession, runId });
+const credentialLease = await runtime.credentials.registerScoped(
+  { providers: ['anthropic', 'openai'] },
+  async ({ provider, sessionId: requestedSession, target, purpose }) => {
+    authorizeSpaceCredential({
+      provider,
+      sessionId: requestedSession,
+      target,
+      purpose,
+    });
     return spaceKeychain.readProviderCredential(provider);
   },
 );
@@ -5372,24 +5380,63 @@ const run = await runtime.runs.start({
   sessionId,
   input: { type: 'text', text: prompt },
   options: { provider: 'anthropic' },
-  credential: { leaseId: credentialLease.id, provider: 'anthropic' },
+  credential: {
+    leaseId: credentialLease.id,
+    mode: 'scoped',
+    providers: ['anthropic', 'openai'],
+  },
   operation: { operationId: loadOrCreatePendingOperationId('space-run-88') },
 });
 ```
 
-The secret crosses only the authenticated reverse frame and an in-memory
-run/provider scope. It is excluded from events, status, logs, diagnostics,
-operation records, and Runtime persistence. While such a scope is active,
-provider mismatch fails closed and never falls back to daemon environment.
+The allowlist is a ceiling: an operation binding can narrow it but cannot add a
+Provider. The daemon asks only when an actual primary, fallback, classifier,
+sidecar, compaction, Agent, Workflow, or utility wire call needs that Provider.
+An unauthorized Provider fails before the host callback. The secret crosses
+only the authenticated reverse frame and exists in a transient exact-Provider
+scope for that wire call. It is excluded from Provider caches, SDK-client
+caches, events, status, logs, diagnostics, operation records, and persistence.
+While such a scope is active, Provider mismatch fails closed and never falls
+back to daemon environment.
+
+The legacy `register()` / `resume()` exact-Provider v1 API remains available for
+existing Run-only integrations. Use `registerScoped()` / `resumeScoped()` for
+manual compaction, lazy multi-Provider routing, native Agent turns, and
+Workflows. Requiring `providerCredentialBroker:2` makes an older daemon fail
+closed instead of silently weakening the contract.
+
 Without a stable `instanceSecret`, registration ends when the Space connection
 closes. With it, the daemon keeps the registration owned by that stable client;
 a replacement Space process reattaches the callback with
-`runtime.credentials.resume(leaseId, broker)`. An accepted run has already
-acquired its scoped credential, so it reports `requirements.credential.state`
-as `ready` and may continue after disconnect. If the broker cannot answer, the
-start is rejected instead of accepting an indefinitely waiting run. Expiry or
-Runtime restart is explicit (`expired` or terminal); no provider request is
-automatically replayed.
+`runtime.credentials.resumeScoped(leaseId, broker)`. Disconnect does not replay
+pending Provider requests. Revocation or expiry rejects pending and delayed
+credential supply, aborts active request signals, and prevents every later
+resolution through already-propagated async context. Runtime restart expires
+all leases.
+
+Native/constructed child Agents inherit only the intersection of the parent
+scope and their concrete Provider capabilities; `'*'` never expands the parent
+allowlist. Host `agents.spawn(..., { credential })` and a follow-up that starts
+a new internal turn must bind explicitly at the shared-daemon boundary. A
+follow-up delivered into the current turn cannot replace its binding. External
+turns keep using `credentialRef`, reject Runtime Provider bindings, and cannot
+read daemon ambient Provider keys. Detached
+Workflow work receives a derived,
+revocable Workflow scope; it closes on completion, failure, cancellation, or
+parent closure. ALS propagates the handle but does not define its lifetime.
+
+Use the separate admin-only effective-config API to diagnose startup source
+without reading secrets:
+
+```ts
+const effective = await runtime.config.readEffective();
+// entries.provider: { value, source, priority, applied, present }
+// credentials.ANTHROPIC_API_KEY: { present, source } // never a value
+```
+
+The snapshot is a whitelist, reports persisted config as `loaded`, `missing`,
+or `invalid`, and omits arbitrary persisted fields. Daemon clients need the
+`integration:admin` scope and may require `effectiveConfig:1` during connect.
 
 ### Bind Space-owned Host Tools to one run
 
@@ -5881,8 +5928,24 @@ await runtime.sessions.updateSettings(session.id, {
   compactionTriggerTokens: 300_000,
 });
 
-await runtime.sessions.compact({ sessionId: session.id });
+await runtime.sessions.compact({
+  sessionId: session.id,
+  provider: 'anthropic',
+  credential: {
+    leaseId: credentialLease.id,
+    mode: 'scoped',
+    providers: ['anthropic'],
+  },
+  operation: {
+    operationId: loadOrCreatePendingOperationId(`compact:${session.id}`),
+  },
+});
 ```
+
+Manual compact uses the same credential-aware summary implementation as
+automatic compact. Its broker target is the stable `session.compact` operation,
+not a fabricated Run ID; the daemon validates lease, Provider, Session, and
+operation scope. Reuse the same `operationId` after a lost response.
 
 Setting `compactionTriggerTokens: 0` removes the absolute Session override.
 Percentage updates are normalized to `15..90`; negative/fractional absolute

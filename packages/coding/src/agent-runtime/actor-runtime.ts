@@ -14,11 +14,25 @@ import {
   type AgentExecutionResult,
   type AgentMailboxMessage,
   type AgentMetadataValue,
+  type AgentMutationOptions,
+  type AgentSpawnInput,
   type AgentTaskSnapshot,
   type AgentTurn,
+  type AgentTurnRef,
+  type AgentFollowupResult,
   type AgentTurnExecutor,
 } from '@kodax-ai/agent';
-import { normalizeReasoningEffortValue, type KodaXTaskResultMetadata } from '@kodax-ai/llm';
+import {
+  createProviderCredentialLeaseScope,
+  currentProviderCredentialLeaseProviders,
+  deriveCurrentProviderCredentialLeaseScope,
+  normalizeReasoningEffortValue,
+  runWithProviderCredentialLeaseScope,
+  runWithoutProviderCredentialScope,
+  type KodaXTaskResultMetadata,
+  type ProviderCredentialLeaseAccess,
+  type ProviderCredentialLeaseScope,
+} from '@kodax-ai/llm';
 
 import { executeChildAgents } from '../child-executor.js';
 import type {
@@ -62,10 +76,26 @@ interface CodingActorEnvironment {
   readonly options: KodaXOptions;
 }
 
+export interface CodingActorCredentialTarget {
+  readonly actorPath: string;
+  readonly turnId: string;
+  readonly providers: readonly string[];
+}
+
+export type CodingActorCredentialAccessFactory = (
+  target: CodingActorCredentialTarget,
+) => ProviderCredentialLeaseAccess;
+
+type ActorFollowupHostOptions = NonNullable<
+  Parameters<AgentActorController['followup']>[4]
+>;
+type ActorStartPlan = Parameters<NonNullable<ActorFollowupHostOptions['beforeLaunch']>>[0];
+
 /** One Runtime-owned Actor tree for one KodaX session. */
 export class CodingActorSession {
   private readonly controller: AgentActorController;
   private readonly turnExecutors = new Map<string, AgentTurnExecutor>();
+  private readonly turnCredentialAccess = new Map<string, ProviderCredentialLeaseAccess>();
   private environment?: CodingActorEnvironment;
   private activeBudget?: AgentBudgetPort;
 
@@ -73,20 +103,53 @@ export class CodingActorSession {
     this.activeBudget = sessionOptions.budget;
     const executor: AgentTurnExecutor = {
       execute: (input) => {
-        const executionKey = metadataString(input.turn.metadata?.executionKey);
-        const registered = executionKey ? this.turnExecutors.get(executionKey) : undefined;
-        if (registered) return registered.execute(input);
-        if (input.actor.kind === 'external' && sessionOptions.executor) {
-          return sessionOptions.executor.execute(input);
+        const executeTurn = (): Promise<AgentExecutionResult> => {
+          const executionKey = metadataString(input.turn.metadata?.executionKey);
+          const registered = executionKey ? this.turnExecutors.get(executionKey) : undefined;
+          if (registered) return registered.execute(input);
+          if (input.actor.kind === 'external' && sessionOptions.executor) {
+            return sessionOptions.executor.execute(input);
+          }
+          const environment = this.environment;
+          if (!environment) throw new Error('Actor session is not attached to an active KodaX run.');
+          return executeCodingActorTurn(
+            input,
+            environment.parentCtx,
+            environment.options,
+            this.controller.bind(input.actor.path),
+          );
+        };
+        const explicitAccess = this.turnCredentialAccess.get(input.turn.turnId);
+        this.turnCredentialAccess.delete(input.turn.turnId);
+        if (input.actor.kind === 'external') {
+          if (explicitAccess !== undefined) {
+            throw new Error(
+              'External Agent turns cannot bind Runtime Provider credentials; use credentialRef.',
+            );
+          }
+          return runWithoutProviderCredentialScope(executeTurn);
         }
-        const environment = this.environment;
-        if (!environment) throw new Error('Actor session is not attached to an active KodaX run.');
-        return executeCodingActorTurn(
-          input,
-          environment.parentCtx,
-          environment.options,
-          this.controller.bind(input.actor.path),
-        );
+        if (explicitAccess !== undefined) {
+          assertCredentialProvidersAllowed(input, explicitAccess.allowedProviders);
+          return runActorTurnInCredentialScope(
+            createProviderCredentialLeaseScope(explicitAccess),
+            input.signal,
+            executeTurn,
+          );
+        }
+        const parentProviders = currentProviderCredentialLeaseProviders();
+        if (parentProviders === undefined) return executeTurn();
+        const actorProviders = input.actor.capabilities.providers;
+        const allowedProviders = parentProviders.filter((provider) => (
+          actorProviders.includes('*') || actorProviders.includes(provider)
+        ));
+        const credentialScope = deriveCurrentProviderCredentialLeaseScope(allowedProviders, {
+          kind: 'actor_turn',
+          actorPath: input.actor.path,
+          turnId: input.turn.turnId,
+        });
+        if (credentialScope === undefined) return executeTurn();
+        return runActorTurnInCredentialScope(credentialScope, input.signal, executeTurn);
       },
     };
     this.controller = new AgentActorController({
@@ -137,6 +200,78 @@ export class CodingActorSession {
 
   rootControl(): AgentActorClient {
     return this.controller.bind('/root');
+  }
+
+  spawnRoot(
+    input: AgentSpawnInput,
+    options?: AgentMutationOptions,
+    credentialAccess?: CodingActorCredentialAccessFactory,
+  ): Promise<AgentTurnRef> {
+    let credentialTurnId: string | undefined;
+    const admission = this.controller.spawn('/root', input, {
+      ...options,
+      ...(credentialAccess === undefined
+        ? {}
+        : {
+            beforeLaunch: (plan) => {
+              if (plan.actor.kind === 'external') throw externalCredentialBindingError();
+              credentialTurnId = plan.turn.turnId;
+              this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
+                actorPath: plan.actor.path,
+                turnId: plan.turn.turnId,
+                providers: plan.actor.capabilities.providers,
+              }));
+              plan.abortController.signal.addEventListener(
+                'abort',
+                () => this.turnCredentialAccess.delete(plan.turn.turnId),
+                { once: true },
+              );
+            },
+          }),
+    });
+    return admission.catch((error: unknown) => {
+      if (credentialTurnId !== undefined) this.turnCredentialAccess.delete(credentialTurnId);
+      throw error;
+    });
+  }
+
+  followupRoot(
+    actorPath: string,
+    objective: string,
+    options?: AgentMutationOptions,
+    credentialAccess?: CodingActorCredentialAccessFactory,
+    requireCredentialForNewTurn = false,
+  ): Promise<AgentFollowupResult> {
+    let credentialTurnId: string | undefined;
+    const beforeLaunch = credentialAccess === undefined
+      ? requireCredentialForNewTurn
+        ? (plan: ActorStartPlan) => {
+            if (plan.actor.kind !== 'external') throw missingAgentCredentialBindingError();
+          }
+        : undefined
+      : (plan: ActorStartPlan) => {
+          if (plan.actor.kind === 'external') throw externalCredentialBindingError();
+          credentialTurnId = plan.turn.turnId;
+          this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
+            actorPath: plan.actor.path,
+            turnId: plan.turn.turnId,
+            providers: plan.actor.capabilities.providers,
+          }));
+          plan.abortController.signal.addEventListener(
+            'abort',
+            () => this.turnCredentialAccess.delete(plan.turn.turnId),
+            { once: true },
+          );
+        };
+    const admission = this.controller.followup('/root', actorPath, objective, undefined, {
+      ...options,
+      ...(credentialAccess === undefined ? {} : { requireNewTurn: true }),
+      ...(beforeLaunch === undefined ? {} : { beforeLaunch }),
+    });
+    return admission.catch((error: unknown) => {
+      if (credentialTurnId !== undefined) this.turnCredentialAccess.delete(credentialTurnId);
+      throw error;
+    });
   }
 
   health(): AgentControllerHealth {
@@ -199,6 +334,7 @@ export class CodingActorSession {
   async close(reason = 'runtime closed'): Promise<void> {
     await this.controller.shutdown(reason);
     this.turnExecutors.clear();
+    this.turnCredentialAccess.clear();
     this.environment = undefined;
   }
 
@@ -212,7 +348,54 @@ export class CodingActorSession {
   disposeAfterStoreRemoval(reason = 'session removed'): void {
     this.controller.disposeAfterStoreRemoval(reason);
     this.turnExecutors.clear();
+    this.turnCredentialAccess.clear();
     this.environment = undefined;
+  }
+}
+
+function runActorTurnInCredentialScope(
+  scope: ProviderCredentialLeaseScope,
+  signal: AbortSignal,
+  execute: () => Promise<AgentExecutionResult>,
+): Promise<AgentExecutionResult> {
+  const closeOnAbort = (): void => scope.close('Agent turn cancelled');
+  if (signal.aborted) closeOnAbort();
+  else signal.addEventListener('abort', closeOnAbort, { once: true });
+  return runWithProviderCredentialLeaseScope(scope, async () => {
+    try {
+      return await execute();
+    } finally {
+      signal.removeEventListener('abort', closeOnAbort);
+      scope.close('Agent turn settled');
+    }
+  });
+}
+
+function externalCredentialBindingError(): Error {
+  return new Error(
+    'External Agent turns cannot bind Runtime Provider credentials; use credentialRef.',
+  );
+}
+
+function missingAgentCredentialBindingError(): Error {
+  return Object.assign(
+    new Error('A new internal Agent turn requires an explicit scoped credential binding.'),
+    { code: 'credential_unavailable' as const },
+  );
+}
+
+function assertCredentialProvidersAllowed(
+  input: AgentExecutionInput,
+  providers: readonly string[],
+): void {
+  if (input.actor.capabilities.providers.includes('*')) return;
+  const unauthorized = providers.find(
+    (provider) => !input.actor.capabilities.providers.includes(provider),
+  );
+  if (unauthorized !== undefined) {
+    throw new Error(
+      `Actor ${input.actor.path} is not authorized to use provider ${unauthorized}.`,
+    );
   }
 }
 

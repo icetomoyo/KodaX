@@ -98,6 +98,7 @@ export type RuntimeDaemonMethod =
   | 'learning.review'
   | 'learning.trust'
   | 'config.read'
+  | 'config.effective'
   | 'config.patch'
   | 'config.reload'
   | 'model.list'
@@ -402,6 +403,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'learning.review',
   'learning.trust',
   'config.read',
+  'config.effective',
   'config.patch',
   'config.reload',
   'model.list',

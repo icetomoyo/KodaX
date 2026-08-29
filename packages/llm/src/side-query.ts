@@ -27,6 +27,10 @@ import type {
 import { KodaXBaseProvider } from './providers/base.js';
 import { type CostTracker, recordRetry, recordUsage } from './cost-tracker.js';
 import { classifyStopReason } from './stop-reason.js';
+import {
+  withProviderRequestCredential,
+  type ProviderCredentialPurpose,
+} from './provider-credential-context.js';
 
 export type SideQueryStopReason =
   | 'end_turn'
@@ -46,6 +50,8 @@ export interface SideQueryRequest {
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly querySource: string;
+  /** Auditable credential purpose for this one-shot request. Defaults to utility. */
+  readonly credentialPurpose?: ProviderCredentialPurpose;
   readonly costTracker?: CostTracker;
 }
 
@@ -257,43 +263,48 @@ export async function sideQuery(req: SideQueryRequest): Promise<SideQueryResult>
       reasoning,
       req.reasoning === undefined,
     );
-    const providerResult = req.provider.stream(
-      [...req.messages],
-      [],
-      req.system,
-      reasoning,
-      {
-        modelOverride: req.model,
-        ...(isPositiveInteger(maxOutputTokens)
-          ? { maxOutputTokensOverride: maxOutputTokens }
-          : {}),
-        onTextDelta: (text) => {
-          recordUpstreamEvent();
-          if (text.length > 0 && firstOutputMs === undefined) {
-            firstOutputMs = elapsed();
-          }
-        },
-        onThinkingDelta: (text) => {
-          recordUpstreamEvent();
-          if (text.length > 0 && firstThinkingDeltaMs === undefined) {
-            firstThinkingDeltaMs = elapsed();
-          }
-        },
-        onHeartbeat: () => recordUpstreamEvent(),
-        onRetryAfter: (event) => {
-          recordUpstreamEvent();
-          retryCount += 1;
-          retryWaitMs += Math.max(0, event.waitMs);
-          if (!costTracker) return;
-          costTracker = recordRetry(costTracker, {
-            provider: event.provider,
-            waitMs: event.waitMs,
-            reason: event.reason,
-            source: event.source,
-          });
-        },
-      },
+    const providerResult = withProviderRequestCredential(
+      req.provider.name,
+      req.credentialPurpose ?? 'utility',
       controller.signal,
+      (credentialSignal) => req.provider.stream(
+        [...req.messages],
+        [],
+        req.system,
+        reasoning,
+        {
+          modelOverride: req.model,
+          ...(isPositiveInteger(maxOutputTokens)
+            ? { maxOutputTokensOverride: maxOutputTokens }
+            : {}),
+          onTextDelta: (text) => {
+            recordUpstreamEvent();
+            if (text.length > 0 && firstOutputMs === undefined) {
+              firstOutputMs = elapsed();
+            }
+          },
+          onThinkingDelta: (text) => {
+            recordUpstreamEvent();
+            if (text.length > 0 && firstThinkingDeltaMs === undefined) {
+              firstThinkingDeltaMs = elapsed();
+            }
+          },
+          onHeartbeat: () => recordUpstreamEvent(),
+          onRetryAfter: (event) => {
+            recordUpstreamEvent();
+            retryCount += 1;
+            retryWaitMs += Math.max(0, event.waitMs);
+            if (!costTracker) return;
+            costTracker = recordRetry(costTracker, {
+              provider: event.provider,
+              waitMs: event.waitMs,
+              reason: event.reason,
+              source: event.source,
+            });
+          },
+        },
+        credentialSignal,
+      ),
     );
     const result = await Promise.race([providerResult, interruption]);
 

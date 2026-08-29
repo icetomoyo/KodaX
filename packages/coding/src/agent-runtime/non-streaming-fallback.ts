@@ -55,6 +55,7 @@ import type {
   KodaXReasoningRequest,
   KodaXEphemeralSuffix,
 } from '@kodax-ai/llm';
+import { withProviderRequestCredential } from '@kodax-ai/llm';
 import type { BoundaryTrackerSession } from './boundary-tracker-session.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
@@ -127,33 +128,38 @@ export async function executeNonStreamingFallback(
       mode: 'replace',
     });
     const requestMeta = { providerRequestId } as const;
-    const result = await input.streamProvider.complete(
-      input.providerMessages,
-      input.activeToolDefinitions,
-      input.effectiveSystemPrompt,
-      input.effectiveProviderReasoning,
-      {
-        promptCacheKey: input.promptCacheKey,
-        onTextDelta: (text: string) => {
-          input.boundarySession.markTextDelta(text);
-          void input.emitActiveExtensionEvent('text:delta', { text });
-          input.events.onTextDelta?.(text, requestMeta);
-        },
-        onThinkingDelta: (text: string) => {
-          input.boundarySession.markThinkingDelta(text);
-          void input.emitActiveExtensionEvent('thinking:delta', { text });
-          input.events.onThinkingDelta?.(text, requestMeta);
-        },
-        onThinkingEnd: (thinking: string) => {
-          void input.emitActiveExtensionEvent('thinking:end', { thinking });
-          input.events.onThinkingEnd?.(thinking, requestMeta);
-        },
-        modelOverride: input.modelOverride,
-        maxOutputTokensOverride: input.maxOutputTokensOverride,
-        ephemeralSuffix: input.ephemeralSuffix,
-        signal: fallbackSignal,
-      },
+    const result = await withProviderRequestCredential(
+      input.streamProvider.name,
+      'fallback',
       fallbackSignal,
+      (credentialSignal) => input.streamProvider.complete(
+        input.providerMessages,
+        input.activeToolDefinitions,
+        input.effectiveSystemPrompt,
+        input.effectiveProviderReasoning,
+        {
+          promptCacheKey: input.promptCacheKey,
+          onTextDelta: (text: string) => {
+            input.boundarySession.markTextDelta(text);
+            void input.emitActiveExtensionEvent('text:delta', { text });
+            input.events.onTextDelta?.(text, requestMeta);
+          },
+          onThinkingDelta: (text: string) => {
+            input.boundarySession.markThinkingDelta(text);
+            void input.emitActiveExtensionEvent('thinking:delta', { text });
+            input.events.onThinkingDelta?.(text, requestMeta);
+          },
+          onThinkingEnd: (thinking: string) => {
+            void input.emitActiveExtensionEvent('thinking:end', { thinking });
+            input.events.onThinkingEnd?.(thinking, requestMeta);
+          },
+          modelOverride: input.modelOverride,
+          maxOutputTokensOverride: input.maxOutputTokensOverride,
+          ephemeralSuffix: input.ephemeralSuffix,
+          signal: credentialSignal,
+        },
+        credentialSignal,
+      ),
     );
     return { ok: true, result, providerRequestId };
   } catch (rawError) {
