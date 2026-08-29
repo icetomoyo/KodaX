@@ -178,6 +178,20 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('v0.7.96 raises it to version 6');
   });
 
+  it('documents the v0.7.96-alpha.3 scoped credential and daemon inventory contracts', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+    const agents = resolveKodaXManual({ topic: 'agents' }).content;
+
+    expect(sdk).toContain('The v0.7.96-alpha.3 SDK adds the v2 scoped Provider credential broker');
+    expect(sdk).toContain('resolve lazily, per wire call');
+    expect(sdk).toContain('require an explicit scoped credential');
+    expect(sdk).toContain('binding and fail closed without one');
+    expect(sdk).toContain('fails closed against an older daemon');
+    expect(sdk).toContain('`daemonClientInventory:1`');
+    expect(agents).toContain('intersection of the live parent authorization');
+    expect(agents).toContain('separate `credentialRef` broker');
+  });
+
   it('documents the v0.7.95 self-healing cleanup and finalization contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
