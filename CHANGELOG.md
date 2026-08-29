@@ -26,7 +26,9 @@ All notable changes to this project will be documented in this file.
 
 - Internal side queries (auto-mode classifier, fallback verification) now
   resolve the lowest enabled reasoning effort for models that cannot disable
-  thinking, instead of requesting a disabled `none` effort through its alias.
+  thinking, instead of requesting a disabled `none` effort through its alias;
+  a profile with no fully usable enabled effort keeps the side query enabled
+  through an explicit `auto` effort.
 
 ## [0.7.96-alpha.2] - 2026-08-28
 
