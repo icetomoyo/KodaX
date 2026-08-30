@@ -44,7 +44,7 @@ describe('parseClassifierOutput', () => {
   it('uses a neutral display reason when an ask decision has no usable reason', () => {
     expect(parseClassifierOutput('<decision>ask</decision>')).toMatchObject({
       kind: 'block',
-      reason: 'Auto[LLM] classifier requested user confirmation.',
+      reason: 'Auto[LLM] reviewer raised a concrete concern.',
     });
   });
 
@@ -348,7 +348,7 @@ describe('parseClassifierOutput', () => {
     const r = parseClassifierOutput('<block>yes</block>');
     expect(r).toMatchObject({
       kind: 'block',
-      reason: 'Auto[LLM] classifier requested user confirmation.',
+      reason: 'Auto[LLM] reviewer raised a concrete concern.',
       warnings: ['missing_reason'],
     });
   });
@@ -357,7 +357,7 @@ describe('parseClassifierOutput', () => {
     const r = parseClassifierOutput('<block>yes</block><reason></reason>');
     expect(r).toMatchObject({
       kind: 'block',
-      reason: 'Auto[LLM] classifier requested user confirmation.',
+      reason: 'Auto[LLM] reviewer raised a concrete concern.',
       warnings: ['missing_reason'],
     });
   });

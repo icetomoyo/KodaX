@@ -1,14 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
   existsSync,
   ftruncateSync,
   openSync,
+  readFileSync,
   readSync,
   renameSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,6 +25,7 @@ import {
   prepareInternalNodeLaunch,
   rememberChildProcessTree,
 } from "@kodax-ai/agent";
+import { parseExecPolicy, type ExecPolicyRule } from "@kodax-ai/coding";
 
 import type { RuntimeDaemonClientTransport } from "./client.js";
 import {
@@ -63,6 +67,19 @@ export interface RuntimeDaemonProcessLeaseOptions {
   readonly startupSignal?: AbortSignal;
   readonly pollIntervalMs?: number;
   readonly healthCheck?: RuntimeDaemonHealthCheckOptions;
+  /** Trusted host policy installed only while creating a new daemon owner. */
+  readonly ownerBootstrap?: RuntimeDaemonOwnerBootstrap;
+}
+
+export interface RuntimeDaemonOwnerBootstrap {
+  readonly execPolicy?: {
+    readonly adminRules?: readonly ExecPolicyRule[];
+    readonly trustedProjectRoots?: readonly string[];
+  };
+  readonly autoReview?: {
+    readonly administratorPolicy?: string;
+    readonly modelGuidance?: string;
+  };
 }
 
 export interface RuntimeDaemonProcessLease {
@@ -102,6 +119,68 @@ export class RuntimeDaemonProcessCleanupIncompleteError extends Error {
 
 const CLEAN_EXIT_OWNER_PUBLICATION_GRACE_MS = 1_000;
 export const RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES = 256 * 1024;
+export const RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV =
+  "KODAX_INTERNAL_DAEMON_OWNER_BOOTSTRAP";
+const RUNTIME_DAEMON_OWNER_BOOTSTRAP_MAX_BYTES = 1024 * 1024;
+const RUNTIME_DAEMON_OWNER_BOOTSTRAP_BASENAME =
+  /^owner-bootstrap-[0-9a-f-]{36}\.json$/u;
+
+export function createRuntimeDaemonOwnerBootstrapFile(
+  paths: RuntimeDaemonPaths,
+  input: RuntimeDaemonOwnerBootstrap,
+): string {
+  ensureRuntimeDaemonDirectories(paths);
+  const bootstrap = parseRuntimeDaemonOwnerBootstrap(
+    JSON.parse(JSON.stringify(input)) as unknown,
+  );
+  const file = path.join(
+    paths.rootDir,
+    `owner-bootstrap-${randomUUID()}.json`,
+  );
+  writeFileSync(file, JSON.stringify(bootstrap), {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  return file;
+}
+
+export function consumeRuntimeDaemonOwnerBootstrap(input: {
+  readonly configHome: string;
+  readonly profile: string;
+  readonly environment: NodeJS.ProcessEnv;
+}): RuntimeDaemonOwnerBootstrap | undefined {
+  const configured = input.environment[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV];
+  delete input.environment[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV];
+  if (configured === undefined) return undefined;
+
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(
+    path.resolve(input.configHome),
+    input.profile,
+  );
+  const file = path.resolve(configured);
+  const relative = path.relative(path.resolve(paths.rootDir), file);
+  if (
+    path.dirname(relative) !== "."
+    || !RUNTIME_DAEMON_OWNER_BOOTSTRAP_BASENAME.test(path.basename(relative))
+  ) {
+    throw new Error(
+      "Runtime daemon owner bootstrap must be a one-shot file in the selected daemon root.",
+    );
+  }
+
+  try {
+    const metadata = statSync(file);
+    if (!metadata.isFile() || metadata.size > RUNTIME_DAEMON_OWNER_BOOTSTRAP_MAX_BYTES) {
+      throw new Error("Runtime daemon owner bootstrap is not a bounded regular file.");
+    }
+    return parseRuntimeDaemonOwnerBootstrap(
+      JSON.parse(readFileSync(file, "utf8")) as unknown,
+    );
+  } finally {
+    if (existsSync(file)) unlinkSync(file);
+  }
+}
 
 export function runtimeDaemonBootstrapLogPath(
   paths: RuntimeDaemonPaths,
@@ -269,6 +348,11 @@ export async function acquireRuntimeDaemonProcessLease(
   const initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
   const initialHealth = classifyRuntimeDaemonHealth(initial);
   if (initialHealth === "healthy" && initial.state) {
+    if (options.ownerBootstrap !== undefined) {
+      throw new Error(
+        "Trusted daemon owner policy cannot be applied to an existing daemon. Stop that owner and retry the bootstrap.",
+      );
+    }
     const observation =
       initial.state.status === "ready"
         ? { ...initial, state: initial.state }
@@ -287,27 +371,43 @@ export async function acquireRuntimeDaemonProcessLease(
     );
   }
 
-  const child = await spawnRuntimeDaemonServeProcess({
-    profile: paths.profile,
-    homeDir,
-    configHome,
-    defaultProvider: options.defaultProvider,
-    defaultModel: options.defaultModel,
-    sessionsDir: options.sessionsDir,
-    permissionTimeoutMs: options.permissionTimeoutMs,
-    userInputTimeoutMs: options.userInputTimeoutMs,
-    orphanExitMs: options.orphanExitMs,
-    startupTimeoutMs: options.startupTimeoutMs,
-  });
-  const observation = await waitForHealthyDaemonStartup(paths, options, child);
-  const endpoint = runtimeDaemonEndpointFromState(observation.state);
-  return connectProcessLease(
-    paths,
-    endpoint,
-    observation.state.pid === child.pid,
-    options,
-    observation.initialization,
-  );
+  const ownerBootstrapFile = options.ownerBootstrap === undefined
+    ? undefined
+    : createRuntimeDaemonOwnerBootstrapFile(paths, options.ownerBootstrap);
+  try {
+    const child = await spawnRuntimeDaemonServeProcess({
+      profile: paths.profile,
+      homeDir,
+      configHome,
+      defaultProvider: options.defaultProvider,
+      defaultModel: options.defaultModel,
+      sessionsDir: options.sessionsDir,
+      permissionTimeoutMs: options.permissionTimeoutMs,
+      userInputTimeoutMs: options.userInputTimeoutMs,
+      orphanExitMs: options.orphanExitMs,
+      startupTimeoutMs: options.startupTimeoutMs,
+      ownerBootstrapFile,
+    });
+    const observation = await waitForHealthyDaemonStartup(paths, options, child);
+    const ownsHost = observation.state.pid === child.pid;
+    if (options.ownerBootstrap !== undefined && !ownsHost) {
+      throw new Error(
+        "Trusted daemon owner policy lost a concurrent startup race and was not applied. Retry after the current owner stops.",
+      );
+    }
+    const endpoint = runtimeDaemonEndpointFromState(observation.state);
+    return connectProcessLease(
+      paths,
+      endpoint,
+      ownsHost,
+      options,
+      observation.initialization,
+    );
+  } finally {
+    if (ownerBootstrapFile !== undefined && existsSync(ownerBootstrapFile)) {
+      unlinkSync(ownerBootstrapFile);
+    }
+  }
 }
 
 async function connectProcessLease(
@@ -597,6 +697,8 @@ export interface RuntimeDaemonServeProcessInput {
   readonly userInputTimeoutMs?: number;
   readonly orphanExitMs?: number;
   readonly startupTimeoutMs?: number;
+  /** @internal One-shot owner-only policy file; never emitted on the command line. */
+  readonly ownerBootstrapFile?: string;
 }
 
 export function buildRuntimeDaemonServeArgs(
@@ -648,6 +750,7 @@ export async function spawnRuntimeDaemonServeProcess(
       homeDir: input.homeDir,
       configHome: input.configHome,
       parentEnv: process.env,
+      ownerBootstrapFile: input.ownerBootstrapFile,
     }),
     isElectron: process.versions.electron !== undefined,
   });
@@ -795,6 +898,7 @@ export function createRuntimeDaemonServeEnvironment(input: {
   readonly homeDir: string;
   readonly configHome?: string;
   readonly parentEnv: NodeJS.ProcessEnv;
+  readonly ownerBootstrapFile?: string;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...input.parentEnv,
@@ -802,7 +906,149 @@ export function createRuntimeDaemonServeEnvironment(input: {
     KODAX_HOME: input.configHome ?? path.join(input.homeDir, ".kodax"),
   };
   delete env[ELECTRON_RUN_AS_NODE_ENV];
+  delete env[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV];
+  if (input.ownerBootstrapFile !== undefined) {
+    env[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV] = input.ownerBootstrapFile;
+  }
   return env;
+}
+
+function parseRuntimeDaemonOwnerBootstrap(
+  value: unknown,
+): RuntimeDaemonOwnerBootstrap {
+  if (!isRecord(value)) {
+    throw new Error("Runtime daemon owner bootstrap must be an object.");
+  }
+  assertOnlyFields(value, ["execPolicy", "autoReview"], "owner bootstrap");
+  return {
+    ...(value.execPolicy === undefined
+      ? {}
+      : { execPolicy: parseRuntimeDaemonExecPolicy(value.execPolicy) }),
+    ...(value.autoReview === undefined
+      ? {}
+      : { autoReview: parseRuntimeDaemonAutoReview(value.autoReview) }),
+  };
+}
+
+function parseRuntimeDaemonExecPolicy(
+  value: unknown,
+): NonNullable<RuntimeDaemonOwnerBootstrap["execPolicy"]> {
+  if (!isRecord(value)) {
+    throw new Error("Runtime daemon owner execPolicy must be an object.");
+  }
+  assertOnlyFields(
+    value,
+    ["adminRules", "trustedProjectRoots"],
+    "owner execPolicy",
+  );
+  const roots = value.trustedProjectRoots;
+  if (
+    roots !== undefined
+    && (!Array.isArray(roots) || !roots.every((root) => typeof root === "string"))
+  ) {
+    throw new Error("Runtime daemon owner trustedProjectRoots must be strings.");
+  }
+  return {
+    ...(value.adminRules === undefined
+      ? {}
+      : { adminRules: parseRuntimeDaemonAdminRules(value.adminRules) }),
+    ...(roots === undefined ? {} : { trustedProjectRoots: roots as string[] }),
+  };
+}
+
+function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRule[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Runtime daemon owner adminRules must be an array.");
+  }
+  return value.map((candidate, index) => {
+    if (!isRecord(candidate)) {
+      throw new Error(`Runtime daemon owner adminRules[${index}] must be an object.`);
+    }
+    assertOnlyFields(
+      candidate,
+      [
+        "prefix",
+        "decision",
+        "justification",
+        "source",
+        "sourcePath",
+        "match",
+        "notMatch",
+        "hostExecutable",
+        "network",
+        "compound",
+      ],
+      `owner adminRules[${index}]`,
+    );
+    const sourcePath = typeof candidate.sourcePath === "string"
+      && candidate.sourcePath.length > 0
+      ? candidate.sourcePath
+      : "host:admin";
+    const parsed = parseExecPolicy(JSON.stringify({
+      rules: [{
+        prefix: candidate.prefix,
+        decision: candidate.decision,
+        justification: candidate.justification,
+        match: candidate.match,
+        notMatch: candidate.notMatch,
+        hostExecutable: candidate.hostExecutable,
+        network: candidate.network,
+        compound: candidate.compound,
+      }],
+    }), sourcePath, "admin");
+    if (!parsed.ok || parsed.rules[0] === undefined) {
+      throw new Error(
+        `Invalid Runtime daemon owner adminRules[${index}]: ${parsed.ok ? "missing rule" : parsed.error}`,
+      );
+    }
+    return parsed.rules[0];
+  });
+}
+
+function parseRuntimeDaemonAutoReview(
+  value: unknown,
+): NonNullable<RuntimeDaemonOwnerBootstrap["autoReview"]> {
+  if (!isRecord(value)) {
+    throw new Error("Runtime daemon owner autoReview must be an object.");
+  }
+  assertOnlyFields(
+    value,
+    ["administratorPolicy", "modelGuidance"],
+    "owner autoReview",
+  );
+  if (
+    value.administratorPolicy !== undefined
+    && typeof value.administratorPolicy !== "string"
+  ) {
+    throw new Error("Runtime daemon owner administratorPolicy must be a string.");
+  }
+  if (value.modelGuidance !== undefined && typeof value.modelGuidance !== "string") {
+    throw new Error("Runtime daemon owner modelGuidance must be a string.");
+  }
+  return {
+    ...(typeof value.administratorPolicy === "string"
+      ? { administratorPolicy: value.administratorPolicy }
+      : {}),
+    ...(typeof value.modelGuidance === "string"
+      ? { modelGuidance: value.modelGuidance }
+      : {}),
+  };
+}
+
+function assertOnlyFields(
+  value: Readonly<Record<string, unknown>>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const known = new Set(allowed);
+  const unknownField = Object.keys(value).find((field) => !known.has(field));
+  if (unknownField !== undefined) {
+    throw new Error(`Runtime daemon ${label}.${unknownField} is not supported.`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveDaemonCliEntry(): string | undefined {

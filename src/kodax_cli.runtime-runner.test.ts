@@ -68,7 +68,7 @@ describe('interactive daemon runtime bridge', () => {
     expect(onCompactEnd).toHaveBeenCalledWith(undefined, endedPayload);
   });
 
-  it('synchronizes Auto settings once without resetting a later session engine choice', async () => {
+  it('synchronizes Auto reviewer settings without writing an engine selector', async () => {
     const updateSettings = vi.fn(async () => ({ permissionMode: 'auto' }));
     const runtime = {
       sessions: {
@@ -76,7 +76,7 @@ describe('interactive daemon runtime bridge', () => {
         getSettings: vi.fn(async () => ({ permissionMode: 'auto' })),
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
-          engine: 'llm' as const,
+          classifierHealth: 'healthy' as const,
           denials: {},
           breaker: {},
         })),
@@ -84,29 +84,19 @@ describe('interactive daemon runtime bridge', () => {
     } as unknown as KodaXRuntime;
     const control = createReplRuntimeAutoModeControl(runtime);
 
-    await control.syncSettings?.('session-1', 'auto', { engine: 'llm' });
-    await control.setEngine('session-1', 'rules');
-    await control.syncSettings?.('session-1', 'auto', { engine: 'llm' });
+    await control.syncSettings?.('session-1', 'auto', {
+      classifierModel: 'review-provider:review-model',
+    });
 
-    expect(updateSettings).toHaveBeenNthCalledWith(1, 'session-1', {
+    expect(updateSettings).toHaveBeenCalledOnce();
+    expect(updateSettings).toHaveBeenCalledWith('session-1', {
       permissionMode: 'auto',
-      autoModeEngine: 'llm',
-      autoModeClassifierModel: null,
-      autoModeTimeoutMs: null,
-      autoModeSpeculativeWindowMs: null,
+      autoModeClassifierModel: 'review-provider:review-model',
     });
-    expect(updateSettings).toHaveBeenNthCalledWith(2, 'session-1', {
-      autoModeEngine: 'rules',
-    });
-    expect(updateSettings).toHaveBeenNthCalledWith(3, 'session-1', {
-      permissionMode: 'auto',
-      autoModeClassifierModel: null,
-      autoModeTimeoutMs: null,
-      autoModeSpeculativeWindowMs: null,
-    });
+    expect(updateSettings.mock.calls[0]?.[1]).not.toHaveProperty('autoModeEngine');
   });
 
-  it('preserves a persisted Auto engine when a fresh REPL control synchronizes', async () => {
+  it('ignores a persisted legacy Rules engine when a fresh REPL control synchronizes', async () => {
     const updateSettings = vi.fn(async () => ({
       permissionMode: 'auto',
       autoModeEngine: 'rules' as const,
@@ -120,7 +110,7 @@ describe('interactive daemon runtime bridge', () => {
         })),
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
-          engine: 'rules' as const,
+          classifierHealth: 'healthy' as const,
           denials: {},
           breaker: {},
         })),
@@ -128,14 +118,13 @@ describe('interactive daemon runtime bridge', () => {
     } as unknown as KodaXRuntime;
 
     const control = createReplRuntimeAutoModeControl(runtime);
-    await control.syncSettings?.('session-1', 'auto', { engine: 'llm' });
+    await control.syncSettings?.('session-1', 'auto', {});
 
     expect(updateSettings).toHaveBeenCalledWith('session-1', {
       permissionMode: 'auto',
       autoModeClassifierModel: null,
-      autoModeTimeoutMs: null,
-      autoModeSpeculativeWindowMs: null,
     });
+    expect(updateSettings.mock.calls[0]?.[1]).not.toHaveProperty('autoModeEngine');
   });
 
   it('does not persist a new REPL session while synchronizing startup settings', async () => {
@@ -151,7 +140,7 @@ describe('interactive daemon runtime bridge', () => {
         getSettings,
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
-          engine: 'llm' as const,
+          classifierHealth: 'healthy' as const,
           denials: {},
           breaker: {},
         })),
@@ -159,9 +148,7 @@ describe('interactive daemon runtime bridge', () => {
     } as unknown as KodaXRuntime;
 
     const control = createReplRuntimeAutoModeControl(runtime);
-    const stats = await control.syncSettings?.('new-session', 'auto', {
-      engine: 'llm',
-    });
+    const stats = await control.syncSettings?.('new-session', 'auto', {});
 
     expect(stats).toBeUndefined();
     expect(create).not.toHaveBeenCalled();
@@ -188,7 +175,7 @@ describe('interactive daemon runtime bridge', () => {
         getSettings: vi.fn(async () => ({ permissionMode: persistedMode })),
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
-          engine: 'llm' as const,
+          classifierHealth: 'healthy' as const,
           denials: {},
           breaker: {},
         })),
@@ -196,8 +183,8 @@ describe('interactive daemon runtime bridge', () => {
     } as unknown as KodaXRuntime;
     const control = createReplRuntimeAutoModeControl(runtime);
 
-    const first = control.syncSettings?.('session-1', 'plan', { engine: 'llm' });
-    const second = control.syncSettings?.('session-1', 'auto', { engine: 'llm' });
+    const first = control.syncSettings?.('session-1', 'plan', {});
+    const second = control.syncSettings?.('session-1', 'auto', {});
     await vi.waitFor(() => expect(updateSettings).toHaveBeenCalled());
     await Promise.resolve();
     expect(updateSettings).toHaveBeenCalledTimes(1);
@@ -399,10 +386,7 @@ describe('interactive daemon runtime bridge', () => {
       sessionId: 'session-1',
       permissionMode: 'plan',
       autoModeSettings: {
-        engine: 'llm',
         classifierModel: 'qwen-token-plan:qwen3.7-plus',
-        timeoutMs: 20_000,
-        speculativeWindowMs: 1_200,
       },
       requestPermission,
       legacyPermissionHook: true,
@@ -410,10 +394,7 @@ describe('interactive daemon runtime bridge', () => {
 
     expect(updateSettings).toHaveBeenCalledWith('session-1', {
       permissionMode: 'plan',
-      autoModeEngine: 'llm',
       autoModeClassifierModel: 'qwen-token-plan:qwen3.7-plus',
-      autoModeTimeoutMs: 20_000,
-      autoModeSpeculativeWindowMs: 1_200,
     });
     expect(capturedStart?.permissionBroker).toBe('client');
     expect(capturedStart?.options).not.toHaveProperty('abortSignal');

@@ -1772,9 +1772,9 @@ describe('runtime daemon dispatcher', () => {
             version: 4,
             owner: 'session-runtime',
             escalationCreatesPermission: true,
-            fallbackPersistsEngine: false,
-            defaultClassifierTimeoutMs: 45_000,
-            defaultSpeculativeWindowMs: 500,
+            defaultClassifierTimeoutMs: 90_000,
+            retryClassifierTimeoutMs: 180_000,
+            maxClassifierAttempts: 2,
             boundedClassifierInput: true,
             diagnosticsVersion: 1,
             permissionGrantSuggestions: true,
@@ -1785,11 +1785,10 @@ describe('runtime daemon dispatcher', () => {
             version: 1,
             keys: expect.arrayContaining([
               'agentMode',
-              'autoModeEngine',
               'autoModeClassifierModel',
-              'autoModeTimeoutMs',
-              'autoModeSpeculativeWindowMs',
             ]),
+            permissionModes: ['plan', 'accept-edits', 'auto', 'full-access'],
+            legacyPermissionModeAliases: { 'auto-in-project': 'auto' },
           },
           durableRecoveryQueries: {
             version: 1,
@@ -1799,6 +1798,10 @@ describe('runtime daemon dispatcher', () => {
           },
         },
       });
+      const settingsCapability = initialized.capabilities.sharedSessionSettings;
+      expect(settingsCapability.keys).not.toContain('autoModeEngine');
+      expect(settingsCapability.keys).not.toContain('autoModeTimeoutMs');
+      expect(settingsCapability.keys).not.toContain('autoModeSpeculativeWindowMs');
       dispatcher.close();
     } finally {
       fs.rmSync(rootDir, { force: true, recursive: true });

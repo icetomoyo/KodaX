@@ -88,6 +88,7 @@ describe('ArgumentCompleter', () => {
         expect(completions.some(c => c.display === 'plan')).toBe(true);
         expect(completions.some(c => c.display === 'accept-edits')).toBe(true);
         expect(completions.some(c => c.display === 'auto')).toBe(true);
+        expect(completions.some(c => c.display === 'full-access')).toBe(true);
         expect(completions.some(c => c.display === 'auto-in-project')).toBe(false);
       });
 
@@ -358,7 +359,6 @@ describe('ArgumentCompleter', () => {
         const cases = [
           ['/mcp ', ['status', 'refresh']],
           ['/fallback ', ['status', 'off']],
-          ['/auto-engine ', ['llm', 'rules']],
           ['/thinking ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/think ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/reasoning ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],

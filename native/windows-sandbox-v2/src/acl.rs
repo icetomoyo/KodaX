@@ -31,10 +31,9 @@ use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_CASE_SENSITIVE_INFO,
     FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
     FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
-    FileAttributeTagInfo,
-    FileCaseSensitiveInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
-    GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
+    FileAttributeTagInfo, FileCaseSensitiveInfo, FileIdInfo, FileStandardInfo,
+    GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
+    MOVEFILE_WRITE_THROUGH, MoveFileExW, READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use windows::core::{PCWSTR, PWSTR};
@@ -257,14 +256,13 @@ pub fn verify_persistent_deny_read(
     let _ = LocalSid::from_string(sandbox_group_sid)?;
     let mut missing = Vec::new();
     for path in normalized_paths(paths.iter().map(PathBuf::from)) {
-        let target = inspect_acl_target(&path)
-            .with_context(|| format!("verify persistent Windows denyRead path {}", path.display()))?;
-        if !target.read_aces()?.has_explicit(
-            AclMode::Deny,
-            sandbox_group_sid,
-            READ_MASK,
-            true,
-        ) {
+        let target = inspect_acl_target(&path).with_context(|| {
+            format!("verify persistent Windows denyRead path {}", path.display())
+        })?;
+        if !target
+            .read_aces()?
+            .has_explicit(AclMode::Deny, sandbox_group_sid, READ_MASK, true)
+        {
             missing.push(target.canonical_path);
         }
     }
@@ -281,14 +279,12 @@ pub fn ensure_persistent_deny_read(
     let targets = normalized_paths(paths.iter().map(PathBuf::from))
         .into_iter()
         .map(|path| {
-            open_acl_target(&path)
-                .with_context(|| format!("open persistent Windows denyRead path {}", path.display()))
+            open_acl_target(&path).with_context(|| {
+                format!("open persistent Windows denyRead path {}", path.display())
+            })
         })
         .collect::<Result<Vec<_>>>()?;
-    let _transaction = NamedMutex::acquire(
-        ACL_MUTEX,
-        PERSISTENT_DENY_SETUP_TIMEOUT_MS,
-    )?;
+    let _transaction = NamedMutex::acquire(ACL_MUTEX, PERSISTENT_DENY_SETUP_TIMEOUT_MS)?;
     for target in targets {
         let operation = AclOperation {
             mode: AclMode::Deny,
@@ -311,6 +307,30 @@ pub fn ensure_persistent_deny_read(
         verify_persistent_deny_read(paths, sandbox_group_sid)?.is_empty(),
         "persistent Windows denyRead verification remained incomplete",
     );
+    Ok(())
+}
+
+pub fn remove_persistent_deny_read(paths: &[String], sandbox_group_sid: &str) -> Result<()> {
+    let _ = LocalSid::from_string(sandbox_group_sid)?;
+    let targets = normalized_paths(paths.iter().map(PathBuf::from))
+        .into_iter()
+        .map(|path| {
+            open_acl_target(&path)
+                .with_context(|| format!("open legacy Windows denyRead path {}", path.display()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let _transaction = NamedMutex::acquire(ACL_MUTEX, PERSISTENT_DENY_SETUP_TIMEOUT_MS)?;
+    for target in targets {
+        let exact_legacy_ace = target.execution_deny_receipt();
+        target
+            .remove_execution_deny(sandbox_group_sid, &exact_legacy_ace)
+            .with_context(|| {
+                format!(
+                    "remove legacy persistent Windows denyRead at {}",
+                    target.canonical_path,
+                )
+            })?;
+    }
     Ok(())
 }
 
@@ -498,6 +518,15 @@ fn normalized_paths(values: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     unique.into_values().collect()
 }
 
+fn filesystem_capability_generation(request: &RunRequest) -> String {
+    format!(
+        "v{}:{}:{}",
+        request.protocol,
+        request.sandbox_user_sid.to_ascii_lowercase(),
+        request.sandbox_group_sid.to_ascii_lowercase(),
+    )
+}
+
 fn policy_operations(
     request: &RunRequest,
     _runner_directory: &Path,
@@ -546,9 +575,7 @@ fn policy_operations(
             mode: AclMode::Grant,
             path,
             mask: READ_EXECUTE_MASK,
-            trustee: PlannedTrustee::FilesystemCapability(
-                FilesystemCapabilityKind::AllowRead,
-            ),
+            trustee: PlannedTrustee::FilesystemCapability(FilesystemCapabilityKind::AllowRead),
             inherit: true,
             pass: AccessPass::Restricted,
         });
@@ -1631,6 +1658,11 @@ pub fn verify_control_directory_boundary(
 ) -> Result<()> {
     let control = open_acl_target(control_directory)
         .context("open protected Windows sandbox control directory")?;
+    let artifact_cache_directory = control_directory
+        .parent()
+        .context("protected Windows sandbox control directory has no artifact cache parent")?;
+    let artifact_cache = open_acl_target(artifact_cache_directory)
+        .context("open protected Windows native artifact cache directory")?;
     ensure!(
         control.directory,
         "Windows sandbox control state is not a directory"
@@ -1682,12 +1714,24 @@ pub fn verify_control_directory_boundary(
                 == 1,
         "Windows sandbox control directory DACL is not the exact host/SYSTEM boundary"
     );
-    for policy_root in request.allow_read.iter().chain(&request.allow_write) {
+    for policy_root in &request.allow_read {
         let target = open_acl_target(Path::new(policy_root))
-            .with_context(|| format!("validate Windows sandbox allow root {policy_root}"))?;
+            .with_context(|| format!("validate Windows sandbox read root {policy_root}"))?;
         ensure!(
-            !canonical_paths_overlap(&control.canonical_path, &target.canonical_path),
+            !canonical_path_is_same_or_inside(
+                &artifact_cache.canonical_path,
+                &target.canonical_path,
+            ),
             "Windows sandbox allow policy overlaps protected native shell control state: {}",
+            target.canonical_path,
+        );
+    }
+    for policy_root in &request.allow_write {
+        let target = open_acl_target(Path::new(policy_root))
+            .with_context(|| format!("validate Windows sandbox write root {policy_root}"))?;
+        ensure!(
+            !canonical_paths_overlap(&artifact_cache.canonical_path, &target.canonical_path),
+            "Windows sandbox write policy overlaps protected native shell control state: {}",
             target.canonical_path,
         );
     }
@@ -1695,7 +1739,10 @@ pub fn verify_control_directory_boundary(
         let target = open_acl_target(Path::new(policy_root))
             .with_context(|| format!("validate Windows sandbox deny root {policy_root}"))?;
         ensure!(
-            !canonical_path_is_same_or_inside(&control.canonical_path, &target.canonical_path),
+            !canonical_path_is_same_or_inside(
+                &artifact_cache.canonical_path,
+                &target.canonical_path,
+            ),
             "Windows sandbox deny policy targets protected native shell control state: {}",
             target.canonical_path,
         );
@@ -1715,9 +1762,13 @@ pub fn ensure_policy_aces_until(
     let operations = policy_operations(&canonical_request, runner_directory, &host_sid);
     let _transaction =
         acquire_acl_transaction(operation_deadline_unix_ms, "policy ACL authorization")?;
+    // Persistent filesystem capabilities belong to the installed sandbox
+    // account. request.generation also includes native build hashes and would
+    // otherwise append a fresh ACE to every policy root after each rebuild.
+    let capability_generation = filesystem_capability_generation(&canonical_request);
     apply_operations(
         operations,
-        &canonical_request.generation,
+        &capability_generation,
         &canonical_request.sandbox_user_sid,
         operation_deadline_unix_ms,
     )
@@ -1840,9 +1891,11 @@ mod tests {
         ensure_persistent_deny_read(&paths, user_sid, group_sid).unwrap();
         ensure_persistent_deny_read(&paths, user_sid, group_sid).unwrap();
 
-        assert!(verify_persistent_deny_read(&paths, group_sid)
-            .unwrap()
-            .is_empty());
+        assert!(
+            verify_persistent_deny_read(&paths, group_sid)
+                .unwrap()
+                .is_empty()
+        );
         let target = inspect_acl_target(&root).unwrap();
         assert_eq!(
             target
@@ -1858,6 +1911,50 @@ mod tests {
                 .count(),
             1,
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_deny_read_removal_is_exact_idempotent_and_reconciles_reinstallation() {
+        let root = temporary_directory("persistent-deny-remove");
+        let child = root.join("existing-child");
+        fs::create_dir(&child).unwrap();
+        let paths = vec![root.to_string_lossy().into_owned()];
+        let user_sid = "S-1-5-21-1-2-3-9998";
+        let legacy_group_sid = "S-1-5-21-1-2-3-9997";
+        let unrelated_group_sid = "S-1-5-21-1-2-3-9996";
+
+        ensure_persistent_deny_read(&paths, user_sid, legacy_group_sid).unwrap();
+        ensure_persistent_deny_read(&paths, user_sid, unrelated_group_sid).unwrap();
+        remove_persistent_deny_read(&paths, legacy_group_sid).unwrap();
+        remove_persistent_deny_read(&paths, legacy_group_sid).unwrap();
+
+        // A concurrently running pre-upgrade KodaX can reinstall this exact
+        // legacy ACE after an upgraded process removed it. The next admission
+        // must be able to perform the same precise cleanup again.
+        ensure_persistent_deny_read(&paths, user_sid, legacy_group_sid).unwrap();
+        assert!(
+            verify_persistent_deny_read(&paths, legacy_group_sid)
+                .unwrap()
+                .is_empty()
+        );
+        remove_persistent_deny_read(&paths, legacy_group_sid).unwrap();
+
+        assert_eq!(
+            verify_persistent_deny_read(&paths, legacy_group_sid).unwrap(),
+            paths,
+        );
+        assert!(
+            verify_persistent_deny_read(&paths, unrelated_group_sid)
+                .unwrap()
+                .is_empty()
+        );
+        let child_aces = inspect_acl_target(&child).unwrap().read_aces().unwrap();
+        assert!(!child_aces.aces.iter().any(|ace| {
+            ace.mode == AclMode::Deny
+                && ace.sid.eq_ignore_ascii_case(legacy_group_sid)
+                && ace.mask == READ_MASK
+        }));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1943,20 +2040,21 @@ mod tests {
             capability_sids,
         );
         let canonical_root = open_acl_target(&root).unwrap().canonical_path;
+        let capability_generation = filesystem_capability_generation(&request);
         let allow_read_sid = filesystem_capability_sid(
-            &request.generation,
+            &capability_generation,
             &canonical_root,
             FilesystemCapabilityKind::AllowRead,
         )
         .unwrap();
         let allow_write_sid = filesystem_capability_sid(
-            &request.generation,
+            &capability_generation,
             &canonical_root,
             FilesystemCapabilityKind::AllowWrite,
         )
         .unwrap();
         let deny_write_sid = filesystem_capability_sid(
-            &request.generation,
+            &capability_generation,
             &canonical_root,
             FilesystemCapabilityKind::DenyWrite,
         )
@@ -2029,6 +2127,24 @@ mod tests {
 
         drop(target);
         fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn native_rebuild_reuses_the_installed_accounts_filesystem_capabilities() {
+        let root = temporary_directory("stable-account-capabilities");
+        let mut request = request(&root);
+        request.generation = "trusted-artifacts-a".into();
+        let first = ensure_policy_aces(&request, &root).unwrap();
+
+        request.generation = "trusted-artifacts-b".into();
+        let second = ensure_policy_aces(&request, &root).unwrap();
+
+        request.sandbox_group_sid = "S-1-5-32-545".into();
+        let rotated_account = ensure_policy_aces(&request, &root).unwrap();
+
+        fs::remove_dir(root).unwrap();
+        assert_eq!(second, first);
+        assert_ne!(rotated_account, first);
     }
 
     #[test]
@@ -2179,20 +2295,16 @@ mod tests {
 
         let capabilities = ensure_policy_aces(&request, &root).unwrap();
         let canonical_root = target.canonical_path.clone();
+        let capability_generation = filesystem_capability_generation(&request);
         let allow_write_sid = filesystem_capability_sid(
-            &request.generation,
+            &capability_generation,
             &canonical_root,
             FilesystemCapabilityKind::AllowWrite,
         )
         .unwrap();
         assert!(capabilities.contains(&allow_write_sid));
         let after = target.read_aces().unwrap();
-        assert!(after.has_explicit(
-            AclMode::Grant,
-            &allow_write_sid,
-            MODIFY_MASK,
-            true,
-        ));
+        assert!(after.has_explicit(AclMode::Grant, &allow_write_sid, MODIFY_MASK, true,));
 
         drop(target);
         fs::remove_dir(root).unwrap();

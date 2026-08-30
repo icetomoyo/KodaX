@@ -185,7 +185,9 @@ import {
   ConfirmResult,
   createPermissionContext,
   computeConfirmTools,
+  canonicalizePermissionMode,
   normalizePermissionMode,
+  isAutoMode,
   isToolCallAllowed,
   isAlwaysConfirmPath,
   isCommandOnProtectedPath,
@@ -197,6 +199,10 @@ import {
   replBashPathSignalCollector,
 } from "../permission/index.js";
 import type { PermissionContext } from "../permission/types.js";
+import {
+  createStandaloneShellPermissionBoundary,
+  type StandaloneExecPolicyOptions,
+} from "../permission/standalone-shell-boundary.js";
 import {
   RUNTIME_PERMISSION_PENDING_NOTICE,
   resolveReplRuntimePermissionDecision,
@@ -286,11 +292,6 @@ import {
   bootstrapAutoMode,
   type AutoModeBootstrapResult,
 } from "../interactive/auto-mode-bootstrap.js";
-import {
-  createAutoInProjectDeprecationEmitter,
-  isAutoLlmMode,
-  isAutoMode,
-} from "../permission/types.js";
 import { copyTextToClipboard } from "../common/clipboard.js";
 import { formatCompactionPolicy } from "../common/compaction-display.js";
 import { initializeSkillRegistry, getSkillRegistry } from "@kodax-ai/agent";
@@ -487,7 +488,6 @@ import {
 import { resolveEffectiveCompactionInfo } from "./view-models/compaction-info.js";
 import {
   buildSurfaceStatusBarProps,
-  resolveSurfaceAutoModeEngine,
 } from "./view-models/surface-status.js";
 import { buildTranscriptSearchChrome } from "./view-models/transcript-search.js";
 
@@ -748,6 +748,7 @@ export async function persistHostSessionPayload(
 
 export interface InkREPLOptions extends KodaXOptions {
   storage?: SessionStorage;
+  execPolicy?: StandaloneExecPolicyOptions;
   hardExitOnClose?: boolean;
   runtimeRunner?: InkRuntimeRunner;
   runtimeAutoModeControl?: ReplRuntimeAutoModeControl;
@@ -788,42 +789,15 @@ interface InkREPLProps {
   fullscreenPolicy: FullscreenPolicy;
   onExit: () => void;
   /**
-   * FEATURE_092 phase 2b.7b: auto-mode guardrail factory + rules-load result.
+   * Auto-mode guardrail factory.
    * Built once per session in `runInkInteractiveMode` (async, requires
    * filesystem reads) and threaded into the component so:
    *   - `createKodaXOptions` can inject `guardrails` when in auto mode
-   *   - `/auto-engine` and `/auto-denials` slash commands can read engine + tracker stats
-   *   - the status bar can render the `auto[LLM]/auto[RULES]` engine indicator
+   *   - `/auto-denials` can read reviewer diagnostics
    * Without this prop, the Ink REPL silently ignored auto-mode (regression
    * fixed pre-v0.7.33 release after the readline REPL had already wired it).
    */
   autoModeBootstrap: AutoModeBootstrapResult;
-  /**
-   * Setter the component invokes once on mount to hand the bootstrap a
-   * surface-aware askUser implementation (Ink-flavored confirm dialog). The
-   * setter writes into a ref captured by the bootstrap's askUser closure,
-   * so subsequent classifier escalations route through Ink's confirm UI.
-   */
-  setAutoModeAskUser: (
-    handler:
-      | ((
-          call: import("@kodax-ai/agent").RunnerToolCall,
-          reason: string,
-          // FEATURE_158 (v0.7.39): optional static-analysis signals threaded
-          // from the guardrail. Confirm dialog renders Scope/Risk from these
-          // (tool-confirmation.ts reads input._classifierSignals).
-          signals?: readonly import("@kodax-ai/coding").ToolCallSignal[],
-        ) => Promise<"allow" | "block">)
-      | null,
-  ) => void;
-  /**
-   * Setter the component invokes on mount to subscribe to guardrail
-   * engine-change events from explicit/manual `setEngine` calls. Classifier
-   * health thresholds no longer mutate the selected engine.
-   */
-  setAutoModeEngineChange: (
-    handler: ((engine: 'llm' | 'rules') => void) | null,
-  ) => void;
   /**
    * FEATURE_092 v0.7.34 hotfix-3: setter the component invokes inside a
    * `useEffect` on every `currentConfig` state change. Writes the latest
@@ -1704,8 +1678,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   onExit,
   compactionInfo,
   autoModeBootstrap,
-  setAutoModeAskUser,
-  setAutoModeEngineChange,
   setCurrentConfigRef,
   teamModeHandle,
 }) => {
@@ -4185,74 +4157,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isCompacting: effectivePromptStreamingState.isCompacting,
     };
   const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : effectivePromptIsLoading;
-  // FEATURE_092 phase 2b.8: classifier engine state. Tracked here (rather
-  // than near setSessionPermissionMode below) because the statusBarProps
-  // useMemo on the next block needs it, and React's let-binding TDZ
-  // forbids forward references across hook ordering. The setter is bound
-  // into setSessionPermissionMode + the /auto-engine slash command callback
-  // further down so manual + automatic engine flips both refresh the bar.
-  const [autoModeEngine, setAutoModeEngineState] = useState<'llm' | 'rules' | undefined>(
-    () =>
-      resolveSurfaceAutoModeEngine(
-        currentConfig.permissionMode,
-        options.runtimeAutoModeControl
-          ? undefined
-          : autoModeBootstrap.getGuardrail().getEngine(),
-        autoModeSettings.engine,
-      ),
-  );
   useEffect(() => {
-    if (!options.runtimeAutoModeControl) {
-      if (!isAutoMode(currentConfig.permissionMode)) setAutoModeEngineState(undefined);
-      return;
-    }
-    if (!isAutoMode(currentConfig.permissionMode)) {
-      setAutoModeEngineState(undefined);
-      void options.runtimeAutoModeControl.syncSettings?.(
-        context.sessionId,
-        currentConfig.permissionMode,
-        autoModeSettings,
-      );
-      return;
-    }
-    setAutoModeEngineState((engine) =>
-      resolveSurfaceAutoModeEngine(
-        currentConfig.permissionMode,
-        engine,
-        autoModeSettings.engine,
-      ));
-    let active = true;
-    const refresh = async (): Promise<void> => {
-      const stats = await options.runtimeAutoModeControl?.syncSettings?.(
-        context.sessionId,
-        currentConfig.permissionMode,
-        autoModeSettings,
-      ) ?? await options.runtimeAutoModeControl?.getStats(context.sessionId);
-      if (active) {
-        setAutoModeEngineState(resolveSurfaceAutoModeEngine(
-          currentConfig.permissionMode,
-          stats?.engine,
-          autoModeSettings.engine,
-        ));
-      }
-    };
-    void refresh();
-    const subscription = options.runtimeAutoModeControl.subscribe?.(
+    void options.runtimeAutoModeControl?.syncSettings?.(
       context.sessionId,
-      (stats) => {
-        if (active) {
-          setAutoModeEngineState(resolveSurfaceAutoModeEngine(
-            currentConfig.permissionMode,
-            stats?.engine,
-            autoModeSettings.engine,
-          ));
-        }
-      },
+      currentConfig.permissionMode,
+      autoModeSettings,
     );
-    return () => {
-      active = false;
-      subscription?.close();
-    };
   }, [autoModeSettings, context.sessionId, currentConfig.permissionMode, options.runtimeAutoModeControl]);
   const statusBarProps = useMemo(
     () =>
@@ -4291,7 +4201,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           idleWaiting: managedTaskStatus?.idleWaiting,
           idleWaitingPendingCount: managedTaskStatus?.idleWaitingPendingCount,
         },
-        autoModeEngine,
       }),
     [
       context.sessionId,
@@ -4319,7 +4228,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatus?.budgetApprovalRequired,
       managedTaskStatus?.idleWaiting,
       managedTaskStatus?.idleWaitingPendingCount,
-      autoModeEngine,
     ],
   );
 
@@ -5455,31 +5363,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   }
 
-  // FEATURE_092 phase 2b.7b slice E: emit the auto-in-project alias deprecation
-  // notice at most once per session. Same factory the readline REPL uses; the
-  // emitter caches its own fired-once flag.
-  const emitAutoInProjectDeprecationRef = useRef(createAutoInProjectDeprecationEmitter());
-  // Run once on mount: if the session started in the deprecated alias mode,
-  // surface the warning immediately (mirrors readline REPL semantics).
-  useEffect(() => {
-    if (currentConfig.permissionMode === 'auto-in-project') {
-      emitAutoInProjectDeprecationRef.current();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
+    const canonicalMode = canonicalizePermissionMode(mode);
     const updateId = ++permissionModeUpdateRef.current;
-    setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
-    permissionModeRef.current = mode;
-    setAutoModeEngineState(resolveSurfaceAutoModeEngine(
-      mode,
-      undefined,
-      autoModeSettings.engine,
-    ));
-    const runtimeStats = await options.runtimeAutoModeControl?.syncSettings?.(
+    setCurrentConfig((prev) => ({ ...prev, permissionMode: canonicalMode }));
+    permissionModeRef.current = canonicalMode;
+    await options.runtimeAutoModeControl?.syncSettings?.(
       context.sessionId,
-      mode,
+      canonicalMode,
       autoModeSettings,
     );
     if (updateId !== permissionModeUpdateRef.current) return;
@@ -5488,7 +5379,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       model: currentConfigRef.current.model,
       effort: currentConfigRef.current.effort,
       effortOverride: currentConfigRef.current.effortOverride,
-      permissionMode: mode,
+      permissionMode: canonicalMode,
       planModeEffort: currentConfigRef.current.planModeEffort,
       thinking: currentConfigRef.current.thinking,
       reasoningMode: currentConfigRef.current.reasoningMode,
@@ -5501,26 +5392,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       effort: modeEffortResolution.runtimeEffort,
       guardrails: options.runtimeRunner
         ? undefined
-        : buildAutoModeGuardrails(mode, autoModeBootstrap),
+        : buildAutoModeGuardrails(canonicalMode, autoModeBootstrap),
     };
-    // FEATURE_092 phase 2b.8: refresh the status-bar engine indicator. Outside
-    // auto mode we clear it; inside auto mode we read the current engine off
-    // the guardrail (may differ from default after a downgrade).
-    if (!isAutoMode(mode)) {
-      setAutoModeEngineState(undefined);
-    } else if (options.runtimeAutoModeControl) {
-      const stats = runtimeStats ?? await options.runtimeAutoModeControl.getStats(context.sessionId);
-      setAutoModeEngineState(resolveSurfaceAutoModeEngine(
-        mode,
-        stats?.engine,
-        autoModeSettings.engine,
-      ));
-    } else {
-      setAutoModeEngineState(autoModeBootstrap.getGuardrail().getEngine());
-    }
-    if (mode === 'auto-in-project') {
-      emitAutoInProjectDeprecationRef.current();
-    }
   }, [autoModeBootstrap, autoModeSettings, context.sessionId, options.runtimeAutoModeControl, options.runtimeRunner]);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
@@ -7453,10 +7326,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Issue 052 fix: Read gitRoot from context prop, not options.context.
       const gitRoot = context.gitRoot;
 
-      // The runner guardrail has already decided this exact Auto[LLM] call.
+      if (mode === 'full-access') {
+        return true;
+      }
+
+      // The runner guardrail has already decided this exact Auto call.
       // Return before the cross-mode denial cache and all legacy checks so a
-      // denial recorded under Edits/Rules cannot override a later LLM allow.
-      if (isAutoLlmMode(mode, autoModeEngine)) {
+      // denial recorded under Edits cannot override a later reviewer allow.
+      if (isAutoMode(mode)) {
         return true;
       }
 
@@ -7467,19 +7344,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return `[Skipped] Previously denied operation. ${ctx}`;
       }
 
-      // === 1. Plan mode: block modification tools ===
-      // Block file modification tools and undo
-      if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
-        return `[Blocked] Tool '${tool}' is not allowed in plan mode (read-only). ${PLAN_MODE_BLOCK_GUIDANCE}`;
-      }
-
-      // For bash in plan mode, only block write operations
-      if (mode === 'plan' && tool === 'bash') {
-        const command = (input.command as string) ?? '';
-        if (isBashWriteCommand(command)) {
-          return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}... ${PLAN_MODE_BLOCK_GUIDANCE}`;
+      // === 1. Plan mode: use the same fail-closed operation analysis as Runtime ===
+      if (mode === 'plan') {
+        const blockReason = getPlanModeBlockReason(
+          tool,
+          input,
+          gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(),
+          context.runtimeInfo?.executionCwd ?? gitRoot ?? process.cwd(),
+        );
+        if (blockReason !== null) {
+          return `${blockReason} ${PLAN_MODE_BLOCK_GUIDANCE}`;
         }
       }
+
+      // Standalone Bash always enters the Coding-owned sandbox/host boundary.
+      // Mode review and Edits prompts happen only after a real boundary.
+      if (!options.runtimeRunner && tool === 'bash') return true;
 
       // === 2. Safe read-only bash commands: auto-allowed BEFORE protected path check ===
       // Issue 085: All modes should allow safe read commands without confirmation
@@ -8005,40 +7885,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return resolveReplRuntimePermissionDecision(request, result);
   };
 
-  // FEATURE_092 phase 2b.7b: hand the bootstrap an Ink-flavored askUser. The
-  // bootstrap was created in `runInkInteractiveMode` (before the component
-  // mounted), so its askUser closure reads from a ref the parent populates
-  // here. Cleanup on unmount clears the ref so a unmounted dialog doesn't
-  // leak its confirmRequest setter.
-  useEffect(() => {
-    setAutoModeAskUser(async (call, reason, signals) => {
-      const result = await showConfirmDialog(
-        call.name,
-        {
-          ...(call.input as Record<string, unknown>),
-          _reason: `[auto-mode] ${reason}`,
-          // FEATURE_158: attach signals so tool-confirmation.ts renders
-          // Scope/Risk from the classifier's view rather than the
-          // input-marker path (FEATURE_066 _alwaysConfirm / _dangerousCommand).
-          // Plan/accept-edits modes keep the marker path (those flows don't
-          // go through askUser).
-          ...(signals && signals.length > 0 ? { _classifierSignals: signals } : {}),
-        },
-      );
-      return result.confirmed ? 'allow' : 'block';
-    });
-    // Subscribe to explicit engine changes so the status bar reflects a live
-    // `/auto-engine` switch without waiting for a permission-mode toggle.
-    setAutoModeEngineChange((engine) => {
-      setAutoModeEngineState(engine);
-    });
-    return () => {
-      setAutoModeAskUser(null);
-      setAutoModeEngineChange(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // FEATURE_092 v0.7.34 hotfix-3: keep the bootstrap's currentConfig ref in
   // sync with React state. The auto-mode bootstrap was created in
   // `runInkInteractiveMode` (before mount) and its
@@ -8089,6 +7935,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       : context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
+    if (!options.runtimeRunner) autoModeBootstrap.resetTurn();
     outputSegmentProjectionRef.current = createOutputSegmentProjection();
     managedOutputSegmentItemsRef.current = {};
     const events = {
@@ -8162,15 +8009,74 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return getPlanModeBlockReason(tool, input, context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd());
     };
 
+    const standaloneShellBoundary = options.runtimeRunner
+      ? undefined
+      : createStandaloneShellPermissionBoundary({
+          getPermissionMode: () => permissionModeRef.current,
+          getAutoGuardrail: autoModeBootstrap.getGuardrail,
+          shellSandbox: managedRunContext.shellSandbox,
+          trustedTextMutationHost: managedRunContext.trustedTextMutationHost,
+          userConfigDir: managedRunContext.configHome,
+          projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(),
+          execPolicy: options.execPolicy,
+          resolvePlanHostExecution: (request) => (
+            isBashReadCommandAutoAllowed(
+              request.command,
+              context.gitRoot ?? process.cwd(),
+              context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
+            )
+              ? true
+              : '[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.'
+          ),
+          requestUserPermission: async (request, reason) => {
+            const input = { ...request.toolInput, command: request.command };
+            const mode = permissionModeRef.current;
+            if (
+              reason === 'mode_boundary'
+              && mode === 'accept-edits'
+              && await isToolCallAllowed(
+                'bash',
+                input,
+                alwaysAllowToolsRef.current,
+                bashPrefixExtractorRef.current ?? undefined,
+              )
+            ) return true;
+            const result = await showConfirmDialog('bash', input, undefined, getSignal());
+            if (
+              result.confirmed
+              && result.always
+              && reason === 'mode_boundary'
+              && permissionModeRef.current === 'accept-edits'
+            ) {
+              saveAlwaysAllowToolPattern('bash', input, false);
+              alwaysAllowToolsRef.current = loadAlwaysAllowTools();
+            }
+            return result.confirmed;
+          },
+        });
+
     const runOptions: KodaXOptions = {
       ...opts,
+      guardrails: standaloneShellBoundary !== undefined
+        && isAutoMode(permissionModeRef.current)
+        ? [standaloneShellBoundary.autoGuardrail]
+        : undefined,
       session: {
         ...opts.session,
         initialMessages,
         initialExtensionState: context.extensionState ?? {},
         initialExtensionRecords: context.extensionRecords ?? [],
       },
-      context: managedRunContext,
+      context: standaloneShellBoundary === undefined
+        ? managedRunContext
+        : {
+            ...managedRunContext,
+            shellSandbox: standaloneShellBoundary.shellSandbox,
+            authorizeShellHostExecution: standaloneShellBoundary.authorizeShellHostExecution,
+            ...(standaloneShellBoundary.trustedTextMutationHost === undefined
+              ? {}
+              : { trustedTextMutationHost: standaloneShellBoundary.trustedTextMutationHost }),
+          },
       events,
       abortSignal: getSignal(),
     };
@@ -9882,8 +9788,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             return "rewound";
           },
           getCostReport: () => inkCostReportRef.current?.() ?? null,
-          // FEATURE_092 phase 2b.8: read-only auto-mode stats + manual engine
-          // setter. Returning undefined when not in auto mode lets the slash
+          // Read-only auto-mode diagnostics. Returning undefined outside Auto lets the slash
           // command print "not in auto mode" instead of leaking guardrail
           // internals to non-auto sessions.
           getAutoModeStats: async () => {
@@ -9892,17 +9797,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               return options.runtimeAutoModeControl.getStats(context.sessionId);
             }
             return autoModeBootstrap.getGuardrail().getStats();
-          },
-          setAutoModeEngine: async (engine) => {
-            if (!isAutoMode(permissionModeRef.current)) return;
-            if (options.runtimeAutoModeControl) {
-              const stats = await options.runtimeAutoModeControl.setEngine(context.sessionId, engine);
-              setAutoModeEngineState(stats?.engine ?? engine);
-              return;
-            }
-            autoModeBootstrap.getGuardrail().setEngine(engine);
-            // Refresh the status-bar engine indicator after manual /auto-engine flip.
-            setAutoModeEngineState(engine);
           },
           createKodaXOptions: () => ({
             ...currentOptionsRef.current,
@@ -11165,26 +11059,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // render so the Ink component receives a ready-to-use accessor. The
   // classifier reads project AGENTS.md fresh via `loadAgentsFiles`
   // (mtime-cached) on every classify, so no agents-files ref bridge is needed
-  // (FEATURE_092 follow-up — AGENTS.md staleness fix). askUser is wired to a
-  // ref the component fills in once `showConfirmDialog` is in scope; until
-  // then escalations fail closed (block) — see `inkAutoModeAskUserRef` below.
-  const inkAutoModeAskUserRef: {
-    current:
-      | ((
-          call: import("@kodax-ai/agent").RunnerToolCall,
-          reason: string,
-          signals?: readonly import("@kodax-ai/coding").ToolCallSignal[],
-        ) => Promise<"allow" | "block">)
-      | null;
-  } = { current: null };
-  // Ref-bridge for engine-change notifications: the React component fills
-  // this with its `setAutoModeEngineState` setter after mount, so automatic
-  // downgrades fired from inside the guardrail (running on the agent's
-  // tool-call path) immediately update the status-bar `auto[LLM]/auto[RULES]`
-  // indicator without waiting for the next mode toggle.
-  const inkAutoModeEngineChangeRef: {
-    current: ((engine: 'llm' | 'rules') => void) | null;
-  } = { current: null };
+  // (FEATURE_092 follow-up — AGENTS.md staleness fix).
   // FEATURE_092 v0.7.34 hotfix-3: ref-bridge for live currentConfig.
   //
   // The React component at the bottom of this file owns the live
@@ -11196,23 +11071,11 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // a prop) inside a `useEffect` that fires on every state change, keeping
   // `inkCurrentConfigRef.current` in sync with the live value. The bootstrap
   // closures read `inkCurrentConfigRef.current.provider` etc. so they
-  // observe the latest values whenever the classifier or askUser fires.
+  // observe the latest values whenever the classifier runs.
   //
-  // The same pattern is used for `inkAutoModeAskUserRef` /
-  // `inkAutoModeEngineChangeRef` above.
   const inkCurrentConfigRef: { current: CurrentConfig } = { current: currentConfig };
   const autoModeSettings = loadAutoModeSettings();
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
-    askUser: async (call, reason, signals) => {
-      const handler = inkAutoModeAskUserRef.current;
-      if (!handler) {
-        // Component hasn't mounted its showConfirmDialog yet (vanishingly rare
-        // — bootstrap runs before render, but guardrail construction is lazy
-        // and only triggers on a real tool call after mount). Fail closed.
-        return 'block';
-      }
-      return handler(call, reason, signals);
-    },
     projectRoot: gitRoot ?? process.cwd(),
     executionCwd: activeRuntimeInfo.executionCwd ?? gitRoot ?? process.cwd(),
     getCurrentProviderName: () => inkCurrentConfigRef.current.provider,
@@ -11225,9 +11088,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         level: level === 'warn' ? 'warn' : 'info',
         message: msg,
       });
-    },
-    onEngineChange: (engine) => {
-      inkAutoModeEngineChangeRef.current?.(engine);
     },
     // FEATURE_158: inject the REPL-specific path signal collector. Shared path
     // utilities are coding-owned; this collector adds REPL protected paths.
@@ -11271,12 +11131,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         rendererMode={rendererMode}
         fullscreenPolicy={fullscreenPolicy}
         autoModeBootstrap={autoModeBootstrap}
-        setAutoModeAskUser={(handler) => {
-          inkAutoModeAskUserRef.current = handler;
-        }}
-        setAutoModeEngineChange={(handler) => {
-          inkAutoModeEngineChangeRef.current = handler;
-        }}
         setCurrentConfigRef={(cfg) => {
           inkCurrentConfigRef.current = cfg;
         }}

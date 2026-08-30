@@ -8,7 +8,6 @@ import {
   KODAX_REASONING_MODE_SEQUENCE,
   normalizeReasoningEffortValue,
   parseReasoningEffortEnv,
-  parseSandboxEnvironmentPass,
 } from '@kodax-ai/coding';
 import {
   createCliEvents,
@@ -17,7 +16,12 @@ import {
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
 
-export const ACP_PERMISSION_MODES: AcpPermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
+export const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
+  'plan',
+  'accept-edits',
+  'auto',
+  'full-access',
+];
 export const CLI_OUTPUT_MODES = ['text', 'json'] as const;
 export const CLI_RUNTIME_MODES = ['embedded', 'daemon'] as const;
 export const KODAX_AGENT_MODES = ['ama', 'sa'] as const;
@@ -185,20 +189,11 @@ export function validateCliModeSelection(
 }
 
 export function parsePermissionModeOption(value: string): AcpPermissionMode {
+  if (value === 'auto-in-project') {
+    return 'auto';
+  }
   if (ACP_PERMISSION_MODES.includes(value as AcpPermissionMode)) {
     return value as AcpPermissionMode;
-  }
-
-  // Help users who reasonably expected canonical 'auto' (the FEATURE_092
-  // default for the REPL) to also work over ACP. The classifier path is
-  // currently REPL-only — see ACP_PERMISSION_MODE_IDS in src/acp_server.ts
-  // for the rationale.
-  if (value === 'auto') {
-    throw new InvalidArgumentError(
-      `'auto' mode is not yet supported over the ACP protocol. `
-      + `Use 'auto-in-project' for the rules-only auto path, or one of: `
-      + `${ACP_PERMISSION_MODES.join(', ')}.`,
-    );
   }
   throw new InvalidArgumentError(
     `Expected one of: ${ACP_PERMISSION_MODES.join(', ')}.`,
@@ -388,9 +383,6 @@ export function parseOptionalNonNegativeInt(value: string | undefined): number |
 }
 
 export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
-  const sandboxEnvironmentPass = parseSandboxEnvironmentPass(
-    process.env.KODAX_SANDBOX_ENV_PASS,
-  );
   return {
     provider: cliOptions.provider,
     model: cliOptions.model,
@@ -401,7 +393,6 @@ export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false):
     maxIter: cliOptions.maxIter,
     extensionRuntime: cliOptions.extensionRuntime,
     session: buildSessionOptions(cliOptions),
-    sandbox: { envPass: sandboxEnvironmentPass },
     context: {
       repoIntelligenceMode: resolveRepoIntelligenceModeFromEnv(),
       repoIntelligenceTrace: resolveRepoIntelligenceTraceFromEnv(),

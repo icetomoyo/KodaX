@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
+## [0.7.96-alpha.4] - 2026-08-30
+
+### Changed
+
+- Replaced the legacy Plan/Edits/Auto[RULES]/Auto[LLM] permission shape with
+  four canonical profiles: Plan, Edits, Auto[LLM], and Full Access. Legacy
+  `auto-in-project` and Rules selections migrate to Auto[LLM]; `/auto-engine`
+  and auto-rules loading are removed.
+- Made shell containment sandbox-first. Successful sandbox execution is silent;
+  only a proven pre-start denial or unavailable backend reaches Exec Policy and
+  the Edits user boundary or Auto reviewer. Started or uncertain commands are
+  never replayed, and an approved boundary has at most one host attempt.
+- Added JSONC Exec Policy (`~/.kodax/exec-policy.jsonc`, plus explicitly trusted
+  repository policy) with deterministic `allow`/`prompt`/`forbidden` prefix
+  rules, strictest-match evaluation, administrator forbids, narrow critical
+  fallbacks, and the non-executing `kodax execpolicy check` command.
+- Auto review now runs only at an exact host boundary, uses fixed 90-second and
+  one 180-second retry deadlines, fails closed on reviewer infrastructure
+  errors, stops a turn after the bounded denial thresholds, and never opens an
+  automatic approval prompt. A later informed natural-language instruction is
+  reviewed again.
+- Aligned the workspace sandbox with normal development use: inherit the host
+  environment except fixed KodaX/Electron execution controls, allow external
+  network and system temporary writes, permit broad reads including Agent Home,
+  credentials, and global Git configuration, and stop disabling global Git.
+  The obsolete `sandbox.envPass` input is inert.
+
+### Fixed
+
+- Removed the shell-tool fallback that could execute unsandboxed after native
+  sandbox bootstrap and termination both failed. The boundary is now explicit,
+  policy-reviewed, and single-attempt.
+- Added an exact Windows migration for obsolete KodaX sandbox-account read-deny
+  ACL entries while preserving unrelated administrator ACLs. Native requests
+  also stop adding the protected artifact cache as a redundant `denyWrite`
+  root, preventing new per-build residues and pre-start policy conflicts;
+  existing cache denies remain untouched because their provenance is not
+  provable from SID shape alone.
+
 ## [0.7.96-alpha.3] - 2026-08-29
 
 ### Added

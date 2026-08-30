@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createProviderCredentialLeaseScope,
   getScopedProviderCredential,
-  registerCustomProviders,
   runWithProviderCredentialLeaseScope,
   withProviderRequestCredential,
 } from '@kodax-ai/llm';
@@ -277,43 +276,6 @@ describe('F270 actor principal wiring', () => {
     });
     if (started.kind === 'started') await started.done;
     parentScope.close();
-  });
-
-  it('binds Provider credentials into default-shell filtering', () => {
-    const ctx = buildToolExecutionContext({
-      options: {
-        provider: 'openai',
-      },
-      runtime: undefined,
-      managedProtocolPayloadRef: { current: undefined },
-    });
-
-    expect(ctx.providerCredentialEnvironmentNames).toContain('OPENAI_API_KEY');
-  });
-
-  it('filters non-standard credentials from the default shell too', () => {
-    registerCustomProviders([{
-      name: 'inactive-shell-review-provider',
-      protocol: 'openai',
-      baseUrl: 'https://inactive.invalid/v1',
-      apiKeyEnv: 'INACTIVE_PROVIDER_AUTH',
-      model: 'inactive-model',
-    }]);
-    try {
-      const ctx = buildToolExecutionContext({
-        options: {
-          provider: 'openai',
-        },
-        runtime: undefined,
-        managedProtocolPayloadRef: { current: undefined },
-      });
-
-      expect(ctx.providerCredentialEnvironmentNames).toContain(
-        'INACTIVE_PROVIDER_AUTH',
-      );
-    } finally {
-      registerCustomProviders([]);
-    }
   });
 
   it('snapshots prompt-cache and context-diagnostic controls for child runtimes', () => {

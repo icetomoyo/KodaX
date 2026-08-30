@@ -2708,6 +2708,8 @@ The important creation options are:
 | `daemonStartupTimeoutMs` | `60000` | Total cold-start/concurrent-owner wait budget. |
 | `daemonConnectTimeoutMs` | `2000` | Per-socket connection timeout. |
 | `autoStartDaemon` | conditional | For `createKodaXRuntime({mode:'daemon'})`, true only when no explicit endpoint/transport is supplied. |
+| `execPolicy` | unset | Trusted host-owned administrator rules and canonical trusted-project roots. Inline and Worker owners receive it directly; daemon mode accepts it only while auto-starting a new owner. |
+| `autoReview` | unset | Trusted host-owned administrator/model guidance for Auto review. It follows the same owner-only transport contract as `execPolicy`. |
 | `externalAgents` | unset | Host-installed executor factories, dispatch policy, optional credential/artifact policies, and default dispatch context. Inline owner only; see §18. |
 | `requirements.externalAgents` | `false` | Reject a Runtime/daemon connection that does not advertise an installed external-agent plane. |
 
@@ -2782,6 +2784,15 @@ try {
 no explicit `daemonEndpoint` or `daemonTransport` is supplied it starts or reuses
 the local profile daemon. `connectKodaXRuntime()` is attach-only unless
 `autoStart: true` is passed.
+
+Trusted `execPolicy` and `autoReview` options are owner bootstrap inputs, not
+client connection settings. For a new daemon, KodaX transfers them through a
+bounded one-shot file in the selected daemon state directory, consumes and
+deletes that file before loading extensions, and never exposes its contents in
+process arguments or the daemon protocol. If the profile already has an owner,
+creation with non-empty owner policy fails closed; stop that daemon and retry if its
+administrator policy must change. Ordinary `connectKodaXRuntime()` clients
+cannot supply or mutate these policy layers.
 
 SDK auto-start allows `daemonStartupTimeoutMs` (default 60 seconds) and
 `daemonConnectTimeoutMs`. The longer startup budget covers cold machines and
@@ -5204,8 +5215,8 @@ create another run. Settings use compare-and-swap; a stale revision returns a
 structured conflict and must be reloaded, never silently overwritten. The
 shared settings keys are `provider`, `model`, `effort`, `thinking`,
 `reasoningMode`, `permissionMode`, `executionCwd`, `agentMode`, and
-`autoModeEngine`, `autoModeClassifierModel`, `autoModeTimeoutMs`, and
-`autoModeSpeculativeWindowMs`.
+`autoModeClassifierModel`. Older Auto engine/timeout/window fields are accepted
+only as inert migration input and are omitted from new writes.
 
 ```ts
 const queued = await runtime.runs.submitInput({
@@ -5351,8 +5362,8 @@ secret-redacted operator label. Clients must not keep separate persistent
 permission rule stores. Runtime capability `runtimeAutoModeGuardrail` v4
 advertises this opaque concrete-grant contract plus the intent-aligned
 retry/Accept-edits behavior that never changes the engine to rules. Embedded,
-Worker, and daemon hosts all report `fallbackPersistsEngine:false`; restart or
-upgrade an older daemon instead of falling back to a client-side alias.
+Worker, and daemon hosts all expose the same Auto[LLM]-only v4 contract; restart
+or upgrade an older daemon instead of falling back to a client-side alias.
 
 ### Broker Space keychain credentials
 
@@ -5631,247 +5642,105 @@ tool arguments.
 
 ---
 
-## 24. Runtime-owned Auto Mode and plan-approval bridges (v0.7.72–v0.7.73)
+## 24. Runtime-owned permission routing and plan bridges (v0.7.96)
 
-Auto Mode is a Runtime session contract, including in shared-daemon mode. Do
-not implement a second classifier or decide permissions from a client-side
-`beforeToolExecute` hook before the Runtime has classified the call.
-
-### Configure the session, not an individual UI callback
+The Runtime owns permission routing in inline, Worker, and daemon deployments.
+Clients select one of four profiles and must not add a second preflight gate:
 
 ```ts
 await runtime.sessions.updateSettings(session.id, {
-  permissionMode: 'auto',
-  autoModeEngine: 'llm',
-  autoModeClassifierModel: 'zhipu:glm-5.2', // optional; otherwise follow the run model
-  autoModeTimeoutMs: 30_000,                // positive safe integer, optional
-  autoModeSpeculativeWindowMs: 0,           // non-negative safe integer, optional
+  permissionMode: 'auto', // 'plan' | 'accept-edits' | 'auto' | 'full-access'
+  autoModeClassifierModel: 'zhipu:glm-5.2', // optional
   executionCwd: projectDirectory,
 });
 ```
 
-All three Auto fields are durable session settings in inline, Worker, and
-daemon forms. A `null` patch removes an optional override. Timeout must be a
-positive safe integer; speculative window must be non-negative, so `0` is a
-valid request to wait for the actual verdict. Daemon capability discovery
-advertises all fields in `sharedSessionSettings.keys`.
-
-SDK hosts that need config precedence without creating a REPL can reuse the
-same typed resolver as KodaX:
-
-```ts
-import {
-  loadAutoModeSettings,
-  resolveAutoModeSettings,
-  type ResolveAutoModeSettingsInput,
-} from '@kodax-ai/kodax/repl';
-
-const persisted = loadAutoModeSettings(process.env);
-const preview = resolveAutoModeSettings({
-  settings: { engine: 'llm', speculativeWindowMs: 0 },
-  env: process.env,
-});
-```
-
-`resolveAutoModeSettings()` is pure. `loadAutoModeSettings()` reads the KodaX
-config once and delegates to that resolver; `loadConfig()` declares and
-returns the same optional `autoMode` object.
-
-Starting with the v0.7.73 patch, `permissionMode: 'auto'` with an omitted
-`autoModeEngine` still means the documented `llm` default and is still owned by
-Runtime. If neither `autoModeClassifierModel` nor the effective run/session/
-Runtime model exists, `runs.start()` rejects with
-`RuntimeAutoModeConfigurationError` (`code:
-'auto_mode_classifier_model_required'`, `recoverable: true`) before provider
-construction, a classifier call, or a pending permission. Blank and malformed
-classifier model specs are rejected by the same typed configuration boundary;
-a live rules-to-LLM switch is blocked rather than converted into approval work.
-
-Direct consumers of `createAutoModeToolGuardrail()` receive the same terminal
-model boundary. After resolving CLI/env/session/settings/live-default
-precedence, an empty effective model returns a local configuration `block`
-before provider lookup. It does not call `askUser`, mutate the denial or
-circuit-breaker trackers, or change the engine to rules. An explicit non-empty
-classifier override remains valid even when the main-session model is empty.
-
-The Runtime owns one serialized permission-settings stream and one shared
-engine/denial/breaker state per Session. It reuses bounded context-specific
-guardrails across turns while provider/model, repository boundary, execution
-directory, classifier model, and timeout remain the same. Updating one of
-those inputs selects a new context guardrail by design without copying stale
-state from a queued turn. Active runs, queued runs, explicit settings updates,
-and explicit engine changes merge through the same Session mutation queue.
-Classifier infrastructure failures do not mutate the engine to rules.
+`auto-in-project` remains an input-only compatibility alias for `auto`. Legacy
+Auto engine, timeout, and speculative-window settings are ignored and omitted
+from new writes. Auto always means Auto[LLM]; there is no selectable rules
+engine.
 
 ### What an embedder should expect
 
-The Runtime's execution order is fixed:
-
 ```text
-Runtime Auto Mode guardrail -> host permission bridge only for escalate -> tool execution
+Plan mutation ------------------------------------> deny
+Full Access -> Exec Policy -----------------------> one host attempt or deny/prompt
+Edits / Auto -> sandbox
+                  | completed --------------------> return silently
+                  | started or uncertain --------> return; never replay
+                  ` proven pre-start boundary ---> Exec Policy
+                                                    | Edits -> user decision
+                                                    ` Auto  -> LLM review
+                                                                | allow -> one host attempt
+                                                                ` deny  -> safer-route result
 ```
 
-Exactly modeled ordinary reads and workspace/system-temp mutations are admitted
-before classifier latency, independent of sandbox readiness. Other calls are
-reviewed against the latest genuine user request, bounded user-only intent
-evidence, and exact operation facts. Consequently, an LLM/rules `allow` does
-not create a pending permission request just because a host installed a static
-approval hook. Classifier concerns, critical deterministic matches, and rules
-concerns use the existing shared
-`runtime.permissions` flow, so another authorized client may render and answer
-it. Hosts should subscribe to permission events to display such a request, but
-must not treat a missing request as an error for a safe tool call.
+The workspace sandbox permits broad host reads, workspace and system-TMP
+writes, external network access, and inherited host environment variables. It
+does not permit arbitrary host writes. Sandbox completion is authoritative and
+does not initialize or call Auto review. Only a proven pre-start denial or
+unavailable backend may create a host-boundary decision. The Runtime owns the
+single host retry; a tool implementation must never fall through and execute
+the command itself.
 
-Direct guardrail embedders should supply `projectRoot` or `executionCwd` for
-path-bearing calls. If both are absent, KodaX keeps those targets unresolved
-instead of treating the host process cwd as the user's workspace.
+Full Access skips both the sandbox and Auto reviewer. It still honors Exec
+Policy, including administrator `forbidden` rules and the narrow unmatched
+critical-effect fallback. Ordinary unmatched development commands run directly.
+An explicit `prompt` rule uses the normal Runtime permission event; ordinary
+uncertainty never manufactures a prompt.
 
-On PowerShell, deterministic read admission includes independently validated
-sequential/pipeline stages such as `where.exe`, ordinary `rg` inspection,
-non-sensitive `$env:NAME` reads, and constrained `Where-Object` /
-`Select-Object` expressions. This is a structural allowlist, not a blanket
-"review task" exemption. The executable token must be an admitted bare command
-name; path-qualified executables, arbitrary `& script.cmd`, effectful `find` /
-`awk` / `sed` forms, script blocks, sensitive credential environment names,
-external ripgrep preprocessors, and file redirection continue through the LLM
-classifier. They reach user approval only when the classifier identifies a
-concrete hazard (or when its bounded retry and fallback policy requires it).
-Authenticated child constraints are checked before deterministic admission:
-for example, `Do not execute shell commands` keeps even a read-only shell call
-under review, while `Do not modify files` does not make an ordinary read ask.
+Auto review uses a fixed reviewer role/output schema. The optional
+`config.json#autoReview.policy` replaces only its security-policy body. The
+first attempt has a 90-second deadline; one 180-second retry is permitted only
+for timeout, provider failure, or invalid structured output. An explicit deny
+does not retry. Infrastructure exhaustion returns a bounded deny telling the
+Agent to use a safer route; it does not ask the user automatically, downgrade
+the profile, or switch engines. Three consecutive denies, or ten denies among
+the last fifty completed reviews in the current turn, stop that turn.
 
-The classifier deadline is 45 seconds for the first default attempt and 90
-seconds for its one retry. A configured `timeoutMs` overrides both attempts
-with the same explicit deadline. Each deadline includes connection setup,
-provider Retry-After/backoff, inference, and stream completion. A second
-timeout/provider/response-contract failure uses the Accept-edits safety
-boundary and never switches to Auto[rules]. Before the
-provider call it removes assistant prose/thinking and image paths, limits each
-tool result to 2 KiB and the serialized permission-relevant transcript to
-8 KiB, then enforces 16 KiB action and 32 KiB total-prompt ceilings plus a
-256-token first-attempt output cap. If that answer is truncated before a
-decision, the retry uses 1024 tokens instead of repeating the same impossible
-budget. An oversized action or prompt escalates without a provider call; it is
-never truncated into an automatic allow. These limits are owned by
-`classify()` itself, so custom callers cannot accidentally bypass the
-session-history boundary.
+Low/medium-risk host-boundary operations are normally allowed. A concrete
+high-risk operation requires narrow informed authorization present in trusted
+conversation context; critical effects and administrator forbids remain
+denied. A later natural-language user direction is reviewed semantically—there
+is no approval command or keyword matcher.
 
-Deterministic read admission keeps ordinary project directories, structured
-`grep`/`glob`, ripgrep/GNU-grep filters, and other bounded search selectors on
-the read fast path. A wildcard remains unresolved only when it can reach a
-protected credential area or its path boundary cannot be established.
-Explicit PowerShell `-LiteralPath` remains literal. Indirect file lists,
-dynamic Git pathspecs, and expanded `git grep --no-index`/`--untracked` scopes
-remain LLM-reviewed when their targets cannot be bounded safely. Git
-line-log `-L` paths, patch-enabling short-option clusters, and merge-diff modes
-are resolved before deciding whether output is scoped. Exact-file reads and
-metadata-only output such as `git show --stat` remain deterministic. Exclusion
-selectors do not become input targets. On Windows, protected-name checks also
-cover trailing-dot/space aliases, alternate data streams, and canonicalized
-existing 8.3 names. Git-config
-regexp/URL reads account for accepted option abbreviations and effective
-boolean-option ordering; only complete anchored selectors over known
-non-secret metadata can take the deterministic fast path. Likewise, incomplete
-current-user content may still admit a proven read, but a complete current
-request that explicitly prohibits reading or shell execution routes the
-matching read-only operation through the classifier. Ordinary review and
-read-only requests remain deterministic. `currentUserContentTruncated:true` prevents a
-write, delete, move, copy, or unmodeled execution from relying on the compacted
-fragment alone. On classifier failure, Accept-edits fallback is available only
-when the full structured review would pass the same deterministic predicate;
-protected/unresolved targets and partial/risky reviews remain approval-bound.
+The permission event's `inputPreview` remains a display-safe diagnostic
+projection. Use the Runtime owner's typed tool input for execution; never
+reconstruct or authorize an operation from the preview. If a permission event
+times out, the operation is cancelled and the Agent receives a safer-route
+instruction.
 
-`ClassifyDecision.diagnostics` and the lower-level
-`SideQueryResult.diagnostics` expose provider, model, effective timeout,
-elapsed time, retry count/wait, provider stop reason, response byte/text-block
-counts, and a coarse terminal phase without including the prompt, action,
-messages, or response text. `pre_output` means no non-empty text delta was
-observed; `streaming` means output began before termination. `firstOutputMs`
-and `streamMs` are present only when the provider adapter emits a text delta.
-Each classifier attempt may additionally expose `observedProtocol`
-(`structured_v2`, `legacy_v1`, or `unknown`) and a bounded
-`parseFailureCode` when no valid unambiguous decision exists. When exactly one
-valid `decision=allow|ask` (or legacy `block=no|yes`) is present, that decision
-is authoritative. Missing, malformed, or contradictory `hazard` / `reason`
-fields and surrounding-format defects are reported as bounded
-`outputWarnings`; they do not change the decision, consume the retry, increment
-the circuit breaker, or create an approval request after `allow`. Runtime
-permission requests copy these fields into `autoModeDiagnostics`, allowing a
-host to distinguish an LLM confirmation decision (`source:
-classifier_confirm`) from provider/decision-contract failure (`source:
-classifier_failure`) without retaining model output. Missing or invalid
-decision values and ambiguous duplicate/mixed decisions remain contract
-failures and receive the same single bounded retry. The current
-provider API cannot honestly separate DNS/connect, TLS, provider queueing, and
-inference, so embedders must not infer those stages from `pre_output`.
-Because raw classifier text is deliberately not retained, these diagnostics
-cannot retroactively prove the shape of an older response. A future
-`observedProtocol:legacy_v1` value is evidence for that attempt; compatibility
-with `legacy_v1` alone is not proof that a prior provider returned it.
-`outputWarnings` explain the accepted attempt; they are not a second verdict.
-Under the LLM engine, a broken/non-string tool projection and an unavailable or
-faulty direct-read analyzer are recoverable metadata faults: KodaX records a
-warning, builds a bounded credential-redacted fallback projection, and still
-asks the classifier. They do not directly create a user approval request.
-Extension/provider exception bodies are omitted entirely from Auto-mode logs
-and approval reasons; only the stable failure stage and exception category are
-retained. All Auto-mode host warning messages are additionally
-credential-redacted, normalized to one line, and capped at 768 characters.
-Logging is best-effort observation: an embedder logger that throws cannot alter
-the permission decision or interrupt the documented fallback.
-For source compatibility, the public `ClassifierDecision` allow branch keeps
-`hazard?: 'none'`. If a model returns `decision=allow` with another hazard, the
-allow remains authoritative, `decision_hazard_conflict` appears in
-`outputWarnings`, and the contradictory hazard value is not placed in that
-legacy field.
-Auto[LLM] is allow-by-default automatic review. An operational classifier is
-instructed to return `ask` only for one of two evidence-based classes: a
-concrete read from a known key/token/credential store or a mutation to KodaX
-authorization controls; or direct system destruction/resource exhaustion that
-can destabilize the OS or unrelated software. Ordinary project mutations, Git
-stash and other Git writes, and normal global dependency install/uninstall/
-reinstall do not require per-command root authorization. Syntax complexity,
-incomplete analysis, general uncertainty, and command category are not ask
-reasons. Static signals, including historical catastrophic-pattern matches,
-are classifier facts rather than a second Auto[LLM] verdict; explicit
-Auto[Rules] retains its legacy deterministic gate. A host must honor a valid
-classifier `allow` without manufacturing another approval. Infrastructure or
-decision-contract failure still uses the bounded retry and documented
-Accept-edits fallback; only exhaustion beyond that fallback reaches approval.
+Exec Policy lives in `~/.kodax/exec-policy.jsonc` and the trusted repository's
+`.kodax/exec-policy.jsonc`. Use `kodax execpolicy check -- <command>` to inspect
+the exact matched source, rule, decision, and justification without execution.
+Repository policy is never trusted merely because the current directory is a
+Git checkout. A trusted host must opt canonical roots in explicitly:
 
-The permission event's `inputPreview` is a display-safe diagnostic projection:
-it is bounded, credential-redacted, valid JSON, and includes the effective
-execution directory. Use the Runtime owner’s typed tool input for execution;
-do not reconstruct or authorize a tool from the preview. `gitRoot` remains the
-session repository safety boundary, whereas relative operands resolve from the
-validated `executionCwd`. In particular, quoted Python/JavaScript/regexp source
-inside a shell command is not a path operand.
+```ts
+const runtime = await createKodaXRuntime({
+  execPolicy: {
+    trustedProjectRoots: [projectDirectory],
+    // adminRules may supply host-managed rules that model/run input cannot edit.
+  },
+});
+```
 
-Every Runtime permission request has a deadline. If the host does not answer,
-the current operation is not executed and the guardrail returns a stable
-`approval_timeout` result telling the main model to try a safer, narrower, or
-reversible approach, or stop and wait for explicit user approval. A timeout is
-not serialized as an ordinary user rejection.
-
-The user-level `.kodax` directory is a credential/configuration boundary, not
-an ordinary project path. Direct shell mutations, output redirects, and
-recognized nested-shell payloads whose target is provably beneath that
-directory are identified before LLM classification and supplied as precise
-facts rather than permanently policy-blocked. The check is segment-safe and
-Windows case-insensitive. KodaX deliberately does not scan arbitrary
-quoted language source for path-looking substrings: doing so would turn Python,
-JavaScript, YAML, and regular expressions into false Tier-0 matches. Trusted
-configuration changes should use the KodaX config CLI or SDK configuration API.
+`match` and `notMatch` in JSONC are load-time positive/negative examples for
+validating a prefix. `hostExecutable`, `network`, and `compound` are runtime
+qualifiers and match only when the trusted integration can prove those facts.
+The built-in Bash route never guesses unavailable operation facts.
 
 ### 0.7.x source compatibility
 
-The v0.7.72 public declarations retain the following migration aliases:
+The v0.7.x public declarations retain the following migration aliases:
 
 | Legacy source | Current source | Contract |
 |---|---|---|
 | `agentMode: 'amaw'` | `'ama'` | accepted as deprecated input and normalized to AMA; no separate AMAW runtime is restored |
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |
+| `permissionMode: 'auto-in-project'` | `'auto'` | accepted only as input and immediately canonicalized; never persisted or advertised as a fifth profile |
+| legacy Auto engine, timeout, and window fields | fixed Auto[LLM] review | accepted only as inert migration input; never persisted or exposed as selectable settings |
 
 ### Plan capability is opt-in
 
@@ -5896,10 +5765,9 @@ The callback belongs in a trusted host process (for Electron, Main rather than
 renderer). It is intentionally not inferred from the presence of a permission
 UI: tool permission and plan approval are different user decisions.
 
-See [ADR-056](../../docs/ADR.md#adr-056-runtime-owns-auto-mode-permission-decisions-and-host-capability-exposure)
-for the ownership decision, [the v0.7.72 design](../../docs/features/v0.7.72.md#2026-07-18-runtime-permission-queue-and-resume-closure)
-for the release boundary, and [Known Issue 187](../../docs/KNOWN_ISSUES.md#187-shared-daemon-auto-permission-ownership-upgrade-fencing-preview-bounds-and-sdk-compatibility-were-incomplete)
-for the final capability-upgrade and compatibility closure.
+See [ADR-069](../../docs/ADR.md#adr-069-sandbox-success-is-authority-while-host-escalation-is-a-separate-policy-boundary)
+and [FEATURE_297](../../docs/features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy)
+for the current permission contract.
 
 ---
 
@@ -6221,52 +6089,17 @@ The contract supports an optional absolute `shell.executable` (for example Git
 Bash) and bounded fixed `shell.args`. Command/file/persistence/profile/server
 and working-directory control flags are rejected from those fixed arguments.
 `environment.set` is for non-secret host variables. `denyPatterns` can remove
-additional names but cannot weaken the built-in Provider credential deny set.
+additional names but cannot weaken the fixed execution-control deny set.
 `inherit: "none"` retains only the OS variables required to start the selected
 shell. On Windows, `windowsPath: "registry"` re-reads current Machine/User
 environment values instead of reusing the daemon's startup PATH.
 
-The CLI config and SDK expose the same small command-target setting for commands
-that intentionally need host credentials:
-
-```json
-{
-  "sandbox": {
-    "envPass": ["GH_TOKEN", "GITHUB_TOKEN"]
-  }
-}
-```
-
-SDK callers pass the same shape per Run, without mutating `process.env` config:
-
-```ts
-const handle = await runtime.runs.start({
-  sessionId: session.id,
-  prompt: 'Inspect the authenticated GitHub repository.',
-  options: {
-    sandbox: { envPass: ['GH_TOKEN', 'GITHUB_TOKEN'] },
-  },
-});
-```
-
-Direct `runKodaX()` / `startKodaX()` callers use the same
-`KodaXOptions.sandbox` field. The option is Run-scoped, overrides the process-
-level fallback even when `envPass` is empty, and is inherited by native child
-Agents, Workflow children, and deterministic evaluators. Concurrent SDK Runs
-can therefore use different lists without changing global configuration.
-
-`sandbox.envPass` defaults to empty and stores exact names, never values. It
-does not expose credentials to shell profile/setup resolution; the current
-host values are restored only into the final command environment, which then
-flows to ASRT or the ordinary fallback path. Windows matching is
-case-insensitive; POSIX matching is case-sensitive. `NODE_OPTIONS`, `BASH_ENV`,
-`RIPGREP_CONFIG_PATH`, and imported Bash functions remain blocked even if
-named. The CLI projects its user config to the Run option through
-`KODAX_SANDBOX_ENV_PASS`; that environment variable remains a CLI/backward-
-compatibility fallback rather than the SDK API. Worker and daemon transports
-carry names only. Values are read from the command-execution host environment;
-an auto-started daemon inherits that environment, while an attached persistent
-daemon must already have the variables and must restart after they change.
+Shell profiles and command targets inherit the execution host environment,
+including ordinary development credentials. A fixed internal deny set removes
+KodaX/Electron execution-control variables. The obsolete
+`KodaXOptions.sandbox.envPass`, config field, and environment bridge are inert
+compatibility inputs and are omitted by new clients. An attached persistent
+daemon must restart after host environment changes.
 
 Resolution is two-stage and uses the effective cwd:
 
@@ -6277,7 +6110,7 @@ Resolution is two-stage and uses the effective cwd:
 3. execute the actual command through that same explicit interpreter.
 
 The cache is in-memory and isolated by normalized contract, canonical cwd,
-Session scratch identity, credential deny names, and refresh generation. TTL
+Session scratch identity, and refresh generation. TTL
 is bounded to ten minutes; zero disables caching. Daemon restart clears it.
 `clearShellExecutionEnvironmentCache()` is available for an in-process owner
 that needs immediate global invalidation.
@@ -6291,8 +6124,7 @@ switch to PowerShell or Bash.
 Configured-shell failures are visible and fail closed: KodaX does not reinterpret
 the command through another shell. When `shellExecution` is absent, KodaX keeps
 the pre-v0.7.77 platform-shell interpreter behavior for compatibility; the
-credential filter and explicit `sandbox.envPass` final-target restoration still
-apply. See
+same inherited-environment and fixed execution-control deny contract applies. See
 [`ISSUE_214_v0.7.77_REGRESSION_GUIDE.md`](../../docs/test-guides/ISSUE_214_v0.7.77_REGRESSION_GUIDE.md)
 for cross-project, cache, cancellation, credential, and Windows argv checks.
 
@@ -6560,6 +6392,11 @@ provide one. The root set is evaluated again for every transaction, so a
 linked worktree registered during the Session becomes writable without
 recreating the client. Runtime-owned Runs use their authenticated registry;
 an explicit host on a direct SDK call remains an embedder-owned policy seam.
+The KodaX root and `/repl` `runInteractiveMode`/`runInkInteractiveMode`
+entries bind the same host before starting a standalone REPL.
+Consumers importing the independently usable `@kodax-ai/repl` workspace
+package directly provide that host through `context.trustedTextMutationHost`;
+the UI package does not import the root native owner.
 
 On Windows, the embedded release manifest pins the text/shell sidecar protocols
 and hashes plus the ASRT release version and hash. Verified bytes are copied
@@ -6604,17 +6441,16 @@ atomic rename. Sandboxed shell policy cannot write either root. Shells remain in
 per command through ASRT bubblewrap or Seatbelt/`sandbox-exec`; there is no
 long-lived KodaX workspace-session owner or filesystem-effect lease.
 
-KodaX's own local workspace-shell policy supplies a stricter `denyRead` set
-than the generic SDK default: common home credential locations, sensitive
-private-key/environment filenames, and the complete resolved agent home are
-denied. Workspace-local `.kodax/runtime` is denied to both shell reads and
-writes even when the surrounding workspace is writable. Its per-Session
+KodaX's own local workspace-shell policy does not add KodaX-specific read
+denials: Agent Home, ordinary credential locations, global Git configuration,
+and workspace-local `.kodax/runtime` are readable. Writes remain bounded to
+the workspace and system temporary directories, and `.kodax/runtime` remains
+write-denied even when the surrounding workspace is writable. Its per-Session
 sequence cursor is a recoverable derived index: a lock-held durable write does
 not require Windows DELETE sharing, retries short sharing conflicts, and a
-truncated cursor is reconstructed from the durable event ledgers. Home-local
-executable search paths nested below those roots are not
-re-granted. This policy belongs to KodaX's command adapter; a standalone SDK
-host must declare the sensitive paths required by its own threat boundary.
+truncated cursor is reconstructed from the durable event ledgers. A standalone
+SDK host must declare any sensitive read paths required by its own threat
+boundary.
 
 `command` and `args` remain separate process arguments. On Windows KodaX uses
 an encoded bootstrap followed by `shell: false`, so `%VAR%`, `&`, embedded
@@ -6626,21 +6462,20 @@ initialization, the command, and cleanup. Windows ACL initialization on a cold
 path can take tens of seconds, so do not reuse a classifier-scale 20–30 second
 deadline unless that early cancellation is intentional.
 
-This is intentionally different from KodaX's local permission fallback. When
-ASRT is unavailable, Auto[LLM] still makes the same deterministic/LLM/user
-permission decision and an admitted local shell may use the ordinary execution
-path; only OS containment is absent. The same local fallback applies when
-ASRT preparation or backend initialization fails before the target process
-starts. KodaX never retries after the target has started, so a sandbox fault
-cannot duplicate command side effects. Remote A2A admitted Skill scripts
+When ASRT is unavailable, or preparation fails before the target starts, KodaX
+reaches a separate host boundary. Exec Policy is evaluated first; Edits uses a
+user decision and Auto[LLM] uses an exact independent review. Only an allow may
+start one ordinary host attempt. KodaX never retries after the target has
+started or start is uncertain, so a sandbox fault cannot duplicate command
+side effects. Remote A2A admitted Skill scripts
 retain their stronger isolation contract and do not fall back to an
 unsandboxed script. Embedded and daemon Runtime capability metadata expose
 `sandboxRuntime` with the platform backend, ASRT version, supported control
 dimensions, elevation behavior, and fallback semantics.
 
 On Windows, each admitted command has an independent native-runner lifecycle.
-Runner or ASRT startup failure rejects or follows the already-declared local
-permission fallback without changing the text-tool authority. Once the target
+Runner or ASRT startup failure returns a proven pre-start boundary result
+without changing the text-tool authority. Once the target
 has started, KodaX does not replay it. EOF, cancellation, timeout, runner
 failure, and peer loss converge on that command's Job only; they do not reset a
 workspace-wide filesystem owner or block later text transactions. macOS and
@@ -6657,7 +6492,7 @@ Runtime event streams may also contain one terminal `tool.sandbox` observation
 associated with the tool ID. `applied` is emitted only after the in-sandbox
 bootstrap confirms that the real target process reached Node's `spawn` event;
 wrapper startup alone is not sufficient. Before that handshake, a local
-backend failure may fall back to normal execution. After it, KodaX never
+backend failure may reach host-boundary review. After it, KodaX never
 restarts the target:
 
 ```ts

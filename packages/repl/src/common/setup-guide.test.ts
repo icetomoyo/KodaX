@@ -31,6 +31,7 @@ describe('renderSetupGuide', () => {
     expect(guide).toContain('kodax -c');
     expect(guide).toContain('/model');
     expect(guide).toContain('/mode');
+    expect(guide).toContain('full-access');
     expect(guide).toContain('/effort');
     expect(guide).toContain('/agent-mode');
     expect(guide).toContain('AMA');
@@ -47,8 +48,7 @@ describe('renderSetupGuide', () => {
     expect(guide).toContain('brew install ripgrep');
     expect(guide).toContain('bubblewrap, socat, and ripgrep');
     expect(guide).toContain('@kodax-ai/kodax/sandbox');
-    expect(guide).toContain('sandbox.envPass');
-    expect(guide).toContain('GH_TOKEN');
-    expect(guide).toContain('default list is empty');
+    expect(guide).toContain('inherit the host environment');
+    expect(guide).toContain('execution-control variables remain blocked');
   });
 });

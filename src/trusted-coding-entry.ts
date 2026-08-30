@@ -18,7 +18,9 @@ import {
 
 import { createTrustedTextMutationHost } from './windows-text-transaction.js';
 
-function withTrustedTextMutationHost(options: KodaXOptions): KodaXOptions {
+export function withTrustedTextMutationHost<TOptions extends KodaXOptions>(
+  options: TOptions,
+): TOptions {
   if (options.context?.trustedTextMutationHost !== undefined) return options;
   const workspaceRoot = options.context?.gitRoot
     ?? options.context?.executionCwd
@@ -38,7 +40,7 @@ function withTrustedTextMutationHost(options: KodaXOptions): KodaXOptions {
       ...options.context,
       trustedTextMutationHost,
     },
-  };
+  } as TOptions;
 }
 
 /** KodaX-owned direct SDK entry with the native trusted-text authority bound. */

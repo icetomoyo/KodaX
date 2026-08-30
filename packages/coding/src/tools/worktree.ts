@@ -77,8 +77,6 @@ function gatedGitInvocation(args: readonly string[]): {
   const hardenedArgs = [...GIT_HARDENING_ARGS, ...args];
   const env = {
     ...process.env,
-    GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
-    GIT_CONFIG_SYSTEM: process.platform === 'win32' ? 'NUL' : '/dev/null',
     KODAX_GIT_ARGS_JSON: JSON.stringify(hardenedArgs),
     KODAX_GIT_EXECUTABLE: resolveGitExecutable(),
   };

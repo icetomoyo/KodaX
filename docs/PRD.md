@@ -2,8 +2,9 @@
 
 > Last updated: 2026-08-29
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.3`
-> (`v0.7.96-alpha.3` Git tag / GitHub pre-release; npm publication remains manual)
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.4` source
+> candidate (`v0.7.96-alpha.3` remains the latest Git tag / GitHub pre-release;
+> npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:6`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
@@ -327,21 +328,24 @@ Runtime hosts must be able to opt into a JSON-serializable Shell Execution
 Contract per Session or Run. The contract selects one explicit interpreter,
 fixed non-command arguments, profile mode, environment inheritance/setup, and
 bounded cache policy. Environment resolution must occur in the effective
-execution cwd so directory-scoped toolchains can take effect. Provider
-credentials and execution-control variables must be removed before profile
-code and before command execution. A configured interpreter failure is visible
+execution cwd so directory-scoped toolchains can take effect. The host
+environment must be inherited by profile code and command targets; fixed
+KodaX/Electron execution-control variables must be removed. A configured interpreter failure is visible
 and fail-closed; an absent contract preserves established behavior.
 
-ASRT is optional execution containment, not permission authority. Ordinary
-Runtime startup and tool admission must not depend on setup readiness or
-silently run installers/elevation. `/sandbox` is the explicit diagnostic
+ASRT is the first execution authority for Edits and Auto[LLM], while ordinary
+Runtime startup must not depend on setup readiness or silently run
+installers/elevation. Sandbox completion is silently authoritative. A proven
+pre-start refusal or unavailable backend reaches a separate host-boundary
+decision; target-started or uncertain calls are never replayed. `/sandbox` is the explicit diagnostic
 surface. SDK hosts may use `@kodax-ai/kodax/sandbox` for their own commands
 with typed filesystem/network/environment/timeout/output policy; that
 standalone executor returns structured `unavailable` and never chooses an
 ordinary unsandboxed fallback for the host. KodaX's own workspace-shell
-containment must deny common home credential paths and the complete resolved
-agent home without converting ordinary external reads into an allowlist; a
-standalone SDK host remains responsible for its own filesystem threat boundary.
+containment must allow broad host reads, including Agent Home, credential
+locations, and global Git configuration, while limiting writes to workspace
+and system temporary roots. A standalone SDK host remains responsible for its
+own filesystem threat boundary.
 
 Sidecar completion must distinguish an optional offer made after the current
 request is satisfied from clarification required to satisfy the request.
@@ -349,46 +353,43 @@ Runtime hosts must receive budget-approval state only for an eligible revision,
 and must retain structured blocked codes and reasons through embedded, daemon,
 persistence, and restart boundaries.
 
-For a session with `permissionMode: 'auto'`, the Runtime is also the owner of
-the Auto Mode tool guardrail. It creates and reuses the guardrail across turns
-and keys reuse to the effective provider/model, project boundary, execution
-directory, classifier model, and timeout. Precisely modeled ordinary reads and
-workspace/system-temp mutations are admitted deterministically before
-classifier latency. Auto[LLM] otherwise defaults to automatic review and
-`allow`, not command-by-command root authorization. The classifier may return
-`ask` only for (1) a concrete credential-store read or a concrete mutation of
+For a session with `permissionMode: 'auto'`, the Runtime owns the Auto reviewer
+at the exact host boundary. A shell call that completes in the sandbox never
+invokes it. Auto[LLM] defaults to automatic review and `allow`, not
+command-by-command root authorization. Under the bundled policy, the
+classifier may return `ask` only for (1) a concrete credential-store read or a concrete mutation of
 KodaX credential/permission/trust controls, or (2) direct destruction,
 formatting, or essential-resource exhaustion that can destabilize the system
 or make unrelated software unavailable. Project edits/deletes/moves, Git mutations
 including stash, and normal global dependency install/uninstall/reinstall are
 not approval reasons merely because they write. Command category, complexity,
 incomplete analysis, general uncertainty, or lack of an explicit per-command
-instruction is insufficient. Static analysis supplies fast admissions and
-facts only; it cannot override the final LLM decision or manufacture a host
-request after `allow`. A user's rejection cancels that attempt and tells the
-agent to seek a safer alternative; it does not persist as a path, prefix, or
-task denial, and a revised call receives a fresh classifier decision.
+instruction is insufficient. A trusted `autoReview.policy` may add stricter
+review criteria without changing the fixed role or output contract. Static analysis may make sandbox admission cheap,
+but after a real host boundary it supplies facts only and cannot replace the
+final LLM decision. A reviewer denial cancels that attempt and tells the agent
+to seek a safer alternative; it opens no automatic permission prompt, persists
+no path/prefix/task denial, and a later informed natural-language instruction
+receives a fresh classifier decision.
 
 The Auto LLM request must contain only bounded permission-relevant evidence,
 not the Runner's raw accumulated session. The current tool action remains
 separate from a transcript that removes assistant prose/thinking, images, and
 unbounded historical tool output. Missing classifier identity is a recoverable
-configuration error before provider/permission work. Timeout, provider, or
-response-contract failure is retried once within the configured deadline; a
-second failure uses the Accept-edits boundary without changing the Session
-engine to rules. Oversized input that cannot be reviewed safely is an
-input-budget classifier failure and follows that same Accept-edits fallback;
-incompleteness itself is not an LLM `ask` reason.
+configuration error only when a host-boundary review is needed. Timeout,
+provider, or response-contract failure is retried once (90 seconds, then 180
+seconds by default); a second failure blocks with safer-route feedback and
+never widens to a user prompt or another engine. Incompleteness itself is not
+an LLM `ask` reason.
 
 Interactive permission-mode changes must be deterministic: Shift-Tab cycles
-Plan -> Edits -> Auto, entering Auto immediately exposes the configured
-`Auto[LLM]` or `Auto[RULES]` state, and rapid changes are applied in user order.
-`Auto[RULES]` is sticky only after an explicit or persisted user selection;
-classifier failure never selects it. Shift+Enter remains newline input.
+Plan -> Edits -> Auto[LLM] -> Full Access, and rapid changes are applied in user
+order. Legacy `auto-in-project` and Auto[RULES] inputs normalize to Auto[LLM]
+and are omitted by new writes. Shift+Enter remains newline input.
 
-SDK hosts must consume this behavior through one typed Auto settings resolver,
-and Runtime Session settings must represent the full public Auto configuration,
-including a zero-valued speculative window. Shared daemons advertise a unique
+SDK hosts must consume this behavior through one typed Auto settings resolver.
+Runtime Session settings retain only reviewer-model selection; the normal
+review deadlines are fixed at 90 and 180 seconds. Shared daemons advertise a unique
 capability version for the bounded-input/defaults/diagnostics contract; a
 newer capability satisfies an older minimum, while an older daemon is replaced
 only after a safe idle preflight. Timeout diagnostics expose bounded

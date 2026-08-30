@@ -1,14 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  setKodaXDiagnosticSink,
-  type KodaXDiagnostic,
-} from '@kodax-ai/agent';
-import {
-  AUTO_IN_PROJECT_DEPRECATION_MSG,
   PERMISSION_MODES,
   CANONICAL_PERMISSION_MODES,
-  createAutoInProjectDeprecationEmitter,
-  isAutoLlmMode,
   isAutoMode,
   canonicalizePermissionMode,
   computeConfirmTools,
@@ -22,8 +15,13 @@ describe('PermissionMode v0.7.33 — auto + auto-in-project alias', () => {
     expect(PERMISSION_MODES).toContain('auto-in-project');
   });
 
-  it('CANONICAL_PERMISSION_MODES excludes the deprecated auto-in-project alias', () => {
-    expect(CANONICAL_PERMISSION_MODES).toEqual(['plan', 'accept-edits', 'auto']);
+  it('CANONICAL_PERMISSION_MODES exposes the four v0.7.96 permission profiles', () => {
+    expect(CANONICAL_PERMISSION_MODES).toEqual([
+      'plan',
+      'accept-edits',
+      'auto',
+      'full-access',
+    ]);
     expect(CANONICAL_PERMISSION_MODES).not.toContain('auto-in-project');
   });
 
@@ -32,15 +30,7 @@ describe('PermissionMode v0.7.33 — auto + auto-in-project alias', () => {
     expect(isAutoMode('auto-in-project')).toBe(true);
     expect(isAutoMode('plan')).toBe(false);
     expect(isAutoMode('accept-edits')).toBe(false);
-  });
-
-  it('identifies only Auto[LLM] as owned by the LLM permission decision', () => {
-    expect(isAutoLlmMode('auto', 'llm')).toBe(true);
-    expect(isAutoLlmMode('auto-in-project', 'llm')).toBe(true);
-    expect(isAutoLlmMode('auto', 'rules')).toBe(false);
-    expect(isAutoLlmMode('accept-edits', 'llm')).toBe(false);
-    expect(isAutoLlmMode('plan', 'llm')).toBe(false);
-    expect(isAutoLlmMode('auto', undefined)).toBe(false);
+    expect(isAutoMode('full-access')).toBe(false);
   });
 
   it('canonicalizePermissionMode rewrites auto-in-project → auto', () => {
@@ -48,6 +38,7 @@ describe('PermissionMode v0.7.33 — auto + auto-in-project alias', () => {
     expect(canonicalizePermissionMode('auto')).toBe('auto');
     expect(canonicalizePermissionMode('plan')).toBe('plan');
     expect(canonicalizePermissionMode('accept-edits')).toBe('accept-edits');
+    expect(canonicalizePermissionMode('full-access')).toBe('full-access');
   });
 
   it('computeConfirmTools returns identical empty set for auto and auto-in-project', () => {
@@ -60,69 +51,20 @@ describe('PermissionMode v0.7.33 — auto + auto-in-project alias', () => {
   it('isPermissionMode accepts both spellings', () => {
     expect(isPermissionMode('auto')).toBe(true);
     expect(isPermissionMode('auto-in-project')).toBe(true);
+    expect(isPermissionMode('full-access')).toBe(true);
     expect(isPermissionMode('YOLO')).toBe(false);
   });
 
-  it('normalizePermissionMode preserves both spellings without forcing canonical', () => {
-    // canonicalization is an explicit boundary call, not implicit on normalize
-    expect(normalizePermissionMode('auto-in-project')).toBe('auto-in-project');
+  it('normalizePermissionMode folds the compatibility alias at the read boundary', () => {
+    expect(normalizePermissionMode('auto-in-project')).toBe('auto');
     expect(normalizePermissionMode('auto')).toBe('auto');
-  });
-});
-
-describe('auto-in-project deprecation emitter (FEATURE_092 phase 2b.7b slice E)', () => {
-  it('AUTO_IN_PROJECT_DEPRECATION_MSG mentions both the alias and the canonical name + a removal version', () => {
-    expect(AUTO_IN_PROJECT_DEPRECATION_MSG).toContain('auto-in-project');
-    expect(AUTO_IN_PROJECT_DEPRECATION_MSG).toContain('auto');
-    expect(AUTO_IN_PROJECT_DEPRECATION_MSG).toMatch(/v0\.7\.\d+/);
+    expect(normalizePermissionMode('full-access')).toBe('full-access');
+    expect(normalizePermissionMode('invalid', 'auto-in-project')).toBe('auto');
   });
 
-  it('emits the message on the first call', () => {
-    const printer = vi.fn();
-    const emit = createAutoInProjectDeprecationEmitter(printer);
-    emit();
-    expect(printer).toHaveBeenCalledOnce();
-    expect(printer).toHaveBeenCalledWith(AUTO_IN_PROJECT_DEPRECATION_MSG);
-  });
-
-  it('does NOT emit again on subsequent calls (once-per-session contract)', () => {
-    const printer = vi.fn();
-    const emit = createAutoInProjectDeprecationEmitter(printer);
-    emit();
-    emit();
-    emit();
-    expect(printer).toHaveBeenCalledOnce();
-  });
-
-  it('two distinct emitters maintain independent state', () => {
-    const printer1 = vi.fn();
-    const printer2 = vi.fn();
-    const emit1 = createAutoInProjectDeprecationEmitter(printer1);
-    const emit2 = createAutoInProjectDeprecationEmitter(printer2);
-    emit1();
-    emit1(); // suppressed
-    emit2();
-    expect(printer1).toHaveBeenCalledOnce();
-    expect(printer2).toHaveBeenCalledOnce();
-  });
-
-  it('default printer emits a diagnostic without writing to stderr', () => {
-    const diagnostics: KodaXDiagnostic[] = [];
-    const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => {
-      diagnostics.push(diagnostic);
-    });
-    try {
-      const emit = createAutoInProjectDeprecationEmitter();
-      emit();
-      expect(diagnostics).toEqual([
-        expect.objectContaining({
-          source: 'repl:permission',
-          level: 'warn',
-          message: AUTO_IN_PROJECT_DEPRECATION_MSG,
-        }),
-      ]);
-    } finally {
-      restoreDiagnostics();
-    }
+  it('Full Access has no interactive confirmation tools and renders its product label', async () => {
+    expect([...computeConfirmTools('full-access')]).toEqual([]);
+    const { permissionModeDisplayName } = await import('./types.js');
+    expect(permissionModeDisplayName('full-access')).toBe('Full Access');
   });
 });

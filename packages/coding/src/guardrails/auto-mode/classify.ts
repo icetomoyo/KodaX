@@ -1,8 +1,8 @@
 /**
  * Auto-Mode Classifier Orchestrator — FEATURE_092 Phase 2b.3 (v0.7.33).
  *
- * Wires the classifier prompt + sideQuery + output parser into a single
- * `classify(...)` call. Caller supplies the rules, transcript, and the
+ * Wires the reviewer prompt + sideQuery + output parser into a single
+ * `classify(...)` call. Caller supplies the transcript and the
  * tool-call action being classified; gets back a `ClassifyDecision`.
  *
  * Failure → decision mapping:
@@ -19,8 +19,8 @@
  *   error                  —              → retry, then failure
  *
  * Every non-abort failure receives one immediate retry. The caller applies
- * its configured safety fallback after the second failure; a valid model
- * concern always means "ask the user", never a direct hard block.
+ * its configured fail-closed result after the second failure; a valid model
+ * concern blocks the current attempt with a concrete safer-route reason.
  */
 
 import type {
@@ -31,14 +31,16 @@ import type {
 import { KodaXBaseProvider, sideQuery } from '@kodax-ai/llm';
 import type { KodaXMessage } from '@kodax-ai/llm';
 
-import { buildClassifierPrompt } from './classifier-prompt.js';
+import {
+  buildClassifierPrompt,
+  type BuildClassifierPromptInput,
+} from './classifier-prompt.js';
 import { parseClassifierOutput } from './parse-output.js';
 import type {
   ClassifierObservedProtocol,
   ClassifierOutputWarningCode,
   ClassifierParseFailureCode,
 } from './parse-output.js';
-import type { AutoRules } from './rules.js';
 import type { ToolCallSignal } from './signals.js';
 import type { PermissionIntentEvidence } from './permission-intent.js';
 import { stripAssistantText } from './transcript-strip.js';
@@ -50,7 +52,11 @@ import {
 export interface ClassifyOptions {
   readonly provider: KodaXBaseProvider;
   readonly model: string;
-  readonly rules: AutoRules;
+  /** @deprecated Legacy compatibility input. Auto rules are ignored. */
+  readonly rules?: BuildClassifierPromptInput['rules'];
+  readonly administratorPolicy?: string;
+  readonly reviewPolicy?: string;
+  readonly modelGuidance?: string;
   readonly claudeMd?: string;
   readonly transcript: readonly KodaXMessage[];
   readonly action: string;
@@ -117,11 +123,11 @@ export type ClassifyDecision =
 /**
  * The deadline includes connection setup, provider-side queueing, inference,
  * and any Retry-After/backoff handled by the provider adapter. Keep it bounded
- * so infrastructure failure reaches the configured Accept-edits fallback.
+ * so infrastructure failure reaches the caller's fail-closed path.
  */
-export const DEFAULT_CLASSIFIER_TIMEOUT_MS = 45_000;
+export const DEFAULT_CLASSIFIER_TIMEOUT_MS = 90_000;
 /** A retry gets a longer deadline because its expanded response budget can take longer to emit. */
-export const DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS = 90_000;
+export const DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS = 180_000;
 /** The classifier returns three short XML tags; a coding-turn-sized budget is wasteful. */
 export const CLASSIFIER_MAX_OUTPUT_TOKENS = 256;
 /** A truncated first response gets one larger, still-bounded contract window. */
@@ -147,6 +153,9 @@ export async function classify(opts: ClassifyOptions): Promise<ClassifyDecision>
 
   const prompt = buildClassifierPrompt({
     rules: opts.rules,
+    administratorPolicy: opts.administratorPolicy,
+    reviewPolicy: opts.reviewPolicy,
+    modelGuidance: opts.modelGuidance,
     claudeMd: opts.claudeMd,
     // Enforce the boundary at the classifier API itself so future callers
     // cannot accidentally bypass the session-history cap.

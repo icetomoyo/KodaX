@@ -1625,7 +1625,7 @@ export type KodaXShellProfileMode =
  *
  * The contract is opt-in. When absent, command execution keeps the legacy
  * platform-shell/process.env behavior. When present, KodaX resolves a
- * credential-filtered environment through this shell in the effective cwd,
+ * host-inherited environment through this shell in the effective cwd,
  * then executes the command with the same explicit interpreter.
  */
 export interface KodaXShellExecutionContract {
@@ -1639,11 +1639,11 @@ export interface KodaXShellExecutionContract {
     readonly profile?: KodaXShellProfileMode;
   };
   readonly environment?: {
-    /** `filtered` keeps non-sensitive daemon variables; `none` keeps only OS bootstrap variables. */
+    /** Legacy `filtered` spelling keeps host variables; `none` keeps only OS bootstrap variables. */
     readonly inherit?: 'filtered' | 'none';
-    /** Trusted, non-secret variables added before profile resolution. */
+    /** Trusted variables added before profile resolution. */
     readonly set?: Readonly<Record<string, string>>;
-    /** Additional glob-style variable-name denies. Built-in credential denies are immutable. */
+    /** Additional glob-style variable-name denies. */
     readonly denyPatterns?: readonly string[];
     /**
      * Trusted shell code run after profile loading and before environment
@@ -1671,7 +1671,9 @@ export interface KodaXShellSandboxPrepareInput {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly windowsVerbatimArguments?: boolean;
-  /** Internal callers may forbid the broker's ordinary host fallback. */
+  /** Host-selected existing project Exec Policy snapshot that this attempt must not modify. */
+  readonly trustedProjectExecPolicyPath?: string;
+  /** @deprecated Brokers never perform host fallback; retained for source compatibility. */
   readonly fallbackToNormalExecution?: boolean;
   /** Caller cancellation while waiting for sandbox admission/preparation. */
   readonly signal?: AbortSignal;
@@ -1698,8 +1700,22 @@ export interface KodaXPreparedShellSandboxInvocation {
   cleanup(input?: {
     readonly execution: 'not_started' | 'started_or_unknown';
     readonly controlOutput?: Uint8Array;
-  }): Promise<KodaXShellSandboxObservation | undefined>;
+  }): Promise<KodaXShellSandboxCleanupResult | undefined>;
 }
+
+/** Exact target lifecycle proved by a prepared sandbox invocation at cleanup. */
+export type KodaXShellSandboxCleanupResult =
+  | KodaXShellSandboxObservation
+  | {
+      readonly version: 1;
+      readonly state: 'pre_start_unavailable';
+      readonly diagnostic?: string;
+    }
+  | {
+      readonly version: 1;
+      readonly state: 'execution_uncertain';
+      readonly diagnostic: string;
+    };
 
 /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
 export interface KodaXShellSandboxProcessControl {
@@ -1724,6 +1740,21 @@ export interface KodaXShellSandbox {
     input: KodaXShellSandboxPrepareInput,
   ): Promise<KodaXPreparedShellSandboxInvocation | undefined>;
 }
+
+export interface KodaXShellHostExecutionRequest {
+  readonly toolCallId?: string;
+  readonly toolInput: Readonly<Record<string, unknown>>;
+  readonly command: string;
+  readonly cwd: string;
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly reason: 'sandbox_unavailable' | 'sandbox_denied';
+  readonly diagnostic?: string;
+}
+
+export type KodaXShellHostExecutionAuthorizer = (
+  request: KodaXShellHostExecutionRequest,
+) => Promise<boolean | string>;
 
 /** Canonical snapshot produced by the trusted main-process text authority. */
 export interface KodaXTrustedTextFileSnapshot {
@@ -1853,6 +1884,8 @@ export interface KodaXContextOptions {
   shellExecution?: KodaXShellExecutionContract;
   /** Runtime-owned OS sandbox broker; never accepted from serialized model input. */
   shellSandbox?: KodaXShellSandbox;
+  /** Runtime-owned decision at the exact unsandboxed shell boundary. */
+  authorizeShellHostExecution?: KodaXShellHostExecutionAuthorizer;
   /** Runtime-owned trusted host transaction authority for direct text tools. */
   trustedTextMutationHost?: KodaXTrustedTextMutationHost;
   /** Runtime-owned linked-worktree roots; never accepted from model input. */
@@ -2212,7 +2245,7 @@ export interface KodaXOptions {
 }
 
 export interface KodaXSandboxOptions {
-  /** Exact host environment-variable names; values are never carried in this option. */
+  /** @deprecated Host variables inherit by default; retained for migration compatibility. */
   readonly envPass?: readonly string[];
 }
 
@@ -2701,19 +2734,14 @@ export interface KodaXToolExecutionContext {
   sandbox?: KodaXSandboxOptions;
   /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
   shellSandbox?: KodaXShellSandbox;
+  /** Runtime-owned decision at the exact unsandboxed shell boundary. */
+  authorizeShellHostExecution?: KodaXShellHostExecutionAuthorizer;
   /** Runtime-owned trusted host transaction authority for direct text tools. */
   trustedTextMutationHost?: KodaXTrustedTextMutationHost;
   /** Runtime-owned linked-worktree roots shared by shell and direct text tools. */
   workspaceSandboxRoots?: KodaXWorkspaceSandboxRootRegistry;
   /** Structured containment metadata; never model-visible or persisted as conversation text. */
   reportToolSandboxObservation?: (observation: KodaXShellSandboxObservation) => void;
-  /**
-   * Exact credential variable names owned by registered Providers.
-   * Used only to remove non-standard `apiKeyEnv` names from child processes.
-   *
-   * @internal
-   */
-  providerCredentialEnvironmentNames?: readonly string[];
   /** Fail-closed host policy applied to every concrete file a read tool opens. */
   assertReadablePath?: (candidate: string) => void;
   /** Host tool visibility ceiling inherited by child agents. */

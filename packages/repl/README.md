@@ -28,8 +28,11 @@ acknowledgement.
 conversation from a broad scan and skips zero-message ACP/bootstrap records.
 The rule is shared by Ink and classic startup, and explicit IDs win. Both
 interactive surfaces restore persisted workspace/runtime identity before the
-next turn. Shift-Tab cycles Plan -> Edits -> Auto while Shift+Enter inserts a
-newline; Auto displays its configured/persisted LLM or rules engine immediately.
+next turn. Shift-Tab cycles Plan -> Edits -> Auto[LLM] -> Full Access while
+Shift+Enter inserts a newline. Auto[LLM] reviews only a proven pre-start host
+boundary after the sandbox cannot execute; Full Access bypasses sandbox and
+reviewer but still applies Exec Policy. Legacy Rules settings normalize to
+Auto[LLM] without reading or migrating legacy rule files.
 
 For strict host observation, `readSessionCapture()` returns active context and
 full transcript from one immutable storage boundary. `readFullTranscript()` and
@@ -56,6 +59,10 @@ import { listSessions } from '@kodax-ai/kodax/session';
 ```typescript
 import { runInkInteractiveMode } from '@kodax-ai/repl';
 ```
+
+`@kodax-ai/kodax/repl` 会自动绑定 KodaX 原生 trusted-text host。直接嵌入
+`@kodax-ai/repl` 时，宿主必须通过 `options.context.trustedTextMutationHost`
+提供同等 authority；REPL 包不会绕过独立分层去加载根包的 native 实现。
 
 ## 启动 Ink REPL
 

@@ -58,7 +58,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   {
     id: 'togglePermissionMode',
     name: 'Cycle Permissions',
-    description: 'Cycle permission mode: plan, accept-edits, auto-in-project',
+    description: 'Cycle permission mode: plan, accept-edits, auto, full-access',
     defaultBindings: [{ key: 'tab', shift: true }],
     context: 'global',
     priority: 150,

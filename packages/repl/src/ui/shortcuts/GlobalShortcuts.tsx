@@ -243,8 +243,7 @@ export function GlobalShortcuts({
     if (isInteractiveDialogActive) {
       return false;
     }
-    // Canonical names only — persisting 'auto-in-project' here triggered a startup deprecation warn that drifted the cursor by one row.
-    const modeCycle: PermissionMode[] = ['plan', 'accept-edits', 'auto'];
+    const modeCycle: PermissionMode[] = ['plan', 'accept-edits', 'auto', 'full-access'];
     // Map the deprecated alias to its canonical position so legacy configs
     // advance from 'auto's slot, not via the indexOf=-1 wrap fallback.
     const aliasedCurrent =

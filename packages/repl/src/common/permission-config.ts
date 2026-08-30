@@ -21,6 +21,7 @@ import path from 'path';
 import { getAgentConfigPath } from '@kodax-ai/agent';
 import {
   PermissionMode,
+  canonicalizePermissionMode,
   normalizePermissionMode,
   parseAllowedToolPattern,
   isToolCallAllowed,
@@ -65,49 +66,42 @@ interface PermissionConfigData {
    * Only consulted when `permissionMode === 'auto'`.
    */
   autoMode?: AutoModeSettings;
+  autoReview?: AutoReviewSettings;
+}
+
+/** Optional fixed policy for the Auto host-boundary reviewer. */
+export interface AutoReviewSettings {
+  policy?: string;
 }
 
 /**
  * Auto-mode classifier configuration. Read from `~/.kodax/config.json` (user-
  * level only — project-level is intentionally not consulted, matching
- * `permissionMode`'s scope) plus the `KODAX_AUTO_MODE_*` env override family.
+ * `permissionMode`'s scope) plus the classifier-model environment override.
  */
 export interface AutoModeSettings {
-  /**
-   * Starting engine for the session.
-   * - `'llm'` (default): classifier runs on every non-Tier-1 tool call
-   * - `'rules'`: classifier skipped; deterministic workspace/temp Tier 2 applies
-   * Engine downgrades stay sticky within the session regardless of this value.
-   */
+  /** @deprecated Legacy input accepted and ignored at the read boundary. */
   engine?: 'llm' | 'rules';
   /**
    * Classifier model spec — `"provider:model"` or `"model"` (provider then
    * inherits from the main session). Feeds layer 4 of `resolveClassifierModel`.
    */
   classifierModel?: string;
-  /** Explicit per-attempt timeout. Omit for the 45_000/90_000 classifier defaults. */
+  /** @deprecated Accepted as inert migration input. Reviewer deadlines are fixed. */
   timeoutMs?: number;
-  /**
-   * Issue 143 (WS3): speculative-classify quiet window in ms. Default 500.
-   * The window only controls "resolve instantly vs wait for the verdict" — the
-   * classifier verdict is always adopted (WS1), so this never decides
-   * "dialog vs no dialog". `0` disables the speculative race (synchronous
-   * classify). Lets users on slow/remote providers widen the window so a fast
-   * local classify still short-circuits while a slow one simply waits.
-   */
+  /** @deprecated Accepted as inert migration input. Sandbox-first routing has no speculative window. */
   speculativeWindowMs?: number;
 }
 
 export interface ResolvedAutoModeSettings {
-  readonly engine: 'llm' | 'rules';
   readonly classifierModel?: string;
   readonly classifierModelEnv?: string;
-  readonly timeoutMs?: number;
-  readonly speculativeWindowMs?: number;
+  readonly reviewPolicy?: string;
 }
 
 export interface ResolveAutoModeSettingsInput {
   readonly settings?: AutoModeSettings;
+  readonly autoReview?: AutoReviewSettings;
   readonly env?: NodeJS.ProcessEnv | Readonly<Record<string, string | undefined>>;
 }
 
@@ -117,20 +111,17 @@ export interface ResolveAutoModeSettingsInput {
  * filesystem read; `resolveAutoModeSettings()` is the pure counterpart.
  *
  * Env priority (highest first):
- *   - KODAX_AUTO_MODE_ENGINE: 'llm' | 'rules' — overrides settings.engine
  *   - KODAX_AUTO_MODE_CLASSIFIER_MODEL: model spec — surfaced as `classifierModelEnv`
  *     so it reaches `AutoModeGuardrailConfig.envVar` (the resolver's layer 2)
- *   - KODAX_AUTO_MODE_TIMEOUT_MS: integer ms — overrides settings.timeoutMs
- *   - KODAX_AUTO_SPECULATIVE_WINDOW_MS: integer ms (0 disables) — overrides
- *     settings.speculativeWindowMs (Issue 143 WS3; reuses the same env name
- *     speculative.ts reads, so a single var controls the knob everywhere)
- *
- * Invalid env values fall through to settings (defensive: a typo in an env
- * var must not silently disable the classifier).
+ * Legacy timeout/window inputs and environment variables are ignored.
  */
 export function loadAutoModeSettings(env: NodeJS.ProcessEnv = process.env): ResolvedAutoModeSettings {
   const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;
-  return resolveAutoModeSettings({ settings: userConfig.autoMode, env });
+  return resolveAutoModeSettings({
+    settings: userConfig.autoMode,
+    autoReview: userConfig.autoReview,
+    env,
+  });
 }
 
 /**
@@ -147,59 +138,15 @@ export function resolveAutoModeSettings(
   // unless the caller opts in by supplying `env`.
   const env = input.env ?? {};
 
-  const envEngineRaw = env.KODAX_AUTO_MODE_ENGINE?.trim();
-  const envEngine =
-    envEngineRaw === 'llm' || envEngineRaw === 'rules' ? envEngineRaw : undefined;
-  const fileEngine =
-    fileSettings.engine === 'llm' || fileSettings.engine === 'rules'
-      ? fileSettings.engine
-      : undefined;
-  const engine: 'llm' | 'rules' = envEngine ?? fileEngine ?? 'llm';
-
   const classifierModel = nonEmptyString(fileSettings.classifierModel);
   const classifierModelEnv = nonEmptyString(env.KODAX_AUTO_MODE_CLASSIFIER_MODEL);
-
-  const envTimeoutRaw = env.KODAX_AUTO_MODE_TIMEOUT_MS?.trim();
-  const envTimeoutNum = envTimeoutRaw !== undefined ? Number(envTimeoutRaw) : NaN;
-  const envTimeoutMs = Number.isFinite(envTimeoutNum) && envTimeoutNum > 0
-    ? Math.floor(envTimeoutNum)
-    : undefined;
-  const fileTimeoutMs =
-    typeof fileSettings.timeoutMs === 'number' && fileSettings.timeoutMs > 0
-      ? Math.floor(fileSettings.timeoutMs)
-      : undefined;
-
-  // Issue 143 (WS3): speculative window. Unlike timeoutMs, `0` is a meaningful
-  // value (disables the race), so the guard accepts >= 0 and negatives clamp to
-  // 0 — mirroring speculative.ts `readWindowFromEnv`. Env overrides file.
-  const envSpeculativeMs = parseSpeculativeWindow(env.KODAX_AUTO_SPECULATIVE_WINDOW_MS?.trim());
-  const fileSpeculativeMs =
-    typeof fileSettings.speculativeWindowMs === 'number'
-      ? parseSpeculativeWindow(String(fileSettings.speculativeWindowMs))
-      : undefined;
+  const reviewPolicy = nonEmptyString(input.autoReview?.policy);
 
   return {
-    engine,
     classifierModel,
     classifierModelEnv,
-    timeoutMs: envTimeoutMs ?? fileTimeoutMs,
-    speculativeWindowMs: envSpeculativeMs ?? fileSpeculativeMs,
+    reviewPolicy,
   };
-}
-
-/**
- * Parse a speculative-window value (env string or stringified file number).
- * Returns `undefined` for unset / empty / non-numeric (caller falls back), a
- * non-negative integer otherwise, clamping negatives to `0` (disabled).
- * Mirrors `readWindowFromEnv` in
- * `packages/coding/src/guardrails/auto-mode/speculative.ts`.
- */
-function parseSpeculativeWindow(raw: string | undefined): number | undefined {
-  if (raw === undefined || raw === '') return undefined;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return undefined;
-  if (parsed < 0) return 0;
-  return Math.floor(parsed);
 }
 
 function nonEmptyString(s: unknown): string | undefined {
@@ -250,7 +197,10 @@ export function loadPermissionMode(): PermissionMode | undefined {
  */
 export function savePermissionModeUser(mode: PermissionMode): void {
   const current = readJsonFile(USER_CONFIG_FILE);
-  writeJsonFile(USER_CONFIG_FILE, { ...current, permissionMode: mode });
+  writeJsonFile(USER_CONFIG_FILE, {
+    ...current,
+    permissionMode: canonicalizePermissionMode(mode),
+  });
 }
 
 /**

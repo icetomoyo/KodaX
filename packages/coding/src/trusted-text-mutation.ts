@@ -2,10 +2,6 @@ import path from 'node:path';
 
 import type { KodaXTrustedTextFileSnapshot } from './types.js';
 
-import {
-  isAgentHomeHardMutationTarget,
-} from './permissions/agent-home-policy.js';
-
 export type KodaXTrustedTextMutationErrorCode =
   | 'text_mutation_stale'
   | 'text_mutation_contended'
@@ -55,7 +51,8 @@ export class KodaXTrustedTextMutationError extends Error {
 /** Shared lexical/canonical policy for trusted main-process text mutations. */
 export function assertTrustedTextMutationPolicy(
   filePath: string,
-  executionCwd = process.cwd(),
+  _executionCwd = process.cwd(),
+  protectedPaths: readonly string[] = [],
 ): void {
   const windowsPath = filePath.replaceAll('/', '\\');
   if (
@@ -73,9 +70,15 @@ export function assertTrustedTextMutationPolicy(
     });
   }
   const components = path.resolve(filePath).split(/[\\/]+/);
+  const canonicalTarget = path.resolve(filePath);
+  const caseFold = (value: string): string => (
+    process.platform === 'win32' ? value.toLowerCase() : value
+  );
   if (
     components.some((component) => component.toLowerCase() === '.git')
-    || isAgentHomeHardMutationTarget(filePath, executionCwd)
+    || protectedPaths.some((candidate) => (
+      caseFold(path.resolve(candidate)) === caseFold(canonicalTarget)
+    ))
   ) {
     throw new KodaXTrustedTextMutationError({
       code: 'text_mutation_policy_denied',

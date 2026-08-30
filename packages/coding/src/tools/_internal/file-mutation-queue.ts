@@ -1363,7 +1363,7 @@ export async function withHostFileSystemNamespaceMutation<T>(
   );
 }
 
-/** Path-local queue plus the ordinary direct-file Agent Home hard boundary. */
+/** Path-local queue plus the internal-state Agent Home hard boundary. */
 export function withFileMutation<T>(
   absolutePath: string,
   fn: () => Promise<T>,

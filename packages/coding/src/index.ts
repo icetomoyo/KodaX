@@ -165,6 +165,7 @@ export type {
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
   KodaXPreparedShellSandboxInvocation,
+  KodaXShellSandboxCleanupResult,
   KodaXShellSandboxProcessControl,
   KodaXShellSandboxBackend,
   KodaXShellSandboxObservation,
@@ -173,6 +174,8 @@ export type {
   KodaXShellProfileMode,
   KodaXShellSandbox,
   KodaXShellSandboxPrepareInput,
+  KodaXShellHostExecutionRequest,
+  KodaXShellHostExecutionAuthorizer,
   KodaXTrustedTextCommitInput,
   KodaXTrustedTextCommitOutcome,
   KodaXTrustedTextFileSnapshot,
@@ -275,6 +278,8 @@ export {
 } from './tools/_internal/file-mutation-queue.js';
 
 export { normalizeKodaXAgentMode } from './types.js';
+/** @deprecated Sandbox environment pass lists are inert since 0.7.96. */
+export { parseSandboxEnvironmentPass } from './shell-execution/environment.js';
 export {
   parseBareInlineSlashReferences,
   parseInlineSkillReferences,
@@ -287,7 +292,6 @@ export {
   shellExecutionContractFingerprint,
 } from './shell-execution/contract.js';
 export { clearShellExecutionEnvironmentCache } from './shell-execution/resolver.js';
-export { parseSandboxEnvironmentPass } from './shell-execution/environment.js';
 
 // ============== Core Errors ==============
 
@@ -1250,9 +1254,8 @@ export type {
 // ============== FEATURE_092 (v0.7.33): Auto-Mode Classifier ==============
 //
 // Public surface for the auto-mode tool-call classifier. Phase 2b.7b/2b.8
-// will internally consume these to register the guardrail and surface
-// /auto-engine, /auto-model commands; the eval suite consumes the same
-// surface to measure classifier quality.
+// is consumed by Auto host-boundary review; the eval suite consumes the same
+// surface to measure reviewer quality.
 export {
   classify,
   CLASSIFIER_MAX_OUTPUT_TOKENS,
@@ -1270,23 +1273,9 @@ export * from './guardrails/auto-mode/permission-analyzer.js';
 export * from './permissions/permission.js';
 export * from './permissions/agent-home-policy.js';
 export * from './permissions/bash-ast.js';
+export * from './permissions/exec-policy.js';
 export * from './permissions/powershell-mutation.js';
 export * from './permissions/shell-command-sets.js';
-export {
-  loadAutoRules,
-  parseAutoRules,
-  computeRulesFingerprint,
-  trustProjectRules,
-  readTrustState,
-} from './guardrails/auto-mode/rules.js';
-export type {
-  AutoRules,
-  RulesLoadResult,
-  LoadedRulesSource,
-  SkippedRulesSource,
-  RulesLoadError,
-  TrustState,
-} from './guardrails/auto-mode/rules.js';
 export { buildClassifierPrompt } from './guardrails/auto-mode/classifier-prompt.js';
 export type {
   BuildClassifierPromptInput,
@@ -1303,7 +1292,7 @@ export type {
   ClassifierParseFailureCode,
   ClassifierProtocol,
 } from './guardrails/auto-mode/parse-output.js';
-// Auto-mode denial counter (cumulative + consecutive block tally) — distinct
+// Auto-mode denial counter (recent-window + consecutive block tally) — distinct
 // from the FEATURE_044/045 input-signature `DenialTracker` exported above.
 export {
   createDenialTracker as createAutoModeDenialTracker,
@@ -1311,7 +1300,8 @@ export {
   recordAllow as recordAutoModeAllow,
   shouldFallback as autoModeDenialShouldFallback,
   CONSECUTIVE_THRESHOLD as AUTO_MODE_DENIAL_CONSECUTIVE_THRESHOLD,
-  CUMULATIVE_THRESHOLD as AUTO_MODE_DENIAL_CUMULATIVE_THRESHOLD,
+  RECENT_DENIAL_THRESHOLD as AUTO_MODE_RECENT_DENIAL_THRESHOLD,
+  RECENT_WINDOW_SIZE as AUTO_MODE_DENIAL_WINDOW_SIZE,
 } from './guardrails/auto-mode/denial-tracker.js';
 export type { DenialTracker as AutoModeDenialTracker } from './guardrails/auto-mode/denial-tracker.js';
 export {
@@ -1338,7 +1328,6 @@ export {
 } from './guardrails/auto-mode/guardrail.js';
 export type {
   AgentHomeShellBoundaryGuardrailOptions,
-  AutoModeEngine,
   AutoModeSharedState,
   AutoModeGuardrailConfig,
   AutoModeToolGuardrail,

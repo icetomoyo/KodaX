@@ -218,7 +218,7 @@ describe('GlobalShortcuts', () => {
   // `console.warn` that bypasses the cell renderer and drifts the cursor
   // by one row, causing subsequent input to paint on the wrong terminal row.
   describe('togglePermissionMode cycle does not produce deprecated alias', () => {
-    function setupAndCycle(startMode: 'plan' | 'accept-edits' | 'auto' | 'auto-in-project') {
+    function setupAndCycle(startMode: 'plan' | 'accept-edits' | 'auto' | 'full-access' | 'auto-in-project') {
       let currentConfig: CurrentConfig = {
         provider: 'openai',
         model: 'gpt-5.4',
@@ -265,17 +265,22 @@ describe('GlobalShortcuts', () => {
       expect(onSavePermissionMode).toHaveBeenCalledWith('auto');
     });
 
-    it('auto → plan (wrap)', () => {
+    it('auto → full-access', () => {
       const { currentConfig } = setupAndCycle('auto');
+      expect(currentConfig.permissionMode).toBe('full-access');
+    });
+
+    it('full-access → plan (wrap)', () => {
+      const { currentConfig } = setupAndCycle('full-access');
       expect(currentConfig.permissionMode).toBe('plan');
     });
 
-    it('legacy auto-in-project config → cycles off to plan (treated as auto position)', () => {
+    it('legacy auto-in-project config → full-access (treated as auto position)', () => {
       const { currentConfig } = setupAndCycle('auto-in-project');
-      expect(currentConfig.permissionMode).toBe('plan');
+      expect(currentConfig.permissionMode).toBe('full-access');
     });
 
-    it('full 3-cycle from accept-edits never lands on auto-in-project', () => {
+    it('full 4-cycle from accept-edits never lands on auto-in-project', () => {
       const seen: string[] = [];
       let currentConfig: CurrentConfig = {
         provider: 'openai',
@@ -285,7 +290,7 @@ describe('GlobalShortcuts', () => {
         agentMode: 'ama',
         permissionMode: 'accept-edits',
       };
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         GlobalShortcuts({
           currentConfig,
           setCurrentConfig: (updater) => {
@@ -306,7 +311,7 @@ describe('GlobalShortcuts', () => {
         seen.push(currentConfig.permissionMode);
       }
       expect(seen).not.toContain('auto-in-project');
-      expect(seen).toEqual(['auto', 'plan', 'accept-edits']);
+      expect(seen).toEqual(['auto', 'full-access', 'plan', 'accept-edits']);
     });
   });
 

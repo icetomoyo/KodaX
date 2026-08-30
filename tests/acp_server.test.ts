@@ -133,6 +133,7 @@ vi.mock('@kodax-ai/repl', async (importOriginal) => {
 });
 
 import { KodaXAcpServer } from '../src/acp_server.js';
+import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -143,6 +144,7 @@ let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
 const stderrLines: string[] = [];
 const harnessServers = new Set<KodaXAcpServer>();
 const harnessTempRoots = new Set<string>();
+const harnessRuntimes = new Set<KodaXRuntime>();
 
 function assertIsolatedAcpTestPath(candidate: string): void {
   const userStateRoot = path.resolve(os.homedir(), '.kodax');
@@ -185,6 +187,7 @@ async function createHarness(options: {
   eventSinks?: AcpEventSink[];
   mcpServers?: McpServer[];
   storage?: FileSessionStorage;
+  runtimeOwnedByTest?: boolean;
 } = {}) {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-harness-'));
   harnessTempRoots.add(runtimeHome);
@@ -204,6 +207,15 @@ async function createHarness(options: {
     },
   };
 
+  const runtime = options.runtimeOwnedByTest
+    ? await createKodaXRuntime({
+        homeDir: runtimeHome,
+        sessionsDir: storage.getSessionsDir(),
+        profile: 'acp-test',
+        defaultProvider: 'openai',
+      })
+    : undefined;
+  if (runtime) harnessRuntimes.add(runtime);
   const server = new KodaXAcpServer({
     ...(options.serverCwd ? { cwd: options.serverCwd } : {}),
     provider: 'openai',
@@ -213,6 +225,7 @@ async function createHarness(options: {
     logLevel: options.logLevel ?? 'off',
     eventSinks: [recordingSink, ...(options.eventSinks ?? [])],
     storage,
+    ...(runtime ? { runtime } : {}),
   });
   harnessServers.add(server);
   server.attach(requestStream.readable, responseStream.writable);
@@ -260,8 +273,10 @@ async function createHarness(options: {
     events,
     permissionRequests,
     sessionId: session.sessionId,
+    modes: session.modes,
     storage,
     runtimeHome,
+    runtime,
   };
 }
 
@@ -292,6 +307,8 @@ describe('KodaXAcpServer', () => {
     delete globalThis.__kodaxAcpExtensionActivations;
     await Promise.all([...harnessServers].map((server) => server.dispose()));
     harnessServers.clear();
+    await Promise.all([...harnessRuntimes].map((runtime) => runtime.close()));
+    harnessRuntimes.clear();
     await Promise.all([...harnessTempRoots].map((root) => rm(root, { recursive: true, force: true })));
     harnessTempRoots.clear();
   });
@@ -352,6 +369,45 @@ describe('KodaXAcpServer', () => {
     });
 
     expect(prepareRuntimeConfigMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('advertises only the four canonical permission profiles', async () => {
+    const harness = await createHarness();
+
+    expect(harness.modes).toEqual({
+      currentModeId: 'accept-edits',
+      availableModes: expect.arrayContaining([
+        expect.objectContaining({ id: 'plan', name: 'Plan' }),
+        expect.objectContaining({ id: 'accept-edits', name: 'Edits' }),
+        expect.objectContaining({ id: 'auto', name: 'Auto[LLM]' }),
+        expect.objectContaining({ id: 'full-access', name: 'Full Access' }),
+      ]),
+    });
+    expect(harness.modes?.availableModes.map((mode) => mode.id)).toEqual([
+      'plan',
+      'accept-edits',
+      'auto',
+      'full-access',
+    ]);
+  });
+
+  it('accepts the legacy auto-in-project input but publishes canonical Auto[LLM]', async () => {
+    const harness = await createHarness();
+
+    await harness.client.setSessionMode({
+      sessionId: harness.sessionId,
+      modeId: 'auto-in-project',
+    });
+
+    expect(harness.updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: harness.sessionId,
+        update: expect.objectContaining({
+          sessionUpdate: 'current_mode_update',
+          currentModeId: 'auto',
+        }),
+      }),
+    ]));
   });
 
   it('uses the injected storage root for runtime-owned ACP sessions', async () => {
@@ -457,7 +513,7 @@ describe('KodaXAcpServer', () => {
     }
   });
 
-  it('bridges tool permission requests through ACP', async () => {
+  it('keeps an Edits Bash call silent before its sandbox attempt', async () => {
     runKodaXMock.mockImplementation(async (options) => {
       const decision = await options.events?.beforeToolExecute?.(
         'bash',
@@ -475,33 +531,46 @@ describe('KodaXAcpServer', () => {
       prompt: [{ type: 'text', text: 'Write a note' }],
     });
 
+    expect(harness.permissionRequests).toHaveLength(0);
+  });
+
+  it('bridges an Auto[LLM] Runtime permission boundary through ACP', async () => {
+    let harness: Awaited<ReturnType<typeof createHarness>>;
+    runKodaXMock.mockImplementation(async () => {
+      const runtime = harness.runtime;
+      if (!runtime) throw new Error('Expected an injected Runtime.');
+      const [run] = await runtime.runs.list({ sessionId: harness.sessionId });
+      if (!run) throw new Error('Expected the ACP run to be active.');
+      const decision = await runtime.permissions.request({
+        sessionId: harness.sessionId,
+        runId: run.runId,
+        toolCallId: 'tool-host-boundary',
+        toolName: 'bash',
+        inputPreview: JSON.stringify({ command: 'git config --global user.name Test' }),
+      });
+      expect(decision).toEqual({ type: 'allow_once' });
+      return createResult();
+    });
+
+    harness = await createHarness({ runtimeOwnedByTest: true });
+    await harness.client.setSessionMode({
+      sessionId: harness.sessionId,
+      modeId: 'auto',
+    });
+    await harness.client.prompt({
+      sessionId: harness.sessionId,
+      prompt: [{ type: 'text', text: 'Configure Git' }],
+    });
+
     expect(harness.permissionRequests).toHaveLength(1);
     expect(harness.permissionRequests[0]).toMatchObject({
       sessionId: harness.sessionId,
       toolCall: {
-        toolCallId: 'tool-bash-write',
+        toolCallId: 'tool-host-boundary',
         title: 'bash',
-        kind: 'execute',
-        rawInput: { command: 'echo test > README.md' },
+        rawInput: { command: 'git config --global user.name Test' },
       },
     });
-    expect(harness.events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'permission_requested',
-          sessionId: harness.sessionId,
-          tool: 'bash',
-          toolId: 'tool-bash-write',
-        }),
-        expect.objectContaining({
-          type: 'tool_permission_resolved',
-          sessionId: harness.sessionId,
-          tool: 'bash',
-          toolId: 'tool-bash-write',
-          outcome: 'request_granted',
-        }),
-      ]),
-    );
   });
 
   it('keeps accept-edits mode aligned with REPL by not requesting permission for read tools', async () => {
@@ -525,7 +594,7 @@ describe('KodaXAcpServer', () => {
     expect(harness.permissionRequests).toHaveLength(0);
   });
 
-  it('supports allow_always without changing the ACP session mode', async () => {
+  it('does not ask or change mode for repeated pre-sandbox Edits calls', async () => {
     runKodaXMock.mockImplementation(async (options) => {
       const firstDecision = await options.events?.beforeToolExecute?.(
         'bash',
@@ -543,21 +612,14 @@ describe('KodaXAcpServer', () => {
       return createResult();
     });
 
-    const harness = await createHarness({
-      onPermissionRequest: async () => ({
-        outcome: {
-          outcome: 'selected',
-          optionId: 'allow_always',
-        },
-      }),
-    });
+    const harness = await createHarness();
 
     await harness.client.prompt({
       sessionId: harness.sessionId,
       prompt: [{ type: 'text', text: 'Persist two edits' }],
     });
 
-    expect(harness.permissionRequests).toHaveLength(1);
+    expect(harness.permissionRequests).toHaveLength(0);
     expect(harness.updates).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -934,25 +996,35 @@ describe('KodaXAcpServer', () => {
   });
 
   it('emits structured permission negotiation events', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
-      const decision = await options.events?.beforeToolExecute?.(
-        'bash',
-        { command: 'echo test > README.md' },
-        { toolId: 'tool-bash-write' },
-      );
-
-      expect(decision).toBe(true);
+    let harness: Awaited<ReturnType<typeof createHarness>>;
+    runKodaXMock.mockImplementation(async () => {
+      const runtime = harness.runtime;
+      if (!runtime) throw new Error('Expected an injected Runtime.');
+      const [run] = await runtime.runs.list({ sessionId: harness.sessionId });
+      if (!run) throw new Error('Expected the ACP run to be active.');
+      await runtime.permissions.request({
+        sessionId: harness.sessionId,
+        runId: run.runId,
+        toolCallId: 'tool-bash-write',
+        toolName: 'bash',
+        inputPreview: JSON.stringify({ command: 'echo test > README.md' }),
+      });
       return createResult();
     });
 
-    const harness = await createHarness({
+    harness = await createHarness({
       logLevel: 'info',
+      runtimeOwnedByTest: true,
       onPermissionRequest: async () => ({
         outcome: {
           outcome: 'selected',
           optionId: 'allow_once',
         },
       }),
+    });
+    await harness.client.setSessionMode({
+      sessionId: harness.sessionId,
+      modeId: 'auto',
     });
 
     await harness.client.prompt({
@@ -967,21 +1039,10 @@ describe('KodaXAcpServer', () => {
           sessionId: harness.sessionId,
           tool: 'bash',
           toolId: 'tool-bash-write',
-          permissionMode: 'accept-edits',
+          permissionMode: 'auto',
         }),
-        expect.objectContaining({
-          type: 'permission_requested',
-          sessionId: harness.sessionId,
-          tool: 'bash',
-          toolId: 'tool-bash-write',
-        }),
-        expect.objectContaining({
-          type: 'tool_permission_resolved',
-          sessionId: harness.sessionId,
-          tool: 'bash',
-          toolId: 'tool-bash-write',
-          outcome: 'request_granted',
-        }),
+        expect.objectContaining({ type: 'permission_requested' }),
+        expect.objectContaining({ type: 'tool_permission_resolved' }),
       ]),
     );
   });

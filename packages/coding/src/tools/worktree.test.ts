@@ -116,6 +116,7 @@ const mockContext: KodaXToolExecutionContext = {
 const TEST_AGENT_HOME = path.join(os.tmpdir(), `kodax-worktree-agent-home-${process.pid}`);
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   setMockExecFileImpl(null);
   vi.mocked(containWindowsEffectProcess).mockClear();
   vi.mocked(killChildProcessTree).mockClear();
@@ -131,6 +132,21 @@ afterEach(async () => {
 });
 
 describe('toolWorktreeCreate', () => {
+  it('preserves the host global and system Git configuration', async () => {
+    vi.stubEnv('GIT_CONFIG_GLOBAL', 'C:\\host\\.gitconfig');
+    vi.stubEnv('GIT_CONFIG_SYSTEM', 'C:\\host\\gitconfig');
+    let gitEnvironment: NodeJS.ProcessEnv | undefined;
+    setMockExecFileImpl((_cmd: string, _args: string[], opts: unknown, cb: Function) => {
+      gitEnvironment = (opts as { readonly env?: NodeJS.ProcessEnv }).env;
+      cb(null, '', '');
+    });
+
+    await toolWorktreeCreate({ branch_name: 'global-git-config' }, mockContext);
+
+    expect(gitEnvironment?.GIT_CONFIG_GLOBAL).toBe('C:\\host\\.gitconfig');
+    expect(gitEnvironment?.GIT_CONFIG_SYSTEM).toBe('C:\\host\\gitconfig');
+  });
+
   it('generates valid branch name from description', async () => {
     const result = await toolWorktreeCreate(
       { description: 'Add new feature' },

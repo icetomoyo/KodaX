@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe('resolved shell execution', () => {
-  it('injects sandbox envPass credentials only into the final command environment', async () => {
+  it('inherits host credentials into profile setup and the final command', async () => {
     vi.stubEnv('GH_TOKEN', 'gh-secret');
     vi.stubEnv('OPENAI_API_KEY', 'provider-secret');
     vi.stubEnv('KODAX_SANDBOX_ENV_PASS', 'OPENAI_API_KEY');
@@ -112,10 +112,8 @@ describe('resolved shell execution', () => {
     );
 
     expect(allowed).toContain('gh-secret');
-    expect(denied).toContain('missing');
-    expect(denied).not.toContain('provider-secret');
-    expect(setupObservation).toContain('no');
-    expect(setupObservation).not.toContain('yes');
+    expect(denied).toContain('provider-secret');
+    expect(setupObservation).toContain('yes');
   });
 
   it('lets two projects resolve different Node toolchains without cache crossover', async () => {
@@ -237,39 +235,42 @@ describe('resolved shell execution', () => {
     expect(second).toContain('session-b');
   });
 
-  it('does not expose daemon provider credentials to the probe or command', async () => {
+  it('inherits daemon provider credentials into the probe and command', async () => {
     vi.stubEnv('KODAX_TEST_API_KEY', 'must-not-leak');
     const cwd = await mkdtemp(path.join(tmpdir(), 'kodax-shell-secret-'));
     const result = await toolBash(
       { command: nodePrint('KODAX_TEST_API_KEY') },
       context(cwd, platformContract()),
     );
-    expect(result).toContain('missing');
-    expect(result).not.toContain('must-not-leak');
+    expect(result).toContain('must-not-leak');
   });
 
-  it('does not expose an inactive Provider credential with a non-standard name', async () => {
+  it('inherits inactive Provider credentials with non-standard names', async () => {
     vi.stubEnv('INACTIVE_PROVIDER_AUTH', 'must-not-leak');
     const cwd = await mkdtemp(path.join(tmpdir(), 'kodax-shell-inactive-secret-'));
     const result = await toolBash(
       { command: nodePrint('INACTIVE_PROVIDER_AUTH') },
       {
         ...context(cwd, platformContract()),
-        providerCredentialEnvironmentNames: ['INACTIVE_PROVIDER_AUTH'],
       },
     );
-    expect(result).toContain('missing');
-    expect(result).not.toContain('must-not-leak');
+    expect(result).toContain('must-not-leak');
   });
 
-  it('removes daemon NODE_OPTIONS before starting the environment probe', async () => {
-    vi.stubEnv('NODE_OPTIONS', '--this-option-does-not-exist');
+  it('preserves daemon NODE_OPTIONS when starting the environment probe', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'kodax-shell-node-options-'));
+    const preload = path.join(cwd, 'node-options-preload.cjs');
+    await writeFile(
+      preload,
+      "process.env.KODAX_NODE_OPTIONS_SEEN = 'yes';\n",
+      'utf8',
+    );
+    vi.stubEnv('NODE_OPTIONS', `--require=${preload}`);
     const result = await toolBash(
-      { command: nodePrint('NODE_OPTIONS') },
+      { command: nodePrint('KODAX_NODE_OPTIONS_SEEN') },
       context(cwd, platformContract()),
     );
-    expect(result).toContain('missing');
+    expect(result).toContain('yes');
     expect(result).not.toMatch(/configured shell environment could not be resolved/i);
   });
 

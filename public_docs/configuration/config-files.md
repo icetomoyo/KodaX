@@ -8,6 +8,7 @@ KodaX reads configuration from `~/.kodax/` with a strict split-file layout.
 |---|---|
 | `~/.kodax/config.json` | Core configuration (strict JSON) |
 | `~/.kodax/config.example.jsonc` | Annotated reference with all settings |
+| `~/.kodax/exec-policy.jsonc` | User host-execution policy (optional JSONC) |
 | `~/.kodax/integrations/mcp.json` | MCP server definitions |
 | `~/.kodax/integrations/extensions.json` | Extension definitions |
 | `~/.kodax/integrations/a2a.json` | A2A agent definitions |
@@ -66,23 +67,50 @@ converge on the same local daemon even when `KODAX_HOME` is a custom directory.
 An explicit `--home <dir>` selects the isolated `<dir>/.kodax` namespace for
 tests, CI, or project-local experiments.
 
-## Sandbox envPass
+## Shell environment
 
-Credential-shaped environment variables are filtered from model-issued shell
-commands by default. To expose specific host variables to command targets:
+Model-issued shell commands inherit the host environment, including normal
+development credentials. Fixed KodaX/Electron execution-control variables are
+removed. The obsolete `sandbox.envPass` field is ignored for upgrade
+compatibility and is not included in new templates.
 
-```json
+## Exec Policy
+
+Exec Policy is deliberately separate from `config.json`. It is evaluated only
+when an operation is about to execute without the OS sandbox. An absent policy
+file means no user rules; it never blocks startup.
+
+```jsonc
 {
-  "sandbox": {
-    "envPass": ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"]
-  }
+  "rules": [
+    {
+      "prefix": [["npm", "pnpm"], "publish"],
+      "decision": "prompt",
+      "justification": "Publishing changes an external registry",
+      "match": ["npm publish"],
+      "notMatch": ["npm test"]
+    }
+  ]
 }
 ```
 
-The default list is empty. Values remain in the host environment and are never
-stored in `config.json`; project configuration cannot extend the list. Matching
-is exact (case-insensitive on Windows), and execution-control variables such as
-`NODE_OPTION` and `BASH_ENV` remain blocked.
+Each rule has a token `prefix`, a decision (`allow`, `prompt`, or
+`forbidden`), and a non-empty justification. `match` and `notMatch` are
+load-time validation examples, not additional runtime predicates. Optional
+`hostExecutable`, `network`, and `compound` qualifiers match only when the
+trusted caller supplies those exact facts. The strictest matching decision
+wins.
+
+A repository policy at `<repo>/.kodax/exec-policy.jsonc` is ignored unless the
+trusted SDK host opts that canonical repository root into
+`execPolicy.trustedProjectRoots`. This prevents a newly checked-out repository
+from granting itself unsandboxed authority. The diagnostic CLI includes it
+only with `--trust-project-policy`:
+
+```bash
+kodax execpolicy check -- git push origin main
+kodax execpolicy check --trust-project-policy -- git push origin main
+```
 
 ## See also
 

@@ -262,22 +262,6 @@ function normalizeConfiguredExtensions(value: unknown): string[] | undefined {
   return normalized.length > 0 ? normalized : [];
 }
 
-function normalizeSandboxConfig(value: unknown): {
-  envPass?: string[];
-} | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  const envPass = (value as { envPass?: unknown }).envPass;
-  if (!Array.isArray(envPass)) return undefined;
-  const names = envPass
-    .filter((name): name is string => typeof name === 'string')
-    .map((name) => name.trim())
-    .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
-  return { envPass: [...new Set(names)] };
-}
-
 interface PersistedCoreConfig {
   readonly raw: string;
   readonly value: Record<string, unknown>;
@@ -329,7 +313,7 @@ function migrateLegacyPermissionModeInConfig<T extends { permissionMode?: string
  * deprecation notice on every startup. Uses a TARGETED rewrite of just the
  * permissionMode value (preserves every other field, comment and formatting,
  * unlike the lossy `JSON.stringify` rewrite above) and canonicalizes the in-memory
- * value so the once-per-session deprecation emitter never fires.
+ * value so downstream state only observes canonical mode names.
  */
 function migrateAutoInProjectAliasInConfig<T extends { permissionMode?: string }>(
   config: T,
@@ -1081,9 +1065,6 @@ export function loadConfig(): {
   workflow?: {
     maxConcurrency?: number;
   };
-  sandbox?: {
-    envPass?: string[];
-  };
   /**
    * Worker-hosted embedded Runtime options. `configuredA2A` lets a
    * Worker-hosted embedded Runtime load and reconcile
@@ -1168,13 +1149,13 @@ export function loadConfig(): {
       } catch {
         // See the Extension-domain note above.
       }
+      const { sandbox: _ignoredLegacySandbox, ...activeCore } = migrated;
       return migrateAutoInProjectAliasInConfig(
         migrateLegacyPermissionModeInConfig({
-          ...migrated,
+          ...activeCore,
           reasoningMode: collapsedReasoning,
           extensions: normalizeConfiguredExtensions(effectiveExtensions),
           mcpServers: effectiveMcpServers,
-          sandbox: normalizeSandboxConfig(migrated.sandbox),
         }),
       );
     }
@@ -1329,7 +1310,6 @@ const CONFIG_ENV_BRIDGES: ReadonlyArray<{
   { configPath: 'repoIntelligence.workerOldSpaceMb', env: 'KODAX_REPO_INTELLIGENCE_WORKER_OLD_SPACE_MB', value: (c) => configNumberString(c.repoIntelligence?.workerOldSpaceMb) },
   { configPath: 'repoIntelligence.storageDir', env: 'KODAX_REPO_INTELLIGENCE_STORAGE_DIR', value: (c) => normalizedConfigString(c.repoIntelligence?.storageDir) },
   { configPath: 'workflow.maxConcurrency', env: 'KODAX_WORKFLOW_MAX_CONCURRENCY', value: (c) => configNumberString(c.workflow?.maxConcurrency) },
-  { configPath: 'sandbox.envPass', env: 'KODAX_SANDBOX_ENV_PASS', value: (c) => configStringList(c.sandbox?.envPass) || undefined },
 ];
 
 function applyConfigSurfaceBridges(config: ReturnType<typeof loadConfig>): void {
@@ -1420,9 +1400,6 @@ export function saveConfig(config: {
   };
   workflow?: {
     maxConcurrency?: number;
-  };
-  sandbox?: {
-    envPass?: string[];
   };
 }): void {
   const { extensions, mcpServers, ...coreConfig } = config;

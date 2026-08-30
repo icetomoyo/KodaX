@@ -70,7 +70,11 @@ fn run() -> anyhow::Result<u32> {
             }
             let paths: Vec<String> = serde_json::from_reader(std::io::stdin())
                 .map_err(|error| anyhow::anyhow!("Invalid persistent denyRead request: {error}"))?;
-            if paths.len() > 256 || paths.iter().any(|path| path.is_empty() || path.contains('\0')) {
+            if paths.len() > 256
+                || paths
+                    .iter()
+                    .any(|path| path.is_empty() || path.contains('\0'))
+            {
                 anyhow::bail!("Persistent denyRead request contains invalid paths");
             }
             let user_sid = sandbox_user_sid
@@ -86,6 +90,10 @@ fn run() -> anyhow::Result<u32> {
                 }
                 "install" => {
                     acl::ensure_persistent_deny_read(&paths, user_sid, group_sid)?;
+                    println!("[]");
+                }
+                "remove" => {
+                    acl::remove_persistent_deny_read(&paths, group_sid)?;
                     println!("[]");
                 }
                 _ => anyhow::bail!("Unknown persistent denyRead action"),

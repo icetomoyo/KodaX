@@ -234,7 +234,7 @@ describe("executeWithPermission", () => {
     expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks new temporary helper scripts outside .agent", async () => {
+  it("does not impose a KodaX-specific directory for temporary helper scripts", async () => {
     const permissionContext = createPermissionContext({
       permissionMode: "auto-in-project",
       gitRoot: process.cwd(),
@@ -250,9 +250,8 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Avoid scattering temporary helper scripts outside the project scratch area");
-    expect(result).toContain(".agent");
-    expect(executeToolMock).not.toHaveBeenCalled();
+    expect(result).toBe("[executed]");
+    expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
   it("allows helper scripts under .agent directory", async () => {
@@ -275,7 +274,7 @@ describe("executeWithPermission", () => {
     expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks bash commands that redirect temp helper scripts outside .agent", async () => {
+  it("does not special-case shell redirects to temporary helper scripts", async () => {
     const permissionContext = createPermissionContext({
       permissionMode: "auto-in-project",
       gitRoot: process.cwd(),
@@ -290,11 +289,11 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Avoid scattering temporary helper scripts outside the project scratch area");
-    expect(executeToolMock).not.toHaveBeenCalled();
+    expect(result).toBe("[executed]");
+    expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks temp helper scripts even inside normal project subdirectories", async () => {
+  it("allows temporary helper scripts in normal project subdirectories", async () => {
     const permissionContext = createPermissionContext({
       permissionMode: "auto-in-project",
       gitRoot: process.cwd(),
@@ -310,8 +309,8 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Avoid scattering temporary helper scripts outside the project scratch area");
-    expect(executeToolMock).not.toHaveBeenCalled();
+    expect(result).toBe("[executed]");
+    expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
   it("allows normal project scripts that are not temp helpers", async () => {

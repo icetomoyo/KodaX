@@ -2,20 +2,19 @@
  * Auto-Mode Guardrail Bootstrap — FEATURE_092 phase 2b.7b (v0.7.33).
  *
  * Builds an `AutoModeToolGuardrail` wired to the live REPL's provider
- * registry, tool registry, compact permission facts, and confirm-dialog askUser
- * surface. The factory returns a lazy accessor: the guardrail is constructed
+ * registry, tool registry, and compact permission facts. The factory returns
+ * a lazy accessor: the guardrail is constructed
  * on first call so REPLs that never enter `auto` mode pay zero cost.
  *
  * What lives in this file (vs. inline in repl.ts):
  *   - The wiring is FEATURE_092-specific and can be unit-tested independently.
  *   - `repl.ts` is already large; keeping the auto-mode plumbing here makes
  *     it greppable and easier to evolve as later phases (settings, subagent
- *     propagation, slash-command engine toggle) extend the feature surface.
+ *     propagation) extend the feature surface.
  *
  * Caller responsibilities (kept minimal — REPL passes down what it owns):
- *   - `getCurrentPermissionMode` is read by `askUser` so the confirm dialog
- *     copy reflects the user's actual mode (the guardrail itself doesn't
- *     care about permission mode beyond "we're in auto").
+ *   - Legacy permission-mode and confirmation inputs remain accepted for
+ *     source compatibility but do not affect Auto review.
  *   - `getCurrentProvider` / `getCurrentModel` are passed as the
  *     `getDefaultProvider` / `getDefaultModel` LIVE getters on the guardrail
  *     config (FEATURE_092 v0.7.34 hotfix-3). They are evaluated on every
@@ -23,37 +22,27 @@
  *     retarget the classifier without the user re-entering auto mode.
  *   - Permission review receives compact deterministic operation facts and
  *     user-only authority evidence. AGENTS.md, assistant narration, and tool
- *     outputs are intentionally excluded. `rules` (`~/.kodax/auto-rules.jsonc`)
- *     remains captured-at-init; a restart applies edits to that file.
+ *     outputs are intentionally excluded.
  */
 
 import {
   createAutoModeToolGuardrail,
   getBuiltinRegisteredToolDefinition,
-  getKodaxGlobalDir,
   getRegisteredToolDefinition,
-  loadAutoRules,
   resolveProvider as resolveCodingProvider,
   type AutoModeAskUser,
   type AutoModeGuardrailConfig,
   type AutoModeSharedState,
   type AutoModeToolGuardrail,
-  type RulesLoadResult,
   type SignalCollector,
 } from '@kodax-ai/coding';
 import type { KodaXBaseProvider } from '@kodax-ai/llm';
 import type { PermissionMode } from '../permission/types.js';
 import { replBashUserKodaxWriteDeny } from '../permission/repl-bash-signals.js';
-import { allowsAcceptEditsClassifierFallback } from '../permission/accept-edits-fallback.js';
 
 export interface AutoModeBootstrapDeps {
-  /**
-   * Surface-specific user-confirmation callback. Readline REPL wraps
-   * `confirmToolExecution(rl, ...)`; Ink REPL wraps `showConfirmDialog`.
-   * Bootstrap stays surface-agnostic so the same factory can wire both
-   * UIs without depending on readline.
-   */
-  readonly askUser: AutoModeAskUser;
+  /** @deprecated Retained as inert source-compatibility input. */
+  readonly askUser?: AutoModeAskUser;
   readonly projectRoot: string;
   /** Directory used to resolve relative tool paths. */
   readonly executionCwd: string;
@@ -64,6 +53,10 @@ export interface AutoModeBootstrapDeps {
   readonly getCurrentProviderName: () => string;
   readonly getCurrentModel: () => string | undefined;
   readonly getCurrentPermissionMode: () => PermissionMode;
+  /** Trusted administrator policy supplied by the Runtime host. */
+  readonly administratorPolicy?: string;
+  /** Guidance supplied by the selected reviewer model/catalog. */
+  readonly modelGuidance?: string;
   /**
    * FEATURE_092 phase 2b.7b slice C: resolved settings/env block. The REPL
    * computes this once via `loadAutoModeSettings()` (in
@@ -76,14 +69,7 @@ export interface AutoModeBootstrapDeps {
    * info lines to stderr via console (matching REPL conventions).
    */
   readonly log?: (level: 'info' | 'warn', msg: string) => void;
-  /**
-   * Fired when an explicit/manual `setEngine` call changes the selected
-   * engine. Classifier health thresholds are diagnostic and do not mutate the
-   * engine. The REPL uses this callback to keep its status bar current.
-   */
-  readonly onEngineChange?: (engine: 'llm' | 'rules') => void;
-
-  /** Session-owned engine/denial/breaker state shared by context-specific guardrails. */
+  /** Session-owned denial/breaker state shared by context-specific guardrails. */
   readonly sharedState?: AutoModeSharedState;
 
   /**
@@ -103,51 +89,32 @@ export interface AutoModeBootstrapDeps {
  * `permission-config.ts` (which would create a cycle through the REPL barrel).
  */
 export interface ResolvedAutoModeBootstrapSettings {
-  readonly engine: 'llm' | 'rules';
   readonly classifierModel?: string;
   readonly classifierModelEnv?: string;
-  readonly timeoutMs?: number;
-  /**
-   * Issue 143 (WS3): speculative-classify quiet window in ms. Forwarded to the
-   * guardrail's `speculativeWindowMs`. When undefined, the guardrail falls back
-   * to the `KODAX_AUTO_SPECULATIVE_WINDOW_MS` env / `DEFAULT_WINDOW_MS = 500`.
-   */
-  readonly speculativeWindowMs?: number;
+  /** Optional fixed reviewer policy from config.json#autoReview.policy. */
+  readonly reviewPolicy?: string;
 }
 
 export interface AutoModeBootstrapResult {
   /**
    * Lazy accessor — constructs the guardrail on first call. Subsequent
-   * calls return the same instance so engine + tracker state is shared
+   * calls return the same instance so tracker state is shared
    * across turns within a session.
    */
   readonly getGuardrail: () => AutoModeToolGuardrail;
-  /**
-   * The rules-load result from `loadAutoRules`. Surfaced so the REPL can
-   * print sources/skipped/errors in the startup banner (phase 2b.8 will
-   * surface this via `/auto-engine`; v1 just exposes the data).
-   */
-  readonly rulesLoadResult: RulesLoadResult;
+  /** Reset only current-turn denial thresholds; stays lazy outside Auto. */
+  readonly resetTurn: () => void;
 }
 
-/**
- * Async because `loadAutoRules` reads disk. Call once at REPL startup
- * after AGENTS.md has been loaded; the returned `getGuardrail` is sync.
- */
+/** Build a lazy Auto reviewer without reading legacy auto-rules files. */
 export async function bootstrapAutoMode(
   deps: AutoModeBootstrapDeps,
 ): Promise<AutoModeBootstrapResult> {
-  const rulesLoadResult = await loadAutoRules({
-    userKodaxDir: getKodaxGlobalDir(),
-    projectRoot: deps.projectRoot,
-  });
-
   let guardrail: AutoModeToolGuardrail | undefined;
 
   const getGuardrail = (): AutoModeToolGuardrail => {
     if (guardrail) return guardrail;
-    guardrail = createAutoModeToolGuardrail({
-      rules: rulesLoadResult.merged,
+    const reviewer = createAutoModeToolGuardrail({
       getToolProjection: (toolName) => {
         const def =
           getRegisteredToolDefinition(toolName)
@@ -177,15 +144,10 @@ export async function bootstrapAutoMode(
       // before provider, approval, breaker, or fallback work.
       getDefaultProvider: deps.getCurrentProviderName,
       getDefaultModel: () => deps.getCurrentModel() ?? '',
-      askUser: deps.askUser,
-      allowOnClassifierFailure: (call) => allowsAcceptEditsClassifierFallback(
-        call,
-        deps.projectRoot,
-        deps.executionCwd,
-      ),
+      // Compatibility callers may still supply askUser, but Auto reviewer
+      // concerns now block the exact attempt and return guidance to the Agent.
       admitWorkspaceSandboxCall: deps.admitWorkspaceSandboxCall,
       log: deps.log,
-      onEngineChange: deps.onEngineChange,
       sharedState: deps.sharedState,
       // FEATURE_158: thread projectRoot to signal collectors + Tier 0;
       // path-aware bash collector merges with coding-side defaults.
@@ -195,21 +157,30 @@ export async function bootstrapAutoMode(
         deps.trustProcessEnvironmentPathExpansion !== false,
       extraCollectors: deps.extraCollectors,
       extraAbsoluteDenyChecks: [replBashUserKodaxWriteDeny],
-      // FEATURE_092 phase 2b.7b slice C: starting engine + timeout + classifier
-      // model overrides. `userSettings` is layer 4 of `resolveClassifierModel`;
+      // FEATURE_092 phase 2b.7b slice C: classifier model override.
+      // `userSettings` is layer 4 of `resolveClassifierModel`;
       // `envVar` is layer 2 (cli flag and session-override remain unset until
       // phase 2b.8 surfaces them via `/auto-model`).
-      initialEngine: deps.autoModeSettings.engine,
-      timeoutMs: deps.autoModeSettings.timeoutMs,
       userSettings: deps.autoModeSettings.classifierModel,
       envVar: deps.autoModeSettings.classifierModelEnv,
-      // Issue 143 (WS3): thread the resolved speculative window so REPL + Space
-      // honour `autoMode.speculativeWindowMs` (config.json) /
-      // `KODAX_AUTO_SPECULATIVE_WINDOW_MS` (env). Undefined → guardrail default.
-      speculativeWindowMs: deps.autoModeSettings.speculativeWindowMs,
+      administratorPolicy: deps.administratorPolicy,
+      reviewPolicy: deps.autoModeSettings.reviewPolicy,
+      modelGuidance: deps.modelGuidance,
     });
+    guardrail = {
+      ...reviewer,
+      async beforeTool(call, context) {
+        const verdict = await reviewer.beforeTool!(call, context);
+        return verdict.action === 'escalate'
+          ? { action: 'block', reason: `[auto_review_denied] ${verdict.reason}` }
+          : verdict;
+      },
+    };
     return guardrail;
   };
 
-  return { getGuardrail, rulesLoadResult };
+  return {
+    getGuardrail,
+    resetTurn: () => guardrail?.resetTurn(),
+  };
 }

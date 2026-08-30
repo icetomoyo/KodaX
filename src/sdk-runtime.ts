@@ -17,7 +17,6 @@ import {
   getActiveExtensionRuntime,
   CodingActorSession,
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
-  DEFAULT_SPECULATIVE_WINDOW_MS,
   createAutoModeDenialTracker,
   createCircuitBreaker,
   breakerShouldFallback,
@@ -28,11 +27,13 @@ import {
   checkAbsoluteDeny,
   classifyResilienceError,
   createExternalActorTurnExecutor,
+  evaluateShellExecPolicy,
   createOutputSegmentProjection,
   effectiveOutputSegmentText,
   generateSessionId,
   listCodingDispatchableAgents,
   listRunScopedTools,
+  loadExecPolicy,
   parseModelSpec,
   registerCustomProviders,
   resolveProviderModelDescriptors,
@@ -46,6 +47,7 @@ import {
   ToolResultBatchCapacityError,
   validateCustomProviderConfig,
   type CodingActorCredentialAccessFactory,
+  type ExecPolicyRule,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -84,6 +86,7 @@ import type {
   KodaXManagedTaskStatusEvent,
   KodaXOptions,
   KodaXShellExecutionContract,
+  KodaXShellHostExecutionRequest,
   KodaXPromptCacheDiagnosticEvent,
   KodaXReasoningMode,
   KodaXResult,
@@ -259,6 +262,7 @@ import {
 import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
+  type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
 } from "./runtime-daemon/process.js";
 export { waitForRuntimeDaemonShutdown } from "./runtime-daemon/shutdown-verifier.js";
@@ -760,6 +764,47 @@ export interface CreateKodaXRuntimeOptions {
   readonly requirements?: RuntimeCapabilityRequirements;
   /** Inline host injection. Functions never cross daemon or Worker transport. */
   readonly externalAgents?: RuntimeExternalAgentsOptions;
+  /** Trusted host-owned Exec Policy inputs. Detached daemon mode accepts them only for a new auto-started owner. */
+  readonly execPolicy?: RuntimeExecPolicyOptions;
+  /** Trusted host-owned Auto reviewer layers; detached daemon attach never mutates them. */
+  readonly autoReview?: RuntimeAutoReviewOptions;
+}
+
+export interface RuntimeExecPolicyOptions {
+  readonly adminRules?: readonly ExecPolicyRule[];
+  /** Canonical project roots whose local `.kodax/exec-policy.jsonc` may load. */
+  readonly trustedProjectRoots?: readonly string[];
+}
+
+export interface RuntimeAutoReviewOptions {
+  /** Highest-priority reviewer policy; never accepted from config or conversation data. */
+  readonly administratorPolicy?: string;
+  /** Guidance supplied by the host's selected model/catalog. */
+  readonly modelGuidance?: string;
+}
+
+function runtimeDaemonOwnerBootstrap(
+  options: CreateKodaXRuntimeOptions,
+): RuntimeDaemonOwnerBootstrap | undefined {
+  const execPolicy =
+    (options.execPolicy?.adminRules?.length ?? 0) > 0
+    || (options.execPolicy?.trustedProjectRoots?.length ?? 0) > 0
+      ? options.execPolicy
+      : undefined;
+  const autoReview =
+    (options.autoReview?.administratorPolicy?.trim().length ?? 0) > 0
+    || (options.autoReview?.modelGuidance?.trim().length ?? 0) > 0
+      ? options.autoReview
+      : undefined;
+  if (execPolicy === undefined && autoReview === undefined) return undefined;
+  return {
+    ...(execPolicy === undefined
+      ? {}
+      : { execPolicy }),
+    ...(autoReview === undefined
+      ? {}
+      : { autoReview }),
+  };
 }
 
 export interface ConnectKodaXRuntimeOptions {
@@ -865,7 +910,7 @@ export interface RuntimeCapabilityRequirements {
   readonly actorControlPlane?: 1;
   /** Require the sandbox-first execution chain and permission fallback revision. */
   readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6;
-  /** Runtime owns Auto LLM/rules classification before shared permission brokering. */
+  /** Runtime owns Auto[LLM] review at the proven host boundary. */
   readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4;
 }
 
@@ -1488,10 +1533,7 @@ export interface RuntimeSessionSettings {
   readonly executionCwd?: string;
   readonly shellExecution?: KodaXShellExecutionContract;
   readonly agentMode?: KodaXOptions["agentMode"];
-  readonly autoModeEngine?: "llm" | "rules";
   readonly autoModeClassifierModel?: string;
-  readonly autoModeTimeoutMs?: number;
-  readonly autoModeSpeculativeWindowMs?: number;
   /** Auto-compaction percentage threshold, normalized to the inclusive 15-90 range. */
   readonly compactionTriggerPercent?: number;
   /** Optional absolute auto-compaction threshold. Missing or zero is inactive. */
@@ -1508,9 +1550,12 @@ export interface RuntimeSessionSettingsPatch {
   readonly executionCwd?: string | null;
   readonly shellExecution?: KodaXShellExecutionContract | null;
   readonly agentMode?: KodaXOptions["agentMode"] | null;
+  /** @deprecated Accepted as inert migration input. Auto always uses the LLM reviewer. */
   readonly autoModeEngine?: "llm" | "rules" | null;
   readonly autoModeClassifierModel?: string | null;
+  /** @deprecated Accepted as inert migration input. Reviewer deadlines are fixed. */
   readonly autoModeTimeoutMs?: number | null;
+  /** @deprecated Accepted as inert migration input. Sandbox-first routing has no speculative window. */
   readonly autoModeSpeculativeWindowMs?: number | null;
   readonly compactionTriggerPercent?: number | null;
   readonly compactionTriggerTokens?: number | null;
@@ -3491,10 +3536,12 @@ interface RuntimeRunRecord {
   model?: string;
   permissionBroker?: RuntimePermissionBroker;
   permissionMode?: string;
-  autoModeEngine?: RuntimeSessionSettings["autoModeEngine"];
   autoModeClassifierModel?: string;
-  autoModeTimeoutMs?: number;
-  autoModeSpeculativeWindowMs?: number;
+  autoReviewPolicy?: string;
+  execPolicyRules?: readonly ExecPolicyRule[];
+  execPolicyErrors?: readonly { readonly path: string; readonly message: string }[];
+  readonly trustedProjectExecPolicySnapshotPath?: string;
+  forcedPermissionCalls?: Set<string>;
   reasoning?: KodaXReasoningMode;
   error?: string;
   failureDetail?: RuntimeFailureDetail;
@@ -3951,7 +3998,16 @@ export async function createKodaXRuntime(
       options.autoStartDaemon ??
       (options.daemonTransport === undefined &&
         options.daemonEndpoint === undefined);
-    return connectKodaXRuntime({
+    const ownerBootstrap = runtimeDaemonOwnerBootstrap(options);
+    if (
+      ownerBootstrap !== undefined
+      && (!autoStart || options.daemonTransport !== undefined)
+    ) {
+      throw new Error(
+        "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
+      );
+    }
+    return connectKodaXRuntimeInternal({
       profile: options.profile,
       transport: options.daemonTransport,
       endpoint: options.daemonEndpoint,
@@ -3993,7 +4049,7 @@ export async function createKodaXRuntime(
           }
           : {}),
       },
-    });
+    }, true, "execution", ownerBootstrap);
   }
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
@@ -4090,9 +4146,9 @@ export async function createKodaXRuntime(
       version: 4,
       owner: "session-runtime",
       escalationCreatesPermission: true,
-      fallbackPersistsEngine: false,
       defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
-      defaultSpeculativeWindowMs: DEFAULT_SPECULATIVE_WINDOW_MS,
+      retryClassifierTimeoutMs: 180_000,
+      maxClassifierAttempts: 2,
       boundedClassifierInput: true,
       diagnosticsVersion: 1,
       permissionGrantSuggestions: true,
@@ -4458,6 +4514,8 @@ export async function createKodaXRuntime(
     defaultModel: options.defaultModel,
     defaultProvider: options.defaultProvider,
     defaultConfigHome: configHome,
+    execPolicy: options.execPolicy,
+    autoReview: options.autoReview,
     ensureOpen,
     isClosed: () => closed,
     artifacts,
@@ -4688,6 +4746,8 @@ async function createInProcessExternalAgentDaemon(
         capabilities: options.capabilities,
         requirements: options.requirements,
         externalAgents,
+        execPolicy: options.execPolicy,
+        autoReview: options.autoReview,
       }),
   });
   if (!lease.ownsHost) {
@@ -4777,6 +4837,8 @@ async function createWorkerHostedKodaXRuntime(
       permissionTimeoutMs: options.permissionTimeoutMs,
       userInputTimeoutMs: options.userInputTimeoutMs,
       configuredA2A: options.worker?.configuredA2A,
+      execPolicy: options.execPolicy,
+      autoReview: options.autoReview,
     },
     options.worker,
   );
@@ -5412,6 +5474,7 @@ async function connectKodaXRuntimeInternal(
   options: ConnectKodaXRuntimeOptions,
   allowCapabilityUpgrade: boolean,
   contract: "execution" | "prepared-exit-settlement" = "execution",
+  ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
 ): Promise<KodaXDaemonRuntime> {
   assertRuntimeTimeout(
     "permissionTimeoutMs",
@@ -5458,6 +5521,7 @@ async function connectKodaXRuntimeInternal(
           orphanExitMs: options.daemonOrphanExitMs,
           startupTimeoutMs: options.daemonStartupTimeoutMs,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
+          ownerBootstrap,
         })
       : undefined;
   const endpoint =
@@ -5592,7 +5656,12 @@ async function connectKodaXRuntimeInternal(
         // lease's transport. Do not close the same transport again below.
         upgradeReleasedLease = true;
       }
-      return connectKodaXRuntimeInternal(options, false);
+      return connectKodaXRuntimeInternal(
+        options,
+        false,
+        contract,
+        ownerBootstrap,
+      );
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
     const expectedProfile = options.profile ?? "default";
@@ -5718,10 +5787,6 @@ interface RuntimeSessionSettingsOwner {
     expectedRevision: number | undefined,
     validate: (settings: RuntimeSessionSettings) => void,
   ): Promise<RuntimeVersionedValue<RuntimeSessionSettings>>;
-  persistAutoModeEngine(
-    sessionId: string,
-    engine: NonNullable<RuntimeSessionSettings["autoModeEngine"]>,
-  ): Promise<void>;
   subscribe(listener: RuntimeSessionSettingsListener): RuntimeSubscription;
   release(sessionId: string): void;
 }
@@ -5795,34 +5860,13 @@ function createRuntimeSessionSettingsOwner(
             loaded.revision,
           );
         }
-        const settings = applySessionSettingsPatch(loaded.value, patch);
+        const canonicalPatch = canonicalizeRuntimeSessionSettingsPatch(patch);
+        const settings = applySessionSettingsPatch(loaded.value, canonicalPatch);
         validate(settings);
         const updated = { revision: loaded.revision + 1, value: settings };
         persistence.saveSessionSettingsVersioned(sessionId, updated);
-        publish(sessionId, updated, patch);
+        publish(sessionId, updated, canonicalPatch);
         return updated;
-      });
-    },
-    async persistAutoModeEngine(sessionId, engine) {
-      const optimistic =
-        current.get(sessionId) ??
-        persistence.loadSessionSettingsVersioned(sessionId);
-      current.set(sessionId, {
-        revision: optimistic.revision,
-        value: { ...optimistic.value, autoModeEngine: engine },
-      });
-      await enqueue(sessionId, () => {
-        const loaded = persistence.loadSessionSettingsVersioned(sessionId);
-        if (loaded.value.autoModeEngine === engine) {
-          current.set(sessionId, loaded);
-          return;
-        }
-        const updated = {
-          revision: loaded.revision + 1,
-          value: { ...loaded.value, autoModeEngine: engine },
-        };
-        persistence.saveSessionSettingsVersioned(sessionId, updated);
-        publish(sessionId, updated, { autoModeEngine: engine });
       });
     },
     subscribe(listener) {
@@ -7740,7 +7784,6 @@ function createRuntimeSessionService(
       }
       const live = readAutoModeStats(sessionId);
       return {
-        engine: settings.autoModeEngine ?? live?.engine ?? "llm",
         ...(settings.autoModeClassifierModel !== undefined
           ? { classifierModel: settings.autoModeClassifierModel }
           : {}),
@@ -8112,6 +8155,8 @@ function createRuntimeRunService(deps: {
   readonly defaultModel?: string;
   readonly defaultConfigHome: string;
   readonly defaultProvider?: string;
+  readonly execPolicy?: RuntimeExecPolicyOptions;
+  readonly autoReview?: RuntimeAutoReviewOptions;
   readonly defaultAgentContext?: AgentDispatchContext;
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
@@ -8215,7 +8260,20 @@ function createRuntimeRunService(deps: {
     };
   };
 
+  const releaseAutoModeRun = (record: RuntimeRunRecord): void => {
+    autoModeStates.delete(record.runId);
+    const sessionCache = autoModeGuardrails.get(record.sessionId);
+    if (sessionCache === undefined) return;
+    for (const [key, entry] of sessionCache) {
+      if (entry.runId !== record.runId) continue;
+      entry.guardrail.clearAllowedCalls();
+      sessionCache.delete(key);
+    }
+    if (sessionCache.size === 0) autoModeGuardrails.delete(record.sessionId);
+  };
+
   const releaseActiveRun = (record: RuntimeRunRecord): void => {
+    releaseAutoModeRun(record);
     if (activeRunBySession.get(record.sessionId) === record.runId) {
       activeRunBySession.delete(record.sessionId);
     }
@@ -9293,6 +9351,12 @@ function createRuntimeRunService(deps: {
       userInputs: deps.userInputs,
       enableSharedInteractions: deps.enableSharedInteractions,
       record,
+      onTurnStarted: () => {
+        const state = autoModeStates.get(record.runId);
+        if (state !== undefined) {
+          state.denials = createAutoModeDenialTracker();
+        }
+      },
       onExecutorTerminal: (signal, error) =>
         settleFromExecutorSignal(record, signal, error),
       onPhase: (phase) => {
@@ -9395,19 +9459,8 @@ function createRuntimeRunService(deps: {
         ...(record.permissionMode !== undefined
           ? { permissionMode: record.permissionMode }
           : {}),
-        ...(record.autoModeEngine !== undefined
-          ? { autoModeEngine: record.autoModeEngine }
-          : {}),
         ...(record.autoModeClassifierModel !== undefined
           ? { autoModeClassifierModel: record.autoModeClassifierModel }
-          : {}),
-        ...(record.autoModeTimeoutMs !== undefined
-          ? { autoModeTimeoutMs: record.autoModeTimeoutMs }
-          : {}),
-        ...(record.autoModeSpeculativeWindowMs !== undefined
-          ? {
-              autoModeSpeculativeWindowMs: record.autoModeSpeculativeWindowMs,
-            }
           : {}),
         ...(runOptions.compaction?.triggerPercent !== undefined
           ? { compactionTriggerPercent: runOptions.compaction.triggerPercent }
@@ -9824,15 +9877,7 @@ function createRuntimeRunService(deps: {
         )
           continue;
         record.permissionMode = current.value.permissionMode;
-        record.autoModeEngine =
-          replApi.normalizePermissionMode(current.value.permissionMode) ===
-          "auto"
-            ? (current.value.autoModeEngine ?? "llm")
-            : current.value.autoModeEngine;
         record.autoModeClassifierModel = current.value.autoModeClassifierModel;
-        record.autoModeTimeoutMs = current.value.autoModeTimeoutMs;
-        record.autoModeSpeculativeWindowMs =
-          current.value.autoModeSpeculativeWindowMs;
         publishRunUpdate(record);
       }
     },
@@ -9990,6 +10035,30 @@ function createRuntimeRunService(deps: {
       options.model ??
       deps.defaultModel ??
       resolveProviderModelDescriptors(provider)[0]?.id;
+    const autoReviewPolicy = runtimeAutoReviewPolicy(
+      readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")),
+    );
+    const execPolicyProjectRoot = path.resolve(
+      options.context?.gitRoot ?? admittedSessionContext.gitRoot,
+    );
+    const trustProjectExecPolicy = deps.execPolicy?.trustedProjectRoots?.some((root) =>
+      sameHostPath(root, execPolicyProjectRoot)
+    ) === true;
+    const projectExecPolicyPath = path.join(
+      execPolicyProjectRoot,
+      ".kodax",
+      "exec-policy.jsonc",
+    );
+    const trustedProjectExecPolicySnapshotPath = trustProjectExecPolicy
+      && fs.existsSync(projectExecPolicyPath)
+      ? projectExecPolicyPath
+      : undefined;
+    const execPolicy = await loadExecPolicy({
+      userConfigDir: deps.defaultConfigHome,
+      projectRoot: execPolicyProjectRoot,
+      trustProjectPolicy: trustProjectExecPolicy,
+      adminRules: deps.execPolicy?.adminRules,
+    });
     const runId =
       (input as RuntimeTrustedStartRunInput).trustedRunId ?? createRunId();
     if (deps.runs.has(runId))
@@ -9997,12 +10066,10 @@ function createRuntimeRunService(deps: {
         `Runtime run already exists: ${runId}`,
         0,
       );
-    const runtimeOwnsPermissionGuardrail =
-      deps.enableSharedInteractions ||
-      replApi.normalizePermissionMode(settings.permissionMode) === "auto";
-    assertRuntimeAutoModeClassifierModelConfigured(settings, model);
+    // Install the Runtime-owned Auto seam for every Run. Construction stays
+    // lazy, so Full Access pays no reviewer cost, while a live Full -> Auto
+    // profile change can still review the next proven host boundary.
     if (
-      runtimeOwnsPermissionGuardrail &&
       options.guardrails?.some(
         (guardrail) =>
           guardrail.kind === "tool" && guardrail.name === "auto-mode",
@@ -10012,70 +10079,39 @@ function createRuntimeRunService(deps: {
         "Runtime owns the auto-mode guardrail for shared Session permission state.",
       );
     }
-    const autoModeGuardrail = runtimeOwnsPermissionGuardrail
-      ? createRuntimeSessionAutoModeGuardrail({
-          sessionId: input.sessionId,
-          provider,
-          model,
-          options,
-          permissions: deps.permissions,
-          cache: autoModeGuardrails,
-          states: autoModeStates,
-          settingsOwner: deps.settingsOwner,
-          getRecord: () => {
-            const activeRunId = activeRunBySession.get(input.sessionId);
-            return activeRunId === undefined
-              ? undefined
-              : deps.runs.get(activeRunId);
-          },
-          onPhase: (record, phase) => {
-            if (
-              record.terminalEmitted
-              || record.executorTerminalSignal !== undefined
-              || record.phase === "unknown"
-              || record.stop?.state === "unknown"
-              || record.phase === phase
-            ) {
-              return;
-            }
-            record.phase = phase;
-            publishRunUpdate(record);
-          },
-          onEngineChange: (engine) => {
-            for (const record of deps.runs.values()) {
-              if (
-                record.sessionId === input.sessionId &&
-                (record.phase === "queued" || isActiveRunPhase(record.phase)) &&
-                record.autoModeEngine !== engine
-              ) {
-                record.autoModeEngine = engine;
-                publishRunUpdate(record);
-              }
-            }
-            void deps.settingsOwner
-              .persistAutoModeEngine(input.sessionId, engine)
-              .catch((error: unknown) => {
-                deps.bus.emit(
-                  "runtime.warning",
-                  {
-                    source: "runtime.auto-mode",
-                    severity: "error",
-                    message: `Failed to persist Session auto-mode engine: ${normalizeError(error).message}`,
-                  },
-                  { sessionId: input.sessionId, runId: input.sessionId },
-                );
-              });
-          },
-        })
-      : undefined;
-    await autoModeGuardrail?.prepare?.();
-    const effectiveOptions: RuntimeKodaXOptions =
-      autoModeGuardrail === undefined
-        ? options
-        : {
-            ...options,
-            guardrails: [...(options.guardrails ?? []), autoModeGuardrail],
-          };
+    const autoModeGuardrail = createRuntimeSessionAutoModeGuardrail({
+      runId,
+      sessionId: input.sessionId,
+      provider,
+      model,
+      autoReviewPolicy,
+      administratorPolicy: deps.autoReview?.administratorPolicy,
+      modelGuidance: deps.autoReview?.modelGuidance,
+      options,
+      permissions: deps.permissions,
+      cache: autoModeGuardrails,
+      states: autoModeStates,
+      settingsOwner: deps.settingsOwner,
+      getRecord: () => deps.runs.get(runId),
+      onPhase: (record, phase) => {
+        if (
+          record.terminalEmitted
+          || record.executorTerminalSignal !== undefined
+          || record.phase === "unknown"
+          || record.stop?.state === "unknown"
+          || record.phase === phase
+        ) {
+          return;
+        }
+        record.phase = phase;
+        publishRunUpdate(record);
+      },
+    });
+    await autoModeGuardrail.prepare?.();
+    const effectiveOptions: RuntimeKodaXOptions = {
+      ...options,
+      guardrails: [...(options.guardrails ?? []), autoModeGuardrail],
+    };
     const startedAt = new Date().toISOString();
     let resolveResult: (result: RuntimeRunResult) => void = () => undefined;
     const result = new Promise<RuntimeRunResult>((resolve) => {
@@ -10107,19 +10143,15 @@ function createRuntimeRunService(deps: {
       ...(settings.autoModeClassifierModel !== undefined
         ? { autoModeClassifierModel: settings.autoModeClassifierModel }
         : {}),
-      ...(settings.autoModeTimeoutMs !== undefined
-        ? { autoModeTimeoutMs: settings.autoModeTimeoutMs }
+      ...(autoReviewPolicy !== undefined ? { autoReviewPolicy } : {}),
+      execPolicyRules: execPolicy.rules,
+      ...(execPolicy.errors.length > 0
+        ? { execPolicyErrors: execPolicy.errors }
         : {}),
-      ...(settings.autoModeSpeculativeWindowMs !== undefined
-        ? {
-            autoModeSpeculativeWindowMs: settings.autoModeSpeculativeWindowMs,
-          }
-        : {}),
-      ...(replApi.normalizePermissionMode(settings.permissionMode) === "auto"
-        ? { autoModeEngine: settings.autoModeEngine ?? "llm" }
-        : settings.autoModeEngine !== undefined
-          ? { autoModeEngine: settings.autoModeEngine }
-          : {}),
+      ...(trustedProjectExecPolicySnapshotPath === undefined
+        ? {}
+        : { trustedProjectExecPolicySnapshotPath }),
+      forcedPermissionCalls: new Set(),
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
@@ -10667,14 +10699,18 @@ function createRuntimeRunService(deps: {
         entry.guardrail.clearAllowedCalls();
       }
       autoModeGuardrails.delete(sessionId);
-      autoModeStates.delete(sessionId);
+      for (const run of deps.runs.values()) {
+        if (run.sessionId === sessionId) autoModeStates.delete(run.runId);
+      }
     },
     getAutoModeStats(sessionId) {
-      const state = autoModeStates.get(sessionId);
+      const activeRunId = activeRunBySession.get(sessionId);
+      const state = activeRunId === undefined
+        ? undefined
+        : autoModeStates.get(activeRunId);
       return state === undefined
         ? undefined
         : {
-            engine: state.engine,
             classifierHealth: breakerShouldFallback(state.breaker, Date.now())
               ? "degraded"
               : "healthy",
@@ -11505,6 +11541,7 @@ function buildRunOptions(input: {
   const hideUnwiredExitPlanMode = options.events?.exitPlanMode === undefined;
   const {
     configHome: _callerConfigHome,
+    authorizeShellHostExecution: _callerHostExecutionAuthorizer,
     memoryIdentity: _callerMemoryIdentity,
     shellSandbox: callerShellSandbox,
     trustedTextMutationHost: _callerTrustedTextMutationHost,
@@ -11514,6 +11551,11 @@ function buildRunOptions(input: {
   const workspaceRoot =
     options.context?.gitRoot ?? options.context?.executionCwd ?? process.cwd();
   const executionCwd = options.context?.executionCwd ?? workspaceRoot;
+  const trustedProjectExecPolicyPath = path.join(
+    workspaceRoot,
+    ".kodax",
+    "exec-policy.jsonc",
+  );
   const workspaceSandboxRoots = createWorkspaceSandboxRootRegistry({
     admittedSessionContext: record.admittedSessionContext,
     sessionId: record.sessionId,
@@ -11526,42 +11568,37 @@ function buildRunOptions(input: {
       executionCwd,
       ...workspaceSandboxRoots.list(),
     ],
-    (canonicalTarget) => assertTrustedTextMutationPolicy(canonicalTarget, executionCwd),
+    (canonicalTarget) => assertTrustedTextMutationPolicy(
+      canonicalTarget,
+      executionCwd,
+      [trustedProjectExecPolicyPath],
+    ),
   );
   const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
-    const autoMode =
-      replApi.normalizePermissionMode(record.permissionMode) === "auto";
-    let review: AutoModePermissionReview | undefined;
-    if (autoMode && runtimeAutoGuardrail !== undefined) {
-      review = runtimeAutoGuardrail.consumeWorkspaceSandboxCall(call);
-      if (review === undefined) return false;
-    } else {
-      try {
-        review = await analyzeAutoModeCall(call, {
-          projectRoot: workspaceRoot,
-          executionCwd,
-          signals: [],
-        });
-      } catch {
-        // The sandbox remains selected with workspace-only access.
-      }
+    try {
+      const review = await analyzeAutoModeCall(call, {
+        projectRoot: workspaceRoot,
+        executionCwd,
+        signals: [],
+      });
+      return review === undefined || workspaceSandboxCanContainReview(review);
+    } catch {
+      // The sandbox remains selected with workspace-only writes and broad reads.
+      return true;
     }
-    return {
-      agentHomeAccess: review === undefined
-        ? undefined
-        : runtimePermissionReviewAgentHomeAccess(review, executionCwd),
-      filesystemAccess: review === undefined
-        ? undefined
-        : runtimePermissionReviewFilesystemAccess(review, executionCwd),
-    };
   };
   const runtimeWorkspaceShellSandbox = createAsrtShellSandbox({
     workspaceRoot,
     additionalWorkspaceRoots: workspaceSandboxRoots.list,
+    ...(record.trustedProjectExecPolicySnapshotPath === undefined
+      ? {}
+      : {
+          trustedProjectExecPolicyPath: record.trustedProjectExecPolicySnapshotPath,
+        }),
     shouldSandbox: selectWorkspaceSandbox,
   });
-  const shellSandbox =
+  const selectedShellSandbox =
     runtimeWorkspaceShellSandbox !== undefined && callerShellSandbox !== undefined
       ? {
           // Opaque calls admitted by the Runtime-owned Auto guardrail consume
@@ -11602,6 +11639,43 @@ function buildRunOptions(input: {
           },
         }
       : runtimeWorkspaceShellSandbox ?? callerShellSandbox;
+  const restrictedModeShellSandbox = selectedShellSandbox ?? {
+    async prepare(request) {
+      request.reportObservation?.({
+        version: 1,
+        state: "fallback",
+        reason: "backend_failed",
+        execution: "normal_permission_policy",
+      });
+      return undefined;
+    },
+  } satisfies KodaXShellSandbox;
+  const shellSandbox: KodaXShellSandbox = {
+    ...(restrictedModeShellSandbox.processTreeContainment === undefined
+      ? {}
+      : {
+          processTreeContainment:
+            restrictedModeShellSandbox.processTreeContainment,
+        }),
+    async prepare(request) {
+      if (
+        replApi.normalizePermissionMode(record.permissionMode) === "full-access"
+      ) {
+        return undefined;
+      }
+      return restrictedModeShellSandbox.prepare(request);
+    },
+  };
+  const authorizeShellHostExecution = async (
+    request: Parameters<
+      NonNullable<KodaXContextOptions["authorizeShellHostExecution"]>
+    >[0],
+  ) => authorizeRuntimeShellHostExecution({
+    events,
+    record,
+    request,
+    runtimeAutoGuardrail,
+  });
   const executeSkillDynamicContext = options.skillDynamicContext?.execute;
   const skillDynamicContext: NonNullable<
     KodaXOptions["skillDynamicContext"]
@@ -11643,6 +11717,9 @@ function buildRunOptions(input: {
       ...ownerSafeContext,
       configHome: input.defaultConfigHome,
       ...(shellSandbox !== undefined ? { shellSandbox } : {}),
+      ...(authorizeShellHostExecution !== undefined
+        ? { authorizeShellHostExecution }
+        : {}),
       ...(trustedTextMutationHost !== undefined ? { trustedTextMutationHost } : {}),
       workspaceSandboxRoots,
       ...(hideUnwiredExitPlanMode
@@ -18300,6 +18377,7 @@ function wrapKodaXEvents(input: {
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
   readonly record: RuntimeRunRecord;
+  readonly onTurnStarted: () => void;
   readonly onExecutorTerminal: (
     signal: "completed" | "failed",
     error?: Error,
@@ -18321,6 +18399,7 @@ function wrapKodaXEvents(input: {
     userInputs,
     enableSharedInteractions,
     record,
+    onTurnStarted,
     onExecutorTerminal,
     onPhase,
     onStage,
@@ -18539,6 +18618,7 @@ function wrapKodaXEvents(input: {
     onTurnStarted(event) {
       if (record.actorDurabilityFailure !== undefined) return;
       record.turnId = event.turnId;
+      onTurnStarted();
       implicitOutputSegments.clear();
       emit("turn.started", event, event);
       externalCallbacks()?.onTurnStarted?.(event);
@@ -18834,25 +18914,44 @@ function wrapKodaXEvents(input: {
     ): Promise<RuntimePermissionToolDecision> => {
       const stoppedBeforeAdmission = managedStopDecision();
       if (stoppedBeforeAdmission !== undefined) return stoppedBeforeAdmission;
-      const autoGuardrail = getRuntimeAutoModeGuardrail(record);
-      const autoModeEngine = record.autoModeEngine;
-      const runtimeOwnsAutoDecision =
-        autoGuardrail !== undefined &&
-        replApi.normalizePermissionMode(record.permissionMode) === "auto" &&
-        (autoModeEngine === "llm" || autoModeEngine === "rules");
-      if (runtimeOwnsAutoDecision) {
-        if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
-        const hostDecision = await original?.beforeToolExecute?.(
+      const exactCall: RunnerToolCall = {
+        id: meta?.toolId ?? `runtime_${tool}`,
+        name: tool,
+        input: toolInput,
+      };
+      const exactCallKey = runtimeAutoModeDecisionKey(exactCall);
+      const forcedPermission = exactCallKey !== undefined
+        && record.forcedPermissionCalls?.delete(exactCallKey) === true;
+      const permissionMode = replApi.normalizePermissionMode(record.permissionMode);
+      if (permissionMode === "full-access" && !forcedPermission) {
+        const fullAccessDecision = resolveRuntimePermissionPolicy(
+          record,
           tool,
           toolInput,
-          meta,
         );
-        const stoppedAfterHostDecision = managedStopDecision();
-        if (stoppedAfterHostDecision !== undefined) {
-          return stoppedAfterHostDecision;
-        }
-        if (hostDecision !== undefined && hostDecision !== true) {
-          return hostDecision;
+        if (fullAccessDecision !== undefined) return fullAccessDecision;
+        // `undefined` in Full Access is reachable only for an explicit policy
+        // prompt, which deliberately falls through to the user boundary.
+      }
+      const autoGuardrail = getRuntimeAutoModeGuardrail(record);
+      const runtimeOwnsAutoDecision =
+        autoGuardrail !== undefined &&
+        permissionMode === "auto";
+      if (runtimeOwnsAutoDecision && !forcedPermission) {
+        if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
+        if (tool !== "bash") {
+          const hostDecision = await original?.beforeToolExecute?.(
+            tool,
+            toolInput,
+            meta,
+          );
+          const stoppedAfterHostDecision = managedStopDecision();
+          if (stoppedAfterHostDecision !== undefined) {
+            return stoppedAfterHostDecision;
+          }
+          if (hostDecision !== undefined && hostDecision !== true) {
+            return hostDecision;
+          }
         }
         const allowed =
           meta?.toolId !== undefined &&
@@ -18864,6 +18963,16 @@ function wrapKodaXEvents(input: {
         if (!allowed) {
           return "[Blocked] Runtime auto mode did not classify this concrete tool call.";
         }
+        return true;
+      }
+      if (
+        permissionMode === "accept-edits"
+        && tool === "bash"
+        && !forcedPermission
+      ) {
+        // Edits also attempts the OS sandbox before creating user permission
+        // work. A proven pre-start boundary re-enters this hook with the exact
+        // forced receipt above.
         return true;
       }
       if (replApi.normalizePermissionMode(record.permissionMode) === "plan") {
@@ -18892,7 +19001,7 @@ function wrapKodaXEvents(input: {
       // fallback for headless/daemon execution where no executable callback can
       // cross the wire.
       const policyDecision =
-        original?.beforeToolExecute === undefined
+        !forcedPermission && original?.beforeToolExecute === undefined
           ? resolveRuntimePermissionPolicy(record, tool, toolInput)
           : undefined;
       if (policyDecision !== undefined) return policyDecision;
@@ -20262,20 +20371,22 @@ function applySessionSettingsPatch(
   applyNullablePatch(next, "thinking", patch.thinking);
   applyNullablePatch(next, "reasoningMode", patch.reasoningMode);
   applyNullablePatch(next, "agentMode", patch.agentMode);
-  applyNullablePatch(next, "autoModeEngine", patch.autoModeEngine);
-  applyNullablePositiveIntegerPatch(
-    next,
-    "autoModeTimeoutMs",
-    patch.autoModeTimeoutMs,
-  );
-  applyNullableNonNegativeIntegerPatch(
-    next,
-    "autoModeSpeculativeWindowMs",
-    patch.autoModeSpeculativeWindowMs,
-  );
   applyNullableCompactionPercentPatch(next, patch.compactionTriggerPercent);
   applyNullableCompactionTokensPatch(next, patch.compactionTriggerTokens);
   return next;
+}
+
+function canonicalizeRuntimeSessionSettingsPatch(
+  patch: RuntimeSessionSettingsPatch,
+): RuntimeSessionSettingsPatch {
+  const {
+    autoModeEngine: _ignoredLegacyEngine,
+    autoModeTimeoutMs: _ignoredLegacyTimeout,
+    autoModeSpeculativeWindowMs: _ignoredLegacyWindow,
+    ...canonical
+  } = patch;
+  if (canonical.permissionMode !== "auto-in-project") return canonical;
+  return { ...canonical, permissionMode: "auto" };
 }
 
 function applyNullableCompactionPercentPatch(
@@ -20337,38 +20448,6 @@ type RuntimeStringSettingKey =
   | "executionCwd"
   | "autoModeClassifierModel";
 
-function applyNullablePositiveIntegerPatch(
-  target: RuntimeSessionSettings,
-  key: "autoModeTimeoutMs",
-  value: number | null | undefined,
-): void {
-  if (value === undefined) return;
-  if (value === null) {
-    deleteMutableSetting(target, key);
-    return;
-  }
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${key} must be a positive safe integer`);
-  }
-  setMutableSetting(target, key, value);
-}
-
-function applyNullableNonNegativeIntegerPatch(
-  target: RuntimeSessionSettings,
-  key: "autoModeSpeculativeWindowMs",
-  value: number | null | undefined,
-): void {
-  if (value === undefined) return;
-  if (value === null) {
-    deleteMutableSetting(target, key);
-    return;
-  }
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${key} must be a non-negative safe integer`);
-  }
-  setMutableSetting(target, key, value);
-}
-
 function applyNullableStringPatch(
   target: RuntimeSessionSettings,
   key: RuntimeStringSettingKey,
@@ -20416,10 +20495,7 @@ function runtimeAutoModeClassifierModelError(
   settings: RuntimeSessionSettings,
   model: string | undefined,
 ): RuntimeAutoModeConfigurationError | undefined {
-  if (
-    replApi.normalizePermissionMode(settings.permissionMode) !== "auto" ||
-    (settings.autoModeEngine ?? "llm") !== "llm"
-  ) {
+  if (replApi.normalizePermissionMode(settings.permissionMode) !== "auto") {
     return undefined;
   }
   if (settings.autoModeClassifierModel !== undefined) {
@@ -20438,14 +20514,6 @@ function runtimeAutoModeClassifierModelError(
   return new RuntimeAutoModeConfigurationError(
     "Auto LLM requires a classifier model. Set autoModeClassifierModel, the Session/run model, or runtime defaultModel.",
   );
-}
-
-function assertRuntimeAutoModeClassifierModelConfigured(
-  settings: RuntimeSessionSettings,
-  model: string | undefined,
-): void {
-  const error = runtimeAutoModeClassifierModelError(settings, model);
-  if (error) throw error;
 }
 
 function applyNullablePatch<K extends keyof RuntimeSessionSettings>(
@@ -20489,7 +20557,11 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
   const settings: RuntimeSessionSettings = {};
   setStringIfPresent(settings, "provider", value.provider);
   setStringIfPresent(settings, "model", value.model);
-  setStringIfPresent(settings, "permissionMode", value.permissionMode);
+  setStringIfPresent(
+    settings,
+    "permissionMode",
+    value.permissionMode === "auto-in-project" ? "auto" : value.permissionMode,
+  );
   setStringIfPresent(settings, "executionCwd", value.executionCwd);
   if (value.shellExecution !== undefined) {
     setMutableSetting(
@@ -20509,29 +20581,6 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
   }
   setStringIfPresent(settings, "reasoningMode", value.reasoningMode);
   setStringIfPresent(settings, "agentMode", value.agentMode);
-  if (value.autoModeEngine === "llm" || value.autoModeEngine === "rules") {
-    setMutableSetting(settings, "autoModeEngine", value.autoModeEngine);
-  }
-  if (
-    Number.isSafeInteger(value.autoModeTimeoutMs) &&
-    Number(value.autoModeTimeoutMs) > 0
-  ) {
-    setMutableSetting(
-      settings,
-      "autoModeTimeoutMs",
-      Number(value.autoModeTimeoutMs),
-    );
-  }
-  if (
-    Number.isSafeInteger(value.autoModeSpeculativeWindowMs) &&
-    Number(value.autoModeSpeculativeWindowMs) >= 0
-  ) {
-    setMutableSetting(
-      settings,
-      "autoModeSpeculativeWindowMs",
-      Number(value.autoModeSpeculativeWindowMs),
-    );
-  }
   if (typeof value.compactionTriggerPercent === "number") {
     applyNullableCompactionPercentPatch(
       settings,
@@ -20640,6 +20689,111 @@ function readRuntimeConfig(
   return readRuntimeConfigDocument(configFile).config;
 }
 
+function runtimeAutoReviewPolicy(
+  config: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const autoReview = config.autoReview;
+  if (!isRecord(autoReview) || typeof autoReview.policy !== "string") {
+    return undefined;
+  }
+  const policy = autoReview.policy.trim();
+  return policy.length === 0 ? undefined : policy;
+}
+
+async function authorizeRuntimeShellHostExecution(input: {
+  readonly events: KodaXEvents;
+  readonly record: RuntimeRunRecord;
+  readonly request: KodaXShellHostExecutionRequest;
+  readonly runtimeAutoGuardrail?: RuntimeOwnedAutoModeGuardrail;
+}): Promise<boolean | string> {
+  const trustedProjectPolicy = input.record.trustedProjectExecPolicySnapshotPath;
+  if (trustedProjectPolicy !== undefined && !fs.existsSync(trustedProjectPolicy)) {
+    return `[Blocked] Trusted project Exec Policy snapshot disappeared during this Run: ${trustedProjectPolicy}. Start a new Run after restoring or intentionally removing the policy.`;
+  }
+  const call: RunnerToolCall = {
+    id: input.request.toolCallId
+      ?? `host_boundary_${createHash("sha256").update(input.request.command).digest("hex").slice(0, 16)}`,
+    name: "bash",
+    input: { ...input.request.toolInput },
+  };
+  const policy = resolveRuntimeShellExecPolicy(
+    input.record,
+    input.request.command,
+    input.request.executable === undefined
+      ? undefined
+      : { hostExecutable: input.request.executable },
+  );
+  if (policy === true) return true;
+  if (policy === "prompt") {
+    return requestRuntimeForcedPermission(input.events, input.record, call);
+  }
+  if (typeof policy === "string") return policy;
+
+  const mode = replApi.normalizePermissionMode(input.record.permissionMode);
+  if (mode === "full-access") return true;
+  if (mode === "accept-edits") {
+    return requestRuntimeForcedPermission(input.events, input.record, call);
+  }
+  if (mode === "auto") {
+    const verdict = await input.runtimeAutoGuardrail?.reviewHostCall(call);
+    if (verdict?.action === "allow") return true;
+    return `[Denied] ${verdict?.reason ?? "Auto[LLM] could not authorize this host-boundary operation. Use a safer route or ask the user for informed direction."}`;
+  }
+  if (mode === "plan") {
+    const decision = resolveRuntimePermissionPolicy(
+      input.record,
+      call.name,
+      call.input,
+    );
+    return decision === true
+      ? true
+      : typeof decision === "string"
+        ? decision
+        : "[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.";
+  }
+  return "[Blocked] Host execution requires a recognized permission profile.";
+}
+
+async function requestRuntimeForcedPermission(
+  events: KodaXEvents,
+  record: RuntimeRunRecord,
+  call: RunnerToolCall,
+): Promise<boolean | string> {
+  const key = runtimeAutoModeDecisionKey(call);
+  if (key === undefined) {
+    return "[Blocked] Host-boundary operation could not be bound to an exact permission request.";
+  }
+  record.forcedPermissionCalls?.add(key);
+  const decision = await events.beforeToolExecute?.(call.name, call.input, {
+    sessionId: record.sessionId,
+    ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
+    toolId: call.id,
+  });
+  return decision ?? false;
+}
+
+function resolveRuntimeShellExecPolicy(
+  record: RuntimeRunRecord,
+  command: string,
+  facts?: Readonly<{ readonly hostExecutable?: string }>,
+): true | "prompt" | string | undefined {
+  const invalid = record.execPolicyErrors?.[0];
+  if (invalid !== undefined) {
+    return `[Blocked] Exec Policy could not be loaded from ${invalid.path}: ${invalid.message}`;
+  }
+  const evaluation = evaluateShellExecPolicy(
+    command,
+    record.execPolicyRules ?? [],
+    facts,
+  );
+  if (evaluation.decision === "allow") return true;
+  if (evaluation.decision === "prompt") return "prompt";
+  if (evaluation.decision === "forbidden") {
+    return `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? "no justification supplied"}`;
+  }
+  return undefined;
+}
+
 function readRuntimeConfigDocument(
   configFile: string | undefined,
 ): {
@@ -20666,6 +20820,7 @@ function readRuntimeConfigDocument(
 function buildRuntimeEffectiveConfigSnapshot(options: {
   readonly configFile: string | undefined;
   readonly defaultProvider?: string;
+  readonly execPolicy?: RuntimeExecPolicyOptions;
   readonly defaultModel?: string;
 }): RuntimeEffectiveConfigSnapshot {
   const persisted = readRuntimeConfigDocument(
@@ -21208,23 +21363,11 @@ function serializeSessionSettings(
   }
   if (settings.agentMode !== undefined)
     setMutableSetting(result, "agentMode", settings.agentMode);
-  if (settings.autoModeEngine !== undefined)
-    setMutableSetting(result, "autoModeEngine", settings.autoModeEngine);
   if (settings.autoModeClassifierModel !== undefined) {
     setMutableSetting(
       result,
       "autoModeClassifierModel",
       settings.autoModeClassifierModel,
-    );
-  }
-  if (settings.autoModeTimeoutMs !== undefined) {
-    setMutableSetting(result, "autoModeTimeoutMs", settings.autoModeTimeoutMs);
-  }
-  if (settings.autoModeSpeculativeWindowMs !== undefined) {
-    setMutableSetting(
-      result,
-      "autoModeSpeculativeWindowMs",
-      settings.autoModeSpeculativeWindowMs,
     );
   }
   if (settings.compactionTriggerPercent !== undefined) {
@@ -22318,41 +22461,20 @@ type RuntimePermissionRaceResult =
       readonly decision: RuntimePermissionToolDecision;
     };
 
-function autoModeEscalationRisk(
-  signals: readonly ToolCallSignal[] | undefined,
-): RuntimePermissionRisk {
-  if (
-    signals?.some(
-      (signal) =>
-        (signal.kind === "dangerous_pattern" && signal.severity === "high") ||
-        signal.kind === "protected_path" ||
-        signal.kind === "shell_redirect_outside",
-    )
-  ) {
-    return "high";
-  }
-  return signals && signals.length > 0 ? "medium" : "low";
-}
-
 interface RuntimeAutoModeGuardrailCacheEntry {
+  readonly runId: string;
   readonly projectRoot: string;
   readonly executionCwd: string;
-  engine: NonNullable<RuntimeSessionSettings["autoModeEngine"]>;
   readonly classifierModel?: string;
-  readonly timeoutMs?: number;
-  readonly speculativeWindowMs?: number;
   readonly guardrail: RuntimeOwnedAutoModeGuardrail;
 }
 
 const MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION = 8;
 
 interface RuntimeOwnedAutoModeGuardrail extends ToolGuardrail {
-  getEngine(): NonNullable<RuntimeSessionSettings["autoModeEngine"]>;
   prepare?(): Promise<void>;
   consumeAllowedCall(call: RunnerToolCall): boolean;
-  consumeWorkspaceSandboxCall(
-    call: RunnerToolCall,
-  ): AutoModePermissionReview | undefined;
+  reviewHostCall(call: RunnerToolCall): Promise<GuardrailVerdict>;
   clearAllowedCalls(): void;
 }
 
@@ -22389,12 +22511,10 @@ function isRuntimeAutoModeGuardrail(
   return (
     guardrail.kind === "tool" &&
     guardrail.name === "auto-mode" &&
-    "getEngine" in guardrail &&
-    typeof guardrail.getEngine === "function" &&
     "consumeAllowedCall" in guardrail &&
     typeof guardrail.consumeAllowedCall === "function" &&
-    "consumeWorkspaceSandboxCall" in guardrail &&
-    typeof guardrail.consumeWorkspaceSandboxCall === "function"
+    "reviewHostCall" in guardrail &&
+    typeof guardrail.reviewHostCall === "function"
   );
 }
 
@@ -22507,167 +22627,30 @@ function runtimeAutoModeDecisionKey(call: RunnerToolCall): string | undefined {
   }
 }
 
-function runtimePermissionPath(
-  target: AutoModePermissionTarget,
-  executionCwd: string,
-): string {
-  const home = os.homedir();
-  const candidate = target.path;
-  const homeExpanded = (candidate === "~"
-    ? home
-    : /^~[\\/]/.test(candidate)
-      ? path.join(home, candidate.slice(2))
-      : candidate
-  ).replace(
-    /^(?:\$\{HOME\}|\$HOME|\$env:(?:home|userprofile)|%userprofile%)(?=$|[\\/])/i,
-    home,
+function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boolean {
+  const writable = (boundary: AutoModePermissionTarget["boundary"]): boolean => (
+    boundary === "workspace" || boundary === "system-temp"
   );
-  const envExpanded = homeExpanded.replace(
-    /^(?:%([^%]+)%|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*))(?=$|[\\/])/i,
-    (
-      matched: string,
-      percent: string | undefined,
-      powershell: string | undefined,
-      braced: string | undefined,
-      bare: string | undefined,
-    ) => {
-      const name = [percent, powershell, braced, bare]
-        .find((value) => value !== undefined);
-      if (name === undefined) return matched;
-      return Object.entries(process.env).find(([candidateName, value]) => (
-        candidateName.toLowerCase() === name.toLowerCase() && value !== undefined
-      ))?.[1] ?? matched;
-    },
-  );
-  return path.resolve(executionCwd, envExpanded);
-}
-
-function runtimePermissionAgentHomePath(
-  target: AutoModePermissionTarget,
-  executionCwd: string,
-): string | undefined {
-  const resolved = runtimePermissionPath(target, executionCwd);
-  const insideAgentHome = isPathInsideDirectory(
-    resolved,
-    path.resolve(getAgentConfigHome()),
-  );
-  if (!insideAgentHome) return undefined;
-  return target.boundary === "agent-home"
-    || target.boundary === "agent-home-readonly"
-    || target.boundary === "protected"
-    ? resolved
-    : undefined;
-}
-
-function runtimePermissionReviewFilesystemAccess(
-  review: AutoModePermissionReview,
-  executionCwd: string,
-): { readonly read: readonly string[]; readonly write: readonly string[] } | undefined {
-  const read = new Set<string>();
-  const write = new Set<string>();
-  const add = (
-    target: AutoModePermissionTarget,
-    destination: Set<string>,
-  ): void => {
-    if (target.boundary !== "outside-workspace" && target.boundary !== "system-temp") return;
-    destination.add(runtimePermissionPath(target, executionCwd));
-  };
-  for (const operation of review.operations) {
+  return review.operations.every((operation) => {
+    if (operation.options?.whatIf === true) return true;
+    if (operation.kind === "execute" || operation.kind === "unknown") return true;
     if ("target" in operation) {
-      add(
-        operation.target,
-        operation.kind === "read" || operation.options?.whatIf === true ? read : write,
-      );
-      continue;
+      return operation.kind === "read" || writable(operation.target.boundary);
     }
-    if ("source" in operation) {
-      add(operation.source, operation.kind === "copy" ? read : write);
-      add(operation.destination, write);
-    }
-  }
-  return read.size === 0 && write.size === 0
-    ? undefined
-    : { read: [...read], write: [...write] };
-}
-
-function runtimePermissionReviewAgentHomeAccess(
-  review: AutoModePermissionReview,
-  executionCwd: string,
-): {
-  readonly read: readonly string[];
-  readonly write: readonly string[];
-  readonly ephemeral?: boolean;
-} | undefined {
-  const read = new Set<string>();
-  const write = new Set<string>();
-  let ephemeral = false;
-  const add = (
-    target: AutoModePermissionTarget,
-    destination: Set<string>,
-    writeAccess: boolean,
-  ): void => {
-    const resolved = runtimePermissionAgentHomePath(target, executionCwd);
-    if (resolved === undefined) return;
-    destination.add(resolved);
-    const safelyAutomatic = target.boundary === "agent-home"
-      || (!writeAccess && target.boundary === "agent-home-readonly");
-    if (!safelyAutomatic) ephemeral = true;
-  };
-  for (const operation of review.operations) {
-    if ("target" in operation) {
-      const reading = operation.kind === "read"
-        || operation.options?.whatIf === true;
-      add(
-        operation.target,
-        reading ? read : write,
-        !reading,
-      );
-      continue;
-    }
-    if ("source" in operation) {
-      const copies = operation.kind === "copy";
-      add(operation.source, copies ? read : write, !copies);
-      add(operation.destination, write, true);
-    }
-  }
-  return read.size === 0 && write.size === 0
-    ? undefined
-    : {
-        read: [...read],
-        write: [...write],
-        ...(ephemeral ? { ephemeral: true } : {}),
-      };
-}
-
-function reviewTouchesProtectedWindowsSystemTemp(
-  review: AutoModePermissionReview,
-): boolean {
-  if (process.platform !== "win32") return false;
-  const systemTemp = path.resolve(
-    process.env.SystemRoot ?? "C:\\Windows",
-    "Temp",
-  );
-  const isSystemTemp = (candidate: string): boolean => {
-    if (!path.isAbsolute(candidate)) return false;
-    const relative = path.relative(systemTemp, path.resolve(candidate));
-    return relative === ""
-      || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  };
-  return review.operations.some((operation) => {
-    if ("target" in operation) return isSystemTemp(operation.target.path);
-    if ("source" in operation) {
-      return isSystemTemp(operation.source.path)
-        || isSystemTemp(operation.destination.path);
-    }
-    return false;
+    if (operation.kind === "copy") return writable(operation.destination.boundary);
+    return writable(operation.source.boundary)
+      && writable(operation.destination.boundary);
   });
 }
 
 function createRuntimeOwnedAutoModeGuardrail(
   guardrail: AutoModeToolGuardrail,
-  workspaceSandboxCalls: Map<string, AutoModePermissionReview>,
 ): RuntimeOwnedAutoModeGuardrail {
   const allowedCalls = new Set<string>();
+  const pendingHostReviews = new Map<
+    string,
+    { readonly call: RunnerToolCall; readonly context: GuardrailContext }
+  >();
   return {
     ...guardrail,
     beforeTool: async (
@@ -22679,6 +22662,23 @@ function createRuntimeOwnedAutoModeGuardrail(
           action: "block",
           reason: "Runtime auto-mode guardrail has no beforeTool hook.",
         };
+      }
+      if (call.name === "bash") {
+        const key = runtimeAutoModeDecisionKey(call);
+        if (key === undefined) {
+          return {
+            action: "block",
+            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
+          };
+        }
+        allowedCalls.add(key);
+        pendingHostReviews.set(key, { call, context: ctx });
+        while (pendingHostReviews.size > 64) {
+          const oldest = pendingHostReviews.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          pendingHostReviews.delete(oldest);
+        }
+        return { action: "allow" };
       }
       const verdict = await guardrail.beforeTool(call, ctx);
       if (verdict.action === "allow") {
@@ -22695,25 +22695,35 @@ function createRuntimeOwnedAutoModeGuardrail(
       allowedCalls.delete(key);
       return true;
     },
-    consumeWorkspaceSandboxCall(call) {
+    async reviewHostCall(call) {
       const key = runtimeAutoModeDecisionKey(call);
-      if (key === undefined) return undefined;
-      const review = workspaceSandboxCalls.get(key);
-      if (review === undefined) return undefined;
-      workspaceSandboxCalls.delete(key);
-      return review;
+      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
+      if (key !== undefined) pendingHostReviews.delete(key);
+      if (pending === undefined || !guardrail.beforeTool) {
+        return {
+          action: "block",
+          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
+        };
+      }
+      return typeof guardrail.reviewHostBoundary === "function"
+        ? guardrail.reviewHostBoundary(pending.call, pending.context)
+        : guardrail.beforeTool(pending.call, pending.context);
     },
     clearAllowedCalls() {
       allowedCalls.clear();
-      workspaceSandboxCalls.clear();
+      pendingHostReviews.clear();
     },
   };
 }
 
 function createRuntimeSessionAutoModeGuardrail(input: {
+  readonly runId: string;
   readonly sessionId: string;
   readonly provider: string;
   readonly model?: string;
+  readonly autoReviewPolicy?: string;
+  readonly administratorPolicy?: string;
+  readonly modelGuidance?: string;
   readonly options: RuntimeKodaXOptions;
   readonly permissions: RuntimePermissionRegistry;
   readonly cache: Map<string, Map<string, RuntimeAutoModeGuardrailCacheEntry>>;
@@ -22724,11 +22734,12 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     record: RuntimeRunRecord,
     phase: RuntimeRunPhase,
   ) => void;
-  readonly onEngineChange: (
-    engine: NonNullable<RuntimeSessionSettings["autoModeEngine"]>,
-  ) => void;
 }): RuntimeOwnedAutoModeGuardrail {
   const allowedCalls = new Set<string>();
+  const pendingHostReviews = new Map<
+    string,
+    { readonly call: RunnerToolCall; readonly context: GuardrailContext }
+  >();
   let currentGuardrail: RuntimeOwnedAutoModeGuardrail | undefined;
   let configurationError: RuntimeAutoModeConfigurationError | undefined;
   const resolveGuardrail = async (): Promise<
@@ -22738,13 +22749,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     const record = input.getRecord();
     if (record) {
       record.permissionMode = settings.permissionMode;
-      record.autoModeEngine =
-        replApi.normalizePermissionMode(settings.permissionMode) === "auto"
-          ? (settings.autoModeEngine ?? "llm")
-          : settings.autoModeEngine;
       record.autoModeClassifierModel = settings.autoModeClassifierModel;
-      record.autoModeTimeoutMs = settings.autoModeTimeoutMs;
-      record.autoModeSpeculativeWindowMs = settings.autoModeSpeculativeWindowMs;
     }
     configurationError = runtimeAutoModeClassifierModelError(
       settings,
@@ -22765,10 +22770,32 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     kind: "tool",
     name: "auto-mode",
     async prepare() {
-      await resolveGuardrail();
-      if (configurationError) throw configurationError;
+      // Reviewer configuration is intentionally lazy. A sandbox-completing
+      // Bash call must not require a classifier model or provider.
     },
     async beforeTool(call, ctx) {
+      if (call.name === "bash") {
+        const liveMode = replApi.normalizePermissionMode(
+          input.settingsOwner.peek(input.sessionId)?.value.permissionMode
+            ?? input.getRecord()?.permissionMode,
+        );
+        if (liveMode !== "auto") return { action: "allow" };
+        const key = runtimeAutoModeDecisionKey(call);
+        if (key === undefined) {
+          return {
+            action: "block",
+            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
+          };
+        }
+        allowedCalls.add(key);
+        pendingHostReviews.set(key, { call, context: ctx });
+        while (pendingHostReviews.size > 64) {
+          const oldest = pendingHostReviews.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          pendingHostReviews.delete(oldest);
+        }
+        return { action: "allow" };
+      }
       const guardrail = await resolveGuardrail();
       if (!guardrail?.beforeTool) {
         if (configurationError) {
@@ -22787,25 +22814,41 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       }
       return verdict;
     },
-    getEngine() {
-      if (currentGuardrail) return currentGuardrail.getEngine();
-      const settings = input.settingsOwner.peek(input.sessionId)?.value;
-      return replApi.normalizePermissionMode(settings?.permissionMode) ===
-        "auto"
-        ? (settings?.autoModeEngine ?? "llm")
-        : "rules";
-    },
     consumeAllowedCall(call) {
       const key = runtimeAutoModeDecisionKey(call);
       if (key === undefined || !allowedCalls.has(key)) return false;
       allowedCalls.delete(key);
       return true;
     },
-    consumeWorkspaceSandboxCall(call) {
-      return currentGuardrail?.consumeWorkspaceSandboxCall(call);
+    async reviewHostCall(call) {
+      const key = runtimeAutoModeDecisionKey(call);
+      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
+      if (key !== undefined) pendingHostReviews.delete(key);
+      if (pending === undefined) {
+        return {
+          action: "block",
+          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
+        };
+      }
+      // Host-boundary review is a fresh authorization decision. Resolve from
+      // live Session settings even when an earlier tool initialized a cached
+      // reviewer with a now-stale classifier override.
+      const guardrail = await resolveGuardrail();
+      if (guardrail === undefined) {
+        return {
+          action: "block",
+          reason: configurationError?.message
+            ?? "Auto[LLM] reviewer is unavailable. Use a safer route or configure a reviewer model.",
+        };
+      }
+      const admitted = await guardrail.beforeTool?.(pending.call, pending.context);
+      if (admitted !== undefined && admitted.action !== "allow") return admitted;
+      guardrail.consumeAllowedCall(pending.call);
+      return guardrail.reviewHostCall(call);
     },
     clearAllowedCalls() {
       allowedCalls.clear();
+      pendingHostReviews.clear();
       currentGuardrail?.clearAllowedCalls();
     },
   };
@@ -22826,9 +22869,13 @@ function runtimeShellUsesProcessEnvironmentPathAliases(
 }
 
 async function createRuntimeAutoModeGuardrail(input: {
+  readonly runId: string;
   readonly sessionId: string;
   readonly provider: string;
   readonly model?: string;
+  readonly autoReviewPolicy?: string;
+  readonly administratorPolicy?: string;
+  readonly modelGuidance?: string;
   readonly settings: RuntimeSessionSettings;
   readonly options: RuntimeKodaXOptions;
   readonly permissions: RuntimePermissionRegistry;
@@ -22839,29 +22886,19 @@ async function createRuntimeAutoModeGuardrail(input: {
     record: RuntimeRunRecord,
     phase: RuntimeRunPhase,
   ) => void;
-  readonly onEngineChange: (
-    engine: NonNullable<RuntimeSessionSettings["autoModeEngine"]>,
-  ) => void;
 }): Promise<RuntimeOwnedAutoModeGuardrail | undefined> {
   if (
     replApi.normalizePermissionMode(input.settings.permissionMode) !== "auto"
   ) {
     return undefined;
   }
-  const engine = input.settings.autoModeEngine ?? "llm";
-  let sharedState = input.states.get(input.sessionId);
+  let sharedState = input.states.get(input.runId);
   if (sharedState === undefined) {
     sharedState = {
-      engine,
       denials: createAutoModeDenialTracker(),
       breaker: createCircuitBreaker(),
     };
-    input.states.set(input.sessionId, sharedState);
-  } else {
-    // Persisted Session settings are authoritative for explicit engine
-    // changes; denial and breaker history survive cwd/config-specific
-    // guardrail replacement.
-    sharedState.engine = engine;
+    input.states.set(input.runId, sharedState);
   }
   const executionCwd = path.resolve(
     input.options.context?.executionCwd ??
@@ -22877,119 +22914,50 @@ async function createRuntimeAutoModeGuardrail(input: {
       input.options.context?.shellExecution,
     );
   const cacheKey = JSON.stringify([
+    input.runId,
     process.platform === "win32" ? projectRoot.toLowerCase() : projectRoot,
     process.platform === "win32" ? executionCwd.toLowerCase() : executionCwd,
-    engine,
     input.settings.autoModeClassifierModel ?? null,
-    input.settings.autoModeTimeoutMs ?? null,
-    input.settings.autoModeSpeculativeWindowMs ?? null,
+    input.administratorPolicy ?? null,
+    input.autoReviewPolicy ?? null,
+    input.modelGuidance ?? null,
     trustProcessEnvironmentPathExpansion,
   ]);
   const sessionCache = input.cache.get(input.sessionId) ?? new Map();
   input.cache.set(input.sessionId, sessionCache);
   const cached = sessionCache.get(cacheKey);
-  if (cached?.engine === engine) return cached.guardrail;
-  if (cached) sessionCache.delete(cacheKey);
-  let cacheEntry: RuntimeAutoModeGuardrailCacheEntry | undefined;
-  const workspaceSandboxCalls = new Map<string, AutoModePermissionReview>();
+  if (cached) return cached.guardrail;
   const bootstrap = await replApi.bootstrapAutoMode({
-    askUser: async (call, reason, signals, diagnostics) => {
-      const record = input.getRecord();
-      if (!record) return "block";
-      const previousPhase = record.phase;
-      if (record.phase === "running") {
-        input.onPhase(record, "waiting_permission");
-      }
-      try {
-        const decision = await input.permissions.requestOwned(
-          {
-            sessionId: input.sessionId,
-            runId: record.runId,
-            ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
-            toolCallId: call.id,
-            toolName: call.name,
-            reason: reason.slice(0, 512),
-            risk: autoModeEscalationRisk(signals),
-            inputPreview: previewInput(call.input),
-            executionCwd,
-            ...(diagnostics !== undefined
-              ? { autoModeDiagnostics: diagnostics }
-              : {}),
-          },
-          {
-            toolInput: call.input,
-            projectRoot,
-            ...(signals !== undefined ? { signals } : {}),
-          },
-        );
-        if (
-          decision.type === "reject"
-          && decision.cause === "approval_timeout"
-        ) return "timeout";
-        return decision.type === "allow_once" ||
-          decision.type === "allow_session" ||
-          decision.type === "allow_always"
-          ? "allow"
-          : "block";
-      } finally {
-        if (record.phase === "waiting_permission") {
-          input.onPhase(
-            record,
-            previousPhase === "queued" ? "running" : previousPhase,
-          );
-        }
-      }
-    },
     projectRoot,
     executionCwd,
     trustProcessEnvironmentPathExpansion,
-    admitWorkspaceSandboxCall: (call, review) => {
-      if (reviewTouchesProtectedWindowsSystemTemp(review)) return;
-      const key = runtimeAutoModeDecisionKey(call);
-      if (key !== undefined) workspaceSandboxCalls.set(key, review);
-    },
     getCurrentProviderName: () => input.getRecord()?.provider ?? input.provider,
     getCurrentModel: () => input.getRecord()?.model ?? input.model,
     getCurrentPermissionMode: () => "auto",
+    ...(input.administratorPolicy !== undefined
+      ? { administratorPolicy: input.administratorPolicy }
+      : {}),
+    ...(input.modelGuidance !== undefined
+      ? { modelGuidance: input.modelGuidance }
+      : {}),
     autoModeSettings: {
-      engine,
       ...(input.settings.autoModeClassifierModel !== undefined
         ? { classifierModel: input.settings.autoModeClassifierModel }
         : {}),
-      ...(input.settings.autoModeTimeoutMs !== undefined
-        ? { timeoutMs: input.settings.autoModeTimeoutMs }
-        : {}),
-      ...(input.settings.autoModeSpeculativeWindowMs !== undefined
-        ? {
-            speculativeWindowMs: input.settings.autoModeSpeculativeWindowMs,
-          }
+      ...(input.autoReviewPolicy !== undefined
+        ? { reviewPolicy: input.autoReviewPolicy }
         : {}),
     },
     sharedState,
     extraCollectors: [replApi.replBashPathSignalCollector],
-    onEngineChange: (nextEngine) => {
-      if (cacheEntry) cacheEntry.engine = nextEngine;
-      input.onEngineChange(nextEngine);
-    },
   });
-  const guardrail = createRuntimeOwnedAutoModeGuardrail(
-    bootstrap.getGuardrail(),
-    workspaceSandboxCalls,
-  );
-  cacheEntry = {
+  const guardrail = createRuntimeOwnedAutoModeGuardrail(bootstrap.getGuardrail());
+  const cacheEntry: RuntimeAutoModeGuardrailCacheEntry = {
+    runId: input.runId,
     projectRoot,
     executionCwd,
-    engine: guardrail.getEngine(),
     ...(input.settings.autoModeClassifierModel !== undefined
       ? { classifierModel: input.settings.autoModeClassifierModel }
-      : {}),
-    ...(input.settings.autoModeTimeoutMs !== undefined
-      ? { timeoutMs: input.settings.autoModeTimeoutMs }
-      : {}),
-    ...(input.settings.autoModeSpeculativeWindowMs !== undefined
-      ? {
-          speculativeWindowMs: input.settings.autoModeSpeculativeWindowMs,
-        }
       : {}),
     guardrail,
   };
@@ -22997,7 +22965,8 @@ async function createRuntimeAutoModeGuardrail(input: {
   while (sessionCache.size > MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION) {
     const oldestKey = sessionCache.keys().next().value as string | undefined;
     if (oldestKey === undefined || oldestKey === cacheKey) break;
-    sessionCache.get(oldestKey)?.guardrail.clearAllowedCalls();
+    const oldest = sessionCache.get(oldestKey);
+    oldest?.guardrail.clearAllowedCalls();
     sessionCache.delete(oldestKey);
   }
   return guardrail;
@@ -23011,6 +22980,12 @@ function resolveRuntimePermissionPolicy(
   if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
   const mode = replApi.normalizePermissionMode(record.permissionMode);
   if (mode === undefined) return undefined;
+  if (mode === "full-access") {
+    // Bash policy is evaluated once at the resolved host boundary, where
+    // executable/network qualifiers can be proved. The live Full Access
+    // sandbox adapter reaches that boundary without starting a sandbox.
+    return true;
+  }
   const rawProjectRoot =
     record.start?.options.context?.gitRoot ??
     record.start?.options.context?.executionCwd;

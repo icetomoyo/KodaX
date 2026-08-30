@@ -18,7 +18,6 @@ import { Runner } from '@kodax-ai/agent';
 import { runWithScopedConfig } from '@kodax-ai/llm';
 
 import { createDefaultCodingAgent } from './coding-preset.js';
-import { createAgentHomeShellBoundaryGuardrail } from './guardrails/auto-mode/guardrail.js';
 import { applyFollowupEscalationToOptions } from './reasoning.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
 import {
@@ -69,22 +68,6 @@ export async function runKodaX(
           permissionIntent: { rootUserIntent: prompt },
         },
       };
-  const shellBoundary = createAgentHomeShellBoundaryGuardrail({
-    projectRoot: runtimeOptions.context?.gitRoot
-      ?? runtimeOptions.context?.executionCwd
-      ?? process.cwd(),
-    executionCwd: runtimeOptions.context?.executionCwd
-      ?? runtimeOptions.context?.gitRoot
-      ?? process.cwd(),
-    protectedReadReviewAvailable: runtimeOptions.events?.beforeToolExecute !== undefined,
-  });
-  const guardrails = [
-    ...(runtimeOptions.guardrails ?? []).filter(
-      (guardrail) => guardrail.name !== shellBoundary.name,
-    ),
-    // Terminal boundary: no later guardrail may rewrite the checked call.
-    shellBoundary,
-  ];
   // Establish the run-scoped config (AsyncLocalStorage) around the whole run.
   // `runKodaX` is a public SDK entry (and the target `startKodaX` wraps), so
   // without this the per-run overrides (modelTiers / maxOutputTokens /
@@ -100,7 +83,7 @@ export async function runKodaX(
         // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails
         // (e.g. AutoModeToolGuardrail injected by the REPL bootstrap when
         // permissionMode === 'auto'). Runner merges with `agent.guardrails`.
-        guardrails,
+        guardrails: runtimeOptions.guardrails,
         permissionIntent: runtimeOptions.context?.permissionIntent,
       });
       // Substrate executor always lifts full `KodaXResult` onto `data` —

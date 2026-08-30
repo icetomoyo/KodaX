@@ -353,7 +353,7 @@ describe('CLI Entry Point', () => {
     expect(source).toContain('Resume session by ID or exact title (no value = open searchable session picker)');
     expect(source).toContain('Multiple sessions have the title');
     expect(source).not.toContain('list recent sessions, then resume the latest');
-    expect(source).toContain('/mode [plan|accept-edits|auto]');
+    expect(source).toContain('/mode [plan|accept-edits|auto|full-access]');
     expect(source).toContain('Backward-compat alias; no effect in non-REPL CLI');
     expect(source).toContain('runSessionPicker');
     expect(source).not.toContain('Auto-select the most recent session for resume');
@@ -695,19 +695,19 @@ describe('CLI Behavior', () => {
 
 describe('parsePermissionModeOption', () => {
   it('accepts valid ACP permission modes', () => {
+    expect(parsePermissionModeOption('plan')).toBe('plan');
     expect(parsePermissionModeOption('accept-edits')).toBe('accept-edits');
-    expect(parsePermissionModeOption('auto-in-project')).toBe('auto-in-project');
+    expect(parsePermissionModeOption('auto')).toBe('auto');
+    expect(parsePermissionModeOption('full-access')).toBe('full-access');
   });
 
-  it('rejects invalid ACP permission modes', () => {
-    expect(() => parsePermissionModeOption('architect')).toThrow(/Expected one of: plan, accept-edits, auto-in-project/);
+  it('normalizes the legacy auto-in-project CLI input to canonical Auto[LLM]', () => {
+    expect(parsePermissionModeOption('auto-in-project')).toBe('auto');
   });
 
-  it("rejects canonical 'auto' with a hint that ACP does not support it yet (FEATURE_092)", () => {
-    // Users who learned 'auto' from the REPL will reach for the same flag on
-    // ACP; the error must point them at 'auto-in-project' instead of just
-    // listing the allowed set. Otherwise it looks like 'auto' was forgotten.
-    expect(() => parsePermissionModeOption('auto')).toThrow(/'auto' mode is not yet supported over the ACP protocol/);
-    expect(() => parsePermissionModeOption('auto')).toThrow(/auto-in-project/);
+  it('rejects invalid ACP permission modes with the canonical set', () => {
+    expect(() => parsePermissionModeOption('architect')).toThrow(
+      /Expected one of: plan, accept-edits, auto, full-access/,
+    );
   });
 });

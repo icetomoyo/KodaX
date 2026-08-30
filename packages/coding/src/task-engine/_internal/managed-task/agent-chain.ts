@@ -641,12 +641,6 @@ export function buildRunnerAgentChain(
               ...(ctx.sessionScratchDir !== undefined
                 ? { sessionScratchDir: ctx.sessionScratchDir }
                 : {}),
-              ...(ctx.providerCredentialEnvironmentNames !== undefined
-                ? {
-                    providerCredentialEnvironmentNames:
-                      ctx.providerCredentialEnvironmentNames,
-                  }
-                : {}),
               ...(ctx.sandbox !== undefined ? { sandbox: ctx.sandbox } : {}),
             });
             evaluatorOutputs.push(

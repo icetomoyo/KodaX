@@ -302,13 +302,6 @@ export interface StatusBarProps {
   managedIdleWaiting?: boolean;
   /** v0.7.38 FEATURE_156 — child count surfaced in the idle-wait label. */
   managedIdleWaitingPendingCount?: number;
-  /**
-   * FEATURE_092 phase 2b.8: classifier engine indicator. Only renders when
-   * permissionMode is in the auto family. `'llm'` shows green `auto[LLM]`
-   * (healthy), `'rules'` shows yellow `auto[RULES]` (deterministic
-   * workspace/temp rules; unresolved calls escalate to user confirmation).
-   */
-  autoModeEngine?: 'llm' | 'rules';
 }
 
 /**

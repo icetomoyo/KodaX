@@ -288,16 +288,21 @@ export function assertWindowsSandboxControlStateNotDirectlyAccessible(input: {
   readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
 }): void {
-  const controlRoot = canonicalExistingPath(windowsSandboxControlDirectory());
-  const allowConflict = [...input.allowRead, ...input.allowWrite].find((root) => {
+  const cacheRoot = canonicalExistingPath(windowsNativeArtifactCacheRoot());
+  const readConflict = input.allowRead.find((root) => {
     const canonical = canonicalExistingPath(root);
-    return sameOrInside(controlRoot, canonical) || sameOrInside(canonical, controlRoot);
+    return sameOrInside(cacheRoot, canonical);
   });
+  const writeConflict = input.allowWrite.find((root) => {
+    const canonical = canonicalExistingPath(root);
+    return sameOrInside(cacheRoot, canonical) || sameOrInside(canonical, cacheRoot);
+  });
+  const allowConflict = readConflict ?? writeConflict;
   if (allowConflict !== undefined) {
     throw new Error(`Windows policy overlaps protected native shell control state: ${allowConflict}`);
   }
   const denyConflict = [...input.denyRead, ...input.denyWrite].find((root) => (
-    sameOrInside(controlRoot, canonicalExistingPath(root))
+    sameOrInside(cacheRoot, canonicalExistingPath(root))
   ));
   if (denyConflict !== undefined) {
     throw new Error(`Windows deny policy targets protected native shell control state: ${denyConflict}`);
@@ -687,8 +692,9 @@ function Assert-AclShape($acl, [bool]$directory, [string]$candidate) {
   $observed = @{}
   foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
     if ($rule.IsInherited) { throw 'artifact ACL contains an inherited rule' }
-    # Native v2 appends execution-specific DENY ACEs to deny-write roots. A
-    # DENY cannot widen access, so it is safe to retain while the exact ALLOW
+    # Existing DENY ACEs can be legacy KodaX state or administrator policy.
+    # Shape alone cannot prove ownership, so never remove or rewrite them. A
+    # DENY cannot widen access, and is safe to retain while the exact ALLOW
     # surface below remains closed and fully verified.
     if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Deny) { continue }
     $sid = $rule.IdentityReference.Value

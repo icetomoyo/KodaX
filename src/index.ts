@@ -193,8 +193,10 @@ export { KodaXAcpServer, runAcpServer, type KodaXAcpServerOptions } from './acp_
 // REPL API - 从 @kodax-ai/repl 重新导出
 export {
   runInkInteractiveMode,
-  type InkREPLOptions,
   runInteractiveMode,
+} from './trusted-repl-entry.js';
+export {
+  type InkREPLOptions,
   processSpecialSyntax,
   type RepLOptions,
   InteractiveContext,

@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/kodax",
-  "version": "0.7.96-alpha.3",
+  "version": "0.7.96-alpha.4",
   "description": "KodaX lightweight coding agent - TypeScript implementation with 16 built-in LLM provider aliases, published as a Node-free single-file CLI and SDK",
   "type": "module",
   "private": true,

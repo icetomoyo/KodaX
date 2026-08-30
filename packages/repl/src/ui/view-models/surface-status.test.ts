@@ -2,17 +2,9 @@ import { describe, expect, it } from "vitest";
 import { ToolCallStatus } from "../types.js";
 import {
   buildSurfaceStatusBarProps,
-  resolveSurfaceAutoModeEngine,
 } from "./surface-status.js";
 
 describe("surface-status", () => {
-  it("shows the configured Auto engine while Runtime stats are still loading", () => {
-    expect(resolveSurfaceAutoModeEngine("auto", undefined, "llm")).toBe("llm");
-    expect(resolveSurfaceAutoModeEngine("auto", undefined, "rules")).toBe("rules");
-    expect(resolveSurfaceAutoModeEngine("auto", "rules", "llm")).toBe("rules");
-    expect(resolveSurfaceAutoModeEngine("plan", "rules", "llm")).toBeUndefined();
-  });
-
   it("builds status bar props without prompt-only busy duplication", () => {
     const props = buildSurfaceStatusBarProps({
       sessionId: "s1",

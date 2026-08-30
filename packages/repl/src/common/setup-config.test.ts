@@ -42,7 +42,8 @@ describe('initializeSetupConfiguration', () => {
     expect(coreTemplate.split(/\r?\n/u)[0]).toMatch(
       /mcp\.json.*extensions\.json.*a2a\.json/i,
     );
-    expect(coreTemplate).toContain('"envPass"');
+    expect(coreTemplate).not.toContain('"envPass"');
+    expect(coreTemplate).toContain('"full-access"');
   });
 
   it('renders installed template paths from the actual config home', () => {

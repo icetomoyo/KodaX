@@ -37,7 +37,6 @@ import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import {
   currentProviderCredentialLeaseProviders,
   deriveCurrentProviderCredentialLeaseScope,
-  getProviderCredentialEnvironmentNames,
   runWithProviderCredentialLeaseScope,
 } from '@kodax-ai/llm';
 
@@ -171,7 +170,6 @@ export function buildToolExecutionContext(
     shellSandbox: options.context?.shellSandbox,
     trustedTextMutationHost: options.context?.trustedTextMutationHost,
     workspaceSandboxRoots: options.context?.workspaceSandboxRoots,
-    providerCredentialEnvironmentNames: getProviderCredentialEnvironmentNames(),
     sessionScratchDir,
     extensionRuntime: runtime,
     askUser: events.askUser, // Issue 069

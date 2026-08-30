@@ -1,32 +1,38 @@
 # Permission Modes
 
-KodaX controls file-system and shell-command permissions through three
-interactive modes, plus a Runtime-owned Auto mode.
+KodaX controls file-system and shell-command permissions through four profiles.
 
-## Three interactive modes
+## Permission profiles
 
 | Mode | Behavior |
 |---|---|
 | **Plan** | Read-only analysis. KodaX inspects code and proposes a plan but makes no edits. |
 | **Edits** | KodaX can read and write files but asks before running shell commands. |
-| **Auto** | KodaX can read, write, and run commands with minimal prompting. |
+| **Auto[LLM]** | Uses the sandbox first; only a proven pre-start host boundary is reviewed by the LLM. |
+| **Full Access** | Runs directly on the host without a sandbox or Auto reviewer, while still honoring Exec Policy. |
 
-In the REPL, **Shift-Tab** cycles Plan → Edits → Auto. Auto displays its
-configured/persisted LLM or rules engine immediately.
+In the REPL, **Shift-Tab** cycles Plan → Edits → Auto[LLM] → Full Access.
+Legacy Auto[RULES] settings normalize to Auto[LLM] and never migrate to Full
+Access.
 
 ## Auto Mode
 
-Auto Mode uses a classifier (Auto[LLM]) to decide whether each operation is safe
-to execute without explicit user approval.
+Auto[LLM] first executes operations inside the OS sandbox. Sandbox completion is
+authoritative and silent. Only a sandbox that is unavailable or refuses before
+the target starts reaches the host boundary:
 
-- **Deterministic safe operations** (ordinary reads, workspace/temp mutations)
-  are admitted before classifier latency.
-- **Classifier infrastructure failure** retries once, then falls back to the
-  Accept-edits boundary without switching to rules.
-- ASRT sandbox is **optional execution containment**, not permission authority.
-  If the sandbox is not active, deterministic safe operations and Auto[LLM]
-  decisions keep the same permission behavior; only OS-level containment is
-  absent.
+- Edits asks the user.
+- Auto[LLM] asks the reviewer; allow performs exactly one host attempt, while a
+  concern blocks the attempt and tells the Agent to use a safer route.
+- A command that started, or may have started, is never replayed on the host.
+
+Reviewer infrastructure failures retry once (90 seconds, then 180 seconds).
+Explicit deny does not retry and Auto review never opens its own approval
+prompt.
+
+Full Access bypasses both sandbox and reviewer. Exec Policy still applies its
+explicit allow/prompt/forbidden rules, absolute administrator forbids, and the
+narrow critical-effect fallback.
 
 ## SDK permission control
 
@@ -43,14 +49,14 @@ environment in the effective project cwd and then executes the command through
 that same interpreter.
 
 Resolved environments are isolated by contract and cwd, expire after a bounded
-TTL, and can be explicitly refreshed. Provider credentials and execution-control
-variables are removed before profile/setup code and again before the command
-starts.
+TTL, and can be explicitly refreshed. The host environment, including normal
+development credentials, is inherited; only fixed KodaX/Electron
+execution-control variables and explicit `denyPatterns` are removed.
 
 When `shellExecution` is absent, the established interpreter path is unchanged.
 
 ## See also
 
-- [Sandbox](./sandbox.md) — Optional OS-level containment
+- [Sandbox](./sandbox.md) — Sandbox-first containment and host-boundary routing
 - [Configuration files](./config-files.md) — Config.json reference
 - [CLI reference](../guides/cli-reference.md) — `--mode` flag

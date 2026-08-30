@@ -28,7 +28,6 @@ describe('config.json environment bindings', () => {
       { configPath: 'sessionRetentionDays', env: 'KODAX_SESSION_RETENTION_DAYS' },
       { configPath: 'lspAutoDownload', env: 'KODAX_LSP_DOWNLOAD' },
       { configPath: 'repoIntelligenceMode', env: 'KODAX_REPO_INTELLIGENCE' },
-      { configPath: 'sandbox.envPass', env: 'KODAX_SANDBOX_ENV_PASS' },
     ]));
   });
 
@@ -46,7 +45,6 @@ describe('config.json environment bindings', () => {
       repoIntelligenceMode: 'full',
       repoIntelligence: { toolWaitMs: 250 },
       workflow: { maxConcurrency: 3 },
-      sandbox: { envPass: ['GH_TOKEN', 'GITHUB_TOKEN'] },
     });
 
     expect(process.env.KODAX_PROVIDER).toBe('shell-provider');
@@ -58,7 +56,6 @@ describe('config.json environment bindings', () => {
     expect(process.env.KODAX_REPO_INTELLIGENCE).toBe('full');
     expect(process.env.KODAX_REPO_INTELLIGENCE_TOOL_WAIT_MS).toBe('250');
     expect(process.env.KODAX_WORKFLOW_MAX_CONCURRENCY).toBe('3');
-    expect(process.env.KODAX_SANDBOX_ENV_PASS).toBe('GH_TOKEN,GITHUB_TOKEN');
   });
 
   it('updates and clears values previously projected from config', () => {

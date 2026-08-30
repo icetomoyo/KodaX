@@ -17,9 +17,12 @@ import {
   assertRuntimeDaemonCliEntryAvailable,
   buildRuntimeDaemonServeArgs,
   capRuntimeDaemonBootstrapLog,
+  consumeRuntimeDaemonOwnerBootstrap,
   createRuntimeDaemonServeEnvironment,
+  createRuntimeDaemonOwnerBootstrapFile,
   daemonServeExecArgv,
   openRuntimeDaemonBootstrapLog,
+  RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV,
   RuntimeDaemonProcessCleanupIncompleteError,
   runtimeDaemonBootstrapLogPath,
   waitForHealthyDaemonStartup,
@@ -32,6 +35,90 @@ import {
 } from "./state.js";
 
 describe("runtime daemon child process environment", () => {
+  it("passes trusted owner policy through a one-shot daemon bootstrap file", () => {
+    const configHome = mkdtempSync(
+      path.join(os.tmpdir(), "kodax-daemon-owner-bootstrap-"),
+    );
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "coder");
+    try {
+      const ownerBootstrap = {
+        execPolicy: {
+          adminRules: [{
+            prefix: ["git", "push"],
+            decision: "forbidden" as const,
+            justification: "Publishing is administrator-controlled.",
+            source: "admin" as const,
+            sourcePath: "host:admin",
+          }],
+          trustedProjectRoots: [path.join(configHome, "project")],
+        },
+        autoReview: {
+          administratorPolicy: "Never publish from this host.",
+          modelGuidance: "Distinguish staging from production.",
+        },
+      };
+      const bootstrapFile = createRuntimeDaemonOwnerBootstrapFile(
+        paths,
+        ownerBootstrap,
+      );
+      const childEnv = createRuntimeDaemonServeEnvironment({
+        homeDir: configHome,
+        configHome,
+        parentEnv: {
+          [RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]: "untrusted-parent-value",
+        },
+        ownerBootstrapFile: bootstrapFile,
+      });
+
+      expect(childEnv[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]).toBe(bootstrapFile);
+      expect(
+        consumeRuntimeDaemonOwnerBootstrap({
+          configHome,
+          profile: "coder",
+          environment: childEnv,
+        }),
+      ).toEqual(ownerBootstrap);
+      expect(childEnv[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]).toBeUndefined();
+      expect(existsSync(bootstrapFile)).toBe(false);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not trust an ambient owner bootstrap path", () => {
+    const childEnv = createRuntimeDaemonServeEnvironment({
+      homeDir: "runtime-home",
+      parentEnv: {
+        [RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]: "attacker-controlled.json",
+      },
+    });
+
+    expect(childEnv[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]).toBeUndefined();
+  });
+
+  it("refuses to consume an owner bootstrap outside the selected daemon root", () => {
+    const configHome = mkdtempSync(
+      path.join(os.tmpdir(), "kodax-daemon-owner-root-"),
+    );
+    const outside = path.join(os.tmpdir(), `kodax-owner-outside-${Date.now()}.json`);
+    writeFileSync(outside, "{}", "utf8");
+    const environment: NodeJS.ProcessEnv = {
+      [RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]: outside,
+    };
+    try {
+      expect(() => consumeRuntimeDaemonOwnerBootstrap({
+        configHome,
+        profile: "coder",
+        environment,
+      })).toThrow(/daemon root/i);
+      expect(environment[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]).toBeUndefined();
+      expect(existsSync(outside)).toBe(true);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+      rmSync(outside, { force: true });
+    }
+  });
+
   it("passes Space orphan recovery only to the newly spawned daemon", () => {
     const args = buildRuntimeDaemonServeArgs(
       {

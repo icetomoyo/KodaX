@@ -12,7 +12,9 @@ import fsSync from 'fs';
 
 import {
   loadAutoModeSettings,
+  loadPermissionMode,
   resolveAutoModeSettings,
+  savePermissionModeUser,
 } from './permission-config.js';
 
 const writeFakeConfig = (autoMode: Record<string, unknown> | undefined): void => {
@@ -34,28 +36,28 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
 
   it('returns sensible defaults when no config and no env are set', () => {
     const r = loadAutoModeSettings({});
-    expect(r.engine).toBe('llm');
+    expect(r).not.toHaveProperty('engine');
     expect(r.classifierModel).toBeUndefined();
     expect(r.classifierModelEnv).toBeUndefined();
-    expect(r.timeoutMs).toBeUndefined();
+    expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('reads engine / classifierModel / timeoutMs from settings file', () => {
+  it('ignores a legacy Rules engine in settings without exposing engine state', () => {
     writeFakeConfig({
       engine: 'rules',
       classifierModel: 'kimi-code:kimi-for-coding',
       timeoutMs: 5000,
     });
     const r = loadAutoModeSettings({});
-    expect(r.engine).toBe('rules');
+    expect(r).not.toHaveProperty('engine');
     expect(r.classifierModel).toBe('kimi-code:kimi-for-coding');
-    expect(r.timeoutMs).toBe(5000);
+    expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('KODAX_AUTO_MODE_ENGINE env wins over settings.engine', () => {
+  it('ignores legacy KODAX_AUTO_MODE_ENGINE=rules without exposing engine state', () => {
     writeFakeConfig({ engine: 'llm' });
     const r = loadAutoModeSettings({ KODAX_AUTO_MODE_ENGINE: 'rules' });
-    expect(r.engine).toBe('rules');
+    expect(r).not.toHaveProperty('engine');
   });
 
   it('KODAX_AUTO_MODE_CLASSIFIER_MODEL env is surfaced separately so the resolver can see env-vs-settings layer ordering', () => {
@@ -65,24 +67,24 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
     expect(r.classifierModelEnv).toBe('from-env');
   });
 
-  it('KODAX_AUTO_MODE_TIMEOUT_MS env wins over settings.timeoutMs', () => {
+  it('ignores legacy timeout config and environment inputs', () => {
     writeFakeConfig({ timeoutMs: 1000 });
     const r = loadAutoModeSettings({ KODAX_AUTO_MODE_TIMEOUT_MS: '7500' });
-    expect(r.timeoutMs).toBe(7500);
+    expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('invalid env engine falls through to settings (defensive: a typo must not silently disable classifier)', () => {
+  it('invalid env engine remains an inert legacy input', () => {
     writeFakeConfig({ engine: 'rules' });
     const r = loadAutoModeSettings({ KODAX_AUTO_MODE_ENGINE: 'YOLO' });
-    expect(r.engine).toBe('rules');
+    expect(r).not.toHaveProperty('engine');
   });
 
-  it('invalid env timeout falls through to settings (NaN, negative, zero, non-numeric)', () => {
+  it('keeps legacy timeout inputs inert regardless of their value', () => {
     writeFakeConfig({ timeoutMs: 1000 });
     const cases = ['NaN', '-1', '0', 'fast', ''];
     for (const v of cases) {
       const r = loadAutoModeSettings({ KODAX_AUTO_MODE_TIMEOUT_MS: v });
-      expect(r.timeoutMs).toBe(1000);
+      expect(r).not.toHaveProperty('timeoutMs');
     }
   });
 
@@ -92,69 +94,110 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
     expect(r.classifierModel).toBeUndefined();
   });
 
-  it('settings file with no autoMode block returns engine=llm + everything else undefined', () => {
+  it('settings file with no autoMode block returns optional settings as undefined', () => {
     writeFakeConfig(undefined);
     const r = loadAutoModeSettings({});
-    expect(r.engine).toBe('llm');
+    expect(r).not.toHaveProperty('engine');
     expect(r.classifierModel).toBeUndefined();
-    expect(r.timeoutMs).toBeUndefined();
+    expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('floats in timeoutMs are floored (settings)', () => {
+  it('does not normalize or expose legacy timeout settings', () => {
     writeFakeConfig({ timeoutMs: 3000.7 });
     const r = loadAutoModeSettings({});
-    expect(r.timeoutMs).toBe(3000);
+    expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  // ===== Issue 143 (WS3): speculativeWindowMs =====
+  // Legacy speculative-window inputs remain readable but inert.
 
-  it('speculativeWindowMs is undefined by default (guardrail falls back to 500)', () => {
+  it('omits speculativeWindowMs by default', () => {
     const r = loadAutoModeSettings({});
-    expect(r.speculativeWindowMs).toBeUndefined();
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('reads speculativeWindowMs from the settings file', () => {
+  it('ignores speculativeWindowMs from the settings file', () => {
     writeFakeConfig({ speculativeWindowMs: 1500 });
     const r = loadAutoModeSettings({});
-    expect(r.speculativeWindowMs).toBe(1500);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('accepts speculativeWindowMs: 0 from file (disables the race — distinct from unset)', () => {
+  it('keeps zero speculativeWindowMs inert', () => {
     writeFakeConfig({ speculativeWindowMs: 0 });
     const r = loadAutoModeSettings({});
-    expect(r.speculativeWindowMs).toBe(0);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('KODAX_AUTO_SPECULATIVE_WINDOW_MS env wins over settings.speculativeWindowMs', () => {
+  it('ignores the legacy speculative-window environment variable', () => {
     writeFakeConfig({ speculativeWindowMs: 500 });
     const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: '2000' });
-    expect(r.speculativeWindowMs).toBe(2000);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('env speculative window of 0 wins over file (explicit disable)', () => {
+  it('does not revive speculative routing for a zero environment value', () => {
     writeFakeConfig({ speculativeWindowMs: 500 });
     const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: '0' });
-    expect(r.speculativeWindowMs).toBe(0);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('negative speculative window clamps to 0 (mirrors readWindowFromEnv)', () => {
+  it('does not normalize negative legacy speculative-window settings', () => {
     writeFakeConfig({ speculativeWindowMs: -100 });
     const r = loadAutoModeSettings({});
-    expect(r.speculativeWindowMs).toBe(0);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
   });
 
-  it('non-numeric / empty env speculative window falls through to file', () => {
+  it('keeps all legacy speculative-window environment forms inert', () => {
     writeFakeConfig({ speculativeWindowMs: 750 });
     for (const v of ['fast', '', 'NaN']) {
       const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: v });
-      expect(r.speculativeWindowMs).toBe(750);
+      expect(r).not.toHaveProperty('speculativeWindowMs');
     }
   });
 
-  it('floats in speculativeWindowMs are floored', () => {
+  it('does not normalize float legacy speculative-window settings', () => {
     writeFakeConfig({ speculativeWindowMs: 480.9 });
     const r = loadAutoModeSettings({});
-    expect(r.speculativeWindowMs).toBe(480);
+    expect(r).not.toHaveProperty('speculativeWindowMs');
+  });
+});
+
+describe('permission mode compatibility boundary — FEATURE_297', () => {
+  beforeEach(() => {
+    vi.spyOn(fsSync, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fsSync, 'mkdirSync').mockReturnValue(undefined);
+    vi.spyOn(fsSync, 'writeFileSync').mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('loads auto-in-project as canonical Auto[LLM]', () => {
+    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+      permissionMode: 'auto-in-project',
+    }));
+
+    expect(loadPermissionMode()).toBe('auto');
+  });
+
+  it('writes only the canonical mode when a legacy alias reaches the save boundary', () => {
+    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+      permissionMode: 'accept-edits',
+    }));
+
+    savePermissionModeUser('auto-in-project');
+
+    expect(fsSync.writeFileSync).toHaveBeenCalledOnce();
+    const serialized = vi.mocked(fsSync.writeFileSync).mock.calls[0]?.[1];
+    expect(typeof serialized === 'string' ? JSON.parse(serialized) : undefined)
+      .toMatchObject({ permissionMode: 'auto' });
+  });
+
+  it('round-trips Full Access without rewriting it', () => {
+    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+      permissionMode: 'full-access',
+    }));
+
+    expect(loadPermissionMode()).toBe('full-access');
   });
 });
 
@@ -162,7 +205,8 @@ describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
   it('does not read process.env when the caller omits env', () => {
     vi.stubEnv('KODAX_AUTO_MODE_ENGINE', 'rules');
 
-    expect(resolveAutoModeSettings({ settings: { engine: 'llm' } }).engine).toBe('llm');
+    expect(resolveAutoModeSettings({ settings: { engine: 'rules' } }))
+      .not.toHaveProperty('engine');
   });
 
   it('resolves caller-supplied settings without reading the filesystem', () => {
@@ -179,11 +223,9 @@ describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
     });
 
     expect(resolved).toEqual({
-      engine: 'rules',
       classifierModel: 'zai-coding:glm-5.2',
       classifierModelEnv: undefined,
-      timeoutMs: 20_000,
-      speculativeWindowMs: 0,
+      reviewPolicy: undefined,
     });
     expect(exists).not.toHaveBeenCalled();
   });
@@ -205,11 +247,19 @@ describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
     });
 
     expect(resolved).toEqual({
-      engine: 'llm',
       classifierModel: 'from-settings',
       classifierModelEnv: 'from-env',
-      timeoutMs: 20_000,
-      speculativeWindowMs: 1_200,
+      reviewPolicy: undefined,
     });
+  });
+
+  it('reads and trims the optional fixed autoReview policy without an env override', () => {
+    const resolved = resolveAutoModeSettings({
+      settings: {},
+      autoReview: { policy: '  Never publish packages from this machine.  ' },
+      env: {},
+    });
+
+    expect(resolved.reviewPolicy).toBe('Never publish packages from this machine.');
   });
 });

@@ -32,24 +32,14 @@ stages through the existing Actor tools and may attach validated
 create a fixed Agent topology, or add another quality judge.
 
 The same release adds the JSON-only `KodaXShellExecutionContract`. Configured
-Runtime sessions and runs resolve a credential-filtered shell environment in
-the effective cwd, execute through the same explicit interpreter, inherit the
+Runtime sessions and runs inherit the host environment except for fixed
+KodaX/Electron execution-control variables, resolve it in the effective cwd,
+execute through the same explicit interpreter, inherit the
 contract into native children and deterministic evaluators, and bind exact
 command grants to the contract fingerprint. The feature is opt-in; callers
 without `shellExecution` keep the legacy platform-shell interpreter path.
-Credential-shaped variables are filtered from every model-issued command path.
-The KodaX CLI can restore exact host variables only for the final command target
-through user-level `sandbox.envPass`; its default list is empty and
-execution-control variables remain blocked.
-
-SDK callers use the same Run-scoped shape without changing global state:
-
-```ts
-await runKodaX({
-  provider: 'openai',
-  sandbox: { envPass: ['GH_TOKEN'] },
-}, 'Inspect the authenticated repository.');
-```
+Model-issued commands therefore support ordinary authenticated development
+without a second passthrough configuration.
 
 The same release replaces asynchronous semantic memory prefetch with sparse
 foreground intervention after tool/verification failure or committed
@@ -58,10 +48,12 @@ selector calls. Inline hosts may opt into `memoryRecallRunner` or construct the
 coding-owned forced-tool selector with
 `createCodingMemoryInterventionRunner()`.
 
-Auto Mode is enforced by the active Runtime guardrail before the generic
-permission bridge. A host only receives a permission request for an explicit
-guardrail escalation; Runtime sessions retain the selected/fallback LLM or
-rules engine across turns.
+Auto[LLM] is sandbox-first: a sandbox-completing call is silent, and only a
+proven pre-start denial or unavailable sandbox reaches the Runtime-owned LLM
+reviewer. Reviewer allow authorizes one host attempt; concern blocks the attempt
+without opening an approval prompt. Full Access skips sandbox and reviewer but
+still applies Exec Policy. Legacy Rules settings normalize to Auto[LLM] and the
+old rules files are inert.
 
 When `session.autoResume` or `session.resume` is set without an explicit ID,
 the coding-runtime middleware requests a broad newest-first list and selects the

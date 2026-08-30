@@ -28,7 +28,6 @@ import {
   type BashOutputCollector,
 } from './bash-output-collector.js';
 import { filterBashOutputBodies } from './output-filters/registry.js';
-import { shellMemoryMutationDenial } from './memory-mutation-guard.js';
 import {
   getToolResultPolicy,
   TOOL_RESULT_INCOMPLETE_MARKER,
@@ -40,8 +39,6 @@ import {
 } from '../shell-execution/resolver.js';
 import {
   hardenShellCommandEnvironment,
-  normalizeSandboxEnvironmentPass,
-  parseSandboxEnvironmentPass,
 } from '../shell-execution/environment.js';
 
 const BACKGROUND_ABORT_KILL_MS = process.platform === 'win32' ? 5_000 : 2_000;
@@ -398,8 +395,6 @@ async function executeToolBash(
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
   const command = input.command as string;
-  const memoryDenial = shellMemoryMutationDenial(command);
-  if (memoryDenial !== undefined) return memoryDenial;
   const userTimeout = input.timeout as number | undefined;
   const timeout = userTimeout ? Math.min(KODAX_HARD_TIMEOUT, userTimeout) : KODAX_DEFAULT_TIMEOUT;
   const deadlineAt = Date.now() + timeout * 1000;
@@ -415,17 +410,11 @@ async function executeToolBash(
       KODAX_SESSION_TMP: ctx.sessionScratchDir,
     }
     : process.env;
-  const environmentPass = ctx.sandbox === undefined
-    ? parseSandboxEnvironmentPass(process.env.KODAX_SANDBOX_ENV_PASS)
-    : normalizeSandboxEnvironmentPass(ctx.sandbox.envPass);
   const legacyEnv = exposeCurrentRuntimeOnPath(
     hardenShellCommandEnvironment(
       legacyEnvSource,
       usesWindowsCmd ? 'cmd' : 'bash',
       process.platform,
-      ctx.providerCredentialEnvironmentNames,
-      cwd,
-      environmentPass,
     ),
   );
   const legacyCommandInvocation = usesWindowsCmd
@@ -452,10 +441,9 @@ async function executeToolBash(
         ctx.shellExecution,
         cwd,
         ctx.sessionScratchDir,
-        ctx.providerCredentialEnvironmentNames,
         ctx.abortSignal,
       );
-      commandInvocation = createShellCommandInvocation(resolved, command, environmentPass);
+      commandInvocation = createShellCommandInvocation(resolved, command);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return cancelledCommandResult(command);
@@ -467,6 +455,7 @@ async function executeToolBash(
   let sandboxInvocation:
     | Awaited<ReturnType<NonNullable<typeof ctx.shellSandbox>['prepare']>>
     | undefined;
+  let sandboxPreparationDiagnostic: string | undefined;
   if (ctx.shellSandbox) {
     try {
       sandboxInvocation = await ctx.shellSandbox.prepare({
@@ -481,6 +470,7 @@ async function executeToolBash(
           ?? legacyCommandInvocation?.windowsVerbatimArguments,
         signal: ctx.abortSignal,
         deadlineAt,
+        fallbackToNormalExecution: false,
         reportObservation: ctx.reportToolSandboxObservation,
       });
     } catch (error: unknown) {
@@ -488,12 +478,7 @@ async function executeToolBash(
       if (Date.now() >= deadlineAt) {
         return commandPreparationTimeoutResult(command, timeout);
       }
-      ctx.reportToolSandboxObservation?.({
-        version: 1,
-        state: 'fallback',
-        reason: 'prepare_failed',
-        execution: 'normal_permission_policy',
-      });
+      sandboxPreparationDiagnostic = error instanceof Error ? error.message : String(error);
     }
   }
   let sandboxCleanup:
@@ -501,6 +486,8 @@ async function executeToolBash(
     | undefined;
   let sandboxControlOutput: Promise<Uint8Array> | undefined;
   let sandboxCleanupError: unknown;
+  let sandboxPreStartUnavailable = false;
+  let sandboxPreStartDiagnostic: string | undefined;
   const cleanupSandbox = async (
     execution: 'not_started' | 'started_or_unknown' = 'not_started',
   ): Promise<void> => {
@@ -512,6 +499,15 @@ async function executeToolBash(
         : { controlOutput: await sandboxControlOutput }),
     }))()
       .then((observation) => {
+        if (observation?.state === 'pre_start_unavailable') {
+          sandboxPreStartUnavailable = true;
+          sandboxPreStartDiagnostic = observation.diagnostic;
+          return observation;
+        }
+        if (observation?.state === 'execution_uncertain') {
+          sandboxCleanupError = new Error(observation.diagnostic);
+          return observation;
+        }
         if (observation) ctx.reportToolSandboxObservation?.(observation);
         return observation;
       })
@@ -558,6 +554,58 @@ async function executeToolBash(
           env: legacyEnv,
         }
       : { executable: '/bin/sh', args: ['-c', command], env: legacyEnv });
+  let hostBoundaryResult: Promise<string> | undefined;
+  const executeAtHostBoundary = (
+    reason: 'sandbox_unavailable' | 'sandbox_denied',
+    diagnostic: string | undefined,
+    observationReason: 'not_ready' | 'prepare_failed' | 'backend_failed',
+  ): Promise<string> => {
+    hostBoundaryResult ??= (async () => {
+      const authorize = ctx.authorizeShellHostExecution;
+      if (authorize === undefined) {
+        return '[Sandbox boundary] Command was not started because the selected OS sandbox '
+          + 'was unavailable. Host execution requires a new permission decision.';
+      }
+      const decision = await authorize({
+        toolCallId: ctx.toolCallId,
+        toolInput: input,
+        command,
+        cwd,
+        executable: ordinaryInvocation.executable,
+        args: ordinaryInvocation.args,
+        reason,
+        ...(diagnostic === undefined ? {} : { diagnostic }),
+      });
+      if (decision !== true) {
+        return typeof decision === 'string'
+          ? decision
+          : '[Denied] Host execution was not authorized after the sandbox boundary.';
+      }
+      ctx.reportToolSandboxObservation?.({
+        version: 1,
+        state: 'fallback',
+        reason: observationReason,
+        execution: 'normal_permission_policy',
+      });
+      // Review/approval owns an independent interaction budget. Once allowed,
+      // the one host attempt receives the caller's complete command budget.
+      return toolBash(input, {
+        ...ctx,
+        shellSandbox: undefined,
+        authorizeShellHostExecution: undefined,
+      });
+    })();
+    return hostBoundaryResult;
+  };
+  if (ctx.shellSandbox !== undefined && sandboxInvocation === undefined) {
+    return executeAtHostBoundary(
+      sandboxPreparationDiagnostic === undefined
+        ? 'sandbox_denied'
+        : 'sandbox_unavailable',
+      sandboxPreparationDiagnostic,
+      sandboxPreparationDiagnostic === undefined ? 'not_ready' : 'prepare_failed',
+    );
+  }
   const resolvedInvocation = sandboxInvocation ?? ordinaryInvocation;
   const directEnvironment = directShellEnvironment(
     resolvedInvocation.executable,
@@ -652,7 +700,8 @@ async function executeToolBash(
         } catch (terminationError: unknown) {
           inputFailure = new AggregateError(
             [error, terminationError],
-            'Native shell bootstrap and termination both failed.',
+            `Native shell bootstrap failed: ${sandboxLifecycleErrorDetail(error)}; `
+              + `termination also failed: ${sandboxLifecycleErrorDetail(terminationError)}.`,
           );
         }
       } else {
@@ -780,6 +829,11 @@ async function executeToolBash(
       if (!logStream.destroyed) logStream.end();
     };
     const backgroundSandboxFailure = (): string | undefined => {
+      if (sandboxPreStartUnavailable) {
+        const detail = sandboxPreStartDiagnostic ?? 'The sandbox did not start the target.';
+        return `\n[Sandbox boundary] ${detail}\n`
+          + '[Safety] Background host retry was not attempted after the tool returned.\n';
+      }
       if (sandboxCleanupError === undefined) return undefined;
       const detail = sandboxLifecycleErrorDetail(sandboxCleanupError);
       return `\n[Error] Required OS sandbox execution could not be verified: ${detail}\n`
@@ -1107,6 +1161,21 @@ async function executeToolBash(
           if (stopReason) {
             return;
           }
+          // A spawn-level error may have already owned the proven pre-start
+          // fallback. Never authorize or execute a second host attempt here.
+          if (settled) {
+            disposeCollectors();
+            return;
+          }
+          if (sandboxPreStartUnavailable) {
+            disposeCollectors();
+            settle(await executeAtHostBoundary(
+              'sandbox_unavailable',
+              sandboxPreStartDiagnostic,
+              'backend_failed',
+            ));
+            return;
+          }
           if (sandboxCleanupError !== undefined) {
             const detail = sandboxLifecycleErrorDetail(sandboxCleanupError);
             let capturedProcessOutput = '';
@@ -1123,11 +1192,6 @@ async function executeToolBash(
               + `[Sandbox process exit: ${code}]`
               + (capturedProcessOutput ? `\n${capturedProcessOutput}` : ''),
             );
-            return;
-          }
-          // Spawn-error paths may already be settled before `close` arrives.
-          if (settled) {
-            disposeCollectors();
             return;
           }
           // Trailing flush of live progress so the final tail (often the most
@@ -1217,6 +1281,19 @@ async function executeToolBash(
         if (proc.pid === undefined) {
           unregisterForegroundCommand();
           await cleanupSandbox();
+          if (sandboxCleanupError === undefined && !sandboxPreStartUnavailable) {
+            sandboxPreStartUnavailable = true;
+            sandboxPreStartDiagnostic = `Sandbox wrapper failed before assigning a process id: ${error.message}`;
+          }
+          if (sandboxPreStartUnavailable) {
+            disposeCollectors();
+            settle(await executeAtHostBoundary(
+              'sandbox_unavailable',
+              sandboxPreStartDiagnostic,
+              'backend_failed',
+            ));
+            return;
+          }
         } else {
           await finishForeground();
         }

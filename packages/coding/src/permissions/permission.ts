@@ -36,7 +36,12 @@ import {
   isProtectedAgentHomeReadTarget,
 } from './agent-home-policy.js';
 
-export type PermissionMode = 'plan' | 'accept-edits' | 'auto' | 'auto-in-project';
+export type PermissionMode =
+  | 'plan'
+  | 'accept-edits'
+  | 'auto'
+  | 'full-access'
+  | 'auto-in-project';
 
 const PLAN_MODE_PROJECT_DOC_RELATIVE_PATH = path.join('.agent', 'plan_mode_doc.md');
 const existingPathPrefixCache = new Map<string, string>();
@@ -2467,8 +2472,8 @@ export function inferPermissionMode(opts: {
   confirmTools?: Set<string>;
 }): PermissionMode {
   if (opts.mode === 'ask') return 'plan';
-  if (opts.auto) return 'auto-in-project';
-  if (opts.confirmTools && opts.confirmTools.size === 0) return 'auto-in-project';
+  if (opts.auto) return 'auto';
+  if (opts.confirmTools && opts.confirmTools.size === 0) return 'auto';
   if (opts.confirmTools && !opts.confirmTools.has('write') && !opts.confirmTools.has('edit')) {
     return 'accept-edits';
   }

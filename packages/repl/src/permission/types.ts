@@ -9,7 +9,6 @@ import {
   FILE_MODIFICATION_TOOLS,
   MODIFICATION_TOOLS,
 } from '@kodax-ai/coding';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
 // ============== Permission Mode ==============
 
@@ -17,19 +16,25 @@ import { emitKodaXDiagnostic } from '@kodax-ai/agent';
  * Permission mode
  * - plan: Read-only planning, all modifications blocked unless explicitly whitelisted
  * - accept-edits: File edits auto-approved, shell commands require confirmation
- * - auto: All tools auto-approved (with optional LLM classifier review when
- *         auto-mode engine === 'llm'; FEATURE_092 v0.7.33). When engine === 'rules',
- *         falls back to the legacy "all tools approved within project, outside
- *         requires confirmation" behavior — i.e., the v0.7.32 `auto-in-project`
- *         shape. The `auto-in-project` name is preserved as a deprecated alias
- *         for 5 minor versions (removed in v0.7.38).
+ * - auto: Sandboxed execution with LLM review at the host boundary
+ * - full-access: Host execution without sandbox or Auto review
+ *
+ * `auto-in-project` remains accepted only as a persisted/CLI compatibility
+ * input and is immediately normalized to `auto`.
  */
-export type PermissionMode = "plan" | "accept-edits" | "auto" | "auto-in-project";
+export type CanonicalPermissionMode =
+  | "plan"
+  | "accept-edits"
+  | "auto"
+  | "full-access";
+
+export type PermissionMode = CanonicalPermissionMode | "auto-in-project";
 
 export const PERMISSION_MODES: PermissionMode[] = [
   "plan",
   "accept-edits",
   "auto",
+  "full-access",
   "auto-in-project", // deprecated alias; behavior identical to 'auto'
 ];
 
@@ -37,10 +42,11 @@ export const PERMISSION_MODES: PermissionMode[] = [
  * Canonical mode names that should appear in user-facing UI / Shift-Tab
  * cycling (excludes deprecated aliases).
  */
-export const CANONICAL_PERMISSION_MODES: PermissionMode[] = [
+export const CANONICAL_PERMISSION_MODES: CanonicalPermissionMode[] = [
   "plan",
   "accept-edits",
   "auto",
+  "full-access",
 ];
 
 /**
@@ -53,23 +59,11 @@ export function isAutoMode(mode: PermissionMode): boolean {
 }
 
 /**
- * True only when the LLM guardrail owns the concrete Auto permission verdict.
- * Legacy REPL observers use this to avoid applying a second denial/approval
- * policy after the guardrail has already allowed the call.
- */
-export function isAutoLlmMode(
-  mode: PermissionMode,
-  engine: 'llm' | 'rules' | undefined,
-): boolean {
-  return isAutoMode(mode) && engine === 'llm';
-}
-
-/**
  * Map legacy mode names to their canonical form. v0.7.33: auto-in-project → auto.
  * Use at value-read boundaries (settings load, persisted session restore) so
  * downstream code only ever sees canonical names.
  */
-export function canonicalizePermissionMode(mode: PermissionMode): PermissionMode {
+export function canonicalizePermissionMode(mode: PermissionMode): CanonicalPermissionMode {
   return mode === "auto-in-project" ? "auto" : mode;
 }
 
@@ -80,9 +74,8 @@ export function canonicalizePermissionMode(mode: PermissionMode): PermissionMode
  *   - `plan`             → `Plan`
  *   - `accept-edits`     → `Edits`
  *   - `auto`             → `Auto`
- *   - `auto-in-project`  → `Auto`  (deprecated alias folds into the canonical
- *                                   display name; the deprecation notice
- *                                   surfaces once per session at startup)
+ *   - `full-access`      → `Full Access`
+ *   - `auto-in-project`  → `Auto` (compatibility input only)
  *
  * Single source of truth for command output, startup summaries, and the live
  * Ink status-bar view-model. The former write-only readline StatusBar was
@@ -97,46 +90,9 @@ export function permissionModeDisplayName(mode: PermissionMode): string {
     case "auto":
     case "auto-in-project":
       return "Auto";
+    case "full-access":
+      return "Full Access";
   }
-}
-
-// ============== Deprecated alias soft-warning (FEATURE_092 phase 2b.7b slice E) ==============
-
-/**
- * One-line user-facing notice surfaced when the user explicitly chooses
- * `auto-in-project` (either at REPL startup from `~/.kodax/config.json` or
- * via `/mode auto-in-project`). The alias is preserved for 5 minor versions
- * for backward compat — design doc validation §4 requires the warning emit
- * once per session, not per-call.
- */
-export const AUTO_IN_PROJECT_DEPRECATION_MSG =
-  '[deprecated] permissionMode "auto-in-project" is now an alias for "auto" (FEATURE_092, v0.7.33). '
-  + 'The alias will be removed in v0.7.38 — please update ~/.kodax/config.json to use "auto".';
-
-/**
- * Build a once-per-session emitter for the auto-in-project deprecation
- * notice. The factory shape (vs. a module-scoped `let emitted = false`)
- * makes the once-semantics testable without resetting module state and
- * lets the REPL own the lifecycle (one emitter per session).
- *
- * `printer` defaults to diagnostics so hosts can render or suppress it
- * without writing below Ink's live region.
- */
-export function createAutoInProjectDeprecationEmitter(
-  printer: (msg: string) => void = (msg) => {
-    emitKodaXDiagnostic({
-      source: 'repl:permission',
-      level: 'warn',
-      message: msg,
-    });
-  },
-): () => void {
-  let emitted = false;
-  return () => {
-    if (emitted) return;
-    emitted = true;
-    printer(AUTO_IN_PROJECT_DEPRECATION_MSG);
-  };
 }
 
 // ============== Confirm Result ==============
@@ -254,6 +210,7 @@ export function computeConfirmTools(mode: PermissionMode): Set<string> {
     case "accept-edits":
       return new Set(["bash"]);
     case "auto":
+    case "full-access":
     case "auto-in-project":
       return new Set();
   }
@@ -266,10 +223,10 @@ export function isPermissionMode(value: string | undefined): value is Permission
 export function normalizePermissionMode(
   value: string | undefined,
   fallback?: PermissionMode,
-): PermissionMode | undefined {
+): CanonicalPermissionMode | undefined {
   if (isPermissionMode(value)) {
-    return value;
+    return canonicalizePermissionMode(value);
   }
 
-  return fallback;
+  return fallback === undefined ? undefined : canonicalizePermissionMode(fallback);
 }

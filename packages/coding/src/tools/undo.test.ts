@@ -217,7 +217,7 @@ describe('toolUndo Agent Home hard boundary', () => {
     expect(fs.readFileSync(target, 'utf8')).toBe('approved-previous');
   });
 
-  it('refuses a Runtime target even when a pathless backup selected it', async () => {
+  it('restores a Runtime target after the outer permission policy approved it', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-runtime-'));
     roots.push(home);
     setAgentConfigHome(home);
@@ -226,9 +226,9 @@ describe('toolUndo Agent Home hard boundary', () => {
     fs.writeFileSync(target, 'runtime-current');
     const backups = new Map([[target, 'attacker-content']]);
 
-    await expect(toolUndo({}, context(backups))).rejects.toThrow('protected KodaX state');
-    expect(fs.readFileSync(target, 'utf8')).toBe('runtime-current');
-    expect(backups.has(target)).toBe(true);
+    await expect(toolUndo({}, context(backups))).resolves.toContain('Restored');
+    expect(fs.readFileSync(target, 'utf8')).toBe('attacker-content');
+    expect(backups.has(target)).toBe(false);
   });
 
   it('canonicalizes a Session-path junction before restoring its target', async () => {
@@ -244,7 +244,7 @@ describe('toolUndo Agent Home hard boundary', () => {
     fs.writeFileSync(path.join(runtime, 'state.json'), 'runtime-current');
 
     await expect(toolUndo({}, context(new Map([[target, 'attacker-content']]))))
-      .rejects.toThrow('protected KodaX state');
+      .rejects.toThrow('Backup path identity changed');
     expect(fs.readFileSync(path.join(runtime, 'state.json'), 'utf8')).toBe('runtime-current');
   });
 

@@ -1,11 +1,12 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297; not tagged)
 >
 > This HLD is intentionally current-state only. The old pre-v0.7.43
 > chain/harness model has been removed from this active design document because
@@ -142,9 +143,13 @@ crash-safe receipt, then removed only after Job drain. Recovery verifies the
 recorded volume/file identity before changing the DACL; a missing or replaced
 object keeps the receipt and fails shell admission closed until repair. No ACL
 mutex or receipt participates in trusted text admission or spans the command
-lifetime. Fixed sensitive-root read denies are installed once through native
-no-follow handles; admission idempotently repairs an exact root created after
-setup instead of returning a permanent setup error.
+ lifetime. The v0.7.96 permission-profile migration idempotently removes the
+ legacy KodaX-installed sensitive-root deny ACEs after proving the sandbox SID
+ idle; new sandbox policy grants broad host reads instead. Native requests no
+ longer add the protected artifact-cache root as a redundant `denyWrite` root,
+ so upgrades neither grow those historical residues nor conflict with the
+ control verifier. Existing cache denies remain unchanged: owner/protection,
+ masks, flags, and SID shapes cannot prove individual ACE provenance.
 The protected control directory is doctor-verified and setup-repaired only
 after the sandbox SID is idle. Repair can retire an expired dead-PID request or
 a dead-owner terminal record that already proves Job drainage; live,
@@ -250,9 +255,8 @@ supersedes that path for shell and controlled text tools; it remains only for
 legacy/non-text namespace effects such as worktree lifecycle. The current
 v0.7.96 boundaries are defined above: trusted text is host-authorized and never
 enters the shell graph, while Windows shell uses per-command native token/Job
-containment and Linux/macOS use one ASRT command wrapper per invocation. Fixed
-sensitive-root guards are native, additive, idempotently repaired at shell
-admission, and removed from per-command dynamic deny sets. Dynamic `denyRead`
+containment and Linux/macOS use one ASRT command wrapper per invocation. Legacy
+sensitive-root guards are retired by bounded upgrade reconciliation. Dynamic `denyRead`
 retains its execution-logon receipt and short ACL transaction without owning a
 command-lifetime mutex or affecting trusted text.
 Learned Skill discovery likewise treats local and remote project identities as
@@ -408,16 +412,15 @@ class instances, `AbortSignal`, cyclic values, and extension runtime objects do
 not silently cross or execute in the client. Runtime methods bridge abort,
 events, permissions, artifacts, config, and owner-loaded extensions instead.
 
-Auto Mode is likewise an owner-plane concern. For an `auto` session, the
-Runtime holds one session-scoped LLM/rules guardrail. Precisely modeled ordinary
-reads and workspace/system-temp mutations are admitted deterministically
-before classifier latency. Remaining calls run through the guardrail before
-the generic permission bridge; only an explicit escalation reaches a shared
-pending-permission request. Classifier failure retries once and then applies
-the Accept-edits boundary without changing the engine to rules. Classifier
-model/timeout, project boundary, execution directory, and provider/model are
-part of the guardrail reuse key, so a setting change gets a fresh guardrail
-rather than stale classification state.
+Permission is an owner-plane concern with four canonical profiles: Plan,
+Edits, Auto[LLM], and Full Access. Edits and Auto first run eligible shell calls
+inside the OS sandbox. A completed invocation is authoritative and creates no
+review. Only a proven pre-start denial/unavailability reaches Exec Policy and
+then the user or LLM reviewer; a target-started/uncertain call is never replayed.
+Full Access skips sandbox and reviewer while retaining administrator forbids
+and the narrow critical-effect fallback. Auto reviewer state is per turn;
+infrastructure failure retries once (90s then 180s) and then blocks with a safer
+route rather than widening authority.
 
 The Runtime owner also owns interaction deadlines. Permission and AskUser have
 independent five-minute defaults: permission expires fail-closed, while AskUser
@@ -427,11 +430,10 @@ a late UI answer cannot retain the event stream or restart resolved work.
 Agent-layer MCP elicitation shares the bounded AbortSignal UI contract and
 cancels at the same default deadline.
 
-REPL-to-Runtime Auto settings are serialized per Session. The UI may project the
-configured engine immediately while the owner acknowledgement is pending, then
-reconcile to the persisted engine; this prevents both a transient bare `Auto`
-label and out-of-order completion of rapid mode changes. `Auto[RULES]` is
-sticky only when explicitly selected or restored from a prior user choice.
+REPL-to-Runtime permission settings are serialized per Session. The UI projects
+the selected canonical profile immediately, then reconciles owner acknowledgement.
+Legacy `auto-in-project` and Auto[RULES] inputs normalize to Auto[LLM] and are
+omitted from new writes and events.
 
 The classifier input boundary is owned by `classify`, not by individual
 guardrail callers. It projects the current action independently and sanitizes
@@ -601,17 +603,16 @@ then uses the same explicit interpreter for the command. Cache identity binds
 the contract, canonical cwd, Session scratch identity, denied credential
 names, and refresh generation. Legacy callers bypass this resolver.
 
-ASRT containment is a separate execution layer below permission admission.
-Local permission results do not depend on ASRT readiness; a failure before
-target spawn may use the ordinary already-admitted path, while a failure after
-spawn never re-executes. Workspace commands reuse one long-lived containment
-session. The public `/sandbox` entry exposes capability/doctor/setup plus an
+ASRT containment is the first authority for Edits and Auto shell execution.
+Sandbox completion returns directly; a failure proven before target spawn
+reaches a new exact host-boundary decision, while a failure after spawn never
+re-executes. The public `/sandbox` entry exposes capability/doctor/setup plus an
 explicit host-owned executor that returns `unavailable` instead of applying
 the local fallback. `/sandbox` and optional `tool.sandbox` events are diagnostic
 surfaces; ordinary REPL history remains unchanged. KodaX's workspace-shell
-policy denies sensitive home credential paths and the complete resolved agent
-home, and filters home-local executable grants that would reopen a denied
-subtree. The generic SDK executor continues to apply its caller-owned policy.
+policy allows broad reads, including Agent Home, credential locations, and
+global Git configuration; writes stay within workspace/system temp. The
+generic SDK executor continues to apply its caller-owned policy.
 
 The permission boundary treats `gitRoot` as an allowed repository boundary and
 `executionCwd` as the base for relative operands. It never promotes quoted

@@ -37,32 +37,21 @@
   // "thinking": true,
 
   // Agent harness: "ama" enables adaptive multi-agent use; "sa" forces one
-  // agent. Permission mode is "plan", "accept-edits", or classifier-backed
-  // "auto".
+  // agent. Permission mode is "plan", "accept-edits", classifier-backed
+  // "auto", or unsandboxed "full-access".
   // "agentMode": "ama",
   // "permissionMode": "accept-edits",
   // User-level Bash allow patterns. Project additions belong in
   // <project>/.kodax/config.local.json. Broad Bash(*) is rejected.
   // "alwaysAllowTools": ["Bash(npm test)", "Bash(git status:*)"],
   // "autoMode": {
-  //   "engine": "llm",
-  //   "classifierModel": "provider:model",
-  //   // Omit timeoutMs for the 45s first-attempt / 90s retry defaults.
-  //   // A configured timeoutMs applies the same deadline to both attempts.
-  //   "speculativeWindowMs": 500
+  //   "classifierModel": "provider:model"
   // },
+  // Optional policy body appended to the fixed Auto reviewer contract.
+  // "autoReview": { "policy": "Prefer reversible, narrowly scoped operations." },
 
   // UI/manual locale.
   // "locale": "zh",
-
-  // Sensitive environment variables are filtered from model-issued commands by
-  // default. List exact host variable names here to pass them to the command
-  // target (including ASRT); values are never stored in this file. Project
-  // config cannot extend this user-level list. Execution-control variables such
-  // as NODE_OPTIONS and BASH_ENV remain blocked.
-  // "sandbox": {
-  //   "envPass": ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"]
-  // },
 
   // Custom providers store public connection metadata only. Put the actual
   // credential in the named environment variable, never in this file. Use

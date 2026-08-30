@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolveReplRuntimePermissionDecision,
+  toReplRuntimeAutoModeSettings,
   type ReplRuntimePermissionRequest,
 } from './runtime-permission.js';
 
@@ -39,5 +40,13 @@ describe('resolveReplRuntimePermissionDecision', () => {
   it('keeps one-time approval independent of grant suggestions', () => {
     expect(resolveReplRuntimePermissionDecision(request, { confirmed: true }))
       .toEqual({ type: 'allow_once' });
+  });
+});
+
+describe('toReplRuntimeAutoModeSettings', () => {
+  it('forwards the fixed reviewer policy to Runtime', () => {
+    expect(toReplRuntimeAutoModeSettings({
+      reviewPolicy: 'Never publish packages from this machine.',
+    })).toEqual({ reviewPolicy: 'Never publish packages from this machine.' });
   });
 });

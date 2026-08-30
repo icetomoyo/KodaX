@@ -342,6 +342,34 @@ describe('toolBash', () => {
     expect(managedRegistrationMock.killSyncCalls).toBe(0);
   });
 
+  it('reports both native bootstrap and termination failures', async () => {
+    const closeInput = vi.fn(async () => {
+      throw new Error('bootstrap control pipe timed out');
+    });
+    const terminate = vi.fn(async () => {
+      throw new Error('native job termination timed out');
+    });
+
+    await expect(toolBash({ command: 'native-bootstrap-failure' }, {
+      backups: new Map(),
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setTimeout(() => undefined, 100)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: { closeInput, terminate },
+          cleanup: async () => undefined,
+        }),
+      },
+    })).rejects.toThrow(
+      'Native shell bootstrap failed: bootstrap control pipe timed out; '
+      + 'termination also failed: native job termination timed out.',
+    );
+    expect(closeInput).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
   it('delivers broker-only control output to request-scoped cleanup', async () => {
     const cleanup = vi.fn(async (input?: {
       readonly execution: 'not_started' | 'started_or_unknown';
@@ -560,7 +588,7 @@ describe('toolBash', () => {
     }
   }, WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS);
 
-  it('falls back to ordinary execution when sandbox preparation unexpectedly fails', async () => {
+  it('does not fall through to host execution when sandbox preparation unexpectedly fails', async () => {
     const reportToolSandboxObservation = vi.fn();
     const prepare = vi.fn(async () => {
       throw new Error('sandbox preparation failed');
@@ -574,16 +602,12 @@ describe('toolBash', () => {
       reportToolSandboxObservation,
     });
 
-    expect(completedCommandBody(result)).toContain('ordinary execution completed');
-    expect(reportToolSandboxObservation).toHaveBeenCalledWith({
-      version: 1,
-      state: 'fallback',
-      reason: 'prepare_failed',
-      execution: 'normal_permission_policy',
-    });
+    expect(result).toContain('[Sandbox boundary]');
+    expect(result).not.toContain('ordinary execution completed');
+    expect(reportToolSandboxObservation).not.toHaveBeenCalled();
   });
 
-  it('uses ordinary authorized execution when sandbox preparation fails', async () => {
+  it('uses ordinary execution only after the host boundary explicitly allows it', async () => {
     const prepare = vi.fn(async () => {
       throw new Error('sandbox unavailable');
     });
@@ -593,23 +617,152 @@ describe('toolBash', () => {
       backups: new Map(),
       toolCallId: 'bash-sandbox-fallback-after-error',
       shellSandbox: { prepare },
+      authorizeShellHostExecution: vi.fn(async () => true),
     });
 
     expect(completedCommandBody(result)).toContain('authorized fallback completed');
   });
 
-  it('uses ordinary authorized execution when sandbox declines the selected call', async () => {
+  it('gives an authorized host attempt a fresh command deadline after review', async () => {
+    const realNow = Date.now();
+    let elapsed = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow + elapsed);
+    try {
+      const result = await toolBash({
+        command: nodeOutputCommand('reviewed after the original command deadline'),
+      }, {
+        backups: new Map(),
+        toolCallId: 'bash-independent-review-budget',
+        shellSandbox: { prepare: async () => undefined },
+        authorizeShellHostExecution: async () => {
+          elapsed = 61_000;
+          return true;
+        },
+      });
+
+      expect(completedCommandBody(result))
+        .toContain('reviewed after the original command deadline');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('does not execute when the host boundary denies a declined sandbox call', async () => {
     const command = nodeOutputCommand('declined sandbox fallback completed');
     const result = await toolBash({ command }, {
       backups: new Map(),
       toolCallId: 'bash-sandbox-declined-fallback',
       shellSandbox: { prepare: async () => undefined },
+      authorizeShellHostExecution: vi.fn(async () => '[Denied] reviewer refused host execution'),
     });
 
-    expect(completedCommandBody(result)).toContain('declined sandbox fallback completed');
+    expect(result).toContain('[Denied] reviewer refused host execution');
+    expect(result).not.toContain('declined sandbox fallback completed');
   });
 
-  it('keeps Provider credentials out of legacy sandbox input and fallback execution', async () => {
+  it('retries on the host once when sandbox cleanup proves the target never started', async () => {
+    const prepare = vi.fn(async () => ({
+      executable: process.execPath,
+      args: ['-e', 'process.exit(1)'],
+      env: process.env,
+      cleanup: vi.fn(async () => ({
+        version: 1 as const,
+        state: 'pre_start_unavailable' as const,
+        diagnostic: 'sandbox backend did not launch the target',
+      })),
+    }));
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+
+    const result = await toolBash({
+      command: nodeOutputCommand('single authorized host retry'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-pre-start-host-retry',
+      shellSandbox: { prepare },
+      authorizeShellHostExecution,
+    });
+
+    expect(completedCommandBody(result)).toContain('single authorized host retry');
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+  });
+
+  it('routes a proven sandbox wrapper spawn failure through one host boundary', async () => {
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const result = await toolBash({
+      command: nodeOutputCommand('host ran exactly once after wrapper failure'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-wrapper-spawn-pre-start',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: path.join(tempDir, 'missing-sandbox-wrapper.exe'),
+          args: [],
+          env: process.env,
+          cleanup: async () => ({
+            version: 1,
+            state: 'pre_start_unavailable',
+            diagnostic: 'sandbox wrapper could not be spawned',
+          }),
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(completedCommandBody(result)).toContain('host ran exactly once after wrapper failure');
+    expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+  });
+
+  it('routes a wrapper spawn failure when cleanup has no observation', async () => {
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const result = await toolBash({
+      command: nodeOutputCommand('host ran after pidless wrapper failure'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-wrapper-spawn-no-observation',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: path.join(tempDir, 'missing-sandbox-wrapper-no-observation.exe'),
+          args: [],
+          env: process.env,
+          cleanup: async () => undefined,
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(completedCommandBody(result)).toContain('host ran after pidless wrapper failure');
+    expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+  });
+
+  it('never retries when sandbox cleanup reports started-or-unknown execution', async () => {
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const result = await toolBash({
+      command: nodeOutputCommand('must not be replayed'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-uncertain-no-retry',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'process.exit(125)'],
+          env: process.env,
+          cleanup: async () => ({
+            version: 1,
+            state: 'execution_uncertain',
+            diagnostic: 'target-start attestation was missing',
+          }),
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(result).toContain('[Safety] The command was not retried');
+    expect(result).not.toContain('must not be replayed');
+    expect(authorizeShellHostExecution).not.toHaveBeenCalled();
+  });
+
+  it('inherits Provider credentials into the sandbox command environment by default', async () => {
     const originalOpenAI = process.env.OPENAI_API_KEY;
     const originalCustom = process.env.KODAX_TEST_CUSTOM_PROVIDER_AUTH;
     const originalSafe = process.env.KODAX_TEST_SAFE_VALUE;
@@ -619,29 +772,21 @@ describe('toolBash', () => {
     let preparedEnvironment: NodeJS.ProcessEnv | undefined;
     const prepare = vi.fn(async (input: Parameters<KodaXShellSandbox['prepare']>[0]) => {
       preparedEnvironment = input.env;
-      throw new Error('exercise normal-permission fallback');
+      return undefined;
     });
-    const script = [
-      'process.env.OPENAI_API_KEY',
-      'process.env.KODAX_TEST_CUSTOM_PROVIDER_AUTH',
-      'process.env.KODAX_TEST_SAFE_VALUE',
-    ].join(" ?? 'missing',") + " ?? 'missing'";
-    const encoded = Buffer.from(`process.stdout.write([${script}].join('|'))`, 'utf8')
-      .toString('base64');
     try {
-      const result = await toolBash({
-        command: `node -e "eval(Buffer.from('${encoded}','base64').toString())"`,
-      }, {
+      await toolBash({ command: nodeOutputCommand('must not execute') }, {
         backups: new Map(),
-        toolCallId: 'bash-filter-provider-credentials',
+        toolCallId: 'bash-inherit-provider-credentials',
         shellSandbox: { prepare },
-        providerCredentialEnvironmentNames: ['KODAX_TEST_CUSTOM_PROVIDER_AUTH'],
       });
 
-      expect(preparedEnvironment).not.toHaveProperty('OPENAI_API_KEY');
-      expect(preparedEnvironment).not.toHaveProperty('KODAX_TEST_CUSTOM_PROVIDER_AUTH');
+      expect(preparedEnvironment).toHaveProperty('OPENAI_API_KEY', 'built-in-secret');
+      expect(preparedEnvironment).toHaveProperty(
+        'KODAX_TEST_CUSTOM_PROVIDER_AUTH',
+        'custom-secret',
+      );
       expect(preparedEnvironment).toHaveProperty('KODAX_TEST_SAFE_VALUE', 'safe');
-      expect(completedCommandBody(result)).toContain('missing|missing|safe');
     } finally {
       if (originalOpenAI === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = originalOpenAI;
@@ -652,7 +797,7 @@ describe('toolBash', () => {
     }
   });
 
-  it('passes explicitly allowed credentials to sandbox input and fallback execution', async () => {
+  it('ignores the removed envPass compatibility input because all host variables inherit', async () => {
     const originalPass = process.env.KODAX_SANDBOX_ENV_PASS;
     const originalGitHub = process.env.GITHUB_TOKEN;
     const originalOpenAI = process.env.OPENAI_API_KEY;
@@ -662,25 +807,19 @@ describe('toolBash', () => {
     let preparedEnvironment: NodeJS.ProcessEnv | undefined;
     const prepare = vi.fn(async (input: Parameters<KodaXShellSandbox['prepare']>[0]) => {
       preparedEnvironment = input.env;
-      throw new Error('exercise normal-permission fallback');
+      return undefined;
     });
-    const encoded = Buffer.from(
-      "process.stdout.write([process.env.GITHUB_TOKEN, process.env.OPENAI_API_KEY ?? 'missing'].join('|'))",
-      'utf8',
-    ).toString('base64');
     try {
-      const result = await toolBash({
-        command: `node -e "eval(Buffer.from('${encoded}','base64').toString())"`,
-      }, {
+      await toolBash({ command: nodeOutputCommand('must not execute') }, {
         backups: new Map(),
-        toolCallId: 'bash-pass-allowed-credential',
+        toolCallId: 'bash-env-pass-is-obsolete',
         shellSandbox: { prepare },
         sandbox: { envPass: ['GITHUB_TOKEN'] },
       });
 
       expect(preparedEnvironment).toHaveProperty('GITHUB_TOKEN', 'allowed-secret');
-      expect(preparedEnvironment).not.toHaveProperty('OPENAI_API_KEY');
-      expect(completedCommandBody(result)).toContain('allowed-secret|missing');
+      expect(preparedEnvironment).toHaveProperty('OPENAI_API_KEY', 'filtered-secret');
+      expect(preparedEnvironment).not.toHaveProperty('KODAX_SANDBOX_ENV_PASS');
     } finally {
       if (originalPass === undefined) delete process.env.KODAX_SANDBOX_ENV_PASS;
       else process.env.KODAX_SANDBOX_ENV_PASS = originalPass;
@@ -1249,6 +1388,40 @@ describe('toolBash', () => {
     expect(output).toContain('background-ran-once');
     expect(output).toContain('sandbox attestation missing');
     expect(output).toContain('was not retried');
+    await fs.rm(outputPath, { force: true });
+  });
+
+  it('records proven background pre-start failure without a late host replay', async () => {
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const shellSandbox: KodaXShellSandbox = {
+      prepare: async () => ({
+        executable: process.execPath,
+        args: ['-e', 'process.exit(1)'],
+        env: process.env,
+        cleanup: async () => ({
+          version: 1,
+          state: 'pre_start_unavailable',
+          diagnostic: 'sandbox backend did not launch the target',
+        }),
+      }),
+    };
+
+    const result = await toolBash({
+      command: nodeOutputCommand('must not be replayed'),
+      run_in_background: true,
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-background-pre-start',
+      shellSandbox,
+      authorizeShellHostExecution,
+    });
+    const outputPath = parseBackgroundOutputPath(result);
+    await waitForOutputMatch(outputPath, /sandbox backend did not launch the target/);
+
+    const output = await fs.readFile(outputPath, 'utf8');
+    expect(output).toContain('Background host retry was not attempted');
+    expect(output).not.toContain('must not be replayed');
+    expect(authorizeShellHostExecution).not.toHaveBeenCalled();
     await fs.rm(outputPath, { force: true });
   });
 

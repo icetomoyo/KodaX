@@ -18,8 +18,7 @@
  *      here.
  *
  * The historical Tier 0 detector is a separate module, but its matches are
- * also pre-verdict facts in Auto[LLM]. Only explicit Auto[Rules] treats that
- * detector as a legacy approval gate.
+ * also pre-verdict facts in Auto[LLM].
  *
  * Design ref: ADR-025, FEATURE_158 (docs/features/v0.7.39.md).
  */

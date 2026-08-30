@@ -3,9 +3,8 @@
  *
  * The exported names remain source-compatible with FEATURE_158. Auto[LLM]
  * now treats matches as deterministic facts for the classifier, whose
- * decision is final. Explicit Auto[Rules] mode retains the legacy approval
- * gate. The narrow list still identifies high-impact operations worth
- * describing precisely:
+ * decision is final. The narrow list still identifies high-impact operations
+ * worth describing precisely:
  *
  * The detector must not expand into a second Auto[LLM] approval policy.
  *
@@ -715,7 +714,7 @@ function removalSelectionHitsHardBoundary(
   return traversedTargetHitsHardBoundary(targetPath, executionCwd);
 }
 
-/** Unauthorizable Agent Home boundary, enforced before either Auto engine. */
+/** Unauthorizable Agent Home control-plane boundary for Auto review. */
 export function checkAgentHomeHardDeny(
   call: RunnerToolCall,
   projectRoot: string,
@@ -777,8 +776,7 @@ export function checkAgentHomeHardDeny(
 /**
  * Check a tool call against the historical Tier 0 pattern list. Returns the
  * first matching pattern, or `{ denied: false }` if no pattern fires. A match
- * is classifier evidence in Auto[LLM] and a legacy approval gate only in
- * explicit Auto[Rules].
+ * is classifier evidence in Auto[LLM].
  *
  * Order is deterministic — patterns checked in the order defined above.
  * Multiple matches would be possible (e.g. `rm -rf / ; :(){...};:`) but

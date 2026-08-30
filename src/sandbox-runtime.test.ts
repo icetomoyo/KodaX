@@ -339,11 +339,13 @@ vi.mock('node:child_process', async (importOriginal) => {
       if (
         args.length === 4
         && args[0] === '__persistent-deny-read'
-        && (args[1] === 'verify' || args[1] === 'install')
+        && (args[1] === 'verify' || args[1] === 'install' || args[1] === 'remove')
       ) {
         const paths = JSON.parse(options?.input ?? '[]') as readonly string[];
         const install = args[1] === 'install';
-        const missing = windowsSandboxMock.guardReady || install ? [] : paths;
+        const missing = args[1] === 'remove'
+          ? []
+          : windowsSandboxMock.guardReady || install ? [] : paths;
         if (install) windowsSandboxMock.guardReady = true;
         return {
           status: 0,
@@ -1282,12 +1284,10 @@ beforeEach(async () => {
   recoveryLockMock.beforeOperation = undefined;
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-runner-'));
   tempRoots.push(root);
-  const source = path.join(root, 'package', 'srt-win.exe');
-  await mkdir(path.dirname(source), { recursive: true });
-  await writeFile(source, await readFile(path.resolve(
+  const source = path.resolve(
     'node_modules', '@anthropic-ai', 'sandbox-runtime',
     'vendor', 'srt-win', process.arch, 'srt-win.exe',
-  )));
+  );
   windowsSandboxMock.runnerSource = source;
   vi.stubEnv('ProgramData', path.join(root, 'program-data'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
@@ -1305,6 +1305,14 @@ beforeEach(async () => {
       protocol: 7,
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }),
+    'utf8',
+  );
+  await writeFile(
+    path.join(markerDirectory, 'read-policy-v2.json'),
+    JSON.stringify({
+      version: 1,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
     }),
     'utf8',
@@ -2118,7 +2126,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await reused.cleanup();
   });
 
-  it('repairs newly materialized persistent ACL guards on cold shell admission', async () => {
+  it('removes obsolete persistent read guards on cold shell admission', async () => {
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cold-guards-'));
@@ -2141,11 +2149,11 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     if (prepared === undefined) throw new Error('expected guarded Windows v2 invocation');
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read'
-    )).map(({ args }) => args[1])).toEqual(['verify', 'install']);
+    )).map(({ args }) => args[1])).toEqual(['remove']);
     await prepared.cleanup({ execution: 'not_started' });
   });
 
-  it('repairs newly materialized guards before the public SDK doctor gate', async () => {
+  it('does not install obsolete read guards before the public SDK doctor gate', async () => {
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-cold-guards-'));
@@ -2168,7 +2176,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     })).resolves.toMatchObject({ status: 'completed', sandboxed: true });
     expect(capturedSyncSpawns.some(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'install'
-    ))).toBe(true);
+    ))).toBe(false);
   });
 
   it('does not hide a blocking doctor failure behind repairable guard diagnostics', async () => {
@@ -2232,7 +2240,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
-  it('keeps workspace-local Runtime state outside shell read and write authority', async () => {
+  it('allows reads but denies writes for workspace-local Runtime state', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-runtime-state-deny-'));
     tempRoots.push(root);
@@ -2260,13 +2268,204 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       readonly denyWrite: readonly string[];
     };
     const canonicalRuntimeState = await realpath(runtimeState);
-    expect(request.denyRead.map((entry) => entry.toLowerCase())).toContain(
+    expect(request.denyRead.map((entry) => entry.toLowerCase())).not.toContain(
       canonicalRuntimeState.toLowerCase(),
     );
     expect(request.denyWrite.map((entry) => entry.toLowerCase())).toContain(
       canonicalRuntimeState.toLowerCase(),
     );
     await invocation.cleanup();
+  });
+
+  it('allows broad home reads and writes to the host temporary directory', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));
+    tempRoots.push(root);
+    const home = path.join(root, 'host-home');
+    const agentHome = path.resolve(process.env.KODAX_HOME!);
+    const globalGitConfig = path.join(home, '.gitconfig');
+    await mkdir(home, { recursive: true });
+    await writeFile(globalGitConfig, '[user]\n\tname = Test\n', 'utf8');
+    vi.stubEnv('USERPROFILE', home);
+    const sandbox = createAsrtShellSandbox({
+      workspaceRoot: root,
+      shouldSandbox: () => true,
+    });
+    const invocation = await sandbox.prepare({
+      toolCallId: 'broad-home-and-temp-access',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly allowRead: readonly string[];
+      readonly allowWrite: readonly string[];
+      readonly denyRead: readonly string[];
+      readonly denyWrite: readonly string[];
+    };
+    const normalize = (entries: readonly string[]) => entries.map((entry) => (
+      path.resolve(entry).toLowerCase()
+    ));
+    expect(normalize(request.allowRead)).toContain(path.resolve(home).toLowerCase());
+    expect(normalize(request.allowRead)).toContain(agentHome.toLowerCase());
+    expect(normalize(request.denyRead)).not.toContain(path.resolve(globalGitConfig).toLowerCase());
+    expect(normalize(request.denyRead)).not.toContain(agentHome.toLowerCase());
+    expect(normalize(request.allowWrite)).toContain(path.resolve(os.tmpdir()).toLowerCase());
+    expect(normalize(request.denyWrite)).not.toContain(
+      path.resolve(root, '.kodax', 'exec-policy.jsonc').toLowerCase(),
+    );
+    await invocation.cleanup();
+  });
+
+  it('protects an explicitly snapshotted workspace Exec Policy from sandbox writes', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-exec-policy-deny-'));
+    tempRoots.push(root);
+    const execPolicy = path.join(root, '.kodax', 'exec-policy.jsonc');
+    await mkdir(path.dirname(execPolicy), { recursive: true });
+    await writeFile(execPolicy, '{ "rules": [] }', 'utf8');
+    const sandbox = createAsrtShellSandbox({
+      workspaceRoot: root,
+      trustedProjectExecPolicyPath: execPolicy,
+      shouldSandbox: () => true,
+    });
+    const invocation = await sandbox.prepare({
+      toolCallId: 'trusted-exec-policy-deny',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly denyWrite: readonly string[];
+    };
+    expect(request.denyWrite.map((entry) => path.resolve(entry).toLowerCase())).toContain(
+      path.resolve(execPolicy).toLowerCase(),
+    );
+    await invocation.cleanup();
+
+    const standaloneSandbox = createAsrtShellSandbox({
+      workspaceRoot: root,
+      shouldSandbox: () => true,
+    });
+    const standaloneInvocation = await standaloneSandbox.prepare({
+      toolCallId: 'standalone-trusted-exec-policy-deny',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      trustedProjectExecPolicyPath: execPolicy,
+    });
+    if (standaloneInvocation === undefined) {
+      throw new Error('expected a standalone Windows v2 invocation');
+    }
+    const standaloneRequestFile = standaloneInvocation.args.at(-1);
+    if (standaloneRequestFile === undefined) {
+      throw new Error('expected a standalone native request file');
+    }
+    const standaloneRequest = JSON.parse(readFileSync(standaloneRequestFile, 'utf8')) as {
+      readonly denyWrite: readonly string[];
+    };
+    expect(standaloneRequest.denyWrite.map((entry) => path.resolve(entry).toLowerCase())).toContain(
+      path.resolve(execPolicy).toLowerCase(),
+    );
+    await standaloneInvocation.cleanup();
+
+    await rm(execPolicy, { force: true });
+    await expect(sandbox.prepare({
+      toolCallId: 'removed-trusted-exec-policy-deny',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    })).rejects.toThrow(/trusted project Exec Policy snapshot disappeared/i);
+  });
+
+  it('reconciles legacy credential deny ACLs before every shell admission', async () => {
+    await resetSandboxRuntimeForTest();
+    await writeFile(
+      path.join(
+        path.resolve(process.env.ProgramData!),
+        'KodaX',
+        'sandbox-runtime',
+        'read-policy-v2.json',
+      ),
+      JSON.stringify({
+        version: 2,
+        sandboxGroupSid: windowsSandboxMock.user.groupSid,
+      }),
+      'utf8',
+    );
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-legacy-acl-reconcile-'));
+    tempRoots.push(root);
+    const home = path.join(root, 'host-home');
+    const agentHome = path.join(home, '.kodax');
+    const globalGitConfig = path.join(home, '.gitconfig');
+    const agentConfig = path.join(agentHome, 'config.json');
+    const agentRuntime = path.join(agentHome, 'runtime');
+    await mkdir(home, { recursive: true });
+    await mkdir(agentRuntime, { recursive: true });
+    await writeFile(globalGitConfig, '[user]\n\tname = Test\n', 'utf8');
+    await writeFile(agentConfig, '{}', 'utf8');
+    vi.stubEnv('USERPROFILE', home);
+    vi.stubEnv('KODAX_HOME', agentHome);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = async (toolCallId: string) => {
+      const invocation = await sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+        fallbackToNormalExecution: false,
+      });
+      if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+      await invocation.cleanup({ execution: 'not_started' });
+    };
+
+    await prepare('legacy-acl-reconcile-first');
+    await prepare('legacy-acl-reconcile-second');
+
+    const removals = capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ));
+    expect(removals).toHaveLength(2);
+    for (const removal of removals) {
+      expect(removal.args.slice(2)).toEqual([
+        windowsSandboxMock.user.sid,
+        windowsSandboxMock.user.groupSid,
+      ]);
+      const removed = JSON.parse(removal.input ?? '[]') as readonly string[];
+      expect(removed.map((entry) => path.resolve(entry).toLowerCase())).toEqual(
+        expect.arrayContaining([
+          path.resolve(globalGitConfig).toLowerCase(),
+          path.resolve(agentConfig).toLowerCase(),
+        ]),
+      );
+      expect(removed.map((entry) => path.resolve(entry).toLowerCase())).toContain(
+        path.resolve(agentRuntime).toLowerCase(),
+      );
+    }
   });
 
   it('partitions shared network brokers by exact network authority', async () => {
@@ -2353,39 +2552,23 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
   });
 
-  it('requires setup when persistent sensitive-root guards are missing and repairs them', async () => {
+  it('does not require setup or install guards when the obsolete guard probe is missing', async () => {
     windowsSandboxMock.guardReady = false;
 
     await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
-      ready: false,
-      setupRequired: true,
-      diagnostics: expect.arrayContaining([
-        expect.stringContaining('[acl_guards_missing]'),
-      ]),
+      ready: true,
+      setupRequired: false,
+      diagnostics: [],
     });
 
     const outcome = await prepareSandboxRuntimeForSetup();
-    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(outcome).toMatchObject({ status: 'ready', attempted: false });
     const guardCalls = capturedSyncSpawns.flatMap((call) => (
       call.args[0] === '__persistent-deny-read' && call.input
         ? [{ action: call.args[1], paths: JSON.parse(call.input) as readonly string[] }]
         : []
     ));
-    expect(guardCalls.map((call) => call.action)).toEqual([
-      'verify',
-      'verify',
-      'verify',
-      'install',
-      'verify',
-    ]);
-    const agentHome = process.env.KODAX_HOME;
-    if (agentHome === undefined) throw new Error('expected isolated KODAX_HOME');
-    for (const call of guardCalls) {
-      expect(call.paths).not.toContain(path.resolve(agentHome));
-      for (const protectedRoot of trustedTextNativeArtifactStateRoots()) {
-        expect(call.paths).not.toContain(path.resolve(protectedRoot));
-      }
-    }
+    expect(guardCalls).toEqual([]);
   });
 
   it('keeps persistent sensitive roots out of per-command deny ACL transactions', async () => {
@@ -2407,6 +2590,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       Array.isArray(candidate.targetArgv)
     )) as {
       readonly denyRead: readonly string[];
+      readonly denyWrite: readonly string[];
     } | undefined;
     if (request === undefined) throw new Error('expected a native Windows request');
     expect(request.denyRead.map((entry) => entry.toLowerCase())).toContain(
@@ -2417,6 +2601,9 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
         protectedRoot.toLowerCase(),
       );
     }
+    expect(request.denyWrite.map((entry) => entry.toLowerCase())).not.toContain(
+      windowsNativeArtifactCacheRoot().toLowerCase(),
+    );
   });
 
   it('reinstalls a missing NUL compatibility ACE without rotating the current v2 account', async () => {
@@ -2622,26 +2809,24 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
   );
 
   it.runIf(process.platform === 'win32')(
-    'fails closed quickly when persistent ACL guards require explicit setup',
+    'does not make obsolete persistent read guards a doctor prerequisite',
     async () => {
       windowsSandboxMock.guardReady = false;
 
       await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
-        ready: false,
-        setupRequired: true,
-        diagnostics: expect.arrayContaining([
-          expect.stringContaining('[acl_guards_missing]'),
-        ]),
+        ready: true,
+        setupRequired: false,
+        diagnostics: [],
       });
       const guardCalls = capturedSyncSpawns.filter(
         (call) => call.args[0] === '__persistent-deny-read',
       );
-      expect(guardCalls.map((call) => call.args[1])).toEqual(['verify']);
+      expect(guardCalls).toEqual([]);
     },
   );
 
   it.runIf(process.platform === 'win32')(
-    'uses the native no-follow ACL verifier instead of PowerShell',
+    'does not probe obsolete persistent read guards during doctor',
     async () => {
       await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
         ready: true,
@@ -2650,8 +2835,7 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
       expect(capturedSyncSpawns.some(({ command, args }) => (
         path.basename(command).toLowerCase().includes('kodax-windows-sandbox')
         && args[0] === '__persistent-deny-read'
-        && args[1] === 'verify'
-      ))).toBe(true);
+      ))).toBe(false);
     },
   );
 
@@ -2960,7 +3144,7 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     }
   });
 
-  it('falls back before target launch when the local workspace sandbox backend fails', async () => {
+  it('reports pre-start unavailability without directly replaying on the host', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-broker-fallback-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
@@ -2983,14 +3167,14 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     }), 'utf8');
     sandboxInitialize.mockRejectedValueOnce(new Error('backend initialization failed'));
 
-    await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(0);
-    expect(capturedSpawnArgv.at(-1)).toEqual([process.execPath, '--version']);
-    expect(capturedSpawnEnvironments.at(-1)?.KODAX_FALLBACK_VISIBLE).toBe('yes');
-    expect(JSON.parse(readFileSync(observationFile, 'utf8'))).toEqual({
+    await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(1);
+    expect(capturedSpawnArgv.filter(
+      (argv) => JSON.stringify(argv) === JSON.stringify([process.execPath, '--version']),
+    )).toHaveLength(0);
+    expect(JSON.parse(readFileSync(observationFile, 'utf8'))).toMatchObject({
       version: 1,
-      state: 'fallback',
-      reason: 'backend_failed',
-      execution: 'normal_permission_policy',
+      state: 'not_started',
+      diagnostic: 'backend initialization failed',
     });
   });
 
@@ -3027,7 +3211,7 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     },
   );
 
-  it('falls back once when the sandbox wrapper is proven not to have spawned', async () => {
+  it('reports wrapper pre-start failure without directly replaying on the host', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-wrapper-spawn-fallback-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
@@ -3050,15 +3234,13 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     }), 'utf8');
     sandboxWrapper.mode = 'spawn_error';
 
-    await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(0);
+    await expect(runAsrtBrokerProcess(requestFile)).resolves.toBe(1);
     expect(capturedSpawnArgv.filter(
       (argv) => JSON.stringify(argv) === JSON.stringify([process.execPath, '--version']),
-    )).toHaveLength(1);
-    expect(JSON.parse(readFileSync(observationFile, 'utf8'))).toEqual({
+    )).toHaveLength(0);
+    expect(JSON.parse(readFileSync(observationFile, 'utf8'))).toMatchObject({
       version: 1,
-      state: 'fallback',
-      reason: 'backend_failed',
-      execution: 'normal_permission_policy',
+      state: 'not_started',
     });
   });
 

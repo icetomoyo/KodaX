@@ -197,22 +197,41 @@ describe('Windows native artifact trust boundary', () => {
     },
   );
 
-  it('rejects read or write grants on either side of the native control boundary', () => {
+  it('allows readable ancestors but rejects direct grants inside the native artifact boundary', () => {
     vi.stubEnv('LOCALAPPDATA', path.resolve('C:/kodax-control-test-local'));
+    const cacheRoot = windowsNativeArtifactCacheRoot();
     const control = windowsSandboxControlDirectory();
 
     expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
-      allowRead: [path.dirname(control)],
+      allowRead: [path.dirname(cacheRoot)],
+      allowWrite: [],
+      denyRead: [],
+      denyWrite: [],
+    })).not.toThrow();
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [cacheRoot],
+      allowWrite: [],
+      denyRead: [],
+      denyWrite: [],
+    })).toThrow(/native shell control state/);
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [control],
       allowWrite: [],
       denyRead: [],
       denyWrite: [],
     })).toThrow(/native shell control state/);
     expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
       allowRead: [],
-      allowWrite: [path.join(control, 'nested')],
+      allowWrite: [path.join(cacheRoot, 'artifact-sibling')],
       denyRead: [],
       denyWrite: [],
     })).toThrow(/native shell control state/);
+    expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
+      allowRead: [],
+      allowWrite: [],
+      denyRead: [cacheRoot],
+      denyWrite: [],
+    })).toThrow(/deny policy targets protected native shell control state/);
     expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
       allowRead: [],
       allowWrite: [],
@@ -222,7 +241,7 @@ describe('Windows native artifact trust boundary', () => {
     expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
       allowRead: [],
       allowWrite: [],
-      denyRead: [path.dirname(control)],
+      denyRead: [path.dirname(cacheRoot)],
       denyWrite: [],
     })).not.toThrow();
     expect(() => assertWindowsSandboxControlStateNotDirectlyAccessible({
@@ -553,6 +572,60 @@ $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentif
           Buffer.from('tampered executable with the same package version'),
           sha256,
         )).toThrow(/trusted release digest/);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'preserves an administrator deny on the protected native cache',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-admin-deny-'));
+      const localAppData = path.join(temporary, 'local-app-data');
+      fs.mkdirSync(localAppData, { recursive: true });
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const bytes = Buffer.from('administrator deny preservation');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        provisionWindowsAsrtRunner(bytes, sha256);
+        const cacheRoot = windowsNativeArtifactCacheRoot();
+        const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$path = $env:KODAX_TEST_CACHE
+$sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-11-12-13-14')
+$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+$rights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+$acl = [IO.Directory]::GetAccessControl($path)
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
+[void]$acl.AddAccessRule($rule)
+[IO.Directory]::SetAccessControl($path, $acl)
+`;
+        const powershell = path.join(
+          process.env.SystemRoot ?? String.raw`C:\Windows`,
+          'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+        );
+        const invoke = (source: string) => spawnSync(powershell, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64'),
+        ], {
+          env: { ...process.env, KODAX_TEST_CACHE: cacheRoot },
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+        const added = invoke(script);
+        expect(added.status, added.stderr).toBe(0);
+
+        provisionWindowsAsrtRunner(bytes, sha256);
+
+        const observed = invoke(String.raw`
+$acl = [IO.Directory]::GetAccessControl($env:KODAX_TEST_CACHE)
+@($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+  $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Deny -and $_.IdentityReference.Value -eq 'S-1-5-21-11-12-13-14'
+}).Count
+`);
+        expect(observed.status, observed.stderr).toBe(0);
+        expect(observed.stdout.trim()).toBe('1');
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }

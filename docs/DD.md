@@ -1,11 +1,12 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297; not tagged)
 >
 > This DD describes current implementation structure. Retired V1 chain details
 > were deleted from this active document; use git history and historical feature
@@ -370,40 +371,46 @@ All forms expose `identity`, `sessions`, `runs`, `events`, `permissions`,
 without `isolation: 'worker'`, or any explicit embedded isolation combined with
 daemon mode, are rejected rather than ignored.
 
-`RuntimeSessionSettings` carries `permissionMode`, `executionCwd`,
-`autoModeEngine`, `autoModeClassifierModel`, and `autoModeTimeoutMs` alongside
-the provider/model/reasoning fields. The Runtime validates a positive timeout,
-persists these settings, advertises them through daemon capability negotiation,
-and uses them to build a session-owned auto guardrail. Changing classifier
-model or timeout invalidates the cached guardrail. Classifier infrastructure
-failure does not mutate `autoModeEngine`; only explicit settings input does.
+`CreateKodaXRuntimeOptions.execPolicy` and `.autoReview` are trusted host-owner
+inputs in every ownership form. Inline and Worker hosts receive them through
+their owner bootstrap. A detached daemon receives them only while a new owner
+is auto-started, through a bounded one-shot file under its daemon state root;
+the daemon consumes and deletes the file before extension loading. The client
+protocol never carries these fields. Supplying them while attaching an existing
+daemon fails closed instead of mutating or silently reusing a different
+administrator policy.
 
-`createReplRuntimeAutoModeControl()` serializes `syncSettings()` and
-`setEngine()` writes per Session. Ink renders the configured engine immediately
-when Auto is selected and reconciles with `getAutoModeStats()` or settings
-events; a missing observation never produces a transient fourth/bare Auto state.
+`RuntimeSessionSettings.permissionMode` persists one of four profiles:
+`plan`, `accept-edits`, `auto`, or `full-access`. `auto-in-project` is accepted
+only at read boundaries and immediately canonicalized to `auto`. Legacy Auto
+engine fields are ignored on input and omitted from new writes; Auto is always
+Auto[LLM]. The optional `autoModeClassifierModel` remains a reviewer-model
+override, while `config.json#autoReview.policy` supplies only the configurable
+security-policy body.
 
-For Auto permission mode, an omitted engine is normalized to `llm` for both
-preflight and guardrail ownership. Missing/blank/malformed classifier identity
-raises `RuntimeAutoModeConfigurationError` before provider or permission work.
-`packages/coding/src/guardrails/auto-mode/classify.ts` owns transcript
-sanitization and request ceilings: 2 KiB per historical tool result, 8 KiB
-serialized transcript, 16 KiB action, 32 KiB prompt, and 256 output tokens.
-The 20-second deadline remains a bounded end-to-end side-query deadline.
+Plan rejects mutations. Edits and Auto attempt the Runtime-owned workspace
+sandbox first, with broad reads, workspace/system-TMP writes, external network,
+and the inherited host environment. A completed sandbox execution is final and
+silent. Only a proven pre-start denial or unavailable backend reaches Exec
+Policy and then the Edits user boundary or Auto reviewer. A started or uncertain
+target is never replayed. Full Access skips sandbox and Auto review and runs on
+the host after Exec Policy.
 
-`resolveAutoModeSettings()` is the pure authority for config/environment/default
-precedence; `loadAutoModeSettings()` performs I/O then delegates. Runtime
-persists `autoModeSpeculativeWindowMs` as a non-negative safe integer and
-propagates it through effective settings, active/queued records, cache identity,
-and guardrail bootstrap. `0` is preserved rather than treated as absent.
+Auto review is lazy and run-owned: sandbox success does not require a reviewer
+model. Host-boundary review uses fixed role/schema and bounded input, a 90-second
+attempt, and one 180-second retry only for timeout, provider, or invalid-output
+failure. Explicit deny is terminal. Three consecutive denies, or ten of the
+last fifty completed reviews in one turn, stop that turn without changing mode.
+Infrastructure failure blocks the boundary and tells the Agent to choose a
+safer route; it never opens an automatic permission prompt, falls back to Edits,
+or switches to Auto[RULES]. A later informed natural-language instruction is
+part of a fresh semantic review.
 
-Daemon and embedded capability metadata advertise
-`runtimeAutoModeGuardrail.version = 4`, retaining the effective 20-second
-timeout, bounded-input flag, diagnostics, Runtime-issued opaque exact
-permission-grant suggestions, and concrete matchers while adding the F277
-intent-aligned retry/Accept-edits behavior. Capability checks accept
-`advertised >= required`; auto-start may fence and replace an idle older
-daemon, but attach-only/busy paths return a recoverable error without mutation.
+Daemon and embedded capability metadata advertise the same four canonical
+profiles, the `auto-in-project` input alias, fixed reviewer attempts, and the
+Runtime-owned boundary route. Capability checks accept `advertised >= required`;
+auto-start may fence and replace an idle older daemon, but attach-only/busy paths
+return a recoverable error without mutation.
 
 `sideQuery()` owns a fixed-field `SideQueryDiagnostics` envelope: provider,
 model, effective timeout, elapsed time, retry count/wait, optional first-output
@@ -778,15 +785,15 @@ admits only version 1 and the bounded `pwsh` / `powershell` / `cmd` / `bash` /
 profile, server, or working-directory flags. `resolveShellExecution()`:
 
 1. canonicalizes the effective cwd;
-2. builds a credential-filtered bootstrap environment, including every
-   registered Provider's exact credential variable;
+2. inherits the host bootstrap environment while removing only the fixed
+   KodaX/Electron execution-control variables;
 3. loads the selected profile and trusted setup in that cwd;
 4. captures the environment through a random framed payload with timeout and
    output bounds;
 5. validates and filters it again before explicit-interpreter execution.
 
 The in-memory cache key includes normalized contract bytes, canonical cwd,
-Session scratch identity, provider deny names, and a generation. TTL is capped;
+Session scratch identity, and a generation. TTL is capped;
 `refreshToken`, daemon restart, or `clearShellExecutionEnvironmentCache()`
 invalidates the result. In-flight probes are waiter-counted: one cancelled
 caller does not kill another caller's shared probe, while the last waiter
@@ -795,39 +802,24 @@ Workflow leaves, and deterministic evaluators inherit the contract. Exact
 command permission matchers bind the interpreter family and contract SHA-256.
 No contract keeps `shell: true` plus the legacy process environment.
 
-The CLI adds one user-level command-target exception without widening the
-shell-profile bootstrap boundary. `config.json#sandbox.envPass` is an exact
-list of host environment-variable names, defaulting to empty. The REPL config
-bridge projects the names (never values) through `KODAX_SANDBOX_ENV_PASS`.
-Legacy command preparation retains listed credentials; configured-shell
-resolution still strips them before profile/setup and restores them from the
-host only after final environment hardening. The resulting environment is the
-one passed to ASRT or the ordinary fallback target. Matching is
-case-insensitive only on Windows. Execution-control names (`NODE_OPTIONS`,
-`BASH_ENV`, `RIPGREP_CONFIG_PATH`, and imported Bash functions) cannot be
-restored. Project permission configuration has no path to broaden this
-user-level list.
+Shell command targets inherit the host environment, including ordinary
+development identity. A fixed internal deny set removes KodaX/Electron
+execution-control variables. The legacy `sandbox.envPass` config, environment,
+and SDK input is inert and is not written or advertised by new clients.
 
-The public SDK mirrors the config shape as Run-scoped
-`KodaXOptions.sandbox.envPass`. It crosses Worker/daemon transports as names
-only, overrides the process fallback for that Run, and propagates to native and
-Workflow child commands plus deterministic evaluators. The execution host—not
-the SDK payload—remains the source of values.
+The default terminal bindings keep Shift-Tab for the four permission profiles
+and Shift+Enter for newline input. Rapid changes enter the per-Session Runtime
+settings queue in input order, so the final visible mode is also the final
+persisted mode. `auto-in-project` and legacy Auto[RULES] inputs normalize to
+Auto[LLM]; `/auto-engine` no longer exists.
 
-The default terminal bindings keep Shift-Tab for the three permission modes and
-Shift+Enter for newline input. Rapid Shift-Tab changes enter the per-Session
-Runtime settings queue in input order, so the final visible mode is also the
-final persisted mode. Classifier timeout/provider/contract failure retries once
-within the deadline, then uses the Accept-edits boundary without mutating the
-engine. `Auto[RULES]` remains a valid sticky state only after explicit or
-persisted user selection; `/auto-engine llm` changes it explicitly.
-
-Shell containment is an execution adapter below this permission decision.
-Windows uses the native v2 runner and Linux/macOS prepare one ASRT invocation
-per command; no platform keeps a KodaX workspace-session owner across the
-command lifetime. An unavailable or proven pre-target backend failure may
-use the already-admitted ordinary local path, while post-start failure never
-retries the target. The `/sandbox` command and
+Shell containment is the first authority for Edits and Auto[LLM]. Windows uses
+the native v2 runner and Linux/macOS prepare one ASRT invocation per command.
+A completed sandbox invocation returns its result without permission or LLM
+review. A proven pre-start denial/unavailability reaches Exec Policy and the
+profile-specific host boundary; an allow can start the host target once.
+Post-start or uncertain failure never retries the target. Full Access skips the
+sandbox and reviewer and goes directly through Exec Policy. The `/sandbox` command and
 `tool.sandbox` events expose diagnostics without entering ordinary history.
 The separate `src/sdk-sandbox.ts` API deliberately has no such fallback:
 `runKodaXSandboxed()` returns a typed `unavailable` result when containment
@@ -838,13 +830,20 @@ with bounded diagnostics. A spawned wrapper without target-start authority is
 broker stdin and target-start/fallback authority returns through a bounded FD3
 frame bound to the invocation and expected backend; the target never inherits
 that descriptor. Missing or invalid authority is `execution_uncertain`, not a
-retryable not-started result. The internal workspace-shell
-adapter also denies common
-credential-bearing home paths and the resolved internal Agent Home state
-surfaces; it removes
-home-local executable grants nested below those paths before sending the ASRT
-policy. This stricter local policy is not silently imposed on the standalone
-SDK executor, whose filesystem boundary remains caller-owned.
+retryable not-started result. The internal workspace-shell adapter allows broad
+host reads, including Agent Home, credential locations, and global Git
+ configuration. Writes remain bound to canonical workspace roots and system
+ temporary directories. The standalone SDK executor keeps its caller-owned
+ filesystem boundary.
+
+Windows v2 no longer injects the protected native artifact-cache root into each
+request's `denyWrite`: the native control boundary already prevents direct
+sandbox access, and the redundant deny collided with that verifier. Historical
+cache-root deny ACEs are not automatically removed: SID shape, mask, owner, and
+the surrounding canonical boundary still cannot prove whether an individual
+entry came from KodaX or an administrator. Provisioning preserves such denies,
+and ordinary admission no longer treats their presence as a request-policy
+conflict.
 
 Do not add a new permission bypass path for convenience. Route effects through
 the tool layer or an existing capability API.
@@ -1062,8 +1061,8 @@ accepts both deprecated `expectedScope` and optional `expectedScopes`. Discovery
 pairs each physical root with exactly one expected scope, validates the pairing
 before scanning even an empty store, and never accepts a stale cross-root scope.
 
-The Rules permission analyzer uses the same protected agent-home predicates for
-file and shell tools. Ordinary descendants, including `agents/*.md`, Sessions,
+The Auto permission analyzer uses the same protected agent-home predicates for
+file and shell mutations. Ordinary descendants, including `agents/*.md`, Sessions,
 tool results, and intermediate artifacts, may be read and written automatically.
 The home root cannot be removed or overwritten as a whole. Runtime mutations
 and writes to the legacy host-owned `processes/children` registry are hard-denied.
@@ -1071,10 +1070,10 @@ Because that old location was historically model-writable, its records are
 quarantined for diagnosis and never used as process-signal authority.
 The host-owned `learned/` tree is also hard-denied to model mutation; Memory and
 Skill lifecycle APIs remain the only writers.
-Exact non-sensitive Runtime descendants remain readable, while
-the Runtime root, recursive reads that can reach protected descendants,
-credentials/security config, and generic sensitive files require review.
-Ancestor traversal never inherits a child exemption.
+Shell reads are broadly available inside the workspace sandbox, including the
+Runtime tree, Agent Home, credential locations, and global Git configuration.
+Host-boundary mutations of credential/security controls remain reviewer facts;
+ancestor traversal never inherits a child mutation exemption.
 
 File mutation sinks recheck the Runtime/home-root hard boundary immediately
 before execution. Undo records context-local canonical path identities and
@@ -1085,19 +1084,19 @@ text sinks use the native trusted-text transaction described in section 3 and
 never acquire the legacy cross-process filesystem-effect lease. Worktree and
 other non-text namespace effects retain their separate legacy coordination.
 Recognized shell mutations of the Agent Home root or Runtime are blocked before
-either Auto engine can consult its classifier or approval surface; credential
+the Auto reviewer; credential
 and security configuration remains on the reviewable branch.
 Shell authorization remains independent from containment. Windows v2 uses ASRT
 only for the network/account launch and the native host/runner path described in
 section 3 for per-command restricted token, private desktop, framed stdio, and
 creation-time Job containment. Different policies, Sessions, and Runtime
-processes do not share a command-lifetime filesystem-effect lease. Fixed
-sensitive-root denies are installed and verified through native no-follow
-handles and repaired idempotently at cold shell admission; truly dynamic
-`denyRead` roots keep their short execution-logon ACL transaction and crash-safe
-receipt. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
+processes do not share a command-lifetime filesystem-effect lease. Cold
+admission removes only exact obsolete KodaX sandbox-account read-deny ACEs and
+preserves unrelated ACLs; caller-supplied dynamic `denyRead` roots in the
+standalone sandbox API keep their short execution-logon ACL transaction and
+crash-safe receipt. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
 without a KodaX workspace-session owner. A pre-target-start sandbox preparation
-failure may return the already-authorized call to the ordinary permission path;
+failure may create an exact host-boundary decision;
 it never redirects through trusted text or replays a target whose start is
 committed or unknown.
 

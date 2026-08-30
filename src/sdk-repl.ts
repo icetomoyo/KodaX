@@ -25,6 +25,7 @@
  */
 
 export * from '@kodax-ai/repl';
+export { runInkInteractiveMode, runInteractiveMode } from './trusted-repl-entry.js';
 
 // v0.7.42 — user-defined slash command loader. Lives in this layer (not
 // inside @kodax-ai/repl) because it depends on the SDK's `KodaXResult` type

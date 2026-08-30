@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
-  DEFAULT_SPECULATIVE_WINDOW_MS,
   getActiveExtensionRuntime,
   listTools,
 } from "@kodax-ai/coding";
@@ -2360,9 +2359,9 @@ function runtimeDaemonCapabilities(
       version: 4,
       owner: "session-runtime",
       escalationCreatesPermission: true,
-      fallbackPersistsEngine: false,
       defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
-      defaultSpeculativeWindowMs: DEFAULT_SPECULATIVE_WINDOW_MS,
+      retryClassifierTimeoutMs: 180_000,
+      maxClassifierAttempts: 2,
       boundedClassifierInput: true,
       diagnosticsVersion: 1,
       permissionGrantSuggestions: true,
@@ -2460,6 +2459,8 @@ function runtimeDaemonCapabilities(
       : {}),
     sharedSessionSettings: {
       version: 1,
+      permissionModes: ["plan", "accept-edits", "auto", "full-access"],
+      legacyPermissionModeAliases: { "auto-in-project": "auto" },
       keys: [
         "provider",
         "model",
@@ -2469,10 +2470,7 @@ function runtimeDaemonCapabilities(
         "permissionMode",
         "executionCwd",
         "agentMode",
-        "autoModeEngine",
         "autoModeClassifierModel",
-        "autoModeTimeoutMs",
-        "autoModeSpeculativeWindowMs",
       ],
     },
     ...(controlJournal !== undefined

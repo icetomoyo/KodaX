@@ -12,23 +12,22 @@
 | Item | Value |
 |---|---|
 | Current released version | `v0.7.96-alpha.3` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-alpha.3` pre-release (npm publication remains manual) |
+| Current package version | `@kodax-ai/kodax@0.7.96-alpha.4` source candidate (not yet tagged or published) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Total tracked features | `80` |
+| Total tracked features | `81` |
 | InProgress | `1` |
 | Planned | `16` |
-| Completed | `57` |
+| Completed | `58` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 57 | `295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `295` (trusted text / native shell authority split) and `296` (capacity-debt admission) shipped in the v0.7.96-alpha.1 pre-release; `293` and `294` completed in v0.7.89. npm publication remains manual. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented in the v0.7.96-alpha.4 source candidate; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
-| Planned, near-term | 0 | `-` | No near-term slot is planned after the v0.7.96-alpha.3 pre-release; Issue 256 descendant-closure remains open and npm publication remains manual. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -1566,6 +1565,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.4` candidate | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1` | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment on Windows/Linux/macOS; Windows sandbox v2 native restricted-token runner, `sandboxRuntime:6`, native shell protocol v7, and the one-time `kodax sandbox setup` cutover (ADR-066). |
 | `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | `v0.7.96-alpha.1` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) | Replaces the local tool-result capacity hard gate with capacity-debt admission, a bounded recovery ladder, floor-bounded output reserve, paged oversized-input degradation, and `context_capacity` terminal classification (ADR-067). |
 | `294` | Host Tools First-Class Visibility | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_294--host-tools-first-class-visibility-2026-08-16) | Materializes leased Host Tools as run-scoped model tools, adds cache-stable host capability context, conservative plan-mode metadata, registry-first dispatch, revoke/collision hardening, and exact A2A `host:` authorization. |
@@ -1574,7 +1574,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `291` | Session-Scoped Runtime Event Journals | `v0.7.85` | [v0.7.85](features/v0.7.85.md#feature_291-session-scoped-runtime-event-journals) | Replaces the Runtime-global event sequence lock with independent Session journals/cursors, scopes the breaking SDK replay API, negotiates the daemon contract, and binds each A2A Task to one Runtime Session. |
 | `290` | Memory Lesson and Verdict Production + failedWithLesson Admission | `v0.7.85` | [v0.7.85](features/v0.7.85.md#feature_290-memory-lesson-and-verdict-production--failedwithlesson-admission) | Ships the governed lesson/verdict production path, bounded review admission, and failedWithLesson safety gates with the accompanying human regression guide. |
 | `289` | Memory Review Drain Reliability + Pipeline Observability | `v0.7.85` | [v0.7.85](features/v0.7.85.md#feature_289-memory-review-drain-reliability--pipeline-observability) | Ships bounded startup/turn-end review draining, observable pipeline health, backlog recovery, and the accompanying human regression guide. |
-| `286` | Explicit Shell Environment Passthrough | `v0.7.79` candidate | [v0.7.79](features/v0.7.79.md#feature_286-explicit-shell-environment-passthrough) | Adds user-config and Run-scoped SDK `sandbox.envPass` exact-name passthrough for final command targets while retaining default credential filtering and immutable execution-control denies. |
+| `286` | Explicit Shell Environment Passthrough | `v0.7.79` (superseded by F297) | [v0.7.79](features/v0.7.79.md#feature_286-explicit-shell-environment-passthrough) | Historical exact-name passthrough design; F297 now inherits the host environment except fixed execution-control variables and treats `sandbox.envPass` as inert migration input. |
 | `284` | Qwen 3.8 Max Token Plan Model Refresh | `v0.7.79` candidate | [v0.7.79](features/v0.7.79.md#feature_284-qwen-38-max-token-plan-model-refresh) | Makes `qwen3.8-max` the default production ID, retains Preview selection, and aligns Qwen 3.8 context/output/reasoning/image metadata. |
 | `281` | Explicit A2A Network Authorization | `v0.7.79` candidate | [v0.7.79](features/v0.7.79.md#feature_281-explicit-a2a-network-authorization) | Adds independent persisted private-address and non-loopback plaintext-HTTP permissions across config, CLI discovery/call, Runtime reconciliation, registration fingerprints, and execution. Exact loopback HTTP remains implicit; all broader authority remains default deny. |
 | `277` | Intent-Aligned Auto[LLM] Permissions and Optional ASRT Containment | `v0.7.78` | [v0.7.78](features/v0.7.78.md#feature_277-intent-aligned-autollm-permissions-and-optional-asrt-containment) | Shipped after the independent semantic-eval, integrated CI, binary, tag, and release-asset gates completed. |

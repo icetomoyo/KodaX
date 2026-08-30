@@ -95,8 +95,8 @@ describe('parseRuntimeEvent', () => {
     expect(parseRuntimeEvent(event('session.settings.updated', {
       sessionId: 'session-1',
       revision: 2,
-      settings: { agentMode: 'ama', autoModeEngine: 'rules' },
-      patch: { agentMode: 'ama', autoModeEngine: 'rules' },
+      settings: { agentMode: 'ama', permissionMode: 'auto' },
+      patch: { agentMode: 'ama', permissionMode: 'auto' },
     })).ok).toBe(true);
   });
 

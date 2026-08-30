@@ -2,14 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getAgentConfigHome, isPathInsideDirectory } from '@kodax-ai/agent';
+import type { RunnerToolCall } from '@kodax-ai/agent';
 import { minimatch } from 'minimatch';
 import type {
   AutoModePermissionOperation,
   AutoModePermissionReview,
   AutoModePermissionTarget,
   AutoModeRulesContext,
-  AutoModeRulesDecision,
-  AutoModeRulesEvaluator,
 } from './guardrail.js';
 import {
   collectDeterministicBashWriteTargets,
@@ -1014,10 +1013,6 @@ function isAllowedMutationTarget(target: AutoModePermissionTarget): boolean {
   return target.boundary === 'workspace' || target.boundary === 'system-temp' || target.boundary === 'agent-home';
 }
 
-function escalate(reason: string): AutoModeRulesDecision {
-  return { action: 'escalate', reason };
-}
-
 function shellExecutable(stage: BashPipelineStage): string {
   return (stage.argv[0] ?? '').replace(/\\/g, '/').split('/').at(-1)?.toLowerCase() ?? '';
 }
@@ -1030,6 +1025,7 @@ function hasOnlyModeledShellStages(tree: BashCommandTree): boolean {
       !hasDynamicPowerShellParameterBinding(stage)
       && (
         TARGETED_WRITE_COMMANDS.has(shellExecutable(stage))
+        || isGlobalGitConfigMutationStage(stage)
         || canonicalPowerShellReadExecutable(stage) !== undefined
         || isShellReadOnlyArgv(stage.argv)
       )
@@ -1086,36 +1082,25 @@ function hasWriteCapableReadSyntax(tree: BashCommandTree): boolean {
   return false;
 }
 
-export interface AutoModeCallAssessment {
-  readonly decision: AutoModeRulesDecision;
-  readonly review: AutoModePermissionReview;
-}
-
 function assessFileCall(
   input: Readonly<Record<string, unknown>>,
   context: AutoModeRulesContext,
-): AutoModeCallAssessment {
+): AutoModePermissionReview {
   const targetPath = typeof input.path === 'string' ? input.path : '';
   if (!targetPath) {
-    return assessment(
-      escalate('auto-mode rules could not resolve the file target'),
-      review('incomplete', 'tool', [], ['target_unresolved'], 'file target is missing'),
-    );
+    return review('incomplete', 'tool', [], ['target_unresolved'], 'file target is missing');
   }
   const operation: AutoModePermissionOperation = {
     kind: 'write', target: classifyTarget(targetPath, context),
   };
   const complete = operation.target.boundary !== 'unresolved';
-  const decision = isOperationAllowed(operation)
-    ? { action: 'allow' as const }
-    : escalate('auto-mode rules require confirmation for a protected or out-of-boundary file target');
-  return assessment(decision, review(
+  return review(
     complete ? 'complete' : 'incomplete',
     'tool',
     [operation],
     collectRisks([operation]),
     complete ? undefined : 'file target could not be resolved safely',
-  ));
+  );
 }
 
 function readToolTarget(
@@ -1262,13 +1247,10 @@ function assessReadFileCall(
   toolName: string,
   input: Readonly<Record<string, unknown>>,
   context: AutoModeRulesContext,
-): AutoModeCallAssessment {
+): AutoModePermissionReview {
   const targetPath = readToolTarget(toolName, input, context);
   if (!targetPath) {
-    return assessment(
-      escalate('auto-mode could not resolve the read target'),
-      review('incomplete', 'tool', [], ['target_unresolved'], 'read target is missing'),
-    );
+    return review('incomplete', 'tool', [], ['target_unresolved'], 'read target is missing');
   }
   const globPattern = toolName === 'glob' && typeof input.pattern === 'string'
     ? input.pattern
@@ -1294,18 +1276,12 @@ function assessReadFileCall(
       : directTarget,
   };
   const complete = operation.target.boundary !== 'unresolved';
-  const allowed = complete && operation.target.boundary !== 'protected';
-  return assessment(
-    allowed
-      ? { action: 'allow' }
-      : escalate('auto-mode requires confirmation before reading a sensitive or unresolved target'),
-    review(
-      complete ? 'complete' : 'incomplete',
-      'tool',
-      [operation],
-      collectRisks([operation]),
-      complete ? undefined : 'read target could not be resolved safely',
-    ),
+  return review(
+    complete ? 'complete' : 'incomplete',
+    'tool',
+    [operation],
+    collectRisks([operation]),
+    complete ? undefined : 'read target could not be resolved safely',
   );
 }
 
@@ -2017,24 +1993,18 @@ function collectSensitiveReadTargets(
 function assessBashCall(
   input: Readonly<Record<string, unknown>>,
   context: AutoModeRulesContext,
-): AutoModeCallAssessment {
+): AutoModePermissionReview {
   const command = typeof input.command === 'string' ? input.command : '';
   if (!command.trim()) {
-    return assessment(
-      escalate('auto-mode rules could not resolve the shell command'),
-      review('incomplete', 'shell', [], ['command_unresolved'], 'shell command is missing'),
-    );
+    return review('incomplete', 'shell', [], ['command_unresolved'], 'shell command is missing');
   }
   if (hasAmbiguousQuotedWindowsDirectory(command)) {
-    return assessment(
-      escalate('auto-mode requires confirmation because a quoted Windows directory is ambiguous'),
-      review(
-        'incomplete',
-        'shell',
-        [{ kind: 'unknown', summary: 'ambiguous quoted Windows directory command' }],
-        ['command_unresolved'],
-        'a trailing backslash may escape the closing quote',
-      ),
+    return review(
+      'incomplete',
+      'shell',
+      [{ kind: 'unknown', summary: 'ambiguous quoted Windows directory command' }],
+      ['command_unresolved'],
+      'a trailing backslash may escape the closing quote',
     );
   }
 
@@ -2090,34 +2060,7 @@ function assessBashCall(
     complete ? undefined : operationResult.reason ?? 'shell effects are not fully modeled',
   );
 
-  if (!complete) {
-    return assessment(
-      escalate('auto-mode rules require confirmation for an unmodelled shell command'),
-      permissionReview,
-    );
-  }
-  if (highRisk) {
-    return assessment(
-      escalate('auto-mode rules require confirmation for a high-risk shell command'),
-      permissionReview,
-    );
-  }
-  if (risks.includes('sensitive_environment_read')) {
-    return assessment(
-      escalate('auto-mode requires confirmation before reading sensitive environment data'),
-      permissionReview,
-    );
-  }
-  if (risks.includes('sensitive_process_data_read')) {
-    return assessment(
-      escalate('auto-mode requires confirmation before reading non-filesystem provider data'),
-      permissionReview,
-    );
-  }
-  const decision = operations.every(isOperationAllowed)
-    ? { action: 'allow' as const }
-    : escalate('auto-mode rules require confirmation for a protected or out-of-boundary shell target');
-  return assessment(decision, permissionReview);
+  return permissionReview;
 }
 
 function protectedAgentHomeMutationSelection(
@@ -2640,6 +2583,8 @@ function collectDirectShellOperations(
 ): AutoModePermissionOperation[] {
   const command = shellExecutable(stage);
   const restorePath = (value: string): string => restoreMangledShellPath(value, rawPaths);
+  const globalGitConfigWrite = gitGlobalConfigWrite(stage, context);
+  if (globalGitConfigWrite) return [globalGitConfigWrite];
   const timestampSyntax = cmdCopyTimestampSyntax(stage);
   if (timestampSyntax) {
     return [{ kind: 'write', target: classifyTarget(restorePath(timestampSyntax.target), context) }];
@@ -2711,6 +2656,42 @@ function collectDirectShellOperations(
     }));
   }
   return [];
+}
+
+function gitGlobalConfigWrite(
+  stage: BashPipelineStage,
+  context: AutoModeRulesContext,
+): AutoModePermissionOperation | undefined {
+  if (!isGlobalGitConfigMutationStage(stage)) return undefined;
+  const configured = process.env.GIT_CONFIG_GLOBAL?.trim();
+  const target = configured && configured.toLowerCase() !== 'nul' && configured !== '/dev/null'
+    ? configured
+    : path.join(os.homedir(), '.gitconfig');
+  return { kind: 'write', target: classifyTarget(target, context) };
+}
+
+function isGlobalGitConfigMutationStage(stage: BashPipelineStage): boolean {
+  if (shellExecutable(stage) !== 'git') return false;
+  const subcommandIndex = findGitSubcommandIndex(stage.argv);
+  if (subcommandIndex === undefined
+    || stage.argv[subcommandIndex]?.toLowerCase() !== 'config') return false;
+  const args = stage.argv.slice(subcommandIndex + 1);
+  return args.some((token) => token.toLowerCase() === '--global')
+    && isGitConfigMutation(args);
+}
+
+function isGitConfigMutation(args: readonly string[]): boolean {
+  const normalized = args.map((token) => token.toLowerCase());
+  if (normalized.some((token) => [
+    '--get', '--get-all', '--get-regexp', '--get-urlmatch', '--list', '-l',
+    '--get-color', '--get-colorbool', 'get', 'list',
+  ].includes(token))) return false;
+  if (normalized.some((token) => [
+    '--add', '--replace-all', '--unset', '--unset-all', '--rename-section',
+    '--remove-section', '--edit', '-e', 'set', 'unset', 'unset-all',
+    'rename-section', 'remove-section',
+  ].includes(token))) return true;
+  return args.filter((token) => !token.startsWith('-')).length >= 2;
 }
 
 function cmdCopyTimestampSyntax(
@@ -2971,27 +2952,6 @@ function operationPaths(operation: AutoModePermissionOperation): readonly AutoMo
   return [];
 }
 
-function isOperationAllowed(operation: AutoModePermissionOperation): boolean {
-  if (operation.options?.whatIf === true) return true;
-  if (operation.kind === 'execute') {
-    return operation.options?.readOnly === true || operation.options?.contained === true;
-  }
-  if (operation.kind === 'unknown') return false;
-  if (operation.kind === 'read') {
-    return operation.target.boundary !== 'protected'
-      && operation.target.boundary !== 'unresolved';
-  }
-  if ('target' in operation) return isAllowedMutationTarget(operation.target);
-  if (!('source' in operation)) return false;
-  if (operation.kind === 'copy') {
-    return isAllowedMutationTarget(operation.destination)
-      && operation.source.boundary !== 'protected'
-      && operation.source.boundary !== 'unresolved';
-  }
-  return isAllowedMutationTarget(operation.source)
-    && isAllowedMutationTarget(operation.destination);
-}
-
 function collectRisks(operations: readonly AutoModePermissionOperation[]): string[] {
   const risks = new Set<string>();
   for (const operation of operations) {
@@ -3054,13 +3014,6 @@ function review(
   };
 }
 
-function assessment(
-  decision: AutoModeRulesDecision,
-  permissionReview: AutoModePermissionReview,
-): AutoModeCallAssessment {
-  return { decision, review: permissionReview };
-}
-
 const DECLARED_TOOL_PATH_FIELDS = [
   'path', 'file_path', 'filePath', 'target_path', 'targetPath',
   'source_path', 'sourcePath', 'input_path', 'inputPath',
@@ -3087,9 +3040,9 @@ function declaredToolPaths(input: Readonly<Record<string, unknown>>): readonly s
 }
 
 function assessDeclaredToolEffect(
-  call: Parameters<AutoModeRulesEvaluator>[0],
+  call: RunnerToolCall,
   context: AutoModeRulesContext,
-): AutoModeCallAssessment | undefined {
+): AutoModePermissionReview | undefined {
   const paths = declaredToolPaths(call.input);
   const filesystemEffect = context.toolSideEffect === 'readonly'
     ? 'read'
@@ -3109,19 +3062,14 @@ function assessDeclaredToolEffect(
       && paths.some((targetPath) => (
         isProtectedAgentHomeRemovalTarget(targetPath, context.executionCwd)
       ));
-    const allowed = complete && !worktreeRemovalNeedsReview
-      && operations.every(isOperationAllowed);
-    return assessment(
-      allowed ? { action: 'allow' } : escalate(`auto-mode requires confirmation for ${filesystemEffect} targets`),
-      review(
-        complete ? 'complete' : 'incomplete',
-        'tool',
-        operations,
-        [
-          ...collectRisks(operations),
-          ...(worktreeRemovalNeedsReview ? ['protected_descendant'] : []),
-        ],
-      ),
+    return review(
+      complete ? 'complete' : 'incomplete',
+      'tool',
+      operations,
+      [
+        ...collectRisks(operations),
+        ...(worktreeRemovalNeedsReview ? ['protected_descendant'] : []),
+      ],
     );
   }
   const contained = context.toolSideEffect === 'mutates-state';
@@ -3133,38 +3081,23 @@ function assessDeclaredToolEffect(
     summary: `${context.toolSideEffect} tool ${call.name}`,
     options: contained ? { contained: true } : { readOnly: true },
   };
-  return assessment(
-    { action: 'allow' },
-    review('complete', 'tool', [operation], []),
-  );
+  return review('complete', 'tool', [operation], []);
 }
 
-export function assessAutoModeCall(
-  call: Parameters<AutoModeRulesEvaluator>[0],
+export function analyzeAutoModeCall(
+  call: RunnerToolCall,
   context: AutoModeRulesContext,
-): AutoModeCallAssessment {
+): AutoModePermissionReview {
   if (FILE_TOOLS.has(call.name)) return assessFileCall(call.input, context);
   if (READ_FILE_TOOLS.has(call.name)) return assessReadFileCall(call.name, call.input, context);
   if (call.name === 'bash') return assessBashCall(call.input, context);
   const declared = assessDeclaredToolEffect(call, context);
   if (declared) return declared;
-  return assessment(
-    escalate(`auto-mode rules require confirmation for tool "${call.name}"`),
-    review(
-      'incomplete',
-      'tool',
-      [{ kind: 'unknown', summary: `tool ${call.name}` }],
-      ['tool_effects_unresolved'],
-      'tool has no deterministic effect analyzer',
-    ),
+  return review(
+    'incomplete',
+    'tool',
+    [{ kind: 'unknown', summary: `tool ${call.name}` }],
+    ['tool_effects_unresolved'],
+    'tool has no deterministic effect analyzer',
   );
 }
-
-export const analyzeAutoModeCall = (
-  call: Parameters<AutoModeRulesEvaluator>[0],
-  context: AutoModeRulesContext,
-): AutoModePermissionReview => assessAutoModeCall(call, context).review;
-
-export const evaluateAutoRulesCall: AutoModeRulesEvaluator = (call, context) => (
-  assessAutoModeCall(call, context).decision
-);

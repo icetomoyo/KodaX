@@ -258,7 +258,7 @@ export function buildToolConfirmationDisplay(
         pushField(fields, "Scope", scope);
         // FEATURE_158: prefer signal-derived risks when present (auto[llm]
         // escalate path); fall back to command-regex risks (plan / accept-
-        // edits / auto[rules] paths where signals aren't threaded).
+        // edits or compatibility paths where signals aren't threaded).
         const signalRisks = risksFromSignals(signals);
         const risks = signalRisks.length > 0 ? signalRisks : classifyShellRisks(command);
         if (risks.length > 0) {

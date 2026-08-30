@@ -1,7 +1,4 @@
-import path from 'node:path';
-
 import type { KodaXShellExecutionContract, KodaXShellKind } from '../types.js';
-import { isSensitiveShellEnvironmentName } from './contract.js';
 
 const WINDOWS_BOOTSTRAP_NAMES = new Set([
   'COMSPEC',
@@ -34,9 +31,9 @@ const POSIX_BOOTSTRAP_NAMES = new Set([
   'USER',
 ]);
 const EXECUTION_CONTROL_NAMES = new Set([
-  'BASH_ENV',
-  'NODE_OPTIONS',
-  'RIPGREP_CONFIG_PATH',
+  'ELECTRON_RUN_AS_NODE',
+  'KODAX_EFFECT_COMMAND_JSON',
+  'KODAX_SANDBOX_ENV_PASS',
 ]);
 const MAX_RESOLVED_ENV_ENTRIES = 4_096;
 const MAX_RESOLVED_ENV_BYTES = 2 * 1024 * 1024;
@@ -45,28 +42,13 @@ export function hardenShellCommandEnvironment(
   source: NodeJS.ProcessEnv,
   shellKind: KodaXShellKind,
   platform: NodeJS.Platform = process.platform,
-  additionalDeniedNames: readonly string[] = [],
-  executionCwd?: string,
-  allowedSensitiveNames: readonly string[] = [],
 ): NodeJS.ProcessEnv {
   const result = { ...source };
   for (const name of Object.keys(result)) {
-    const explicitlyAllowed = environmentNameIsListed(
-      name,
-      allowedSensitiveNames,
-      platform,
-    );
-    if (isExecutionControlEnvironmentName(name)
-      || (!explicitlyAllowed && (
-        isSensitiveShellEnvironmentName(name)
-        || additionalDeniedNames.some((candidate) => (
-          candidate.toUpperCase() === name.toUpperCase()
-        ))
-      ))) {
+    if (isExecutionControlEnvironmentName(name)) {
       deleteEnvironmentValue(result, name, platform);
     }
   }
-  sanitizeCommandPath(result, platform, executionCwd);
   if (platform !== 'win32' || shellKind !== 'cmd') return result;
   // cmd.exe otherwise searches the current working directory before PATH,
   // allowing a workspace-local executable to shadow a trusted bare command.
@@ -74,73 +56,16 @@ export function hardenShellCommandEnvironment(
   return result;
 }
 
+/**
+ * @deprecated Environment pass lists are inert since 0.7.96. Retained so
+ * 0.7.x SDK imports keep compiling during migration.
+ */
 export function parseSandboxEnvironmentPass(value: string | undefined): readonly string[] {
   if (!value) return [];
-  return normalizeSandboxEnvironmentPass(value.split(','));
-}
-
-export function normalizeSandboxEnvironmentPass(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
   return [...new Set(value
-    .filter((name): name is string => typeof name === 'string')
+    .split(',')
     .map((name) => name.trim())
-    .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)))];
-}
-
-export function applyShellEnvironmentPass(
-  source: NodeJS.ProcessEnv,
-  target: NodeJS.ProcessEnv,
-  names: readonly string[],
-  platform: NodeJS.Platform = process.platform,
-): NodeJS.ProcessEnv {
-  const result = { ...target };
-  for (const requestedName of names) {
-    if (isExecutionControlEnvironmentName(requestedName)) continue;
-    const sourceName = Object.keys(source).find((name) => (
-      environmentNamesEqual(name, requestedName, platform)
-    ));
-    if (sourceName === undefined || source[sourceName] === undefined) continue;
-    setEnvironmentValue(result, sourceName, source[sourceName]!, platform);
-  }
-  return result;
-}
-
-function environmentNameIsListed(
-  name: string,
-  candidates: readonly string[],
-  platform: NodeJS.Platform,
-): boolean {
-  return candidates.some((candidate) => environmentNamesEqual(name, candidate, platform));
-}
-
-function environmentNamesEqual(
-  left: string,
-  right: string,
-  platform: NodeJS.Platform,
-): boolean {
-  return platform === 'win32'
-    ? left.toUpperCase() === right.toUpperCase()
-    : left === right;
-}
-
-function sanitizeCommandPath(
-  environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  executionCwd: string | undefined,
-): void {
-  const pathName = Object.keys(environment).find((name) => name.toUpperCase() === 'PATH');
-  if (!pathName || environment[pathName] === undefined) return;
-  const flavor = platform === 'win32' ? path.win32 : path.posix;
-  const delimiter = platform === 'win32' ? ';' : ':';
-  const canonicalCwd = executionCwd === undefined ? undefined : flavor.resolve(executionCwd);
-  const safeEntries = environment[pathName]!.split(delimiter).filter((rawEntry) => {
-    const entry = rawEntry.replace(/^"|"$/g, '');
-    if (!flavor.isAbsolute(entry)) return false;
-    if (canonicalCwd === undefined) return true;
-    const relative = flavor.relative(canonicalCwd, flavor.resolve(entry));
-    return relative.startsWith('..') || flavor.isAbsolute(relative);
-  });
-  environment[pathName] = safeEntries.join(delimiter);
+    .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)))];
 }
 
 function deleteEnvironmentValue(
@@ -159,8 +84,6 @@ export function buildShellProbeEnvironment(
   contract: KodaXShellExecutionContract,
   sessionScratchDir?: string,
   platform: NodeJS.Platform = process.platform,
-  additionalDeniedNames: readonly string[] = [],
-  executionCwd?: string,
 ): NodeJS.ProcessEnv {
   const inherit = contract.environment?.inherit ?? 'filtered';
   const bootstrapNames = platform === 'win32'
@@ -170,20 +93,13 @@ export function buildShellProbeEnvironment(
   for (const [name, value] of Object.entries(source)) {
     if (
       value === undefined
-      || isDeniedEnvironmentName(name, contract, additionalDeniedNames)
+      || isDeniedEnvironmentName(name, contract)
     ) continue;
     if (inherit === 'none' && !bootstrapNames.has(name.toUpperCase())) continue;
     setEnvironmentValue(result, name, value, platform);
   }
   for (const [name, value] of Object.entries(contract.environment?.set ?? {})) {
-    if (additionalDeniedNames.some((candidate) => (
-      candidate.toUpperCase() === name.toUpperCase()
-    ))) {
-      throw new Error(
-        `shellExecution.environment.set cannot contain active Provider credential variable ${name}`,
-      );
-    }
-    if (isDeniedEnvironmentName(name, contract, additionalDeniedNames)) {
+    if (isDeniedEnvironmentName(name, contract)) {
       throw new Error(
         `shellExecution.environment.set cannot contain denied variable ${name}`,
       );
@@ -192,15 +108,10 @@ export function buildShellProbeEnvironment(
   }
   if (
     sessionScratchDir !== undefined
-    && !isDeniedEnvironmentName(
-      'KODAX_SESSION_TMP',
-      contract,
-      additionalDeniedNames,
-    )
+    && !isDeniedEnvironmentName('KODAX_SESSION_TMP', contract)
   ) {
     setEnvironmentValue(result, 'KODAX_SESSION_TMP', sessionScratchDir, platform);
   }
-  sanitizeCommandPath(result, platform, executionCwd);
   validateEnvironmentSize(result);
   return result;
 }
@@ -209,17 +120,14 @@ export function sanitizeResolvedShellEnvironment(
   source: Readonly<Record<string, string>>,
   contract: KodaXShellExecutionContract,
   platform: NodeJS.Platform = process.platform,
-  additionalDeniedNames: readonly string[] = [],
-  executionCwd?: string,
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(source)) {
     if (
-      isDeniedEnvironmentName(name, contract, additionalDeniedNames)
+      isDeniedEnvironmentName(name, contract)
     ) continue;
     setEnvironmentValue(result, name, value, platform);
   }
-  sanitizeCommandPath(result, platform, executionCwd);
   validateEnvironmentSize(result);
   return result;
 }
@@ -227,21 +135,15 @@ export function sanitizeResolvedShellEnvironment(
 export function isDeniedEnvironmentName(
   name: string,
   contract: KodaXShellExecutionContract,
-  additionalDeniedNames: readonly string[] = [],
 ): boolean {
-  if (isSensitiveShellEnvironmentName(name)) return true;
   if (isExecutionControlEnvironmentName(name)) return true;
-  if (additionalDeniedNames.some((candidate) => (
-    candidate.toUpperCase() === name.toUpperCase()
-  ))) return true;
   return (contract.environment?.denyPatterns ?? []).some((pattern) => (
     environmentNameMatchesPattern(name, pattern)
   ));
 }
 
 function isExecutionControlEnvironmentName(name: string): boolean {
-  return EXECUTION_CONTROL_NAMES.has(name.toUpperCase())
-    || /^BASH_FUNC_.+(?:%%|\(\))$/i.test(name);
+  return EXECUTION_CONTROL_NAMES.has(name.toUpperCase());
 }
 
 export function environmentNameMatchesPattern(

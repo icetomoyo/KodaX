@@ -37,7 +37,12 @@ const MODE_ARGS: ArgumentDefinition[] = [
   },
   {
     name: 'auto',
-    description: 'Use auto-mode classifier for tool permissions',
+    description: 'Use sandbox execution with LLM review at the host boundary',
+    type: 'enum',
+  },
+  {
+    name: 'full-access',
+    description: 'Run with unrestricted host access',
     type: 'enum',
   },
 ];
@@ -159,11 +164,6 @@ const MCP_ARGS: ArgumentDefinition[] = [
 const FALLBACK_ARGS: ArgumentDefinition[] = [
   { name: 'status', description: 'Show child-task fallback order', type: 'enum' },
   { name: 'off', description: 'Disable child-task fallback providers', type: 'enum' },
-];
-
-const AUTO_ENGINE_ARGS: ArgumentDefinition[] = [
-  { name: 'llm', description: 'Use LLM classifier for auto mode', type: 'enum' },
-  { name: 'rules', description: 'Use rules-only auto mode', type: 'enum' },
 ];
 
 const AGENT_MODE_ARGS: ArgumentDefinition[] = [
@@ -707,7 +707,6 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
   ['ctx', STATUS_ARGS],
   ['mcp', MCP_ARGS],
   ['fallback', FALLBACK_ARGS],
-  ['auto-engine', AUTO_ENGINE_ARGS],
   ['agent-mode', AGENT_MODE_ARGS],
   ['am', AGENT_MODE_ARGS],
   ['verifier-log', TOGGLE_ARGS],

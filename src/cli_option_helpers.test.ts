@@ -16,8 +16,17 @@ import {
   resolveCliRuntimeMode,
   findSessionTitleMatches,
   validateCliModeSelection,
+  parsePermissionModeOption,
   type CliOptions,
 } from './cli_option_helpers.js';
+
+describe('parsePermissionModeOption FEATURE_297 migration', () => {
+  it('returns only canonical permission profile ids', () => {
+    expect(parsePermissionModeOption('auto')).toBe('auto');
+    expect(parsePermissionModeOption('full-access')).toBe('full-access');
+    expect(parsePermissionModeOption('auto-in-project')).toBe('auto');
+  });
+});
 
 function createCliOptions(overrides: Partial<CliOptions> = {}): CliOptions {
   return {
@@ -141,13 +150,11 @@ describe('normalizeCliSessionFlags', () => {
 });
 
 describe('createKodaXOptions', () => {
-  it('projects configured sandbox environment names into run-scoped options', () => {
+  it('ignores the obsolete sandbox environment pass variable', () => {
     const previous = process.env.KODAX_SANDBOX_ENV_PASS;
     process.env.KODAX_SANDBOX_ENV_PASS = 'GH_TOKEN, GITHUB_TOKEN,GH_TOKEN';
     try {
-      expect(createKodaXOptions(createCliOptions()).sandbox).toEqual({
-        envPass: ['GH_TOKEN', 'GITHUB_TOKEN'],
-      });
+      expect(createKodaXOptions(createCliOptions()).sandbox).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.KODAX_SANDBOX_ENV_PASS;
       else process.env.KODAX_SANDBOX_ENV_PASS = previous;

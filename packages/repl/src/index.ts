@@ -243,7 +243,12 @@ export {
 } from "./session/dedupe.js";
 
 // === Permission helpers ===
-export type { PermissionMode, ConfirmResult, PermissionContext } from "./permission/index.js";
+export type {
+  PermissionMode,
+  ConfirmResult,
+  PermissionContext,
+  StandaloneExecPolicyOptions,
+} from "./permission/index.js";
 export type {
   ReplRuntimePermissionDecision,
   ReplRuntimeAutoModeControl,

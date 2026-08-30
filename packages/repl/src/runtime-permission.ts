@@ -55,7 +55,6 @@ export function resolveReplRuntimePermissionDecision(
 
 export interface ReplRuntimeAutoModeControl {
   getStats(sessionId: string): Promise<AutoModeStats | undefined>;
-  setEngine(sessionId: string, engine: 'llm' | 'rules'): Promise<AutoModeStats | undefined>;
   syncSettings?(
     sessionId: string,
     permissionMode: string,
@@ -68,10 +67,8 @@ export interface ReplRuntimeAutoModeControl {
 }
 
 export interface ReplRuntimeAutoModeSettings {
-  readonly engine: 'llm' | 'rules';
   readonly classifierModel?: string;
-  readonly timeoutMs?: number;
-  readonly speculativeWindowMs?: number;
+  readonly reviewPolicy?: string;
 }
 
 export function toReplRuntimeAutoModeSettings(
@@ -79,11 +76,9 @@ export function toReplRuntimeAutoModeSettings(
 ): ReplRuntimeAutoModeSettings {
   const classifierModel = settings.classifierModelEnv ?? settings.classifierModel;
   return {
-    engine: settings.engine,
     ...(classifierModel !== undefined ? { classifierModel } : {}),
-    ...(settings.timeoutMs !== undefined ? { timeoutMs: settings.timeoutMs } : {}),
-    ...(settings.speculativeWindowMs !== undefined
-      ? { speculativeWindowMs: settings.speculativeWindowMs }
+    ...(settings.reviewPolicy !== undefined
+      ? { reviewPolicy: settings.reviewPolicy }
       : {}),
   };
 }

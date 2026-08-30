@@ -279,7 +279,7 @@ describe('executeCommand', () => {
   it('should execute mode command with auto-in-project arg', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await executeCommand({ command: 'mode', args: ['auto-in-project'] }, context, callbacks, currentConfig);
-    expect(currentConfig.permissionMode).toBe('auto-in-project');
+    expect(currentConfig.permissionMode).toBe('auto');
     consoleSpy.mockRestore();
   });
 

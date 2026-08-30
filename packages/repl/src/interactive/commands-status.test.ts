@@ -94,33 +94,17 @@ describe('status workspace output', () => {
     expect(output).toContain('workflows=3');
   });
 
-  it('shows the Runtime-owned classifier model in auto-engine diagnostics', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === 'auto-engine');
-
-    await command!.handler([], context, {
-      getAutoModeStats: async () => ({
-        engine: 'llm',
-        classifierHealth: 'healthy',
-        classifierModel: 'qwen-token-plan:qwen3.7-plus',
-        denials: { consecutive: 0, cumulative: 0 },
-        breaker: { timestamps: [] },
-      }),
-    } as unknown as CommandCallbacks, currentConfig);
-
-    expect(logSpy.mock.calls.flat().join('\n')).toContain(
-      'qwen-token-plan:qwen3.7-plus',
-    );
+  it('does not expose the removed auto-engine command', () => {
+    expect(BUILTIN_COMMANDS.some((candidate) => candidate.name === 'auto-engine')).toBe(false);
   });
 
-  it('shows circuit-breaker fallback without claiming the engine changed to rules', async () => {
+  it('shows circuit-breaker fail-closed behavior without exposing legacy engine state', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === 'auto-denials');
     const now = Date.now();
 
     await command!.handler([], context, {
       getAutoModeStats: async () => ({
-        engine: 'llm',
         classifierHealth: 'degraded',
         classifierModel: 'deepseek:deepseek-v4-flash',
         denials: { consecutive: 0, cumulative: 0 },
@@ -130,9 +114,8 @@ describe('status workspace output', () => {
 
     const output = logSpy.mock.calls.flat().join('\n');
     expect(output).toContain('degraded');
-    expect(output).toContain('Accept-edits fallback');
-    expect(output).toContain('engine remains llm');
-    expect(output).not.toContain('engine downgrade to rules');
+    expect(output).toContain('fail closed');
+    expect(output).not.toMatch(/\bengine\b/i);
   });
 
   it('does not publish a mode change before Runtime settings synchronize', async () => {

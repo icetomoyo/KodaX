@@ -215,36 +215,22 @@ kodax sandbox setup
   and security policy must also permit unprivileged user namespaces; KodaX
   reports a failed backend launch and does not change system policy itself.
 
-KodaX never runs `sudo` or a package manager automatically. If the sandbox is
-not active, deterministic safe operations and Auto[LLM] decisions keep the
-same permission behavior; only OS-level containment is absent. Ordinary runs
-do not repeatedly prompt for setup. In the REPL, `/sandbox` refreshes readiness
+KodaX never runs `sudo` or a package manager automatically. Edits and
+Auto[LLM] try the sandbox first. A command that completes there is silently
+authorized; a proven pre-start denial or unavailable backend reaches the
+profile-specific host boundary. A command that may have started is never
+replayed. In the REPL, `/sandbox` refreshes readiness
 and diagnostics without activating the backend or requesting elevation.
 Per-command sandbox routing remains internal and is not shown in normal command
 history. SDK embedders can use the same capability independently through
 `@kodax-ai/kodax/sandbox`; see the
 [SDK sandbox guide](public_docs/sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778).
 
-Credential-shaped environment variables are filtered from model-issued shell
-commands by default. To expose exact host variables to those command targets,
-including ASRT, add only their names to the user-level core config:
-
-```json
-{
-  "sandbox": {
-    "envPass": ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"]
-  }
-}
-```
-
-The default list is empty. Values remain in the host environment and are never
-stored in `config.json`; project configuration cannot extend the list.
-Matching is exact (case-insensitive on Windows), and execution-control
-variables such as `NODE_OPTIONS` and `BASH_ENV` remain blocked. Restart KodaX
-after changing the host variables or this setting; stop/restart a persistent
-KodaX daemon so it receives the new environment and configuration.
-SDK callers pass the same shape per Run as `KodaXOptions.sandbox`, so concurrent
-Runs can use different lists without mutating process-global configuration.
+Sandboxed shell commands inherit the host environment, including ordinary
+development credentials, and retain external network access. A fixed internal
+deny set removes KodaX/Electron execution-control variables. Writes remain
+bounded to the workspace and system temporary directory; broad host reads,
+including Agent Home and global Git configuration, are available.
 
 For Qwen Token Plan, select `qwen-token-plan` and use its separate credential;
 `QWEN_API_KEY` does not authenticate this route:
@@ -564,17 +550,14 @@ Extension authoring remain explicit user actions.
 
 First-run setup now creates and validates the split core/MCP/Extensions/A2A
 files and annotated templates without overwriting existing configuration or
-collecting secrets. Auto[LLM] admits precisely modeled ordinary reads and
-workspace/temp mutations before classifier latency, retries classifier
-infrastructure failure once, then falls back at the Accept-edits boundary
-without switching to rules. ASRT is optional execution containment rather
-than permission authority; `/sandbox` is the explicit diagnostic surface, and
-SDK hosts can use the standalone `/sandbox` subpath without a silent
-unsandboxed fallback. KodaX's workspace containment denies reads from common
-home credential paths and the complete resolved agent home without turning
-ordinary external reads into an allowlist. See the
+collecting secrets. That release introduced the earlier pre-classification
+permission route. FEATURE_297 supersedes it with sandbox-first execution:
+sandbox completion is silent; only a proven pre-start boundary reaches Edits
+or Auto[LLM], and reviewer infrastructure failure blocks with a safer-route
+message after one retry. Workspace containment now permits broad host reads,
+including Agent Home, credential locations, and global Git configuration,
+while retaining workspace/system-TMP-only writes and external network. See the
 [v0.7.78 design](docs/features/v0.7.78.md), the
-[release checklist](docs/release.md#v0778-release-verification), and
 [SDK guide sections 29–30](public_docs/sdk/embedder-guide.md#29-evidence-gated-background-skill-learning-feature_263-v0778).
 
 The release closure also preserves intent across adjacent surfaces: static
@@ -584,7 +567,7 @@ handles explicit remember/correct/forget requests immediately through the
 governed `memory_intent` control plane while exceptional or inferred changes
 remain reviewable, Workflow Actor waits remain
 unbounded unless the workflow sets a deadline, and Runtime Auto capability v4
-advertises `fallbackPersistsEngine:false` across embedded, Worker, and daemon
+advertises the same Auto[LLM]-only contract across embedded, Worker, and daemon
 hosts. Actor ownership additionally uses Runtime identity rather than PID alone,
 so PID reuse cannot pin a crashed owner. The resume Session picker also renders
 timestamps in the host's local timezone.
@@ -811,8 +794,8 @@ file to trusted-host ownership and preserves the ordered effective ACE policy.
 The filesystem may canonicalize DACL protection/inheritance control at the
 atomic namespace commit; stale inherited authority is not copied from an old
 parent. The
-shell cannot read or write workspace-local `.kodax/runtime` control state even
-when the surrounding workspace is writable.
+shell may read workspace-local `.kodax/runtime` like other host state, but
+cannot write it even when the surrounding workspace is writable.
 Each shared broker owns a verified native liveness controller whose named pipe
 is created with a protected Host/SYSTEM-only DACL and multiple pending
 instances. Restricted targets cannot connect or exhaust it; controller or
@@ -971,10 +954,9 @@ PowerShell, `cmd`, `bash`, `zsh`, or an explicit Git Bash executable; KodaX
 resolves the shell environment in the effective project cwd and then executes
 the command through that same interpreter. Resolved environments are isolated
 by contract and cwd, expire after a bounded TTL, and can be explicitly
-refreshed. Provider credentials and execution-control variables are removed
-before profile/setup code and again before the command starts. Credential-shaped
-variables are also filtered on the legacy platform-shell path; explicit names
-in user-level `sandbox.envPass` are restored only for the final command target.
+refreshed. The resolved host environment is inherited by profile/setup and
+command targets; fixed KodaX/Electron execution-control variables are removed
+before execution.
 When `shellExecution` is absent, the established interpreter path is unchanged. See
 [SDK Embedder Guide section 28](public_docs/sdk/embedder-guide.md#28-host-configurable-shell-execution-contract-v0777)
 and the [Issue 214 regression guide](docs/test-guides/ISSUE_214_v0.7.77_REGRESSION_GUIDE.md).
@@ -1305,7 +1287,7 @@ provisioning or v2 account-SID cutover).
 - **Skills System** - Natural language triggering, extensible, role-projected in AMA
 - **Repo Intelligence** - Built-in full/light repository intelligence with native KodaX auto-injection lane
 - **Rich Tool Surface** - 50+ built-in tools across file ops, shell, search, repo intelligence, MCP capabilities, git worktree, and agent control
-- **Permission Control** - 3 permission modes with pattern-based control
+- **Permission Control** - 4 profiles with sandbox-first routing and Exec Policy
 - **Standalone Binary** - `bun --compile` releases for Win/macOS/Linux x64+arm64, no Node.js required on target machines
 - **Cross-Platform** - Windows/macOS/Linux
 - **TypeScript Native** - Full type safety and IDE support
@@ -1540,19 +1522,21 @@ kodax                    Start the interactive REPL
 
 ### Permission Control
 
-KodaX provides 3 permission modes for fine-grained control:
+KodaX provides 4 permission profiles:
 
 | Mode | Description | Tools Need Confirmation |
 |------|-------------|------------------------|
 | `plan` | Read-only planning mode | All modification tools blocked |
-| `accept-edits` | Auto-accept file edits | bash only |
-| `auto` | Runtime-owned LLM/rules classification within the project boundary | Only explicit classifier escalation |
+| `accept-edits` | Sandbox-first edits; user decides an exact host boundary | Host-boundary operations |
+| `auto` | Sandbox-first execution; LLM reviews an exact host boundary | No automatic prompt; denied calls return a safer-route reason |
+| `full-access` | Direct host execution without sandbox or Auto review | Explicit Exec Policy `prompt` only |
 
 ```bash
 # In REPL, use /mode command
 /mode plan          # Switch to plan mode (read-only)
 /mode accept-edits  # Switch to accept-edits mode
 /mode auto             # Switch to Runtime-owned Auto Mode
+/mode full-access      # Direct host execution, still subject to Exec Policy
 /auto                  # Alias for auto
 
 # Check current mode
@@ -1566,15 +1550,15 @@ KodaX provides 3 permission modes for fine-grained control:
   ordinary reads outside the project are allowed
 - Pattern-based permission: Allow specific Bash commands (e.g., `Bash(npm install)`)
 - Unified diff display for write/edit operations
-- Auto Mode first admits exactly modeled safe reads and workspace/temp
-  mutations without classifier latency. Remaining actions are reviewed against
-  bounded user intent and exact operation facts; a safe verdict creates no
-  pending approval request. Classifier failures retry once, then use the
-  Accept-edits safety boundary rather than silently switching to Auto[rules].
-- Shift-Tab cycles `Plan -> Edits -> Auto`; Shift+Enter inserts a newline. Auto
-  immediately displays `Auto[LLM]` or `Auto[RULES]`, and rapid mode changes are
-  persisted in input order. `Auto[RULES]` remains an explicit/manual engine;
-  use `/auto-engine llm` to select LLM classification.
+- Edits and Auto first attempt the OS sandbox. Sandbox completion is final;
+  only proven pre-start refusal/unavailability reaches Exec Policy and then the
+  user or Auto reviewer. Target-started/uncertain calls are never replayed.
+- Shift-Tab cycles `Plan -> Edits -> Auto[LLM] -> Full Access`; Shift+Enter
+  inserts a newline. Legacy `auto-in-project` and Auto[RULES] state normalize
+  to Auto[LLM] and are never persisted again.
+- Full Access skips sandbox and reviewer, but administrator forbids and the
+  narrow critical-effect fallback remain enforced. Use
+  `kodax execpolicy check -- <command>` to inspect host policy without running it.
 - Runtime-backed prompts can offer exact `allow once`, `allow this session`,
   and `always allow` choices. Return the Runtime-issued opaque suggestion;
   never derive or widen a permission rule from the displayed command or path.
@@ -1887,14 +1871,14 @@ import { runInkInteractiveMode } from '@kodax-ai/kodax/repl';
 
 // Usually used via the `kodax` bin command; can be embedded:
 // - Interactive terminal UI (Ink components)
-// - Permission control (auto/plan/accept-edits modes)
+// - Permission control (plan/accept-edits/auto/full-access profiles)
 // - Command system (/help, /mode, /clear, /status, …)
 // - Skills integration
 // - Theme support
 await runInkInteractiveMode({ provider: 'zhipu-coding', effort: 'auto' });
 ```
 
-**Key Features**: Ink-based React components · 3 permission modes (auto / plan / accept-edits) · built-in commands · real-time streaming display · context-usage indicator.
+**Key Features**: Ink-based React components · 4 permission profiles · built-in commands · real-time streaming display · context-usage indicator.
 
 ### Package Dependency Graph (workspace internal)
 

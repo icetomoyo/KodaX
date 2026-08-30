@@ -64,6 +64,7 @@ import {
 import {
   KodaXShellSandbox,
   KodaXShellSandboxBackend,
+  KodaXPreparedShellSandboxInvocation,
   KodaXShellSandboxObservation,
   KodaXShellSandboxProcessControl,
   KodaXSkillScriptRunInput,
@@ -96,7 +97,6 @@ import {
   resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
   verifyWindowsSandboxControlDirectory,
-  windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
@@ -287,6 +287,8 @@ export interface CreateAsrtShellSandboxInput {
   readonly workspaceRoot: string;
   /** Exact Runtime-owned linked-worktree roots that share this workspace policy. */
   readonly additionalWorkspaceRoots?: () => readonly string[];
+  /** Existing trusted project Exec Policy from the Run admission snapshot. */
+  readonly trustedProjectExecPolicyPath?: string;
   readonly shouldSandbox: (
     call: RunnerToolCall,
   ) => boolean | AsrtShellSandboxSelection
@@ -338,7 +340,7 @@ export interface KodaXSandboxRunInput {
   readonly cwd: string;
   readonly filesystem: KodaXSandboxFilesystemPolicy;
   readonly network?: KodaXSandboxNetworkPolicy;
-  /** Defaults to a minimal process environment. */
+  /** Defaults to the host process environment; set false for a minimal bootstrap environment. */
   readonly inheritEnvironment?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly timeoutMs?: number;
@@ -449,20 +451,9 @@ const SENSITIVE_PATH_PARTS = new Set([
 const SENSITIVE_FILES = new Set([
   '.env', '.envrc', '.pgpass', '.npmrc', '.pypirc', 'credentials', 'id_rsa', 'id_ed25519',
 ]);
-const WORKSPACE_SHELL_SENSITIVE_HOME_PATHS = [
-  '.ssh',
-  '.aws',
-  '.azure',
-  '.gnupg',
-  '.kube',
-  '.docker',
-  '.kodax',
-  '.agents',
-  '.codex',
-  '.claude',
-  '.gemini',
-  '.direnv',
-  '.terraform.d',
+const WORKSPACE_SHELL_LEGACY_HOME_DENY_PATHS = [
+  '.ssh', '.aws', '.azure', '.gnupg', '.kube', '.docker', '.kodax', '.agents',
+  '.codex', '.claude', '.gemini', '.direnv', '.terraform.d',
   path.join('.cargo', 'credentials.toml'),
   path.join('.config', 'gcloud'),
   path.join('.config', 'gh'),
@@ -472,16 +463,10 @@ const WORKSPACE_SHELL_SENSITIVE_HOME_PATHS = [
   path.join('.config', 'git', 'config'),
   '.terraformrc',
   path.join('.config', 'pypoetry', 'auth.toml'),
-  '.condarc',
-  '.bashrc',
-  '.bash_profile',
-  '.zshrc',
-  '.zprofile',
-  '.profile',
+  '.condarc', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.profile',
   path.join('.config', 'fish', 'config.fish'),
   path.join('.config', 'fish', 'fish_variables'),
-  '.bash_history',
-  '.zsh_history',
+  '.bash_history', '.zsh_history',
   path.join('.m2', 'settings.xml'),
   path.join('.m2', 'settings-security.xml'),
   path.join('.gradle', 'gradle.properties'),
@@ -499,48 +484,16 @@ const WORKSPACE_SHELL_SENSITIVE_HOME_PATHS = [
   path.join('AppData', 'Local', 'Microsoft', 'Credentials'),
   path.join('AppData', 'Local', 'Microsoft', 'Protect'),
   path.join('AppData', 'Local', 'Microsoft', 'Vault'),
-  '.password-store',
-  '.env',
-  '.envrc',
-  '.pgpass',
-  '.env.local',
-  '.env.development',
-  '.env.production',
-  '.env.test',
-  '.env.staging',
-  '.npmrc',
-  '.pypirc',
-  '.netrc',
-  '.git-credentials',
-  'credentials',
-  'credentials.json',
-  'application_default_credentials.json',
-  'id_rsa',
-  'id_dsa',
-  'id_ecdsa',
-  'id_ed25519',
+  '.password-store', '.env', '.envrc', '.pgpass', '.env.local', '.env.development',
+  '.env.production', '.env.test', '.env.staging', '.npmrc', '.pypirc', '.netrc',
+  '.git-credentials', 'credentials', 'credentials.json',
+  'application_default_credentials.json', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519',
 ] as const;
-const WORKSPACE_SHELL_SENSITIVE_AGENT_HOME_PATHS = [
-  'native-text-state-v1',
-  'runtime',
-  'mcp-tokens',
-  'mcp-clients',
-  'integrations',
-  'sandbox-runtime',
-  'processes',
-  'learned',
-  'config.json',
-  'auth.json',
-  'trusted-project-rules.json',
-  '.env',
-  '.envrc',
-  '.pgpass',
-  '.npmrc',
-  '.pypirc',
-  '.netrc',
-  '.git-credentials',
-  'credentials',
-  'credentials.json',
+const WORKSPACE_SHELL_LEGACY_AGENT_HOME_DENY_PATHS = [
+  'native-text-state-v1', 'runtime', 'mcp-tokens', 'mcp-clients', 'integrations',
+  'sandbox-runtime', 'processes', 'learned', 'config.json', 'auth.json',
+  'trusted-project-rules.json', '.env', '.envrc', '.pgpass', '.npmrc', '.pypirc',
+  '.netrc', '.git-credentials', 'credentials', 'credentials.json',
   'application_default_credentials.json',
 ] as const;
 const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
@@ -549,7 +502,7 @@ const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
   'processes',
   'learned',
 ] as const;
-const windowsAclReadGuardedPaths = new Set<string>();
+let windowsLegacyAclReconciliationMarkerWritten = false;
 const ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL = JSON.stringify(ELECTRON_NODE_ENV_SCRUB_IMPORT);
 const ELECTRON_RUN_AS_NODE_ENV_LITERAL = JSON.stringify(ELECTRON_RUN_AS_NODE_ENV);
 const TARGET_ARGV_BOOTSTRAP = String.raw`
@@ -786,57 +739,6 @@ const waitForTarget = (target, observation, onTargetStarted) => {
 };
 let child;
 let targetStarted = false;
-let normalFallbackAttempted = false;
-let normalFallbackSpawned = false;
-const runDirect = async () => {
-  const internalElectronNode = request.command === process.execPath && process.versions.electron !== undefined;
-  const directArgs = internalElectronNode
-    ? ['--import', ${ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL}, ...request.args]
-    : request.args;
-  const directEnv = internalElectronNode
-    ? { ...request.env, [${ELECTRON_RUN_AS_NODE_ENV_LITERAL}]: '1' }
-    : request.env;
-  child = spawn(request.command, directArgs, {
-    cwd: request.cwd,
-    env: directEnv,
-    shell: false,
-    stdio: 'inherit',
-    windowsHide: true,
-    windowsVerbatimArguments: request.windowsVerbatimArguments === true,
-  });
-  return await new Promise((resolve, reject) => {
-    child.once('spawn', () => { normalFallbackSpawned = true; });
-    child.once('error', reject);
-    child.once('exit', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
-  });
-};
-const runNormalFallback = async () => {
-  if (
-    request.fallbackToNormalExecution !== true
-    || targetStarted
-    || normalFallbackAttempted
-  ) return false;
-  normalFallbackAttempted = true;
-  try {
-    process.exitCode = await runDirect();
-    writeObservation({
-      version: 1,
-      state: 'fallback',
-      reason: 'backend_failed',
-      execution: 'normal_permission_policy',
-    });
-  } catch (error) {
-    if (!normalFallbackSpawned) {
-      writeObservation({
-        version: 1,
-        state: 'not_started',
-        diagnostic: error instanceof Error ? error.message : String(error),
-      });
-    }
-    throw error;
-  }
-  return true;
-};
 try {
   if (request.wrappedInvocation) {
     const wrapped = request.wrappedInvocation;
@@ -858,10 +760,7 @@ try {
       process.stderr.write(result.controlFailure + '\n');
       process.exitCode = 125;
     } else {
-      const fellBack = result.spawnFailedBeforeSpawn
-        ? await runNormalFallback()
-        : false;
-      if (!targetStarted && !fellBack) {
+      if (!targetStarted) {
         if (result.spawnFailedBeforeSpawn) {
           writeObservation({
             version: 1,
@@ -871,9 +770,7 @@ try {
         }
         process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
       }
-      if (!fellBack) {
-        process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
-      }
+      process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
     }
   } else {
   ({ SandboxManager } = await import(process.argv[1]));
@@ -957,10 +854,7 @@ try {
     process.stderr.write(result.controlFailure + '\n');
     process.exitCode = 125;
   } else {
-    const fellBack = result.spawnFailedBeforeSpawn
-      ? await runNormalFallback()
-      : false;
-    if (!targetStarted && !fellBack) {
+    if (!targetStarted) {
       if (result.spawnFailedBeforeSpawn) {
         writeObservation({
           version: 1,
@@ -970,38 +864,22 @@ try {
       }
       process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
     }
-    if (!fellBack) {
-      process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
-    }
+    process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
   }
   }
 } catch (error) {
   await SandboxManager?.reset().catch(() => undefined);
-  if (
-    request.fallbackToNormalExecution === true
-    && !targetStarted
-    && !normalFallbackAttempted
-    && child === undefined
-  ) {
+  if (!targetStarted && child === undefined) {
     try {
-      await runNormalFallback();
-    } catch (fallbackError) {
-      process.stderr.write((fallbackError instanceof Error ? fallbackError.message : String(fallbackError)) + '\n');
-      process.exitCode = 1;
-    }
-  } else {
-    if (!targetStarted && child === undefined) {
-      try {
-        writeObservation({
-          version: 1,
-          state: 'not_started',
-          diagnostic: error instanceof Error ? error.message : String(error),
-        });
-      } catch {}
-    }
-    process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
-    process.exitCode = targetStarted ? 125 : 1;
+      writeObservation({
+        version: 1,
+        state: 'not_started',
+        diagnostic: error instanceof Error ? error.message : String(error),
+      });
+    } catch {}
   }
+  process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
+  process.exitCode = targetStarted ? 125 : 1;
 }
 `;
 let doctorPromise: Promise<SandboxRuntimeDoctorResult> | undefined;
@@ -1192,20 +1070,8 @@ function windowsSandboxV2SetupLockFile(): string {
 }
 
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
-const WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC = '[acl_guards_missing]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
-
-function hasOnlyRepairableWindowsAclGuardDiagnostics(
-  diagnostics: readonly string[],
-): boolean {
-  const blocking = diagnostics.filter(
-    (diagnostic) => !diagnostic.startsWith(WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC),
-  );
-  return blocking.length > 0 && blocking.every(
-    (diagnostic) => diagnostic.startsWith(WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC),
-  );
-}
 
 interface WindowsSandboxV2CutoverMarker {
   readonly version: 3;
@@ -2082,19 +1948,6 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
         try {
           assertWindowsSandboxV2Cutover(user);
           verifyWindowsV2AccountCompatibility(user.sid);
-          const missingGuards = runWindowsAclGuard(
-            windowsPersistentAclGuardRoots(),
-            user.sid,
-            user.groupSid,
-            false,
-          );
-          if (missingGuards.length > 0) {
-            setupRequired = true;
-            diagnostics.push(
-              `${WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC} ${missingGuards.length} persistent Windows sandbox ACL guard(s) are missing. `
-              + 'Run "kodax sandbox setup" once to install them outside the command path.',
-            );
-          }
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
           setupRequired = true;
@@ -2250,11 +2103,11 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     const result = installWindowsSandbox({ srtWin: runner.srtWin });
     if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
     const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
-    if (installedUser.sid === undefined) {
-      throw new Error('Windows sandbox setup did not return an account SID.');
+    if (installedUser.sid === undefined || installedUser.groupSid === undefined) {
+      throw new Error('Windows sandbox setup did not return complete account SIDs.');
     }
     installWindowsV2AccountCompatibility(installedUser.sid);
-    installWindowsAclGuards(windowsPersistentAclGuardRoots());
+    reconcileWindowsLegacyAclGuards(installedUser.sid, installedUser.groupSid);
     return doctorSandboxRuntime({ refresh: true });
   }
 
@@ -2284,7 +2137,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     throw new Error('Windows sandbox account rotation did not produce a new SID; v2 remains fail-closed.');
   }
   installWindowsV2AccountCompatibility(installedUser.sid);
-  installWindowsAclGuards(windowsPersistentAclGuardRoots());
+  reconcileWindowsLegacyAclGuards(installedUser.sid, installedUser.groupSid);
   await verifyPreparedWindowsWfp(runner);
   writeWindowsSandboxV2CutoverMarker({
     version: 3,
@@ -2700,7 +2553,7 @@ export async function resetSandboxRuntimeForTest(): Promise<void> {
   });
   const brokerResults = await Promise.allSettled(brokerStops);
   windowsNetworkBrokers.clear();
-  windowsAclReadGuardedPaths.clear();
+  windowsLegacyAclReconciliationMarkerWritten = false;
   rmSync(windowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   const failures = brokerResults.flatMap((result) => (
@@ -3355,9 +3208,7 @@ function sandboxConfig(
   const home = process.platform === 'win32'
     ? process.env.USERPROFILE ?? os.homedir()
     : os.homedir();
-  const homeDenies = process.platform === 'win32'
-    ? windowsPersistentAclGuardRoots()
-    : [home];
+  const homeDenies = [home];
   const executableReadScopes = (command: string): string[] => (
     path.isAbsolute(command)
       ? process.platform === 'win32'
@@ -3417,32 +3268,16 @@ function existingWorkspaceDenyWrites(workspaceRoot: string): string[] {
   });
 }
 
-function workspaceShellSensitiveReadDenies(
-  home: string,
-  agentHome: string,
-  controlDirectory: string,
+function trustedProjectExecPolicyDenyWrite(
+  trustedProjectExecPolicyPath: string | undefined,
 ): string[] {
-  const homeDenies = WORKSPACE_SHELL_SENSITIVE_HOME_PATHS
-    .map((relative) => path.resolve(home, relative))
-    .filter((candidate) => path.relative(candidate, agentHome) !== '');
-  const agentHomeDenies = process.platform === 'win32'
-    ? [
-        ...WORKSPACE_SHELL_SENSITIVE_AGENT_HOME_PATHS.map(
-          (relative) => path.resolve(agentHome, relative),
-        ),
-        windowsSandboxAclCoordinationDirectory(),
-      ]
-    : [
-        path.resolve(controlDirectory),
-        ...WORKSPACE_SHELL_SENSITIVE_AGENT_HOME_PATHS.map(
-          (relative) => path.resolve(agentHome, relative),
-        ),
-      ];
-  return [...new Set([
-    ...agentHomeDenies,
-    ...(process.platform === 'win32' ? [] : trustedTextNativeArtifactStateRoots()),
-    ...homeDenies,
-  ])];
+  if (trustedProjectExecPolicyPath === undefined) return [];
+  if (statSync(trustedProjectExecPolicyPath, { throwIfNoEntry: false }) === undefined) {
+    throw new Error(
+      `Trusted project Exec Policy snapshot disappeared before sandbox admission: ${trustedProjectExecPolicyPath}`,
+    );
+  }
+  return [trustedProjectExecPolicyPath];
 }
 
 function existingMinimalWindowsAclGuardRoots(
@@ -3458,41 +3293,31 @@ function existingMinimalWindowsAclGuardRoots(
   return roots;
 }
 
-function windowsAclGuardKey(candidate: string): string {
-  return path.resolve(candidate).toLowerCase();
-}
-
-function windowsAclGuardCovers(candidate: string): boolean {
-  const key = windowsAclGuardKey(candidate);
-  for (const root of windowsAclReadGuardedPaths) {
-    if (key === root || key.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function windowsPersistentAclGuardRoots(): string[] {
+function windowsLegacyPersistentAclGuardRoots(): string[] {
   const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
   const agentHome = path.resolve(getAgentConfigHome());
-  return existingMinimalWindowsAclGuardRoots(workspaceShellSensitiveReadDenies(
-    home,
-    agentHome,
-    path.join(agentHome, 'sandbox-runtime'),
-  ));
+  const legacyHomeRoots = WORKSPACE_SHELL_LEGACY_HOME_DENY_PATHS
+    .map((relative) => path.join(home, relative))
+    .filter((candidate) => !sameWindowsPath(candidate, agentHome));
+  return existingMinimalWindowsAclGuardRoots([
+    ...legacyHomeRoots,
+    ...WORKSPACE_SHELL_LEGACY_AGENT_HOME_DENY_PATHS.map(
+      (relative) => path.join(agentHome, relative),
+    ),
+    windowsSandboxAclCoordinationDirectory(),
+  ]);
 }
 
-function runWindowsAclGuard(
+function removeWindowsLegacyAclGuards(
   candidates: readonly string[],
   sandboxUserSid: string,
   sandboxGroupSid: string | undefined,
-  install: boolean,
-): string[] {
+): void {
   if (sandboxGroupSid === undefined) {
     throw new Error('Windows sandbox group SID is unavailable for persistent denyRead.');
   }
   const roots = existingMinimalWindowsAclGuardRoots(candidates);
-  if (roots.length === 0) return [];
+  if (roots.length === 0) return;
   const executable = resolveWindowsSandboxV2Executable({
     sandboxReadSid: sandboxGroupSid,
     untrustedWriteRoots: [],
@@ -3501,14 +3326,14 @@ function runWindowsAclGuard(
     executable,
     [
       '__persistent-deny-read',
-      install ? 'install' : 'verify',
+      'remove',
       sandboxUserSid,
       sandboxGroupSid,
     ],
     {
       input: JSON.stringify(roots),
       encoding: 'utf8',
-      timeout: install ? 15 * 60_000 : 30_000,
+      timeout: 15 * 60_000,
       windowsHide: true,
     },
   );
@@ -3518,88 +3343,55 @@ function runWindowsAclGuard(
       .slice(-4_096);
     throw new Error(`Windows sandbox ACL guard failed: ${detail}`);
   }
-  let missing: string[];
   try {
     const output: unknown = JSON.parse(result.stdout.trim());
-    missing = Array.isArray(output)
-      ? output.filter((entry): entry is string => typeof entry === 'string')
-      : [];
+    if (!Array.isArray(output) || output.length !== 0) {
+      throw new Error('legacy ACL removal returned a non-empty result');
+    }
   } catch (error: unknown) {
     throw new Error(`Windows sandbox ACL guard returned invalid output: ${errorText(error)}`);
   }
-  if (missing.length === 0) {
-    for (const root of roots) windowsAclReadGuardedPaths.add(windowsAclGuardKey(root));
-  }
-  return missing;
 }
 
-function installWindowsAclGuards(candidates: readonly string[]): void {
-  if (process.platform !== 'win32' || candidates.length === 0) return;
-  const pending = candidates.filter((candidate) => !windowsAclGuardCovers(candidate));
-  if (pending.length === 0) return;
-  const runner = requirePreparedWindowsRunner();
-  const user = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
-  if (!user.sid) throw new Error('Windows sandbox account SID is unavailable for ACL guards.');
-  const missing = runWindowsAclGuard(pending, user.sid, user.groupSid, true);
-  if (missing.length > 0) {
-    throw new Error('Windows sandbox ACL guards were not installed completely.');
-  }
+function windowsLegacyAclReconciliationMarkerFile(): string {
+  return path.join(
+    path.resolve(process.env.ProgramData ?? path.join(os.homedir(), 'AppData', 'Local')),
+    'KodaX',
+    'sandbox-runtime',
+    'read-policy-v2.json',
+  );
 }
 
-function withoutWindowsAsrtDenyPropagation(
-  config: SandboxRuntimeConfig,
-): SandboxRuntimeConfig {
-  if (process.platform !== 'win32') return config;
-  return {
-    ...config,
-    filesystem: {
-      ...config.filesystem,
-      // Persistent guards cover broad roots once during explicit setup. Keep
-      // uncovered SDK-specific denies on ASRT's ordinary per-run path.
-      denyRead: config.filesystem.denyRead.filter(
-        (candidate) => !windowsAclGuardCovers(candidate),
-      ),
-      denyWrite: config.filesystem.denyWrite,
-    },
-  };
+function reconcileWindowsLegacyAclGuards(
+  sandboxUserSid: string,
+  sandboxGroupSid: string,
+): void {
+  // An older KodaX process can reinstall an exact legacy deny ACE at any later
+  // admission. Removal is exact and idempotent, so repeat it before every new
+  // Windows target admission; only the diagnostic marker write is cached.
+  const legacyRoots = windowsLegacyPersistentAclGuardRoots();
+  removeWindowsLegacyAclGuards(legacyRoots, sandboxUserSid, sandboxGroupSid);
+  if (windowsLegacyAclReconciliationMarkerWritten) return;
+  writeFileSync(
+    windowsLegacyAclReconciliationMarkerFile(),
+    JSON.stringify({ version: 2, sandboxGroupSid }),
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  windowsLegacyAclReconciliationMarkerWritten = true;
 }
 
 function workspaceShellWriteRoots(
   candidateRoots: readonly string[],
-  agentHome: string,
+  _agentHome: string,
 ): string[] {
-  let canonicalAgentHome: string;
-  try {
-    canonicalAgentHome = realpathSync.native(agentHome);
-  } catch {
-    return [];
-  }
   const roots: string[] = [];
   for (const candidateRoot of candidateRoots) {
-    let canonicalCandidate: string;
     try {
-      canonicalCandidate = realpathSync.native(candidateRoot);
+      roots.push(realpathSync.native(candidateRoot));
     } catch {
       continue;
     }
-    if (!isInside(canonicalCandidate, canonicalAgentHome)) {
-      roots.push(candidateRoot);
-    } else if (canonicalCandidate !== canonicalAgentHome) {
-      const protectedSegments = path.relative(canonicalCandidate, canonicalAgentHome).split(path.sep);
-      let current = canonicalCandidate;
-      try {
-        for (const protectedSegment of protectedSegments) {
-          for (const entry of readdirSync(current, { withFileTypes: true })) {
-            if (entry.name !== protectedSegment) roots.push(path.join(current, entry.name));
-          }
-          current = path.join(current, protectedSegment);
-        }
-      } catch {
-        // Existing sibling grants are optional; omitting them is fail-closed.
-      }
-    }
   }
-  if (process.platform !== 'win32') roots.push(agentHome);
   return [...new Set(roots)];
 }
 
@@ -3632,9 +3424,10 @@ async function removeWorkspaceShellTempDirectory(tempDirectory: string): Promise
 }
 
 function workspaceShellTempWriteRoots(shellTempDirectory?: string): string[] {
-  return process.platform === 'win32'
-    ? shellTempDirectory === undefined ? [] : [path.dirname(shellTempDirectory)]
-    : canonicalTempDirectories();
+  return [...new Set([
+    ...canonicalTempDirectories(),
+    ...(shellTempDirectory === undefined ? [] : [path.dirname(shellTempDirectory)]),
+  ])];
 }
 
 function windowsAgentHomeAccessRoot(
@@ -3779,10 +3572,6 @@ function workspaceShellRuntimeReadScopes(
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
   );
-  const agentHome = path.resolve(getAgentConfigHome());
-  const sensitiveRoots = workspaceShellSensitiveReadDenies(
-    home, agentHome, path.join(agentHome, 'sandbox-runtime'),
-  );
   const boundaries = workspaceShellUserDataBoundaries(home);
   const scopes = new Map<string, string>();
   const safe = (candidate: string): string | undefined => {
@@ -3790,9 +3579,6 @@ function workspaceShellRuntimeReadScopes(
     if (
       resolved === path.parse(resolved).root
       || resolved.toLowerCase() === home.toLowerCase()
-      || isInside(agentHome, resolved)
-      || isInside(resolved, agentHome)
-      || sensitiveRoots.some((sensitive) => isInside(sensitive, resolved))
     ) return undefined;
     return resolved;
   };
@@ -3974,22 +3760,14 @@ function workspaceShellSandboxConfig(
     process.env,
     workspaceShellExecutable(),
   ),
+  trustedProjectExecPolicyPath?: string,
 ): SandboxRuntimeConfig {
   const agentHome = path.resolve(getAgentConfigHome());
   const controlDirectory = path.join(agentHome, 'sandbox-runtime');
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
   );
-  const sensitiveReadDenies = workspaceShellSensitiveReadDenies(
-    home,
-    agentHome,
-    controlDirectory,
-  );
-  const workspaceRuntimeState = path.join(workspaceRoot, '.kodax', 'runtime');
-  const readDenies = [...sensitiveReadDenies, workspaceRuntimeState];
-  const denyRead = process.platform === 'win32'
-    ? existingMinimalWindowsAclGuardRoots(readDenies)
-    : readDenies.filter((candidate) => candidate !== agentHome);
+  const denyRead: string[] = [];
   const scopedAgentHomeAccess = process.platform === 'win32'
     ? windowsAgentHomeAccessRoots(agentHome, agentHomeAccess)
     : { read: [], write: [] };
@@ -4005,6 +3783,7 @@ function workspaceShellSandboxConfig(
   const linkedGit = windowsLinkedWorktreeGitAccess(workspaceRoot);
   const allowRead = [
     ...new Set([
+      ...(process.platform === 'win32' ? [home, agentHome] : []),
       ...runtimeReadScopes,
       ...scopedAgentHomeAccess.read,
       ...(filesystemAccess?.read ?? []),
@@ -4013,11 +3792,6 @@ function workspaceShellSandboxConfig(
         : []),
     ]),
   ];
-  if (process.platform !== 'win32') {
-    assertTrustedTextNativeStateNotDirectlyReadable(
-      normalizedSandboxPaths(allowRead, workspaceRoot),
-    );
-  }
   return {
     network: {
       allowedDomains: [],
@@ -4037,6 +3811,7 @@ function workspaceShellSandboxConfig(
         ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
           (directory) => path.join(agentHome, directory),
         ),
+        ...trustedProjectExecPolicyDenyWrite(trustedProjectExecPolicyPath),
         ...existingWorkspaceDenyWrites(workspaceRoot),
         ...(linkedGit.gitfile !== undefined ? [linkedGit.gitfile] : []),
       ],
@@ -4069,6 +3844,7 @@ function workspaceShellCommandSandboxConfig(
   agentHomeAccess?: AsrtShellAgentHomeAccess,
   filesystemAccess?: AsrtShellSandboxSelection['filesystemAccess'],
   runtimeReadScopes?: readonly string[],
+  trustedProjectExecPolicyPath?: string,
 ): SandboxRuntimeConfig {
   const config = workspaceShellSandboxConfig(
     workspaceRoot,
@@ -4076,6 +3852,7 @@ function workspaceShellCommandSandboxConfig(
     agentHomeAccess,
     filesystemAccess,
     runtimeReadScopes,
+    trustedProjectExecPolicyPath,
   );
   return process.platform === 'win32'
     ? boundedWindowsWorkspaceDenies(config)
@@ -4250,35 +4027,6 @@ async function runWindowsV2Sandboxed(
   }
 }
 
-function ensureWindowsAclGuardsForAdmission(
-  sandboxUserSid: string,
-  sandboxGroupSid: string,
-): void {
-  const pending = windowsPersistentAclGuardRoots()
-    .filter((candidate) => !windowsAclGuardCovers(candidate));
-  if (pending.length === 0) return;
-  const missing = runWindowsAclGuard(
-    pending,
-    sandboxUserSid,
-    sandboxGroupSid,
-    false,
-  );
-  if (missing.length > 0) {
-    const stillMissing = runWindowsAclGuard(
-      missing,
-      sandboxUserSid,
-      sandboxGroupSid,
-      true,
-    );
-    if (stillMissing.length > 0) {
-      throw new Error(
-        `${WINDOWS_ACL_GUARDS_MISSING_DIAGNOSTIC} ${stillMissing.length} persistent Windows sandbox ACL guard(s) `
-        + 'could not be repaired. Run "kodax sandbox setup" and retry.',
-      );
-    }
-  }
-}
-
 /**
  * Public SDK executor. An unavailable sandbox is returned as structured state;
  * this function never runs the command without containment.
@@ -4326,35 +4074,7 @@ export async function runKodaXSandboxed(
   };
   const network = input.network ?? { mode: 'deny' };
   const endpoints = sdkSandboxEndpoints(network);
-  let doctor = await doctorSandboxRuntime();
-  if (
-    process.platform === 'win32'
-    && !doctor.ready
-    && hasOnlyRepairableWindowsAclGuardDiagnostics(doctor.diagnostics)
-  ) {
-    try {
-      const runner = await prepareWindowsSandboxRunner(normalizedFilesystem.allowWrite);
-      const cutover = assertWindowsSandboxV2Cutover(
-        getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
-      );
-      ensureWindowsAclGuardsForAdmission(
-        cutover.sandboxUserSid,
-        cutover.sandboxGroupSid,
-      );
-      doctor = await doctorSandboxRuntime({ refresh: true });
-    } catch (error: unknown) {
-      const refreshed = await doctorSandboxRuntime({ refresh: true });
-      doctor = {
-        ...refreshed,
-        ready: false,
-        setupRequired: true,
-        diagnostics: [
-          ...refreshed.diagnostics,
-          `[acl_guard_repair_failed] ${errorText(error).slice(0, 4_096)}`,
-        ],
-      };
-    }
-  }
+  const doctor = await doctorSandboxRuntime();
   if (!doctor.ready) {
     return {
       status: 'unavailable',
@@ -4364,7 +4084,7 @@ export async function runKodaXSandboxed(
     };
   }
   const env = mergeSandboxEnvironment(
-    input.inheritEnvironment === true ? process.env : sanitizedEnvironment(),
+    input.inheritEnvironment !== false ? process.env : sanitizedEnvironment(),
     input.env ?? {},
   );
   if (process.platform === 'win32') {
@@ -4949,6 +4669,7 @@ async function prepareWindowsV2ShellInvocation(input: {
   readonly workspaceRoot: string;
   readonly agentHomeAccess: AsrtShellAgentHomeAccess | undefined;
   readonly filesystemAccess: AsrtShellSandboxSelection['filesystemAccess'];
+  readonly trustedProjectExecPolicyPath: string | undefined;
   readonly executable: string;
   readonly args: readonly string[];
   readonly cwd: string;
@@ -4965,6 +4686,7 @@ async function prepareWindowsV2ShellInvocation(input: {
     input.agentHomeAccess,
     input.filesystemAccess,
     runtimeReadScopes,
+    input.trustedProjectExecPolicyPath,
   );
   return prepareWindowsV2Invocation({
     shellPolicy,
@@ -5002,14 +4724,12 @@ async function prepareWindowsV2Invocation(input: {
     getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
   );
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
-  ensureWindowsAclGuardsForAdmission(
+  reconcileWindowsLegacyAclGuards(
     cutover.sandboxUserSid,
     cutover.sandboxGroupSid,
   );
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
-  const shellPolicy = withoutWindowsAsrtDenyPropagation(
-    withPreparedWindowsRunner(input.shellPolicy),
-  );
+  const shellPolicy = withPreparedWindowsRunner(input.shellPolicy);
   assertWindowsSandboxControlStateNotDirectlyAccessible({
     allowRead: shellPolicy.filesystem.allowRead,
     allowWrite: shellPolicy.filesystem.allowWrite,
@@ -5017,7 +4737,6 @@ async function prepareWindowsV2Invocation(input: {
     denyWrite: shellPolicy.filesystem.denyWrite,
   });
   assertWindowsNativeArtifactStoreNotDirectlyWritable(shellPolicy.filesystem.allowWrite);
-  const nativeArtifactRoot = windowsNativeArtifactCacheRoot();
   const shellArtifact = resolveWindowsSandboxV2Executable({
     sandboxReadSid: cutover.sandboxGroupSid,
     untrustedWriteRoots: shellPolicy.filesystem.allowWrite,
@@ -5105,10 +4824,7 @@ async function prepareWindowsV2Invocation(input: {
       allowRead: shellPolicy.filesystem.allowRead,
       allowWrite: shellPolicy.filesystem.allowWrite,
       denyRead: shellPolicy.filesystem.denyRead,
-      denyWrite: [...new Set([
-        ...shellPolicy.filesystem.denyWrite,
-        nativeArtifactRoot,
-      ])],
+      denyWrite: shellPolicy.filesystem.denyWrite,
       controllerPipe: ready.controllerPipe,
       terminalRecordPath: nativeTerminalRecordFile,
       terminalNonce,
@@ -5187,12 +4903,12 @@ async function preparePortableAsrtShellInvocation(input: {
   readonly workspaceRoot: string;
   readonly agentHomeAccess: AsrtShellAgentHomeAccess | undefined;
   readonly filesystemAccess: AsrtShellSandboxSelection['filesystemAccess'];
+  readonly trustedProjectExecPolicyPath: string | undefined;
   readonly executable: string;
   readonly args: readonly string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly windowsVerbatimArguments: boolean;
-  readonly fallbackToNormalExecution: boolean;
 }): Promise<Awaited<ReturnType<KodaXShellSandbox['prepare']>>> {
   const runtimeReadScopes = workspaceShellRuntimeReadScopes(input.env, input.executable);
   const request: SandboxBrokerRequest = {
@@ -5202,6 +4918,7 @@ async function preparePortableAsrtShellInvocation(input: {
       input.agentHomeAccess,
       input.filesystemAccess,
       runtimeReadScopes,
+      input.trustedProjectExecPolicyPath,
     ),
     command: input.executable,
     args: input.args,
@@ -5211,7 +4928,6 @@ async function preparePortableAsrtShellInvocation(input: {
     endpoints: [],
     allowAllNetwork: true,
     bootstrapCommand: sandboxJavaScriptCommand(),
-    fallbackToNormalExecution: input.fallbackToNormalExecution,
     observationBackend: sandboxRuntimeCapability().backend,
     targetStartedMarker: `\0KODAX_ASRT_TARGET_STARTED:${randomUUID()}\0\n`,
   };
@@ -5224,7 +4940,7 @@ async function preparePortableAsrtShellInvocation(input: {
     env: sanitizedEnvironment(),
     isElectron: process.versions.electron !== undefined,
   });
-  let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
+  let cleanupPromise: ReturnType<KodaXPreparedShellSandboxInvocation['cleanup']> | undefined;
   return {
     executable: process.execPath,
     args: launch.args,
@@ -5239,7 +4955,11 @@ async function preparePortableAsrtShellInvocation(input: {
         const controlOutput = cleanupInput?.controlOutput;
         if (controlOutput === undefined) {
           if (cleanupInput?.execution === 'started_or_unknown') {
-            throw new Error('Required OS sandbox execution could not be attested.');
+            return {
+              version: 1,
+              state: 'execution_uncertain',
+              diagnostic: 'Required OS sandbox execution could not be attested.',
+            };
           }
           return undefined;
         }
@@ -5249,9 +4969,21 @@ async function preparePortableAsrtShellInvocation(input: {
           controlled.request.observationBackend ?? 'unsupported',
         );
         if (observation === undefined) {
-          throw new Error('Required OS sandbox execution could not be attested.');
+          return {
+            version: 1,
+            state: 'execution_uncertain',
+            diagnostic: 'Required OS sandbox execution could not be attested.',
+          };
         }
-        return observation.state === 'not_started' ? undefined : observation;
+        return observation.state === 'not_started'
+          ? {
+              version: 1,
+              state: 'pre_start_unavailable',
+              ...(observation.diagnostic === undefined
+                ? {}
+                : { diagnostic: observation.diagnostic }),
+            }
+          : observation;
       })();
       return cleanupPromise;
     },
@@ -5311,13 +5043,7 @@ export function createAsrtShellSandbox(
         ? selection.filesystemAccess
         : undefined;
       if (!workspaceShellFilesystemAccessIsRepresentable(filesystemAccess)) {
-        shellInput.reportObservation?.({
-          version: 1,
-          state: 'fallback',
-          reason: 'not_ready',
-          execution: 'normal_permission_policy',
-        });
-        return undefined;
+        throw new Error('The selected filesystem access is not representable by the OS sandbox.');
       }
       const executable = workspaceShellExecutable(shellInput.executable);
       const args = shellInput.args
@@ -5325,12 +5051,15 @@ export function createAsrtShellSandbox(
           ? ['/d', '/s', '/c', shellInput.command]
           : ['-c', shellInput.command]);
       const commandEnvironment = normalizedSandboxEnvironment(shellInput.env);
+      const trustedProjectExecPolicyPath = input.trustedProjectExecPolicyPath
+        ?? shellInput.trustedProjectExecPolicyPath;
       if (process.platform === 'win32') {
         try {
           return await prepareWindowsV2ShellInvocation({
             workspaceRoot,
             agentHomeAccess,
             filesystemAccess,
+            trustedProjectExecPolicyPath,
             executable,
             args,
             cwd: shellInput.cwd,
@@ -5348,20 +5077,13 @@ export function createAsrtShellSandbox(
           ) {
             throw error;
           }
-          if (shellInput.fallbackToNormalExecution === false) throw error;
           emitKodaXDiagnostic({
             source: 'sandbox:windows-v2',
             level: 'warn',
-            message: 'Windows native shell preparation failed; using normal permission fallback.',
+            message: 'Windows native shell preparation failed before target start.',
             detail: error,
           });
-          shellInput.reportObservation?.({
-            version: 1,
-            state: 'fallback',
-            reason: 'prepare_failed',
-            execution: 'normal_permission_policy',
-          });
-          return undefined;
+          throw error;
         }
       }
       try {
@@ -5369,12 +5091,12 @@ export function createAsrtShellSandbox(
           workspaceRoot,
           agentHomeAccess,
           filesystemAccess,
+          trustedProjectExecPolicyPath,
           executable,
           args,
           cwd: shellInput.cwd,
           env: commandEnvironment,
           windowsVerbatimArguments: shellInput.windowsVerbatimArguments === true,
-          fallbackToNormalExecution: shellInput.fallbackToNormalExecution !== false,
         });
       } catch (error: unknown) {
         if (
@@ -5383,20 +5105,13 @@ export function createAsrtShellSandbox(
         ) {
           throw error;
         }
-        if (shellInput.fallbackToNormalExecution === false) throw error;
         emitKodaXDiagnostic({
           source: 'sandbox:portable-asrt',
           level: 'warn',
-          message: 'Portable ASRT shell preparation failed; using normal permission fallback.',
+          message: 'Portable ASRT shell preparation failed before target start.',
           detail: error,
         });
-        shellInput.reportObservation?.({
-          version: 1,
-          state: 'fallback',
-          reason: 'prepare_failed',
-          execution: 'normal_permission_policy',
-        });
-        return undefined;
+        throw error;
       }
     },
   };
@@ -5659,7 +5374,6 @@ async function writeBrokerObservation(
     }
     return;
   }
-  if (observation.state === 'not_started') return;
   if (request.observationFile === undefined) return;
   await writeFile(
     request.observationFile,
@@ -5762,51 +5476,6 @@ async function resetSandboxManagerBestEffort(): Promise<void> {
   await SandboxManager.reset().catch(() => undefined);
 }
 
-async function runNormalBrokerProcess(
-  request: SandboxBrokerRequest,
-): Promise<number> {
-  const internalElectronNode = (
-    request.command === process.execPath
-    && process.versions.electron !== undefined
-  );
-  const args = internalElectronNode
-    ? ['--import', ELECTRON_NODE_ENV_SCRUB_IMPORT, ...request.args]
-    : request.args;
-  const env = internalElectronNode
-    ? { ...request.env, [ELECTRON_RUN_AS_NODE_ENV]: '1' }
-    : request.env;
-  const child = spawn(request.command, args, {
-    cwd: request.cwd,
-    env,
-    shell: false,
-    stdio: 'inherit',
-    windowsHide: true,
-    windowsVerbatimArguments: request.windowsVerbatimArguments === true,
-  });
-  let spawned = false;
-  let processError: string | undefined;
-  const exitCode = await new Promise<number>((resolve) => {
-    child.once('spawn', () => { spawned = true; });
-    child.once('error', (error: Error) => { processError = error.message; });
-    child.once('close', (code, signal) => resolve(signal ? 1 : code ?? 1));
-  });
-  if (!spawned) {
-    await writeBrokerObservation(request, {
-      version: 1,
-      state: 'not_started',
-      diagnostic: processError ?? 'Normal-permission fallback could not be spawned.',
-    });
-    return 1;
-  }
-  await writeBrokerObservation(request, {
-    version: 1,
-    state: 'fallback',
-    reason: 'backend_failed',
-    execution: 'normal_permission_policy',
-  });
-  return exitCode;
-}
-
 async function readSandboxBrokerRequest(
   requestFile?: string,
 ): Promise<SandboxBrokerRequest> {
@@ -5841,7 +5510,6 @@ export async function runAsrtBrokerProcess(requestFile?: string): Promise<number
   let request: SandboxBrokerRequest | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   let targetStarted = false;
-  let normalFallbackAttempted = false;
   try {
     request = await readSandboxBrokerRequest(requestFile);
     const targetStartedMarker = request.targetStartedMarker
@@ -5881,17 +5549,6 @@ export async function runAsrtBrokerProcess(requestFile?: string): Promise<number
       process.stderr.write(`${result.controlFailure}\n`);
       return 125;
     }
-    if (
-      result.spawnFailedBeforeSpawn
-      && request.fallbackToNormalExecution === true
-      && !normalFallbackAttempted
-    ) {
-      normalFallbackAttempted = true;
-      if (request.wrappedInvocation === undefined) {
-        await resetSandboxManagerBestEffort();
-      }
-      return await runNormalBrokerProcess(request);
-    }
     if (!targetStarted) {
       if (result.spawnFailedBeforeSpawn) {
         await writeBrokerObservation(request, {
@@ -5906,23 +5563,6 @@ export async function runAsrtBrokerProcess(requestFile?: string): Promise<number
     }
     return targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
   } catch (error: unknown) {
-    if (
-      request?.fallbackToNormalExecution === true
-      && !targetStarted
-      && !normalFallbackAttempted
-      && child === undefined
-    ) {
-      if (request.wrappedInvocation === undefined) {
-        await resetSandboxManagerBestEffort();
-      }
-      try {
-        normalFallbackAttempted = true;
-        return await runNormalBrokerProcess(request);
-      } catch (fallbackError: unknown) {
-        process.stderr.write(`${errorText(fallbackError)}\n`);
-        return 1;
-      }
-    }
     if (!targetStarted && request !== undefined && child === undefined) {
       await writeBrokerObservation(request, {
         version: 1,

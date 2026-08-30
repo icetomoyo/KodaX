@@ -27,10 +27,11 @@ verify the packaged trusted-text addon. This check does not require
 | **macOS** | Seatbelt (`sandbox-exec`) | ripgrep (`brew install ripgrep`) |
 | **Linux** | bubblewrap | `bubblewrap`, `socat`, `ripgrep` |
 
-KodaX never runs `sudo` or a package manager automatically. If the sandbox is
-not active, deterministic safe operations and Auto[LLM] decisions keep the same
-permission behavior; only OS-level containment is absent. Ordinary runs do not
-repeatedly prompt for setup.
+KodaX never runs `sudo` or a package manager automatically. Edits and
+Auto[LLM] attempt the sandbox first. Completion is silently authorized; only a
+proven pre-start denial or unavailable backend reaches Exec Policy and the
+profile-specific host boundary. A target-started or uncertain invocation is
+never replayed.
 
 On Linux, the kernel and host security policy must also permit unprivileged
 user namespaces. Some hardened distributions disable them even when
@@ -48,26 +49,14 @@ In the REPL, `/sandbox` refreshes readiness and diagnostics without activating
 the backend or requesting elevation. Per-command sandbox routing remains
 internal and is not shown in normal command history.
 
-## Environment variable passthrough
+## Environment, reads, writes, and network
 
-Credential-shaped environment variables are filtered from model-issued shell
-commands by default. To expose specific host variables to those command targets:
-
-```json
-{
-  "sandbox": {
-    "envPass": ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"]
-  }
-}
-```
-
-The default list is empty. Values remain in the host environment and are never
-stored in `config.json`; project configuration cannot extend the list. Matching
-is exact (case-insensitive on Windows), and execution-control variables such as
-`NODE_OPTION` and `BASH_ENV` remain blocked.
-
-Restart KodaX after changing the host variables or this setting; stop/restart a
-persistent KodaX daemon so it receives the new environment and configuration.
+Sandboxed commands inherit the host environment, including ordinary
+development identity, and can access external networks. A fixed internal deny
+set removes KodaX/Electron execution-control variables. Reads are broad,
+including Agent Home, credential locations, and global Git configuration.
+Writes stay bounded to the workspace and system temporary directory. The
+obsolete `sandbox.envPass` input is ignored.
 
 ## Historical Windows workspace Shell behavior (v0.7.86-v0.7.95)
 
@@ -85,8 +74,7 @@ fail-closed; KodaX does not retry a command that may already have started.
 Commands with the same canonical workspace, Agent Home, additional filesystem,
 toolchain, and network policy can share one Windows policy group across KodaX
 processes. An incompatible policy or sandbox infrastructure failure before
-target start returns the already-authorized command to normal permission
-execution. Runtime sandbox capability v3 first fenced older daemon policy
+target start returns to the separate host-boundary decision. Runtime sandbox capability v3 first fenced older daemon policy
 revisions in v0.7.86. The v0.7.95 contract was `sandboxRuntime:5`: auto-start
 replaces an idle v4-or-older Windows daemon and fails closed while it is busy.
 The v5 advance marks self-healing Windows cleanup
@@ -139,7 +127,8 @@ shared across Runtime config homes; its per-resource inode carries kernel
 `flock`. The native binding is stored separately below
 `KODAX_HOME/native-text-state-v1` and loaded through a no-follow descriptor
 whose digest matches its content-addressed directory. Sandboxed shell policy
-cannot read or write either root, and symlinked Agent Home state fails closed. File presence
+may read those roots but cannot write them; standalone SDK policy may deny
+reads explicitly. Symlinked Agent Home state fails closed for mutation. File presence
 does not mean the lock is held. Process death releases either lock
 automatically and no PID/ticket recovery protocol is required. Unix atomic
 replacement preserves ownership, mode, extended attributes, Linux
@@ -164,8 +153,8 @@ the known null-desktop loader failure and exposure to the interactive desktop. N
 owner, reset, cleanup, or poison gate spans the command lifetime, so shell
 commands from different policies, Sessions, and Runtime processes may overlap.
 A long-running shell therefore cannot make a trusted text tool unavailable.
-Workspace-local `.kodax/runtime` state is excluded from shell read and write
-authority even though the surrounding workspace is writable; Session journals,
+Workspace-local `.kodax/runtime` state is readable but excluded from shell
+write authority even though the surrounding workspace is writable; Session journals,
 cursor files, daemon records, and grants remain host-owned control state.
 The private desktop uses an ephemeral full-policy capability. Filesystem write
 authority instead uses stable capabilities derived from the sandbox-account
@@ -214,12 +203,13 @@ staged in a protected content-addressed LocalAppData store independent of
 startup. Windows text bytes remain Host/SYSTEM-only; the dedicated sandbox
 group SID receives read/execute, but not write/delete, on the shell artifact;
 and local Users receive only read/execute on the pinned ASRT executable. Fixed
-Agent Home and credential read denies are installed once on exact roots through
-native no-follow handles; cold admission idempotently guards an exact sensitive
-directory created after setup. They are not rebuilt for each shell command. The
-ASRT directory is not passed as a final-target policy root. A fixed System32
-provisioner may run during this artifact bootstrap; text content and shell
-stdin never enter it.
+The current workspace sandbox grants broad host reads, including Agent Home,
+credential locations, and global Git configuration. During upgrade, cold
+admission removes only the exact obsolete KodaX sandbox-account read-deny ACEs;
+unrelated administrator ACLs are preserved byte-for-byte, and an ambiguous ACL
+fails closed instead of being rewritten. The ASRT directory is not passed as a
+final-target policy root. A fixed System32 provisioner may run during artifact
+bootstrap; text content and shell stdin never enter it.
 
 In a bundled build, the package-source ASRT executable may be a package-store
 hardlink. KodaX does not trust that link relationship: it performs a
@@ -263,17 +253,8 @@ and does not join trusted-text CAS.
 
 ## SDK sandbox
 
-SDK callers pass the same shape per Run as `KodaXOptions.sandbox`, so concurrent
-Runs can use different lists without mutating process-global configuration.
-
-```ts
-await runKodaX({
-  provider: 'openai',
-  sandbox: { envPass: ['GH_TOKEN'] },
-}, 'Inspect the authenticated repository.');
-```
-
-SDK embedders can also use the standalone shell sandbox capability
+SDK command targets inherit the environment of their execution host. SDK
+embedders can also use the standalone shell sandbox capability
 independently through `@kodax-ai/kodax/sandbox`. Its readiness and setup state
 apply to shell/process containment only. A failed or unavailable shell runner
 does not change the trusted text-tool path. An unavailable result may include

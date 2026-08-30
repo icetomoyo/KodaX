@@ -1,6 +1,6 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 >
 > **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
 > scoped, revocable capabilities (ADR-068). The v2 credential broker keeps
@@ -231,11 +231,11 @@
 > lifecycle mutation returns to the record's owning store. The legacy public
 > `expectedScope` spelling remains accepted alongside optional multi-scope
 > configuration.
-> Shell authorization is authoritative and OS containment is attempted first.
-> Infrastructure failure or policy contention before target start returns an
-> already-authorized call to normal permission execution. Once target start is
-> committed or unknown, the execution layer never replays it; the main model may
-> reason about the result and submit a new call. Runtime provides Linux
+> OS containment is attempted before host authorization. Sandbox completion is
+> authoritative; only a proven pre-target denial or unavailable backend reaches
+> the separate Exec Policy plus Edits/Auto host boundary. A target-started or
+> uncertain call is never replayed; the main model may reason about the result
+> and submit a new call. Runtime provides Linux
 > PID-namespace containment and a Windows per-effect Job when selected. Windows
 > grants verified ordinary children, not
 > the Agent Home directory object, preserving child writes without granting
@@ -245,17 +245,16 @@
 > Windows ACL reuse is keyed by the complete effective policy: workspace,
 > Agent Home access, additional filesystem roots, toolchain closure, temp scope,
 > and network policy. Equal policies may share the restricted-user safety domain
-> across Runtime processes; an incompatible owner returns to normal permission
-> execution. Setup/reset remains coordinated across processes. Existing
-> existing targets are granted directly. A reviewed missing external target that cannot
-> be represented without broadening its parent grant uses normal permission execution;
+> across Runtime processes; an incompatible owner produces a proven pre-start
+> boundary result and never authorizes host execution by itself. Setup/reset
+> remains coordinated across processes. Existing targets are granted directly.
+> A missing external target that cannot be represented without broadening its
+> parent grant reaches the separate host boundary;
 > the root object, escaping links, and host control trees are revalidated before
-> the ACL is built. Windows setup idempotently installs persistent read guards
-> for the dedicated sandbox SID on existing sensitive roots. Process startup
-> only audits those guards and fails closed with setup guidance; it never creates
-> or restores broad sensitive-tree denies. Exact reviewed child grants override
-> the inherited Agent Home deny without granting the root object. Repository
-> config/hooks use
+> the ACL is built. Windows setup removes only the exact obsolete KodaX
+> sandbox-user read-deny ACEs from earlier versions while preserving unrelated
+> ACL entries. Ambiguous legacy entries fail closed with setup guidance.
+> Repository config/hooks use
 > write-only persistent guards (no read/synchronize deny), while uncovered
 > caller-specific SDK denies stay on ASRT's ordinary path. A parent
 > delete-child deny is installed only when the sandbox token would otherwise
@@ -5041,9 +5040,14 @@ serve plus a new authority/lifecycle ADR.
 
 ## ADR-060: Auto Permission Degradation Preserves Intent and Does Not Change Engines
 
-**Status**: Accepted (2026-07-29)
+**Status**: Superseded by ADR-069 for v0.7.96-alpha.4 (originally accepted
+2026-07-29)
 
 **Driver**: `FEATURE_277`, v0.7.78 intent-aligned Auto Mode correction
+
+> Historical decision only. ADR-069 removes Auto[RULES], moves containment
+> before host authorization, and replaces the call-local Edits fallback with a
+> fail-closed Auto reviewer boundary.
 
 **Context**: ADR-056 correctly moved Auto Mode permission ownership into the
 Runtime, but its automatic, durable LLM-to-rules fallback conflated classifier
@@ -5930,3 +5934,80 @@ bindings, but a client requiring v2 fails closed against an older daemon.
 Provider requests perform one broker round trip per actual wire call; this is
 intentional because retaining secrets across calls would weaken revocation and
 cross-Run isolation.
+
+## ADR-069: Sandbox Success Is Authority While Host Escalation Is a Separate Policy Boundary
+
+**Status**: Accepted for v0.7.96-alpha.4; supersedes ADR-060's permission-before-
+sandbox ordering and Auto[RULES] degradation contract.
+
+**Context**: FEATURE_277 and ADR-060 made an Auto permission verdict before
+optional ASRT containment. This caused Auto[LLM] to review operations that a
+workspace sandbox could safely complete and allowed a later sandbox bootstrap
+failure to fall through to an already-authorized ordinary host execution. The
+same path accumulated an Auto[RULES] engine, legacy rule-file trust machinery,
+environment allowlisting, and KodaX-specific Agent-Home/global-Git exceptions.
+ The Session `20260830_085341_9n5ca60c92666a` native-shell Tool Error made the
+ split authority visible. Its retained evidence proves the aggregate boundary
+ (native bootstrap/control failed and termination also failed), not the final
+ Windows sub-error. Review additionally found a concrete upgrade defect: older
+ releases accumulated per-run deny ACEs on the protected native artifact cache,
+ while the current TypeScript request still redundantly placed that same root in
+ `denyWrite`, which the corrected native control verifier rejects before start.
+ Current Codex instead treats sandboxed success as the normal path and sends
+ only a required unsandboxed retry to an approval/reviewer boundary.
+
+**Decision**: KodaX has four permission profiles: Plan, Edits, Auto[LLM], and
+Full Access. Plan is non-mutating. Edits and Auto[LLM] attempt the selected OS
+sandbox first; completion is silently authorized. Only a proven pre-target
+denial or sandbox unavailability may reach the host boundary, where explicit
+Exec Policy applies and Edits asks the user while Auto[LLM] asks the independent
+reviewer. A target-started or uncertain attempt is never replayed. Full Access
+skips the sandbox and reviewer and executes on the host, but cannot bypass an
+administrator forbidden policy or the narrow critical-effect fallback.
+
+Exec Policy is a separate JSONC file with Codex-shaped token-prefix
+`allow`/`prompt`/`forbidden` decisions; KodaX does not embed Starlark. It is
+evaluated for host execution, not before every sandbox attempt. Broad sandbox
+reads, workspace and system-TMP writes, external network, and the inherited
+host environment are normal. `sandbox.envPass`, Auto[RULES], `/auto-engine`,
+legacy auto-rules loading/trust, helper-script bans, Agent-Home/credential read
+ denials, and global-Git disabling are removed. Legacy rules files are ignored
+ without parsing or migration; legacy Rules-engine selections normalize to
+ Auto[LLM] and never to Full Access.
+
+Windows request policy no longer carries a redundant deny on the protected
+native artifact cache. Historical cache-root deny residues are preserved:
+canonical owner/protection, masks, flags, and SID shapes prove the boundary but
+cannot prove each ACE's provenance, so automatic bulk cleanup could erase an
+administrator's same-shaped entry. Removing the request conflict stops new
+growth and lets admission proceed without silently redefining cache ACL
+ownership.
+
+Auto review returns allow/deny for one exact host operation. Its configurable
+security body is `config.json#autoReview.policy`; its role and structured
+output remain fixed. Timeout/provider/invalid-output failure receives one
+bounded retry (90 seconds, then 180 seconds), while an explicit deny does not.
+High risk requires narrow informed user authorization; critical and
+administrator-forbidden effects stay denied. A later natural-language user
+instruction is understood semantically and re-reviewed, without a new
+`/approve` command or keyword grammar.
+
+**Consequences**: ordinary development, authenticated network operations, and
+global Git behavior work in the sandbox or through one explicit host-boundary
+decision instead of paying an LLM review on every call. A sandbox bootstrap
+failure is no longer host authority. Full Access is meaningfully full for
+ordinary work while retaining only explicit administrator policy and a narrow
+critical safeguard. The permission implementation becomes smaller by deleting
+the second engine and its configuration/trust graph. Embedders must update to
+the four-profile capability revision; older persisted settings remain readable
+through normalization.
+
+**Rejected alternatives**: keeping permission-before-sandbox (retains noisy
+reviews and the unsafe fallthrough split); moving a complete deterministic
+operation analyzer before the sandbox (makes the sandbox largely redundant and
+still cannot prove opaque effects); reviewing every authenticated network call
+(unnecessarily disables inherited sandbox identity); making Full Access bypass
+administrator policy (misrepresents explicit deployment constraints); adding
+another tool/Agent or a Starlark VM for policy (violates KodaX's minimalist
+boundary); parsing or migrating legacy auto-rules (lets dead configuration
+block the new mode).

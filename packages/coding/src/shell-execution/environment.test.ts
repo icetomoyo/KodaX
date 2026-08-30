@@ -7,7 +7,6 @@ import {
   hardenShellCommandEnvironment,
   mergeWindowsRegistryEnvironment,
   mergeWindowsRegistryPath,
-  normalizeSandboxEnvironmentPass,
   parseWindowsRegistryEnvironment,
   parseWindowsRegistryPath,
   sanitizeResolvedShellEnvironment,
@@ -24,25 +23,18 @@ const contract: KodaXShellExecutionContract = {
 };
 
 describe('shell execution environment', () => {
-  it('normalizes SDK environment names without accepting values or patterns', () => {
-    expect(normalizeSandboxEnvironmentPass([
-      ' GH_TOKEN ',
-      'GH_TOKEN',
-      'GITHUB_*',
-      'TOKEN=value',
-      42,
-    ])).toEqual(['GH_TOKEN']);
-    expect(normalizeSandboxEnvironmentPass({ envPass: ['GH_TOKEN'] })).toEqual([]);
-  });
-
-  it('prevents cmd from searching the execution cwd before PATH', () => {
+  it('inherits the host environment while removing only KodaX and Electron controls', () => {
     expect(hardenShellCommandEnvironment({
       PATH: 'C:\\Windows\\System32',
       nodefaultcurrentdirectoryinexepath: 'user-controlled',
       Node_Options: '--require=C:\\hook.js',
       BASH_ENV: 'C:\\hook.sh',
+      ELECTRON_RUN_AS_NODE: '1',
+      KODAX_EFFECT_COMMAND_JSON: '{}',
     }, 'cmd', 'win32')).toEqual({
       PATH: 'C:\\Windows\\System32',
+      Node_Options: '--require=C:\\hook.js',
+      BASH_ENV: 'C:\\hook.sh',
       NoDefaultCurrentDirectoryInExePath: '1',
     });
     expect(hardenShellCommandEnvironment({
@@ -50,10 +42,14 @@ describe('shell execution environment', () => {
       NODE_OPTIONS: '--require=/tmp/hook.js',
       BASH_ENV: '/tmp/hook.sh',
     }, 'bash', 'linux'))
-      .toEqual({ PATH: '/usr/bin' });
+      .toEqual({
+        PATH: '/usr/bin',
+        NODE_OPTIONS: '--require=/tmp/hook.js',
+        BASH_ENV: '/tmp/hook.sh',
+      });
   });
 
-  it('removes inherited controls that can replace or preprocess analyzed commands', () => {
+  it('preserves ordinary shell and tool configuration variables', () => {
     const source = {
       PATH: '/usr/bin',
       RIPGREP_CONFIG_PATH: '/tmp/untrusted-rg.conf',
@@ -63,51 +59,52 @@ describe('shell execution environment', () => {
     };
 
     expect(hardenShellCommandEnvironment(source, 'bash', 'linux')).toEqual({
-      PATH: '/usr/bin',
-      SAFE_VALUE: 'safe',
+      ...source,
     });
     expect(buildShellProbeEnvironment(source, {
       version: 1,
       shell: { kind: 'bash' },
       environment: { inherit: 'filtered' },
-    }, undefined, 'linux')).not.toHaveProperty('RIPGREP_CONFIG_PATH');
+    }, undefined, 'linux')).toHaveProperty('RIPGREP_CONFIG_PATH', '/tmp/untrusted-rg.conf');
     expect(sanitizeResolvedShellEnvironment(source as Record<string, string>, {
       version: 1,
       shell: { kind: 'bash' },
     }, 'linux')).toEqual({
-      PATH: '/usr/bin',
-      SAFE_VALUE: 'safe',
+      ...source,
     });
   });
 
-  it('removes relative and workspace PATH entries that can shadow analyzed commands', () => {
+  it('inherits PATH without rewriting host entries', () => {
     expect(hardenShellCommandEnvironment({
       PATH: '/workspace/node_modules/.bin:relative-bin:/usr/local/bin:/usr/bin',
     }, 'bash', 'linux', [], '/workspace')).toEqual({
-      PATH: '/usr/local/bin:/usr/bin',
+      PATH: '/workspace/node_modules/.bin:relative-bin:/usr/local/bin:/usr/bin',
     });
     expect(hardenShellCommandEnvironment({
       Path: 'C:\\workspace\\bin;.;C:\\Windows\\System32',
     }, 'cmd', 'win32', [], 'C:\\workspace')).toMatchObject({
-      Path: 'C:\\Windows\\System32',
+      Path: 'C:\\workspace\\bin;.;C:\\Windows\\System32',
       NoDefaultCurrentDirectoryInExePath: '1',
     });
   });
 
-  it('filters built-in and active Provider credentials from a legacy child environment', () => {
+  it('inherits built-in and active Provider credentials', () => {
     expect(hardenShellCommandEnvironment({
       PATH: '/usr/bin',
       OPENAI_API_KEY: 'built-in-secret',
       ANTHROPIC_AUTH_TOKEN: 'built-in-token',
       CUSTOM_PROVIDER_AUTH: 'custom-secret',
       SAFE_VALUE: 'safe',
-    }, 'bash', 'linux', ['CUSTOM_PROVIDER_AUTH'])).toEqual({
+    }, 'bash', 'linux')).toEqual({
       PATH: '/usr/bin',
+      OPENAI_API_KEY: 'built-in-secret',
+      ANTHROPIC_AUTH_TOKEN: 'built-in-token',
+      CUSTOM_PROVIDER_AUTH: 'custom-secret',
       SAFE_VALUE: 'safe',
     });
   });
 
-  it('passes only explicitly allowlisted credentials and never execution controls', () => {
+  it('does not require an allowlist for credentials or ordinary runtime variables', () => {
     expect(hardenShellCommandEnvironment({
       PATH: 'C:\\Windows\\System32',
       GH_TOKEN: 'gh-secret',
@@ -115,14 +112,12 @@ describe('shell execution environment', () => {
       OPENAI_API_KEY: 'provider-secret',
       NODE_OPTIONS: '--require=C:\\hook.js',
       SAFE_VALUE: 'safe',
-    }, 'cmd', 'win32', [], undefined, [
-      'GH_TOKEN',
-      'GITHUB_TOKEN',
-      'NODE_OPTIONS',
-    ])).toEqual({
+    }, 'cmd', 'win32')).toEqual({
       PATH: 'C:\\Windows\\System32',
       GH_TOKEN: 'gh-secret',
       github_token: 'github-secret',
+      OPENAI_API_KEY: 'provider-secret',
+      NODE_OPTIONS: '--require=C:\\hook.js',
       SAFE_VALUE: 'safe',
       NoDefaultCurrentDirectoryInExePath: '1',
     });
@@ -130,12 +125,13 @@ describe('shell execution environment', () => {
     expect(hardenShellCommandEnvironment({
       PATH: '/usr/bin',
       github_token: 'case-sensitive-secret',
-    }, 'bash', 'linux', [], undefined, ['GITHUB_TOKEN'])).toEqual({
+    }, 'bash', 'linux')).toEqual({
       PATH: '/usr/bin',
+      github_token: 'case-sensitive-secret',
     });
   });
 
-  it('filters credentials before profile startup and after profile resolution', () => {
+  it('keeps credentials before profile startup and after profile resolution', () => {
     const source = {
       PATH: 'C:\\system',
       OPENAI_API_KEY: 'provider-secret',
@@ -149,7 +145,6 @@ describe('shell execution environment', () => {
       contract,
       'C:\\scratch',
       'win32',
-      ['CUSTOM_PROVIDER_AUTH'],
     );
     expect(bootstrap).toMatchObject({
       PATH: 'C:\\system',
@@ -157,23 +152,23 @@ describe('shell execution environment', () => {
       KODAX_VISIBLE: 'yes',
       KODAX_SESSION_TMP: 'C:\\scratch',
     });
-    expect(bootstrap).not.toHaveProperty('OPENAI_API_KEY');
-    expect(bootstrap).not.toHaveProperty('CUSTOM_PROVIDER_AUTH');
+    expect(bootstrap).toHaveProperty('OPENAI_API_KEY', 'provider-secret');
+    expect(bootstrap).toHaveProperty('CUSTOM_PROVIDER_AUTH', 'provider-secret-with-a-nonstandard-name');
     expect(bootstrap).not.toHaveProperty('PRIVATE_NOTE');
-    expect(bootstrap).not.toHaveProperty('NODE_OPTIONS');
+    expect(bootstrap).toHaveProperty('NODE_OPTIONS', '--require=C:\\stale-hook.js');
 
     const resolved = sanitizeResolvedShellEnvironment({
       ...bootstrap as Record<string, string>,
       ANTHROPIC_API_KEY: 'profile-secret',
       CUSTOM_PROVIDER_AUTH: 'profile-secret-with-a-nonstandard-name',
       BASH_ENV: '/tmp/untrusted',
-    }, contract, 'win32', ['CUSTOM_PROVIDER_AUTH']);
-    expect(resolved).not.toHaveProperty('ANTHROPIC_API_KEY');
-    expect(resolved).not.toHaveProperty('CUSTOM_PROVIDER_AUTH');
-    expect(resolved).not.toHaveProperty('BASH_ENV');
+    }, contract, 'win32');
+    expect(resolved).toHaveProperty('ANTHROPIC_API_KEY', 'profile-secret');
+    expect(resolved).toHaveProperty('CUSTOM_PROVIDER_AUTH', 'profile-secret-with-a-nonstandard-name');
+    expect(resolved).toHaveProperty('BASH_ENV', '/tmp/untrusted');
   });
 
-  it('supports bounded glob denies without allowlist overrides', () => {
+  it('supports explicit bounded glob denies', () => {
     expect(environmentNameMatchesPattern('PRIVATE_TOKEN', 'PRIVATE_*')).toBe(true);
     expect(environmentNameMatchesPattern('PUBLIC_VALUE', 'PRIVATE_*')).toBe(false);
     expect(() => buildShellProbeEnvironment(
@@ -182,13 +177,13 @@ describe('shell execution environment', () => {
         version: 1,
         shell: { kind: 'cmd' },
         environment: {
+          denyPatterns: ['CUSTOM_PROVIDER_*'],
           set: { CUSTOM_PROVIDER_AUTH: 'must-not-be-reintroduced' },
         },
       },
       undefined,
       'win32',
-      ['CUSTOM_PROVIDER_AUTH'],
-    )).toThrow(/active Provider credential variable/i);
+    )).toThrow(/denied variable/i);
   });
 
   it('parses and merges current Windows Machine/User PATH values', () => {

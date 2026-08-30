@@ -23,13 +23,10 @@ import {
   shellExecutionContractFingerprint,
 } from './contract.js';
 import {
-  applyShellEnvironmentPass,
   buildShellProbeEnvironment,
   hardenShellCommandEnvironment,
   mergeWindowsRegistryEnvironment,
-  normalizeSandboxEnvironmentPass,
   parseWindowsRegistryEnvironment,
-  parseSandboxEnvironmentPass,
   sanitizeResolvedShellEnvironment,
 } from './environment.js';
 
@@ -88,7 +85,6 @@ export async function resolveShellExecution(
   rawContract: KodaXShellExecutionContract,
   cwd: string,
   sessionScratchDir?: string,
-  additionalDeniedNames: readonly string[] = [],
   signal?: AbortSignal,
 ): Promise<ResolvedShellExecution> {
   if (signal?.aborted) throw shellResolutionAbortError();
@@ -99,16 +95,11 @@ export async function resolveShellExecution(
   const scratchKey = sessionScratchDir === undefined
     ? ''
     : normalizeCacheCwd(sessionScratchDir);
-  const deniedNamesKey = [...additionalDeniedNames]
-    .map((name) => name.toUpperCase())
-    .sort()
-    .join('\0');
   const key = [
     environmentCacheGeneration,
     contractFingerprint,
     normalizedCwd,
     scratchKey,
-    deniedNamesKey,
   ].join('\0');
   const cached = environmentCache.get(key);
   if (cached !== undefined && cached.expiresAt > Date.now()) return cached.value;
@@ -129,7 +120,6 @@ export async function resolveShellExecution(
     contractFingerprint,
     executionCwd,
     sessionScratchDir,
-    additionalDeniedNames,
     controller.signal,
   ).then((value) => {
     if (
@@ -217,16 +207,11 @@ function shellResolutionAbortError(): Error {
 export function createShellCommandInvocation(
   resolved: ResolvedShellExecution,
   command: string,
-  environmentPass?: readonly string[],
 ): ShellCommandInvocation {
-  const normalizedEnvironmentPass = environmentPass === undefined
-    ? parseSandboxEnvironmentPass(process.env.KODAX_SANDBOX_ENV_PASS)
-    : normalizeSandboxEnvironmentPass(environmentPass);
   const hardened = hardenShellCommandEnvironment(
     resolved.env,
     resolved.contract.shell.kind,
     process.platform,
-    [],
   );
   return {
     executable: resolved.executable,
@@ -236,12 +221,7 @@ export function createShellCommandInvocation(
         ? `"${command.trimStart()}"`
         : command,
     ],
-    env: applyShellEnvironmentPass(
-      process.env,
-      hardened,
-      normalizedEnvironmentPass,
-      process.platform,
-    ),
+    env: hardened,
     ...(resolved.contract.shell.kind === 'cmd'
       ? { windowsVerbatimArguments: true }
       : {}),
@@ -253,7 +233,6 @@ async function resolveFreshShellExecution(
   contractFingerprint: string,
   cwd: string,
   sessionScratchDir?: string,
-  additionalDeniedNames: readonly string[] = [],
   signal?: AbortSignal,
 ): Promise<ResolvedShellExecution> {
   const profile = contract.shell.profile ?? 'default';
@@ -269,8 +248,6 @@ async function resolveFreshShellExecution(
     contract,
     sessionScratchDir,
     process.platform,
-    additionalDeniedNames,
-    cwd,
   );
   if (
     contract.shell.kind === 'bash'
@@ -293,8 +270,6 @@ async function resolveFreshShellExecution(
       contract,
       sessionScratchDir,
       process.platform,
-      additionalDeniedNames,
-      cwd,
     );
   }
   const executable = resolveShellExecutable(contract, bootstrapEnv);
@@ -312,7 +287,6 @@ async function resolveFreshShellExecution(
       captured,
       contract,
       process.platform,
-      additionalDeniedNames,
     ),
     contract,
     contractFingerprint,

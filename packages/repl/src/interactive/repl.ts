@@ -70,13 +70,16 @@ import {
 } from '../runtime-permission.js';
 import {
   computeConfirmTools,
-  createAutoInProjectDeprecationEmitter,
+  canonicalizePermissionMode,
   FILE_MODIFICATION_TOOLS,
-  isAutoLlmMode,
   isAutoMode,
   normalizePermissionMode,
 } from '../permission/types.js';
 import { bootstrapAutoMode, type AutoModeBootstrapResult } from './auto-mode-bootstrap.js';
+import {
+  createStandaloneShellPermissionBoundary,
+  type StandaloneExecPolicyOptions,
+} from '../permission/standalone-shell-boundary.js';
 import { formatLearningRecoverySummary } from '../ui/view-models/learning-summary.js';
 import { createBashPrefixExtractor, type BashPrefixExtractor } from '@kodax-ai/coding';
 import { bootstrapTeamMode, type TeamModeHandle, type WorkflowProcessEvent } from '@kodax-ai/agent';
@@ -474,6 +477,7 @@ export type ReplRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | und
 
 export interface RepLOptions extends KodaXOptions {
   storage?: SessionStorage;
+  execPolicy?: StandaloneExecPolicyOptions;
   runtimeRunner?: ReplRuntimeRunner;
   runtimeAutoModeControl?: ReplRuntimeAutoModeControl;
   getRuntimeStatus?: ReplRuntimeStatusProvider;
@@ -573,14 +577,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialThinking = initialReasoningMode !== 'off';
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
-  // FEATURE_092 phase 2b.7b slice E: emit the auto-in-project alias
-  // deprecation notice once per session — at startup if config picked the
-  // alias, plus on `/mode auto-in-project`. Internal state is shared so
-  // it fires AT MOST once even across both code paths.
-  const emitAutoInProjectDeprecation = createAutoInProjectDeprecationEmitter();
-  if (initialPermissionMode === 'auto-in-project') {
-    emitAutoInProjectDeprecation();
-  }
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
 
   const configuredTheme = (config as { theme?: string }).theme;
@@ -759,24 +755,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     runtimeAutoModeSettings,
   );
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
-    askUser: async (call, reason, signals) => {
-      const result = await confirmToolExecution(
-        rl,
-        call.name,
-        // FEATURE_158: attach signals so confirmToolExecution renders
-        // Scope/Risk from the classifier's view. Readline path follows
-        // the same _classifierSignals input-marker convention as Ink.
-        {
-          ...(call.input as Record<string, unknown>),
-          ...(signals && signals.length > 0 ? { _classifierSignals: signals } : {}),
-        },
-        {
-          permissionMode: currentPermissionMode,
-          reason: `[auto-mode] ${reason}`,
-        },
-      );
-      return result.confirmed ? 'allow' : 'block';
-    },
     projectRoot: gitRoot ?? process.cwd(),
     executionCwd: activeRuntime.executionCwd ?? gitRoot ?? process.cwd(),
     getCurrentProviderName: () => currentConfig.provider,
@@ -1191,21 +1169,15 @@ Keyboard Shortcuts:
       currentOptions.agentMode = mode;
     },
     setPermissionMode: async (mode: PermissionMode) => {
+      const canonicalMode = canonicalizePermissionMode(mode);
       await options.runtimeAutoModeControl?.syncSettings?.(
         context.sessionId,
-        mode,
+        canonicalMode,
         runtimeAutoModeSettings,
       );
-      currentConfig.permissionMode = mode;
-      currentPermissionMode = mode; // Sync with local permission state
+      currentConfig.permissionMode = canonicalMode;
+      currentPermissionMode = canonicalMode; // Sync with local permission state
       refreshCurrentEffort();
-      // FEATURE_092 phase 2b.7b slice E: surface the deprecation when the
-      // user explicitly picks the alias via `/mode auto-in-project`.
-      // Once-per-session semantics means picking it at startup THEN typing
-      // /mode auto-in-project later still emits AT MOST once.
-      if (mode === 'auto-in-project') {
-        emitAutoInProjectDeprecation();
-      }
       // Note: permissionMode is no longer part of KodaXOptions
       // Permission control is handled locally via beforeToolExecute callback
     },
@@ -1329,8 +1301,7 @@ Keyboard Shortcuts:
       return 'rewound';
     },
     getCostReport: () => costReportRef.current?.() ?? null,
-    // FEATURE_092 phase 2b.8: auto-mode read-only stats + manual engine setter
-    // for /auto-engine and /auto-denials. The accessors
+    // Auto-mode read-only diagnostics for /auto-denials. The accessor
     // delegate to the lazy guardrail factory — when REPL never enters auto
     // mode, the guardrail is never constructed and the stats are undefined.
     getAutoModeStats: async () => {
@@ -1339,14 +1310,6 @@ Keyboard Shortcuts:
         return options.runtimeAutoModeControl.getStats(context.sessionId);
       }
       return autoModeBootstrap.getGuardrail().getStats();
-    },
-    setAutoModeEngine: async (engine) => {
-      if (!isAutoMode(currentPermissionMode)) return;
-      if (options.runtimeAutoModeControl) {
-        await options.runtimeAutoModeControl.setEngine(context.sessionId, engine);
-        return;
-      }
-      autoModeBootstrap.getGuardrail().setEngine(engine);
     },
     createKodaXOptions: () => {
       // FEATURE_074: live plan-mode check for child agents. The closure reads
@@ -1357,12 +1320,50 @@ Keyboard Shortcuts:
         if (currentPermissionMode !== 'plan') return null;
         return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
       };
-      // FEATURE_092 phase 2b.7b: when the user is in 'auto' (canonical) or
-      // 'auto-in-project' (alias), forward the AutoModeToolGuardrail to
-      // Runner via KodaXOptions.guardrails. The lazy factory means we only
-      // pay the construction + rules-load cost for users who use auto mode.
-      const guardrails = !options.runtimeRunner && isAutoMode(currentPermissionMode)
-        ? [autoModeBootstrap.getGuardrail()]
+      const standaloneShellBoundary = options.runtimeRunner
+        ? undefined
+        : createStandaloneShellPermissionBoundary({
+            getPermissionMode: () => currentPermissionMode,
+            getAutoGuardrail: autoModeBootstrap.getGuardrail,
+            shellSandbox: currentOptions.context?.shellSandbox,
+            trustedTextMutationHost: currentOptions.context?.trustedTextMutationHost,
+            userConfigDir: currentOptions.context?.configHome,
+            projectRoot: gitRoot ?? process.cwd(),
+            execPolicy: options.execPolicy,
+            resolvePlanHostExecution: (request) => (
+              isBashReadCommandAutoAllowed(
+                request.command,
+                gitRoot ?? process.cwd(),
+                activeRuntime.executionCwd ?? gitRoot ?? process.cwd(),
+              )
+                ? true
+                : '[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.'
+            ),
+            requestUserPermission: async (request, reason) => {
+              const input = { ...request.toolInput, command: request.command };
+              if (
+                reason === 'mode_boundary'
+                && currentPermissionMode === 'accept-edits'
+                && await isToolCallAllowed('bash', input, alwaysAllowTools, bashPrefixExtractor)
+              ) return true;
+              const result = await confirmToolExecution(rl, 'bash', input, {
+                permissionMode: currentPermissionMode,
+              });
+              if (
+                result.confirmed
+                && result.always
+                && reason === 'mode_boundary'
+                && currentPermissionMode === 'accept-edits'
+              ) {
+                saveAlwaysAllowToolPattern('bash', input, false);
+                alwaysAllowTools = loadAlwaysAllowTools();
+              }
+              return result.confirmed;
+            },
+          });
+      const guardrails = standaloneShellBoundary !== undefined
+        && isAutoMode(currentPermissionMode)
+        ? [standaloneShellBoundary.autoGuardrail]
         : undefined;
       return {
         ...currentOptions,
@@ -1377,6 +1378,15 @@ Keyboard Shortcuts:
         context: {
           ...currentOptions.context,
           planModeBlockCheck,
+          ...(standaloneShellBoundary === undefined
+            ? {}
+            : {
+                shellSandbox: standaloneShellBoundary.shellSandbox,
+                authorizeShellHostExecution: standaloneShellBoundary.authorizeShellHostExecution,
+                ...(standaloneShellBoundary.trustedTextMutationHost === undefined
+                  ? {}
+                  : { trustedTextMutationHost: standaloneShellBoundary.trustedTextMutationHost }),
+              }),
         },
         events: {
           ...currentOptions.events,
@@ -1451,6 +1461,10 @@ Keyboard Shortcuts:
               }
             }
 
+            // Standalone Bash always enters the Coding-owned sandbox/host
+            // boundary. Mode review and Edits prompts happen there.
+            if (!options.runtimeRunner && tool === 'bash') return true;
+
             // All modes: safe read-only bash commands are auto-allowed BEFORE protected path check
             // 所有模式：安全的只读 bash 命令在受保护路径检查之前就自动放行
             if (tool === 'bash') {
@@ -1464,15 +1478,16 @@ Keyboard Shortcuts:
               }
             }
 
-            // Auto[LLM] has a single decision owner. The runner guardrail has
+            if (mode === 'full-access') {
+              return true;
+            }
+
+            // Auto has a single decision owner. The runner guardrail has
             // already reviewed this exact call before this legacy observer is
             // invoked, so protected-path and confirmTools checks below must
             // not manufacture a second approval after an LLM allow. Explicit
-            // Auto[Rules] continues through the legacy deterministic checks.
-            if (isAutoLlmMode(
-              mode,
-              autoModeBootstrap.getGuardrail().getEngine(),
-            )) {
+            // reviewed it before this observer runs.
+            if (isAutoMode(mode)) {
               return true;
             }
 
@@ -1823,6 +1838,7 @@ Keyboard Shortcuts:
         // Process edited content directly, skip askInput - 直接处理编辑后的内容，跳过 askInput
         const trimmed = edited.trim();
         touchContext(context);
+        autoModeBootstrap.resetTurn();
 
         // Process command - 处理命令
         const parsed = parseCommand(trimmed);
@@ -2006,6 +2022,7 @@ Keyboard Shortcuts:
     if (!trimmed) continue;
 
     touchContext(context);
+    autoModeBootstrap.resetTurn();
 
     // Process command - 处理命令
     const parsed = parseCommand(trimmed);

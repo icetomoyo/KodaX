@@ -5,7 +5,8 @@ import {
   recordAllow,
   shouldFallback,
   CONSECUTIVE_THRESHOLD,
-  CUMULATIVE_THRESHOLD,
+  RECENT_DENIAL_THRESHOLD,
+  RECENT_WINDOW_SIZE,
 } from './denial-tracker.js';
 
 describe('denial-tracker', () => {
@@ -13,6 +14,7 @@ describe('denial-tracker', () => {
     const t = createDenialTracker();
     expect(t.consecutive).toBe(0);
     expect(t.cumulative).toBe(0);
+    expect(t.recent).toEqual([]);
     expect(shouldFallback(t)).toBe(false);
   });
 
@@ -43,14 +45,23 @@ describe('denial-tracker', () => {
     expect(shouldFallback(t)).toBe(true);
   });
 
-  it('shouldFallback returns true when cumulative threshold reached, even if consecutive resets in between', () => {
+  it('shouldFallback returns true for 10 denials in the last 50 completed reviews', () => {
     let t = createDenialTracker();
-    for (let i = 0; i < CUMULATIVE_THRESHOLD; i += 1) {
+    for (let i = 0; i < RECENT_DENIAL_THRESHOLD; i += 1) {
       t = recordBlock(t);
-      if (i % 2 === 0) t = recordAllow(t); // alternate allow keeps consecutive low
+      t = recordAllow(t);
     }
     expect(shouldFallback(t)).toBe(true);
     expect(t.consecutive).toBeLessThan(CONSECUTIVE_THRESHOLD);
+  });
+
+  it('forgets denials that leave the 50-review window', () => {
+    let t = createDenialTracker();
+    for (let i = 0; i < RECENT_DENIAL_THRESHOLD; i += 1) t = recordBlock(t);
+    for (let i = 0; i < RECENT_WINDOW_SIZE; i += 1) t = recordAllow(t);
+    expect(t.cumulative).toBe(RECENT_DENIAL_THRESHOLD);
+    expect(t.recent).toHaveLength(RECENT_WINDOW_SIZE);
+    expect(shouldFallback(t)).toBe(false);
   });
 
   it('shouldFallback returns false below both thresholds', () => {
@@ -69,8 +80,9 @@ describe('denial-tracker', () => {
     expect(t2.cumulative).toBe(1);
   });
 
-  it('CONSECUTIVE_THRESHOLD is 3 and CUMULATIVE_THRESHOLD is 20 (per design doc)', () => {
+  it('uses the FEATURE_297 denial thresholds', () => {
     expect(CONSECUTIVE_THRESHOLD).toBe(3);
-    expect(CUMULATIVE_THRESHOLD).toBe(20);
+    expect(RECENT_DENIAL_THRESHOLD).toBe(10);
+    expect(RECENT_WINDOW_SIZE).toBe(50);
   });
 });

@@ -71,6 +71,7 @@ import {
 import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
 import { acquireRuntimeDaemonLease } from './runtime-daemon/manager.js';
 import {
+  consumeRuntimeDaemonOwnerBootstrap,
   detachRuntimeDaemonBootstrapOutput,
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
   RuntimeDaemonStartupError,
@@ -207,6 +208,7 @@ import {
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
 import { configureIntegrationCommands } from './integration-cli.js';
+import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
 import {
   createIntegrationEventBridge,
   startIntegrationHotReload,
@@ -567,7 +569,6 @@ interface InteractiveRuntimeRunnerInput {
 export function createReplRuntimeAutoModeControl(
   runtime: KodaXRuntime,
 ): ReplRuntimeAutoModeControl {
-  const initializedSessions = new Set<string>();
   const pendingSettingsUpdates = new Map<string, Promise<unknown>>();
   const enqueueSettingsUpdate = <T>(
     sessionId: string,
@@ -601,16 +602,6 @@ export function createReplRuntimeAutoModeControl(
     getStats(sessionId) {
       return readStats(sessionId);
     },
-    async setEngine(sessionId, engine) {
-      return enqueueSettingsUpdate(sessionId, async () => {
-        await ensureCliRuntimeSession(runtime, sessionId, 'repl', '');
-        await runtime.sessions.updateSettings(sessionId, {
-          autoModeEngine: engine,
-        });
-        initializedSessions.add(sessionId);
-        return runtime.sessions.getAutoModeStats(sessionId);
-      });
-    },
     async syncSettings(sessionId, permissionMode, settings) {
       return enqueueSettingsUpdate(sessionId, async () => {
         try {
@@ -624,18 +615,10 @@ export function createReplRuntimeAutoModeControl(
           }
           throw error;
         }
-        const initializeEngine =
-          !initializedSessions.has(sessionId) &&
-          (await runtime.sessions.getSettings(sessionId)).autoModeEngine ===
-            undefined;
         await runtime.sessions.updateSettings(sessionId, {
           permissionMode,
-          ...(initializeEngine ? { autoModeEngine: settings.engine } : {}),
           autoModeClassifierModel: settings.classifierModel ?? null,
-          autoModeTimeoutMs: settings.timeoutMs ?? null,
-          autoModeSpeculativeWindowMs: settings.speculativeWindowMs ?? null,
         });
-        initializedSessions.add(sessionId);
         return readStats(sessionId);
       });
     },
@@ -1642,6 +1625,13 @@ async function serveDaemonCommand(input: {
     daemonConfigHome,
     input.profile,
   );
+  const ownerBootstrap = process.env.KODAX_DAEMON_SERVE === '1'
+    ? consumeRuntimeDaemonOwnerBootstrap({
+        configHome: daemonConfigHome,
+        profile: input.profile,
+        environment: process.env,
+      })
+    : undefined;
   if (process.env.KODAX_DAEMON_SERVE === '1') {
     detachRuntimeDaemonBootstrapOutput(
       daemonPaths,
@@ -1700,6 +1690,8 @@ async function serveDaemonCommand(input: {
           sharedDaemonHost: true,
           daemonHostRuntimeId: runtimeId,
           externalAgents: a2aIntegration.runtimeOptions,
+          execPolicy: ownerBootstrap?.execPolicy,
+          autoReview: ownerBootstrap?.autoReview,
         });
         ownedRuntime = runtime;
         try {
@@ -2740,7 +2732,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     );
     console.log(
       chalk.dim('  --permission-mode <mode>     ') +
-        'Initial mode: plan, accept-edits, auto-in-project',
+        'Initial mode: plan, accept-edits, auto, full-access',
     );
     console.log(
       chalk.dim('  KODAX_ACP_LOG=<level>        ') +
@@ -3152,7 +3144,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   },
 };
 
-const CLI_SUBCOMMAND_NAMES = new Set([
+export const KODAX_CLI_SUBCOMMAND_NAMES = [
   'acp',
   'skill',
   'tools',
@@ -3169,7 +3161,29 @@ const CLI_SUBCOMMAND_NAMES = new Set([
   'sandbox',
   'setup',
   'memory',
-]);
+  'execpolicy',
+] as const;
+const CLI_SUBCOMMAND_NAMES = new Set<string>(KODAX_CLI_SUBCOMMAND_NAMES);
+
+export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
+  'setup',
+  'acp',
+  'skill',
+  'tools',
+  'sessions',
+  'constructed',
+  'doctor',
+  'daemon',
+  'completion',
+  'config',
+  'integrations',
+  'mcp',
+  'extensions',
+  'a2a',
+  'sandbox',
+  'execpolicy',
+] as const;
+export const KODAX_EXEC_POLICY_SUBCOMMANDS = ['check'] as const;
 
 function collectRepeatedOption(
   value: string,
@@ -3179,7 +3193,7 @@ function collectRepeatedOption(
 }
 
 export function configureKodaXRootCommand(program: Command): Command {
-  return (
+  const configured = (
     program
       // Disable commander default help so the custom topic help can take over.
       .helpOption(false)
@@ -3255,6 +3269,8 @@ export function configureKodaXRootCommand(program: Command): Command {
       // Keep the root command executable even when subcommands like `skill` exist.
       .action(() => {})
   );
+  configureKodaXExecPolicyCommand(configured);
+  return configured;
 }
 
 function showCliHelpTopic(topic: string): boolean {
@@ -3564,7 +3580,7 @@ function showBasicHelp(): void {
   console.log('  /exit, /quit            Exit interactive mode');
   console.log('  /clear                  Clear conversation history');
   console.log('  /status                 Show session status');
-  console.log('  /mode [plan|accept-edits|auto]  Switch permission mode');
+  console.log('  /mode [plan|accept-edits|auto|full-access]  Switch permission mode');
   console.log('  /project ...            Project workflow commands');
   console.log('  /sessions               List saved sessions\n');
   console.log('Examples:');
@@ -4016,8 +4032,7 @@ async function main() {
       const effortModes = 'off auto low medium high xhigh max';
       const agentModes = 'ama sa';
       const repoModes = 'auto full light off';
-      const rootSubcommands =
-        'setup acp skill tools sessions constructed doctor daemon completion config integrations mcp extensions a2a sandbox';
+      const rootSubcommands = KODAX_COMPLETION_ROOT_SUBCOMMANDS.join(' ');
       const allOptions = [
         '-p',
         '-c',
@@ -4066,6 +4081,8 @@ async function main() {
         '--apply',
         '--all',
         '--custom',
+        '--pretty',
+        '--trust-project-policy',
       ].join(' ');
       const skillSubcommands =
         'init validate eval grade analyze compare package install';
@@ -4073,6 +4090,7 @@ async function main() {
       const sessionsSubcommands = 'dedupe';
       const constructedSubcommands =
         'reset-self-modify-budget audit disable-self-modify rollback';
+      const execPolicySubcommands = KODAX_EXEC_POLICY_SUBCOMMANDS.join(' ');
 
       if (shell === 'bash') {
         console.log(`# KodaX bash completion — add to ~/.bashrc:
@@ -4107,6 +4125,7 @@ _kodax_complete() {
     extensions) COMPREPLY=( $(compgen -W "list add remove reload" -- "\${cur}") ); return 0 ;;
     a2a) COMPREPLY=( $(compgen -W "list add remove test call expose serve" -- "\${cur}") ); return 0 ;;
     sandbox) COMPREPLY=( $(compgen -W "doctor setup" -- "\${cur}") ); return 0 ;;
+    execpolicy) COMPREPLY=( $(compgen -W "${execPolicySubcommands}" -- "\${cur}") ); return 0 ;;
   esac
 
   if [[ "\${cur}" == -* ]]; then
@@ -4178,6 +4197,7 @@ complete -c kodax -n '__fish_seen_subcommand_from mcp' -a 'list add remove' -d '
 complete -c kodax -n '__fish_seen_subcommand_from extensions' -a 'list add remove reload' -d 'Extension subcommand'
 complete -c kodax -n '__fish_seen_subcommand_from a2a' -a 'list add remove test call expose serve' -d 'A2A subcommand'
 complete -c kodax -n '__fish_seen_subcommand_from sandbox' -a 'doctor setup' -d 'Sandbox subcommand'
+complete -c kodax -n '__fish_seen_subcommand_from execpolicy' -a '${execPolicySubcommands}' -d 'Exec Policy subcommand'
 complete -c kodax -s h -l help -d 'Show help'
 complete -c kodax -s p -l print -d 'Print mode' -r
 complete -c kodax -l mode -d 'Output mode' -xa 'json'

@@ -1,7 +1,7 @@
 /**
  * View-model status-bar tests — FEATURE_092 phase 2b.8 engine-indicator format.
  *
- * Pins the live Ink `Auto[LLM]` / `Auto[RULES]` text format. Classic uses
+ * Pins the live Ink permission-mode text format. Classic uses
  * command/startup text surfaces rather than a second cursor-managed StatusBar.
  */
 
@@ -137,36 +137,24 @@ describe("status-bar Learning Center segment", () => {
   });
 });
 
-describe("status-bar (Ink view-model) — auto-mode engine indicator (FEATURE_092 phase 2b.8)", () => {
-  it("renders Auto[LLM] when permissionMode=auto and engine=llm", () => {
-    const text = getStatusBarText(baseProps({ permissionMode: "auto", autoModeEngine: "llm" }));
+describe("status-bar (Ink view-model) — canonical permission profiles", () => {
+  it("renders Auto[LLM] for the single Auto policy", () => {
+    const text = getStatusBarText(baseProps({ permissionMode: "auto" }));
     expect(text).toContain("Auto[LLM]");
     // Title-Case short label — not the raw lowercase 'auto', not all-uppercase 'AUTO'
     expect(text).not.toMatch(/\bauto\b/);
     expect(text).not.toMatch(/\bAUTO\b/);
   });
 
-  it("renders Auto[RULES] when the deterministic rules engine is active", () => {
-    const text = getStatusBarText(baseProps({ permissionMode: "auto", autoModeEngine: "rules" }));
-    expect(text).toContain("Auto[RULES]");
-  });
-
   it("renders Auto[LLM] for the deprecated auto-in-project alias too (folds into canonical short label)", () => {
     const text = getStatusBarText(
-      baseProps({ permissionMode: "auto-in-project", autoModeEngine: "llm" }),
+      baseProps({ permissionMode: "auto-in-project" }),
     );
     // Deprecation notice already fired at startup; status bar shows 'Auto'
     // for both the canonical and deprecated spelling, no need to re-litigate.
     expect(text).toContain("Auto[LLM]");
     expect(text).not.toContain("auto-in-project");
     expect(text).not.toContain("Auto-In-Project");
-  });
-
-  it("falls back to bare 'Auto' when autoModeEngine is undefined", () => {
-    const text = getStatusBarText(baseProps({ permissionMode: "auto" }));
-    expect(text).toContain("Auto");
-    expect(text).not.toContain("[LLM]");
-    expect(text).not.toContain("[RULES]");
   });
 
   it("renders Title-Case short labels for non-auto modes", () => {
@@ -182,14 +170,14 @@ describe("status-bar (Ink view-model) — auto-mode engine indicator (FEATURE_09
     expect(editsText).not.toContain("accept-edits");
     expect(editsText).not.toContain("ACCEPT-EDITS");
     expect(editsText).not.toContain("Accept-Edits");
+
+    const fullAccessText = getStatusBarText(baseProps({ permissionMode: "full-access" }));
+    expect(fullAccessText).toContain("Full Access");
+    expect(fullAccessText).not.toContain("full-access");
   });
 
-  it("does NOT render engine suffix outside auto modes (gating is on the mode)", () => {
-    // Even if autoModeEngine somehow leaks in, the mode gate prevents the
-    // suffix from rendering — same belt-and-suspenders the readline path uses.
-    const planText = getStatusBarText(
-      baseProps({ permissionMode: "plan", autoModeEngine: "rules" }),
-    );
+  it("does NOT render reviewer suffix outside Auto", () => {
+    const planText = getStatusBarText(baseProps({ permissionMode: "plan" }));
     expect(planText).not.toContain("[RULES]");
     expect(planText).not.toContain("[LLM]");
   });
@@ -215,9 +203,7 @@ describe("status-bar (Ink view-model) — auto-mode engine indicator (FEATURE_09
 });
 
 describe("status-bar (Ink view-model) — surface-status integration", () => {
-  it("autoModeEngine flows through buildSurfaceStatusBarProps to the view-model", async () => {
-    // Real shape: buildSurfaceStatusBarProps fills StatusBarProps, view-model
-    // reads it. Verifies no field-name drift between the two layers.
+  it("renders the canonical Auto label without engine state plumbing", async () => {
     const { buildSurfaceStatusBarProps } = await import("./surface-status.js");
     const props = buildSurfaceStatusBarProps({
       sessionId: "s1",
@@ -237,10 +223,8 @@ describe("status-bar (Ink view-model) — surface-status integration", () => {
         isCompacting: false,
       },
       isLoading: false,
-      autoModeEngine: "rules",
     });
-    expect(props.autoModeEngine).toBe("rules");
     const text = getStatusBarText(props);
-    expect(text).toContain("Auto[RULES]");
+    expect(text).toContain("Auto[LLM]");
   });
 });

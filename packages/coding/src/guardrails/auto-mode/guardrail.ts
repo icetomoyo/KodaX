@@ -1,7 +1,7 @@
 /**
  * AutoModeToolGuardrail — FEATURE_092 Phase 2b.6 (v0.7.33).
  *
- * Assembles the auto-mode classifier modules (rules + projection +
+ * Assembles the auto-mode reviewer modules (projection +
  * classify + denial-tracker + circuit-breaker + model-resolver) into a
  * `ToolGuardrail` that the Runner calls via `beforeTool` on every
  * tool invocation.
@@ -10,31 +10,28 @@
  *
  *   1. exact safe read/workspace-temp effect → allow (zero token cost)
  *   2. Explicitly exempt empty projection    → allow
- *   3. Static/high-impact pattern match      → classifier facts in LLM;
- *                                               legacy gate in explicit Rules
+ *   3. Static/high-impact pattern match      → reviewer facts in LLM
  *   4. Recoverable projection/analyzer fault → safe facts to classifier
- *   5. Engine is rules → deterministic Tier 2, otherwise user confirms
- *   6. degraded classifier infrastructure    → Accept-edits fallback
- *   7. classify(...) sideQuery (sole Auto[LLM] decision owner)
+ *   5. degraded reviewer infrastructure      → block with safer-route reason
+ *   6. classify(...) sideQuery (sole Auto[LLM] decision owner)
  *        allow                                → allow (record allow → reset consecutive)
- *        confirm                              → user confirmation (record concern)
- *        failure                              → Accept-edits fallback (record error)
+ *        confirm                              → block this attempt (record concern)
+ *        failure                              → block with safer-route reason (record error)
  *        AbortError thrown                    → re-throw (propagate user cancel)
  *
  * State (mutable, session-scoped):
- *   - engine: 'llm' | 'rules' (user-selected; classifier health never changes it)
  *   - denialTracker (immutable type, swapped on each event)
  *   - circuitBreaker (immutable type, swapped on each event)
  *
  * Subagent sharing:
  *   The factory accepts an optional `sharedState` ref; passing the same ref
- *   to a subagent's guardrail means denial / circuit / engine state is
+ *   to a subagent's guardrail means denial / circuit state is
  *   shared (per design doc "防绕阈值"). Without it each guardrail is
  *   independent.
  *
  * Provider capability checks and the explicit `supportsAutoModeClassifier`
  * flag are deferred to follow-up phases. Coding owns the default analyzer and
- * Tier 2 evaluator so direct SDK and REPL consumers share one decision path.
+ * deterministic analyzer so direct SDK and REPL consumers share one decision path.
  */
 
 import { createHash } from 'node:crypto';
@@ -56,8 +53,8 @@ import { bashSignalCollector } from './bash-signals.js';
 import {
   classify,
   type ClassifierAttemptDiagnostics,
-  type ClassifierFailureKind,
   type ClassifyDecision,
+  type ClassifyOptions,
 } from './classify.js';
 import {
   createCircuitBreaker,
@@ -69,20 +66,18 @@ import {
   createDenialTracker,
   recordAllow as recordDenialAllow,
   recordBlock as recordDenialBlock,
+  shouldFallback as denialLimitReached,
   type DenialTracker,
 } from './denial-tracker.js';
 import { fileSignalCollector } from './file-signals.js';
 import {
   analyzeAutoModeCall,
-  evaluateAutoRulesCall,
 } from './permission-analyzer.js';
 import {
   resolveClassifierModel,
   type ResolveClassifierModelOptions,
 } from './model-resolver.js';
-import type { AutoRules } from './rules.js';
 import { collectAllSignals, type SignalCollector, type ToolCallSignal } from './signals.js';
-import { speculativeRace } from './speculative.js';
 import {
   buildPermissionIntentEvidence,
   type PermissionIntentEvidence,
@@ -93,8 +88,6 @@ import {
 } from '../../tools/classifier-projection.js';
 import { resolveToolBridgeTarget } from '../../tools/tool-bridge.js';
 import type { ToolSideEffect } from '../../tools/side-effect.js';
-
-export type AutoModeEngine = 'llm' | 'rules';
 
 function automaticPermissionIntentRevision(
   messages: readonly KodaXMessage[],
@@ -115,58 +108,30 @@ function automaticPermissionIntentRevision(
 }
 
 export interface AutoModeSharedState {
-  engine: AutoModeEngine;
   denials: DenialTracker;
   breaker: CircuitBreaker;
 }
 
-/**
- * User answer for an escalated tool-call. The guardrail translates this into
- * the actual `GuardrailVerdict` returned to the Runner. `'block'` preserves
- * a clear call-local user-declined result while retaining the review reason.
- * It does not create a persistent denial: a safer follow-up is reviewed as a
- * new call. `'timeout'` reports that the action was not executed and gives the
- * main model a bounded recovery instruction.
- */
+/** @deprecated Auto review no longer opens an interactive approval prompt. */
 export type AutoModeAskUserVerdict = 'allow' | 'block' | 'timeout';
 
+/** @deprecated Auto review no longer opens an interactive approval prompt. */
 export interface AutoModeDecisionDiagnostics {
-  readonly source:
-    | 'classifier_confirm'
-    | 'classifier_failure'
-    | 'classifier_circuit_breaker'
-    | 'configuration';
-  /**
-   * Bounded (≤512 chars) decision-rationale summary for display surfaces
-   * (permission prompts). Same text the guardrail already passes as the ask
-   * reason; never prompt content or raw response body.
-   */
+  readonly source: 'classifier_confirm';
+  /** Bounded (≤512 chars) decision-rationale summary. */
   readonly reason?: string;
-  readonly classifierFailureKind?: ClassifierFailureKind;
   readonly classifierAttempts?: readonly ClassifierAttemptDiagnostics[];
 }
 
 /**
- * Optional REPL-supplied prompt callback for calls that require a human
- * decision (rules escalation, classifier concern/failure, or configuration
- * failure). When supplied, the guardrail calls this and
- * translates the user's answer into allow/block/timeout semantics. When NOT
- * supplied, the guardrail returns `'escalate'` as before — the Runner will
- * then throw `GuardrailEscalateError` (preserves backward compat with
- * SDK-side guardrail consumers that have no askUser surface).
- *
- * Rejection propagates: if the user cancels (Ctrl-C in the prompt), throw
- * an AbortError-shaped exception and the Runner aborts the run cleanly.
+ * @deprecated Retained for source compatibility. Auto review never invokes
+ * this callback; a classifier concern blocks the exact attempt and returns
+ * guidance to the Agent.
  */
 export type AutoModeAskUser = (
   call: RunnerToolCall,
   reason: string,
-  /**
-   * FEATURE_158 (v0.7.39): static-analysis signals collected for this tool
-   * call. Optional + readonly so existing callers without signal-aware UI
-   * keep working. REPL uses these to render Scope/Risk labels on the
-   * confirm dialog (replacing the input-marker path from FEATURE_066).
-   */
+  /** Static-analysis signals retained in the deprecated callback signature. */
   signals?: readonly ToolCallSignal[],
   diagnostics?: AutoModeDecisionDiagnostics,
 ) => Promise<AutoModeAskUserVerdict>;
@@ -236,20 +201,28 @@ export type AutoModeCallAnalyzer = (
   context: AutoModeRulesContext,
 ) => AutoModePermissionReview | undefined | Promise<AutoModePermissionReview | undefined>;
 
+/** @deprecated Auto[RULES] execution was removed in v0.7.96. */
 export type AutoModeRulesDecision =
   | { readonly action: 'allow' }
   | { readonly action: 'block'; readonly reason: string }
   | { readonly action: 'escalate'; readonly reason: string };
 
-/** Deterministic Tier-2 evaluator used only while the rules engine is active. */
+/** @deprecated Type-only source compatibility; KodaX no longer executes Auto rules. */
 export type AutoModeRulesEvaluator = (
   call: RunnerToolCall,
   context: AutoModeRulesContext,
 ) => AutoModeRulesDecision | Promise<AutoModeRulesDecision>;
 
 export interface AutoModeGuardrailConfig {
-  readonly rules: AutoRules;
+  /** @deprecated Legacy compatibility input. Auto rules are ignored. */
+  readonly rules?: ClassifyOptions['rules'];
   readonly claudeMd?: string;
+  /** Optional trusted administrator policy supplied by the host. */
+  readonly administratorPolicy?: string;
+  /** Optional user policy from config.json#autoReview.policy. */
+  readonly reviewPolicy?: string;
+  /** Optional guidance supplied by the selected reviewer model/catalog. */
+  readonly modelGuidance?: string;
   /**
    * Legacy classifier path only. Runtime compact review excludes AGENTS.md.
    * FEATURE_092 follow-up (auto-mode classifier AGENTS.md staleness fix):
@@ -266,30 +239,14 @@ export interface AutoModeGuardrailConfig {
    * same fresh project rules the system prompt does.
    */
   readonly getClaudeMd?: () => string | undefined;
-  /**
-   * FEATURE_092 phase 2b.7b: optional user-prompt callback for escalate
-   * paths. See `AutoModeAskUser` for semantics.
-   */
+  /** @deprecated Retained as inert source-compatibility input. */
   readonly askUser?: AutoModeAskUser;
-
-  /**
-   * Runtime-owned Accept-edits fallback used only when classifier
-   * infrastructure or its response contract fails.
-   */
-  readonly allowOnClassifierFailure?: (
-    call: RunnerToolCall,
-  ) => boolean | Promise<boolean>;
 
   /** Mint one exact bash call for workspace-sandboxed execution. */
   readonly admitWorkspaceSandboxCall?: (
     call: RunnerToolCall,
     review: AutoModePermissionReview,
   ) => void;
-
-  /**
-   * Override for the coding-owned deterministic Tier-2 evaluator.
-   */
-  readonly evaluateRulesCall?: AutoModeRulesEvaluator;
 
   /**
    * Override for the coding-owned compact permission analyzer. An override may
@@ -311,7 +268,7 @@ export interface AutoModeGuardrailConfig {
 
   /**
    * Resolve a provider name to an instance. Returns `undefined` when
-   * unconfigured / unknown — the guardrail then escalates.
+   * unconfigured / unknown — the guardrail then blocks.
    */
   readonly resolveProvider: (providerName: string) => KodaXBaseProvider | undefined;
 
@@ -347,35 +304,18 @@ export interface AutoModeGuardrailConfig {
   readonly log?: (level: 'info' | 'warn', msg: string) => void;
 
   /**
-   * Fired whenever the active engine changes through `setEngine(...)`.
-   * UI surfaces (status bar engine indicator, slash-command
-   * confirmations) subscribe here so the displayed engine stays in sync
-   * with the guardrail's internal state without the user having to trigger
-   * another mode toggle just to refresh the bar.
-   */
-  readonly onEngineChange?: (engine: AutoModeEngine) => void;
-
-  /**
    * Optional shared state for subagent threshold-bypass defense
    * (design doc "防绕阈值"). When supplied, the parent and child
-   * guardrails reference the SAME object — engine changes and tracker
+   * guardrails reference the SAME object — tracker
    * advances are visible across the session boundary.
    */
   readonly sharedState?: AutoModeSharedState;
 
   /**
-   * FEATURE_092 phase 2b.7b slice C: starting engine. Defaults to `'llm'`.
-   * Set to `'rules'` to skip the classifier entirely from session start
-   * (the deterministic Tier-2 evaluator runs for non-Tier-1 calls). Resolved
-   * by the REPL from `~/.kodax/config.json`
-   * `autoMode.engine` and the `KODAX_AUTO_MODE_ENGINE` env var.
-   */
-  readonly initialEngine?: AutoModeEngine;
-
-  /**
    * FEATURE_092 phase 2b.7b slice C: classifier sideQuery timeout in ms.
-   * Defaults to 45_000 for the first attempt and 90_000 for the retry.
-   * A configured value applies to both attempts.
+   * Defaults to 90_000 for the first attempt and 180_000 for the retry.
+   * A configured lower deadline applies to both attempts for embedder-owned
+   * cancellation compatibility.
    */
   readonly timeoutMs?: number;
 
@@ -424,30 +364,11 @@ export interface AutoModeGuardrailConfig {
   readonly extraCollectors?: readonly SignalCollector[];
 
   /**
-   * Layer-owned high-impact pattern checks. In LLM mode they add classifier
-   * evidence; in explicitly selected Rules mode they retain the legacy gate.
+   * Layer-owned high-impact pattern checks. They add classifier evidence.
    */
   readonly extraAbsoluteDenyChecks?: readonly AbsoluteDenyCheck[];
 
-  /**
-   * Speculative-classify quiet window (ms). When a classifier promise
-   * settles within this window, the guardrail uses the verdict directly
-   * with no perceptible latency.
-   *
-   * Issue 143 (WS1): when the window expires the guardrail does NOT
-   * hard-escalate — it waits for the real classifier verdict and adopts it
-   * (late-verdict adoption). The window therefore only controls "fast path
-   * vs wait", never "dialog vs no dialog": an `allow` never surfaces a
-   * confirm dialog regardless of how long the classifier takes, and only an
-   * confirmation/failure verdict reaches the configured user or Accept-edits
-   * fallback path.
-   * The background classifier's cost is settled exactly once inside
-   * classify(), so awaiting it after window expiry does not double-count.
-   *
-   * Precedence: explicit arg > `KODAX_AUTO_SPECULATIVE_WINDOW_MS` env >
-   * `DEFAULT_WINDOW_MS = 500`. Set to 0 to disable the speculative race
-   * (degrades to a synchronous classify — identical verdict outcome).
-   */
+  /** @deprecated Retained as inert source-compatibility input. */
   readonly speculativeWindowMs?: number;
 }
 
@@ -459,13 +380,12 @@ export interface AgentHomeShellBoundaryGuardrailOptions {
 
 /**
  * Snapshot of the auto-mode guardrail's session-scoped state. Returned by
- * `getStats()` for diagnostic surfaces (`/auto-denials`) and the status bar
- * engine indicator. The DenialTracker / CircuitBreaker types are immutable
+ * `getStats()` for diagnostic surfaces (`/auto-denials`). The DenialTracker /
+ * CircuitBreaker types are immutable
  * value objects, so this is a copy of the references — caller cannot mutate
  * guardrail state through it.
  */
 export interface AutoModeStats {
-  readonly engine: AutoModeEngine;
   readonly classifierHealth: 'healthy' | 'degraded';
   readonly classifierModel?: string;
   readonly denials: DenialTracker;
@@ -473,18 +393,15 @@ export interface AutoModeStats {
 }
 
 export interface AutoModeToolGuardrail extends ToolGuardrail {
-  /** Current engine for this session. */
-  getEngine(): AutoModeEngine;
-  /** Snapshot of engine + denial tracker + circuit breaker. */
+  /** Review an exact operation that has crossed the sandbox/host boundary. */
+  reviewHostBoundary(
+    call: RunnerToolCall,
+    ctx: GuardrailContext,
+  ): Promise<GuardrailVerdict>;
+  /** Start a new user turn: clear denial thresholds, retain infrastructure health. */
+  resetTurn(): void;
+  /** Snapshot of denial tracker + circuit breaker. */
   getStats(): AutoModeStats;
-  /**
-   * Manually set the engine. Used by `/auto-engine` slash command to flip
-   * between 'llm' and 'rules' after an explicit user or host choice.
-   */
-  setEngine(engine: AutoModeEngine): void;
-
-  /** Test-only alias for getEngine(). Backward-compat for test files. */
-  getEngineForTest(): AutoModeEngine;
   /** Test-only alias for getStats(). Backward-compat for test files. */
   getStatsForTest(): AutoModeStats;
   /** Test-only override: swap the provider mid-test. */
@@ -498,14 +415,15 @@ const DETERMINISTIC_OPERATION_RISKS = new Set([
   'cross_boundary_copy',
   'cross_boundary_mutation',
 ]);
-const APPROVAL_TIMEOUT_REASON =
-  '[approval_timeout] The requested operation was not executed because user approval timed out. '
-  + 'Try a safer, narrower, or reversible way to continue. If no safer alternative exists, '
-  + 'stop the task and wait for explicit user approval before retrying.';
-const USER_DECLINED_REASON =
-  '[user_declined] The requested operation was not executed because the user declined this attempt. '
-  + 'Try a safer, narrower, or alternative way to continue; any new proposal will be reviewed independently. '
-  + 'Review reason: ';
+const AUTO_REVIEW_UNAVAILABLE_PREFIX =
+  '[auto_review_unavailable] The requested operation was not executed because Auto review '
+  + 'could not produce a trustworthy decision after its bounded retry. ';
+const AUTO_REVIEW_DENIAL_LIMIT_REASON =
+  '[auto_review_denial_limit] Auto review rejected too many operations in this turn. '
+  + 'Stop this turn and wait for a new user instruction or choose a materially safer route.';
+const AUTO_REVIEW_DENIED_PREFIX =
+  '[auto_review_denied] Auto review did not authorize this attempt. '
+  + 'Use a safer route or wait for a later informed natural-language user instruction. Review reason: ';
 const AUTO_MODE_FAILURE_LOG_MAX_LENGTH = 768;
 const AUTO_MODE_FAILURE_LOG_SCAN_MAX_LENGTH = 4_096;
 
@@ -1285,36 +1203,6 @@ function isDeterministicallyAllowed(
   ));
 }
 
-function restrictionsRequireClassifierFallback(
-  permissionReview: AutoModePermissionReview | undefined,
-  intentEvidence: PermissionIntentEvidence | undefined,
-): boolean {
-  if (permissionReview) {
-    // Accept-edits fallback is only valid for the same calls that the
-    // deterministic layer could safely admit. Otherwise a classifier outage
-    // would re-allow protected/unresolved reads or other incomplete analyses.
-    return permissionReview.analysis.status !== 'complete'
-      || permissionReview.analysis.binding !== 'exact'
-      || permissionReviewRequiresExecutionIntentReview(permissionReview, intentEvidence)
-      || permissionReview.risks.some((risk) => !DETERMINISTIC_OPERATION_RISKS.has(risk))
-      || permissionReview.operations.length === 0
-      || permissionReview.operations.some((operation) => (
-        !isDeterministicallyAllowedOperation(operation)
-        || operationHasKnownIntentRestriction(operation, intentEvidence)
-      ));
-  }
-  if (intentEvidence?.readOnly === true) return true;
-  if ((intentEvidence?.bindingConstraints?.length ?? 0) > 0) return true;
-  const currentIntent = intentEvidence?.currentUserContent?.trim();
-  return currentIntent
-    ? GENERAL_OPERATION_CONSTRAINT.test(currentIntent)
-      || matchesConstraintCandidate(currentIntent, READ_CONSTRAINT_CANDIDATES)
-      || matchesConstraintCandidate(currentIntent, EXECUTION_CONSTRAINT_CANDIDATES)
-      || isNonExecutingIntent(currentIntent)
-      || hasExplicitMutationDenial(currentIntent)
-    : false;
-}
-
 function isStaticallyBoundShellCall(
   permissionReview: AutoModePermissionReview,
 ): boolean {
@@ -1391,25 +1279,13 @@ export function createAutoModeToolGuardrail(
   config: AutoModeGuardrailConfig,
 ): AutoModeToolGuardrail {
   const state: AutoModeSharedState = config.sharedState ?? {
-    engine: config.initialEngine ?? 'llm',
     denials: createDenialTracker(),
     breaker: createCircuitBreaker(),
   };
   const analyzeCall = config.analyzeCall ?? analyzeAutoModeCall;
-  const evaluateRulesCall = config.evaluateRulesCall ?? evaluateAutoRulesCall;
   // For tests only: lets us swap the provider mid-flight.
   let providerOverride: KodaXBaseProvider | undefined;
   const automaticAllowCache = new Set<string>();
-
-  // Single mutation point for `state.engine`. Fires `onEngineChange` on every
-  // real transition (no callback when the new value equals the old) so UI
-  // surfaces (status bar engine indicator) stay in sync without polling. The
-  // explicit `setEngine(...)` path goes through here.
-  const transitionEngine = (next: AutoModeEngine): void => {
-    if (state.engine === next) return;
-    state.engine = next;
-    config.onEngineChange?.(next);
-  };
 
   // FEATURE_158: signal-collector set — defaults + extras. Frozen at
   // factory time so collectors don't change mid-session.
@@ -1425,12 +1301,12 @@ export function createAutoModeToolGuardrail(
   const beforeTool = async (
     call: RunnerToolCall,
     ctx: GuardrailContext,
+    forceReview = false,
   ): Promise<GuardrailVerdict> => {
     const bridgeTarget = resolveToolBridgeTarget(call);
     const guardedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
-    // FEATURE_158: collect signals ONCE per call. Used by both the
-    // classifier prompt and the escalate-to-user path (REPL UI renders
-    // Scope/Risk from signals). Empty array when no collector matches.
+    // FEATURE_158: collect signals once per call for the classifier prompt.
+    // Empty array when no collector matches.
     let signals: readonly ToolCallSignal[] = collectAllSignals(
       guardedCall,
       projectRoot,
@@ -1468,64 +1344,24 @@ export function createAutoModeToolGuardrail(
       return { action: 'allow' };
     };
 
-    // When the REPL has supplied askUser, every "escalate" path is resolved
-    // here into a concrete allow/block; otherwise we fall through to the
-    // legacy escalate verdict (Runner throws GuardrailEscalateError).
-    // FEATURE_158: pass signals to askUser so REPL can render Scope/Risk.
-    const escalateOrAsk = async (
-      reason: string,
-      diagnostics?: AutoModeDecisionDiagnostics,
-    ): Promise<GuardrailVerdict> => {
-      if (!config.askUser) {
-        return { action: 'escalate', reason };
-      }
-      const verdict = await config.askUser(guardedCall, reason, signals, diagnostics);
-      if (verdict === 'allow') return allowFinal();
-      if (verdict === 'timeout') {
-        return { action: 'block', reason: APPROVAL_TIMEOUT_REASON };
-      }
-      return { action: 'block', reason: `${USER_DECLINED_REASON}${reason}` };
-    };
-
-    const allowOrAskOnClassifierFailure = async (
-      reason: string,
-      diagnostics: AutoModeDecisionDiagnostics,
-    ): Promise<GuardrailVerdict> => {
-      if (restrictionsRequireClassifierFallback(permissionReview, intentEvidence)) {
-        return escalateOrAsk(reason, diagnostics);
-      }
-      try {
-        if (await config.allowOnClassifierFailure?.(guardedCall)) {
-          return allowFinal();
-        }
-      } catch (error) {
-        logAutoModeWarning(
-          config.log,
-          `[auto-mode] Accept-edits fallback failed (${errorCategory(error)})`,
-        );
-      }
-      return escalateOrAsk(reason, diagnostics);
-    };
+    const blockOnClassifierFailure = (reason: string): GuardrailVerdict => ({
+      action: 'block',
+      reason: `${AUTO_REVIEW_UNAVAILABLE_PREFIX}${reason.slice(0, 512)}. `
+        + 'Try a safer, narrower, or reversible way to continue. If none exists, '
+        + 'stop and ask the user for explicit direction before proposing the operation again.',
+    });
 
     const fallbackOnClassifierException = (
       error: unknown,
-    ): Promise<GuardrailVerdict> => {
+    ): GuardrailVerdict => {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw error;
       }
       state.breaker = recordBreakerError(state.breaker, Date.now());
       const reason = `classifier error (${errorCategory(error)})`;
       logAutoModeWarning(config.log, `[auto-mode] ${reason}`);
-      return allowOrAskOnClassifierFailure(reason, {
-        source: 'classifier_failure',
-        classifierFailureKind: 'provider_error',
-      });
+      return blockOnClassifierFailure(reason);
     };
-
-    const hardBoundary = checkAgentHomeHardDeny(guardedCall, projectRoot, executionCwd);
-    if (hardBoundary.denied) {
-      return { action: 'block', reason: hardBoundary.reason };
-    }
 
     // Catastrophic host operations are not authorization questions: block them
     // before Auto[LLM]. Agent Home matches remain classifier facts because the
@@ -1542,13 +1378,15 @@ export function createAutoModeToolGuardrail(
       if (builtInTier0.denied && builtInTier0.patternId !== 'user_kodax_write') {
         return { action: 'block', reason: tier0.reason };
       }
-      if (state.engine === 'llm') {
-        signals = [...signals, {
-          kind: 'dangerous_pattern',
-          pattern: `static_match=${tier0.patternId}; ${tier0.reason}`,
-          severity: 'high',
-        }];
-      }
+      signals = [...signals, {
+        kind: 'dangerous_pattern',
+        pattern: `static_match=${tier0.patternId}; ${tier0.reason}`,
+        severity: 'high',
+      }];
+    }
+
+    if (denialLimitReached(state.denials)) {
+      return { action: 'block', reason: AUTO_REVIEW_DENIAL_LIMIT_REASON };
     }
 
     // Tier 1: explicitly exempt tools may opt out through an empty projection.
@@ -1638,9 +1476,8 @@ export function createAutoModeToolGuardrail(
       );
     }
     const userIntentRevision = automaticPermissionIntentRevision(ctx.messages ?? []);
-    if (tier0.denied && state.engine === 'rules') return escalateOrAsk(tier0.reason);
     if (
-      !tier0.denied && permissionReview
+      !forceReview && !tier0.denied && permissionReview
       && isDeterministicallyAllowed(permissionReview, intentEvidence)
     ) {
       return allowFinal();
@@ -1662,29 +1499,6 @@ export function createAutoModeToolGuardrail(
       }
     }
 
-    // Rules engine: Tier 1 already returned above. The coding package owns the
-    // default deterministic evaluator; hosts may still inject an override.
-    if (state.engine === 'rules') {
-      let decision: AutoModeRulesDecision;
-      try {
-        decision = await evaluateRulesCall(guardedCall, {
-          projectRoot,
-          executionCwd,
-          signals,
-          toolSideEffect,
-          trustProcessEnvironmentPathExpansion:
-            config.trustProcessEnvironmentPathExpansion !== false,
-        });
-      } catch (error) {
-        const reason = `auto-mode rules could not evaluate this call (${errorCategory(error)})`;
-        logAutoModeWarning(config.log, `[auto-mode] ${reason}`);
-        return escalateOrAsk(reason);
-      }
-      if (decision.action === 'allow') return allowFinal();
-      if (decision.action === 'block') return escalateOrAsk(decision.reason);
-      return escalateOrAsk(decision.reason);
-    }
-
     // Resolve the complete override chain before consulting failure trackers.
     // A missing model is a local configuration error, not classifier
     // infrastructure instability. Apply the same bounded fallback without
@@ -1698,9 +1512,7 @@ export function createAutoModeToolGuardrail(
     if (typeof resolved.model !== 'string' || resolved.model.trim().length === 0) {
       const reason = 'auto-mode classifier model is not configured; select a model before using Auto LLM';
       logAutoModeWarning(config.log, `[auto-mode] ${reason}`);
-      return allowOrAskOnClassifierFailure(reason, {
-        source: 'configuration',
-      });
+      return blockOnClassifierFailure(reason);
     }
     let classifierClaudeMd: string | undefined;
     try {
@@ -1724,16 +1536,11 @@ export function createAutoModeToolGuardrail(
       claudeMd: classifierClaudeMd ?? null,
       signals,
     })).digest('hex');
-    if (automaticAllowCache.has(automaticAllowKey)) return allowFinal();
+    if (!forceReview && automaticAllowCache.has(automaticAllowKey)) return allowFinal();
 
-    // Infrastructure degradation never widens policy to Auto[rules].
+    // Infrastructure degradation fails closed and never asks the user.
     if (breakerShouldFallback(state.breaker, Date.now())) {
-      return allowOrAskOnClassifierFailure(
-        'classifier infrastructure is degraded; applying Accept-edits fallback',
-        {
-          source: 'classifier_circuit_breaker',
-        },
-      );
+      return blockOnClassifierFailure('classifier infrastructure is degraded');
     }
 
     // Resolve the configured provider only after the final model check and
@@ -1746,36 +1553,20 @@ export function createAutoModeToolGuardrail(
       return fallbackOnClassifierException(error);
     }
     if (!provider) {
-      return allowOrAskOnClassifierFailure(
+      return blockOnClassifierFailure(
         `classifier provider "${resolved.providerName}" is not configured`,
-        {
-          source: 'configuration',
-        },
       );
     }
 
-    // FEATURE_158: kick off classifier with signals attached. The promise is
-    // held locally so speculativeRace can race it against a quiet window — when
-    // the verdict arrives within the window, we use it directly with no
-    // perceptible latency.
-    //
-    // Issue 143 (WS1): the classifier verdict is ALWAYS adopted, even when the
-    // window expires. The window only decides whether we resolve instantly
-    // (fast classify) or wait a bit longer (slow/remote provider) — it does NOT
-    // decide "hard-escalate vs not". A late allow is applied directly and a
-    // late concern requests confirmation. This is the
-    // late-verdict adoption (CC's peekSpeculativeClassifierCheck equivalent) that
-    // makes auto[llm] usable on remote/slow providers where a single classify
-    // round-trip routinely outruns the window. The background classifyPromise is
-    // never aborted on window expiry (tokens are already in flight) and its cost
-    // is settled exactly once inside classify(), so awaiting it again here does
-    // not double-count.
-    let classifyPromise: Promise<ClassifyDecision>;
+    let decision: ClassifyDecision;
     try {
-      classifyPromise = classify({
+      decision = await classify({
         provider,
         model: resolved.model,
         rules: config.rules,
+        administratorPolicy: config.administratorPolicy,
+        reviewPolicy: config.reviewPolicy,
+        modelGuidance: config.modelGuidance,
         // Compact review deliberately excludes AGENTS.md. An analyzer override
         // that declines the call retains the legacy live/static behavior.
         claudeMd: classifierClaudeMd,
@@ -1795,33 +1586,6 @@ export function createAutoModeToolGuardrail(
       return fallbackOnClassifierException(error);
     }
 
-    // Issue 143 (WS2): the speculative window only earns its keep when a human
-    // is waiting on the confirm dialog — it trades a possible early escalate for
-    // hiding classifier latency. With no `askUser` surface (SDK / non-interactive
-    // / child-agent contexts) there is nobody to pre-empt, so an early
-    // `window-expired` escalate is pure harm: it surfaces a transient 500ms
-    // timeout as a verdict even though the classifier is about to return
-    // allow/block. Force the window to 0 (wait for the full verdict) in that
-    // case. When askUser IS present, `undefined` flows through to
-    // speculativeRace's env/default resolution unchanged.
-    const effectiveWindowMs = config.askUser ? config.speculativeWindowMs : 0;
-
-    let decision: ClassifyDecision;
-    try {
-      const raceResult = await speculativeRace(classifyPromise, effectiveWindowMs);
-      if (raceResult.kind === 'window-expired') {
-        // Issue 143 (WS1): window expired — do NOT hard-escalate. Wait for the
-        // real verdict and adopt it. The existing agent spinner covers the wait;
-        // allow resolves without a dialog while a concern reaches the user. A
-        // late AbortError re-surfaces here and is re-thrown by the catch below.
-        decision = await classifyPromise;
-      } else {
-        decision = raceResult.value;
-      }
-    } catch (err) {
-      return fallbackOnClassifierException(err);
-    }
-
     // Map decision to verdict and update diagnostic trackers.
     switch (decision.kind) {
       case 'allow':
@@ -1836,25 +1600,17 @@ export function createAutoModeToolGuardrail(
 
       case 'confirm':
         state.denials = recordDenialBlock(state.denials);
-        return escalateOrAsk(decision.reason, {
-          source: 'classifier_confirm',
-          reason: decision.reason.slice(0, 512),
-          classifierAttempts: decision.attempts,
-        });
+        return denialLimitReached(state.denials)
+          ? { action: 'block', reason: `${AUTO_REVIEW_DENIAL_LIMIT_REASON} Review reason: ${decision.reason}` }
+          : { action: 'block', reason: `${AUTO_REVIEW_DENIED_PREFIX}${decision.reason}` };
 
       case 'failure':
         state.breaker = recordBreakerError(state.breaker, Date.now());
-        return allowOrAskOnClassifierFailure(decision.reason, {
-          source: 'classifier_failure',
-          reason: decision.reason.slice(0, 512),
-          classifierFailureKind: decision.failureKind,
-          classifierAttempts: decision.attempts,
-        });
+        return blockOnClassifierFailure(decision.reason);
     }
   };
 
   const getStats = (): AutoModeStats => ({
-    engine: state.engine,
     classifierHealth: breakerShouldFallback(state.breaker, Date.now())
       ? 'degraded'
       : 'healthy',
@@ -1865,13 +1621,11 @@ export function createAutoModeToolGuardrail(
     kind: 'tool',
     name: 'auto-mode',
     beforeTool,
-    getEngine: () => state.engine,
-    getStats,
-    setEngine: (engine) => {
-      transitionEngine(engine);
+    reviewHostBoundary: (call, ctx) => beforeTool(call, ctx, true),
+    resetTurn: () => {
+      state.denials = createDenialTracker();
     },
-    // Test-only aliases — kept for backward compat with the existing test files.
-    getEngineForTest: () => state.engine,
+    getStats,
     getStatsForTest: getStats,
     setProviderForTest: (p) => { providerOverride = p; },
   };

@@ -35,6 +35,7 @@ import type { AgentsFile } from '@kodax-ai/coding';
 import {
   PermissionMode,
   PERMISSION_MODES,
+  canonicalizePermissionMode,
   normalizePermissionMode,
 } from '../permission/types.js';
 import {
@@ -1172,17 +1173,18 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'mode',
-    description: 'Show or switch permission mode (plan/accept-edits/auto)',
-    usage: '/mode [plan|accept-edits|auto]',
+    description: 'Show or switch permission mode (plan/accept-edits/auto/full-access)',
+    usage: '/mode [plan|accept-edits|auto|full-access]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
         const m = normalizePermissionMode(currentConfig.permissionMode, 'accept-edits') ?? 'accept-edits';
         console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(m)}`));
-        console.log(chalk.dim('Usage: /mode [plan|accept-edits|auto]'));
+        console.log(chalk.dim('Usage: /mode [plan|accept-edits|auto|full-access]'));
         return;
       }
-      const newMode = args[0] as PermissionMode;
-      if (PERMISSION_MODES.includes(newMode)) {
+      const requestedMode = args[0] as PermissionMode;
+      if (PERMISSION_MODES.includes(requestedMode)) {
+        const newMode = canonicalizePermissionMode(requestedMode);
         if (callbacks.setPermissionMode) {
           await callbacks.setPermissionMode(newMode);
         } else {
@@ -1191,7 +1193,7 @@ export const BUILTIN_COMMANDS: Command[] = [
         savePermissionModeUser(newMode);
         console.log(chalk.cyan(`\n[Switched to ${newMode} mode] (saved)`));
       } else {
-        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | accept-edits | auto]`));
+        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | accept-edits | auto | full-access]`));
       }
     },
     detailedHelp: () => {
@@ -1200,69 +1202,17 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /mode                        ') + 'Show current permission mode');
       console.log(chalk.dim('  /mode plan                   ') + 'Read-only: blocks all modifications');
       console.log(chalk.dim('  /mode accept-edits           ') + 'File edits auto, bash requires confirmation');
-      console.log(chalk.dim('  /mode auto                   ') + 'LLM classifier reviews each tool call (FEATURE_092)');
-      console.log(chalk.dim('  /mode auto-in-project        ') + chalk.gray('(deprecated alias for auto; will be removed in v0.7.38)'));
+      console.log(chalk.dim('  /mode auto                   ') + 'Sandbox first; LLM review only at the host boundary');
+      console.log(chalk.dim('  /mode full-access            ') + 'Run directly on the host without sandbox or Auto review');
       console.log();
       console.log(chalk.bold('Permission Levels:'));
       console.log(chalk.yellow('  plan          ') + chalk.dim('- Read-only planning, no file/command modifications'));
       console.log(chalk.green('  accept-edits  ') + chalk.dim('- File edits auto-approved, bash still requires confirmation'));
-      console.log(chalk.green('  auto          ') + chalk.dim('- LLM classifier (engine=llm, default) or rules engine reviews each call'));
+      console.log(chalk.green('  auto          ') + chalk.dim('- Sandbox first; LLM reviews host-boundary fallbacks'));
+      console.log(chalk.red('  full-access   ') + chalk.dim('- Unrestricted host execution'));
       console.log();
       console.log(chalk.bold('Notes:'));
-      console.log(chalk.dim('  - .kodax/ directory and project-external paths always require confirmation'));
       console.log(chalk.dim('  - Mode is saved to ~/.kodax/config.json (user-level)'));
-      console.log();
-    },
-  },
-  {
-    // FEATURE_092 phase 2b.8: read-only or set classifier engine for current session.
-    name: 'auto-engine',
-    description: 'Show or set auto-mode classifier engine (llm | rules)',
-    usage: '/auto-engine [llm|rules]',
-    handler: async (args, _context, callbacks) => {
-      const stats = await callbacks.getAutoModeStats?.();
-      if (!stats) {
-        console.log(chalk.yellow('\n[auto-engine] not in auto mode — switch via /mode auto first'));
-        return;
-      }
-      if (args.length === 0) {
-        console.log(chalk.dim(`\nClassifier engine: ${chalk.cyan(stats.engine)}`));
-        console.log(chalk.dim(`  classifier health:    ${stats.classifierHealth}`));
-        if (stats.classifierModel) {
-          console.log(chalk.dim(`  classifier model:     ${stats.classifierModel}`));
-        }
-        console.log(chalk.dim(`  consecutive denials: ${stats.denials.consecutive}`));
-        console.log(chalk.dim(`  cumulative denials:  ${stats.denials.cumulative}`));
-        console.log(chalk.dim(`  breaker errors:      ${stats.breaker.timestamps.filter((t) => t >= Date.now() - 10 * 60 * 1000).length}`));
-        console.log(chalk.dim('Usage: /auto-engine [llm|rules]'));
-        return;
-      }
-      const newEngine = args[0];
-      if (newEngine !== 'llm' && newEngine !== 'rules') {
-        console.log(chalk.red(`\n[auto-engine] unknown engine "${args[0]}" — use llm or rules`));
-        return;
-      }
-      await callbacks.setAutoModeEngine?.(newEngine);
-      console.log(chalk.cyan(`\n[auto-engine] switched to ${newEngine}`));
-      if (newEngine === 'rules') {
-        console.log(chalk.dim('  deterministic workspace/temp rules are now active'));
-      } else {
-        console.log(chalk.dim('  classifier selected; degraded health temporarily uses Accept-edits fallback'));
-      }
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/auto-engine - Auto-Mode Classifier Engine Toggle\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /auto-engine                 ') + 'Show current engine + denial/breaker counts');
-      console.log(chalk.dim('  /auto-engine llm             ') + 'Resume classifier consultation (default)');
-      console.log(chalk.dim('  /auto-engine rules           ') + 'Skip classifier; use deterministic workspace/temp rules');
-      console.log();
-      console.log(chalk.bold('Notes:'));
-      console.log(chalk.dim('  - Only meaningful in auto mode (/mode auto).'));
-      console.log(chalk.dim('  - Denial counters are diagnostic only; they do not change the selected engine.'));
-      console.log(chalk.dim('  - Five classifier failures in 10 minutes temporarily skip classifier calls'));
-      console.log(chalk.dim('    and apply Accept-edits fallback; the selected engine remains llm.'));
-      console.log(chalk.dim('  - Override via env: KODAX_AUTO_MODE_ENGINE=rules.'));
       console.log();
     },
   },
@@ -1270,7 +1220,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     // FEATURE_092 phase 2b.8: dump tracker + breaker stats. Useful for the
     // pilot to verify fallback paths manually + for debugging classifier health.
     name: 'auto-denials',
-    description: 'Show auto-mode classifier denial tracker + circuit breaker stats',
+    description: 'Show Auto reviewer denial tracker + circuit breaker stats',
     usage: '/auto-denials',
     handler: async (_args, _context, callbacks) => {
       const stats = await callbacks.getAutoModeStats?.();
@@ -1278,33 +1228,29 @@ export const BUILTIN_COMMANDS: Command[] = [
         console.log(chalk.yellow('\n[auto-denials] not in auto mode — switch via /mode auto first'));
         return;
       }
-      console.log(chalk.cyan('\n[auto-mode classifier stats]'));
-      console.log(chalk.dim(`  engine:               ${chalk.cyan(stats.engine)}`));
-      console.log(chalk.dim(`  classifier health:    ${stats.classifierHealth}`));
+      console.log(chalk.cyan('\n[auto-mode reviewer stats]'));
+      console.log(chalk.dim(`  reviewer health:      ${stats.classifierHealth}`));
       console.log(chalk.dim('  Denial tracker:'));
       console.log(chalk.dim(`    consecutive blocks: ${stats.denials.consecutive} / 3`));
       console.log(chalk.dim(`    cumulative blocks:  ${stats.denials.cumulative} / 20`));
       console.log(chalk.dim('  Circuit breaker:'));
       console.log(chalk.dim(`    errors in window:   ${stats.breaker.timestamps.filter((t) => t >= Date.now() - 10 * 60 * 1000).length} / 5 (10 min)`));
       console.log();
-      if (stats.engine === 'rules') {
-        console.log(chalk.yellow('  ↪ rules engine is active. /auto-engine llm to enable the classifier.'));
-      } else if (stats.classifierHealth === 'degraded') {
+      if (stats.classifierHealth === 'degraded') {
         console.log(chalk.yellow(
-          '  ↪ classifier calls are temporarily skipped; Accept-edits fallback is active and engine remains llm.',
+          '  ↪ reviewer calls are temporarily skipped; host-boundary operations fail closed with safer-route guidance.',
         ));
       }
       console.log();
     },
     detailedHelp: () => {
-      console.log(chalk.cyan('\n/auto-denials - Auto-Mode Classifier Diagnostic Dump\n'));
+      console.log(chalk.cyan('\n/auto-denials - Auto Reviewer Diagnostic Dump\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /auto-denials                ') + 'Print engine + tracker + breaker counters');
+      console.log(chalk.dim('  /auto-denials                ') + 'Print reviewer tracker + breaker counters');
       console.log();
-      console.log(chalk.bold('Diagnostics and fallback (FEATURE_092):'));
-      console.log(chalk.dim('  - Block counters are diagnostic only; they never select rules.'));
-      console.log(chalk.dim('  - 5 errors in 10 min → skip classifier temporarily and use Accept-edits fallback.'));
-      console.log(chalk.dim('  - The selected engine remains llm unless the user/host explicitly selects rules.'));
+      console.log(chalk.bold('Diagnostics and fail-closed behavior:'));
+      console.log(chalk.dim('  - Block counters are diagnostic only.'));
+      console.log(chalk.dim('  - 5 errors in 10 min → skip the reviewer temporarily and block host-boundary operations.'));
       console.log();
     },
   },
@@ -1928,10 +1874,10 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Equivalent to /mode auto.'));
-      console.log(chalk.dim('  Auto-mode classifier evaluates each non-Tier-1 tool call;'));
-      console.log(chalk.dim('  benign actions auto-approve, risky ones escalate to user confirm.'));
+      console.log(chalk.dim('  Auto runs sandboxed calls first, then uses the LLM reviewer at the host boundary;'));
+      console.log(chalk.dim('  ordinary actions continue silently; reviewer concerns block the exact attempt with recovery guidance.'));
       console.log();
-      console.log(chalk.dim('  See also: /help mode, /auto-engine, /auto-denials'));
+      console.log(chalk.dim('  See also: /help mode, /auto-denials'));
       console.log();
     },
   },

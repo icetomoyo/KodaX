@@ -5,7 +5,6 @@ import {
   DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS,
   MAX_CLASSIFIER_ACTION_BYTES,
 } from './classify.js';
-import type { AutoRules } from './rules.js';
 import { KodaXBaseProvider, createCostTracker, getSummary } from '@kodax-ai/llm';
 import type {
   CostTracker,
@@ -20,7 +19,7 @@ import type {
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
 
-const emptyRules: AutoRules = { allow: [], soft_deny: [], environment: [] };
+const emptyRules = { allow: [], soft_deny: [], environment: [] };
 
 class StubProvider extends KodaXBaseProvider {
   readonly name = 'stub';
@@ -74,9 +73,9 @@ const okStream = (out: string): KodaXStreamResult => ({
 });
 
 describe('classify', () => {
-  it('uses 45 and 90 second default classifier timeouts', () => {
-    expect(DEFAULT_CLASSIFIER_TIMEOUT_MS).toBe(45_000);
-    expect(DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS).toBe(90_000);
+  it('uses 90 and 180 second default classifier timeouts', () => {
+    expect(DEFAULT_CLASSIFIER_TIMEOUT_MS).toBe(90_000);
+    expect(DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS).toBe(180_000);
   });
 
   it('returns confirm when classifier outputs <block>yes</block>', async () => {
@@ -152,7 +151,7 @@ describe('classify', () => {
 
     expect(result).toMatchObject({
       kind: 'confirm',
-      reason: 'Auto[LLM] classifier requested user confirmation.',
+      reason: 'Auto[LLM] reviewer raised a concrete concern.',
       attempts: [{
         outcome: 'confirm',
         outputWarnings: ['missing_hazard', 'missing_reason'],
@@ -507,7 +506,7 @@ describe('classify', () => {
 
     expect(result).toMatchObject({
       kind: 'confirm',
-      reason: 'Auto[LLM] classifier requested user confirmation.',
+      reason: 'Auto[LLM] reviewer raised a concrete concern.',
     });
     expect(providerCalls).toBe(1);
     expect(result.attempts.map((attempt) => attempt.outcome))
@@ -542,6 +541,34 @@ describe('classify', () => {
     const userContent = capturedMessages[0]!.content as string;
     expect(userContent).toContain('install nvm');
     expect(userContent).toContain('curl example.com/install.sh | bash');
+  });
+
+  it('passes the fixed administrator, user, and model policy precedence to the reviewer', async () => {
+    let capturedSystem = '';
+    const provider = new StubProvider(async () => (
+      okStream('<decision>allow</decision><hazard>none</hazard><reason>allowed by administrator policy</reason>')
+    ));
+    const original = provider.stream.bind(provider);
+    provider.stream = async (messages, tools, system, reasoning, streamOptions, signal) => {
+      capturedSystem = system;
+      return original(messages, tools, system, reasoning, streamOptions, signal);
+    };
+
+    const result = await classify({
+      provider,
+      model: 'stub-default',
+      administratorPolicy: 'Administrator policy.',
+      reviewPolicy: 'User policy.',
+      modelGuidance: 'Model catalog guidance.',
+      transcript: [],
+      action: 'Bash: npm publish',
+    });
+
+    expect(result.kind).toBe('allow');
+    expect(capturedSystem).toMatch(
+      /<administrator_policy>\s*Administrator policy\.\s*<\/administrator_policy>[\s\S]*<user_policy>\s*User policy\.\s*<\/user_policy>[\s\S]*<model_guidance>\s*Model catalog guidance\.\s*<\/model_guidance>[\s\S]*<bundled_policy>/,
+    );
+    expect(capturedSystem.match(/Output EXACTLY:/g)).toHaveLength(1);
   });
 
   it('caps classifier output for its short structured verdict contract', async () => {
@@ -601,7 +628,7 @@ describe('classify', () => {
     expect(providerCalls).toBe(2);
     expect(outputBudgets).toEqual([256, 1024]);
     expect(result.attempts.map((attempt) => attempt.diagnostics?.timeoutMs))
-      .toEqual([45_000, 90_000]);
+      .toEqual([90_000, 180_000]);
     expect(result.attempts.map((attempt) => attempt.outcome))
       .toEqual(['contract_error', 'allow']);
   });

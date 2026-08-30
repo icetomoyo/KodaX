@@ -1922,7 +1922,7 @@ mod tests {
     fn test_tempdir() -> tempfile::TempDir {
         let base = std::env::var_os("KODAX_NATIVE_TEST_TEMP")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().expect("native test current directory"));
+            .unwrap_or_else(std::env::temp_dir);
         fs::create_dir_all(&base).expect("native test temporary base");
         tempfile::Builder::new()
             .prefix("kodax-text-")

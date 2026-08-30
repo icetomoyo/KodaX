@@ -122,10 +122,9 @@ function getPermissionModeColor(permissionMode: StatusBarProps["permissionMode"]
       return "green";
     case "auto":
     case "auto-in-project":
-      // FEATURE_092 v0.7.33: 'auto' (canonical) shares the deprecated
-      // 'auto-in-project' coloring. The engine suffix appended by
-      // `buildPermissionModeText` carries the rules/llm visual distinction.
       return "warning";
+    case "full-access":
+      return "red";
     default:
       return "magenta";
   }
@@ -135,27 +134,16 @@ function getPermissionModeColor(permissionMode: StatusBarProps["permissionMode"]
  * Compose the permission-mode segment text. Mode names render Title-Case
  * short labels (`Plan` / `Edits` / `Auto`) sourced from
  * `permissionModeDisplayName` — same helper the readline status bar uses
- * so the two surfaces never drift on capitalization. The auto-family
- * deprecated alias (`auto-in-project`) folds into the canonical `Auto`
- * display because the deprecation notice surfaces once at startup; the
- * status bar doesn't need to re-litigate it every frame.
- *
- * The engine suffix (`[LLM]` classifier / `[RULES]` deterministic) is uppercase
- * regardless — LLM is an acronym, and `[OK]` / `[ERROR]` / `[WARN]`-style
- * uppercase status indicators are the terminal convention.
+ * so the two surfaces never drift on capitalization. The compatibility alias
+ * folds into the canonical Auto label at this display boundary.
  */
 function buildPermissionModeText(
   permissionMode: StatusBarProps["permissionMode"],
-  autoModeEngine: StatusBarProps["autoModeEngine"],
 ): string {
   const display = permissionModeDisplayName(permissionMode);
   const isAutoFamily =
     permissionMode === "auto" || permissionMode === "auto-in-project";
-  if (!isAutoFamily || !autoModeEngine) {
-    return display;
-  }
-  const suffix = autoModeEngine === "llm" ? "[LLM]" : "[RULES]";
-  return `${display}${suffix}`;
+  return isAutoFamily ? `${display}[LLM]` : display;
 }
 
 function formatToolAction(currentTool: string): string {
@@ -448,7 +436,7 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     },
     {
       id: "permission-mode",
-      text: buildPermissionModeText(permissionMode, props.autoModeEngine),
+      text: buildPermissionModeText(permissionMode),
       color: getPermissionModeColor(permissionMode),
     },
   ];

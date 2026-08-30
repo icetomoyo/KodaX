@@ -7,6 +7,10 @@ import { setAgentConfigHome } from '@kodax-ai/agent';
 import type { GuardrailContext, RunnerToolCall } from '@kodax-ai/agent';
 import {
   createAutoModeToolGuardrail,
+  type AutoModePermissionOperation,
+  type AutoModePermissionReview,
+  type AutoModePermissionTarget,
+  type AutoModeRulesDecision,
   type AutoModeRulesContext,
 } from './guardrail.js';
 import {
@@ -20,8 +24,6 @@ import {
 } from '@kodax-ai/llm';
 import {
   analyzeAutoModeCall,
-  assessAutoModeCall,
-  evaluateAutoRulesCall,
 } from './permission-analyzer.js';
 import { isBashReadCommand } from '../../permissions/permission.js';
 
@@ -96,6 +98,62 @@ function context(
   signals: AutoModeRulesContext['signals'] = [],
 ): AutoModeRulesContext {
   return { projectRoot, executionCwd, signals };
+}
+
+function legacyOperationAllowed(operation: AutoModePermissionOperation): boolean {
+  const writable = (target: AutoModePermissionTarget): boolean => (
+    target.boundary === 'workspace'
+    || target.boundary === 'system-temp'
+    || target.boundary === 'agent-home'
+  );
+  if (operation.options?.whatIf === true) return true;
+  if (operation.kind === 'execute') {
+    return operation.options?.readOnly === true || operation.options?.contained === true;
+  }
+  if (operation.kind === 'unknown') return false;
+  if (operation.kind === 'read') {
+    return operation.target.boundary !== 'protected'
+      && operation.target.boundary !== 'unresolved';
+  }
+  if ('target' in operation) return writable(operation.target);
+  if (!('source' in operation)) return false;
+  if (operation.kind === 'copy') {
+    return writable(operation.destination)
+      && operation.source.boundary !== 'protected'
+      && operation.source.boundary !== 'unresolved';
+  }
+  return writable(operation.source) && writable(operation.destination);
+}
+
+function legacyDecision(review: AutoModePermissionReview): AutoModeRulesDecision {
+  const reviewOnlyRisks = new Set([
+    'high_risk_pattern',
+    'sensitive_environment_read',
+    'sensitive_process_data_read',
+    'protected_descendant',
+  ]);
+  const allowed = review.analysis.status === 'complete'
+    && !review.risks.some((risk) => reviewOnlyRisks.has(risk))
+    && review.operations.length > 0
+    && review.operations.every(legacyOperationAllowed);
+  return allowed
+    ? { action: 'allow' }
+    : { action: 'escalate', reason: review.analysis.reason ?? 'review required' };
+}
+
+function assessAutoModeCall(
+  toolCall: RunnerToolCall,
+  rulesContext: AutoModeRulesContext,
+): { readonly decision: AutoModeRulesDecision; readonly review: AutoModePermissionReview } {
+  const review = analyzeAutoModeCall(toolCall, rulesContext);
+  return { review, decision: legacyDecision(review) };
+}
+
+function evaluateAutoRulesCall(
+  toolCall: RunnerToolCall,
+  rulesContext: AutoModeRulesContext,
+): AutoModeRulesDecision {
+  return legacyDecision(analyzeAutoModeCall(toolCall, rulesContext));
 }
 
 afterEach(() => {
@@ -2199,6 +2257,23 @@ describe('Auto[rules] deterministic Tier 2', () => {
     });
     expect(assessment.review.operations.every((operation) => operation.kind === 'read'))
       .toBe(true);
+  });
+
+  it('models a global Git config mutation as a host-home write', () => {
+    const projectRoot = createRoot('kodax-auto-rules-project-');
+    const assessment = assessAutoModeCall(
+      call('bash', { command: 'git config --global user.name KodaX' }),
+      context(projectRoot),
+    );
+
+    expect(assessment.decision.action).toBe('escalate');
+    expect(assessment.review).toMatchObject({
+      analysis: { status: 'complete', binding: 'exact' },
+      operations: [{
+        kind: 'write',
+        target: { path: path.join(os.homedir(), '.gitconfig'), boundary: 'protected' },
+      }],
+    });
   });
 
   it.runIf(process.platform === 'win32')(

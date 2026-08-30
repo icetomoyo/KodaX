@@ -190,15 +190,12 @@ option，以及多余参数都会失败且不改变目录。目标位置是所�
 `active_learned` Skill，再选择 **Promote to user catalog**。
 
 首次 setup 会创建并校验 core/MCP/Extensions/A2A 分离配置及带注释模板，不覆盖
-现有配置，也不收集密钥。Auto[LLM] 在 classifier 延迟之前放行可精确建模的普通
-读取及 workspace/temp 变更；classifier 基础设施失败只重试一次，随后按
-Accept-edits 边界降级，绝不切换到 rules。ASRT 是可选执行期 containment，不是
-权限裁决者；`/sandbox` 是显式诊断入口，SDK 宿主也可独立使用 `/sandbox`
-subpath，且不可用时不会静默改为非隔离执行。KodaX 自身的 workspace containment
-会拒绝读取常见的用户主目录凭据路径及完整的已解析 agent home，同时不把普通外部
-读取收窄成 allowlist。详见
+现有配置，也不收集密钥。FEATURE_297 已取代该版本较早的预分类权限路线：sandbox
+成功完成时静默返回，只有可证明的启动前边界才进入 Edits 或 Auto[LLM]；reviewer
+基础设施失败重试一次后阻断并提示更安全路线，不降级权限模式。Workspace
+containment 允许包括 Agent Home、凭据位置和全局 Git 配置在内的广泛宿主读取，仍只
+允许 workspace/系统 TMP 写入，并保留外部网络。详见
 [v0.7.78 设计](docs/features/v0.7.78.md)、
-[发布检查清单](docs/release.md#v0778-release-verification)与
 [SDK 指南第 29–30 节](public_docs/sdk/embedder-guide.md#29-evidence-gated-background-skill-learning-feature_263-v0778)。
 
 本次发布收口同时保证相邻表面不扭曲意图：Edit/Plan 可加载静态 Skill 指令，但不
@@ -207,7 +204,7 @@ subpath，且不可用时不会静默改为非隔离执行。KodaX 自身的 wor
 或推断出的变更才进入可解释的决策；Workflow
 Actor wait 只有在 workflow 显式设置
 deadline 时才超时；embedded、Worker 与 daemon 的 Runtime Auto v4 均声明
-`fallbackPersistsEngine:false`。Actor owner 还会验证 Runtime identity，而不是只看
+同一套仅 Auto[LLM] 合约。Actor owner 还会验证 Runtime identity，而不是只看
 PID，因此 PID 复用不会卡住已崩溃 owner。恢复 Session 选择器也改为显示宿主本地时区。
 
 **v0.7.79 发布**：configured outbound A2A Agent 现在可持久化两项彼此独立、
@@ -459,9 +456,8 @@ v0.7.77 还增加了由宿主显式配置的 Shell Execution Contract。Runtime 
 设置或单次 Run 可以选择 `pwsh`、Windows PowerShell、`cmd`、`bash`、`zsh`
 或 Git Bash 的绝对路径；KodaX 会在实际项目 cwd 中解析 shell 环境，再通过同一
 解释器执行命令。环境缓存按 contract 与 cwd 隔离，使用有界 TTL，也可由宿主显式
-刷新。Provider 凭据与执行控制变量会在加载 profile/setup 前以及实际执行前分别
-过滤；旧的 platform-shell 路径同样会过滤凭据型变量。用户级 `sandbox.envPass`
-明确列出的变量只会在最终命令目标中恢复。没有配置 `shellExecution` 时仍保持原有
+刷新。解析后的宿主环境会由 profile/setup 与最终命令继承；固定的 KodaX/Electron
+执行控制变量会在执行前移除。没有配置 `shellExecution` 时仍保持原有
 解释器路径。详见
 [SDK Embedder Guide 第 28 节](public_docs/sdk/embedder-guide.md#28-host-configurable-shell-execution-contract-v0777)
 与 [Issue 214 回归指南](docs/test-guides/ISSUE_214_v0.7.77_REGRESSION_GUIDE.md)。
@@ -484,24 +480,14 @@ CLI bridge 还会让首个原生 CLI turn 以 fresh 模式启动，只恢复 CLI
 CLI 也会在配置的 deadline 被终止。详见
 [Issue 217 回归指南](docs/test-guides/ISSUE_217_v0.7.77_REGRESSION_GUIDE.md)。
 
-**v0.7.72–v0.7.73 Runtime 权限契约：**Auto Mode 的权限决策由 Runtime Session 持有，
-不再由 UI hook 抢先决定。Runtime 会跨 turn 复用 LLM/rules guardrail，先分类、
-仅在 `escalate` 时创建共享 permission 请求，并持久化显式选择的 engine。
-Session 也可设置 classifier model 和有界 timeout；`auto` 默认使用 LLM
-分类，没有有效 classifier model 时会在调用 provider 或创建审批前返回可恢复配置错误，
-绝不静默退回 rules。v0.7.78 中 classifier 失败会重试一次，再按 Accept-edits
-安全边界降级，绝不把 engine 改为 rules。Runtime 权限请求可给出由 Runtime 生成的精确作用域建议：一次允许、
-本 Session 允许，或（仅安全场景）持久允许；客户端只能回传不透明 suggestion id，不能从
-预览内容自行扩大范围。持久授权由 daemon 持有并通过 revision 管理。没有宿主审批回调时，
-不会向模型暴露 `exit_plan_mode`。完整 SDK 接入见
-[Runtime Auto Mode 指引](public_docs/sdk/embedder-guide.md#24-runtime-owned-auto-mode-and-plan-approval-bridges-v072)。
-
-**v0.7.74 Auto 切换可靠性：**默认用 `Shift+Tab` 在 `Plan -> Edits -> Auto`
-之间循环，`Shift+Enter` 仍用于换行。进入 Auto 时状态栏会立即显示已解析的
-`Auto[LLM]` 或 `Auto[RULES]`，同一 Session 的 Runtime 设置按键入顺序串行提交，
-快速循环不会让较早的异步结果覆盖最后一次选择。`Auto[RULES]` 是手动选择后的
-合法粘性状态；从 v0.7.78 起它只由显式/持久化选择产生。使用
-`/auto-engine llm` 可显式选择 LLM 分类。
+**v0.7.96 权限契约：**权限档位统一为 `Plan -> Edits -> Auto[LLM] -> Full Access`。
+Edits 与 Auto 先尝试 sandbox；成功即静默完成，只有启动前拒绝或 backend 不可用
+才在 Exec Policy 后进入用户/LLM 宿主边界。Full Access 不经过 sandbox 或 reviewer，
+但仍受管理员 forbidden 与窄 critical-effect fallback 约束。旧 `auto-in-project`
+和 Auto[RULES] 状态只做读取兼容并归一到 Auto[LLM]；`/auto-engine` 已移除。
+Reviewer 首次 90 秒，只有 timeout/provider/无效输出会再试一次 180 秒；普通失败
+或具体高风险判断都不会自动弹授权框，而是拒绝本次操作并给 Agent 更安全绕行提示。
+若没有安全绕行，用户可在下一条自然语言指令中给出具体知情授权，随后重新语义复核。
 
 ## 为什么用 KodaX
 
@@ -636,30 +622,17 @@ kodax sandbox setup
   `apt`、`dnf` 或 `pacman` 安装。宿主内核与安全策略还必须允许非特权 user
   namespace；若 backend 无法启动，KodaX 会明确报告，且不会自行修改系统策略。
 
-KodaX 不会自动运行 `sudo` 或系统包管理器。sandbox 未激活时，确定性安全操作与
-Auto[LLM] 的权限体验保持一致，只缺少 OS 级 containment；普通运行不会反复打扰。
+KodaX 不会自动运行 `sudo` 或系统包管理器。Edits 与 Auto[LLM] 会先尝试 sandbox；
+在其中完成的命令静默授权。只有已证明在启动前拒绝或 backend 不可用的精确操作
+才进入对应的宿主边界；可能已经启动的命令绝不在宿主重放。
 在 REPL 中，`/sandbox` 会刷新 ready 状态与诊断，但不会激活 backend 或请求提权。
 逐命令 sandbox 路由属于内部机制，不显示在普通命令历史中。SDK 嵌入方还可通过
 `@kodax-ai/kodax/sandbox` 在 Auto[LLM] 之外独立使用该能力，
 见 [SDK sandbox 指南](public_docs/sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778)。
 
-模型发起的 shell 命令默认会过滤名称形似凭据的环境变量。若要把指定宿主变量
-透传给命令目标（包括 ASRT），只需在用户级 core 配置中列出变量名：
-
-```json
-{
-  "sandbox": {
-    "envPass": ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"]
-  }
-}
-```
-
-默认列表为空；`config.json` 只保存变量名，不保存值，项目配置也不能扩大该列表。
-变量名精确匹配（Windows 不区分大小写），`NODE_OPTIONS`、`BASH_ENV` 等执行控制
-变量即使列入仍会被阻止。修改宿主环境变量或该配置后需重启 KodaX；若使用常驻
-daemon，还需先停止并重新启动 daemon，让它获取新的环境与配置。
-SDK 调用方可按 Run 传入同结构的 `KodaXOptions.sandbox`，并发 Run 无需修改全局配置，
-也可以各自使用不同的变量名列表。
+sandbox shell 默认继承宿主环境和普通开发凭据，并允许外部网络；固定的
+KodaX/Electron 执行控制变量仍会被移除。写入范围保持在 workspace 与系统 TMP，
+宿主读取范围则包含 Agent Home、凭据位置和真实的全局 Git 配置。
 
 Qwen Token Plan 需要选择 `qwen-token-plan` 并使用单独的凭据；`QWEN_API_KEY`
 不能用于该路由：

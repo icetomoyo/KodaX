@@ -287,16 +287,14 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('Job Object');
     expect(sdk).toContain('Issue 256');
 
-    expect(sandbox).toContain('sandbox.envPass');
-    expect(sandbox).toContain('GH_TOKEN');
-    expect(sandbox).toContain('default');
-    expect(sandbox).toContain('KodaXOptions.sandbox');
-    expect(sandbox).toContain('Run-scoped');
+    expect(sandbox).toContain('inherit the host environment');
+    expect(sandbox).toContain('obsolete');
+    expect(sandbox).toContain('Exec Policy');
     expect(sandbox).toContain('case-insensitive PATH/Path');
     expect(sandbox).toContain('verbatim-argument contract');
     expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('Windows sandbox cleanup is self-healing');
-    expect(sandbox).toContain('already-approved normal permission path');
+    expect(sandbox).toContain('profile-specific host boundary');
     expect(sandbox).toContain('only the last owner recovers');
   });
 
@@ -452,7 +450,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('RuntimePermissionMatcher');
     expect(sdk).toContain('runtimeAutoModeGuardrail` v4');
     expect(sdk).toContain('requires v4');
-    expect(sdk).toContain('fallbackPersistsEngine:false');
+    expect(sdk).toContain('never restores a rules engine');
   });
 
   it('documents the v0.7.73 regression closure for legacy grants and effort commands', () => {
@@ -462,7 +460,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(commands).toContain('same native reasoning-effort control');
     expect(commands).toContain('none');
     expect(commands).toContain('quick/balanced/deep');
-    expect(commands).toContain('when configured, the session classifier');
+    expect(commands).toContain('/auto-denials');
     expect(permissions).toContain('Legacy grants without a Runtime-issued matcher');
     expect(permissions).toContain('remain visible and revocable');
     expect(permissions).toMatch(/never\s+authorize a concrete call/);
@@ -544,7 +542,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('runtime.runs.submitInput()');
   });
 
-  it('documents the v0.7.74 resume and Auto mode-switch reliability closures', () => {
+  it('documents the four canonical permission profiles without legacy engine controls', () => {
     const sessions = resolveKodaXManual({ topic: 'sessions' }).content;
     const permissions = resolveKodaXManual({ topic: 'permissions' }).content;
 
@@ -555,8 +553,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(permissions).toContain('Shift-Tab');
     expect(permissions).toContain('Shift+Enter');
     expect(permissions).toContain('Auto[LLM]');
-    expect(permissions).toContain('Auto[RULES]');
-    expect(permissions).toContain('/auto-engine llm');
+    expect(permissions).toContain('Full Access');
+    expect(permissions).not.toContain('Auto[RULES]');
+    expect(permissions).not.toContain('/auto-engine');
   });
 
   it('keeps the SDK topic aligned with current published subpaths', () => {
@@ -595,13 +594,13 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('AggregateError members');
   });
 
-  it('documents the v0.7.78 sensitive-home workspace containment boundary', () => {
+  it('documents the v0.7.96 broad-read workspace containment boundary', () => {
     const content = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(content).toContain('common home credential paths');
-    expect(content).toMatch(/complete\s+resolved agent home/);
-    expect(content).toContain('cannot reopen a denied subtree');
-    expect(content).toMatch(/ordinary\s+external reads/);
+    expect(content).toContain('broad host reads');
+    expect(content).toContain('Agent Home');
+    expect(content).toContain('global Git configuration');
+    expect(content).toContain('workspace/system temp');
   });
 
   it('documents the split integration configuration instead of legacy core fields', () => {

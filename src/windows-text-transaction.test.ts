@@ -325,6 +325,18 @@ describe('Windows trusted text transaction integration', () => {
     expect(() => assertTrustedTextMutationPolicy(path.join(agentHome, 'config.json')))
       .not.toThrow();
     expect(() => assertTrustedTextMutationPolicy(path.join(agentHome, 'runtime', 'daemon.json')))
+      .not.toThrow();
+  });
+
+  it('protects an explicitly trusted project Exec Policy from text-tool mutation', () => {
+    const policyPath = path.join(root, '.kodax', 'exec-policy.jsonc');
+
+    expect(() => assertTrustedTextMutationPolicy(policyPath, root, [policyPath]))
       .toThrow(/protected KodaX state/i);
+    expect(() => assertTrustedTextMutationPolicy(
+      path.join(root, '.kodax', 'config.json'),
+      root,
+      [policyPath],
+    )).not.toThrow();
   });
 });

@@ -14,7 +14,7 @@
  *
  * The historical Tier 0 detector for `~/.kodax/` writes is a separate
  * module. In Auto[LLM] both its match and this protected_path signal are
- * facts for the classifier; explicit Auto[Rules] retains the legacy gate.
+ * facts for the classifier.
  *
  * Purity: deterministic given `call.input.path` + `projectRoot` + stable
  * env (KODAX_HOME, system temp). `getAgentConfigHome()` and `os.tmpdir()`

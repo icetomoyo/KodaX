@@ -1,3 +1,5 @@
+import type { ExecPolicyRule } from '@kodax-ai/coding';
+
 export interface RuntimeWorkerBootstrapOptions {
   readonly homeDir?: string;
   readonly profile?: string;
@@ -8,6 +10,14 @@ export interface RuntimeWorkerBootstrapOptions {
   readonly userInputTimeoutMs?: number;
   /** Worker-owner bootstrap permission to load the configured outbound A2A integration. */
   readonly configuredA2A?: boolean;
+  readonly execPolicy?: {
+    readonly adminRules?: readonly ExecPolicyRule[];
+    readonly trustedProjectRoots?: readonly string[];
+  };
+  readonly autoReview?: {
+    readonly administratorPolicy?: string;
+    readonly modelGuidance?: string;
+  };
 }
 
 export interface RuntimeWorkerResourceLimits {

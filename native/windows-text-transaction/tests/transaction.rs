@@ -12,12 +12,26 @@ use tempfile::TempDir;
 fn tempdir() -> std::io::Result<TempDir> {
     let base = match std::env::var_os("KODAX_NATIVE_TEST_TEMP") {
         Some(base) => std::path::PathBuf::from(base),
-        None => std::env::current_dir()?,
+        None => std::env::temp_dir(),
     };
     fs::create_dir_all(&base)?;
     tempfile::Builder::new()
         .prefix("kodax-text-integration-")
         .tempdir_in(base)
+}
+
+#[test]
+fn native_fixtures_default_to_the_system_temp_tree() {
+    if std::env::var_os("KODAX_NATIVE_TEST_TEMP").is_some() {
+        return;
+    }
+    let directory = tempdir().unwrap();
+    assert!(directory.path().starts_with(std::env::temp_dir()));
+    assert!(
+        !directory
+            .path()
+            .starts_with(std::env::current_dir().unwrap())
+    );
 }
 
 fn as_text(path: &std::path::Path) -> String {

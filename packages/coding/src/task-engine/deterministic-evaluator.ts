@@ -37,8 +37,6 @@ import {
 } from '../shell-execution/resolver.js';
 import {
   hardenShellCommandEnvironment,
-  normalizeSandboxEnvironmentPass,
-  parseSandboxEnvironmentPass,
 } from '../shell-execution/environment.js';
 
 export type DeterministicEvaluatorHint = 'build' | 'test' | 'lint';
@@ -64,8 +62,6 @@ export interface RunDeterministicEvaluatorInput {
   readonly shellExecution?: KodaXShellExecutionContract;
   /** Session scratch identity used to isolate resolved environment cache entries. */
   readonly sessionScratchDir?: string;
-  /** Exact non-standard Provider credential variables to remove. */
-  readonly providerCredentialEnvironmentNames?: readonly string[];
   /** Run-scoped command-target environment policy supplied by the SDK host. */
   readonly sandbox?: KodaXSandboxOptions;
   /** Timeout in milliseconds. Default 90 000 (90s). */
@@ -142,9 +138,6 @@ export async function runDeterministicEvaluator(
   const command = defaultCommandFor(input);
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const startedAt = Date.now();
-  const environmentPass = input.sandbox === undefined
-    ? parseSandboxEnvironmentPass(process.env.KODAX_SANDBOX_ENV_PASS)
-    : normalizeSandboxEnvironmentPass(input.sandbox.envPass);
   const fallbackEnvironmentSource = input.sessionScratchDir === undefined
     ? process.env
     : { ...process.env, KODAX_SESSION_TMP: input.sessionScratchDir };
@@ -152,9 +145,6 @@ export async function runDeterministicEvaluator(
     fallbackEnvironmentSource,
     process.platform === 'win32' ? 'cmd' : 'bash',
     process.platform,
-    input.providerCredentialEnvironmentNames,
-    input.cwd,
-    environmentPass,
   );
   let configuredInvocation:
     | ReturnType<typeof createShellCommandInvocation>
@@ -165,13 +155,8 @@ export async function runDeterministicEvaluator(
         input.shellExecution,
         input.cwd,
         input.sessionScratchDir,
-        input.providerCredentialEnvironmentNames,
       );
-      configuredInvocation = createShellCommandInvocation(
-        resolved,
-        command,
-        environmentPass,
-      );
+      configuredInvocation = createShellCommandInvocation(resolved, command);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {

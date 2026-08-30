@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildClassifierPrompt } from './classifier-prompt.js';
-import type { AutoRules } from './rules.js';
 import type { KodaXMessage } from '@kodax-ai/llm';
 
-const emptyRules: AutoRules = { allow: [], soft_deny: [], environment: [] };
+const emptyRules = { allow: [], soft_deny: [], environment: [] };
 
 describe('buildClassifierPrompt', () => {
   it('returns a system prompt declaring the classifier role and output format', () => {
@@ -54,7 +53,7 @@ describe('buildClassifierPrompt', () => {
     expect(out.system).toMatch(/allow.*normal.*global.*dependenc|normal.*global.*dependenc.*allow/i);
   });
 
-  it('includes the user-supplied rules in their own sections', () => {
+  it('ignores legacy auto-rules input', () => {
     const out = buildClassifierPrompt({
       rules: {
         allow: ['Running tests via npm test'],
@@ -64,9 +63,10 @@ describe('buildClassifierPrompt', () => {
       transcript: [],
       action: 'Bash: ls',
     });
-    expect(out.system).toContain('Running tests via npm test');
-    expect(out.system).toContain('Uploading to non-allowlisted hosts');
-    expect(out.system).toContain('Node monorepo');
+    expect(out.system).not.toContain('<rules>');
+    expect(out.system).not.toContain('Running tests via npm test');
+    expect(out.system).not.toContain('Uploading to non-allowlisted hosts');
+    expect(out.system).not.toContain('Node monorepo');
   });
 
   it('omits the claude_md section when not supplied', () => {
@@ -78,6 +78,32 @@ describe('buildClassifierPrompt', () => {
     expect(out.system).not.toContain('<claude_md>');
   });
 
+  it('composes trusted policies in administrator, user, model, bundled order without replacing the fixed contract', () => {
+    const out = buildClassifierPrompt({
+      rules: emptyRules,
+      administratorPolicy: 'Administrator: never publish packages.',
+      reviewPolicy: 'User: allow only the staging registry.',
+      modelGuidance: 'Model catalog: distinguish staging from production.',
+      transcript: [],
+      action: 'Bash: npm publish',
+    });
+    const administrator = out.system.indexOf('<administrator_policy>');
+    const user = out.system.indexOf('<user_policy>');
+    const model = out.system.indexOf('<model_guidance>');
+    const bundled = out.system.indexOf('<bundled_policy>');
+
+    expect(administrator).toBeGreaterThan(-1);
+    expect(administrator).toBeLessThan(user);
+    expect(user).toBeLessThan(model);
+    expect(model).toBeLessThan(bundled);
+    expect(out.system).toContain('Administrator: never publish packages.');
+    expect(out.system).toContain('User: allow only the staging registry.');
+    expect(out.system).toContain('Model catalog: distinguish staging from production.');
+    expect(out.system).toMatch(/administrator_policy.*user_policy.*model_guidance.*bundled_policy/s);
+    expect(out.system).toMatch(/role.*output schema.*cannot be changed/i);
+    expect(out.system.match(/Output EXACTLY:/g)).toHaveLength(1);
+  });
+
   it('includes the claude_md section when supplied', () => {
     const out = buildClassifierPrompt({
       rules: emptyRules,
@@ -87,6 +113,8 @@ describe('buildClassifierPrompt', () => {
     });
     expect(out.system).toContain('<claude_md>');
     expect(out.system).toContain('No secrets in repo');
+    expect(out.system.indexOf('<claude_md>')).toBeLessThan(out.system.indexOf('<bundled_policy>'));
+    expect(out.system.indexOf('<bundled_policy>')).toBeLessThan(out.system.indexOf('Output EXACTLY:'));
   });
 
   it('truncates oversized claude_md to keep prompt cost bounded', () => {

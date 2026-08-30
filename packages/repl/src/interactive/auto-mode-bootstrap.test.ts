@@ -2,12 +2,10 @@
  * Hermetic tests for `bootstrapAutoMode` — FEATURE_092 phase 2b.7b.
  *
  * No real LLM, no real tool registry mutation. We exercise the wiring:
- *   - `loadAutoRules` is invoked with `userKodaxDir` + `projectRoot`
+ *   - startup does not read legacy auto-rules files
  *   - the guardrail is constructed lazily on first `getGuardrail()` call
  *   - subsequent calls return the SAME instance (state is shared)
- *   - the askUser bridge invokes `confirmToolExecution` and translates
- *     the `confirmed` flag into the AutoModeAskUserVerdict the guardrail
- *     expects
+ *   - legacy askUser input remains accepted but is not forwarded
  *
  * The guardrail's own behavior (Tier 1, classifier, denial fallback,
  * circuit breaker) is covered by `packages/coding/src/guardrails/auto-mode/
@@ -15,23 +13,12 @@
  * so here we only verify wiring.
  */
 
-import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { GuardrailContext } from '@kodax-ai/agent';
 
-// `bootstrapAutoMode` calls `loadAutoRules` against the real filesystem.
-// We mock it to return an empty merge so the test doesn't depend on the
-// developer's `~/.kodax/auto-rules.jsonc` (it doesn't exist in CI).
 vi.mock('@kodax-ai/coding', async () => {
   const actual = await vi.importActual<typeof import('@kodax-ai/coding')>('@kodax-ai/coding');
   return {
     ...actual,
-    loadAutoRules: vi.fn(async () => ({
-      merged: { allow: [], soft_deny: [], environment: [] },
-      sources: [],
-      skipped: [],
-      errors: [],
-    })),
     formatAgentsForPrompt: vi.fn(() => ''),
     // Issue 143 (WS3): wrap the real factory in a capturing spy (still delegates
     // to the real implementation, so guardrail behavior is unchanged) so wiring
@@ -50,7 +37,6 @@ import {
   createCircuitBreaker,
   type AutoModeSharedState,
 } from '@kodax-ai/coding';
-import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js';
 
 const baseDeps = () => ({
   askUser: vi.fn(async () => 'allow' as const),
@@ -60,23 +46,17 @@ const baseDeps = () => ({
   getCurrentModel: () => 'kimi-for-coding',
   getCurrentPermissionMode: () => 'auto' as const,
   autoModeSettings: {
-    engine: 'llm' as const,
     classifierModel: undefined,
     classifierModelEnv: undefined,
-    timeoutMs: undefined,
   },
 });
 
 describe('bootstrapAutoMode', () => {
-  it('returns rulesLoadResult and a getGuardrail factory', async () => {
+  it('returns lazy guardrail and turn-reset seams', async () => {
     const result = await bootstrapAutoMode(baseDeps());
-    expect(result.rulesLoadResult).toBeDefined();
-    expect(result.rulesLoadResult.merged).toEqual({
-      allow: [],
-      soft_deny: [],
-      environment: [],
-    });
+    expect(Object.keys(result)).toEqual(['getGuardrail', 'resetTurn']);
     expect(typeof result.getGuardrail).toBe('function');
+    expect(typeof result.resetTurn).toBe('function');
   });
 
   it('getGuardrail returns the same instance on repeated calls (state-sharing)', async () => {
@@ -88,7 +68,6 @@ describe('bootstrapAutoMode', () => {
 
   it('forwards a Runtime-owned Session state into context-specific guardrails', async () => {
     const sharedState: AutoModeSharedState = {
-      engine: 'llm',
       denials: createAutoModeDenialTracker(),
       breaker: createCircuitBreaker(),
     };
@@ -97,6 +76,20 @@ describe('bootstrapAutoMode', () => {
 
     const config = vi.mocked(createAutoModeToolGuardrail).mock.calls.at(-1)?.[0];
     expect(config?.sharedState).toBe(sharedState);
+  });
+
+  it('resets denial thresholds between turns without clearing breaker health', async () => {
+    const sharedState: AutoModeSharedState = {
+      denials: { consecutive: 2, cumulative: 4, recent: [true, true] },
+      breaker: { timestamps: [123] },
+    };
+    const result = await bootstrapAutoMode({ ...baseDeps(), sharedState });
+    result.getGuardrail();
+
+    result.resetTurn();
+
+    expect(sharedState.denials).toEqual({ consecutive: 0, cumulative: 0, recent: [] });
+    expect(sharedState.breaker.timestamps).toEqual([123]);
   });
 
   it('forwards shell environment path-expansion trust to the analyzer context', async () => {
@@ -117,113 +110,11 @@ describe('bootstrapAutoMode', () => {
     expect(g.name).toBe('auto-mode');
   });
 
-  it('starts in llm engine (not pre-downgraded) when autoModeSettings.engine="llm"', async () => {
+  it('does not expose the removed selectable engine surface', async () => {
     const result = await bootstrapAutoMode(baseDeps());
     const g = result.getGuardrail();
-    expect(g.getEngineForTest()).toBe('llm');
-  });
-
-  it('starts in rules engine when autoModeSettings.engine="rules" (slice C wiring)', async () => {
-    const result = await bootstrapAutoMode({
-      ...baseDeps(),
-      autoModeSettings: {
-        engine: 'rules' as const,
-        classifierModel: undefined,
-        classifierModelEnv: undefined,
-        timeoutMs: undefined,
-      },
-    });
-    const g = result.getGuardrail();
-    expect(g.getEngineForTest()).toBe('rules');
-  });
-
-  it('wires Runtime-owned Tier 2 so an in-workspace edit in rules mode needs no prompt', async () => {
-    const projectRoot = createTempDirSync('kodax-bootstrap-rules-', process.cwd());
-    const askUser = vi.fn(async () => 'allow' as const);
-    try {
-      const result = await bootstrapAutoMode({
-        ...baseDeps(),
-        askUser,
-        projectRoot,
-        executionCwd: projectRoot,
-        autoModeSettings: { engine: 'rules' as const },
-      });
-      const verdict = await result.getGuardrail().beforeTool!(
-        { id: 'edit-1', name: 'edit', input: { path: 'src/inside.ts' } },
-        {
-          agent: { name: 'test', instructions: '' } as GuardrailContext['agent'],
-          abortSignal: new AbortController().signal,
-        },
-      );
-
-      expect(verdict.action).toBe('allow');
-      expect(askUser).not.toHaveBeenCalled();
-    } finally {
-      removeTempDirSync(projectRoot);
-    }
-  });
-
-  it('uses trusted side-effect metadata for read-only and contained internal tools', async () => {
-    const projectRoot = createTempDirSync('kodax-bootstrap-rules-', process.cwd());
-    const askUser = vi.fn(async () => 'allow' as const);
-    try {
-      const result = await bootstrapAutoMode({
-        ...baseDeps(),
-        askUser,
-        projectRoot,
-        executionCwd: projectRoot,
-        autoModeSettings: { engine: 'rules' as const },
-      });
-      const guardrail = result.getGuardrail();
-      for (const name of [
-        'web_search',
-        'web_fetch',
-        'mcp_read_resource',
-        'mcp_get_prompt',
-        'spawn_agent',
-      ]) {
-        const verdict = await guardrail.beforeTool!(
-          { id: `declared-${name}`, name, input: {} },
-          {
-            agent: { name: 'test', instructions: '' } as GuardrailContext['agent'],
-            abortSignal: new AbortController().signal,
-          },
-        );
-        expect(verdict.action, name).toBe('allow');
-      }
-      expect(askUser).not.toHaveBeenCalled();
-    } finally {
-      removeTempDirSync(projectRoot);
-    }
-  });
-
-  it('keeps an out-of-workspace edit behind confirmation without falsely calling rules a downgrade', async () => {
-    const projectRoot = createTempDirSync('kodax-bootstrap-rules-', process.cwd());
-    const outsideRoot = createTempDirSync('kodax-bootstrap-outside-', process.cwd());
-    const askUser = vi.fn(async () => 'allow' as const);
-    try {
-      const result = await bootstrapAutoMode({
-        ...baseDeps(),
-        askUser,
-        projectRoot,
-        executionCwd: projectRoot,
-        autoModeSettings: { engine: 'rules' as const },
-      });
-      const verdict = await result.getGuardrail().beforeTool!(
-        { id: 'edit-2', name: 'edit', input: { path: path.join(outsideRoot, 'outside.ts') } },
-        {
-          agent: { name: 'test', instructions: '' } as GuardrailContext['agent'],
-          abortSignal: new AbortController().signal,
-        },
-      );
-
-      expect(verdict.action).toBe('allow');
-      expect(askUser).toHaveBeenCalledOnce();
-      expect(askUser.mock.calls[0]?.[1]).not.toMatch(/downgraded/i);
-    } finally {
-      removeTempDirSync(projectRoot);
-      removeTempDirSync(outsideRoot);
-    }
+    expect(g).not.toHaveProperty('getEngine');
+    expect(g).not.toHaveProperty('setEngine');
   });
 
   it('does not eagerly construct the guardrail (lazy on first getGuardrail)', async () => {
@@ -232,7 +123,6 @@ describe('bootstrapAutoMode', () => {
     // `getGuardrail()` is called. Verifying laziness directly is hard
     // without exposing internals; we settle for the weaker assertion
     // that `result.getGuardrail` is callable and returns an object —
-    // and that the FIRST call gives us `engine: 'llm'` (a fresh state),
     // confirming the constructor ran exactly once.
     expect(result.getGuardrail).toBeDefined();
     const g1 = result.getGuardrail();
@@ -275,27 +165,51 @@ describe('bootstrapAutoMode', () => {
     expect(getCurrentProviderName()).toBe('glm-coding');
   });
 
-  it('Issue 143 WS3: forwards autoModeSettings.speculativeWindowMs to the guardrail config', async () => {
+  it('does not forward legacy timeout or speculative-window inputs', async () => {
     const result = await bootstrapAutoMode({
       ...baseDeps(),
       autoModeSettings: {
-        engine: 'llm' as const,
         classifierModel: undefined,
         classifierModelEnv: undefined,
-        timeoutMs: undefined,
-        speculativeWindowMs: 1500,
       },
     });
     result.getGuardrail(); // trigger lazy construction
     const cfg = vi.mocked(createAutoModeToolGuardrail).mock.calls.at(-1)?.[0];
-    expect(cfg?.speculativeWindowMs).toBe(1500);
+    expect(cfg?.speculativeWindowMs).toBeUndefined();
+    expect(cfg?.timeoutMs).toBeUndefined();
+    expect(cfg?.askUser).toBeUndefined();
   });
 
-  it('Issue 143 WS3: omitted speculativeWindowMs forwards undefined (guardrail uses its 500 default)', async () => {
-    const result = await bootstrapAutoMode(baseDeps());
+  it('forwards the optional fixed reviewer policy to the guardrail', async () => {
+    const result = await bootstrapAutoMode({
+      ...baseDeps(),
+      autoModeSettings: {
+        ...baseDeps().autoModeSettings,
+        reviewPolicy: 'Never publish packages from this machine.',
+      },
+    });
     result.getGuardrail();
     const cfg = vi.mocked(createAutoModeToolGuardrail).mock.calls.at(-1)?.[0];
-    expect(cfg?.speculativeWindowMs).toBeUndefined();
+    expect(cfg?.reviewPolicy).toBe('Never publish packages from this machine.');
+  });
+
+  it('keeps trusted administrator and model guidance separate from the user policy', async () => {
+    const result = await bootstrapAutoMode({
+      ...baseDeps(),
+      administratorPolicy: 'Administrator policy.',
+      modelGuidance: 'Selected model catalog guidance.',
+      autoModeSettings: {
+        ...baseDeps().autoModeSettings,
+        reviewPolicy: 'User config policy.',
+      },
+    });
+    result.getGuardrail();
+    const cfg = vi.mocked(createAutoModeToolGuardrail).mock.calls.at(-1)?.[0];
+    expect(cfg).toMatchObject({
+      administratorPolicy: 'Administrator policy.',
+      reviewPolicy: 'User config policy.',
+      modelGuidance: 'Selected model catalog guidance.',
+    });
   });
 
   it('forwards an empty live model to the common guardrail without bootstrap-side effects', async () => {
