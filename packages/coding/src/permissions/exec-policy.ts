@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseBashCommand } from './bash-ast.js';
@@ -8,7 +9,16 @@ export type ExecPolicyCriticalEffect =
   | 'rm_rf_root'
   | 'mkfs_or_format'
   | 'dd_disk_write'
-  | 'fork_bomb';
+  | 'fork_bomb'
+  | 'uninspectable_nested_shell';
+
+type NestedShellCommand =
+  | { readonly kind: 'command'; readonly command: string; readonly hostExecutable: string }
+  | { readonly kind: 'opaque'; readonly reason: string }
+  | { readonly kind: 'invalid'; readonly reason: string }
+  | { readonly kind: 'none' };
+
+const MAX_POWERSHELL_ENCODED_COMMAND_CHARS = 128 * 1024;
 
 export interface ExecPolicyRule {
   readonly prefix: readonly (string | readonly string[])[];
@@ -179,9 +189,11 @@ function evaluateOperation(
   }
 
   if (critical !== undefined) {
-    const exactAllow = matched.find(
-      (rule) => rule.decision === 'allow' && rule.prefix.length === operation.tokens.length,
-    );
+    const exactAllow = critical === 'uninspectable_nested_shell'
+      ? undefined
+      : matched.find(
+        (rule) => rule.decision === 'allow' && rule.prefix.length === operation.tokens.length,
+      );
     const stricter = matched.find((rule) => rule.decision !== 'allow');
     if (stricter !== undefined) return decisionResult(stricter, matched, true);
     if (exactAllow !== undefined) return decisionResult(exactAllow, matched, false);
@@ -294,16 +306,29 @@ function evaluateNestedAdministratorForbidden(
   if (wrapped !== undefined) appendTokens(wrapped, compound);
 
   const executable = executableName(tokens[0] ?? '');
-  const nestedCommand = nestedShellCommand(executable, tokens.slice(1));
-  if (nestedCommand !== undefined) {
-    const tree = parseBashCommand(nestedCommand);
+  const nested = nestedShellCommand(executable, tokens.slice(1));
+  if (nested.kind === 'command') {
+    const tree = parseBashCommand(nested.command);
     if (!tree.unparseable) {
       const stages = tree.statements.flatMap((statement) => statement.stages);
       const nestedCompound = compound || tree.statements.length > 1 || stages.length > 1;
       for (const stage of stages) {
-        appendTokens(normalizeHostShellTokens(stage.argv, executable), nestedCompound);
+        appendTokens(normalizeHostShellTokens(stage.argv, nested.hostExecutable), nestedCompound);
       }
+    } else if (
+      rules.some((rule) => rule.source === 'admin' && rule.decision === 'forbidden')
+    ) {
+      const fallback = opaqueNestedShellFallbackRule(
+        `${executable} command syntax is not inspectable.`,
+      );
+      evaluations.push(decisionResult(fallback, [fallback], true));
     }
+  } else if (
+    nested.kind === 'opaque'
+    && rules.some((rule) => rule.source === 'admin' && rule.decision === 'forbidden')
+  ) {
+    const fallback = opaqueNestedShellFallbackRule(nested.reason);
+    evaluations.push(decisionResult(fallback, [fallback], true));
   }
   return evaluations;
 }
@@ -732,10 +757,11 @@ function criticalEffect(
   const args = tokens.slice(1);
   const wrapped = wrappedCommandTokens(tokens);
   if (wrapped !== undefined) return criticalEffect(wrapped);
-  const nestedCommand = nestedShellCommand(executable, args);
-  if (nestedCommand !== undefined) {
-    return criticalEffectInCommand(nestedCommand, executable);
+  const nested = nestedShellCommand(executable, args);
+  if (nested.kind === 'command') {
+    return criticalEffectInCommand(nested.command, nested.hostExecutable);
   }
+  if (nested.kind === 'invalid') return 'uninspectable_nested_shell';
   if (executable === 'rm' && hasRecursiveAndForceFlags(args)) {
     return args.some((token) => isRootRemovalTarget(token)) ? 'rm_rf_root' : undefined;
   }
@@ -767,17 +793,113 @@ function criticalEffect(
 function nestedShellCommand(
   executable: string,
   args: readonly string[],
-): string | undefined {
-  const lowerArgs = args.map((arg) => arg.toLowerCase());
-  const shellFlag = ['bash', 'bash.exe', 'sh', 'sh.exe', 'zsh', 'zsh.exe', 'dash']
-    .includes(executable)
-    ? lowerArgs.findIndex((arg) => /^-[^-]*c/u.test(arg))
-    : ['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(executable)
-      ? lowerArgs.findIndex((arg) => arg === '-command' || arg === '-c')
-      : ['cmd', 'cmd.exe'].includes(executable)
-        ? lowerArgs.findIndex((arg) => arg === '/c')
-        : -1;
-  return shellFlag >= 0 ? args[shellFlag + 1] : undefined;
+): NestedShellCommand {
+  if (['bash', 'bash.exe', 'sh', 'sh.exe', 'zsh', 'zsh.exe', 'dash'].includes(executable)) {
+    const index = args.findIndex((arg) => /^-[^-]*c/u.test(arg.toLowerCase()));
+    if (index < 0) return { kind: 'none' };
+    const command = args[index + 1];
+    return command === undefined || command.length === 0
+      ? { kind: 'invalid', reason: `${executable} command selector has no command.` }
+      : { kind: 'command', command, hostExecutable: executable };
+  }
+  if (['cmd', 'cmd.exe'].includes(executable)) return nestedCmdCommand(executable, args);
+  if (['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(executable)) {
+    return nestedPowerShellCommand(executable, args);
+  }
+  return { kind: 'none' };
+}
+
+function nestedCmdCommand(
+  executable: string,
+  args: readonly string[],
+): NestedShellCommand {
+  const index = args.findIndex((arg) => /^\/[ck]/iu.test(arg));
+  if (index < 0) return { kind: 'none' };
+  const attached = args[index]!.slice(2);
+  const command = [attached, ...args.slice(index + 1)].filter(Boolean).join(' ');
+  return command.length === 0
+    ? { kind: 'invalid', reason: `${executable} command selector has no command.` }
+    : { kind: 'command', command, hostExecutable: executable };
+}
+
+function nestedPowerShellCommand(
+  executable: string,
+  args: readonly string[],
+): NestedShellCommand {
+  for (let index = 0; index < args.length; index += 1) {
+    const selector = powerShellCommandSelector(args[index]!);
+    if (selector === undefined) continue;
+    const payload = args[index + 1];
+    if (payload === undefined || payload.length === 0) {
+      return { kind: 'invalid', reason: `${executable} ${args[index]} has no command.` };
+    }
+    if (selector === 'file' || payload === '-') {
+      return { kind: 'opaque', reason: `${executable} command content is not inspectable.` };
+    }
+    if (selector === 'encoded') {
+      const decoded = decodePowerShellCommand(payload);
+      return decoded === undefined
+        ? { kind: 'invalid', reason: `${executable} encoded command is invalid.` }
+        : { kind: 'command', command: decoded, hostExecutable: executable };
+    }
+    return {
+      kind: 'command',
+      command: args.slice(index + 1).join(' '),
+      hostExecutable: executable,
+    };
+  }
+  return args.some((arg) => !arg.startsWith('-') && !arg.startsWith('/'))
+    ? { kind: 'opaque', reason: `${executable} script content is not inspectable.` }
+    : { kind: 'none' };
+}
+
+function powerShellCommandSelector(
+  token: string,
+): 'plain' | 'encoded' | 'file' | undefined {
+  if (!token.startsWith('-') && !token.startsWith('/')) return undefined;
+  const name = token.slice(1).toLowerCase();
+  if (name.length === 0) return undefined;
+  if (name === 'cwa' || name === 'commandwithargs') return 'plain';
+  if ('command'.startsWith(name)) return 'plain';
+  if ('encodedcommand'.startsWith(name)) return 'encoded';
+  if ('file'.startsWith(name)) return 'file';
+  return undefined;
+}
+
+function decodePowerShellCommand(value: string): string | undefined {
+  if (
+    value.length === 0
+    || value.length > MAX_POWERSHELL_ENCODED_COMMAND_CHARS
+    || value.length % 4 !== 0
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) return undefined;
+  const bytes = Buffer.from(value, 'base64');
+  if (
+    bytes.length === 0
+    || bytes.length % 2 !== 0
+    || bytes.toString('base64') !== value
+  ) return undefined;
+  const command = bytes.toString('utf16le');
+  return command.trim().length > 0
+    && !command.includes('\0')
+    && validUtf16(command)
+    && Buffer.from(command, 'utf16le').equals(bytes)
+    ? command
+    : undefined;
+}
+
+function validUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function criticalEffectInCommand(
@@ -786,7 +908,7 @@ function criticalEffectInCommand(
 ): ExecPolicyCriticalEffect | undefined {
   if (isForkBomb(command)) return 'fork_bomb';
   const tree = parseBashCommand(command);
-  if (tree.unparseable) return undefined;
+  if (tree.unparseable) return 'uninspectable_nested_shell';
   for (const statement of tree.statements) {
     for (const stage of statement.stages) {
       const effect = criticalEffect(normalizeHostShellTokens(stage.argv, hostExecutable));
@@ -836,6 +958,7 @@ function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule 
     mkfs_or_format: 'Unmatched command formats or repartitions a block device.',
     dd_disk_write: 'Unmatched command writes raw bytes directly to a block device.',
     fork_bomb: 'Unmatched command can exhaust host process and CPU resources.',
+    uninspectable_nested_shell: 'Nested shell command syntax cannot be inspected safely.',
   };
   return {
     prefix: [],
@@ -843,6 +966,16 @@ function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule 
     justification: justification[effect],
     source: 'bundled',
     sourcePath: `builtin:critical-effects/${effect}`,
+  };
+}
+
+function opaqueNestedShellFallbackRule(reason: string): ExecPolicyRule {
+  return {
+    prefix: [],
+    decision: 'forbidden',
+    justification: `Administrator forbidden policy cannot inspect this nested shell: ${reason}`,
+    source: 'bundled',
+    sourcePath: 'builtin:admin-forbidden/opaque-nested-shell',
   };
 }
 

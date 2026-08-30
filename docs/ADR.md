@@ -5971,9 +5971,17 @@ evaluated for host execution, not before every sandbox attempt. Broad sandbox
 reads, workspace and system-TMP writes, external network, and the inherited
 host environment are normal. `sandbox.envPass`, Auto[RULES], `/auto-engine`,
 legacy auto-rules loading/trust, helper-script bans, Agent-Home/credential read
- denials, and global-Git disabling are removed. Legacy rules files are ignored
- without parsing or migration; legacy Rules-engine selections normalize to
- Auto[LLM] and never to Full Access.
+denials, and global-Git disabling are removed. Legacy rules files are ignored
+without parsing or migration; legacy Rules-engine selections normalize to
+Auto[LLM] and never to Full Access.
+
+Administrator forbids are recursively checked through recognized shell entry
+forms, including `cmd /C`/`/K`, PowerShell command selectors and abbreviations,
+and strictly decoded UTF-16LE `EncodedCommand` payloads. An invalid nested
+selector is a non-overridable critical fallback. A script body that cannot be
+inspected is denied whenever an administrator forbid exists; the administrator
+must explicitly admit the interpreter surface instead of relying on a hidden
+inner-command exception.
 
 Windows request policy no longer carries a redundant deny on the protected
 native artifact cache. Historical cache-root deny residues are preserved:

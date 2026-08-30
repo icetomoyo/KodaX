@@ -48,6 +48,12 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 4. Confirm a partial allow does not override a critical compound command.
 5. Confirm every statement and pipeline stage of a compound command is evaluated.
 6. Confirm project policy is ignored until that exact canonical project root is trusted by the host.
+7. Add an administrator `forbidden ["git", "push"]` rule and confirm it also
+   blocks `cmd /K`, `cmd /S /K`, PowerShell command abbreviations, and valid
+   UTF-16LE `EncodedCommand` forms that invoke `git push`.
+8. Confirm malformed encoded commands and uninspectable PowerShell script
+   bodies fail closed when administrator forbids exist, while `echo git push`
+   and `echo cmd /k git push` remain ordinary unmatched arguments.
 
 ## Environment, Filesystem, and Network
 

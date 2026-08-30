@@ -36,6 +36,11 @@ All notable changes to this project will be documented in this file.
 - Removed the shell-tool fallback that could execute unsandboxed after native
   sandbox bootstrap and termination both failed. The boundary is now explicit,
   policy-reviewed, and single-attempt.
+- Closed administrator Exec Policy bypasses through nested Windows shells.
+  `cmd /C` and `/K`, PowerShell command selectors/abbreviations, and strict
+  UTF-16LE `EncodedCommand` payloads are recursively evaluated; invalid or
+  policy-opaque nested execution fails closed where an administrator forbid
+  must remain absolute.
 - Added an exact Windows migration for obsolete KodaX sandbox-account read-deny
   ACL entries while preserving unrelated administrator ACLs. Native requests
   also stop adding the protected artifact cache as a redundant `denyWrite`

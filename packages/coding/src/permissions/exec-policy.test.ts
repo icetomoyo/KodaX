@@ -228,10 +228,21 @@ describe('FEATURE_297 Exec Policy', () => {
     'sudo sudo sudo sudo sudo git push',
     'bash -c "git push"',
     'cmd /c "git push"',
+    'cmd /k "git push"',
+    'cmd /d /s /K git push',
+    'cmd /cgit push',
     'cmd /c "g^it push"',
     'cmd /c "call g^it push"',
     'cmd /c "start \"\" /wait g^it push"',
     'powershell -Command "git push"',
+    'powershell -c git push',
+    'powershell -co git push',
+    'powershell -com git push',
+    'powershell -comm git push',
+    'powershell -comma git push',
+    'powershell -comman git push',
+    'pwsh -CommandWithArgs git push',
+    'pwsh -cwa git push',
     'bash -c "git push" $(echo ignored)',
   ])('recursively applies administrator forbidden rules to %s', (command) => {
     const adminForbid = {
@@ -242,6 +253,104 @@ describe('FEATURE_297 Exec Policy', () => {
     expect(evaluateShellExecPolicy(command, [adminForbid]).decision).toBe('forbidden');
   });
 
+  it.each([
+    '-e',
+    '-ec',
+    '-en',
+    '-enc',
+    '-enco',
+    '-encod',
+    '-encode',
+    '-encoded',
+    '-encodedc',
+    '-encodedco',
+    '-encodedcom',
+    '-encodedcomm',
+    '-encodedcomma',
+    '-encodedcomman',
+    '-EncodedCommand',
+  ])(
+    'decodes PowerShell %s payloads before administrator policy evaluation',
+    (selector) => {
+      const adminForbid = {
+        ...rule(['git', 'push'], 'forbidden'),
+        source: 'admin' as const,
+      };
+      const encoded = Buffer.from('git push', 'utf16le').toString('base64');
+
+      expect(evaluateShellExecPolicy(
+        `powershell ${selector} ${encoded}`,
+        [adminForbid],
+      ).decision).toBe('forbidden');
+    },
+  );
+
+  it('applies critical-effect fallback inside an encoded PowerShell command', () => {
+    const encoded = Buffer.from('format C:', 'utf16le').toString('base64');
+
+    expect(evaluateShellExecPolicy(`powershell -enc ${encoded}`, [])).toMatchObject({
+      decision: 'forbidden',
+      criticalFallback: true,
+      matched: [expect.objectContaining({
+        sourcePath: 'builtin:critical-effects/mkfs_or_format',
+      })],
+    });
+  });
+
+  it.each([
+    'cmd /c',
+    'cmd /k',
+    'powershell -Command',
+    'powershell -EncodedCommand !!!',
+    'powershell -enc',
+  ])('fails closed for an invalid nested shell shape: %s', (command) => {
+    expect(evaluateShellExecPolicy(command, [])).toMatchObject({
+      decision: 'forbidden',
+      criticalFallback: true,
+    });
+  });
+
+  it('strictly rejects malformed UTF-16LE and oversized PowerShell encodings', () => {
+    const unpairedSurrogate = Buffer.from([0x00, 0xd8]).toString('base64');
+    const nonCanonical = 'QQB=';
+    const oversized = 'A'.repeat(128 * 1024 + 4);
+    const exactAllow = rule(['powershell', '-enc', unpairedSurrogate], 'allow');
+
+    expect(evaluateShellExecPolicy(
+      `powershell -enc ${unpairedSurrogate}`,
+      [exactAllow],
+    ).decision).toBe('forbidden');
+    expect(evaluateShellExecPolicy(`powershell -enc ${nonCanonical}`, []).decision)
+      .toBe('forbidden');
+    expect(evaluateShellExecPolicy(`powershell -enc ${oversized}`, []).decision)
+      .toBe('forbidden');
+  });
+
+  it('fails closed when a nested command body cannot be parsed reliably', () => {
+    const command = 'powershell -Command g`it push';
+    const exactAllow = rule(['powershell', '-Command', 'g`it', 'push'], 'allow');
+
+    expect(evaluateShellExecPolicy(command, [exactAllow])).toMatchObject({
+      decision: 'forbidden',
+      criticalFallback: true,
+      matched: expect.arrayContaining([expect.objectContaining({
+        sourcePath: 'builtin:critical-effects/uninspectable_nested_shell',
+      })]),
+    });
+  });
+
+  it('fails closed on opaque PowerShell scripts when administrator forbids exist', () => {
+    const adminForbid = {
+      ...rule(['git', 'push'], 'forbidden'),
+      source: 'admin' as const,
+    };
+
+    expect(evaluateShellExecPolicy('pwsh -File script.ps1', [adminForbid]).decision)
+      .toBe('forbidden');
+    expect(evaluateShellExecPolicy('pwsh script.ps1', [adminForbid]).decision)
+      .toBe('forbidden');
+  });
+
   it('does not treat ordinary wrapper-looking arguments as nested commands', () => {
     const adminForbid = {
       ...rule(['git', 'push'], 'forbidden'),
@@ -249,6 +358,10 @@ describe('FEATURE_297 Exec Policy', () => {
     };
 
     expect(evaluateShellExecPolicy('echo git push', [adminForbid]).decision)
+      .toBe('unmatched');
+    expect(evaluateShellExecPolicy('echo cmd /k git push', [adminForbid]).decision)
+      .toBe('unmatched');
+    expect(evaluateShellExecPolicy('cmd /q', [adminForbid]).decision)
       .toBe('unmatched');
     expect(evaluateShellExecPolicy('printf "rm -rf /"', []).decision)
       .toBe('unmatched');

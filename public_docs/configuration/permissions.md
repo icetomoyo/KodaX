@@ -34,6 +34,12 @@ Full Access bypasses both sandbox and reviewer. Exec Policy still applies its
 explicit allow/prompt/forbidden rules, absolute administrator forbids, and the
 narrow critical-effect fallback.
 
+Administrator forbids are also checked inside recognized nested shell entry
+forms: `cmd /C`/`/K`, PowerShell command selectors and abbreviations, and
+strictly decoded UTF-16LE `EncodedCommand` payloads. Invalid nested payloads
+cannot be exact-allow overrides. When an administrator forbid exists, a script
+body that cannot be inspected is denied rather than treated as unmatched.
+
 ## SDK permission control
 
 SDK callers can control permissions per Run through `KodaXOptions`. The same
