@@ -48,19 +48,80 @@ All notable changes to this project will be documented in this file.
   UTF-16LE `EncodedCommand` payloads are recursively evaluated; invalid or
   policy-opaque nested execution fails closed where an administrator forbid
   must remain absolute.
-- Added an exact Windows migration for obsolete KodaX sandbox-account read-deny
-  ACL entries while preserving unrelated administrator ACLs. The migration now
-  runs only during setup-generation-4 cutover after the old SID is idle; normal
-  command admission never repeats the machine-wide cleanup or revokes shared
-  ACL state. This removes the alpha.4 multi-Session regression where a
-  synchronous per-admission cleanup waited on the global ACL mutex and could
-  exceed the 60-second launch deadline. Native requests also stop adding the
-  protected artifact cache as a redundant `denyWrite` root, preventing new
-  per-build residues and pre-start policy conflicts; existing cache denies
-  remain untouched because their provenance is not provable from SID shape
-  alone. Real Windows coverage holds one command active for up to 120 seconds
-  while a second Runtime must complete its independent target before the first
-  is released.
+- Corrected the Windows shell concurrency regression at its setup/admission
+  boundary. Protocol 8/setup generation 8 removes the machine-global ACL mutex
+  from ordinary admission: a complete warm policy is read-only, a missing ACE
+  is added under a short mutex for that exact filesystem object, and all roots
+  share one five-second ACL phase budget. This removes both the observed
+  240-second global-mutex stall and the deterministic 75-second failure caused
+  by applying a separate five-second wait to each of 15 roots. Generation 8
+  persists a random filesystem-capability namespace across protocol/account
+  maintenance. A single setup-only elevated native helper receives a small
+  explicit base64 envelope, validates its versioned digest-bound request from
+  the protected control directory, and is awaited through confirmed exit. Its
+  exact-object mutex waits are included in the setup-wide deadline rather than
+  extending beyond it. The helper
+  prewarms profile top-level read roots plus existing canonical system-TMP write
+  roots together with NUL compatibility, so ordinary admission neither invokes
+  UAC nor recursively
+  rewrites broad profile ACLs nor churns capabilities after a native rebuild.
+- Moved native artifact/control provisioning and legacy ACL recovery out of the
+  command hot path. Setup owns those machine changes; ordinary commands only
+  verify already provisioned state. Protocol 8 requires a hash-bound protected
+  setup marker, and the native host holds its non-delete-sharing handle until
+  the target's `Started` record is durable. Setup therefore cannot rotate a
+  generation across an admitted target-start window. The one-time protocol-7
+  marker retirement uses a protected two-phase marker so an interrupted setup
+  resumes the drain, and waits the full legacy 300-second Bash hard bound
+  instead of guessing a 30-second window.
+- Removed the cross-process command-lifetime filesystem-effect coordinator from
+  Bash, trusted text tools, and worktree lifecycle. Same-file text mutations
+  retain their narrow kernel/CAS ordering; same-path worktree calls retain a
+  process-local queue, while different worktrees and Runtime processes use
+  Git's own locks. Deprecated lease exports remain inert for source/ABI
+  migration and old coordinator files are ignored, so stale alpha state cannot
+  block a new KodaX process.
+- Made each native shell independently own its request, pipes, restricted
+  token, Job, resume/started records, terminal proof, and denyRead receipt.
+  Terminal/termination proof failures now propagate through cleanup instead of
+  being reported as a successful command. Crash-left atomic-publication staging
+  files are removed only after an exact dead-PID and age proof. Network brokers
+  are reused by exact authority, retire failed readiness attempts, and use the
+  bounded five-broker pool without a one-second idle teardown race. A broker
+  remains referenced while starting or leased and detaches from the Node event
+  loop only when idle, preventing independent Runtime processes from exiting
+  with an unsettled top-level command.
+- Closed the controller-loss reuse race: when terminal proof fails on the final
+  reference, cleanup synchronously retires the old broker before a same-authority
+  command can acquire it. A failure with another live holder does not stop or
+  poison that holder.
+- Made immutable denyRead receipts share read/delete access so receipt scans do
+  not block another command's exact cleanup. Caller-local timeout or abort no
+  longer marks a healthy shared broker failed; a sequential later caller can
+  join the same in-flight startup. A fully active five-broker pool fails before
+  target start instead of waiting on an unrelated command lifecycle.
+- Closed prepared-invocation leaks in foreground Bash and the public sandbox
+  SDK. Generation validation now runs immediately before native host spawn;
+  synchronous spawn failure and other proven pre-start exits remove the native
+  request and release the broker lease exactly once. Git Job-binding failure
+  keeps durable child tracking until process-tree drain is proved by background
+  recovery instead of unregistering an unknown tree.
+- Preserved an already wrapped Windows `cmd /S /C` command tail across the
+  native runner boundary. The runner no longer adds a third quote layer that
+  made a successfully attested background shell immediately exit with “path
+  not found” before running its requested program, including when a quoted
+  executable is followed by an unquoted final argument.
+- A denyRead admission no longer performs a machine-wide stale-receipt cleanup.
+  It may recover only a dead-runner receipt that overlaps its exact requested
+  object, under the same one-phase deadline. This preserves host-crash recovery
+  without making unrelated commands or roots wait on it.
+- Native requests also stop adding the protected artifact cache as a redundant
+  `denyWrite` root; setup generation 8 removes only provable obsolete
+  sandbox-account guards and preserves ambiguous administrator ACLs. Real
+  Windows coverage holds one command active for up to 120 seconds while a
+  second Runtime must start and complete in under 15 seconds, and exercises
+  stale control staging, broker pressure, timeout/Job drain, and parallel
+  workspace writes.
 
 ### Removed
 

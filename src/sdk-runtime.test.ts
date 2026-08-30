@@ -311,7 +311,7 @@ describe("createKodaXRuntime", () => {
       rollback: true,
     });
     expect(runtime.capabilities.sandboxRuntime).toMatchObject({
-      version: 6,
+      version: 7,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
       unavailableBehavior: "structured-no-execution",

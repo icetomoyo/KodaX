@@ -844,7 +844,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   managedRunDurability: 1,
   runtimeAutoModeGuardrail: 5,
   runtimeExitSettlement: 2,
-  sandboxRuntime: 6,
+  sandboxRuntime: 7,
   sessionEventJournal: 1,
   sharedSessionSettings: 2,
   runtimeEventCoalescing: 1,
@@ -912,7 +912,7 @@ export interface RuntimeCapabilityRequirements {
   readonly effectiveConfig?: 1;
   readonly actorControlPlane?: 1;
   /** Require the sandbox-first execution chain and permission fallback revision. */
-  readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6;
+  readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Runtime owns Auto[LLM] review at the proven host boundary. */
   readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5;
 }
@@ -4053,7 +4053,7 @@ export async function createKodaXRuntime(
             ...(process.platform === "win32"
               ? {
                   daemonShutdownVerification: 1 as const,
-                  sandboxRuntime: 6 as const,
+                  sandboxRuntime: 7 as const,
                 }
               : {}),
             runtimeEventCoalescing: 1 as const,
@@ -5248,7 +5248,7 @@ function daemonCapabilityRequirements(
           crashOutcomeModel: 2,
           managedRunDurability: 1,
           ...(process.platform === "win32"
-            ? { daemonShutdownVerification: 1, sandboxRuntime: 6 }
+            ? { daemonShutdownVerification: 1, sandboxRuntime: 7 }
             : {}),
           runtimeEventCoalescing: 1,
           ...(options.daemonOrphanExitMs !== undefined

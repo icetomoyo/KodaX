@@ -293,6 +293,16 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-alpha.4 源码候选版**：Windows shell 准入现在遵循 Codex 的并发边界：
+版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
+精确 root capability 时才在 5 秒预算内持有精确对象短锁。Bash、可信文本、worktree、
+Session 与 Runtime 进程之间不再共享命令生命周期或机器级 filesystem coordinator。
+每条 native 命令拥有独立 request、token、控制通道和 Job；相同网络权威使用有界
+broker pool，但不串行命令生命周期。protocol 8/setup generation 8 会把受保护 setup
+marker 持有到目标 `Started` 已持久化；被中断的 setup 继续有界 pre-start drain，而不在
+命令热路径重复迁移。本候选版广告 `sandboxRuntime:7`。详见
+[v0.7.96-alpha.4 发布清单](docs/release.md#v0796-alpha4-release-preparation)。
+
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
 用途（primary/fallback/classifier/sidecar/compaction/agent/workflow/utility）在可撤销

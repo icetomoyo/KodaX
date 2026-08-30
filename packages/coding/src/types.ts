@@ -1719,12 +1719,23 @@ export type KodaXShellSandboxCleanupResult =
 
 /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
 export interface KodaXShellSandboxProcessControl {
+  /** Revalidate the prepared sandbox generation immediately before host spawn. */
+  validateStart?(): void | Promise<void>;
   /** Deliver target stdin and keep the native command channel alive. */
   closeInput(
     child: import('node:child_process').ChildProcess,
     signal: AbortSignal | undefined,
     deadlineAt: number,
   ): Promise<void>;
+  /** Wait until the sandbox proves that the requested target itself started. */
+  attestStart?(
+    child: import('node:child_process').ChildProcess,
+    signal: AbortSignal | undefined,
+    deadlineAt: number,
+  ): Promise<
+    | { readonly state: 'started' }
+    | { readonly state: 'pre_start_unavailable'; readonly diagnostic: string }
+  >;
   /** Request native Job termination and wait for its drain attestation. */
   terminate(child: import('node:child_process').ChildProcess): Promise<void>;
 }

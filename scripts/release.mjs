@@ -219,7 +219,7 @@ function assertNativeArtifacts(dir, platformFilter = null) {
     const expected = [
       ['textTransaction', 4, textFilename],
       ...(platform === 'win32'
-        ? [['shellSandbox', 7, 'kodax-windows-sandbox.exe']]
+        ? [['shellSandbox', 8, 'kodax-windows-sandbox.exe']]
         : []),
     ];
     for (const [kind, protocol, filename] of expected) {

@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use windows::Win32::Foundation::{
     ERROR_SUCCESS, HANDLE, HLOCAL, LocalFree, NTSTATUS, OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE,
     RtlNtStatusToDosError, UNICODE_STRING,
@@ -44,9 +45,9 @@ use crate::win::{
     token_user_sid,
 };
 
-const ACL_MUTEX: &str = "AclTransaction";
-const ACL_MUTEX_TIMEOUT_MS: u32 = 30_000;
+const ACL_TARGET_MUTEX_TIMEOUT_MS: u32 = 5_000;
 const PERSISTENT_DENY_SETUP_TIMEOUT_MS: u32 = 15 * 60_000;
+const SETUP_ACL_TOTAL_TIMEOUT_MS: u64 = 14 * 60_000;
 const FILE_OPEN: u32 = 1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x4000;
@@ -60,6 +61,9 @@ const READ_EXECUTE_MASK: u32 = FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0;
 const MODIFY_MASK: u32 =
     FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0 | DELETE.0;
 const DENY_WRITE_MASK: u32 = FILE_GENERIC_WRITE.0 | DELETE.0 | FILE_DELETE_CHILD.0;
+// Filesystem capabilities outlive the native wire protocol. Keep this schema
+// stable across protocol-only upgrades so ordinary admission never churns ACLs.
+const FILESYSTEM_CAPABILITY_SCHEMA_VERSION: u16 = 8;
 const BUILTIN_USERS_SID: &str = "S-1-5-32-545";
 const EVERYONE_SID: &str = "S-1-1-0";
 const EXECUTION_DENY_RECEIPT_VERSION: u16 = 2;
@@ -80,13 +84,19 @@ fn operation_deadline_timeout_ms(deadline_unix_ms: u64, stage: &str) -> Result<u
         .context("convert Windows sandbox ACL deadline")
 }
 
-fn acquire_acl_transaction(deadline_unix_ms: u64, stage: &str) -> Result<NamedMutex> {
-    let transaction = NamedMutex::acquire(
-        ACL_MUTEX,
-        operation_deadline_timeout_ms(deadline_unix_ms, stage)?,
-    )?;
-    operation_deadline_timeout_ms(deadline_unix_ms, stage)?;
-    Ok(transaction)
+fn acl_phase_deadline_unix_ms(operation_deadline_unix_ms: u64) -> Result<u64> {
+    let now = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("read Windows sandbox ACL phase clock")?
+            .as_millis(),
+    )
+    .context("convert Windows sandbox ACL phase clock")?;
+    ensure!(
+        now < operation_deadline_unix_ms,
+        "Windows sandbox operation deadline expired before ACL authorization",
+    );
+    Ok(operation_deadline_unix_ms.min(now.saturating_add(u64::from(ACL_TARGET_MUTEX_TIMEOUT_MS))))
 }
 
 #[cfg(test)]
@@ -98,7 +108,7 @@ fn test_operation_deadline_unix_ms() -> u64 {
             .as_millis(),
     )
     .expect("test clock fits u64")
-        + u64::from(ACL_MUTEX_TIMEOUT_MS)
+        + u64::from(ACL_TARGET_MUTEX_TIMEOUT_MS)
 }
 
 #[repr(C)]
@@ -210,6 +220,38 @@ struct AclTarget {
     identity: AclTargetIdentity,
 }
 
+fn acl_target_mutex_name(target: &AclTarget) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"KodaX Windows sandbox ACL target mutex\0");
+    hash.update(target.identity.volume_serial.to_le_bytes());
+    hash.update(target.identity.file_id);
+    let digest = hash.finalize();
+    let suffix = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("AclRoot-{suffix}")
+}
+
+fn acquire_acl_target_until(
+    target: &AclTarget,
+    deadline_unix_ms: u64,
+    stage: &str,
+) -> Result<NamedMutex> {
+    let timeout_ms =
+        operation_deadline_timeout_ms(deadline_unix_ms, stage)?.min(ACL_TARGET_MUTEX_TIMEOUT_MS);
+    let transaction = NamedMutex::acquire(&acl_target_mutex_name(target), timeout_ms)?;
+    operation_deadline_timeout_ms(deadline_unix_ms, stage)?;
+    Ok(transaction)
+}
+
+fn acquire_acl_target_for_setup(target: &AclTarget) -> Result<NamedMutex> {
+    // Setup may inspect many roots, but an exact-object DACL commit is still a
+    // short critical section. Long recovery budgets must not become one long
+    // mutex wait or multiply across roots.
+    NamedMutex::acquire(&acl_target_mutex_name(target), ACL_TARGET_MUTEX_TIMEOUT_MS)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AclTargetIdentity {
     volume_serial: u64,
@@ -284,8 +326,8 @@ pub fn ensure_persistent_deny_read(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let _transaction = NamedMutex::acquire(ACL_MUTEX, PERSISTENT_DENY_SETUP_TIMEOUT_MS)?;
     for target in targets {
+        let _transaction = acquire_acl_target_for_setup(&target)?;
         let operation = AclOperation {
             mode: AclMode::Deny,
             path: PathBuf::from(&target.canonical_path),
@@ -319,8 +361,8 @@ pub fn remove_persistent_deny_read(paths: &[String], sandbox_group_sid: &str) ->
                 .with_context(|| format!("open legacy Windows denyRead path {}", path.display()))
         })
         .collect::<Result<Vec<_>>>()?;
-    let _transaction = NamedMutex::acquire(ACL_MUTEX, PERSISTENT_DENY_SETUP_TIMEOUT_MS)?;
     for target in targets {
+        let _transaction = acquire_acl_target_for_setup(&target)?;
         let exact_legacy_ace = target.execution_deny_receipt();
         target
             .remove_execution_deny(sandbox_group_sid, &exact_legacy_ace)
@@ -520,10 +562,9 @@ fn normalized_paths(values: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
 
 fn filesystem_capability_generation(request: &RunRequest) -> String {
     format!(
-        "v{}:{}:{}",
-        request.protocol,
-        request.sandbox_user_sid.to_ascii_lowercase(),
-        request.sandbox_group_sid.to_ascii_lowercase(),
+        "v{}:{}",
+        FILESYSTEM_CAPABILITY_SCHEMA_VERSION,
+        request.filesystem_capability_nonce.to_ascii_lowercase(),
     )
 }
 
@@ -534,19 +575,7 @@ fn policy_operations(
 ) -> Vec<PlannedAclOperation> {
     let allow_read = normalized_paths(request.allow_read.iter().map(PathBuf::from));
     let allow_write = normalized_paths(request.allow_write.iter().map(PathBuf::from));
-    let mut deny_write = normalized_paths(request.deny_write.iter().map(PathBuf::from));
-    for read_root in &allow_read {
-        let read_key = read_root.to_string_lossy().replace('/', "\\");
-        if !allow_write.iter().any(|write_root| {
-            canonical_path_is_same_or_inside(
-                &write_root.to_string_lossy().replace('/', "\\"),
-                &read_key,
-            )
-        }) {
-            deny_write.push(read_root.clone());
-        }
-    }
-    deny_write = normalized_paths(deny_write);
+    let deny_write = normalized_paths(request.deny_write.iter().map(PathBuf::from));
     // The restricted target enables SeChangeNotifyPrivilege, so Windows can
     // traverse to an exact allowed root without persistent ACEs on its
     // ancestors. Mutating a private container DACL here can trigger inheritance
@@ -565,19 +594,11 @@ fn policy_operations(
     for path in allow_read {
         operations.push(PlannedAclOperation {
             mode: AclMode::Grant,
-            path: path.clone(),
+            path,
             mask: READ_EXECUTE_MASK,
             trustee: PlannedTrustee::Sid(request.sandbox_group_sid.clone()),
             inherit: true,
             pass: AccessPass::Normal,
-        });
-        operations.push(PlannedAclOperation {
-            mode: AclMode::Grant,
-            path,
-            mask: READ_EXECUTE_MASK,
-            trustee: PlannedTrustee::FilesystemCapability(FilesystemCapabilityKind::AllowRead),
-            inherit: true,
-            pass: AccessPass::Restricted,
         });
     }
     for path in allow_write {
@@ -599,6 +620,100 @@ fn policy_operations(
         });
     }
     operations
+}
+
+pub fn ensure_setup_acl_roots(
+    read_roots: &[String],
+    write_roots: &[String],
+    sandbox_group_sid: &str,
+    filesystem_capability_nonce: &str,
+) -> Result<()> {
+    let deadline_unix_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("read Windows sandbox setup ACL clock")?
+            .as_millis(),
+    )
+    .context("convert Windows sandbox setup ACL clock")?
+    .saturating_add(SETUP_ACL_TOTAL_TIMEOUT_MS);
+    ensure_setup_acl_roots_until(
+        read_roots,
+        write_roots,
+        sandbox_group_sid,
+        filesystem_capability_nonce,
+        deadline_unix_ms,
+    )
+}
+
+fn ensure_setup_acl_roots_until(
+    read_roots: &[String],
+    write_roots: &[String],
+    sandbox_group_sid: &str,
+    filesystem_capability_nonce: &str,
+    deadline_unix_ms: u64,
+) -> Result<()> {
+    let _ = LocalSid::from_string(sandbox_group_sid)?;
+    let capability_generation = format!(
+        "v{}:{}",
+        FILESYSTEM_CAPABILITY_SCHEMA_VERSION,
+        filesystem_capability_nonce.to_ascii_lowercase(),
+    );
+    let mut operations = Vec::new();
+    for path in normalized_paths(read_roots.iter().map(PathBuf::from)) {
+        operations.push(PlannedAclOperation {
+            mode: AclMode::Grant,
+            path,
+            mask: READ_EXECUTE_MASK,
+            trustee: PlannedTrustee::Sid(sandbox_group_sid.to_owned()),
+            inherit: true,
+            pass: AccessPass::Normal,
+        });
+    }
+    for path in normalized_paths(write_roots.iter().map(PathBuf::from)) {
+        operations.push(PlannedAclOperation {
+            mode: AclMode::Grant,
+            path: path.clone(),
+            mask: MODIFY_MASK,
+            trustee: PlannedTrustee::Sid(sandbox_group_sid.to_owned()),
+            inherit: true,
+            pass: AccessPass::Normal,
+        });
+        operations.push(PlannedAclOperation {
+            mode: AclMode::Grant,
+            path,
+            mask: MODIFY_MASK,
+            trustee: PlannedTrustee::FilesystemCapability(FilesystemCapabilityKind::AllowWrite),
+            inherit: true,
+            pass: AccessPass::Restricted,
+        });
+    }
+    operation_deadline_timeout_ms(deadline_unix_ms, "setup ACL preflight")?;
+    let targets = open_grouped_operations(operations, &capability_generation, sandbox_group_sid)?;
+    operation_deadline_timeout_ms(deadline_unix_ms, "setup ACL preflight")?;
+    for (inspected, operations) in targets {
+        operation_deadline_timeout_ms(deadline_unix_ms, "setup ACL authorization")?;
+        if target_satisfies_operations(&inspected, &operations, sandbox_group_sid)? {
+            continue;
+        }
+        let target = open_acl_target(Path::new(&inspected.canonical_path)).with_context(|| {
+            format!(
+                "reopen setup ACL target {} without reparse traversal",
+                inspected.canonical_path,
+            )
+        })?;
+        let _transaction = acquire_acl_target_until(
+            &target,
+            deadline_unix_ms,
+            "setup ACL authorization",
+        )?;
+        if !target_satisfies_operations(&target, &operations, sandbox_group_sid)? {
+            target
+                .apply_and_verify(&operations, sandbox_group_sid)
+                .with_context(|| format!("prepare setup ACLs at {}", target.canonical_path))?;
+        }
+        operation_deadline_timeout_ms(deadline_unix_ms, "setup ACL authorization")?;
+    }
+    Ok(())
 }
 
 fn is_dos_device_alias(value: &str) -> bool {
@@ -1186,7 +1301,7 @@ impl AclTarget {
 fn open_grouped_operations(
     operations: Vec<PlannedAclOperation>,
     generation: &str,
-    sandbox_user_sid: &str,
+    _sandbox_user_sid: &str,
 ) -> Result<Vec<(AclTarget, Vec<AclOperation>)>> {
     let mut requested: BTreeMap<String, Vec<PlannedAclOperation>> = BTreeMap::new();
     for operation in operations {
@@ -1240,26 +1355,24 @@ fn open_grouped_operations(
                 .or_insert(operation);
         }
     }
-    let mut writable = Vec::new();
-    for (inspected, operations) in groups.into_values() {
-        let operations = operations.into_values().collect::<Vec<_>>();
-        let snapshot = inspected.read_aces()?;
-        let missing = operations.iter().any(|operation| {
-            !snapshot.satisfies(&RequiredAce::from_operation(operation), sandbox_user_sid)
-        });
-        if !missing {
-            writable.push((inspected, operations));
-            continue;
-        }
-        let target = open_acl_target(Path::new(&inspected.canonical_path)).with_context(|| {
-            format!(
-                "open Windows sandbox ACL path for update {}",
-                inspected.canonical_path,
-            )
-        })?;
-        writable.push((target, operations));
-    }
-    Ok(writable)
+    Ok(groups
+        .into_values()
+        .map(|(target, operations)| (target, operations.into_values().collect()))
+        .collect())
+}
+
+fn target_satisfies_operations(
+    target: &AclTarget,
+    operations: &[AclOperation],
+    sandbox_user_sid: &str,
+) -> Result<bool> {
+    let required = operations
+        .iter()
+        .map(RequiredAce::from_operation)
+        .collect::<Vec<_>>();
+    Ok(target
+        .read_aces()?
+        .required_aces_are_canonical(&required, sandbox_user_sid))
 }
 
 fn apply_operations(
@@ -1269,6 +1382,7 @@ fn apply_operations(
     operation_deadline_unix_ms: u64,
 ) -> Result<Vec<String>> {
     let targets = open_grouped_operations(operations, generation, sandbox_user_sid)?;
+    let acl_phase_deadline = acl_phase_deadline_unix_ms(operation_deadline_unix_ms)?;
     let mut filesystem_capability_sids = BTreeSet::new();
     for (_, operations) in &targets {
         for operation in operations {
@@ -1278,16 +1392,70 @@ fn apply_operations(
             }
         }
     }
-    operation_deadline_timeout_ms(
-        operation_deadline_unix_ms,
-        "policy ACL authorization commit",
-    )?;
-    for (target, operations) in targets {
-        target
-            .apply_and_verify(&operations, sandbox_user_sid)
-            .with_context(|| format!("apply verified ACLs to {}", target.canonical_path))?;
+    operation_deadline_timeout_ms(acl_phase_deadline, "policy ACL authorization commit")?;
+    for (inspected, operations) in targets {
+        if target_satisfies_operations(&inspected, &operations, sandbox_user_sid)? {
+            continue;
+        }
+        let target = open_acl_target(Path::new(&inspected.canonical_path)).with_context(|| {
+            format!(
+                "open Windows sandbox ACL path for update {}",
+                inspected.canonical_path,
+            )
+        })?;
+        let _transaction = acquire_acl_target_until(
+            &target,
+            acl_phase_deadline,
+            "policy ACL authorization commit",
+        )?;
+        if target_satisfies_operations(&target, &operations, sandbox_user_sid)? {
+            continue;
+        }
+        for attempt in 0..3 {
+            operation_deadline_timeout_ms(acl_phase_deadline, "policy ACL authorization commit")?;
+            match target.apply_and_verify(&operations, sandbox_user_sid) {
+                Ok(()) => break,
+                Err(_error) if attempt < 2 => {
+                    std::thread::yield_now();
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("apply verified ACLs to {}", target.canonical_path)
+                    });
+                }
+            }
+        }
     }
     Ok(filesystem_capability_sids.into_iter().collect())
+}
+
+fn satisfied_policy_capability_sids(
+    operations: Vec<PlannedAclOperation>,
+    generation: &str,
+    sandbox_user_sid: &str,
+) -> Result<Option<Vec<String>>> {
+    let targets = open_grouped_operations(operations, generation, sandbox_user_sid)?;
+    let mut filesystem_capability_sids = BTreeSet::new();
+    for (target, operations) in &targets {
+        let required = operations
+            .iter()
+            .map(RequiredAce::from_operation)
+            .collect::<Vec<_>>();
+        if !target
+            .read_aces()?
+            .required_aces_are_canonical(&required, sandbox_user_sid)
+        {
+            return Ok(None);
+        }
+        for operation in operations {
+            let _ = LocalSid::from_string(&operation.sid)?;
+            if operation.pass == AccessPass::Restricted {
+                filesystem_capability_sids.insert(operation.sid.clone());
+            }
+        }
+    }
+    Ok(Some(filesystem_capability_sids.into_iter().collect()))
 }
 
 fn canonical_path_is_same_or_inside(parent: &str, candidate: &str) -> bool {
@@ -1387,7 +1555,7 @@ fn write_execution_deny_receipt(path: &Path, receipt: &ExecutionDenyReceipt) -> 
         payload.len() <= MAX_EXECUTION_DENY_RECEIPT_BYTES as usize,
         "Windows execution deny receipt exceeded its bound",
     );
-    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
+    let temporary = execution_deny_receipt_temporary_path(path);
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
@@ -1414,10 +1582,21 @@ fn write_execution_deny_receipt(path: &Path, receipt: &ExecutionDenyReceipt) -> 
     result
 }
 
+fn execution_deny_receipt_temporary_path(path: &Path) -> PathBuf {
+    path.with_extension(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ))
+}
+
 fn read_execution_deny_receipt(path: &Path) -> Result<ExecutionDenyReceipt> {
     let mut file = OpenOptions::new()
         .read(true)
-        .share_mode(0)
+        // Receipts are immutable after their atomic CreateNew publication.
+        // Readers must not serialize unrelated admissions or prevent the exact
+        // owner/recovery path from retiring a receipt that is already open.
+        .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_DELETE.0)
         .custom_flags(windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(path)
         .with_context(|| format!("open Windows execution deny receipt {}", path.display()))?;
@@ -1460,6 +1639,22 @@ fn read_execution_deny_receipt(path: &Path) -> Result<ExecutionDenyReceipt> {
     Ok(receipt)
 }
 
+fn read_execution_deny_receipt_if_present(path: &Path) -> Result<Option<ExecutionDenyReceipt>> {
+    match read_execution_deny_receipt(path) {
+        Ok(receipt) => Ok(Some(receipt)),
+        Err(error)
+            if error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+            }) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn open_execution_deny_targets(receipt: &ExecutionDenyReceipt) -> Result<Vec<AclTarget>> {
     let mut targets = Vec::with_capacity(receipt.targets.len());
     for expected in &receipt.targets {
@@ -1479,30 +1674,53 @@ fn cleanup_execution_denies(
     receipt_path: &Path,
     receipt: &ExecutionDenyReceipt,
     targets: &[AclTarget],
+    operation_deadline_unix_ms: Option<u64>,
 ) -> Result<()> {
     ensure!(
         targets.len() == receipt.targets.len(),
         "Windows execution deny target identity set is incomplete",
     );
     for (target, expected) in targets.iter().zip(&receipt.targets) {
+        let _transaction = match operation_deadline_unix_ms {
+            Some(deadline) => {
+                acquire_acl_target_until(target, deadline, "denyRead cleanup commit")?
+            }
+            None => {
+                NamedMutex::acquire(&acl_target_mutex_name(target), ACL_TARGET_MUTEX_TIMEOUT_MS)?
+            }
+        };
         target.verify_execution_deny_identity(expected)?;
-    }
-    for (target, expected) in targets.iter().zip(&receipt.targets) {
         target.remove_execution_deny(&receipt.logon_sid, expected)?;
     }
-    fs::remove_file(receipt_path).with_context(|| {
-        format!(
-            "remove Windows execution deny receipt {}",
-            receipt_path.display()
-        )
-    })
+    match fs::remove_file(receipt_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "remove Windows execution deny receipt {}",
+                receipt_path.display()
+            )
+        }),
+    }
 }
 
 impl ExecutionDenyLease {
     pub fn finish(self) -> ExecutionDenyCleanup {
         let cleanup = (|| {
-            let _transaction = NamedMutex::acquire(ACL_MUTEX, ACL_MUTEX_TIMEOUT_MS)?;
-            cleanup_execution_denies(&self.receipt_path, &self.receipt, &self.targets)
+            let deadline = u64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .context("read Windows denyRead cleanup clock")?
+                    .as_millis(),
+            )
+            .context("convert Windows denyRead cleanup clock")?
+                + u64::from(ACL_TARGET_MUTEX_TIMEOUT_MS);
+            cleanup_execution_denies(
+                &self.receipt_path,
+                &self.receipt,
+                &self.targets,
+                Some(deadline),
+            )
         })();
         match cleanup {
             Ok(()) => ExecutionDenyCleanup::Completed,
@@ -1524,12 +1742,29 @@ impl ExecutionDenyLease {
     }
 }
 
-pub fn recover_stale_execution_denies_until(
+fn recover_stale_execution_denies_matching_until(
     control_directory: &Path,
     operation_deadline_unix_ms: u64,
+    matching_targets: Option<&[ExecutionDenyTargetReceipt]>,
 ) -> Result<()> {
-    let _transaction =
-        acquire_acl_transaction(operation_deadline_unix_ms, "stale denyRead recovery")?;
+    let mut entries = match fs::read_dir(control_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("scan Windows execution deny receipts"),
+    };
+    let has_receipts = entries.try_fold(false, |found, entry| {
+        let entry = entry.context("enumerate Windows execution deny receipt")?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| anyhow!("Windows execution deny receipt name is not Unicode"))?;
+        Ok::<_, anyhow::Error>(
+            found || (name.starts_with("windows-deny-") && name.ends_with(".json")),
+        )
+    })?;
+    if !has_receipts {
+        return Ok(());
+    }
     for entry in fs::read_dir(control_directory).context("scan Windows execution deny receipts")? {
         operation_deadline_timeout_ms(operation_deadline_unix_ms, "stale denyRead recovery")?;
         let entry = entry.context("enumerate Windows execution deny receipt")?;
@@ -1541,7 +1776,17 @@ pub fn recover_stale_execution_denies_until(
             continue;
         }
         let receipt_path = entry.path();
-        let receipt = read_execution_deny_receipt(&receipt_path)?;
+        let Some(receipt) = read_execution_deny_receipt_if_present(&receipt_path)? else {
+            continue;
+        };
+        if matching_targets.is_some_and(|targets| {
+            !receipt
+                .targets
+                .iter()
+                .any(|candidate| targets.contains(candidate))
+        }) {
+            continue;
+        }
         if process_creation_time(receipt.runner_pid)? == Some(receipt.runner_creation_time) {
             continue;
         }
@@ -1550,14 +1795,48 @@ pub fn recover_stale_execution_denies_until(
             operation_deadline_unix_ms,
             "stale denyRead recovery commit",
         )?;
-        cleanup_execution_denies(&receipt_path, &receipt, &targets)?;
+        let cleanup = cleanup_execution_denies(
+            &receipt_path,
+            &receipt,
+            &targets,
+            Some(operation_deadline_unix_ms),
+        );
+        if let Err(error) = cleanup {
+            match receipt_path.try_exists() {
+                Ok(false) => {}
+                Ok(true) => return Err(error),
+                Err(probe_error) => {
+                    return Err(anyhow!(
+                        "stale denyRead cleanup failed: {error:#}; receipt completion could not be verified: {probe_error}"
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
 
-#[cfg(test)]
-fn recover_stale_execution_denies(control_directory: &Path) -> Result<()> {
-    recover_stale_execution_denies_until(control_directory, test_operation_deadline_unix_ms())
+pub fn recover_stale_execution_denies_until(
+    control_directory: &Path,
+    operation_deadline_unix_ms: u64,
+) -> Result<()> {
+    recover_stale_execution_denies_matching_until(
+        control_directory,
+        operation_deadline_unix_ms,
+        None,
+    )
+}
+
+pub fn recover_stale_execution_denies(control_directory: &Path) -> Result<()> {
+    let deadline = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("read Windows sandbox recovery clock")?
+            .as_millis(),
+    )
+    .context("convert Windows sandbox recovery clock")?
+        + u64::from(PERSISTENT_DENY_SETUP_TIMEOUT_MS);
+    recover_stale_execution_denies_until(control_directory, deadline)
 }
 
 pub fn install_execution_deny_read_until(
@@ -1581,19 +1860,23 @@ pub fn install_execution_deny_read_until(
             .or_insert(target);
     }
     let targets = by_identity.into_values().collect::<Vec<_>>();
-    let _transaction =
-        acquire_acl_transaction(operation_deadline_unix_ms, "denyRead authorization")?;
+    let acl_phase_deadline = acl_phase_deadline_unix_ms(operation_deadline_unix_ms)?;
+    let target_receipts = targets
+        .iter()
+        .map(AclTarget::execution_deny_receipt)
+        .collect::<Vec<_>>();
+    // Ordinary admission never runs full recovery. It only retires a dead
+    // receipt that would otherwise overlap this exact denyRead operation.
+    recover_stale_execution_denies_matching_until(
+        control_directory,
+        acl_phase_deadline,
+        Some(&target_receipts),
+    )?;
+    operation_deadline_timeout_ms(acl_phase_deadline, "denyRead authorization")?;
     ensure!(
         process_creation_time(runner_pid)? == Some(runner_creation_time),
         "Windows sandbox runner exited while waiting for denyRead authorization",
     );
-    for target in &targets {
-        ensure!(
-            !target.read_aces()?.has_any_explicit_sid(logon_sid),
-            "Windows denyRead logon SID already owns an explicit ACE at {}",
-            target.canonical_path,
-        );
-    }
     let receipt = ExecutionDenyReceipt {
         version: EXECUTION_DENY_RECEIPT_VERSION,
         runner_pid,
@@ -1605,9 +1888,16 @@ pub fn install_execution_deny_read_until(
             .collect(),
     };
     let receipt_path = execution_deny_receipt_path(request, control_directory);
-    operation_deadline_timeout_ms(operation_deadline_unix_ms, "denyRead authorization")?;
+    operation_deadline_timeout_ms(acl_phase_deadline, "denyRead authorization")?;
     write_execution_deny_receipt(&receipt_path, &receipt)?;
     let apply_result = targets.iter().try_for_each(|target| {
+        let _transaction =
+            acquire_acl_target_until(target, acl_phase_deadline, "denyRead authorization commit")?;
+        ensure!(
+            !target.read_aces()?.has_any_explicit_sid(logon_sid),
+            "Windows denyRead logon SID already owns an explicit ACE at {}",
+            target.canonical_path,
+        );
         target.apply_and_verify(
             &[AclOperation {
                 mode: AclMode::Deny,
@@ -1621,7 +1911,12 @@ pub fn install_execution_deny_read_until(
         )
     });
     if let Err(apply_error) = apply_result {
-        return match cleanup_execution_denies(&receipt_path, &receipt, &targets) {
+        return match cleanup_execution_denies(
+            &receipt_path,
+            &receipt,
+            &targets,
+            Some(acl_phase_deadline),
+        ) {
             Ok(()) => Err(apply_error.context("apply Windows denyRead ACLs")),
             Err(cleanup_error) => Err(anyhow!(
                 "apply Windows denyRead ACLs failed: {apply_error:#}; rollback also failed: {cleanup_error:#}",
@@ -1651,18 +1946,7 @@ fn install_execution_deny_read(
     )
 }
 
-pub fn verify_control_directory_boundary(
-    request: &RunRequest,
-    control_directory: &Path,
-    host_sid: &str,
-) -> Result<()> {
-    let control = open_acl_target(control_directory)
-        .context("open protected Windows sandbox control directory")?;
-    let artifact_cache_directory = control_directory
-        .parent()
-        .context("protected Windows sandbox control directory has no artifact cache parent")?;
-    let artifact_cache = open_acl_target(artifact_cache_directory)
-        .context("open protected Windows native artifact cache directory")?;
+fn verify_open_control_directory_boundary(control: &AclTarget, host_sid: &str) -> Result<()> {
     ensure!(
         control.directory,
         "Windows sandbox control state is not a directory"
@@ -1714,6 +1998,31 @@ pub fn verify_control_directory_boundary(
                 == 1,
         "Windows sandbox control directory DACL is not the exact host/SYSTEM boundary"
     );
+    Ok(())
+}
+
+pub fn verify_setup_control_directory_boundary(
+    control_directory: &Path,
+    host_sid: &str,
+) -> Result<()> {
+    let control = open_acl_target(control_directory)
+        .context("open protected Windows sandbox control directory")?;
+    verify_open_control_directory_boundary(&control, host_sid)
+}
+
+pub fn verify_control_directory_boundary(
+    request: &RunRequest,
+    control_directory: &Path,
+    host_sid: &str,
+) -> Result<()> {
+    let control = open_acl_target(control_directory)
+        .context("open protected Windows sandbox control directory")?;
+    verify_open_control_directory_boundary(&control, host_sid)?;
+    let artifact_cache_directory = control_directory
+        .parent()
+        .context("protected Windows sandbox control directory has no artifact cache parent")?;
+    let artifact_cache = open_acl_target(artifact_cache_directory)
+        .context("open protected Windows native artifact cache directory")?;
     for policy_root in &request.allow_read {
         let target = open_acl_target(Path::new(policy_root))
             .with_context(|| format!("validate Windows sandbox read root {policy_root}"))?;
@@ -1760,14 +2069,23 @@ pub fn ensure_policy_aces_until(
     let host = current_token()?;
     let host_sid = token_user_sid(host.raw())?;
     let operations = policy_operations(&canonical_request, runner_directory, &host_sid);
-    let _transaction =
-        acquire_acl_transaction(operation_deadline_unix_ms, "policy ACL authorization")?;
-    // Persistent filesystem capabilities belong to the installed sandbox
-    // account. request.generation also includes native build hashes and would
-    // otherwise append a fresh ACE to every policy root after each rebuild.
+    // Capability ACEs are append-only for one installed sandbox account. Once
+    // the exact canonical set is present, admission is read-only and must not
+    // queue behind an unrelated machine-wide ACL mutation.
     let capability_generation = filesystem_capability_generation(&canonical_request);
-    apply_operations(
+    if let Some(capability_sids) = satisfied_policy_capability_sids(
         operations,
+        &capability_generation,
+        &canonical_request.sandbox_user_sid,
+    )? {
+        return Ok(capability_sids);
+    }
+    // Persistent filesystem capabilities belong to the installed sandbox
+    // account. Missing ACEs converge through additive, read-back-verified
+    // updates. Ordinary admission never waits on a machine-global mutex:
+    // concurrent updates either observe the new ACEs or retry their exact set.
+    apply_operations(
+        policy_operations(&canonical_request, runner_directory, &host_sid),
         &capability_generation,
         &canonical_request.sandbox_user_sid,
         operation_deadline_unix_ms,
@@ -1841,6 +2159,7 @@ mod tests {
         RunRequest {
             protocol: crate::protocol::PROTOCOL_VERSION,
             generation: "generation".into(),
+            filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
             sandbox_user_sid: "S-1-5-21-1-2-3-9999".into(),
             sandbox_group_sid: "S-1-5-32-544".into(),
             asrt_executable: "srt-win.exe".into(),
@@ -1857,6 +2176,8 @@ mod tests {
             terminal_record_path: root.join("terminal.json").to_string_lossy().into_owned(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             operation_deadline_unix_ms: 1,
+            setup_marker_path: r"C:\control\windows-v2-cutover.json".into(),
+            setup_marker_sha256: "0".repeat(64),
         }
     }
 
@@ -1986,11 +2307,6 @@ mod tests {
                     == PlannedTrustee::FilesystemCapability(FilesystemCapabilityKind::DenyWrite)
                 && operation.mask == DENY_WRITE_MASK
         }));
-        assert!(
-            !operations
-                .iter()
-                .any(|operation| operation.mask == READ_MASK)
-        );
         assert_eq!(
             operations
                 .iter()
@@ -2002,13 +2318,26 @@ mod tests {
                             .path
                             .to_string_lossy()
                             .eq_ignore_ascii_case(&root.to_string_lossy())
+                        && operation.mask == MODIFY_MASK
+                })
+                .count(),
+            1,
+        );
+        assert_eq!(
+            operations
+                .iter()
+                .filter(|operation| {
+                    operation.mode == AclMode::Grant
+                        && operation.trustee
+                            == PlannedTrustee::Sid(request.sandbox_group_sid.clone())
                         && operation.mask == READ_EXECUTE_MASK
                 })
                 .count(),
             1,
         );
+        assert_eq!(operations.len(), 4);
         assert!(operations.iter().all(|operation| operation.path == root));
-        fs::remove_dir(root).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2041,12 +2370,6 @@ mod tests {
         );
         let canonical_root = open_acl_target(&root).unwrap().canonical_path;
         let capability_generation = filesystem_capability_generation(&request);
-        let allow_read_sid = filesystem_capability_sid(
-            &capability_generation,
-            &canonical_root,
-            FilesystemCapabilityKind::AllowRead,
-        )
-        .unwrap();
         let allow_write_sid = filesystem_capability_sid(
             &capability_generation,
             &canonical_root,
@@ -2059,11 +2382,7 @@ mod tests {
             FilesystemCapabilityKind::DenyWrite,
         )
         .unwrap();
-        let mut expected_capability_sids = vec![
-            allow_read_sid.clone(),
-            allow_write_sid.clone(),
-            deny_write_sid.clone(),
-        ];
+        let mut expected_capability_sids = vec![allow_write_sid.clone(), deny_write_sid.clone()];
         expected_capability_sids.sort();
         assert_eq!(capability_sids, expected_capability_sids);
 
@@ -2076,12 +2395,6 @@ mod tests {
             true,
         ));
         assert!(before_denies.has_explicit(AclMode::Grant, &allow_write_sid, MODIFY_MASK, true,));
-        assert!(before_denies.has_explicit(
-            AclMode::Grant,
-            &allow_read_sid,
-            READ_EXECUTE_MASK,
-            true,
-        ));
         assert_eq!(
             before_denies
                 .aces
@@ -2130,6 +2443,258 @@ mod tests {
     }
 
     #[test]
+    fn warm_policy_and_execution_deny_do_not_wait_for_an_unrelated_acl_target() {
+        let root = temporary_directory("warm-admission");
+        let denied = root.join("denied");
+        let unrelated = temporary_directory("warm-admission-unrelated");
+        fs::create_dir(&denied).unwrap();
+        let mut request = request(&root);
+        request.deny_read = vec![denied.to_string_lossy().into_owned()];
+        ensure_policy_aces(&request, &root).unwrap();
+
+        let unrelated_target = open_acl_target(&unrelated).unwrap();
+        let transaction = NamedMutex::acquire(
+            &acl_target_mutex_name(&unrelated_target),
+            ACL_TARGET_MUTEX_TIMEOUT_MS,
+        )
+        .unwrap();
+        let deadline = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+            + 250;
+        let (policy, execution_deny) = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    (
+                        ensure_policy_aces_until(&request, &root, deadline),
+                        install_execution_deny_read_until(
+                            &request,
+                            &root,
+                            "S-1-5-5-77889-99001",
+                            std::process::id(),
+                            deadline,
+                        ),
+                    )
+                })
+                .join()
+                .unwrap()
+        });
+
+        assert!(
+            policy.is_ok(),
+            "warm policy admission waited for an unrelated ACL target: {policy:?}"
+        );
+        let lease = execution_deny
+            .expect("execution deny must not wait for an unrelated ACL target")
+            .expect("denyRead request must create a lease");
+        assert!(
+            matches!(lease.finish(), ExecutionDenyCleanup::Completed),
+            "execution deny cleanup must not wait for an unrelated ACL target",
+        );
+        drop(transaction);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir(unrelated).unwrap();
+    }
+
+    #[test]
+    fn cold_additive_policy_admission_does_not_wait_for_an_unrelated_acl_transaction() {
+        let root = temporary_directory("cold-parallel-admission");
+        let unrelated = temporary_directory("cold-parallel-admission-unrelated");
+        let mut request = request(&root);
+        request.deny_read.clear();
+        let unrelated_target = open_acl_target(&unrelated).unwrap();
+        let transaction = NamedMutex::acquire(
+            &acl_target_mutex_name(&unrelated_target),
+            ACL_TARGET_MUTEX_TIMEOUT_MS,
+        )
+        .unwrap();
+        let deadline = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+            + 250;
+
+        let policy = std::thread::scope(|scope| {
+            scope
+                .spawn(|| ensure_policy_aces_until(&request, &root, deadline))
+                .join()
+                .unwrap()
+        });
+        drop(transaction);
+
+        assert!(
+            policy.is_ok(),
+            "cold additive policy admission waited for a machine-global ACL mutex: {policy:?}",
+        );
+        fs::remove_dir(root).unwrap();
+        fs::remove_dir(unrelated).unwrap();
+    }
+
+    #[test]
+    fn cold_policy_locks_only_the_target_with_missing_capabilities() {
+        let common = temporary_directory("cold-partial-common");
+        let fresh = temporary_directory("cold-partial-fresh");
+        let mut warm = request(&common);
+        warm.deny_read.clear();
+        warm.deny_write.clear();
+        ensure_policy_aces(&warm, &common).unwrap();
+
+        let mut cold = warm.clone();
+        cold.cwd = fresh.to_string_lossy().into_owned();
+        cold.allow_read.push(fresh.to_string_lossy().into_owned());
+        cold.allow_write.push(fresh.to_string_lossy().into_owned());
+        let common_target = open_acl_target(&common).unwrap();
+        let transaction = NamedMutex::acquire(
+            &acl_target_mutex_name(&common_target),
+            ACL_TARGET_MUTEX_TIMEOUT_MS,
+        )
+        .unwrap();
+        let deadline = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+            + 500;
+
+        let result = std::thread::scope(|scope| {
+            scope
+                .spawn(|| ensure_policy_aces_until(&cold, &fresh, deadline))
+                .join()
+                .unwrap()
+        });
+        drop(transaction);
+
+        assert!(
+            result.is_ok(),
+            "cold admission waited on an already-satisfied shared root: {result:?}",
+        );
+        fs::remove_dir(common).unwrap();
+        fs::remove_dir(fresh).unwrap();
+    }
+
+    #[test]
+    fn warm_read_only_roots_are_not_acl_transaction_targets() {
+        let readable = temporary_directory("read-policy-only");
+        let writable = temporary_directory("read-policy-write-root");
+        let mut request = request(&writable);
+        request.allow_read = vec![readable.to_string_lossy().into_owned()];
+        request.allow_write = vec![writable.to_string_lossy().into_owned()];
+        request.deny_read.clear();
+        request.deny_write.clear();
+        ensure_setup_acl_roots(
+            &request.allow_read,
+            &[],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+
+        let readable_target = open_acl_target(&readable).unwrap();
+        let before = readable_target.read_aces().unwrap().aces;
+        let transaction = NamedMutex::acquire(
+            &acl_target_mutex_name(&readable_target),
+            ACL_TARGET_MUTEX_TIMEOUT_MS,
+        )
+        .unwrap();
+        let deadline = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+            + 500;
+
+        let result = std::thread::scope(|scope| {
+            scope
+                .spawn(|| ensure_policy_aces_until(&request, &writable, deadline))
+                .join()
+                .unwrap()
+        });
+        drop(transaction);
+
+        assert!(
+            result.is_ok(),
+            "read-only policy root entered ACL admission: {result:?}",
+        );
+        assert_eq!(
+            open_acl_target(&readable)
+                .unwrap()
+                .read_aces()
+                .unwrap()
+                .aces,
+            before,
+            "read-only policy root ACL changed during admission",
+        );
+        fs::remove_dir(readable).unwrap();
+        fs::remove_dir(writable).unwrap();
+    }
+
+    #[test]
+    fn setup_acl_mutex_wait_obeys_the_overall_setup_deadline() {
+        let root = temporary_directory("setup-acl-deadline");
+        let target = open_acl_target(&root).unwrap();
+        let transaction = NamedMutex::acquire(
+            &acl_target_mutex_name(&target),
+            ACL_TARGET_MUTEX_TIMEOUT_MS,
+        )
+        .unwrap();
+        let deadline = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+            + 200;
+        let root_text = root.to_string_lossy().into_owned();
+        let started = std::time::Instant::now();
+        let result = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    ensure_setup_acl_roots_until(
+                        &[root_text],
+                        &[],
+                        "S-1-5-21-1-2-3-9998",
+                        "00000000-0000-4000-8000-000000000003",
+                        deadline,
+                    )
+                })
+                .join()
+                .unwrap()
+        });
+        drop(transaction);
+
+        assert!(result.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn filesystem_capability_generation_is_independent_of_protocol_and_account() {
+        let root = temporary_directory("capability-schema");
+        let mut request = request(&root);
+        let current = filesystem_capability_generation(&request);
+        request.protocol = request.protocol.saturating_add(1);
+        request.sandbox_user_sid = "S-1-5-21-4-5-6-9999".into();
+        request.sandbox_group_sid = "S-1-5-32-545".into();
+
+        assert_eq!(filesystem_capability_generation(&request), current);
+        request.filesystem_capability_nonce = "00000000-0000-4000-8000-000000000004".into();
+        assert_ne!(filesystem_capability_generation(&request), current);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn native_rebuild_reuses_the_installed_accounts_filesystem_capabilities() {
         let root = temporary_directory("stable-account-capabilities");
         let mut request = request(&root);
@@ -2144,7 +2709,7 @@ mod tests {
 
         fs::remove_dir(root).unwrap();
         assert_eq!(second, first);
-        assert_ne!(rotated_account, first);
+        assert_eq!(rotated_account, first);
     }
 
     #[test]
@@ -2185,6 +2750,146 @@ mod tests {
             0,
         );
         assert!(!execution_deny_receipt_path(&request, &root).exists());
+
+        drop(target);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn disappearing_enumerated_execution_receipt_is_already_converged() {
+        let root = temporary_directory("execution-deny-enumeration-race");
+        let missing = root.join("windows-deny-gone.json");
+
+        assert!(
+            read_execution_deny_receipt_if_present(&missing)
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn execution_receipt_staging_names_the_native_writer_process() {
+        let root = temporary_directory("execution-deny-staging-writer");
+        let receipt = root.join("windows-deny-receipt.json");
+        let temporary = execution_deny_receipt_temporary_path(&receipt);
+        let suffix = temporary.file_name().unwrap().to_string_lossy();
+
+        assert!(suffix.contains(&format!(".{}.", std::process::id())));
+        assert!(suffix.ends_with(".tmp"));
+
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn opened_execution_receipt_does_not_block_exact_owner_retirement() {
+        let root = temporary_directory("execution-deny-shared-reader");
+        let receipt_path = root.join("windows-deny-shared.json");
+        let receipt = ExecutionDenyReceipt {
+            version: EXECUTION_DENY_RECEIPT_VERSION,
+            runner_pid: std::process::id(),
+            runner_creation_time: process_creation_time(std::process::id())
+                .unwrap()
+                .expect("current native process has a creation time"),
+            logon_sid: "S-1-5-5-72334-94556".into(),
+            targets: vec![ExecutionDenyTargetReceipt {
+                canonical_path: root.to_string_lossy().into_owned(),
+                volume_serial: 1,
+                file_id: [7; 16],
+                directory: true,
+                deny_mask: READ_MASK,
+                deny_flags: (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0 as u8,
+            }],
+        };
+        write_execution_deny_receipt(&receipt_path, &receipt).unwrap();
+
+        let mut reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_DELETE.0)
+            .open(&receipt_path)
+            .unwrap();
+        fs::remove_file(&receipt_path).unwrap();
+        let mut payload = Vec::new();
+        reader.read_to_end(&mut payload).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<ExecutionDenyReceipt>(&payload).unwrap(),
+            receipt,
+        );
+        assert!(!receipt_path.exists());
+
+        drop(reader);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn next_overlapping_deny_read_recovers_a_dead_runner_receipt() {
+        let root = temporary_directory("execution-deny-overlap-recovery");
+        let denied = root.join("denied");
+        fs::create_dir(&denied).unwrap();
+        let mut first_request = request(&root);
+        first_request.deny_read = vec![denied.to_string_lossy().into_owned()];
+        let old_logon_sid = "S-1-5-5-42334-64556";
+        let old_lease =
+            install_execution_deny_read(&first_request, &root, old_logon_sid, std::process::id())
+                .unwrap()
+                .unwrap();
+        let old_receipt_path = old_lease.receipt_path.clone();
+        let mut stale_receipt = old_lease.receipt.clone();
+        stale_receipt.runner_creation_time = 1;
+        drop(old_lease);
+        fs::remove_file(&old_receipt_path).unwrap();
+        write_execution_deny_receipt(&old_receipt_path, &stale_receipt).unwrap();
+
+        let mut second_request = first_request.clone();
+        second_request.terminal_nonce = "22345678-1234-1234-1234-123456789abc".into();
+        let new_logon_sid = "S-1-5-5-52334-74556";
+        let new_lease =
+            install_execution_deny_read(&second_request, &root, new_logon_sid, std::process::id())
+                .unwrap()
+                .unwrap();
+        let target = open_acl_target(&denied).unwrap();
+        let snapshot = target.read_aces().unwrap();
+        assert_eq!(snapshot.exact_execution_deny_count(old_logon_sid), 0);
+        assert_eq!(snapshot.exact_execution_deny_count(new_logon_sid), 1);
+        assert!(!old_receipt_path.exists());
+
+        assert!(matches!(
+            new_lease.finish(),
+            ExecutionDenyCleanup::Completed
+        ));
+        drop(target);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_recovery_and_original_owner_finish_converge_without_a_false_failure() {
+        let root = temporary_directory("execution-deny-owner-recovery-race");
+        let denied = root.join("denied");
+        fs::create_dir(&denied).unwrap();
+        let mut request = request(&root);
+        request.deny_read = vec![denied.to_string_lossy().into_owned()];
+        let logon_sid = "S-1-5-5-62334-84556";
+        let lease = install_execution_deny_read(&request, &root, logon_sid, std::process::id())
+            .unwrap()
+            .unwrap();
+        let receipt_path = lease.receipt_path.clone();
+        let mut stale_receipt = lease.receipt.clone();
+        stale_receipt.runner_creation_time = 1;
+        fs::remove_file(&receipt_path).unwrap();
+        write_execution_deny_receipt(&receipt_path, &stale_receipt).unwrap();
+
+        recover_stale_execution_denies(&root).unwrap();
+        assert!(!receipt_path.exists());
+        assert!(matches!(lease.finish(), ExecutionDenyCleanup::Completed));
+        let target = open_acl_target(&denied).unwrap();
+        assert_eq!(
+            target
+                .read_aces()
+                .unwrap()
+                .exact_execution_deny_count(logon_sid),
+            0,
+        );
 
         drop(target);
         fs::remove_dir_all(root).unwrap();
@@ -2252,7 +2957,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_policy_uses_group_read_and_a_stable_write_deny() {
+    fn read_only_policy_grants_group_read_without_a_capability() {
         let root = temporary_directory("read-only-capability");
         let mut request = request(&root);
         request.allow_write.clear();
@@ -2260,10 +2965,9 @@ mod tests {
         request.deny_write.clear();
 
         let capabilities = ensure_policy_aces(&request, &root).unwrap();
-        assert_eq!(capabilities.len(), 2);
+        assert!(capabilities.is_empty());
         let target = open_acl_target(&root).unwrap();
-        let snapshot = target.read_aces().unwrap();
-        assert!(snapshot.has_explicit(
+        assert!(target.read_aces().unwrap().has_explicit(
             AclMode::Grant,
             &request.sandbox_group_sid,
             READ_EXECUTE_MASK,

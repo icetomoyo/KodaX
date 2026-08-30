@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -25,6 +25,7 @@ pub fn controller_pipe_server_pid(value: &str) -> Result<u32> {
 pub struct RunRequest {
     pub protocol: u16,
     pub generation: String,
+    pub filesystem_capability_nonce: String,
     pub sandbox_user_sid: String,
     pub sandbox_group_sid: String,
     pub asrt_executable: String,
@@ -41,6 +42,8 @@ pub struct RunRequest {
     pub terminal_record_path: String,
     pub terminal_nonce: String,
     pub operation_deadline_unix_ms: u64,
+    pub setup_marker_path: String,
+    pub setup_marker_sha256: String,
 }
 
 impl RunRequest {
@@ -54,6 +57,11 @@ impl RunRequest {
         }
         if self.generation.is_empty() {
             bail!("Windows sandbox generation is empty");
+        }
+        let capability_nonce = uuid::Uuid::parse_str(&self.filesystem_capability_nonce)
+            .context("Windows sandbox filesystem capability nonce is invalid")?;
+        if capability_nonce.get_version_num() != 4 {
+            bail!("Windows sandbox filesystem capability nonce is not version 4");
         }
         if self.operation_deadline_unix_ms == 0 {
             bail!("Windows sandbox operation deadline is invalid");
@@ -76,6 +84,17 @@ impl RunRequest {
         controller_pipe_server_pid(&self.controller_pipe)?;
         if self.terminal_record_path.is_empty() || self.terminal_record_path.contains('\0') {
             bail!("Invalid Windows sandbox terminal record path");
+        }
+        if self.setup_marker_path.is_empty()
+            || self.setup_marker_path.contains('\0')
+            || !std::path::Path::new(&self.setup_marker_path).is_absolute()
+            || self.setup_marker_sha256.len() != 64
+            || !self
+                .setup_marker_sha256
+                .bytes()
+                .all(|value| value.is_ascii_hexdigit())
+        {
+            bail!("Windows sandbox setup marker proof is invalid");
         }
         uuid::Uuid::parse_str(&self.terminal_nonce)
             .map_err(|_| anyhow::anyhow!("Invalid Windows sandbox terminal nonce"))?;
@@ -205,6 +224,15 @@ pub struct StartedMessage {
     pub pid: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartedRecord {
+    pub protocol: u16,
+    pub nonce: String,
+    pub target_pid: u32,
+    pub job_contained: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExitMessage {
@@ -253,7 +281,6 @@ pub fn capability_sid(fingerprint: &str) -> Result<String> {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FilesystemCapabilityKind {
-    AllowRead,
     AllowWrite,
     DenyWrite,
 }
@@ -261,7 +288,6 @@ pub enum FilesystemCapabilityKind {
 impl FilesystemCapabilityKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::AllowRead => "allow-read",
             Self::AllowWrite => "allow-write",
             Self::DenyWrite => "deny-write",
         }
@@ -355,6 +381,7 @@ mod tests {
         let request = RunRequest {
             protocol: PROTOCOL_VERSION,
             generation: "generation-a".into(),
+            filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
             sandbox_user_sid: "S-1-5-21-1-2-3-4".into(),
             sandbox_group_sid: "S-1-5-21-1-2-3-5".into(),
             asrt_executable: "srt-win.exe".into(),
@@ -371,6 +398,8 @@ mod tests {
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             operation_deadline_unix_ms: 1,
+            setup_marker_path: r"C:\control\windows-v2-cutover.json".into(),
+            setup_marker_sha256: "0".repeat(64),
         };
         assert!(request.validate().is_err());
     }
@@ -381,6 +410,7 @@ mod tests {
         let request = RunRequest {
             protocol: PROTOCOL_VERSION,
             generation: "generation-a".into(),
+            filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
             sandbox_user_sid: "S-1-5-21-2130785933-3654544736-2779019230-1006".into(),
             sandbox_group_sid: "S-1-5-21-2130785933-3654544736-2779019230-1005".into(),
             asrt_executable: "srt-win.exe".into(),
@@ -397,6 +427,8 @@ mod tests {
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             operation_deadline_unix_ms: 1,
+            setup_marker_path: r"C:\control\windows-v2-cutover.json".into(),
+            setup_marker_sha256: "0".repeat(64),
         };
         request.validate().unwrap();
     }
@@ -408,6 +440,7 @@ mod tests {
         let request = RunRequest {
             protocol: PROTOCOL_VERSION,
             generation: "generation-a".into(),
+            filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
             sandbox_user_sid: sid.into(),
             sandbox_group_sid: sid.into(),
             asrt_executable: "srt-win.exe".into(),
@@ -424,6 +457,8 @@ mod tests {
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             operation_deadline_unix_ms: 1,
+            setup_marker_path: r"C:\control\windows-v2-cutover.json".into(),
+            setup_marker_sha256: "0".repeat(64),
         };
 
         assert!(
@@ -441,6 +476,7 @@ mod tests {
         let request = RunRequest {
             protocol: PROTOCOL_VERSION,
             generation: "generation-a".into(),
+            filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
             sandbox_user_sid: "S-1-5-21-1-2-3-4".into(),
             sandbox_group_sid: "S-1-5-21-1-2-3-5".into(),
             asrt_executable: "srt-win.exe".into(),
@@ -457,6 +493,8 @@ mod tests {
             terminal_record_path: r"C:\control\terminal.json".into(),
             terminal_nonce: "12345678-1234-1234-1234-123456789abc".into(),
             operation_deadline_unix_ms: 1,
+            setup_marker_path: r"C:\control\windows-v2-cutover.json".into(),
+            setup_marker_sha256: "0".repeat(64),
         };
         assert!(request.validate().is_err());
     }

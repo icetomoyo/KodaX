@@ -192,6 +192,21 @@ hook crashes or returns malformed JSON. The coding runtime finalizes its
 authoritative `KodaXResult` before emitting the public completion signal, so
 A2A responses cannot publish an empty successful answer (Issue 302).
 
+The v0.7.96 Windows shell path removes the old command-lifetime filesystem-
+effect coordinator. Bash commands, trusted text tools, and different worktree
+paths no longer share a KodaX global lock; same-file text CAS and same-path
+worktree ordering remain narrow. Native protocol 8 gives every command its own
+request, token, pipes, Job, start records, and terminal proof. Warm ACL
+admission is read-only; a missing ACE uses a short mutex for that exact opened
+filesystem object, with one five-second budget across all roots. Artifact,
+control-state, legacy-ACL, and full stale-deny recovery belongs only to explicit
+setup generation 8. A denyRead request may recover only a dead receipt that
+overlaps its exact requested object. Matching network authority reuses a healthy broker and
+keeps it referenced while starting or leased, detaches it only while idle, and
+retires a failed readiness attempt. Old `model-filesystem-effects.*` state and
+deprecated lease exports are inert migration surfaces and cannot block current
+commands.
+
 ## 安装 / 导入
 
 ```bash

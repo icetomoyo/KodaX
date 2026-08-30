@@ -1,11 +1,11 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 >
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.4` source
 > candidate (`v0.7.96-alpha.3` remains the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
-> This baseline advertises Windows `sandboxRuntime:6`;
+> This baseline advertises Windows `sandboxRuntime:7`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
 > This document describes the current product. Historical pre-v0.7.43
@@ -202,6 +202,19 @@ shared-daemon native, constructed, and workflow Agent turns require explicit
 scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
+
+The v0.7.96-alpha.4 source candidate adds FEATURE_297 and corrects the Windows
+sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
+does not run setup, legacy ACL migration, synchronous provisioning, or a
+command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;
+a missing additive ACE uses one short lock for that exact opened filesystem
+object and all roots share one five-second phase budget. Each command retains
+an independent token, pipe, Job, and terminal proof. Shared network brokers are
+kept referenced while starting or leased and detached only while idle. The
+one-time setup generation 8 / protocol 8 transition uses a crash-resumable
+legacy-drain marker, rotates the sandbox account only after the complete old
+pre-start window and old SID lifetime have ended, and gates every new target
+start with an open handle to the protected generation marker.
 
 ## 2. Target Users
 

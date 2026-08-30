@@ -8,7 +8,7 @@ import {
   type ResolveWindowsNativeArtifactOptions,
 } from './windows-native-artifacts.js';
 
-export const WINDOWS_SANDBOX_V2_PROTOCOL = 7;
+export const WINDOWS_SANDBOX_V2_PROTOCOL = 8;
 
 export interface AsrtWindowsInvocation {
   readonly executable: string;
@@ -33,6 +33,7 @@ export interface WindowsSandboxV2PolicyInput {
 export interface WindowsSandboxV2RunRequest {
   readonly protocol: typeof WINDOWS_SANDBOX_V2_PROTOCOL;
   readonly generation: string;
+  readonly filesystemCapabilityNonce: string;
   readonly sandboxUserSid: string;
   readonly sandboxGroupSid: string;
   readonly asrtExecutable: string;
@@ -49,10 +50,13 @@ export interface WindowsSandboxV2RunRequest {
   readonly terminalRecordPath: string;
   readonly terminalNonce: string;
   readonly operationDeadlineUnixMs: number;
+  readonly setupMarkerPath: string;
+  readonly setupMarkerSha256: string;
 }
 
 export interface WindowsSandboxV2RunRequestInput {
   readonly generation: string;
+  readonly filesystemCapabilityNonce: string;
   readonly sandboxUserSid: string;
   readonly sandboxGroupSid: string;
   readonly asrtInvocation: SplitAsrtWindowsInvocation;
@@ -66,6 +70,8 @@ export interface WindowsSandboxV2RunRequestInput {
   readonly terminalRecordPath: string;
   readonly terminalNonce: string;
   readonly operationDeadlineUnixMs: number;
+  readonly setupMarkerPath: string;
+  readonly setupMarkerSha256: string;
 }
 
 /**
@@ -194,11 +200,17 @@ export function windowsSandboxV2PolicyCapabilitySid(fingerprint: string): string
 }
 
 export function windowsSandboxV2Generation(input: {
+  readonly setupGenerationNonce: string;
   readonly sandboxUserSid: string;
   readonly sandboxGroupSid: string;
   readonly asrtSha256: string;
   readonly shellSha256: string;
 }): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    input.setupGenerationNonce,
+  )) {
+    throw new Error('Invalid Windows sandbox setup generation nonce.');
+  }
   if (!/^S-1-(?:\d+-)+\d+$/.test(input.sandboxUserSid)) {
     throw new Error('Invalid Windows sandbox account SID.');
   }
@@ -211,6 +223,7 @@ export function windowsSandboxV2Generation(input: {
   }
   return createHash('sha256').update(JSON.stringify({
     version: WINDOWS_SANDBOX_V2_PROTOCOL,
+    setupGenerationNonce: input.setupGenerationNonce.toLowerCase(),
     sandboxUserSid: input.sandboxUserSid,
     sandboxGroupSid: input.sandboxGroupSid,
     asrtSha256: input.asrtSha256.toLowerCase(),
@@ -279,6 +292,10 @@ export function createWindowsSandboxV2RunRequest(
   if (input.targetArgv.length === 0 || input.targetArgv[0]?.trim() === '') {
     throw new Error('Windows sandbox v2 target argv is empty.');
   }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(input.filesystemCapabilityNonce)) {
+    throw new Error('Windows sandbox v2 filesystem capability nonce is invalid.');
+  }
   if (!/^\\\\\.\\pipe\\kodax-v2-[1-9]\d{0,9}-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
     .test(input.controllerPipe)) {
     throw new Error('Windows sandbox v2 controller pipe is invalid.');
@@ -300,6 +317,15 @@ export function createWindowsSandboxV2RunRequest(
   }
   if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.terminalNonce)) {
     throw new Error('Windows sandbox v2 terminal nonce is invalid.');
+  }
+  if (
+    typeof input.setupMarkerPath !== 'string'
+    || typeof input.setupMarkerSha256 !== 'string'
+    || !path.win32.isAbsolute(input.setupMarkerPath)
+    || input.setupMarkerPath.includes('\0')
+    || !/^[0-9a-f]{64}$/i.test(input.setupMarkerSha256)
+  ) {
+    throw new Error('Windows sandbox v2 setup marker proof is invalid.');
   }
   if (!/^S-1-(?:\d+-)+\d+$/.test(input.sandboxUserSid)) {
     throw new Error('Windows sandbox v2 account SID is invalid.');
@@ -324,6 +350,7 @@ export function createWindowsSandboxV2RunRequest(
   return {
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
     generation: input.generation,
+    filesystemCapabilityNonce: input.filesystemCapabilityNonce.toLowerCase(),
     sandboxUserSid: input.sandboxUserSid,
     sandboxGroupSid: input.sandboxGroupSid,
     asrtExecutable: input.asrtInvocation.executable,
@@ -340,6 +367,8 @@ export function createWindowsSandboxV2RunRequest(
     terminalRecordPath: input.terminalRecordPath,
     terminalNonce: input.terminalNonce.toLowerCase(),
     operationDeadlineUnixMs: input.operationDeadlineUnixMs,
+    setupMarkerPath: input.setupMarkerPath,
+    setupMarkerSha256: input.setupMarkerSha256,
   };
 }
 
@@ -348,6 +377,7 @@ export function resolveWindowsSandboxV2Executable(
 ): {
   readonly path: string;
   readonly sha256: string;
+  readonly developmentTrustRoots: readonly string[];
 } {
   const artifact = resolveWindowsNativeArtifact(
     import.meta.url,
@@ -355,5 +385,9 @@ export function resolveWindowsSandboxV2Executable(
     WINDOWS_SANDBOX_V2_PROTOCOL,
     options,
   );
-  return { path: artifact.path, sha256: artifact.entry.sha256 };
+  return {
+    path: artifact.path,
+    sha256: artifact.entry.sha256,
+    developmentTrustRoots: artifact.developmentTrustRoots,
+  };
 }

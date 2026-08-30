@@ -145,9 +145,9 @@ and normal global Git behavior.
 
 Release gates:
 
-1. Root/Worker/daemon capability metadata must advertise
-   `runtimeAutoModeGuardrail:5` and `sharedSessionSettings:2`; an auto-starting
-   alpha.4 client must safely replace an idle v4 or shared-settings-v1 daemon,
+1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:7`,
+   `runtimeAutoModeGuardrail:5`, and `sharedSessionSettings:2`; an auto-starting
+   alpha.4 client must safely replace an idle sandbox-v6, guardrail-v4, or shared-settings-v1 daemon,
    while attach-only clients fail closed.
 2. Public declarations must expose exact canonical/input permission types,
    host-owned Exec Policy and Auto-review options, ACP mode identifiers, and
@@ -155,13 +155,17 @@ Release gates:
 3. Legacy `auto-in-project`, `permissionMode: "default"`, Rules-engine fields,
    and malformed auto-rules files must remain non-blocking compatibility input;
    none may become Full Access or be rewritten destructively.
-4. README/README_CN, PRD/HLD/DD/ADR, feature tracker/design, public
+4. README/README_CN, PRD/HLD/DD/ADR-070, Issue 326, feature tracker/design, public
    configuration and SDK guides, config templates, changelog, test guide, and
    `kodax_manual` must describe the same sandbox-first route.
-5. Focused permission/Runtime/daemon/ACP/manual tests, full typecheck, `git diff --check`,
+5. Protocol 8/setup generation 8, the native sidecar/hash manifest, receipt
+   convergence, bounded-idle broker release, and the real opt-in Windows
+   120-second dual-Runtime overlap must pass the Issue 326 regression guide.
+6. Focused permission/Runtime/daemon/ACP/manual tests, full typecheck, `git diff --check`,
    build, package contents, generated declarations, and an empty-consumer smoke
-   of the root, `/runtime`, and `/repl` exports must pass.
-6. Tag or publish only the exact reviewed commit after CI is green. Publishing
+   of the root, `/runtime`, and `/repl` exports must pass. Root and
+   `docs/features` must both be clean and the recorded submodule commit reachable.
+7. Tag or publish only the exact reviewed commit after CI is green. Publishing
    packages, pushing Git refs, and creating releases remain explicit operator
    actions and are not performed by this checklist.
 

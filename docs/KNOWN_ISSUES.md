@@ -1,11 +1,36 @@
 # Known Issues
 
-_Last Updated: 2026-08-29_
+_Last Updated: 2026-08-31_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## v0.7.96-alpha.4 Concurrency Correction
+
+Issue 326 is resolved in the alpha.4 source candidate. The failure was not an
+inherent Windows sandbox single-command limit: ordinary admission ran legacy
+ACL reconciliation behind a machine-global mutex, applied a separate five-
+second wait to each root (producing the observed 75 seconds), and retained a
+cross-process filesystem-effect coordinator. Protocol 8/setup generation 8
+moves machine work to setup, makes warm ACL admission read-only, uses only an
+exact-object short mutex with one five-second total phase budget, requires a
+hash-bound marker held through target `Started`, retires failed broker
+readiness, keeps active brokers referenced, resumes interrupted legacy drains,
+recovers a dead denyRead receipt only for an overlapping requested object, and
+reads immutable receipts with read/delete sharing so one scan cannot block
+exact cleanup. Caller-local broker deadlines no longer retire a healthy shared
+startup, active-pool saturation fails before start without lifecycle waiting,
+prepared Bash/SDK requests are released on synchronous spawn failure, and an
+uncertain Git Job-binding cleanup retains managed-child recovery. This removes
+the Bash/write/worktree command-lifetime fence. Generation 8 keeps a persistent
+random filesystem-capability namespace and performs broad profile/TMP ACL
+preparation only during explicit setup; ordinary admission never recursively
+mutates those roots. Real
+dual-Runtime coverage requires the second Runtime to complete in under 15
+seconds while a first 120-second target remains active. See
+[ISSUE_326_v0.7.96_REGRESSION_GUIDE.md](test-guides/ISSUE_326_v0.7.96_REGRESSION_GUIDE.md).
 
 ## v0.7.96-alpha.3 Release Corrections
 
@@ -197,6 +222,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.4 | 2026-08-30 | 2026-08-31 |
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
 | 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
 | 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
@@ -14042,13 +14068,14 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - Rejected an inheritable OWNER RIGHTS deny after real tests proved it also
   blocks the trusted host from managing existing host-owned deny roots.
 - Confirmed with real Node/cmd/PowerShell probes that the primary sandbox-user
-  SID must remain alongside logon/Everyone for subprocess compatibility. Exact
-  read capabilities remain, but Issue 309 stays open for all retained ambient
+  SID must remain alongside logon/Everyone for subprocess compatibility. Read
+  access uses the shared sandbox group and exact write clauses use capabilities;
+  Issue 309 stays open for all retained ambient
   trustees; trusted text tools remain outside this boundary.
 
 ### 2026-08-27: Issue 308 recorded (ASRT Windows distinct-policy proxy capacity)
 - FEATURE_295 now pools one ASRT Windows network broker per exact network
-  policy and sandbox-account generation inside a Runtime process, so concurrent
+  policy and setup generation inside a Runtime process, so concurrent
   same-policy shell commands no longer multiply fixed proxy-port consumption.
 - ASRT 0.0.65 still provides no authenticated per-connection identity for
   routing different policies through one ingress. Distinct policies and

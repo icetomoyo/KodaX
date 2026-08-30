@@ -1,6 +1,13 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
+>
+> **v0.7.96-alpha.4 concurrency correction:** ADR-070 removes the global ACL
+> admission mutex and command-lifetime filesystem-effect coordinator. Native
+> protocol 8/setup generation 8 uses a required protected marker start gate,
+> read-only warm ACL admission, exact-object short mutation locks with one
+> five-second total phase budget, setup-only provisioning/full recovery, reusable
+> exact-authority brokers, and independent request/token/pipe/Job lifecycles.
 >
 > **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
 > scoped, revocable capabilities (ADR-068). The v2 credential broker keeps
@@ -5572,19 +5579,18 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
 9. **Shell permission and network split**: ASRT supplies only its network
    proxy, WFP, CA and dedicated account. The KodaX runner supplies a
    `WRITE_RESTRICTED` token whose restricting set carries one ephemeral full-
-   policy capability, stable read/write filesystem-clause capabilities, and
+   policy capability, stable write filesystem-clause capabilities, and
    the dedicated primary account, per-launch logon, and Everyone SIDs for
    Windows subprocess compatibility, matching current Codex. Removing the
    primary SID makes real Node/cmd/PowerShell child creation fail with `EPERM`.
    The account SID remains absent from the token's default DACL. The full-policy capability isolates the private desktop but is
    never persisted on filesystem roots. Persistent write authority instead uses
-   capability SIDs derived from account generation, final handle-canonical root,
+   capability SIDs derived from the setup's persistent filesystem nonce, final handle-canonical root,
    and clause (`allowWrite` or `denyWrite`), matching Codex's bounded root model.
-   Every read root receives its exact allow-read capability, and a read-only
-   root receives a stable deny-write capability unless covered by a current
-   write root. The ASRT sandbox group supplies ordinary read/execute or modify
-   access on the normal pass; the exact read/write root capability supplies the
-   restricted pass. The restricted target enables `SeChangeNotifyPrivilege`,
+   Read roots use the ASRT sandbox group and do not imply a deny-write
+   capability. The group supplies ordinary read/execute or modify access on the
+   normal pass; an exact write-root capability supplies the restricted pass.
+   The restricted target enables `SeChangeNotifyPrivilege`,
    so it can traverse to an exact allowed root without persistent ACEs on
    private ancestors. Admission never rewrites a profile/container DACL merely
    to reach a descendant; exact-root content authority is unchanged. Canonical
@@ -5599,7 +5605,7 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    proves the Job drained. A host crash leaves recovery evidence keyed by exact
    PID creation time; the next shell host recovers stale evidence under the same
    short ACL mutex. The earlier fixed Agent Home and credential guards are
-   historical as of ADR-069: setup generation 4 removes only their exactly
+   historical as of ADR-069/070: setup generation 8 removes only their exactly
    owned legacy ACEs after the previous sandbox SID is idle and rotates the
    account generation. Ordinary admission never installs or removes those
    machine-wide guards. This mutex covers only current-policy ACL
@@ -5616,12 +5622,12 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
     Different policies, Sessions and Runtime processes may run concurrently.
     No owner/reset/allow-revoke/cleanup/poison admission gate spans a command
     lifetime. Inside one Runtime process, commands with the same canonical
-    network policy and sandbox-account generation acquire references to one
+    network policy and setup generation acquire references to one
     process-level ASRT network broker. Each command still has an independent
     native request, restricted policy token, controller connection and Job;
     releasing one command cannot close the broker while another reference is
     live. The broker is retained for one second after the last release to avoid
-    cold-start churn. Different network policies or account generations never
+    cold-start churn. Different network policies or setup generations never
     share a broker.
 
     This pool is intentionally narrower than Codex's process-shared Windows
@@ -6001,14 +6007,18 @@ growth and lets admission proceed without silently redefining cache ACL
 ownership.
 
 Legacy sensitive-root ACL removal is a versioned setup operation, never a
-normal command-admission operation. Windows setup generation 4 waits until the
-previous sandbox SID is idle, removes only the provably owned legacy guards
+normal command-admission operation. Windows setup generation 8 retires the
+protocol-7 ProgramData marker, drains its complete bounded pre-start window, waits until
+the previous sandbox SID is idle, removes only the provably owned legacy guards
 against the exact previous group SID, rotates the account/SID generation, and
-atomically records the new cutover marker. Removal is
-skipped for fresh install and same-generation repair. Older binaries reject
-ordinary admission when they see the v4 marker; their older explicit setup path
-can still downgrade the generation, so operators must not run setup from an
-older KodaX after cutover and must rerun current setup if that happens.
+atomically records the new protected cutover marker. Removal is
+skipped for fresh install and same-generation repair. Protocol-7 binaries never
+read the protected protocol-8 marker; removing their ProgramData marker is what
+closes that authority before the bounded drain. The faulty generation-5
+protocol-8 build reads the protected marker but rejects generation 8 and its
+required nonce. Either older setup path can still downgrade state, so operators
+must not run setup from an older KodaX after cutover and must rerun current setup
+if that happens.
 After setup, each command keeps an independent native request, policy token,
 controller connection, and Job. Admission may idempotently authorize a missing
 current capability on an exact root, but it does not clear or revoke shared
@@ -6033,7 +6043,7 @@ critical safeguard. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
-On Windows, upgrading from setup generation 3 requires one explicit
+On Windows, upgrading from any pre-8 setup generation requires one explicit
 `kodax sandbox setup` while old sandbox processes are stopped. The one-time
 migration can take the setup lock; normal commands never wait on that lock or
 the legacy ACL cleanup path, so independent Sessions retain true overlap.
@@ -6047,3 +6057,97 @@ administrator policy (misrepresents explicit deployment constraints); adding
 another tool/Agent or a Starlark VM for policy (violates KodaX's minimalist
 boundary); parsing or migrating legacy auto-rules (lets dead configuration
 block the new mode).
+
+## ADR-070: Windows Sandbox Coordination Is Setup-Scoped or Exact-Object-Scoped
+
+**Status**: Accepted for v0.7.96-alpha.4 (Issue 326); refines ADR-065, ADR-066,
+and ADR-069 after the production concurrency regression.
+
+**Context**: The native runner already gave each command its own request,
+restricted token, pipe pair, controller connection, Job, and process
+lifecycle. KodaX nevertheless serialized unrelated work outside that runner:
+ordinary admission invoked legacy ACL reconciliation behind one machine-global
+mutex, each ACL root received its own five-second wait, artifact/control setup
+ran synchronously in the Node hot path, and a separate filesystem-effect
+coordinator fenced Bash, text, and worktree operations across processes. The
+observed symptoms—60/75/240-second preparation stalls, `ACL transaction mutex
+timed out`, accepted-but-never-started background Bash, and writes blocked by a
+sibling Session—were therefore KodaX coordination defects, not an inherent
+Windows sandbox limit. Codex uses versioned setup plus stable capabilities and
+per-command runners; it does not acquire a command-lifetime global filesystem
+lock.
+
+**Decision**:
+
+1. Machine-wide changes belong to explicit versioned setup. Artifact/control
+   provisioning, legacy guard removal, and full stale-deny recovery never run
+   in ordinary command admission. The setup lock only excludes another setup.
+2. Warm ACL admission is read-only. A missing additive ACE is installed under
+   a mutex named from the exact no-follow volume/file identity. All policy roots
+   share one five-second phase deadline. Unrelated objects cannot wait on one
+   another; N roots cannot multiply the budget. Generation 8 persists one
+   random filesystem-capability namespace independently of protocol, binary
+   hash, and sandbox-account maintenance. Explicit setup prewarms profile
+   top-level read roots and canonical system-TMP write roots; ordinary
+   admission verifies those warm roots and converges only a genuinely new
+   exact root, never recursively clears or rewrites the profile.
+3. `denyRead` uses the same exact-object mutex only for install/remove of one
+   command's authenticated logon-SID ACE. Before installing on an object, it
+   may recover a dead-runner receipt that overlaps that exact requested object;
+   it neither locks nor cleans an unrelated live command. Its durable receipt
+   and opened target identity support exact crash recovery. No ACL mutex spans
+   target execution. Published receipts are immutable; readers share read and
+   delete access (but never write access), so scanning a live receipt cannot
+   block its exact owner or recovery path from retiring it.
+4. Native protocol 8 requires a protected setup-marker path, random generation
+   nonce, and SHA-256. The
+   host opens it without delete sharing and retains the handle until its
+   nonce-bound `Started` record is durable. Setup invalidation therefore waits
+   only on admitted start windows, not complete command lifetimes. The one-time
+   protocol-7 cutover instead records protected `pending`/`draining` state,
+   removes its old marker, and drains the full 300s legacy Bash deadline plus
+   margin because old hosts cannot participate in the new handle gate. An
+   interrupted setup resumes that drain rather than rotating early.
+5. Remove the command-lifetime filesystem-effect coordinator. Trusted text
+   uses only its final-resource kernel lock/CAS; worktree operations serialize
+   only the same exact target path inside one process and otherwise rely on
+   Git's repository locks; Bash has no filesystem lease. Deprecated lease
+   exports remain immediate, inert shims so older embedders and stale state
+   cannot block migration. If Git Job binding or root termination is uncertain,
+   the managed-child record remains registered until background drain recovery
+   proves the tree gone.
+6. Exact-authority network brokers are bounded reusable resources with a short,
+   cancellable idle-reuse grace. A failed readiness attempt retires its state; a
+   caller timeout or abort only releases that caller's reference and never
+   poisons a healthy shared startup. A sequential caller may join that same
+   startup. A
+   fully active pool returns a proven pre-start unavailable result instead of
+   waiting on another command lifecycle. The
+   child and control handles remain referenced while starting or leased and
+   detach from the Node event loop only while idle. Idle retirement releases
+   ASRT's machine-global fixed proxy ports so another Runtime is not starved.
+7. Cleanup cannot manufacture success. Started-or-unknown execution requires a
+   verified Job-drained terminal record; a termination failure propagates.
+   Overlapping stale recovery and the original owner converge idempotently on
+   absent exact ACEs/receipts. Control repair removes an atomic-publication
+   staging file only when its actual writer PID is dead and the file is older
+   than two launch budgets. Foreground Bash and the public SDK both validate the
+   setup generation immediately before spawn and clean a prepared invocation as
+   `not_started` when spawn fails synchronously; the SDK also consumes target
+   start attestation before reporting execution.
+
+**Consequences**: two KodaX processes may run different sandboxed Bash commands
+and write different workspace files without sharing a KodaX admission lock.
+The only ordinary contention is on the same concrete ACL object, the same
+trusted text namespace slot, the same exact worktree path inside one process,
+or Git's own repository locks. A setup upgrade may be deliberately slow once;
+normal development is not. Protocol 8 is intentionally incompatible with
+protocol 7 so an old request cannot silently omit the start-generation proof.
+
+**Rejected alternatives**: a serial shell queue or “disable concurrency”
+option (hides the defect and diverges from Codex); a repository-wide worktree
+owner (duplicates Git locks and blocks independent worktrees); a longer global
+ACL timeout (preserves head-of-line blocking); per-root phase budgets (recreates
+the 75-second multiplication); a 30-second protocol-7 grace (shorter than the
+legacy 300-second command deadline); and automatic deletion of ambiguous ACL or
+control state (cannot prove ownership).

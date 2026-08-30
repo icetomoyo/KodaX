@@ -740,6 +740,20 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+**v0.7.96-alpha.4 source candidate:** Windows shell admission now follows the
+Codex concurrency boundary: versioned setup performs legacy migration once,
+while ordinary admission is read-only when capabilities are already present
+and only adds a missing exact-root capability under a five-second exact-object
+mutex. No command-lifetime or machine-global filesystem coordinator is shared
+by Bash, trusted text, worktrees, Sessions, or Runtime processes. Every native
+command has an independent request, token, control channel, and Job; matching
+network authorities share a bounded broker pool without serializing command
+lifetime. Protocol 8/setup generation 8 holds the protected setup marker until
+durable target `Started`, and interrupted setup resumes its bounded pre-start
+drain instead of repeating migration in the command hot path. This candidate
+advertises `sandboxRuntime:7`. See the
+[v0.7.96-alpha.4 release checklist](docs/release.md#v0796-alpha4-release-preparation).
+
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
 secrets in the OS keychain and resolves them per wire call for one closed

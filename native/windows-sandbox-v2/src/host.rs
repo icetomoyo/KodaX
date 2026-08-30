@@ -1,6 +1,8 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::mem::size_of;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,18 +12,21 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use sha2::{Digest, Sha256};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_DELETE_ON_CLOSE, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_READ,
+    FILE_GENERIC_READ, FILE_SHARE_READ, FILE_STANDARD_INFO, FileStandardInfo,
+    GetFileInformationByHandleEx,
 };
 
 use crate::acl::{
     ExecutionDenyCleanup, ensure_policy_aces_until, install_execution_deny_read_until,
-    recover_stale_execution_denies_until, verify_control_directory_boundary,
+    verify_control_directory_boundary,
 };
 use crate::model::{
     BootstrapRequest, ErrorMessage, ExitMessage, HelloMessage, ReadyMessage, RunRequest,
-    SpawnMessage, StartedMessage, TerminalRecord, controller_pipe_server_pid,
+    SpawnMessage, StartedMessage, StartedRecord, TerminalRecord, controller_pipe_server_pid,
 };
 #[cfg(test)]
 use crate::protocol::MAX_STREAM_BYTES;
@@ -272,6 +277,58 @@ fn read_request(path: &Path) -> Result<RunRequest> {
     Ok(request)
 }
 
+fn hold_setup_marker(request: &RunRequest) -> Result<File> {
+    open_setup_marker(
+        &request.setup_marker_path,
+        &request.setup_marker_sha256,
+        &request.filesystem_capability_nonce,
+    )
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupMarkerCapability {
+    filesystem_capability_nonce: String,
+}
+
+fn open_setup_marker(
+    path: &str,
+    expected_sha256: &str,
+    expected_capability_nonce: &str,
+) -> Result<File> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)
+        .context("open Windows sandbox setup marker launch gate")?;
+    let metadata = file
+        .metadata()
+        .context("inspect Windows sandbox setup marker launch gate")?;
+    if !metadata.is_file()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+        || metadata.len() > 4_096
+    {
+        bail!("Windows sandbox setup marker launch gate is not a bounded regular file");
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)
+        .context("read Windows sandbox setup marker launch gate")?;
+    let observed = format!("{:x}", Sha256::digest(&bytes));
+    if !observed.eq_ignore_ascii_case(expected_sha256) {
+        bail!("Windows sandbox setup marker generation changed before host launch");
+    }
+    let marker: SetupMarkerCapability =
+        serde_json::from_slice(&bytes).context("decode Windows sandbox setup marker capability")?;
+    if !marker
+        .filesystem_capability_nonce
+        .eq_ignore_ascii_case(expected_capability_nonce)
+    {
+        bail!("Windows sandbox filesystem capability nonce does not match setup authority");
+    }
+    Ok(file)
+}
+
 fn validate_terminal_record_path(request_path: &Path, terminal_path: &Path) -> Result<()> {
     if !terminal_path.is_absolute() || terminal_path.parent() != request_path.parent() {
         bail!("Windows sandbox terminal record must share the request directory");
@@ -284,6 +341,43 @@ fn validate_terminal_record_path(request_path: &Path, terminal_path: &Path) -> R
         bail!("Windows sandbox terminal record name is invalid");
     }
     Ok(())
+}
+
+fn launch_record_path(terminal_path: &Path, kind: &str) -> Result<std::path::PathBuf> {
+    let name = terminal_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("Windows sandbox terminal record name is not Unicode"))?;
+    let suffix = name
+        .strip_prefix("windows-terminal-")
+        .ok_or_else(|| anyhow!("Windows sandbox terminal record name is invalid"))?;
+    Ok(terminal_path.with_file_name(format!("windows-{kind}-{suffix}")))
+}
+
+fn write_launch_record(path: &Path, record: &StartedRecord) -> Result<()> {
+    let payload = serde_json::to_vec(record).context("encode Windows sandbox started record")?;
+    let temporary = path.with_extension(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple(),
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .context("create Windows sandbox started record staging file")?;
+        file.write_all(&payload)
+            .context("write Windows sandbox started record")?;
+        file.sync_all()
+            .context("flush Windows sandbox started record")?;
+        drop(file);
+        std::fs::rename(&temporary, path).context("publish Windows sandbox started record")
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
 }
 
 fn write_terminal_record(path: &Path, record: &TerminalRecord) -> Result<()> {
@@ -318,7 +412,7 @@ fn read_bootstrap(mut reader: impl Read) -> Result<BootstrapRequest> {
     Ok(bootstrap)
 }
 
-fn read_and_retire_request_file(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_and_retire_request_file(path: &Path) -> Result<Vec<u8>> {
     if !path.is_absolute() {
         bail!("Windows sandbox request path must be absolute");
     }
@@ -336,6 +430,19 @@ fn read_and_retire_request_file(path: &Path) -> Result<Vec<u8>> {
         || metadata.len() > MAX_REQUEST_BYTES
     {
         bail!("Windows sandbox request is not a bounded regular file");
+    }
+    let mut standard: FILE_STANDARD_INFO = unsafe { std::mem::zeroed() };
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileStandardInfo,
+            &mut standard as *mut FILE_STANDARD_INFO as *mut std::ffi::c_void,
+            size_of::<FILE_STANDARD_INFO>() as u32,
+        )
+        .context("inspect Windows sandbox request link count")?;
+    }
+    if standard.NumberOfLinks != 1 {
+        bail!("Windows sandbox request must be a single-link file");
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     Read::by_ref(&mut file)
@@ -436,6 +543,8 @@ fn start_control_pump(mut writer: File, outcome: Arc<AtomicU8>) {
 pub fn run(request_path: &Path) -> Result<u32> {
     let request = read_request(request_path)?;
     validate_terminal_record_path(request_path, Path::new(&request.terminal_record_path))?;
+    let resume_record = launch_record_path(Path::new(&request.terminal_record_path), "resume")?;
+    let started_record = launch_record_path(Path::new(&request.terminal_record_path), "started")?;
     let deadline = LaunchDeadline::from_unix_ms(request.operation_deadline_unix_ms)?;
     let current = current_token()?;
     let host_sid = token_user_sid(current.raw())?;
@@ -443,10 +552,10 @@ pub fn run(request_path: &Path) -> Result<u32> {
         .parent()
         .ok_or_else(|| anyhow!("Windows sandbox request has no control directory"))?;
     verify_control_directory_boundary(&request, control_directory, &host_sid)?;
-    recover_stale_execution_denies_until(control_directory, request.operation_deadline_unix_ms)?;
     if host_sid == request.sandbox_user_sid {
         bail!("Windows sandbox host must not run as the restricted account");
     }
+    let setup_marker = hold_setup_marker(&request)?;
     let bootstrap = read_bootstrap(std::io::stdin().lock())?;
     deadline.ensure("bootstrap")?;
     let (controller, controller_pid) = connect_controller_pipe(
@@ -563,10 +672,12 @@ pub fn run(request_path: &Path) -> Result<u32> {
         deadline,
         abort,
         desktop,
+        &resume_record,
+        &started_record,
+        setup_marker,
     );
-    let settlement = relay_result?;
-    finalize_drained_run(
-        settlement,
+    finalize_relay(
+        relay_result,
         || match execution_deny_lease {
             Some(lease) => match lease.finish() {
                 ExecutionDenyCleanup::Completed => Ok(None),
@@ -586,6 +697,21 @@ struct RelaySettlement {
     host_exit_code: u32,
     target_exit_code: u32,
     termination_requested: bool,
+}
+
+fn finalize_relay(
+    relay: Result<RelaySettlement>,
+    cleanup: impl FnOnce() -> Result<Option<String>>,
+    write_terminal: impl FnOnce(&TerminalRecord) -> Result<()>,
+    terminal_nonce: &str,
+) -> Result<u32> {
+    match relay {
+        Ok(settlement) => finalize_drained_run(settlement, cleanup, write_terminal, terminal_nonce),
+        // A relay error is not Job-drain proof. Keep the per-logon deny ACE and
+        // durable receipt until setup or an exact-overlap admission proves the
+        // authenticated runner process is dead.
+        Err(relay_error) => Err(relay_error),
+    }
 }
 
 fn finalize_drained_run(
@@ -635,6 +761,9 @@ fn relay_after_hello(
     deadline: LaunchDeadline,
     _abort: HostAbort,
     _desktop: PrivateDesktop,
+    resume_record_path: &Path,
+    started_record_path: &Path,
+    setup_marker: File,
 ) -> Result<RelaySettlement> {
     if hello.protocol != PROTOCOL_VERSION {
         bail!("Windows sandbox runner reported an incompatible protocol");
@@ -661,6 +790,14 @@ fn relay_after_hello(
         bail!("Windows sandbox target was not proven contained before resume");
     }
     deadline.ensure("target resume")?;
+    let launch_record = StartedRecord {
+        protocol: PROTOCOL_VERSION,
+        nonce: request.terminal_nonce.clone(),
+        target_pid: ready.pid,
+        job_contained: ready.job_contained,
+    };
+    write_launch_record(resume_record_path, &launch_record)?;
+    deadline.ensure("Resume attestation")?;
     write_frame(&mut control_pipe, FrameKind::Resume, &[])?;
     let started: StartedMessage = decode_json(
         next_frame(&mut event_pipe, FrameKind::Started)?,
@@ -668,6 +805,9 @@ fn relay_after_hello(
     )?;
     validate_started(&ready, &started)?;
     deadline.ensure("Started")?;
+    write_launch_record(started_record_path, &launch_record)?;
+    drop(setup_marker);
+    deadline.ensure("Started attestation")?;
     launch_watchdog.finish("target Started")?;
     let control_outcome = Arc::new(AtomicU8::new(CONTROL_OPEN));
     start_control_pump(control_pipe, Arc::clone(&control_outcome));
@@ -800,6 +940,48 @@ mod tests {
     }
 
     #[test]
+    fn relay_failure_preserves_the_execution_deny_lease_until_runner_death() {
+        let cleanup_called = Cell::new(false);
+        let terminal_written = Cell::new(false);
+        let error = finalize_relay(
+            Err(anyhow!("relay failed before drain")),
+            || {
+                cleanup_called.set(true);
+                Ok(None)
+            },
+            |_| {
+                terminal_written.set(true);
+                Ok(())
+            },
+            "terminal-nonce",
+        )
+        .unwrap_err();
+
+        assert!(!cleanup_called.get());
+        assert!(!terminal_written.get());
+        assert!(error.to_string().contains("relay failed before drain"));
+    }
+
+    #[test]
+    fn setup_marker_handle_blocks_cutover_until_the_target_start_window_closes() {
+        let path = std::env::temp_dir().join(format!(
+            "kodax-setup-marker-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4(),
+        ));
+        let capability_nonce = "00000000-0000-4000-8000-000000000003";
+        let payload =
+            br#"{"version":7,"filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003"}"#;
+        std::fs::write(&path, payload).unwrap();
+        let digest = format!("{:x}", Sha256::digest(payload));
+
+        let marker = open_setup_marker(path.to_str().unwrap(), &digest, capability_nonce).unwrap();
+        assert!(std::fs::remove_file(&path).is_err());
+        drop(marker);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn controller_no_data_is_alive_but_eof_or_payload_is_lost() {
         let stop = AtomicBool::new(false);
         assert_eq!(
@@ -847,6 +1029,37 @@ mod tests {
             b"request-body"
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn request_file_rejects_hardlinks_and_oversized_payloads() {
+        let root = std::env::temp_dir().join(format!(
+            "kodax-sandbox-v2-request-boundary-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4(),
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let original = root.join("original.json");
+        let hardlink = root.join("hardlink.json");
+        std::fs::write(&original, b"{}").unwrap();
+        std::fs::hard_link(&original, &hardlink).unwrap();
+        assert!(
+            read_and_retire_request_file(&hardlink)
+                .unwrap_err()
+                .to_string()
+                .contains("single-link")
+        );
+
+        let oversized = root.join("oversized.json");
+        std::fs::write(&oversized, vec![b'x'; (MAX_REQUEST_BYTES + 1) as usize]).unwrap();
+        assert!(
+            read_and_retire_request_file(&oversized)
+                .unwrap_err()
+                .to_string()
+                .contains("bounded regular file")
+        );
+        std::fs::remove_file(original).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]

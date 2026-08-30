@@ -1316,6 +1316,144 @@ describe('toolBash', () => {
       .resolves.toBe('ready');
   });
 
+  it('does not report a background command started before native target-start attestation', async () => {
+    const attestStart = vi.fn(async () => ({
+      state: 'pre_start_unavailable' as const,
+      diagnostic: 'Windows sandbox ACL transaction mutex timed out',
+    }));
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
+    const cleanup = vi.fn(async () => undefined);
+
+    const result = await toolBash({ command: 'never-started', run_in_background: true }, {
+      backups: new Map(),
+      toolCallId: 'native-background-pre-start-failure',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(() => {}, 1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async () => undefined,
+            attestStart,
+            terminate,
+          },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(result).toContain('[Sandbox boundary]');
+    expect(result).toContain('ACL transaction mutex timed out');
+    expect(result).not.toContain('Command started in background');
+    expect(attestStart).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('classifies bootstrap EPIPE as pre-start when native start records prove no resume', async () => {
+    const attestStart = vi.fn(async () => ({
+      state: 'pre_start_unavailable' as const,
+      diagnostic: 'setup generation closed before target Resume',
+    }));
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
+    const cleanup = vi.fn(async () => undefined);
+
+    const result = await toolBash({ command: 'never-resumed' }, {
+      backups: new Map(),
+      toolCallId: 'native-bootstrap-epipe-before-resume',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(() => {}, 1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async () => { throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }); },
+            attestStart,
+            terminate,
+          },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(result).toContain('[Sandbox boundary]');
+    expect(result).toContain('setup generation closed before target Resume');
+    expect(result).toContain('write EPIPE');
+    expect(attestStart).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
+  });
+
+  it('revalidates the sandbox generation before spawning the prepared host', async () => {
+    const marker = path.join(tempDir, 'stale-generation-host-started');
+    const validateStart = vi.fn(() => {
+      throw new Error('sandbox setup generation changed');
+    });
+    const cleanup = vi.fn(async () => undefined);
+
+    const result = await toolBash({ command: 'stale-generation' }, {
+      backups: new Map(),
+      toolCallId: 'stale-generation',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'bad')`],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            validateStart,
+            closeInput: async () => undefined,
+            terminate: async () => undefined,
+          },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(result).toContain('[Sandbox boundary]');
+    expect(result).toContain('sandbox setup generation changed');
+    expect(validateStart).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
+    await expect(fs.stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('releases a prepared foreground sandbox when spawn throws synchronously', async () => {
+    const cleanup = vi.fn(async () => undefined);
+
+    await expect(toolBash({ command: 'invalid-native-host' }, {
+      backups: new Map(),
+      toolCallId: 'synchronous-spawn-failure',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: '\0',
+          args: [],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            validateStart: () => undefined,
+            closeInput: async () => undefined,
+            terminate: async () => undefined,
+          },
+          cleanup,
+        }),
+      },
+    })).rejects.toThrow();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
+  });
+
   it('keeps a long-running background command alive while write and edit complete', async () => {
     const controller = new AbortController();
     const filePath = path.join(tempDir, 'background-concurrency.txt');

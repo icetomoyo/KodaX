@@ -39,11 +39,13 @@ export interface ResolvedWindowsNativeArtifact {
   readonly path: string;
   readonly entry: WindowsNativeArtifactEntry;
   readonly manifest: WindowsNativeArtifactManifest;
+  readonly developmentTrustRoots: readonly string[];
 }
 
 export interface ResolveWindowsNativeArtifactOptions {
   readonly sandboxReadSid?: string;
   readonly untrustedWriteRoots?: readonly string[];
+  readonly provision?: boolean;
 }
 
 export interface ResolvedWindowsAsrtRunnerArtifact {
@@ -818,16 +820,46 @@ function Test-ControlOwnerProcessAlive([uint32]$processId) {
 function Remove-ProvenStaleControlEntries([string]$candidate) {
   $now = [DateTimeOffset]::UtcNow
   foreach ($entry in [IO.Directory]::EnumerateFiles($candidate)) {
-    $item = Get-Item -LiteralPath $entry -Force
+    try {
+      $item = Get-Item -LiteralPath $entry -Force
+    } catch {
+      if ($_.Exception -is [Management.Automation.ItemNotFoundException] -or
+        $_.Exception -is [IO.FileNotFoundException] -or
+        $_.Exception -is [IO.DirectoryNotFoundException]) {
+        # Another setup/owner may retire a converged entry after enumeration.
+        continue
+      }
+      throw
+    }
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 1048576) { continue }
-    $match = [regex]::Match($item.Name, '^windows-(shell|network|terminal)-([0-9]+)-[0-9a-fA-F-]{36}\.json$')
+    $stagingMatch = [regex]::Match($item.Name, '^windows-(resume|started)-([0-9]+)-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
+    $denyStagingMatch = [regex]::Match($item.Name, '^windows-deny-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
+    if ($stagingMatch.Success -or $denyStagingMatch.Success) {
+      $stagingPidText = if ($stagingMatch.Success) { $stagingMatch.Groups[3].Value } else { $denyStagingMatch.Groups[1].Value }
+      $stagingPid = 0L
+      if ([long]::TryParse($stagingPidText, [ref]$stagingPid) -and
+        $stagingPid -gt 0 -and
+        $stagingPid -le [uint32]::MaxValue -and
+        -not (Test-ControlOwnerProcessAlive ([uint32]$stagingPid)) -and
+        $item.LastWriteTimeUtc -lt $now.UtcDateTime.AddMinutes(-1)) {
+        # Atomic publication staging files carry no authority. A dead creator
+        # plus two launch budgets proves publication can no longer complete.
+        [IO.File]::Delete($entry)
+      }
+      continue
+    }
+    $match = [regex]::Match($item.Name, '^windows-(shell|network|resume|started|terminal)-([0-9]+)-[0-9a-fA-F-]{36}\.json$')
     if (-not $match.Success) { continue }
     $ownerPid = 0L
     if (-not [long]::TryParse($match.Groups[2].Value, [ref]$ownerPid) -or $ownerPid -le 0 -or $ownerPid -gt [uint32]::MaxValue) { continue }
     if (Test-ControlOwnerProcessAlive ([uint32]$ownerPid)) { continue }
     $kind = $match.Groups[1].Value
     $retire = $false
-    if ($kind -eq 'network') {
+    if ($kind -eq 'resume' -or $kind -eq 'started') {
+      # Launch attestations carry no authority and have no consumer after their
+      # creating Runtime exits.
+      $retire = $true
+    } elseif ($kind -eq 'network') {
       # A network request is deleted as soon as its broker reads it. A dead
       # creator plus two launch budgets proves this file was never admitted.
       $retire = $item.LastWriteTimeUtc -lt $now.UtcDateTime.AddMinutes(-1)
@@ -994,6 +1026,31 @@ function provisionProtectedArtifact(input: {
   return canonicalDestination;
 }
 
+function verifyProtectedArtifact(input: {
+  readonly kind: WindowsProtectedArtifactKind;
+  readonly entry: Pick<WindowsNativeArtifactEntry, 'file' | 'sha256'>;
+  readonly sandboxReadSid?: string;
+  readonly localUsersReadExecute?: boolean;
+}): string {
+  const cacheRoot = windowsNativeArtifactCacheRoot();
+  const destination = path.join(
+    protectedArtifactDirectory(
+      input.kind,
+      input.entry.sha256,
+      input.sandboxReadSid,
+      input.localUsersReadExecute === true,
+    ),
+    input.entry.file,
+  );
+  readVerifiedArtifact(destination, input.entry.sha256);
+  const canonicalRoot = fs.realpathSync.native(cacheRoot);
+  const canonicalDestination = fs.realpathSync.native(destination);
+  if (!sameOrInside(canonicalRoot, canonicalDestination)) {
+    throw new Error('Protected native artifact escaped its physical cache root.');
+  }
+  return canonicalDestination;
+}
+
 export function provisionWindowsAsrtRunner(
   bytes: Buffer,
   expectedSha256: string,
@@ -1024,7 +1081,10 @@ export function resolveWindowsAsrtRunnerArtifact(
   moduleUrl: string,
   sourcePath: string,
   expectedVersion: string,
-  options: { readonly untrustedWriteRoots?: readonly string[] } = {},
+  options: {
+    readonly untrustedWriteRoots?: readonly string[];
+    readonly provision?: boolean;
+  } = {},
 ): ResolvedWindowsAsrtRunnerArtifact {
   if (process.platform !== 'win32') {
     throw new Error('The protected ASRT Windows runner is unavailable on this platform.');
@@ -1071,7 +1131,16 @@ export function resolveWindowsAsrtRunnerArtifact(
         manifest.asrtRunner.sha256,
         !embeddedManifest,
       );
-      const protectedRunner = provisionWindowsAsrtRunner(bytes, manifest.asrtRunner.sha256);
+      const protectedRunner = options.provision === false
+        ? {
+            path: verifyProtectedArtifact({
+              kind: 'asrtRunner',
+              entry: manifest.asrtRunner,
+              localUsersReadExecute: true,
+            }),
+            sha256: manifest.asrtRunner.sha256,
+          }
+        : provisionWindowsAsrtRunner(bytes, manifest.asrtRunner.sha256);
       return {
         ...protectedRunner,
         developmentTrustRoots: candidate.developmentTrustRoots,
@@ -1121,13 +1190,28 @@ export function resolveWindowsNativeArtifact(
       }
       const artifactPath = path.join(directory, entry.file);
       const bytes = readVerifiedArtifact(artifactPath, entry.sha256);
-      const protectedPath = provisionProtectedArtifact({
-        kind,
+      const protectedPath = options.provision === false
+        ? verifyProtectedArtifact({
+            kind,
+            entry,
+            ...(options.sandboxReadSid === undefined
+              ? {}
+              : { sandboxReadSid: options.sandboxReadSid }),
+          })
+        : provisionProtectedArtifact({
+            kind,
+            entry,
+            bytes,
+            ...(options.sandboxReadSid === undefined
+              ? {}
+              : { sandboxReadSid: options.sandboxReadSid }),
+          });
+      return {
+        path: protectedPath,
         entry,
-        bytes,
-        ...(options.sandboxReadSid === undefined ? {} : { sandboxReadSid: options.sandboxReadSid }),
-      });
-      return { path: protectedPath, entry, manifest };
+        manifest,
+        developmentTrustRoots: trustedManifestText === undefined ? [directory] : [],
+      };
     } catch (error: unknown) {
       diagnostics.push(`${manifestPath}: ${error instanceof Error ? error.message : String(error)}`);
     }

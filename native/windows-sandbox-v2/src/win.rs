@@ -1905,10 +1905,14 @@ fn target_command_line(argv: &[String]) -> String {
                     .then_some(index)
                 })
     {
+        let command = &argv[command_index + 1];
+        if command.len() >= 3 && command.starts_with("\"\"") && command.ends_with('"') {
+            return format!("{} {}", command_line(&argv[..=command_index]), command);
+        }
         return format!(
             "{} \"{}\"",
             command_line(&argv[..=command_index]),
-            argv[command_index + 1],
+            command,
         );
     }
     command_line(argv)
@@ -2141,6 +2145,34 @@ mod tests {
                 r#""C:\Program Files\node.exe" "fixture a.cjs" & echo done"#.into(),
             ]),
             r#"cmd.exe /s /c ""C:\Program Files\node.exe" "fixture a.cjs" & echo done""#,
+        );
+    }
+
+    #[test]
+    fn cmd_strip_semantics_do_not_double_wrap_an_already_wrapped_tail() {
+        assert_eq!(
+            target_command_line(&[
+                "cmd.exe".into(),
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                r#"""C:\Program Files\node.exe" "fixture a.cjs"""#.into(),
+            ]),
+            r#"cmd.exe /d /s /c ""C:\Program Files\node.exe" "fixture a.cjs"""#,
+        );
+    }
+
+    #[test]
+    fn cmd_strip_semantics_do_not_double_wrap_a_quoted_executable_with_a_plain_tail() {
+        assert_eq!(
+            target_command_line(&[
+                "cmd.exe".into(),
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                r#"""C:\Program Files\node.exe" plain""#.into(),
+            ]),
+            r#"cmd.exe /d /s /c ""C:\Program Files\node.exe" plain""#,
         );
     }
 

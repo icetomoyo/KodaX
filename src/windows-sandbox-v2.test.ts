@@ -179,6 +179,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
 
   it('binds one native request to its immutable policy and controller', () => {
     const generation = windowsSandboxV2Generation({
+      setupGenerationNonce: '00000000-0000-4000-8000-000000000001',
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
       asrtSha256: 'a'.repeat(64),
@@ -186,6 +187,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     });
     const request = createWindowsSandboxV2RunRequest({
       generation,
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
       asrtInvocation: {
@@ -204,10 +206,12 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       terminalRecordPath: 'C:\\control\\windows-terminal.json',
       terminalNonce: '12345678-1234-1234-1234-123456789abc',
       operationDeadlineUnixMs: 123_456,
+      setupMarkerPath: 'C:\\control\\windows-v2-cutover.json',
+      setupMarkerSha256: 'c'.repeat(64),
     });
 
     expect(request).toMatchObject({
-      protocol: 7,
+      protocol: 8,
       generation,
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
@@ -226,6 +230,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
   it('rejects a request without an exact ASRT prefix or private pipe', () => {
     const base = {
       generation: 'g',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
       targetArgv: ['cmd.exe'],
@@ -237,6 +242,8 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       terminalRecordPath: 'C:\\control\\windows-terminal.json',
       terminalNonce: '12345678-1234-1234-1234-123456789abc',
       operationDeadlineUnixMs: 123_456,
+      setupMarkerPath: 'C:\\control\\windows-v2-cutover.json',
+      setupMarkerSha256: 'c'.repeat(64),
     } as const;
     expect(() => createWindowsSandboxV2RunRequest({
       ...base,
@@ -259,6 +266,17 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
         childEnvironment: {},
       },
     })).toThrow(/independent account group/);
+    expect(() => createWindowsSandboxV2RunRequest({
+      ...base,
+      setupMarkerPath: undefined as unknown as string,
+      controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
+      asrtInvocation: {
+        executable: 'srt-win.exe',
+        prefixArgs: ['exec', '--'],
+        targetArgv: ['cmd.exe'],
+        childEnvironment: {},
+      },
+    })).toThrow(/setup marker proof/);
   });
 
   it('encodes target environment only in the private bounded bootstrap frame', () => {
@@ -270,7 +288,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     };
     expect(length).toBe(frame.byteLength - 4);
     expect(message).toEqual({
-      protocol: 7,
+      protocol: 8,
       targetEnvironment: [
         { name: 'Path', value: 'C:\\bin' },
         { name: 'SECRET', value: 'sentinel' },

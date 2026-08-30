@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readProcessStartIdentity, SkillRegistry } from '@kodax-ai/agent';
 import { build } from 'esbuild';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetFileSystemEffectLeasesForTests,
   acquireExclusiveFileSystemEffectLease,
@@ -29,11 +29,13 @@ import {
 } from '../packages/coding/src/tools/_internal/file-mutation-queue.js';
 import {
   ensureWindowsSandboxControlDirectory,
+  resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
   verifyWindowsSandboxControlDirectory,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
+import { resolveWindowsSandboxV2Executable } from './windows-sandbox-v2.js';
 
 const capturedBrokerRequests = vi.hoisted(
   () => [] as Array<Readonly<Record<string, unknown>>>,
@@ -85,6 +87,12 @@ const capturedDiagnostics = vi.hoisted(
 const capturedWindowsNetworkBrokerRequests = vi.hoisted(
   () => [] as Array<Readonly<Record<string, unknown>>>,
 );
+const capturedWindowsNetworkBrokerStops = vi.hoisted(() => ({ count: 0 }));
+const windowsNetworkBrokerMock = vi.hoisted(() => ({
+  silentReadiness: false,
+  readinessDelayMs: 0,
+  beforeReady: undefined as (() => void) | undefined,
+}));
 const aclRecoveryGateChildren = vi.hoisted(() => new WeakSet<object>());
 const boundedMetadataReadMock = vi.hoisted(() => ({
   trackedPaths: new Set<string>(),
@@ -94,6 +102,7 @@ const processTreeKillMock = vi.hoisted(() => ({
   outcome: 'actual' as 'actual' | 'unknown' | 'close_then_unknown' | 'close_then_reject',
   childPid: undefined as number | undefined,
   releaseUnknown: undefined as (() => void) | undefined,
+  synchronousNativeHostSpawnFailure: false,
 }));
 const windowsEffectJobMock = vi.hoisted(() => ({
   aclRecoveryDrainFailure: undefined as string | undefined,
@@ -122,10 +131,15 @@ const windowsEffectJobMock = vi.hoisted(() => ({
   aclRecoveryUncontainedStarts: 0,
 }));
 const standaloneBrokerDetachMock = vi.hoisted(() => ({
+  childRefCalls: 0,
   childUnrefCalls: 0,
+  stdinRefCalls: 0,
   stdinUnrefCalls: 0,
+  stderrRefCalls: 0,
   stdoutUnrefCalls: 0,
   stderrUnrefCalls: 0,
+  controlRefCalls: 0,
+  controlUnrefCalls: 0,
 }));
 const standaloneFenceReleaseMock = vi.hoisted(() => ({ failures: 0 }));
 const processIdentityMock = vi.hoisted(() => ({
@@ -337,6 +351,22 @@ vi.mock('node:child_process', async (importOriginal) => {
           stderr: windowsSandboxMock.nullDeviceReady ? '' : 'missing exact sandbox-account ACE',
         };
       }
+      if (args.length === 2 && args[0] === '__recover-execution-denies') {
+        return {
+          status: 0,
+          signal: null,
+          stdout: '',
+          stderr: '',
+        };
+      }
+      if (args.length === 1 && args[0] === '__setup-acl-roots') {
+        return {
+          status: 0,
+          signal: null,
+          stdout: '',
+          stderr: '',
+        };
+      }
       if (
         args.length === 4
         && args[0] === '__persistent-deny-read'
@@ -363,6 +393,15 @@ vi.mock('node:child_process', async (importOriginal) => {
             status: processIdentityMock.windowsBootIdentity === undefined ? 1 : 0,
             signal: null,
             stdout: processIdentityMock.windowsBootIdentity?.replace('windows-boot-', '') ?? '',
+            stderr: '',
+          };
+        }
+        if (script.includes('__setup-account-capabilities')) {
+          windowsSandboxMock.nullDeviceReady = true;
+          return {
+            status: 0,
+            signal: null,
+            stdout: '',
             stderr: '',
           };
         }
@@ -432,6 +471,14 @@ vi.mock('node:child_process', async (importOriginal) => {
         if (environment !== undefined) capturedSpawnEnvironments.push(environment);
         capturedSpawnCwds.push((options as { readonly cwd?: string }).cwd);
       }
+      if (
+        processTreeKillMock.synchronousNativeHostSpawnFailure
+        && Array.isArray(argsOrOptions)
+        && argsOrOptions[0] === '__host'
+      ) {
+        processTreeKillMock.synchronousNativeHostSpawnFailure = false;
+        throw new Error('injected synchronous native host spawn failure');
+      }
       const child = new EventEmitter() as EventEmitter & {
         stdin: PassThrough;
         stdout: PassThrough;
@@ -449,8 +496,13 @@ vi.mock('node:child_process', async (importOriginal) => {
       child.stderr = new PassThrough();
       const control = new PassThrough();
       child.stdio = [child.stdin, child.stdout, child.stderr, control];
-      child.ref = vi.fn();
+      child.ref = vi.fn(() => { standaloneBrokerDetachMock.childRefCalls += 1; });
       child.unref = vi.fn(() => { standaloneBrokerDetachMock.childUnrefCalls += 1; });
+      Reflect.set(
+        child.stdin,
+        'ref',
+        vi.fn(() => { standaloneBrokerDetachMock.stdinRefCalls += 1; }),
+      );
       Reflect.set(
         child.stdin,
         'unref',
@@ -463,8 +515,23 @@ vi.mock('node:child_process', async (importOriginal) => {
       );
       Reflect.set(
         child.stderr,
+        'ref',
+        vi.fn(() => { standaloneBrokerDetachMock.stderrRefCalls += 1; }),
+      );
+      Reflect.set(
+        child.stderr,
         'unref',
         vi.fn(() => { standaloneBrokerDetachMock.stderrUnrefCalls += 1; }),
+      );
+      Reflect.set(
+        control,
+        'ref',
+        vi.fn(() => { standaloneBrokerDetachMock.controlRefCalls += 1; }),
+      );
+      Reflect.set(
+        control,
+        'unref',
+        vi.fn(() => { standaloneBrokerDetachMock.controlUnrefCalls += 1; }),
       );
       child.pid = processTreeKillMock.childPid;
       child.exitCode = null;
@@ -524,6 +591,7 @@ vi.mock('node:child_process', async (importOriginal) => {
         capturedWindowsNetworkBrokerRequests.push(request);
         rmSync(requestFile, { force: true });
         child.stdin.once('finish', () => {
+          capturedWindowsNetworkBrokerStops.count += 1;
           queueMicrotask(() => {
             child.exitCode = 0;
             control.end();
@@ -531,8 +599,10 @@ vi.mock('node:child_process', async (importOriginal) => {
             child.emit('close', 0, null);
           });
         });
-        queueMicrotask(() => {
+        const publishReady = (): void => {
+          windowsNetworkBrokerMock.beforeReady?.();
           child.emit('spawn');
+          if (windowsNetworkBrokerMock.silentReadiness) return;
           control.write(`${JSON.stringify({
             version: 1,
             ok: true,
@@ -546,7 +616,12 @@ vi.mock('node:child_process', async (importOriginal) => {
             sandboxGroupSid: windowsSandboxMock.user.groupSid,
             controllerPipe: `\\\\.\\pipe\\kodax-v2-${process.pid}-${randomUUID()}`,
           })}\n`);
-        });
+        };
+        if (windowsNetworkBrokerMock.readinessDelayMs > 0) {
+          setTimeout(publishReady, windowsNetworkBrokerMock.readinessDelayMs);
+        } else {
+          queueMicrotask(publishReady);
+        }
         return child;
       }
       const standaloneGate = typeof requestFile === 'string'
@@ -774,8 +849,19 @@ vi.mock('node:child_process', async (importOriginal) => {
           typeof brokerRequest?.terminalRecordPath === 'string'
           && typeof brokerRequest.terminalNonce === 'string'
         ) {
+          const terminalName = path.basename(brokerRequest.terminalRecordPath);
+          const recordIdentity = terminalName.slice('windows-terminal-'.length);
+          writeFileSync(
+            path.join(path.dirname(brokerRequest.terminalRecordPath), `windows-started-${recordIdentity}`),
+            JSON.stringify({
+              protocol: 8,
+              nonce: brokerRequest.terminalNonce,
+              targetPid: process.pid,
+              jobContained: true,
+            }),
+          );
           writeFileSync(brokerRequest.terminalRecordPath, JSON.stringify({
-            protocol: 7,
+            protocol: 8,
             nonce: brokerRequest.terminalNonce,
             jobDrained: true,
             targetExitCode: 0,
@@ -1210,7 +1296,9 @@ import {
   createAsrtSkillScriptRunner,
   doctorSandboxRuntime,
   clearPreviousBootWindowsSandboxAclMarkers,
-  overrideWindowsNullDeviceInstallerForTest,
+  overrideLegacyWindowsSandboxAdmissionDrainForTest,
+  overrideWindowsSandboxV2CutoverDirectoryForTest,
+  overrideWindowsSetupCapabilityInstallerForTest,
   prepareSandboxRuntimeForSetup,
   readWindowsSandboxBootIdentity,
   recoverPreviousBootWindowsSandboxAcls,
@@ -1228,6 +1316,28 @@ import {
 } from './sandbox-runtime.js';
 
 const tempRoots: string[] = [];
+let cutoverDirectory = '';
+let restoreCutoverDirectory: (() => void) | undefined;
+
+beforeAll(() => {
+  if (process.platform !== 'win32') return;
+  const runnerSource = path.resolve(
+    'node_modules', '@anthropic-ai', 'sandbox-runtime',
+    'vendor', 'srt-win', process.arch, 'srt-win.exe',
+  );
+  resolveWindowsAsrtRunnerArtifact(
+    import.meta.url,
+    runnerSource,
+    KODAX_ASRT_VERSION,
+    { provision: true },
+  );
+  resolveWindowsSandboxV2Executable({
+    sandboxReadSid: windowsSandboxMock.user.groupSid,
+    provision: true,
+  });
+  resolveWindowsSandboxV2Executable({ provision: true });
+  ensureWindowsSandboxControlDirectory();
+});
 
 async function readDirectoryIfPresent(directory: string): Promise<string[]> {
   try {
@@ -1294,25 +1404,36 @@ beforeEach(async () => {
   vi.stubEnv('ProgramData', path.join(root, 'program-data'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
   await mkdir(process.env.KODAX_HOME!, { recursive: true });
-  const markerDirectory = path.join(
-    path.resolve(process.env.ProgramData!),
-    'KodaX',
-    'sandbox-runtime',
+  cutoverDirectory = path.join(root, 'cutover');
+  restoreCutoverDirectory = overrideWindowsSandboxV2CutoverDirectoryForTest(
+    () => cutoverDirectory,
   );
-  await mkdir(markerDirectory, { recursive: true });
+  await mkdir(cutoverDirectory, { recursive: true });
   await writeFile(
-    path.join(markerDirectory, 'windows-v2-cutover.json'),
+    path.join(cutoverDirectory, 'windows-v2-cutover.json'),
     JSON.stringify({
-      version: 4,
-      protocol: 7,
+      version: 8,
+      protocol: 8,
+      generationNonce: '00000000-0000-4000-8000-000000000001',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
     }),
     'utf8',
   );
+  await mkdir(path.join(
+    path.resolve(process.env.ProgramData!),
+    'KodaX',
+    'sandbox-runtime',
+  ), { recursive: true });
   await writeFile(
-    path.join(markerDirectory, 'read-policy-v2.json'),
+    path.join(
+      path.resolve(process.env.ProgramData!),
+      'KodaX',
+      'sandbox-runtime',
+      'read-policy-v2.json',
+    ),
     JSON.stringify({
       version: 1,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
@@ -1331,6 +1452,7 @@ afterEach(async () => {
   processTreeKillMock.releaseUnknown = undefined;
   processTreeKillMock.outcome = 'actual';
   processTreeKillMock.childPid = undefined;
+  processTreeKillMock.synchronousNativeHostSpawnFailure = false;
   windowsEffectJobMock.drainFailure = undefined;
   windowsEffectJobMock.drainFailureOnCall = undefined;
   windowsEffectJobMock.aclRecoveryDrainFailure = undefined;
@@ -1344,10 +1466,15 @@ afterEach(async () => {
   windowsEffectJobMock.latestChild = undefined;
   windowsEffectJobMock.containedChild = undefined;
   windowsEffectJobMock.aclRecoveryUncontainedStarts = 0;
+  standaloneBrokerDetachMock.childRefCalls = 0;
   standaloneBrokerDetachMock.childUnrefCalls = 0;
+  standaloneBrokerDetachMock.stdinRefCalls = 0;
   standaloneBrokerDetachMock.stdinUnrefCalls = 0;
+  standaloneBrokerDetachMock.stderrRefCalls = 0;
   standaloneBrokerDetachMock.stdoutUnrefCalls = 0;
   standaloneBrokerDetachMock.stderrUnrefCalls = 0;
+  standaloneBrokerDetachMock.controlRefCalls = 0;
+  standaloneBrokerDetachMock.controlUnrefCalls = 0;
   standaloneFenceReleaseMock.failures = 0;
   processIdentityMock.windowsBootIdentity = 'windows-boot-100';
   processIdentityMock.pid4StartIdentity = '13370000000000';
@@ -1376,6 +1503,8 @@ afterEach(async () => {
   boundedMetadataReadMock.trackedPaths.clear();
   boundedMetadataReadMock.fullReads.length = 0;
   await resetSandboxRuntimeForTest();
+  restoreCutoverDirectory?.();
+  restoreCutoverDirectory = undefined;
   await _resetFileSystemEffectLeasesForTests();
   capturedBrokerRequests.length = 0;
   capturedSpawnEnvironments.length = 0;
@@ -1390,6 +1519,10 @@ afterEach(async () => {
   capturedKillSignals.length = 0;
   capturedProcessTreeKillOptions.length = 0;
   capturedWindowsNetworkBrokerRequests.length = 0;
+  capturedWindowsNetworkBrokerStops.count = 0;
+  windowsNetworkBrokerMock.silentReadiness = false;
+  windowsNetworkBrokerMock.readinessDelayMs = 0;
+  windowsNetworkBrokerMock.beforeReady = undefined;
   deferredBrokerRead.enabled = false;
   deferredBrokerRead.missing = false;
   sandboxInitialize.mockReset();
@@ -1944,9 +2077,9 @@ describe('Windows git safe.directory argv takeover', () => {
     },
   );
 
-  it('reports the v6 split-authority capability', () => {
+  it('reports the v7 split-authority capability', () => {
     const capability = sandboxRuntimeCapability();
-    expect(capability.version).toBe(6);
+    expect(capability.version).toBe(7);
     expect(capability.gitSafeDirectory).toBe('authorized-repo-roots');
     expect(capability.delayedEffectDrainRecovery).toBe('automatic');
     expect(capability.sameBootAclRecovery).toBe('sandbox-user-process-probe');
@@ -2023,12 +2156,7 @@ describe.runIf(process.platform === 'win32')('Windows boot identity resolution',
 
 describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () => {
   function cutoverMarkerFile(): string {
-    return path.join(
-      path.resolve(process.env.ProgramData!),
-      'KodaX',
-      'sandbox-runtime',
-      'windows-v2-cutover.json',
-    );
+    return path.join(cutoverDirectory, 'windows-v2-cutover.json');
   }
 
   it('fails doctor and shell admission before broker launch when the cutover marker is absent', async () => {
@@ -2099,7 +2227,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(brokerRequest.controllerExecutable).toMatch(/kodax-windows-sandbox\.exe$/i);
     expect(brokerRequest.srtWinSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(brokerRequest.controllerSha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(brokerRequest.controllerProtocol).toBe(7);
+    expect(brokerRequest.controllerProtocol).toBe(8);
     expect(brokerRequest.config.filesystem.allowRead).not.toContain(
       path.dirname(brokerRequest.srtWinPath),
     );
@@ -2114,6 +2242,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(operationDeadlines).toEqual(Array.from({ length: 4 }, () => operationDeadlineUnixMs));
 
     await Promise.all(prepared.map((invocation) => invocation.cleanup()));
+    const syncSpawnsBeforeReuse = capturedSyncSpawns.length;
     const reused = await sandbox.prepare({
       toolCallId: 'cold-adapter-reused',
       toolInput: { command: 'echo reused' },
@@ -2126,6 +2255,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
     if (reused === undefined) throw new Error('expected a reused Windows v2 invocation');
     expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    expect(capturedSyncSpawns).toHaveLength(syncSpawnsBeforeReuse);
     await reused.cleanup();
   });
 
@@ -2232,10 +2362,15 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     if (requestFile === undefined) throw new Error('expected a native request file');
     const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
       readonly allowRead: readonly string[];
+      readonly allowWrite: readonly string[];
     };
     const canonicalTarget = await realpath(target);
-    expect(request.allowRead.map((entry) => entry.toLowerCase())).toContain(
+    const canonicalTemp = await realpath(os.tmpdir());
+    expect(request.allowRead.map((entry) => entry.toLowerCase())).not.toContain(
       canonicalTarget.toLowerCase(),
+    );
+    expect(request.allowWrite.map((entry) => entry.toLowerCase())).toContain(
+      canonicalTemp.toLowerCase(),
     );
     expect(request.allowRead.map((entry) => entry.toLowerCase())).not.toContain(
       linked.toLowerCase(),
@@ -2316,11 +2451,13 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const normalize = (entries: readonly string[]) => entries.map((entry) => (
       path.resolve(entry).toLowerCase()
     ));
-    expect(normalize(request.allowRead)).toContain(path.resolve(home).toLowerCase());
+    expect(normalize(request.allowRead)).toContain(path.resolve(globalGitConfig).toLowerCase());
+    expect(normalize(request.allowRead)).not.toContain(path.resolve(home).toLowerCase());
     expect(normalize(request.allowRead)).toContain(agentHome.toLowerCase());
     expect(normalize(request.denyRead)).not.toContain(path.resolve(globalGitConfig).toLowerCase());
     expect(normalize(request.denyRead)).not.toContain(agentHome.toLowerCase());
     expect(normalize(request.allowWrite)).toContain(path.resolve(os.tmpdir()).toLowerCase());
+    expect(normalize(request.allowWrite)).not.toContain(path.resolve(root).toLowerCase());
     expect(normalize(request.denyWrite)).not.toContain(
       path.resolve(root, '.kodax', 'exec-policy.jsonc').toLowerCase(),
     );
@@ -2479,7 +2616,305 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     )).sort()).toEqual([false, true]);
   });
 
-  it('partitions shared network brokers after a sandbox account generation change', async () => {
+  it('re-references an idle shared network broker for its next command lease', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-ref-'));
+    tempRoots.push(root);
+    const request = {
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [] as string[], allowWrite: [] as string[] },
+      network: { mode: 'deny' as const },
+    };
+
+    await expect(runKodaXSandboxed(request)).resolves.toMatchObject({
+      status: 'completed', sandboxed: true,
+    });
+    expect(standaloneBrokerDetachMock.childUnrefCalls).toBeGreaterThan(0);
+    expect(standaloneBrokerDetachMock.controlUnrefCalls).toBeGreaterThan(0);
+
+    await expect(runKodaXSandboxed(request)).resolves.toMatchObject({
+      status: 'completed', sandboxed: true,
+    });
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    expect(standaloneBrokerDetachMock.childRefCalls).toBeGreaterThan(0);
+    expect(standaloneBrokerDetachMock.controlRefCalls).toBeGreaterThan(0);
+  });
+
+  it('does not let one short caller deadline poison a shared broker startup', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-deadline-'));
+    tempRoots.push(root);
+    windowsNetworkBrokerMock.readinessDelayMs = 1_500;
+    const base = {
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [] as string[], allowWrite: [] as string[] },
+      network: { mode: 'deny' as const },
+    };
+
+    const shortStartedAt = performance.now();
+    await expect(runKodaXSandboxed({ ...base, timeoutMs: 1_000 }))
+      .rejects.toThrow(/preparation|timeout/i);
+    expect(performance.now() - shortStartedAt).toBeLessThan(2_500);
+
+    const patient = runKodaXSandboxed({ ...base, timeoutMs: 4_000 });
+    await expect(patient).resolves.toMatchObject({ status: 'completed', sandboxed: true });
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+  });
+
+  it('does not retire a healthy shared broker after one command terminal-proof failure', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-isolation-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const holder = await prepare('terminal-holder');
+    const failed = await prepare('terminal-failure');
+    if (holder === undefined || failed === undefined) throw new Error('expected Windows v2 invocations');
+    const failedRequestFile = failed.args.at(-1);
+    if (failedRequestFile === undefined) throw new Error('expected a native request file');
+    const failedRequest = JSON.parse(readFileSync(failedRequestFile, 'utf8')) as {
+      readonly terminalRecordPath: string;
+    };
+    await writeFile(failedRequest.terminalRecordPath, '{}', 'utf8');
+
+    await expect(failed.cleanup({ execution: 'started_or_unknown' })).rejects.toThrow(/terminal|cleanup/i);
+    const third = await Promise.race([
+      prepare('terminal-third'),
+      new Promise<never>((_resolve, reject) => setTimeout(
+        () => reject(new Error('third command waited for an unrelated holder')),
+        500,
+      )),
+    ]);
+    if (third === undefined) throw new Error('expected the third Windows v2 invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    await Promise.all([
+      holder.cleanup({ execution: 'not_started' }),
+      third.cleanup({ execution: 'not_started' }),
+    ]);
+  });
+
+  it('retires an unreferenced broker after terminal proof fails before immediate reuse', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-retire-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const failed = await prepare('terminal-retire-failure');
+    if (failed === undefined) throw new Error('expected a Windows v2 invocation');
+    const failedRequestFile = failed.args.at(-1);
+    if (failedRequestFile === undefined) throw new Error('expected a native request file');
+    const failedRequest = JSON.parse(readFileSync(failedRequestFile, 'utf8')) as {
+      readonly terminalRecordPath: string;
+    };
+    await writeFile(failedRequest.terminalRecordPath, '{}', 'utf8');
+
+    await expect(failed.cleanup({ execution: 'started_or_unknown' })).rejects.toThrow(/terminal|cleanup/i);
+    const replacement = await Promise.race([
+      prepare('terminal-retire-replacement'),
+      new Promise<never>((_resolve, reject) => setTimeout(
+        () => reject(new Error('replacement reused a broker with a lost controller')),
+        500,
+      )),
+    ]);
+    if (replacement === undefined) throw new Error('expected a replacement Windows v2 invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+    expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
+    await replacement.cleanup({ execution: 'not_started' });
+  });
+
+  it('retires an idle shared broker after its bounded reuse grace', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-idle-'));
+    tempRoots.push(root);
+    const request = {
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [] as string[], allowWrite: [] as string[] },
+      network: { mode: 'deny' as const },
+    };
+
+    await expect(runKodaXSandboxed(request)).resolves.toMatchObject({ status: 'completed' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    await expect(runKodaXSandboxed(request)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+    expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('evicts an idle network broker before the fixed Windows port pool is exhausted', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-lru-'));
+    tempRoots.push(root);
+    for (let index = 0; index < 6; index += 1) {
+      const result = await runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        filesystem: { allowRead: [], allowWrite: [] },
+        network: { mode: 'allowlist', origins: [`https://service-${index}.example.com`] },
+      });
+      expect(result).toMatchObject({ status: 'completed', sandboxed: true });
+    }
+
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(6);
+    expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('fails a sixth distinct active broker lease before target start instead of queuing', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-active-capacity-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const held: Array<NonNullable<Awaited<ReturnType<typeof sandbox.prepare>>>> = [];
+    const writeGeneration = async (): Promise<void> => {
+      await writeFile(
+        path.join(cutoverDirectory, 'windows-v2-cutover.json'),
+        JSON.stringify({
+          version: 8,
+          protocol: 8,
+          generationNonce: randomUUID(),
+          filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+          hostUserSid: windowsSandboxMock.hostUserSid,
+          sandboxUserSid: windowsSandboxMock.user.sid,
+          sandboxGroupSid: windowsSandboxMock.user.groupSid,
+        }),
+        'utf8',
+      );
+    };
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    try {
+      for (let index = 0; index < 5; index += 1) {
+        await writeGeneration();
+        const invocation = await prepare(`active-capacity-${index}`);
+        if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+        held.push(invocation);
+      }
+      await writeGeneration();
+      const sixth = prepare('active-capacity-sixth');
+      await expect(Promise.race([
+        sixth,
+        new Promise<never>((_resolve, reject) => setTimeout(
+          () => reject(new Error('sixth lease queued behind an active command')),
+          500,
+        )),
+      ])).rejects.toThrow(/capacity is fully active; no command was started/i);
+      expect(capturedWindowsNetworkBrokerRequests).toHaveLength(5);
+    } finally {
+      await Promise.all(held.map((invocation) => (
+        invocation.cleanup({ execution: 'not_started' })
+      )));
+    }
+  });
+
+  it('revalidates the setup generation before an SDK native host spawn and cleans up', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-generation-'));
+    tempRoots.push(root);
+    const controlFilesBefore = (await readdir(windowsSandboxControlDirectory())).sort();
+    const hostSpawnsBefore = capturedSpawnArgv.filter((argv) => argv[1] === '__host').length;
+    windowsNetworkBrokerMock.beforeReady = () => {
+      windowsNetworkBrokerMock.beforeReady = undefined;
+      writeFileSync(cutoverMarkerFile(), JSON.stringify({
+        version: 8,
+        protocol: 8,
+        generationNonce: randomUUID(),
+        filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+        hostUserSid: windowsSandboxMock.hostUserSid,
+        sandboxUserSid: windowsSandboxMock.user.sid,
+        sandboxGroupSid: windowsSandboxMock.user.groupSid,
+      }));
+    };
+
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [], allowWrite: [] },
+      network: { mode: 'deny' },
+    })).rejects.toThrow(/generation changed/i);
+
+    expect(capturedSpawnArgv.filter((argv) => argv[1] === '__host')).toHaveLength(
+      hostSpawnsBefore,
+    );
+    expect((await readdir(windowsSandboxControlDirectory())).sort()).toEqual(controlFilesBefore);
+  });
+
+  it('releases an SDK native request when host spawn throws synchronously', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-spawn-failure-'));
+    tempRoots.push(root);
+    const commandControlFiles = async (): Promise<readonly string[]> => (
+      (await readdir(windowsSandboxControlDirectory()))
+        .filter((name) => /^windows-(shell|resume|started|terminal)-/.test(name))
+        .sort()
+    );
+    const controlFilesBefore = await commandControlFiles();
+    processTreeKillMock.synchronousNativeHostSpawnFailure = true;
+
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [], allowWrite: [] },
+      network: { mode: 'deny' },
+    })).rejects.toThrow(/synchronous native host spawn failure/i);
+
+    expect(await commandControlFiles()).toEqual(controlFilesBefore);
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('retires a silent network broker so the next command can create a healthy broker', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-silent-'));
+    tempRoots.push(root);
+    windowsNetworkBrokerMock.silentReadiness = true;
+
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [], allowWrite: [] },
+      network: { mode: 'deny' },
+      timeoutMs: 25,
+    })).rejects.toThrow(/preparation|readiness|timeout/i);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
+    windowsNetworkBrokerMock.silentReadiness = false;
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [], allowWrite: [] },
+      network: { mode: 'deny' },
+    })).resolves.toMatchObject({ status: 'completed', sandboxed: true });
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+  });
+
+  it('partitions shared network brokers after a same-account setup generation change', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-account-partition-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
@@ -2498,30 +2933,42 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
     const first = await prepare('account-generation-before');
     if (first === undefined) throw new Error('expected the first Windows v2 invocation');
-
-    windowsSandboxMock.user = {
-      ...windowsSandboxMock.user,
-      sid: 'S-1-5-21-2000',
-      groupSid: 'S-1-5-21-2001',
+    const firstRequestFile = first.args.at(-1);
+    if (firstRequestFile === undefined) throw new Error('expected the first native request file');
+    const firstRequest = JSON.parse(readFileSync(firstRequestFile, 'utf8')) as {
+      readonly setupMarkerSha256: string;
     };
+
     await writeFile(cutoverMarkerFile(), JSON.stringify({
-      version: 4,
-      protocol: 7,
+      version: 8,
+      protocol: 8,
+      generationNonce: '00000000-0000-4000-8000-000000000002',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
     }), 'utf8');
+    expect(() => first.processControl?.validateStart?.()).toThrow(/generation changed/i);
     const second = await prepare('account-generation-after');
     if (second === undefined) throw new Error('expected the rotated Windows v2 invocation');
+    const secondRequestFile = second.args.at(-1);
+    if (secondRequestFile === undefined) throw new Error('expected the second native request file');
+    const secondRequest = JSON.parse(readFileSync(secondRequestFile, 'utf8')) as {
+      readonly setupMarkerSha256: string;
+    };
 
     expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
     expect(capturedWindowsNetworkBrokerRequests.map((request) => (
-      Reflect.get(request, 'expectedSandboxUserSid')
-    ))).toEqual(['S-1-5-21-1000', 'S-1-5-21-2000']);
+      Reflect.get(request, 'setupGenerationNonce')
+    ))).toEqual([
+      '00000000-0000-4000-8000-000000000001',
+      '00000000-0000-4000-8000-000000000002',
+    ]);
+    expect(secondRequest.setupMarkerSha256).not.toBe(firstRequest.setupMarkerSha256);
     await Promise.all([first.cleanup(), second.cleanup()]);
   });
 
-  it('rejects a machine cutover recorded by another host user', async () => {
+  it('does not run a host-identity subprocess for a marker under the host-only cache', async () => {
     const marker = JSON.parse(await readFile(cutoverMarkerFile(), 'utf8')) as {
       hostUserSid: string;
     };
@@ -2531,12 +2978,10 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     }), 'utf8');
 
     await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
-      ready: false,
-      setupRequired: true,
-      diagnostics: expect.arrayContaining([
-        expect.stringContaining('activated by another host user'),
-      ]),
+      ready: true,
+      setupRequired: false,
     });
+    expect(capturedSyncSpawns.some(({ args }) => args[0] === '__current-user-sid')).toBe(false);
   });
 
   it('does not require setup or install guards when the obsolete guard probe is missing', async () => {
@@ -2595,6 +3040,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('reinstalls a missing NUL compatibility ACE without rotating the current v2 account', async () => {
     windowsSandboxMock.nullDeviceReady = false;
+    windowsSandboxMock.sidProcessesActive = false;
     await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
       ready: false,
       setupRequired: true,
@@ -2603,7 +3049,16 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       ]),
     });
 
-    const restore = overrideWindowsNullDeviceInstallerForTest(() => {
+    const setupRequests: Array<{
+      readonly version: 1;
+      readonly sandboxSid: string;
+      readonly sandboxGroupSid: string;
+      readonly filesystemCapabilityNonce: string;
+      readonly readRoots: readonly string[];
+      readonly writeRoots: readonly string[];
+    }> = [];
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      setupRequests.push(request);
       windowsSandboxMock.nullDeviceReady = true;
     });
     try {
@@ -2611,6 +3066,20 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       expect(outcome).toMatchObject({ status: 'ready', attempted: true });
       expect(windowsSandboxMock.uninstallCalls).toBe(0);
       expect(windowsSandboxMock.installCalls).toBe(1);
+      expect(setupRequests).toHaveLength(1);
+      expect(setupRequests[0]).toMatchObject({
+        version: 1,
+        sandboxSid: windowsSandboxMock.user.sid,
+        sandboxGroupSid: windowsSandboxMock.user.groupSid,
+        filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      });
+      expect(setupRequests[0]?.readRoots.some((root) => (
+        isPathInside(root, path.dirname(process.execPath))
+      ))).toBe(true);
+      expect(setupRequests[0]?.writeRoots.some((root) => (
+        isPathInside(root, realpathSync.native(os.tmpdir()))
+      ))).toBe(true);
+      expect(capturedSyncSpawns.some(({ args }) => args[0] === '__setup-acl-roots')).toBe(false);
       expect(capturedSyncSpawns.filter(({ args }) => (
         args[0] === '__persistent-deny-read' && args[1] === 'remove'
       ))).toHaveLength(0);
@@ -2619,11 +3088,52 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     }
   });
 
+  it('does not publish a setup generation when elevated capability setup fails', async () => {
+    windowsSandboxMock.nullDeviceReady = false;
+    windowsSandboxMock.sidProcessesActive = false;
+    const restore = overrideWindowsSetupCapabilityInstallerForTest(() => {
+      throw new Error('injected elevated setup failure');
+    });
+    try {
+      const outcome = await prepareSandboxRuntimeForSetup();
+      expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
+      expect(outcome.error).toContain('injected elevated setup failure');
+      expect(existsSync(cutoverMarkerFile())).toBe(false);
+      expect(capturedSyncSpawns.some(({ args }) => args[0] === '__setup-acl-roots')).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not reinstall a same-SID setup generation while that account is active', async () => {
+    windowsSandboxMock.nullDeviceReady = false;
+    windowsSandboxMock.sidProcessesActive = true;
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
+    expect(outcome.error).toContain('still has a live process');
+    expect(windowsSandboxMock.installCalls).toBe(0);
+  });
+
   it('provisions a fresh native cache before first-account control setup', async () => {
-    await rm(cutoverMarkerFile(), { force: true });
     const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'fresh-local-app-data');
     await mkdir(freshLocalAppData);
     vi.stubEnv('LOCALAPPDATA', freshLocalAppData);
+    restoreCutoverDirectory?.();
+    cutoverDirectory = windowsNativeArtifactCacheRoot();
+    restoreCutoverDirectory = overrideWindowsSandboxV2CutoverDirectoryForTest(
+      () => cutoverDirectory,
+    );
+    await rm(cutoverDirectory, { recursive: true, force: true });
+    const restoreDrain = overrideLegacyWindowsSandboxAdmissionDrainForTest(async () => undefined);
+    const legacyCutover = path.join(
+      path.resolve(process.env.ProgramData!),
+      'KodaX',
+      'sandbox-runtime',
+      'windows-v2-cutover.json',
+    );
+    await writeFile(legacyCutover, JSON.stringify({ version: 4, protocol: 7 }), 'utf8');
     windowsSandboxMock.user = {
       ...windowsSandboxMock.user,
       provisioned: false,
@@ -2634,7 +3144,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
 
     expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(false);
-    const outcome = await prepareSandboxRuntimeForSetup();
+    const outcome = await prepareSandboxRuntimeForSetup().finally(restoreDrain);
 
     if (outcome.status !== 'ready') {
       throw new Error(`Fresh Windows sandbox setup failed: ${JSON.stringify(outcome)}`);
@@ -2642,6 +3152,8 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(outcome).toMatchObject({ status: 'ready', attempted: true });
     expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(true);
     expect(existsSync(windowsSandboxControlDirectory())).toBe(true);
+    expect(existsSync(legacyCutover)).toBe(false);
+    expect(existsSync(path.join(cutoverDirectory, 'windows-v2-legacy-drain.json'))).toBe(false);
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(0);
@@ -2651,11 +3163,14 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'sid-unavailable-local-app-data');
     await mkdir(freshLocalAppData);
     vi.stubEnv('LOCALAPPDATA', freshLocalAppData);
+    windowsSandboxMock.sidProcessesActive = false;
     const initialized = await prepareSandboxRuntimeForSetup();
     if (initialized.status !== 'ready') {
       throw new Error(`Initial Windows sandbox setup failed: ${JSON.stringify(initialized)}`);
     }
     expect(initialized).toMatchObject({ status: 'ready', attempted: true });
+    const installCallsAfterInitialization = windowsSandboxMock.installCalls;
+    const uninstallCallsAfterInitialization = windowsSandboxMock.uninstallCalls;
     const control = ensureWindowsSandboxControlDirectory();
     const corruption = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -2693,8 +3208,8 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
     expect(outcome.error).toContain('SID is unavailable');
     expect(() => verifyWindowsSandboxControlDirectory()).toThrow(/exact|unexpected|host\/SYSTEM/i);
-    expect(windowsSandboxMock.installCalls).toBe(0);
-    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(windowsSandboxMock.installCalls).toBe(installCallsAfterInitialization);
+    expect(windowsSandboxMock.uninstallCalls).toBe(uninstallCallsAfterInitialization);
   });
 
   it('rotates an existing account SID before recording the v2 cutover', async () => {
@@ -2721,7 +3236,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
   it('migrates a previous setup generation once before admitting new commands', async () => {
     await writeFile(cutoverMarkerFile(), JSON.stringify({
       version: 3,
-      protocol: 7,
+      protocol: 8,
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
@@ -2750,7 +3265,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(removals).toHaveLength(1);
     expect(removals[0]?.args[3]).toBe(previousGroupSid);
     expect(removals[0]?.args[3]).not.toBe(windowsSandboxMock.user.groupSid);
-    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":4');
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":8');
 
     const removalsAfterSetup = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
@@ -2773,6 +3288,75 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(removalsAfterSetup);
+  });
+
+  it('retires the protocol-7 ProgramData marker and drains its pre-start window once', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    const legacyMarker = path.join(
+      path.resolve(process.env.ProgramData!),
+      'KodaX',
+      'sandbox-runtime',
+      'windows-v2-cutover.json',
+    );
+    await writeFile(legacyMarker, JSON.stringify({
+      version: 4,
+      protocol: 7,
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = false;
+    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
+    let drains = 0;
+    let drainDelayMs = 0;
+    const restore = overrideLegacyWindowsSandboxAdmissionDrainForTest(async (delayMs) => {
+      drains += 1;
+      drainDelayMs = delayMs;
+    });
+    try {
+      const outcome = await prepareSandboxRuntimeForSetup();
+      if (outcome.status !== 'ready') throw new Error(outcome.error);
+      expect(outcome).toMatchObject({
+        status: 'ready',
+        attempted: true,
+      });
+    } finally {
+      restore();
+    }
+    expect(drains).toBe(1);
+    expect(drainDelayMs).toBeGreaterThan(0);
+    expect(drainDelayMs).toBeLessThanOrEqual(301_000);
+    await expect(stat(legacyMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('resumes an interrupted protocol-7 admission drain before rotating the account', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    const drainMarker = path.join(cutoverDirectory, 'windows-v2-legacy-drain.json');
+    await writeFile(drainMarker, JSON.stringify({
+      version: 1,
+      state: 'draining',
+      deadlineUnixMs: Date.now() + 60_000,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = false;
+    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
+    let drains = 0;
+    let drainDelayMs = 0;
+    const restore = overrideLegacyWindowsSandboxAdmissionDrainForTest(async (delayMs) => {
+      drains += 1;
+      drainDelayMs = delayMs;
+    });
+    try {
+      await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
+        status: 'ready',
+        attempted: true,
+      });
+    } finally {
+      restore();
+    }
+    expect(drains).toBe(1);
+    expect(drainDelayMs).toBeGreaterThan(0);
+    expect(drainDelayMs).toBeLessThanOrEqual(60_000);
+    await expect(stat(drainMarker)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('does not rotate the account while its SID still owns a live process', async () => {

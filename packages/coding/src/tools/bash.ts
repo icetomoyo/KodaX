@@ -57,6 +57,13 @@ interface ForegroundOutputRecovery {
   readonly stderr: StreamRecovery;
 }
 
+class ShellSandboxPreStartError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ShellSandboxPreStartError';
+  }
+}
+
 function closePreparedShellInput(
   proc: ManagedChildProcess,
   prefix: Uint8Array | undefined,
@@ -564,7 +571,8 @@ async function executeToolBash(
       const authorize = ctx.authorizeShellHostExecution;
       if (authorize === undefined) {
         return '[Sandbox boundary] Command was not started because the selected OS sandbox '
-          + 'was unavailable. Host execution requires a new permission decision.';
+          + 'was unavailable. Host execution requires a new permission decision.'
+          + (diagnostic === undefined ? '' : ` Diagnostic: ${diagnostic}`);
       }
       const decision = await authorize({
         toolCallId: ctx.toolCallId,
@@ -641,7 +649,19 @@ async function executeToolBash(
     readonly proc: ManagedChildProcess;
     readonly unregister: () => void;
   }> => {
-    const proc = spawnCommand();
+    try {
+      await sandboxInvocation?.processControl?.validateStart?.();
+    } catch (error: unknown) {
+      await cleanupSandbox('not_started');
+      throw new ShellSandboxPreStartError(sandboxLifecycleErrorDetail(error));
+    }
+    let proc: ManagedChildProcess;
+    try {
+      proc = spawnCommand();
+    } catch (error: unknown) {
+      await cleanupSandbox('not_started');
+      throw error;
+    }
     let unregister: (() => void) | undefined;
     try {
       unregister = registerManagedChildProcess(proc, { kind, command, cwd }, {
@@ -685,13 +705,45 @@ async function executeToolBash(
     // Shell tools are non-interactive. In particular, the native runner host must
     // see EOF immediately; stdin is framed by that host without a model-side gate.
     try {
-      await closePreparedShellInput(
-        proc,
-        sandboxInvocation?.stdinPrefix,
-        ctx.abortSignal,
-        deadlineAt,
-        sandboxInvocation?.processControl,
-      );
+      let deliveryFailure: unknown;
+      try {
+        await closePreparedShellInput(
+          proc,
+          sandboxInvocation?.stdinPrefix,
+          ctx.abortSignal,
+          deadlineAt,
+          sandboxInvocation?.processControl,
+        );
+      } catch (error: unknown) {
+        deliveryFailure = error;
+      }
+      let startAttestation: Awaited<ReturnType<NonNullable<
+        NonNullable<KodaXPreparedShellSandboxInvocation['processControl']>['attestStart']
+      >>> | undefined;
+      try {
+        startAttestation = await sandboxInvocation?.processControl?.attestStart?.(
+          proc,
+          ctx.abortSignal,
+          deadlineAt,
+        );
+      } catch (error: unknown) {
+        throw deliveryFailure === undefined
+          ? error
+          : new AggregateError(
+              [deliveryFailure, error],
+              'Native shell bootstrap delivery and target-start attestation both failed.',
+            );
+      }
+      if (startAttestation?.state === 'pre_start_unavailable') {
+        sandboxPreStartUnavailable = true;
+        const diagnostic = deliveryFailure === undefined
+          ? startAttestation.diagnostic
+          : `${startAttestation.diagnostic} Bootstrap delivery also failed: `
+            + sandboxLifecycleErrorDetail(deliveryFailure);
+        sandboxPreStartDiagnostic = diagnostic;
+        throw new ShellSandboxPreStartError(diagnostic);
+      }
+      if (deliveryFailure !== undefined) throw deliveryFailure;
     } catch (error: unknown) {
       let inputFailure = error;
       if (sandboxInvocation?.processControl !== undefined) {
@@ -708,7 +760,9 @@ async function executeToolBash(
         killChildProcessTreeSync(proc);
       }
       try {
-        await cleanupSandbox('started_or_unknown');
+        await cleanupSandbox(
+          error instanceof ShellSandboxPreStartError ? 'not_started' : 'started_or_unknown',
+        );
       } catch (cleanupError: unknown) {
         inputFailure = new AggregateError(
           [inputFailure, cleanupError],
@@ -765,6 +819,13 @@ async function executeToolBash(
     } catch (error) {
       logStream.destroy();
       await cleanupSandbox();
+      if (error instanceof ShellSandboxPreStartError) {
+        return executeAtHostBoundary(
+          'sandbox_unavailable',
+          error.message,
+          'backend_failed',
+        );
+      }
       if (error instanceof Error && error.name === 'AbortError') {
         return withSandboxCleanupFailure(cancelledCommandResult(command));
       }
@@ -872,6 +933,13 @@ async function executeToolBash(
   try {
     ({ proc, unregister: unregisterManagedChild } = await spawnManagedCommand('bash'));
   } catch (error) {
+    if (error instanceof ShellSandboxPreStartError) {
+      return executeAtHostBoundary(
+        'sandbox_unavailable',
+        error.message,
+        'backend_failed',
+      );
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return withSandboxCleanupFailure(cancelledCommandResult(command));
     }

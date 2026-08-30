@@ -145,15 +145,15 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('native shell protocol is version 7');
+    expect(sandbox).toContain('native shell protocol is version 8');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
     expect(sandbox).toContain('Doctor only verifies it');
     expect(sandbox).toContain('expired dead-PID request');
     expect(sandbox).toContain('windows-deny recovery records remain fail-closed');
-    expect(sandbox).toContain('sandboxRuntime:6');
-    expect(sandbox).toContain('Workspace-local .kodax/runtime state is denied');
+    expect(sandbox).toContain('sandboxRuntime:7');
+    expect(sandbox).toContain('Workspace-local .kodax/runtime state remains readable but is denied to shell writes');
     expect(sandbox).toContain('reconstructs from event ledgers after truncation');
     expect(sandbox).toContain('descriptor-verified addon loading');
     expect(sandbox).toContain('Issue 307 retains');
@@ -169,13 +169,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:6`');
+    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:7`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
     expect(sdk).toContain('bounded `capacityDebt`');
     expect(sdk).toContain('commits through the recovery ladder instead of aborting the Run');
     expect(sdk).toContain('irreducible overflow');
     expect(sandbox).toContain('Since v0.7.96, trusted text transactions and platform shell containment are');
-    expect(sandbox).toContain('v0.7.96 raises it to version 6');
+    expect(sandbox).toContain('v0.7.96 raises it to version 7');
   });
 
   it('documents the v0.7.96-alpha.3 scoped credential and daemon inventory contracts', () => {
@@ -198,18 +198,18 @@ describe('FEATURE_218 manual registry', () => {
 
     expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
-    expect(sdk).toContain('tickets repair without operator input');
-    expect(sdk).toContain('dynamic worktrees register their cleanup policy');
+    expect(sdk).toContain('Only an overlapping denyRead request may recover');
+    expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
     expect(sdk).toContain('zero-byte, malformed, or truncated owner data');
     expect(sdk).toContain('finalizes its authoritative `KodaXResult` before emitting the');
     expect(sdk).toContain('cannot observe an empty successful answer');
     expect(sdk).toContain('Since v0.7.95, KodaX-created linked worktree roots persist');
     expect(sdk).toContain('Since v0.7.95, Runtime rereads a terminal status');
     expect(sandbox).toContain('capability metadata was version 5');
-    expect(sandbox).toContain('Windows sandbox cleanup is self-healing');
-    expect(sandbox).toContain('machine-global cleanup Job is recoverable');
-    expect(sandbox).toContain('dynamic worktrees register their cleanup policy');
-    expect(sandbox).toContain('sandbox-user SID probe');
+    expect(sandbox).toContain('without a machine-global admission mutex');
+    expect(sandbox).toContain('Full stale-receipt recovery remains setup work');
+    expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
+    expect(sandbox).toContain('Atomic control staging is retired only after exact dead-PID');
   });
 
   it('documents the v0.7.94 Runtime settlement and reconnect contracts', () => {
@@ -248,8 +248,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('Resume reconstruction uses canonical Session messages');
     expect(tools).toContain('KodaX file lock timed out');
     expect(sandbox).toContain('version 4');
-    expect(sandbox).toContain('token-scoped durable marker');
-    expect(sandbox).toContain('Do not delete');
+    expect(sandbox).toContain('Old model-filesystem-effects state is ignored');
+    expect(sandbox).toContain('deprecated lease APIs are inert compatibility shims');
   });
 
   it('documents the v0.7.79 provider, A2A, Session, and Runtime contracts', () => {
@@ -293,9 +293,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('case-insensitive PATH/Path');
     expect(sandbox).toContain('verbatim-argument contract');
     expect(sandbox).toContain('capability metadata was version 5');
-    expect(sandbox).toContain('Windows sandbox cleanup is self-healing');
+    expect(sandbox).toContain('without a machine-global admission mutex');
     expect(sandbox).toContain('profile-specific host boundary');
-    expect(sandbox).toContain('only the last owner recovers');
+    expect(sandbox).toContain('setup-generation-8 cutover');
   });
 
   it('documents the v0.7.77 adaptive AMA and governed memory intervention contracts', () => {

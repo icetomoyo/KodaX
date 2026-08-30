@@ -82,9 +82,10 @@ The v5 advance marks self-healing Windows cleanup
 `sameBootAclRecovery: 'sandbox-user-process-probe'`): the machine-global
 cleanup Job is recoverable across reboots, recovery tickets repair without
 operator input, and background retries observe the exact daemon and supervisor
-process generations. Do not
-delete `model-filesystem-effects.lock` by hand; on Windows the coordinator
-state lives under `C:\ProgramData\KodaX\sandbox-runtime\runtime\`.
+process generations. Those `model-filesystem-effects.*` files describe only
+the historical v0.7.86-v0.7.95 coordinator. v0.7.96 ignores them and does not
+acquire that command-lifetime fence; deleting them is neither required nor a
+supported recovery step for an older running binary.
 
 ## Trusted text tools (v0.7.96)
 
@@ -157,17 +158,20 @@ Workspace-local `.kodax/runtime` state is readable but excluded from shell
 write authority even though the surrounding workspace is writable; Session journals,
 cursor files, daemon records, and grants remain host-owned control state.
 The private desktop uses an ephemeral full-policy capability. Filesystem write
-authority instead uses stable capabilities derived from the sandbox-account
-generation, final canonical root, and `allowRead`/`allowWrite`/`denyWrite`
-clause. Every read root has an exact allow-read capability and a read-only root
-implicitly carries its deny-write capability. The dedicated account,
+authority instead uses stable capabilities derived from the setup's persistent
+filesystem nonce, final canonical root, and `allowWrite`/`denyWrite` clause.
+Normal read access is supplied by the shared sandbox group; read roots do not
+create a separate capability or an implicit deny-write capability. The dedicated account,
 per-launch logon, and Everyone SIDs remain in the restricting set because real
 subprocess creation requires them, matching current Codex; Issue 309 documents
 the remaining ambient-trustee child-DACL boundary. The shared sandbox group
 supplies the normal access-check pass. The target's enabled Windows traverse
 privilege reaches an exact allowed root without persistent ACEs on its private
 ancestors; KodaX never rewrites a profile/container DACL merely to make a child
-root reachable. Every target is preflighted before one atomic ACL transaction. Windows
+root reachable. Every target is preflighted before mutation. A complete exact
+ACL policy is a read-only fast path; a missing additive ACE uses a short mutex
+for that exact opened filesystem object, and all roots share one five-second
+phase deadline. Unrelated roots never share an admission mutex. Windows
 `WRITE_RESTRICTED` does not enforce restricting SIDs for reads, so `denyRead`
 uses an execution-logon deny under a short ACL mutex. A durable receipt records
 the no-follow volume/file identity before mutation; exact cleanup follows Job
@@ -176,9 +180,15 @@ and target identity prove the receipt stale. A missing or replaced target keeps
 the receipt and blocks shell admission until repair, but cannot block trusted
 text tools.
 Within one Runtime, commands whose canonical network policy and sandbox-account
-generation match share one process-level ASRT network broker; their native
+generation match share one reusable process-level ASRT network broker; their native
 requests, restricted policy tokens, controller connections, and Jobs remain
-independent. Different network policies never share that authority. ASRT
+independent. The broker is referenced while starting or leased and detached
+from the Node event loop only while idle. A failed readiness attempt is retired instead of poisoning the
+next caller. A caller-local timeout releases only its own reference and does
+not cancel a healthy shared startup; a sequential caller may still join it. If
+all five distinct broker slots are actively leased, a sixth policy fails before
+target start rather than waiting for another command lifecycle. Different
+network policies never share that authority. ASRT
 0.0.65 still consumes two fixed-range ports for each distinct broker and has no
 authenticated connection identity for routing unlike policies through one
 ingress. Issue 308 tracks this capacity difference from Codex; KodaX does not
@@ -189,12 +199,17 @@ keeps multiple pending instances for concurrent host launches. Restricted
 targets cannot connect to or exhaust this control path. Broker/controller loss
 closes every controller handle, drains active Jobs, and lets a later command
 create a fresh broker.
-This authority split is advertised as `sandboxRuntime:6`; auto-started clients
+This authority split is advertised as `sandboxRuntime:7`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`
-cutover. Setup waits for old sandbox processes to exit, recovers recorded ACL
-work, recreates the dedicated account with a new SID, and records that SID and
-the native protocol in machine state. Doctor and native shell admission remain
+cutover. Setup generation 8 retires protocol 7 and records a protected two-
+phase drain marker so an interrupted setup resumes its complete bounded
+pre-start wait, waits for old sandbox processes to exit, recovers recorded
+ACL work, recreates the dedicated account with a new SID, and records that SID
+and protocol 8 in protected machine state. Every protocol-8 request includes
+the marker path/digest; the native host holds the marker without delete sharing
+through durable target `Started`, so setup and command start cannot cross.
+Doctor and native shell admission remain
 fail-closed if that state is missing or mismatched; trusted text tools remain
 available throughout. The embedded release manifest pins each native sidecar
 protocol/SHA-256 plus the ASRT release version/SHA-256. Verified bytes are
@@ -205,15 +220,25 @@ group SID receives read/execute, but not write/delete, on the shell artifact;
 local Users receive only read/execute on the pinned ASRT executable.
 The current workspace sandbox grants broad host reads, including Agent Home,
 credential locations, and global Git configuration. During upgrade, versioned
-setup generation 4 removes only the exact obsolete KodaX sandbox-account read-
+setup generation 8 removes only the exact obsolete KodaX sandbox-account read-
 deny ACEs after the old SID is idle and rotates the account generation.
 Unrelated administrator ACLs are preserved byte-for-byte, and an ambiguous ACL
 fails closed instead of being rewritten. Ordinary command admission never runs
 that legacy cleanup or revokes another Session's shared ACL state; independent
 Runtime processes keep separate requests, tokens, control channels, and Jobs.
 The ASRT directory is not passed as a final-target policy root. A fixed
-System32 provisioner may run during artifact bootstrap; text content and shell
-stdin never enter it.
+System32 provisioner runs only during explicit artifact/setup bootstrap. One
+setup-only elevated native helper receives a small explicit base64 envelope,
+reads a versioned digest-bound single-use request from the protected control
+directory, and synchronously installs NUL
+compatibility plus profile/TMP ACL prewarm before the generation marker;
+the setup caller waits for confirmed helper exit, and exact-object mutex waits
+share the overall setup deadline;
+ordinary command admission verifies already-provisioned artifacts and control
+state without launching synchronous PowerShell. Text content and shell stdin
+never enter it. Started-or-unknown cleanup succeeds only with a verified Job-
+drained terminal record. Control repair may retire an atomic staging file only
+after its exact creator PID is dead and two launch budgets have elapsed.
 
 In a bundled build, the package-source ASRT executable may be a package-store
 hardlink. KodaX does not trust that link relationship: it performs a
@@ -244,8 +269,8 @@ not another post-spawn patch.
 Issue 309 documents the remaining Windows compatibility limitation: an explicit
 ACE for a retained compatibility trustee can bypass a later root capability.
 The ACE may be left by a sandbox command or already exist on an external or
-host-owned descendant. KodaX requires exact read/write capabilities for normal
-declared roots, but the primary account, logon, and Everyone SIDs must remain
+host-owned descendant. KodaX requires exact write capabilities for declared
+write roots and group-based normal-pass access for read roots, but the primary account, logon, and Everyone SIDs must remain
 for working subprocesses; closing explicit child-DACL reuse needs a different
 loader/token architecture.
 

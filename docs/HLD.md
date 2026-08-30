@@ -1,12 +1,13 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
-> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297; not tagged)
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297 + Issue 326
+> sandbox concurrency correction; not tagged)
 >
 > This HLD is intentionally current-state only. The old pre-v0.7.43
 > chain/harness model has been removed from this active design document because
@@ -125,17 +126,17 @@ no dependency on ASRT, shell setup, a runner, workspace sessions, cleanup,
 reset, owner, or poison state; text-tool policy is a trusted-host boundary, not
 OS-token sandbox enforcement. Windows shell/process execution is a separate
 native host/runner protocol: ASRT provides network/account services, the
-runner supplies a restricted policy-capability token (with exact read/write
-capabilities plus the dedicated account, per-launch logon, and Everyone
+runner supplies a restricted policy-capability token (with exact write
+capabilities plus shared-group read access and the dedicated account, per-launch logon, and Everyone
 compatibility SIDs, matching current Codex), uses a nonce-bound policy-capability private desktop, and creates the target suspended
 inside a no-breakaway, kill-on-close Job before `Ready` and resume. Linux and
 macOS shell commands use per-command ASRT bubblewrap/Seatbelt preparation with
 no KodaX workspace-session owner. One-time Windows v2 setup rotates the pre-v2 account SID and records the new
 SID/protocol machine generation before shell admission.
 The Windows private desktop uses a full-policy capability, while persistent
-filesystem ACEs use stable account-generation + canonical-root + read/write-clause
-capabilities. Read roots carry an exact allow-read capability; read-only roots implicitly carry the matching deny-write
-capability. The restricted target's enabled traverse privilege reaches exact
+filesystem write ACEs use the setup's stable filesystem nonce + canonical-root +
+`allowWrite`/`denyWrite` clause capabilities. Read roots use the shared sandbox
+group and do not imply a deny-write capability. The restricted target's enabled traverse privilege reaches exact
 allowed roots without persistent private-ancestor ACEs or profile-DACL
 propagation. Because `WRITE_RESTRICTED` does not enforce read denies,
 `denyRead` uses an execution-logon ACE committed under a short ACL mutex and a
@@ -143,10 +144,18 @@ crash-safe receipt, then removed only after Job drain. Recovery verifies the
 recorded volume/file identity before changing the DACL; a missing or replaced
 object keeps the receipt and fails shell admission closed until repair. No ACL
 mutex or receipt participates in trusted text admission or spans the command
- lifetime. Windows setup generation 4 idempotently removes the legacy KodaX-
- installed sensitive-root deny ACEs with the previous group SID after proving
- that account idle, then rotates it; ordinary command admission never invokes that
- global migration or revokes shared ACL state. New sandbox policy grants broad
+ lifetime. Windows setup generation 8 retires protocol 7, records and resumes
+ an interrupted one-time drain, waits its full bounded pre-start window, and
+ removes the legacy KodaX-installed sensitive-
+ root deny ACEs with the previous group SID after proving that account idle,
+ then rotates it. One setup-only elevated native helper receives a small
+ explicit base64 envelope, validates its versioned digest-bound request inside
+ the protected control directory, and performs NUL
+ compatibility plus broad read/TMP ACL prewarm before marker publication;
+ the setup caller waits for confirmed helper exit, and exact-object mutex waits
+ cannot exceed the setup-wide deadline;
+ ordinary command admission never invokes UAC, that migration, or
+ revokes shared ACL state. New sandbox policy grants broad
  host reads instead. Native requests no
  longer add the protected artifact-cache root as a redundant `denyWrite` root,
  so upgrades neither grow those historical residues nor conflict with the
@@ -176,6 +185,20 @@ Neither platform treats an on-disk file as persistent lock ownership.
 Windows v2 shell invocations do not own a command-lifetime filesystem-effect
 lease. Arbitrary shell writes remain normal OS races and are not serialized by
 the text CAS.
+Protocol 8 binds every request to the protected setup marker's path and digest.
+The native host holds a non-delete-sharing marker handle through durable target
+`Started`, so setup rotation and command start are linearized without a global
+admission lock. A warm exact ACL policy is read-only; a missing ACE takes only
+an exact-filesystem-object mutex, and all roots share one five-second phase
+budget. Setup alone provisions artifacts/control state and performs legacy or
+full crash recovery. A denyRead admission may clean a dead-runner receipt only
+when it overlaps the exact requested object, under that same bounded phase; it
+does not lock unrelated work. Each command otherwise owns independent pipes, token, Job,
+resume/started records, terminal proof, and deny receipt. Exact-authority
+network brokers remain reusable and retire a failed readiness attempt.
+When terminal proof fails on the final reference, cleanup retires that broker
+before an immediate same-authority command can reuse its dead controller;
+another live holder is not stopped by a command-local proof failure.
 The final Windows target is creation-time contained. Issue 307 separately
 tracks the ASRT-owned shared-account runner's pre-main window, which also
 exists in current Codex and requires an upstream spawn boundary to eliminate.
@@ -256,8 +279,9 @@ fallback remain non-bypassable. Upgrade cleanup still quarantines legacy
 unauthenticated `processes/children` records without signaling a process.
 The v0.7.85 containment path used ASRT workspace sessions, a per-effect Job,
 policy-owner fallback, and a cross-process filesystem-effect lease. FEATURE_295
-supersedes that path for shell and controlled text tools; it remains only for
-legacy/non-text namespace effects such as worktree lifecycle. The current
+supersedes that path for shell and controlled text tools; Issue 326 also removes
+it from worktree lifecycle. Worktree calls retain only same-exact-path local
+ordering and otherwise use Git's own cross-process locks. The current
 v0.7.96 boundaries are defined above: trusted text is host-authorized and never
 enters the shell graph, while Windows shell uses per-command native token/Job
 containment and Linux/macOS use one ASRT command wrapper per invocation. Legacy

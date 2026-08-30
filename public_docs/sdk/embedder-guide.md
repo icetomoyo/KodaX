@@ -7,13 +7,14 @@
 
 This guide tracks the current source candidate on the `v0.7.96-alpha.4` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
-advertises Windows `sandboxRuntime:6`, `runtimeAutoModeGuardrail:5`,
+advertises Windows `sandboxRuntime:7`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
 `crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
 (cross-Runtime per-file kernel locking, revision CAS, flushed atomic
 replacement, and a native restricted-token Windows shell runner behind
-native shell protocol version 7), and local tool-result capacity overflow
+native shell protocol version 8/setup generation 8 with no command-lifetime
+global admission lock), and local tool-result capacity overflow
 records bounded `capacityDebt` and commits through a bounded recovery ladder
 instead of aborting the Run. On top of v0.7.95: self-healing Windows sandbox
 cleanup (a recoverable machine-global
@@ -4709,7 +4710,7 @@ const runtime = await connectKodaXRuntime({
     runBoundHostTools: 1,
     coderOwnerFencing: 1,
     crashOutcomeModel: 2,
-    sandboxRuntime: 6,
+    sandboxRuntime: 7,
     coderFeatureMatrix: 1,
     sessionAdmission: 1,
     completeObservationSnapshot: 1,
@@ -4778,20 +4779,22 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `6` since v0.7.96
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `7` in v0.7.96-alpha.4
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
-`sandboxRuntime:6`, so an idle v5-or-older daemon is replaced; a busy or
+`sandboxRuntime:7`, so an idle v6-or-older daemon is replaced; a busy or
 multi-client daemon fails closed with restart guidance. Version 6 means that
 trusted text transactions are host-owned and the native shell runner has no
 command-lifetime filesystem-effect lease; a v5 daemon cannot be reused for
-those semantics. Require `crashOutcomeModel:2` when the host
+those semantics. The former `model-filesystem-effects.*` coordinator state is
+ignored by v0.7.96 and cannot block Bash, trusted text, or worktree admission;
+deprecated lease exports are immediate compatibility shims. Require
+`crashOutcomeModel:2` when the host
 depends on managed Session persistence preceding completion and on the
 executor Promise — not managed `onComplete` — as terminal authority. Do not
-delete `C:\ProgramData\KodaX\sandbox-runtime\runtime\model-filesystem-effects.lock`
-or its `.queue` tickets by hand. `KodaXFileLockTimeoutError` means the
-filesystem-effect coordinator was unavailable; it does not prove a learning job
-holds the lock. `reclaimStaleKodaXFileLock` remains an explicit stale-lock
-helper, not a general lock-deletion primitive.
+delete old coordinator files to recover a current Runtime; an older process
+must instead be stopped/upgraded. `reclaimStaleKodaXFileLock` remains an
+explicit stale-lock helper for APIs that still use file locks, not a general
+lock-deletion primitive.
 
 ### v0.7.91 crash-resumable Runtime exit settlement
 
@@ -4848,7 +4851,10 @@ function with only `configHome` and `profile` to resume a still-exact prepared
 ticket. Do not delete `exit-settlement.json`, clear ACL markers, or start a
 replacement owner while a settlement is `prepared` or `stop_accepted`.
 
-### v0.7.92 filesystem-effect coordinator and managed terminal authority
+### Historical v0.7.92 filesystem-effect coordinator and managed terminal authority
+
+The coordinator described below applied to v0.7.92-v0.7.95. v0.7.96 retires
+it from Bash, trusted text, and worktree lifecycle; its files are ignored.
 
 A Worker operation can disappear while the shared Coder daemon PID remains
 alive. The coordinator queue now identifies each attempt by an operation token
@@ -6408,14 +6414,21 @@ Windows, Linux, and macOS:
   setup may create it or repair a no-reparse, host-owned direct cache child
   after proving the sandbox SID idle. Repair retires only expired dead-PID
   requests, aged unconsumed dead-PID network requests, or dead-owner terminal
-  records with `jobDrained: true`; live, unexpired, malformed, unknown, and
-  deny-recovery state stays fail-closed.
+  records with `jobDrained: true`. Atomic resume/started/deny staging is retired
+  only after the encoded creator PID is dead and the file is older than two
+  launch budgets; live, unexpired, malformed, unknown, and deny-recovery state
+  stays fail-closed.
+  Setup uses one elevated native helper with a small explicit base64 envelope
+  naming a versioned, digest-bound, single-use request in this protected
+  directory to install NUL compatibility and prewarm profile/TMP ACL roots.
+  The caller waits for confirmed helper exit, and exact-object mutex waits obey
+  the setup-wide deadline. Doctor and normal admission never invoke it.
 
 The Windows private desktop uses an ephemeral full-policy capability. Persistent
 filesystem write authority instead uses stable capabilities derived from the
-sandbox-account generation, final handle-canonical root, and
-`allowWrite`/`denyWrite` clause. A read-only root implicitly carries its
-deny-write capability; the shared sandbox group supplies ordinary read access.
+setup's persistent filesystem nonce, final handle-canonical root, and
+`allowWrite`/`denyWrite` clause. Read roots use the shared sandbox group and do
+not implicitly carry a deny-write capability.
 The target's enabled Windows traverse privilege reaches an exact allowed root
 without persistent ACEs on private ancestors; admission never rewrites a
 profile/container DACL merely to make a descendant reachable. Because `WRITE_RESTRICTED` does not
@@ -6426,6 +6439,26 @@ recovers a crashed owner only after validating PID creation time and the
 recorded volume/file identity. A missing or replaced target retains the receipt
 and fails later shell admission closed until repair. This transaction never
 gates trusted text tools or spans the command lifetime.
+Warm policy ACL admission is read-only. A missing additive capability uses a
+mutex derived from the exact opened filesystem object, and every root shares
+one five-second ACL phase budget rather than multiplying five seconds per root.
+Artifact/control provisioning and full stale receipt recovery are setup work,
+not ordinary command admission. A denyRead request may clean a dead-runner
+receipt only when it overlaps the exact requested object, using the same single
+ACL phase budget; unrelated receipts never acquire a lock.
+
+Native protocol 8 requires the protected setup-marker path and digest on every
+request. The host keeps that marker open without delete sharing until the
+target's `Started` record is durable, which linearizes setup rotation with
+target start without a global admission lock. Setup generation 8 retires a
+protocol-7 marker through protected pending/draining state, so setup interruption
+resumes the complete legacy 300-second Bash deadline plus margin; subsequent
+command admission never waits on that migration.
+
+A shared network broker is referenced while readiness or a command lease is
+active and is detached from the Node event loop only while idle. Awaiting an
+independent Runtime command therefore cannot exit early with an unsettled
+top-level Promise, while an unused broker still cannot keep that Runtime alive.
 
 The KodaX root and `/coding` exports of `runKodaX`, `startKodaX`,
 `runManagedTask`, `createKodaXTaskRunner`, `createDefaultCodingAgent`, `KodaXClient`, and `Client` bind this native text host automatically when an embedder did not
@@ -6459,8 +6492,9 @@ not need to normalize the package manager's content-store layout.
 There is no filesystem-effect lease spanning a command lifetime and no
 owner/reset/allow-revoke/poison admission gate shared with text tools. Shells
 from different Sessions, Runtime processes, and policies may run concurrently
-within the documented distinct-broker capacity. One Runtime shares a broker
-only for an exact network-policy/account-generation match; unlike policies and
+within the documented distinct-broker capacity. One Runtime reuses a healthy
+broker only for an exact network-policy/setup-generation match; a failed
+readiness attempt is retired, while unlike policies and
 Runtime processes remain subject to ASRT 0.0.65's ten-port/five-broker limit
 (Issue 308), without hidden serialization or authority sharing.
 KodaX does not serialize arbitrary shell writes to the same file; those remain
@@ -6499,9 +6533,26 @@ quotes, and spaces are not expanded or re-parsed by the host shell. The
 explicit environment policy is overlaid into ASRT's fresh restricted-user
 environment; ASRT-owned proxy, CA, and Git safety variables retain precedence.
 `timeoutMs` covers the complete broker lifecycle, including ASRT
-initialization, the command, and cleanup. Windows ACL initialization on a cold
-path can take tens of seconds, so do not reuse a classifier-scale 20–30 second
-deadline unless that early cancellation is intentional.
+initialization, the command, and cleanup. Ordinary admission never provisions
+artifacts/control state through synchronous PowerShell. A missing setup artifact
+fails with setup guidance; a cold additive ACL phase has one five-second total
+budget, not a per-root timeout.
+
+Custom shell adapters follow one lifecycle: `validateStart` immediately before
+spawn, spawn the prepared executable, `closeInput`, optional `attestStart`, then
+`cleanup` exactly once on every settlement path. Cancellation, timeout, or an
+uncertain started process first calls `terminate` and waits for its drain proof,
+then still calls `cleanup` exactly once to retire the prepared request and broker lease. An
+attestation returns either `started` or a proven `pre_start_unavailable`; only
+the latter may enter the separate host-permission boundary. If an embedder
+omits the optional `attestStart` hook, it must not describe a background target
+as proven started merely because the wrapper process spawned.
+
+`runKodaXSandboxed()` follows that lifecycle itself on Windows. A generation
+change or synchronous host-spawn exception is a proven `not_started` cleanup:
+the native request and broker lease are released exactly once. After spawn it
+uses target-start and terminal/Job-drain evidence; it never treats wrapper spawn
+alone as proof that the requested command ran.
 
 When ASRT is unavailable, or preparation fails before the target starts, KodaX
 reaches a separate host boundary. Exec Policy is evaluated first; Edits uses a

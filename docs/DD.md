@@ -1,12 +1,13 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
-> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297; not tagged)
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297 + Issue 326
+> sandbox concurrency correction; not tagged)
 >
 > This DD describes current implementation structure. Retired V1 chain details
 > were deleted from this active document; use git history and historical feature
@@ -227,20 +228,36 @@ policy capability, so restricted targets initialize without using the
 interactive desktop or opening a sibling policy's desktop. The
 prepared invocation identifies native token isolation so Coding bypasses the
 legacy effect gate and lease; no owner/reset/cleanup/poison transition spans a
-command lifetime. The restricting set carries the exact read/write policy
-capabilities plus the dedicated account, per-launch logon, and Everyone
+command lifetime. The restricting set carries exact write policy capabilities,
+shared-group read access, plus the dedicated account, per-launch logon, and Everyone
 compatibility SIDs. Real nested Node/cmd/PowerShell probes require the account
 SID, matching current Codex; Issue 309 records that an ambient-trustee child
 DACL can therefore bypass a later root capability. The token default DACL still
 excludes the account. Pre-alpha.4 exact sensitive-root denies are removed only
-by the versioned Windows setup cutover. Setup generation 4 proves the previous
-sandbox SID idle, removes the exactly owned guards with the previous group SID,
-rotates the account, and records the new protocol/SID generation. Ordinary command admission may
+by the versioned Windows setup cutover. Setup generation 8 retires the protocol-
+7 marker, drains the full legacy Bash deadline, proves the previous sandbox SID
+idle, removes the exactly owned guards with the previous group SID, rotates the
+account, and records the new protected protocol/SID generation. Ordinary command admission may
 authorize a missing current capability on an exact root, but it never runs
 legacy ACL cleanup or revokes another Session's shared ACL state. Linux and
 macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
+Protocol 8 requires a marker path and SHA-256 on every request. The native host
+holds that marker without delete sharing until its resume/started proof is
+durable. Warm ACL verification is read-only; a cold additive update uses a
+mutex derived from the exact opened object's volume/file identity, and all
+roots consume one five-second ACL phase budget. Artifact and control-directory
+provisioning is setup-only. Ordinary admission performs bounded verification
+and starts an independent request/token/pipe/Job lifecycle. A denyRead request
+may recover a dead-runner receipt only when it overlaps the exact requested
+object; full stale-receipt recovery remains setup work.
+Generation-8 setup invokes one elevated native helper with a versioned,
+digest-bound, single-use request below the protected control directory. That
+helper performs NUL compatibility and setup ACL prewarm synchronously; normal
+doctor/admission never invokes it. A final-reference terminal-proof failure
+synchronously retires the broker before same-authority reuse, while an
+unrelated live holder is left running.
 Windows allow-root ACL changes are exact-root only. The target's enabled
 traverse privilege reaches private descendant roots without rewriting ancestor
 container DACLs, avoiding inheritance propagation through unrelated profile
@@ -251,9 +268,10 @@ post-spawn DACL hardening cannot close it, and current Codex retains the same
 `CreateProcessWithLogonW` residual.
 The following v0.7.95 helper lifecycle is historical and does not apply to
 FEATURE_295 trusted text transactions. Sandbox backups used a canonical path minted from the opened helper identity;
-undo rejects a subsequently changed canonical identity. Worktree create/remove additionally keep a per-target queue
-around their namespace lease until the managed Git process tree is proven
-drained.
+undo rejects a subsequently changed canonical identity. Worktree create/remove
+keep a process-local queue only for the same exact target path until the managed
+Git process tree is proven drained; different paths and processes rely on Git's
+own locks and do not acquire a KodaX namespace lease.
 Historical text cleanup recovery was phase-idempotent. It applied to both ordinarily
 drained and delayed-drain paths, caches a successfully read execution
 attestation before deleting the broker file, retries a transient
@@ -335,8 +353,8 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 | Coding preset | `packages/coding/src/coding-preset.ts` | Declares the default coding agent and substrate executor. |
 | Continuous SDK | `packages/coding/src/client.ts`, `running-session.ts` | `KodaXClient` and non-blocking session handle. |
 | Runtime SDK | `src/sdk-runtime.ts` | One service facade for inline, Worker-hosted, and daemon ownership. Managed `onComplete` is not terminal authority. |
-| Filesystem-effect lock | `packages/agent/src/learning/store-lock.ts` | Operation-token queue, ticket heartbeat, exact-lock fence, retryable release handoff, `KodaXFileLockTimeoutError`. |
-| Filesystem-effect leases | `packages/coding/src/tools/_internal/file-mutation-queue.ts` | Direct / shell / namespace owners, release markers, cross-category fence. |
+| Durable state lock primitive | `packages/agent/src/learning/store-lock.ts` | Exact state-file ownership where a subsystem still needs it; not part of shell/write/worktree admission. |
+| File mutation ordering | `packages/coding/src/tools/_internal/file-mutation-queue.ts` | Same-path process-local ordering and inert compatibility lease exports; no cross-process command-lifetime fence. |
 | Managed terminal commit | `packages/coding/src/task-engine/runner-driven.ts` | Session snapshot before completion; repo/task projection is asynchronous. |
 | Runtime daemon | `src/runtime-daemon/` | Versioned protocol/schema, socket transport, owner state/lock, host, client, and process launcher. |
 | Runtime Worker | `src/runtime-worker/` | MessagePort host that reuses the daemon dispatcher/client and supports hard termination. |
@@ -1086,8 +1104,9 @@ refuses restore after retargeting. Model-facing worktree creation ignores any
 undeclared base path; only the workflow controller can supply its Runtime-owned
 worktree base through trusted execution context. Since FEATURE_295, controlled
 text sinks use the native trusted-text transaction described in section 3 and
-never acquire the legacy cross-process filesystem-effect lease. Worktree and
-other non-text namespace effects retain their separate legacy coordination.
+never acquire the legacy cross-process filesystem-effect lease. Issue 326
+removes that coordinator from worktree lifecycle as well; old state and lease
+exports are migration-only inert data/API and cannot block current work.
 Recognized shell mutations of the Agent Home root, Runtime, credentials, and
 security configuration remain on the reviewable branch. Full Access skips this
 reviewer; only administrator `forbid` policy and the narrow critical-effect
@@ -1097,11 +1116,22 @@ only for the network/account launch and the native host/runner path described in
 section 3 for per-command restricted token, private desktop, framed stdio, and
 creation-time Job containment. Different policies, Sessions, and Runtime
 processes do not share a command-lifetime filesystem-effect lease. Setup
-generation 4 removes only exact obsolete KodaX sandbox-account read-deny ACEs
-after the old SID is idle and preserves unrelated ACLs; ordinary admission
-performs zero legacy cleanup. Caller-supplied dynamic `denyRead` roots in the
+generation 8/protocol 8 removes only exact obsolete KodaX sandbox-account read-
+deny ACEs after the legacy pre-start window drains and the old SID is idle,
+then publishes a protected marker whose handle gates target start. A protected
+two-phase drain marker makes that one-time wait resume safely if setup exits
+between retiring protocol 7 and completing its bounded drain. Ordinary
+admission performs zero legacy cleanup or provisioning. The elevated setup
+helper receives only an explicit base64 envelope naming a digest-bound request
+in protected control state; the caller waits for helper exit, and every setup
+ACL mutex wait consumes the same overall setup deadline. Caller-supplied dynamic `denyRead` roots in the
 standalone sandbox API keep their short execution-logon ACL transaction and
-crash-safe receipt. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
+crash-safe immutable receipt; receipt reads share read/delete access and cannot
+serialize exact owner cleanup. Foreground Bash and the SDK validate setup state
+immediately before spawn and release prepared state on a synchronous pre-start
+failure. Caller-local broker deadlines release only their reference, while a
+fully active broker pool fails before target start rather than waiting for a
+command lifecycle. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
 without a KodaX workspace-session owner. A pre-target-start sandbox preparation
 failure may create an exact host-boundary decision;
 it never redirects through trusted text or replays a target whose start is

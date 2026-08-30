@@ -103,7 +103,9 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
    state.
 3. Stop the process and run `kodax sandbox setup`. Confirm exactly one legacy
    removal runs, the dedicated account SID rotates, and the cutover marker is
-   atomically rewritten as setup generation 4. The ambiguous administrator/
+   atomically rewritten as protected setup generation 8/protocol 8. The protocol-
+   7 marker must be retired only after its full bounded pre-start window drains.
+   The ambiguous administrator/
    cache deny remains byte-for-byte unchanged.
 4. Confirm new native requests do not include the artifact-cache root in
    `denyWrite` and can pass the control-boundary preflight.
@@ -114,7 +116,7 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 6. Enable `KODAX_REAL_WINDOWS_SANDBOX_V2=1` and run the real dual-process test.
    Its first Runtime reaches the target and remains eligible to run for 120
    seconds; while it is active, a second Runtime with a different policy must
-   reach and complete its target before the first is released. Release the
+   reach and complete its target in under 15 seconds before the first is released. Release the
    first Runtime only after this overlap is proven. Do not add a serial queue or concurrency-
    disable setting to make the test pass.
 

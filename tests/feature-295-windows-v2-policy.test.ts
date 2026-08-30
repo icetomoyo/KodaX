@@ -3,8 +3,8 @@ import {
   spawn,
   type ChildProcess,
 } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { createConnection, createServer, type Server } from 'node:net';
 import path from 'node:path';
@@ -15,6 +15,7 @@ import { DEFAULT_WINDOWS_PROXY_PORT_RANGE } from '@anthropic-ai/sandbox-runtime'
 
 import {
   assertTrustedTextMutationPolicy,
+  toolBash,
   toolEdit,
   toolInsertAfterAnchor,
   toolUndo,
@@ -24,6 +25,7 @@ import {
 import { toolMultiEdit } from '../packages/coding/src/tools/multi-edit.js';
 
 import {
+  createAsrtShellSandbox,
   doctorSandboxRuntime,
   runKodaXSandboxed,
   setupSandboxRuntime,
@@ -33,6 +35,7 @@ import {
   ensureWindowsSandboxControlDirectory,
   repairWindowsSandboxControlDirectory,
   verifyWindowsSandboxControlDirectory,
+  windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from '../src/windows-native-artifacts.js';
 import {
@@ -993,6 +996,10 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     const terminalPath = path.join(control, `windows-terminal-${process.pid}-${randomUUID()}.json`);
     const denyRequestPath = path.join(control, `windows-shell-${process.pid}-${randomUUID()}.json`);
     const denyTerminalPath = path.join(control, `windows-terminal-${process.pid}-${randomUUID()}.json`);
+    const setupMarkerPath = path.join(windowsNativeArtifactCacheRoot(), 'windows-v2-cutover.json');
+    const setupMarkerSha256 = createHash('sha256')
+      .update(await readFile(setupMarkerPath))
+      .digest('hex');
     await writeFile(secret, 'host-only-secret', { flag: 'wx' });
     try {
       const denied = await runKodaXSandboxed({
@@ -1011,6 +1018,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
 
       const request = createWindowsSandboxV2RunRequest({
         generation: 'control-boundary-test',
+        filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
         sandboxUserSid: 'S-1-5-21-1-2-3-1001',
         sandboxGroupSid: 'S-1-5-21-1-2-3-1002',
         asrtInvocation: {
@@ -1034,6 +1042,8 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
         terminalRecordPath: terminalPath,
         terminalNonce: randomUUID(),
         operationDeadlineUnixMs: Date.now() + 30_000,
+        setupMarkerPath,
+        setupMarkerSha256,
       });
       await writeFile(requestPath, JSON.stringify(request), { flag: 'wx' });
       let nativeFailure: unknown;
@@ -1053,6 +1063,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
 
       const denyRequest = createWindowsSandboxV2RunRequest({
         generation: 'control-deny-boundary-test',
+        filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
         sandboxUserSid: 'S-1-5-21-1-2-3-1001',
         sandboxGroupSid: 'S-1-5-21-1-2-3-1002',
         asrtInvocation: {
@@ -1071,6 +1082,8 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
         terminalRecordPath: denyTerminalPath,
         terminalNonce: randomUUID(),
         operationDeadlineUnixMs: Date.now() + 30_000,
+        setupMarkerPath,
+        setupMarkerSha256,
       });
       await writeFile(denyRequestPath, JSON.stringify(denyRequest), { flag: 'wx' });
       let denyFailure: unknown;
@@ -1109,7 +1122,7 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     }
   }, 90_000);
 
-  it('keeps doctor verify-only and setup retires a dead request before repairing control DACL', async () => {
+  it('keeps doctor verify-only and setup retires dead request/staging creators before control repair', async () => {
     const control = ensureWindowsSandboxControlDirectory();
     const staleRequest = path.join(
       control,
@@ -1118,6 +1131,18 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     const liveRequest = path.join(
       control,
       `windows-shell-${process.pid}-${randomUUID()}.json`,
+    );
+    const staleStartedStage = path.join(
+      control,
+      `windows-started-${process.pid}-${randomUUID()}.4294967294.${'a'.repeat(32)}.tmp`,
+    );
+    const staleDenyStage = path.join(
+      control,
+      `windows-deny-${randomUUID()}.4294967294.${'b'.repeat(32)}.tmp`,
+    );
+    const liveDenyStage = path.join(
+      control,
+      `windows-deny-${randomUUID()}.${process.pid}.${'c'.repeat(32)}.tmp`,
     );
     const corruption = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -1136,6 +1161,17 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       await writeFile(liveRequest, JSON.stringify({ operationDeadlineUnixMs: 1 }), {
         flag: 'wx',
       });
+      await Promise.all([
+        writeFile(staleStartedStage, '{}', { flag: 'wx' }),
+        writeFile(staleDenyStage, '{}', { flag: 'wx' }),
+        writeFile(liveDenyStage, '{}', { flag: 'wx' }),
+      ]);
+      const staleTime = new Date(Date.now() - 120_000);
+      await Promise.all([
+        utimes(staleStartedStage, staleTime, staleTime),
+        utimes(staleDenyStage, staleTime, staleTime),
+        utimes(liveDenyStage, staleTime, staleTime),
+      ]);
       await execFile(windowsPowerShell(), [
         '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-EncodedCommand', Buffer.from(corruption, 'utf16le').toString('base64'),
@@ -1151,8 +1187,17 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         /control state verification and setup repair both failed/i,
       );
       await expect(stat(staleRequest)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(staleStartedStage)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(staleDenyStage)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(liveRequest)).resolves.toBeDefined();
+      await expect(stat(liveDenyStage)).resolves.toBeDefined();
       await rm(liveRequest, { force: true });
+
+      await expect(setupSandboxRuntime()).rejects.toThrow(
+        /control state verification and setup repair both failed/i,
+      );
+      await expect(stat(liveDenyStage)).resolves.toBeDefined();
+      await rm(liveDenyStage, { force: true });
 
       const repaired = await setupSandboxRuntime();
       expect(repaired).toMatchObject({ ready: true, setupRequired: false });
@@ -1161,6 +1206,9 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       await Promise.all([
         rm(staleRequest, { force: true }),
         rm(liveRequest, { force: true }),
+        rm(staleStartedStage, { force: true }),
+        rm(staleDenyStage, { force: true }),
+        rm(liveDenyStage, { force: true }),
       ].map(async (cleanup) => cleanup.catch(() => undefined)));
       try {
         verifyWindowsSandboxControlDirectory();
@@ -1168,7 +1216,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         repairWindowsSandboxControlDirectory();
       }
     }
-  }, 90_000);
+  }, 360_000);
 
   it('returns the original timeout only after the native Job and descendants drain', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-timeout-drain-');
@@ -1434,8 +1482,11 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       }
       await expect(stat(readyA)).resolves.toBeDefined();
 
+      const policyBStartedAt = Date.now();
       const policyB = await runRuntime(rootB, readyB, '');
+      const policyBElapsedMs = Date.now() - policyBStartedAt;
       expect(holderSettled).toBe(false);
+      expect(policyBElapsedMs).toBeLessThan(15_000);
       expect(policyB).toMatchObject({
         status: 'completed',
         sandboxed: true,
@@ -1477,12 +1528,142 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     }
   }, 180_000);
 
+  it('keeps real background Bash, a second Runtime Bash, and trusted text writes concurrent', async () => {
+    const parent = await createWindowsV2TestRoot('kodax-v2-tool-bash-concurrent-');
+    roots.push(parent);
+    const holderRoot = path.join(parent, 'holder');
+    const workerRoot = path.join(parent, 'worker');
+    await Promise.all([mkdir(holderRoot), mkdir(workerRoot)]);
+    const holderScript = path.join(holderRoot, 'holder.cjs');
+    const holderReady = path.join(holderRoot, 'ready');
+    const holderStop = path.join(holderRoot, 'stop');
+    const target = path.join(workerRoot, 'hello.md');
+    await Promise.all([
+      writeFile(holderScript, [
+        'const fs=require("node:fs")',
+        'fs.writeFileSync(process.argv[2],"ready")',
+        'const wait=new Int32Array(new SharedArrayBuffer(4))',
+        'const deadline=Date.now()+120000',
+        'while(!fs.existsSync(process.argv[3])&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+        'if(!fs.existsSync(process.argv[3])) process.exit(41)',
+        'process.stdout.write("BACKGROUND_DONE")',
+      ].join(';'), 'utf8'),
+      writeFile(target, 'before', 'utf8'),
+    ]);
+
+    const holderSandbox = createAsrtShellSandbox({
+      workspaceRoot: holderRoot,
+      shouldSandbox: () => true,
+    });
+    const holderResult = await toolBash({
+      command: `"${process.execPath}" "${holderScript}" "${holderReady}" "${holderStop}"`,
+      run_in_background: true,
+      timeout: 130,
+    }, {
+      backups: new Map(),
+      executionCwd: holderRoot,
+      gitRoot: holderRoot,
+      toolCallId: 'real-background-holder',
+      shellSandbox: holderSandbox,
+    });
+    expect(holderResult).toContain('Command started in background');
+    const holderOutput = /Output:\s*(.+)/.exec(holderResult)?.[1]?.trim();
+    if (holderOutput === undefined) throw new Error(`Missing background output path: ${holderResult}`);
+
+    const readyDeadline = Date.now() + 15_000;
+    while (Date.now() < readyDeadline) {
+      try {
+        await stat(holderReady);
+        break;
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      await delay(25);
+    }
+    await expect(stat(holderReady)).resolves.toBeDefined();
+
+    const bashUrl = new URL('../packages/coding/src/tools/bash.ts', import.meta.url).href;
+    const sandboxUrl = new URL('../src/sandbox-runtime.ts', import.meta.url).href;
+    const workerScript = [
+      `import { toolBash } from ${JSON.stringify(bashUrl)}`,
+      `import { createAsrtShellSandbox } from ${JSON.stringify(sandboxUrl)}`,
+      'const input=JSON.parse(Buffer.from(process.argv[1],"base64url").toString("utf8"))',
+      'const observations=[]',
+      'const result=await toolBash({command:input.command,timeout:30},{',
+      'backups:new Map(),executionCwd:input.root,gitRoot:input.root,',
+      'toolCallId:"second-runtime-bash",',
+      'shellSandbox:createAsrtShellSandbox({workspaceRoot:input.root,shouldSandbox:()=>true}),',
+      'reportToolSandboxObservation:(observation)=>observations.push(observation)',
+      '})',
+      'process.stdout.write(JSON.stringify({result,observations}))',
+    ].join('\n');
+    const workerInput = Buffer.from(JSON.stringify({
+      root: workerRoot,
+      command: `del /f /q "${target}" && echo SECOND_RUNTIME_OK`,
+    }), 'utf8').toString('base64url');
+
+    let primaryFailure: unknown;
+    try {
+      const workerStartedAt = Date.now();
+      const { stdout } = await execFile(process.execPath, [
+        '--import', 'tsx', '--input-type=module', '-e', workerScript, workerInput,
+      ], {
+        cwd: process.cwd(),
+        env: process.env,
+        timeout: 45_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const workerElapsedMs = Date.now() - workerStartedAt;
+      const worker = JSON.parse(stdout) as {
+        readonly result: string;
+        readonly observations: readonly { readonly state?: string }[];
+      };
+      expect(workerElapsedMs).toBeLessThan(15_000);
+      expect(worker.result).toContain('SECOND_RUNTIME_OK');
+      expect(worker.observations.some((item) => item.state === 'applied')).toBe(true);
+      await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const textHost = createWindowsTrustedTextMutationHost(
+        () => [workerRoot],
+        assertTrustedTextMutationPolicy,
+      );
+      const textContext: KodaXToolExecutionContext = {
+        backups: new Map(),
+        executionCwd: workerRoot,
+        gitRoot: workerRoot,
+        trustedTextMutationHost: textHost,
+      };
+      const writeStartedAt = Date.now();
+      await expect(toolWrite({ path: target, content: 'after' }, textContext))
+        .resolves.toContain('File created');
+      expect(Date.now() - writeStartedAt).toBeLessThan(15_000);
+      await expect(readFile(target, 'utf8')).resolves.toBe('after');
+      expect(await readFile(holderOutput, 'utf8')).not.toContain('[Exit:');
+    } catch (error: unknown) {
+      primaryFailure = error;
+    } finally {
+      await writeFile(holderStop, 'stop', 'utf8');
+    }
+
+    const footerDeadline = Date.now() + 30_000;
+    let holderLog = '';
+    while (Date.now() < footerDeadline) {
+      holderLog = await readFile(holderOutput, 'utf8').catch(() => '');
+      if (holderLog.includes('[Exit:')) break;
+      await delay(25);
+    }
+    if (primaryFailure !== undefined) throw primaryFailure;
+    expect(holderLog).toContain('BACKGROUND_DONE');
+    expect(holderLog).toContain('[Exit: 0]');
+  }, 180_000);
+
   it('shares one same-policy proxy when fixed Windows proxy ports are under pressure', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-shared-proxy-');
     roots.push(root);
     await delay(1_200);
+    const [firstProxyPort] = DEFAULT_WINDOWS_PROXY_PORT_RANGE;
     const occupied = await Promise.all(
-      DEFAULT_WINDOWS_PROXY_PORT_RANGE.slice(0, 3).map(occupyLoopbackPort),
+      [firstProxyPort, firstProxyPort + 1, firstProxyPort + 2].map(occupyLoopbackPort),
     );
     const ownedServers = occupied.filter((server): server is Server => server !== undefined);
     const targetScript = [

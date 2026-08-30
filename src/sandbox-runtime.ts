@@ -62,6 +62,7 @@ import {
   type WindowsEffectJob,
 } from '@kodax-ai/agent';
 import {
+  KODAX_HARD_TIMEOUT,
   KodaXShellSandbox,
   KodaXShellSandboxBackend,
   KodaXPreparedShellSandboxInvocation,
@@ -97,6 +98,7 @@ import {
   resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
   verifyWindowsSandboxControlDirectory,
+  windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
@@ -198,6 +200,7 @@ const SANDBOX_BROKER_CONTROL_MAX_BYTES = 16 * 1024;
 
 interface WindowsNetworkBrokerRequest {
   readonly version: 1;
+  readonly setupGenerationNonce: string;
   readonly config: SandboxRuntimeConfig;
   readonly cwd: string;
   readonly srtWinPath: string;
@@ -219,22 +222,35 @@ interface WindowsNetworkBrokerState {
   child?: ReturnType<typeof spawn>;
   exit?: Promise<WindowsNetworkBrokerExit>;
   stderrTail: Buffer;
+  lastUsed: number;
   ready?: Promise<WindowsNetworkBrokerReady & { readonly ok: true }>;
   references: number;
   failed: boolean;
-  referencesDrained?: Promise<void>;
-  markReferencesDrained?: () => void;
   stopRequested: boolean;
-  idleTimer?: NodeJS.Timeout;
   stopping?: Promise<void>;
+  idleTimer?: NodeJS.Timeout;
 }
 
 function retireWindowsNetworkBrokerState(state: WindowsNetworkBrokerState): void {
   state.failed = true;
-  if (state.references === 0 || state.referencesDrained !== undefined) return;
-  state.referencesDrained = new Promise<void>((resolve) => {
-    state.markReferencesDrained = resolve;
-  });
+}
+
+function setWindowsNetworkBrokerReferenced(
+  state: WindowsNetworkBrokerState,
+  referenced: boolean,
+): void {
+  const child = state.child;
+  if (child === undefined) return;
+  if (referenced) child.ref();
+  else child.unref();
+  const handles = new Set<object>();
+  for (const handle of [child.stdin, child.stderr, child.stdio[3]]) {
+    if (handle !== null && handle !== undefined) handles.add(handle);
+  }
+  for (const handle of handles) {
+    const update = Reflect.get(handle, referenced ? 'ref' : 'unref');
+    if (typeof update === 'function') update.call(handle);
+  }
 }
 
 interface WindowsNetworkBrokerExit {
@@ -245,8 +261,7 @@ interface WindowsNetworkBrokerExit {
 
 interface WindowsNetworkBrokerLease {
   readonly ready: WindowsNetworkBrokerReady & { readonly ok: true };
-  retire(): void;
-  release(): Promise<void>;
+  release(options?: { readonly retireIfLast?: boolean }): Promise<void>;
 }
 
 type WindowsNetworkBrokerReady =
@@ -383,7 +398,7 @@ export interface SandboxSetupOutcome {
 }
 
 export interface KodaXSandboxCapability {
-  readonly version: 6;
+  readonly version: 7;
   readonly asrtVersion: string;
   readonly platform: NodeJS.Platform;
   readonly backend: 'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
@@ -416,7 +431,7 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
         ? 'linux-bubblewrap'
         : 'unsupported';
   return {
-    version: 6,
+    version: 7,
     asrtVersion: KODAX_ASRT_VERSION,
     platform: process.platform,
     backend,
@@ -438,8 +453,24 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
 const MAX_OUTPUT_BYTES = 1_048_576;
 const SCRIPT_TIMEOUT_MS = 120_000;
 const WINDOWS_V2_LAUNCH_TIMEOUT_MS = 30_000;
-const WINDOWS_NETWORK_BROKER_IDLE_MS = 1_000;
 const windowsNetworkBrokers = new Map<string, WindowsNetworkBrokerState>();
+const WINDOWS_NETWORK_PORTS_PER_BROKER = 2;
+const [WINDOWS_NETWORK_PROXY_PORT_LOW, WINDOWS_NETWORK_PROXY_PORT_HIGH]
+  = DEFAULT_WINDOWS_PROXY_PORT_RANGE;
+const WINDOWS_NETWORK_BROKER_CAPACITY = Math.max(
+  1,
+  Math.floor(
+    (WINDOWS_NETWORK_PROXY_PORT_HIGH - WINDOWS_NETWORK_PROXY_PORT_LOW + 1)
+      / WINDOWS_NETWORK_PORTS_PER_BROKER,
+  ),
+);
+const WINDOWS_NETWORK_BROKER_IDLE_GRACE_MS = 1_000;
+let windowsNetworkBrokerUseSequence = 0;
+
+function touchWindowsNetworkBroker(state: WindowsNetworkBrokerState): void {
+  windowsNetworkBrokerUseSequence += 1;
+  state.lastUsed = windowsNetworkBrokerUseSequence;
+}
 const moduleRequire = createRequire(import.meta.url);
 const ASRT_MODULE_URL = process.env.KODAX_BUNDLED === 'true'
   ? undefined
@@ -941,6 +972,7 @@ export function resolveSrtWinSourcePath(
 
 async function prepareWindowsSandboxRunner(
   untrustedWriteRoots: readonly string[] = [],
+  provision = false,
 ): Promise<PreparedWindowsSandboxRunner> {
   if (preparedWindowsRunnerPromise === undefined) {
     const preparation = (async () => {
@@ -948,7 +980,7 @@ async function prepareWindowsSandboxRunner(
         import.meta.url,
         resolveSrtWinSourcePath(),
         KODAX_ASRT_VERSION,
-        { untrustedWriteRoots },
+        { untrustedWriteRoots, provision },
       );
       const directory = path.dirname(protectedRunner.path);
       await mkdir(windowsSandboxAclCoordinationDirectory(), { recursive: true, mode: 0o700 });
@@ -1071,23 +1103,47 @@ function windowsSandboxV2SetupLockFile(): string {
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
-const WINDOWS_SANDBOX_V2_SETUP_VERSION = 4 as const;
+const WINDOWS_SANDBOX_V2_SETUP_VERSION = 8 as const;
+const WINDOWS_LEGACY_ADMISSION_DRAIN_MS = KODAX_HARD_TIMEOUT * 1_000 + 1_000;
 
 interface WindowsSandboxV2CutoverMarker {
   readonly version: typeof WINDOWS_SANDBOX_V2_SETUP_VERSION;
   readonly protocol: typeof WINDOWS_SANDBOX_V2_PROTOCOL;
+  readonly generationNonce: string;
+  readonly filesystemCapabilityNonce: string;
   readonly hostUserSid: string;
   readonly sandboxUserSid: string;
   readonly sandboxGroupSid: string;
 }
 
+type WindowsSandboxLegacyDrainMarker =
+  | {
+      readonly version: 1;
+      readonly state: 'pending';
+    }
+  | {
+      readonly version: 1;
+      readonly state: 'draining';
+      readonly deadlineUnixMs: number;
+    };
+
 let cachedWindowsSandboxV2HostUserSid: string | undefined;
+let windowsSandboxV2CutoverDirectory = windowsNativeArtifactCacheRoot;
+let waitForLegacyWindowsSandboxAdmissions = (delayMs: number) => new Promise<void>(
+  (resolve) => setTimeout(resolve, delayMs),
+);
+let cachedWindowsSandboxV2Cutover: WindowsSandboxV2CutoverMarker | undefined;
+const preparedWindowsShellArtifacts = new Map<
+  string,
+  Promise<ReturnType<typeof resolveWindowsSandboxV2Executable>>
+>();
+let preparedWindowsControlDirectoryPromise: Promise<string> | undefined;
 
 function windowsSandboxV2HostUserSid(): string {
   if (cachedWindowsSandboxV2HostUserSid !== undefined) {
     return cachedWindowsSandboxV2HostUserSid;
   }
-  const artifact = resolveWindowsSandboxV2Executable();
+  const artifact = resolveWindowsSandboxV2Executable({ provision: false });
   const result = spawnSync(artifact.path, ['__current-user-sid'], {
     env: sanitizedEnvironment(),
     encoding: 'utf8',
@@ -1106,7 +1162,31 @@ function windowsSandboxV2HostUserSid(): string {
 }
 
 function windowsSandboxV2CutoverMarkerFile(): string {
-  return path.join(windowsSandboxAclCoordinationDirectory(), 'windows-v2-cutover.json');
+  return path.join(windowsSandboxV2CutoverDirectory(), 'windows-v2-cutover.json');
+}
+
+function windowsSandboxLegacyDrainMarkerFile(): string {
+  return path.join(windowsSandboxV2CutoverDirectory(), 'windows-v2-legacy-drain.json');
+}
+
+export function overrideWindowsSandboxV2CutoverDirectoryForTest(
+  resolveDirectory: () => string,
+): () => void {
+  const previous = windowsSandboxV2CutoverDirectory;
+  windowsSandboxV2CutoverDirectory = resolveDirectory;
+  return () => {
+    windowsSandboxV2CutoverDirectory = previous;
+  };
+}
+
+export function overrideLegacyWindowsSandboxAdmissionDrainForTest(
+  wait: (delayMs: number) => Promise<void>,
+): () => void {
+  const previous = waitForLegacyWindowsSandboxAdmissions;
+  waitForLegacyWindowsSandboxAdmissions = wait;
+  return () => {
+    waitForLegacyWindowsSandboxAdmissions = previous;
+  };
 }
 
 function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2CutoverMarker {
@@ -1120,9 +1200,13 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
   const marker = parsed as Readonly<Record<string, unknown>>;
   const keys = Object.keys(marker).sort();
   if (
-    keys.join(',') !== 'hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,version'
+    keys.join(',') !== 'filesystemCapabilityNonce,generationNonce,hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,version'
     || marker.version !== WINDOWS_SANDBOX_V2_SETUP_VERSION
     || marker.protocol !== WINDOWS_SANDBOX_V2_PROTOCOL
+    || typeof marker.generationNonce !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(marker.generationNonce)
+    || typeof marker.filesystemCapabilityNonce !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(marker.filesystemCapabilityNonce)
     || typeof marker.hostUserSid !== 'string'
     || typeof marker.sandboxUserSid !== 'string'
     || typeof marker.sandboxGroupSid !== 'string'
@@ -1135,6 +1219,8 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
   return {
     version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+    generationNonce: marker.generationNonce,
+    filesystemCapabilityNonce: marker.filesystemCapabilityNonce,
     hostUserSid: marker.hostUserSid,
     sandboxUserSid: marker.sandboxUserSid,
     sandboxGroupSid: marker.sandboxGroupSid,
@@ -1178,28 +1264,114 @@ function assertWindowsSandboxV2Cutover(
   if (user.sid !== marker.sandboxUserSid || user.groupSid !== marker.sandboxGroupSid) {
     throw windowsSandboxV2CutoverError('The installed sandbox account identity does not match the recorded v2 generation');
   }
-  if (windowsSandboxV2HostUserSid() !== marker.hostUserSid) {
-    throw windowsSandboxV2CutoverError(
-      'Windows v2 was activated by another host user; machine-wide ACL coordination cannot be shared safely',
-    );
-  }
   return marker;
 }
 
-function writeWindowsSandboxV2CutoverMarker(
-  marker: WindowsSandboxV2CutoverMarker,
-): void {
+function previousWindowsFilesystemCapabilityNonce(): string | undefined {
   const file = windowsSandboxV2CutoverMarkerFile();
+  try {
+    const metadata = lstatSync(file);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const nonce = Reflect.get(parsed, 'filesystemCapabilityNonce');
+    return typeof nonce === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)
+      ? nonce.toLowerCase()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function currentWindowsSandboxV2Cutover(
+  runner: PreparedWindowsSandboxRunner,
+): WindowsSandboxV2CutoverMarker {
+  let marker: WindowsSandboxV2CutoverMarker | undefined;
+  try {
+    marker = readWindowsSandboxV2CutoverMarker();
+  } catch (error: unknown) {
+    throw windowsSandboxV2CutoverError(`The recorded migration state is invalid: ${errorText(error)}`);
+  }
+  if (marker === undefined) {
+    throw windowsSandboxV2CutoverError('The sandbox account has not completed the Windows v2 ACL cutover');
+  }
+  if (
+    cachedWindowsSandboxV2Cutover !== undefined
+    && JSON.stringify(cachedWindowsSandboxV2Cutover) === JSON.stringify(marker)
+  ) {
+    return cachedWindowsSandboxV2Cutover;
+  }
+  const verified = assertWindowsSandboxV2Cutover(
+    getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
+  );
+  cachedWindowsSandboxV2Cutover = verified;
+  return verified;
+}
+
+function prepareWindowsShellArtifact(
+  sandboxReadSid: string,
+  untrustedWriteRoots: readonly string[],
+): Promise<ReturnType<typeof resolveWindowsSandboxV2Executable>> {
+  let prepared = preparedWindowsShellArtifacts.get(sandboxReadSid);
+  if (prepared === undefined) {
+    prepared = Promise.resolve().then(() => resolveWindowsSandboxV2Executable({
+      sandboxReadSid,
+      provision: false,
+    }));
+    preparedWindowsShellArtifacts.set(sandboxReadSid, prepared);
+    void prepared.catch(() => {
+      if (preparedWindowsShellArtifacts.get(sandboxReadSid) === prepared) {
+        preparedWindowsShellArtifacts.delete(sandboxReadSid);
+      }
+    });
+  }
+  assertWindowsNativeArtifactStoreNotDirectlyWritable(untrustedWriteRoots);
+  return prepared.then((artifact) => {
+    assertWindowsAsrtRunnerTrustOutsideWriteRoots(
+      artifact.developmentTrustRoots,
+      untrustedWriteRoots,
+    );
+    return artifact;
+  });
+}
+
+function prepareWindowsControlDirectory(): Promise<string> {
+  if (preparedWindowsControlDirectoryPromise === undefined) {
+    const preparation = Promise.resolve().then(() => {
+      const controlDirectory = windowsSandboxControlDirectory();
+      const metadata = lstatSync(controlDirectory);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+        throw new Error('Protected native shell control state is not a regular directory.');
+      }
+      const canonicalRoot = realpathSync.native(windowsNativeArtifactCacheRoot());
+      const canonicalControl = realpathSync.native(controlDirectory);
+      if (!isInside(canonicalRoot, canonicalControl)) {
+        throw new Error('Protected native shell control state escaped its cache root.');
+      }
+      return canonicalControl;
+    });
+    preparedWindowsControlDirectoryPromise = preparation;
+    void preparation.catch(() => {
+      if (preparedWindowsControlDirectoryPromise === preparation) {
+        preparedWindowsControlDirectoryPromise = undefined;
+      }
+    });
+  }
+  return preparedWindowsControlDirectoryPromise;
+}
+
+function writePrivateJsonFile(file: string, value: object): void {
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  const payload = Buffer.from(JSON.stringify(marker), 'utf8');
+  const payload = Buffer.from(JSON.stringify(value), 'utf8');
   let descriptor: number | undefined;
   try {
     descriptor = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
     let offset = 0;
     while (offset < payload.length) {
       const written = writeSync(descriptor, payload, offset, payload.length - offset);
-      if (written === 0) throw new Error('Windows v2 cutover marker write made no progress.');
+      if (written === 0) throw new Error('Windows sandbox private-state write made no progress.');
       offset += written;
     }
     fsyncSync(descriptor);
@@ -1210,6 +1382,115 @@ function writeWindowsSandboxV2CutoverMarker(
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporary, { force: true });
+  }
+}
+
+async function removeWindowsSandboxCutoverMarkerForSetup(file: string): Promise<void> {
+  const deadline = Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS;
+  while (true) {
+    try {
+      rmSync(file, { force: true });
+      return;
+    } catch (error: unknown) {
+      if (
+        !isFileSystemError(error, 'EACCES', 'EBUSY', 'EPERM')
+        || Date.now() >= deadline
+      ) {
+        throw error;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  }
+}
+
+function writeWindowsSandboxV2CutoverMarker(
+  marker: WindowsSandboxV2CutoverMarker,
+): void {
+  writePrivateJsonFile(windowsSandboxV2CutoverMarkerFile(), marker);
+}
+
+function readWindowsSandboxLegacyDrainMarker(): WindowsSandboxLegacyDrainMarker | undefined {
+  const file = windowsSandboxLegacyDrainMarkerFile();
+  if (!existsSync(file)) return undefined;
+  const metadata = lstatSync(file);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error('the legacy admission drain marker is not a regular file');
+  }
+  if (metadata.size > WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES) {
+    throw new Error('the legacy admission drain marker exceeds its size bound');
+  }
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('the legacy admission drain marker is not an object');
+  }
+  const marker = parsed as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(marker).sort().join(',');
+  if (marker.state === 'pending') {
+    if (keys !== 'state,version' || marker.version !== 1) {
+      throw new Error('the legacy admission drain marker has an incompatible schema');
+    }
+    return { version: 1, state: 'pending' };
+  }
+  if (
+    keys !== 'deadlineUnixMs,state,version'
+    || marker.state !== 'draining'
+    || typeof marker.deadlineUnixMs !== 'number'
+    || !Number.isSafeInteger(marker.deadlineUnixMs)
+    || marker.deadlineUnixMs <= 0
+  ) {
+    throw new Error('the legacy admission drain marker has an incompatible schema');
+  }
+  return { version: 1, state: 'draining', deadlineUnixMs: marker.deadlineUnixMs };
+}
+
+async function invalidateWindowsSandboxV2CutoverForSetup(): Promise<void> {
+  cachedWindowsSandboxV2Cutover = undefined;
+  await removeWindowsSandboxCutoverMarkerForSetup(windowsSandboxV2CutoverMarkerFile());
+}
+
+async function invalidateLegacyWindowsSandboxCutoverForSetup(): Promise<number> {
+  const file = path.join(windowsSandboxAclCoordinationDirectory(), 'windows-v2-cutover.json');
+  const drainFile = windowsSandboxLegacyDrainMarkerFile();
+  let marker = readWindowsSandboxLegacyDrainMarker();
+  const legacyMarkerExists = existsSync(file);
+  if (!legacyMarkerExists && marker === undefined) return 0;
+  if (legacyMarkerExists) {
+    writePrivateJsonFile(drainFile, { version: 1, state: 'pending' });
+    marker = { version: 1, state: 'pending' };
+  }
+  await removeWindowsSandboxCutoverMarkerForSetup(file);
+  if (marker?.state === 'pending') {
+    marker = {
+      version: 1,
+      state: 'draining',
+      deadlineUnixMs: Date.now() + WINDOWS_LEGACY_ADMISSION_DRAIN_MS,
+    };
+    writePrivateJsonFile(drainFile, marker);
+  }
+  if (marker?.state !== 'draining') return 0;
+  return Math.max(0, Math.min(
+    marker.deadlineUnixMs - Date.now(),
+    WINDOWS_LEGACY_ADMISSION_DRAIN_MS,
+  ));
+}
+
+function recoverWindowsV2ExecutionDeniesForSetup(): void {
+  const executable = resolveWindowsSandboxV2Executable({ provision: true }).path;
+  const result = spawnSync(
+    executable,
+    ['__recover-execution-denies', windowsSandboxControlDirectory()],
+    {
+      env: sanitizedEnvironment(),
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 15 * 60_000,
+    },
+  );
+  if (result.error !== undefined || result.status !== 0) {
+    const reason = result.error?.message
+      ?? (result.stderr.trim() || `exit ${String(result.status)}`);
+    throw new Error(`Windows v2 denyRead setup recovery failed: ${reason}`);
   }
 }
 
@@ -1939,14 +2220,17 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
       const runner = await prepareWindowsSandboxRunner();
       const user = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
       const accountDiagnostics = windowsSandboxAccountDiagnostics(user);
-      if (accountDiagnostics.length > 0 || !user.sid) {
+      if (accountDiagnostics.length > 0 || !user.sid || !user.groupSid) {
         setupRequired = true;
         diagnostics.push(...accountDiagnostics);
       } else {
-        resolveWindowsSandboxV2Executable();
+        resolveWindowsSandboxV2Executable({
+          sandboxReadSid: user.groupSid,
+          provision: false,
+        });
         verifyWindowsSandboxControlDirectory();
         try {
-          assertWindowsSandboxV2Cutover(user);
+          cachedWindowsSandboxV2Cutover = assertWindowsSandboxV2Cutover(user);
           verifyWindowsV2AccountCompatibility(user.sid);
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
@@ -1975,61 +2259,113 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
   };
 }
 
-const INSTALL_WINDOWS_NULL_DEVICE_ACCESS = String.raw`
+const INSTALL_WINDOWS_SETUP_CAPABILITIES = String.raw`
 $ErrorActionPreference = 'Stop'
-$process = Start-Process -FilePath $env:KODAX_NATIVE_SETUP_EXE -ArgumentList @('__setup-null-device', $env:KODAX_NATIVE_SETUP_SID) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+$process = Start-Process -FilePath $env:KODAX_NATIVE_SETUP_EXE -ArgumentList @('__setup-account-capabilities', $env:KODAX_NATIVE_SETUP_ENVELOPE) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
 exit $process.ExitCode
 `;
 
-type WindowsNullDeviceInstaller = (executable: string, sandboxSid: string) => void;
+interface WindowsSetupCapabilityRequest {
+  readonly version: 1;
+  readonly sandboxSid: string;
+  readonly sandboxGroupSid: string;
+  readonly filesystemCapabilityNonce: string;
+  readonly readRoots: readonly string[];
+  readonly writeRoots: readonly string[];
+}
 
-const installWindowsNullDeviceAccess: WindowsNullDeviceInstaller = (executable, sandboxSid) => {
-  if (!/^S-\d+(?:-\d+)+$/i.test(sandboxSid)) {
-    throw new Error('Windows sandbox account SID is invalid for NUL setup.');
+type WindowsSetupCapabilityInstaller = (
+  executable: string,
+  request: WindowsSetupCapabilityRequest,
+) => void;
+
+const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = (executable, request) => {
+  if (
+    !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxSid)
+    || !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxGroupSid)
+    || request.sandboxSid.toLowerCase() === request.sandboxGroupSid.toLowerCase()
+  ) {
+    throw new Error('Windows sandbox account authority is invalid for capability setup.');
   }
+  if (request.readRoots.length + request.writeRoots.length > 1_024) {
+    throw new Error('Windows sandbox setup capability request exceeds 1024 roots.');
+  }
+  const controlDirectory = verifyWindowsSandboxControlDirectory();
+  const requestFile = path.join(
+    controlDirectory,
+    `windows-setup-${process.pid}-${randomUUID()}.json`,
+  );
+  const payload = Buffer.from(JSON.stringify(request), 'utf8');
+  if (payload.byteLength > 1024 * 1024) {
+    throw new Error('Windows sandbox setup capability request exceeds 1 MiB.');
+  }
+  const requestSha256 = createHash('sha256').update(payload).digest('hex');
+  const envelope = Buffer.from(JSON.stringify({
+    version: 1,
+    requestPath: requestFile,
+    sha256: requestSha256,
+  }), 'utf8').toString('base64');
+  writeFileSync(requestFile, payload, { flag: 'wx', mode: 0o600 });
   const powershell = path.join(
     process.env.SystemRoot ?? String.raw`C:\Windows`,
     'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
   );
-  const result = spawnSync(powershell, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(INSTALL_WINDOWS_NULL_DEVICE_ACCESS, 'utf16le').toString('base64'),
-  ], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      KODAX_NATIVE_SETUP_EXE: executable,
-      KODAX_NATIVE_SETUP_SID: sandboxSid,
-    },
-    shell: false,
-    windowsHide: true,
-    timeout: 60_000,
-  });
-  if (result.error !== undefined || result.status !== 0) {
-    const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
-    throw new Error(`Windows sandbox NUL capability setup failed: ${reason}`);
+  try {
+    const result = spawnSync(powershell, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', Buffer.from(INSTALL_WINDOWS_SETUP_CAPABILITIES, 'utf16le').toString('base64'),
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        KODAX_NATIVE_SETUP_EXE: executable,
+        KODAX_NATIVE_SETUP_ENVELOPE: envelope,
+      },
+      shell: false,
+      windowsHide: true,
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
+      throw new Error(`Windows sandbox account capability setup failed: ${reason}`);
+    }
+  } finally {
+    rmSync(requestFile, { force: true });
   }
 };
 
-let windowsNullDeviceInstaller: WindowsNullDeviceInstaller = installWindowsNullDeviceAccess;
+let windowsSetupCapabilityInstaller: WindowsSetupCapabilityInstaller = installWindowsSetupCapabilities;
 
-export function overrideWindowsNullDeviceInstallerForTest(
-  installer: WindowsNullDeviceInstaller,
+export function overrideWindowsSetupCapabilityInstallerForTest(
+  installer: WindowsSetupCapabilityInstaller,
 ): () => void {
-  const previous = windowsNullDeviceInstaller;
-  windowsNullDeviceInstaller = installer;
+  const previous = windowsSetupCapabilityInstaller;
+  windowsSetupCapabilityInstaller = installer;
   return () => {
-    windowsNullDeviceInstaller = previous;
+    windowsSetupCapabilityInstaller = previous;
   };
 }
 
-function installWindowsV2AccountCompatibility(sandboxSid: string): void {
-  windowsNullDeviceInstaller(resolveWindowsSandboxV2Executable().path, sandboxSid);
+function installWindowsV2AccountCapabilities(
+  sandboxSid: string,
+  sandboxGroupSid: string,
+  filesystemCapabilityNonce: string,
+): void {
+  windowsSetupCapabilityInstaller(
+    resolveWindowsSandboxV2Executable({ provision: true }).path,
+    {
+      version: 1,
+      sandboxSid,
+      sandboxGroupSid,
+      filesystemCapabilityNonce,
+      readRoots: windowsSandboxSetupReadRoots(),
+      writeRoots: windowsSandboxSetupWriteRoots(),
+    },
+  );
 }
 
 function verifyWindowsV2AccountCompatibility(sandboxSid: string): void {
   const result = spawnSync(
-    resolveWindowsSandboxV2Executable().path,
+    resolveWindowsSandboxV2Executable({ provision: false }).path,
     ['__verify-null-device', sandboxSid],
     {
       env: sanitizedEnvironment(),
@@ -2051,12 +2387,45 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
   const initial = await doctorSandboxRuntime({ refresh: true });
   if (initial.ready) return initial;
   if (!initial.setupRequired) return initial;
-  const runner = await prepareWindowsSandboxRunner();
-  // Explicit setup owns first-run native cache provisioning. Doctor remains
-  // verify-only when the sandbox account is absent and therefore may leave the
-  // cache root uninitialized.
-  resolveWindowsSandboxV2Executable();
+  // Migration state lives in the protected native cache. Provision that cache
+  // before publishing a legacy drain marker; a normal mkdir would inherit a
+  // weaker parent DACL and make later artifact verification fail closed.
+  resolveWindowsSandboxV2Executable({ provision: true });
+  const filesystemCapabilityNonce = previousWindowsFilesystemCapabilityNonce() ?? randomUUID();
+  let previousCutover: WindowsSandboxV2CutoverMarker | undefined;
+  try {
+    previousCutover = readWindowsSandboxV2CutoverMarker();
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError || errorText(error).includes('cutover marker'))) {
+      throw new Error('Cannot inspect the Windows sandbox setup generation.', { cause: error });
+    }
+    emitKodaXDiagnostic({
+      source: 'sandbox:windows-v2-setup',
+      level: 'warn',
+      message: 'The previous Windows sandbox generation marker is invalid and will be rotated.',
+      detail: error,
+    });
+  }
+  // Protocol-7 Runtimes read the former ProgramData marker and do not know the
+  // protocol-8 marker-handle gate. Remove that authority once, then drain the
+  // full Bash hard-timeout window: a legacy admission may already have read the
+  // marker but can never retain pre-start authority beyond that deadline.
+  const legacyAdmissionDrainMs = await invalidateLegacyWindowsSandboxCutoverForSetup();
+  // Setup never shares a valid account generation with new admissions.
+  await invalidateWindowsSandboxV2CutoverForSetup();
+  if (legacyAdmissionDrainMs > 0) {
+    await waitForLegacyWindowsSandboxAdmissions(legacyAdmissionDrainMs);
+  }
+  await removeWindowsSandboxCutoverMarkerForSetup(windowsSandboxLegacyDrainMarkerFile());
+  const runner = await prepareWindowsSandboxRunner([], true);
   const oldUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
+  const oldSid = oldUser.sid;
+  const markerMatchesCurrentUser = previousCutover !== undefined
+    && windowsSandboxAccountDiagnostics(oldUser).length === 0
+    && oldUser.sid === previousCutover.sandboxUserSid
+    && oldUser.groupSid === previousCutover.sandboxGroupSid
+    && windowsSandboxV2HostUserSid() === previousCutover.hostUserSid;
+  recoverWindowsV2ExecutionDeniesForSetup();
   let controlStateFailure: unknown;
   try {
     verifyWindowsSandboxControlDirectory();
@@ -2072,7 +2441,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
           + 'safely prove that no sandbox process still holds a control-state handle.',
         );
       }
-      if (oldUser.sid !== undefined && !await windowsSandboxSidIsIdle(oldUser.sid)) {
+      if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
         throw new Error(
           'The native shell control directory needs repair while the sandbox account still has '
           + 'a live process; close sandboxed shells and retry "kodax sandbox setup".',
@@ -2090,36 +2459,51 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     const repaired = await doctorSandboxRuntime({ refresh: true });
     if (repaired.ready) return repaired;
   }
-  let markerMatchesCurrentUser = false;
-  if (windowsSandboxAccountDiagnostics(oldUser).length === 0 && oldUser.sid !== undefined) {
-    try {
-      assertWindowsSandboxV2Cutover(oldUser);
-      markerMatchesCurrentUser = true;
-    } catch (error: unknown) {
-      if (!errorText(error).includes(WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC)) throw error;
-    }
-  }
   if (markerMatchesCurrentUser) {
+    if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
+      throw new Error(
+        'The Windows sandbox account still has a live process; '
+        + 'close sandboxed shells and retry "kodax sandbox setup".',
+      );
+    }
     const result = installWindowsSandbox({ srtWin: runner.srtWin });
     if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
     const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
     if (installedUser.sid === undefined || installedUser.groupSid === undefined) {
       throw new Error('Windows sandbox setup did not return complete account SIDs.');
     }
-    installWindowsV2AccountCompatibility(installedUser.sid);
+    resolveWindowsSandboxV2Executable({
+      sandboxReadSid: installedUser.groupSid,
+      provision: true,
+    });
+    installWindowsV2AccountCapabilities(
+      installedUser.sid,
+      installedUser.groupSid,
+      filesystemCapabilityNonce,
+    );
+    await verifyPreparedWindowsWfp(runner);
+    writeWindowsSandboxV2CutoverMarker({
+      version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
+      protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+      generationNonce: randomUUID(),
+      filesystemCapabilityNonce,
+      hostUserSid: windowsSandboxV2HostUserSid(),
+      sandboxUserSid: installedUser.sid,
+      sandboxGroupSid: installedUser.groupSid,
+    });
     return doctorSandboxRuntime({ refresh: true });
+  }
+
+  if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
+    throw new Error(
+      'The Windows sandbox account still has a live process; '
+      + 'close sandboxed shells and retry "kodax sandbox setup".',
+    );
   }
 
   const setupBlock = await windowsSandboxAclSetupBlockWithLock();
   if (setupBlock !== undefined) return withWindowsSandboxAclSetupBlock(initial, setupBlock);
-  const oldSid = oldUser.sid;
   if (oldSid !== undefined) {
-    if (!await windowsSandboxSidIsIdle(oldSid)) {
-      throw new Error(
-        'The legacy Windows sandbox account still has a live process; '
-        + 'close sandboxed shells and retry "kodax sandbox setup".',
-      );
-    }
     await recoverWindowsSandboxAcls();
     if (oldUser.groupSid === undefined) {
       throw new Error(
@@ -2141,11 +2525,21 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
   if (oldSid !== undefined && installedUser.sid === oldSid) {
     throw new Error('Windows sandbox account rotation did not produce a new SID; v2 remains fail-closed.');
   }
-  installWindowsV2AccountCompatibility(installedUser.sid);
+  resolveWindowsSandboxV2Executable({
+    sandboxReadSid: installedUser.groupSid,
+    provision: true,
+  });
+  installWindowsV2AccountCapabilities(
+    installedUser.sid,
+    installedUser.groupSid,
+    filesystemCapabilityNonce,
+  );
   await verifyPreparedWindowsWfp(runner);
   writeWindowsSandboxV2CutoverMarker({
     version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+    generationNonce: randomUUID(),
+    filesystemCapabilityNonce,
     hostUserSid: windowsSandboxV2HostUserSid(),
     sandboxUserSid: installedUser.sid,
     sandboxGroupSid: installedUser.groupSid,
@@ -2551,12 +2945,16 @@ export async function resetSandboxRuntimeForTest(): Promise<void> {
   doctorExpiresAt = 0;
   preparedWindowsRunnerPromise = undefined;
   preparedWindowsRunner = undefined;
+  cachedWindowsSandboxV2Cutover = undefined;
+  preparedWindowsShellArtifacts.clear();
+  preparedWindowsControlDirectoryPromise = undefined;
   const brokerStops = [...windowsNetworkBrokers.values()].map((state) => {
     state.references = 0;
     return stopSharedWindowsNetworkBroker(state);
   });
   const brokerResults = await Promise.allSettled(brokerStops);
   windowsNetworkBrokers.clear();
+  windowsNetworkBrokerUseSequence = 0;
   rmSync(windowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   const failures = brokerResults.flatMap((result) => (
@@ -2579,11 +2977,23 @@ interface WindowsV2ProcessControl extends KodaXShellSandboxProcessControl {
 
 function createWindowsV2ProcessControl(
   bootstrap: Uint8Array,
+  resumeRecordPath: string,
+  startedRecordPath: string,
   terminalRecordPath: string,
   terminalNonce: string,
+  validateStart: NonNullable<KodaXShellSandboxProcessControl['validateStart']>,
 ): WindowsV2ProcessControl {
-  type ControlPhase = 'bootstrap-pending' | 'control-open' | 'terminal';
+  type ControlPhase =
+    | 'bootstrap-pending'
+    | 'control-open'
+    | 'pre-start-unavailable'
+    | 'started'
+    | 'terminal';
   const terminations = new WeakMap<ReturnType<typeof spawn>, Promise<void>>();
+  const startAttestations = new WeakMap<
+    ReturnType<typeof spawn>,
+    ReturnType<NonNullable<KodaXShellSandboxProcessControl['attestStart']>>
+  >();
   const phases = new WeakMap<ReturnType<typeof spawn>, ControlPhase>();
   let terminalObservation: Promise<void> | undefined;
   const initialInput = Buffer.concat([
@@ -2719,11 +3129,126 @@ function createWindowsV2ProcessControl(
     }
   };
 
+  const verifyLaunchRecord = async (recordPath: string): Promise<void> => {
+    const raw = await readFile(recordPath, 'utf8');
+    const value = JSON.parse(raw) as unknown;
+    if (
+      typeof value !== 'object'
+      || value === null
+      || Reflect.get(value, 'protocol') !== WINDOWS_SANDBOX_V2_PROTOCOL
+      || Reflect.get(value, 'nonce') !== terminalNonce.toLowerCase()
+      || !Number.isSafeInteger(Reflect.get(value, 'targetPid'))
+      || Number(Reflect.get(value, 'targetPid')) <= 0
+      || Reflect.get(value, 'jobContained') !== true
+    ) {
+      throw new Error('Native sandbox target-start record was invalid.');
+    }
+  };
+
+  const verifyStartedRecord = () => verifyLaunchRecord(startedRecordPath);
+
+  const attestStart: NonNullable<KodaXShellSandboxProcessControl['attestStart']> = (
+    child,
+    signal,
+    deadlineAt,
+  ) => {
+    const existing = startAttestations.get(child);
+    if (existing !== undefined) return existing;
+    const attestation = new Promise<
+      | { readonly state: 'started' }
+      | { readonly state: 'pre_start_unavailable'; readonly diagnostic: string }
+    >((resolve, reject) => {
+      let settled = false;
+      let closed = child.exitCode !== null || child.signalCode !== null;
+      let closeCode = child.exitCode;
+      let closeSignal = child.signalCode;
+      let pollTimer: NodeJS.Timeout | undefined;
+      let stderrTail = Buffer.alloc(0);
+      const stderr = child.stderr;
+      const finish = (
+        result?: { readonly state: 'started' }
+          | { readonly state: 'pre_start_unavailable'; readonly diagnostic: string },
+        error?: unknown,
+      ): void => {
+        if (settled) return;
+        settled = true;
+        if (pollTimer !== undefined) clearTimeout(pollTimer);
+        child.off('close', onClose);
+        signal?.removeEventListener('abort', onAbort);
+        stderr?.off('data', onStderr);
+        if (error !== undefined) reject(error);
+        else if (result !== undefined) resolve(result);
+      };
+      const onStderr = (chunk: Buffer): void => {
+        stderrTail = Buffer.concat([stderrTail, chunk]).subarray(-4_096);
+      };
+      const onClose = (code: number | null, closeSignalValue: NodeJS.Signals | null): void => {
+        closed = true;
+        closeCode = code;
+        closeSignal = closeSignalValue;
+        void poll();
+      };
+      const onAbort = (): void => {
+        if (signal !== undefined) finish(undefined, sandboxAbortError(signal));
+      };
+      const poll = async (): Promise<void> => {
+        if (settled) return;
+        try {
+          await verifyStartedRecord();
+          phases.set(child, 'started');
+          finish({ state: 'started' });
+          return;
+        } catch (error: unknown) {
+          if (!isFileSystemError(error, 'ENOENT')) {
+            finish(undefined, error);
+            return;
+          }
+        }
+        if (closed) {
+          try {
+            await verifyLaunchRecord(resumeRecordPath);
+          } catch (error: unknown) {
+            if (!isFileSystemError(error, 'ENOENT')) {
+              finish(undefined, error);
+              return;
+            }
+            phases.set(child, 'pre-start-unavailable');
+            const diagnostic = stderrTail.toString('utf8').trim()
+              || `Native sandbox exited before target-start attestation `
+                + `(code ${String(closeCode)}, signal ${String(closeSignal)}).`;
+            finish({ state: 'pre_start_unavailable', diagnostic });
+            return;
+          }
+          const diagnostic = stderrTail.toString('utf8').trim()
+            || 'Native sandbox authorized target Resume but exited before target-start '
+              + 'attestation; execution is started-or-unknown and will not be replayed.';
+          finish(undefined, new Error(diagnostic));
+          return;
+        }
+        if (Date.now() >= deadlineAt) {
+          finish(undefined, new Error('Native sandbox target-start attestation timed out.'));
+          return;
+        }
+        pollTimer = setTimeout(() => { void poll(); }, 20);
+        pollTimer.unref();
+      };
+      stderr?.on('data', onStderr);
+      child.once('close', onClose);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+      else void poll();
+    });
+    startAttestations.set(child, attestation);
+    void attestation.catch(() => undefined);
+    return attestation;
+  };
+
   const terminate: KodaXShellSandboxProcessControl['terminate'] = (child) => {
     const existing = terminations.get(child);
     if (existing !== undefined) return existing;
     const termination = new Promise<void>((resolve, reject) => {
-      const preBootstrap = phases.get(child) === undefined;
+      const phase = phases.get(child);
+      const provenNotStarted = phase === undefined || phase === 'pre-start-unavailable';
       const stdin = child.stdin;
       if (stdin === null) {
         reject(new Error('Native sandbox control pipe was not created.'));
@@ -2731,7 +3256,7 @@ function createWindowsV2ProcessControl(
       }
       if (child.exitCode !== null || child.signalCode !== null) {
         phases.set(child, 'terminal');
-        if (preBootstrap) resolve();
+        if (provenNotStarted) resolve();
         else void verifyTerminalRecord().then(resolve, reject);
         return;
       }
@@ -2751,7 +3276,7 @@ function createWindowsV2ProcessControl(
       const onClose = (code: number | null, closeSignal: NodeJS.Signals | null): void => {
         if (emergencyStarted) return;
         phases.set(child, 'terminal');
-        if (preBootstrap) {
+        if (provenNotStarted) {
           finish();
           return;
         }
@@ -2808,9 +3333,14 @@ function createWindowsV2ProcessControl(
       child.once('close', onClose);
       child.once('error', onChildError);
       stdin.on('error', onStdinError);
-      stdin.end(preBootstrap ? undefined : encodeWindowsSandboxV2ControlFrame('terminate'), (error) => {
+      stdin.end(
+        phases.get(child) === undefined
+          ? undefined
+          : encodeWindowsSandboxV2ControlFrame('terminate'),
+        (error) => {
         if (error !== null && error !== undefined) deliveryFailure ??= error;
-      });
+        },
+      );
     });
     terminations.set(child, termination);
     terminalObservation = termination;
@@ -2819,7 +3349,9 @@ function createWindowsV2ProcessControl(
   };
 
   return {
+    validateStart,
     closeInput,
+    attestStart,
     terminate,
     async waitForTerminalObservation() {
       const active = terminalObservation;
@@ -2827,10 +3359,7 @@ function createWindowsV2ProcessControl(
         await verifyTerminalRecord();
         return;
       }
-      await active.then(
-        () => undefined,
-        () => undefined,
-      );
+      await active;
     },
   };
 }
@@ -3385,6 +3914,24 @@ function migrateWindowsLegacyAclGuardsForSetup(
   );
 }
 
+function windowsSandboxProfileReadRoots(home: string): string[] {
+  return readdirSync(home, { withFileTypes: true })
+    .filter((entry) => !entry.isSymbolicLink())
+    .map((entry) => path.join(home, entry.name));
+}
+
+function windowsSandboxSetupReadRoots(): string[] {
+  const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
+  return existingMinimalWindowsAclGuardRoots([
+    ...windowsSandboxProfileReadRoots(home),
+    ...windowsNativeRuntimeReadScopes(workspaceShellRuntimeReadScopes(process.env)),
+  ]);
+}
+
+function windowsSandboxSetupWriteRoots(): string[] {
+  return workspaceShellWriteRoots(canonicalTempDirectories(), '');
+}
+
 function workspaceShellWriteRoots(
   candidateRoots: readonly string[],
   _agentHome: string,
@@ -3397,7 +3944,9 @@ function workspaceShellWriteRoots(
       continue;
     }
   }
-  return [...new Set(roots)];
+  return process.platform === 'win32'
+    ? existingMinimalWindowsAclGuardRoots(roots)
+    : [...new Set(roots)];
 }
 
 function workspaceShellTempRoot(workspaceRoot: string, policyKey: string): string {
@@ -3786,17 +4335,20 @@ function workspaceShellSandboxConfig(
     agentHome,
   );
   const linkedGit = windowsLinkedWorktreeGitAccess(workspaceRoot);
-  const allowRead = [
-    ...new Set([
-      ...(process.platform === 'win32' ? [home, agentHome] : []),
+  const allowReadCandidates = [
+      ...(process.platform === 'win32'
+        ? [...windowsSandboxProfileReadRoots(home), agentHome]
+        : []),
       ...runtimeReadScopes,
       ...scopedAgentHomeAccess.read,
       ...(filesystemAccess?.read ?? []),
       ...(linkedGit.mainGitDirectory !== undefined
         ? [linkedGit.mainGitDirectory]
         : []),
-    ]),
   ];
+  const allowRead = process.platform === 'win32'
+    ? existingMinimalWindowsAclGuardRoots(allowReadCandidates)
+    : [...new Set(allowReadCandidates)];
   return {
     network: {
       allowedDomains: [],
@@ -3951,22 +4503,26 @@ async function runWindowsV2Sandboxed(
     deadlineAt,
   });
   if (prepared === undefined) throw new Error('Windows native sandbox invocation was not prepared.');
-  if (prepared.processControl === undefined) {
-    throw new Error('Windows native sandbox invocation has no persistent process control.');
-  }
-  const processControl = prepared.processControl;
-  const child = spawn(prepared.executable, [...prepared.args], {
-    cwd,
-    env: prepared.env,
-    shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-    windowsVerbatimArguments: prepared.windowsVerbatimArguments === true,
-  });
-  rememberChildProcessTree(child);
+  let cleanupExecution: 'not_started' | 'started_or_unknown' = 'not_started';
   let executionFailure: unknown;
   let nativeHostFailure: Error | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
   try {
+    if (prepared.processControl === undefined) {
+      throw new Error('Windows native sandbox invocation has no persistent process control.');
+    }
+    const processControl = prepared.processControl;
+    await processControl.validateStart?.();
+    child = spawn(prepared.executable, [...prepared.args], {
+      cwd,
+      env: prepared.env,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      windowsVerbatimArguments: prepared.windowsVerbatimArguments === true,
+    });
+    cleanupExecution = 'started_or_unknown';
+    rememberChildProcessTree(child);
     const result = collectProcess(
       child,
       input.signal,
@@ -3994,6 +4550,11 @@ async function runWindowsV2Sandboxed(
       await result.catch(() => undefined);
       throw finalError;
     }
+    const start = await processControl.attestStart?.(child, input.signal, deadlineAt);
+    if (start?.state === 'pre_start_unavailable') {
+      cleanupExecution = 'not_started';
+      throw new Error(start.diagnostic);
+    }
     const collected = await result;
     if (collected.exitCode !== 0) {
       const internalDiagnostic = collected.stderr
@@ -4010,10 +4571,20 @@ async function runWindowsV2Sandboxed(
     return collected;
   } catch (error: unknown) {
     executionFailure = error;
-    throw error;
+    if (child !== undefined && prepared.processControl !== undefined) {
+      try {
+        await prepared.processControl.terminate(child);
+      } catch (terminationError: unknown) {
+        executionFailure = new AggregateError(
+          [error, terminationError],
+          'Windows native sandbox execution and termination both failed.',
+        );
+      }
+    }
+    throw executionFailure;
   } finally {
     try {
-      await prepared.cleanup({ execution: 'started_or_unknown' });
+      await prepared.cleanup({ execution: cleanupExecution });
     } catch (cleanupError: unknown) {
       if (executionFailure !== undefined) {
         throw new AggregateError(
@@ -4433,6 +5004,7 @@ function windowsNetworkBrokerKey(request: WindowsNetworkBrokerRequest): string {
   // excluded while every network/account authority input remains in the key.
   const serialized = canonicalWindowsNetworkBrokerValue({
     version: normalized.version,
+    setupGenerationNonce: normalized.setupGenerationNonce,
     config: normalized.config,
     srtWinPath: path.resolve(normalized.srtWinPath).toLowerCase(),
     srtWinSha256: normalized.srtWinSha256,
@@ -4463,6 +5035,7 @@ function createWindowsNetworkBrokerState(
     markStarted: () => markStarted(),
     references: 0,
     failed: false,
+    lastUsed: 0,
     stopRequested: false,
     stderrTail: Buffer.alloc(0),
   };
@@ -4497,6 +5070,7 @@ function createWindowsNetworkBrokerState(
           ...(processError === undefined ? {} : { error: processError }),
         }));
       });
+      if (state.references === 0) setWindowsNetworkBrokerReferenced(state, false);
       child.on('error', (error) => {
         emitKodaXDiagnostic({
           source: 'sandbox:windows-v2',
@@ -4522,7 +5096,11 @@ function createWindowsNetworkBrokerState(
       });
       let ready: WindowsNetworkBrokerReady;
       try {
-        ready = await readWindowsNetworkBrokerReady(child);
+        ready = await readWindowsNetworkBrokerReady(
+          child,
+          undefined,
+          Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS,
+        );
       } catch (error: unknown) {
         const diagnostic = state.stderrTail.toString('utf8').trim();
         throw new Error(
@@ -4554,6 +5132,7 @@ async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState):
   state.stopRequested = true;
   state.stopping = (async () => {
     await state.started;
+    setWindowsNetworkBrokerReferenced(state, true);
     const results = await Promise.allSettled([
       ...(state.child === undefined || state.exit === undefined
         ? []
@@ -4571,6 +5150,7 @@ async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState):
       throw new AggregateError(failures, 'Shared Windows network broker cleanup failed.');
     }
   })().finally(() => {
+    setWindowsNetworkBrokerReferenced(state, false);
     if (windowsNetworkBrokers.get(state.key) === state) {
       windowsNetworkBrokers.delete(state.key);
     }
@@ -4580,28 +5160,60 @@ async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState):
 
 async function releaseWindowsNetworkBrokerState(
   state: WindowsNetworkBrokerState,
+  retireIfLast = false,
 ): Promise<void> {
   state.references = Math.max(0, state.references - 1);
   if (state.references !== 0) return;
-  state.markReferencesDrained?.();
-  state.markReferencesDrained = undefined;
-  state.referencesDrained = undefined;
+  if (retireIfLast) retireWindowsNetworkBrokerState(state);
+  setWindowsNetworkBrokerReferenced(state, false);
+  touchWindowsNetworkBroker(state);
   if (state.failed) {
     await stopSharedWindowsNetworkBroker(state);
     return;
   }
   state.idleTimer = setTimeout(() => {
     state.idleTimer = undefined;
+    if (state.references !== 0 || state.stopping !== undefined) return;
     void stopSharedWindowsNetworkBroker(state).catch((error: unknown) => {
       emitKodaXDiagnostic({
         source: 'sandbox:windows-v2',
         level: 'warn',
-        message: 'Idle shared Windows network broker cleanup failed.',
+        message: 'Idle Windows network broker cleanup failed.',
         detail: error,
       });
     });
-  }, WINDOWS_NETWORK_BROKER_IDLE_MS);
+  }, WINDOWS_NETWORK_BROKER_IDLE_GRACE_MS);
   state.idleTimer.unref();
+}
+
+async function evictIdleWindowsNetworkBroker(
+  signal?: AbortSignal,
+  deadlineAt?: number,
+): Promise<void> {
+  if (windowsNetworkBrokers.size < WINDOWS_NETWORK_BROKER_CAPACITY) return;
+  const idle = [...windowsNetworkBrokers.values()]
+    .filter((state) => state.references === 0 && state.stopping === undefined)
+    .sort((left, right) => left.lastUsed - right.lastUsed)[0];
+  if (idle === undefined) {
+    const stopping = [...windowsNetworkBrokers.values()]
+      .flatMap((state) => state.stopping === undefined ? [] : [state.stopping]);
+    if (stopping.length > 0) {
+      await waitForSandboxRunnerPreparation(
+        Promise.race(stopping),
+        signal,
+        deadlineAt,
+      );
+      return;
+    }
+    throw new Error(
+      'Windows network broker capacity is fully active; no command was started.',
+    );
+  }
+  await waitForSandboxRunnerPreparation(
+    stopSharedWindowsNetworkBroker(idle),
+    signal,
+    deadlineAt,
+  );
 }
 
 async function acquireWindowsNetworkBroker(
@@ -4619,31 +5231,38 @@ async function acquireWindowsNetworkBroker(
       continue;
     }
     if (state?.failed) {
-      if (state.references !== 0 && state.referencesDrained !== undefined) {
-        await waitForSandboxRunnerPreparation(state.referencesDrained, signal, deadlineAt);
-      } else {
-        await waitForSandboxRunnerPreparation(
-          stopSharedWindowsNetworkBroker(state),
-          signal,
-          deadlineAt,
+      if (state.references !== 0) {
+        throw new Error(
+          'Windows network broker failed while prior command leases are still settling; no command was started.',
         );
       }
+      await waitForSandboxRunnerPreparation(
+        stopSharedWindowsNetworkBroker(state),
+        signal,
+        deadlineAt,
+      );
       continue;
     }
     if (state === undefined) {
+      if (windowsNetworkBrokers.size >= WINDOWS_NETWORK_BROKER_CAPACITY) {
+        await evictIdleWindowsNetworkBroker(signal, deadlineAt);
+        continue;
+      }
       state = createWindowsNetworkBrokerState(key, normalized, controlDirectory);
       windowsNetworkBrokers.set(key, state);
     }
+    touchWindowsNetworkBroker(state);
     if (state.idleTimer !== undefined) {
       clearTimeout(state.idleTimer);
       state.idleTimer = undefined;
     }
     state.references += 1;
+    if (state.references === 1) setWindowsNetworkBrokerReferenced(state, true);
     let released = false;
-    const release = async (): Promise<void> => {
+    const release = async (options?: { readonly retireIfLast?: boolean }): Promise<void> => {
       if (released) return;
       released = true;
-      await releaseWindowsNetworkBrokerState(state);
+      await releaseWindowsNetworkBrokerState(state, options?.retireIfLast === true);
     };
     try {
       const readyPromise = state.ready;
@@ -4651,9 +5270,6 @@ async function acquireWindowsNetworkBroker(
       const ready = await waitForSandboxRunnerPreparation(readyPromise, signal, deadlineAt);
       return {
         ready,
-        retire() {
-          retireWindowsNetworkBrokerState(state);
-        },
         release,
       };
     } catch (error: unknown) {
@@ -4725,9 +5341,7 @@ async function prepareWindowsV2Invocation(input: {
     preparationDeadlineAt,
   );
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
-  const cutover = assertWindowsSandboxV2Cutover(
-    getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
-  );
+  const cutover = currentWindowsSandboxV2Cutover(runner);
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const shellPolicy = withPreparedWindowsRunner(input.shellPolicy);
   assertWindowsSandboxControlStateNotDirectlyAccessible({
@@ -4737,13 +5351,17 @@ async function prepareWindowsV2Invocation(input: {
     denyWrite: shellPolicy.filesystem.denyWrite,
   });
   assertWindowsNativeArtifactStoreNotDirectlyWritable(shellPolicy.filesystem.allowWrite);
-  const shellArtifact = resolveWindowsSandboxV2Executable({
-    sandboxReadSid: cutover.sandboxGroupSid,
-    untrustedWriteRoots: shellPolicy.filesystem.allowWrite,
-  });
+  const shellArtifact = await waitForSandboxRunnerPreparation(
+    prepareWindowsShellArtifact(
+      cutover.sandboxGroupSid,
+      shellPolicy.filesystem.allowWrite,
+    ),
+    input.signal,
+    preparationDeadlineAt,
+  );
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const controlDirectory = await waitForSandboxRunnerPreparation(
-    sandboxControlDirectory(),
+    prepareWindowsControlDirectory(),
     input.signal,
     preparationDeadlineAt,
   );
@@ -4753,6 +5371,7 @@ async function prepareWindowsV2Invocation(input: {
   }
   const brokerRequest: WindowsNetworkBrokerRequest = {
     version: 1,
+    setupGenerationNonce: cutover.generationNonce,
     config: asrtWindowsNetworkOnlyConfig(shellPolicy),
     cwd: input.cwd,
     srtWinPath: runner.path,
@@ -4785,6 +5404,7 @@ async function prepareWindowsV2Invocation(input: {
       );
     }
     const generation = windowsSandboxV2Generation({
+      setupGenerationNonce: cutover.generationNonce,
       sandboxUserSid: ready.sandboxUserSid,
       sandboxGroupSid: ready.sandboxGroupSid,
       asrtSha256: runner.sha256,
@@ -4794,10 +5414,10 @@ async function prepareWindowsV2Invocation(input: {
       controlDirectory,
       `windows-shell-${process.pid}-${randomUUID()}.json`,
     );
-    nativeTerminalRecordFile = path.join(
-      controlDirectory,
-      `windows-terminal-${process.pid}-${randomUUID()}.json`,
-    );
+    const recordIdentity = `${process.pid}-${randomUUID()}.json`;
+    nativeTerminalRecordFile = path.join(controlDirectory, `windows-terminal-${recordIdentity}`);
+    const nativeStartedRecordFile = path.join(controlDirectory, `windows-started-${recordIdentity}`);
+    const nativeResumeRecordFile = path.join(controlDirectory, `windows-resume-${recordIdentity}`);
     const terminalNonce = randomUUID();
     const operationDeadlineUnixMs = input.deadlineAt ?? preparationDeadlineAt;
     const targetEnvironment = mergeWindowsSandboxTargetEnvironment(
@@ -4811,6 +5431,7 @@ async function prepareWindowsV2Invocation(input: {
     );
     const nativeRequest = createWindowsSandboxV2RunRequest({
       generation,
+      filesystemCapabilityNonce: cutover.filesystemCapabilityNonce,
       sandboxUserSid: ready.sandboxUserSid,
       sandboxGroupSid: ready.sandboxGroupSid,
       asrtInvocation: {
@@ -4829,6 +5450,10 @@ async function prepareWindowsV2Invocation(input: {
       terminalRecordPath: nativeTerminalRecordFile,
       terminalNonce,
       operationDeadlineUnixMs,
+      setupMarkerPath: windowsSandboxV2CutoverMarkerFile(),
+      setupMarkerSha256: createHash('sha256')
+        .update(readFileSync(windowsSandboxV2CutoverMarkerFile()))
+        .digest('hex'),
     });
     await writeFile(nativeRequestFile, JSON.stringify(nativeRequest), { flag: 'wx', mode: 0o600 });
     throwIfSandboxRunnerPreparationStopped(input.signal, operationDeadlineUnixMs);
@@ -4839,8 +5464,18 @@ async function prepareWindowsV2Invocation(input: {
     const bootstrap = encodeWindowsSandboxV2Bootstrap(targetEnvironment);
     const processControl = createWindowsV2ProcessControl(
       bootstrap,
+      nativeResumeRecordFile,
+      nativeStartedRecordFile,
       ownedTerminalRecordFile,
       terminalNonce,
+      () => {
+        const current = currentWindowsSandboxV2Cutover(runner);
+        if (JSON.stringify(current) !== JSON.stringify(cutover)) {
+          throw windowsSandboxV2CutoverError(
+            'The Windows sandbox account generation changed before target start',
+          );
+        }
+      },
     );
     return {
       executable: shellArtifact.path,
@@ -4857,12 +5492,13 @@ async function prepareWindowsV2Invocation(input: {
               await processControl.waitForTerminalObservation();
             } catch (error: unknown) {
               terminalFailure = error;
-              ownedBrokerLease.retire();
             }
           }
           const results = await Promise.allSettled([
-            ownedBrokerLease.release(),
+            ownedBrokerLease.release({ retireIfLast: terminalFailure !== undefined }),
             rm(ownedRequestFile, { force: true }),
+            rm(nativeResumeRecordFile, { force: true }),
+            rm(nativeStartedRecordFile, { force: true }),
             rm(ownedTerminalRecordFile, { force: true }),
           ]);
           const failures = results.flatMap((result) => (
@@ -5739,6 +6375,9 @@ export async function runAsrtWindowsNetworkBrokerProcess(
     await rm(requestFile, { force: true });
     if (
       request.version !== 1
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        request.setupGenerationNonce,
+      )
       || request.config.filesystem.disabled !== true
       || !path.isAbsolute(request.cwd)
       || !path.isAbsolute(request.srtWinPath)

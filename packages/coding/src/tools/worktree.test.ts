@@ -10,6 +10,7 @@ import {
   containWindowsEffectProcess,
   killChildProcessTree,
   setAgentConfigHome,
+  terminateWindowsEffectJob,
 } from '@kodax-ai/agent';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
@@ -34,6 +35,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => ({
     unref: () => undefined,
   })),
   killChildProcessTree: vi.fn(async () => ({ status: 'already-exited' as const })),
+  terminateWindowsEffectJob: vi.fn(async () => undefined),
 }));
 
 // `toolWorktreeCreate` mkdirs an explicit base_dir; stub it so tests touch no fs.
@@ -52,6 +54,7 @@ vi.mock('fs', async (importOriginal) => {
 
 // Mock the gated child process with default git behavior.
 let mockExecFileImpl: Function | null = null;
+let mockStdinEndError: Error | undefined;
 
 vi.mock('child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('child_process')>();
@@ -76,7 +79,9 @@ vi.mock('child_process', async (importOriginal) => {
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = {
-        end: () => queueMicrotask(() => {
+        end: () => {
+          if (mockStdinEndError !== undefined) throw mockStdinEndError;
+          queueMicrotask(() => {
           const complete = (error: Error | null, stdout: string, stderr: string): void => {
             if (stdout) child.stdout.emit('data', stdout);
             if (stderr) child.stderr.emit('data', stderr);
@@ -96,7 +101,8 @@ vi.mock('child_process', async (importOriginal) => {
           } else {
             complete(null, '', '');
           }
-        }),
+          });
+        },
       };
       return child;
     }),
@@ -118,8 +124,10 @@ const TEST_AGENT_HOME = path.join(os.tmpdir(), `kodax-worktree-agent-home-${proc
 afterEach(async () => {
   vi.unstubAllEnvs();
   setMockExecFileImpl(null);
+  mockStdinEndError = undefined;
   vi.mocked(containWindowsEffectProcess).mockClear();
   vi.mocked(killChildProcessTree).mockClear();
+  vi.mocked(terminateWindowsEffectJob).mockClear();
   vi.mocked(containWindowsEffectProcess).mockImplementation(async (pid: number) => ({
     drained: Promise.resolve(),
     supervisorPid: pid,
@@ -127,6 +135,7 @@ afterEach(async () => {
     unref: () => undefined,
   }));
   vi.mocked(killChildProcessTree).mockResolvedValue({ status: 'already-exited' });
+  vi.mocked(terminateWindowsEffectJob).mockResolvedValue(undefined);
   await _resetFileSystemEffectLeasesForTests();
   setAgentConfigHome(undefined);
 });
@@ -315,19 +324,19 @@ describe('toolWorktreeCreate', () => {
     )).rejects.toThrow('protected KodaX state');
   });
 
-  it('does not overlap a model-started shell effect', async () => {
+  it('does not wait for a model-started shell compatibility lease', async () => {
     const releaseShell = await acquireFileSystemMutationLease();
     try {
       await expect(toolWorktreeCreate(
         { branch_name: 'lease-conflict' },
         mockContext,
-      )).rejects.toThrow('filesystem effect is already active');
+      )).resolves.toContain('lease-conflict');
     } finally {
       await releaseShell();
     }
   });
 
-  it('does not overlap a direct file sink that could race checked-out aliases', async () => {
+  it('does not wait for an unrelated direct file mutation', async () => {
     let enteredMutation: (() => void) | undefined;
     const entered = new Promise<void>((resolve) => { enteredMutation = resolve; });
     let finishMutation: (() => void) | undefined;
@@ -340,7 +349,7 @@ describe('toolWorktreeCreate', () => {
     await expect(toolWorktreeCreate(
       { branch_name: 'direct-lease-conflict' },
       mockContext,
-    )).rejects.toThrow('filesystem effect is already active');
+    )).resolves.toContain('direct-lease-conflict');
     finishMutation?.();
     await mutation;
   });
@@ -411,6 +420,7 @@ describe('toolWorktreeCreate', () => {
       vi.mocked(containWindowsEffectProcess).mockResolvedValueOnce({
         drained,
         supervisorPid: 2_147_483_647,
+        jobName: 'Global\\KodaXEffect-00000000-0000-4000-8000-000000000003',
         unref: () => undefined,
       });
       vi.mocked(killChildProcessTree).mockResolvedValueOnce({ status: 'already-exited' });
@@ -420,6 +430,56 @@ describe('toolWorktreeCreate', () => {
         mockContext,
       )).rejects.toThrow(/job drain failed|process tree has not been proven drained/i);
       expect(killChildProcessTree).not.toHaveBeenCalled();
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'uses bounded Job termination when the Git launch gate fails after containment',
+    async () => {
+      const drained = new Promise<void>(() => undefined);
+      const jobName = 'Global\\KodaXEffect-00000000-0000-4000-8000-000000000002';
+      vi.mocked(containWindowsEffectProcess).mockResolvedValueOnce({
+        drained,
+        supervisorPid: 2_147_483_647,
+        jobName,
+        unref: () => undefined,
+      });
+      vi.mocked(killChildProcessTree).mockResolvedValueOnce({ status: 'unknown' });
+      mockStdinEndError = new Error('injected Git gate stdin failure');
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('worktree gate cleanup remained pending')), 2_000);
+        });
+        await expect(Promise.race([
+          toolWorktreeCreate({ branch_name: 'failed-git-gate' }, mockContext),
+          deadline,
+        ])).rejects.toThrow(/injected Git gate stdin failure/i);
+        expect(terminateWindowsEffectJob).toHaveBeenCalledWith(jobName);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'keeps recovering a Git tree when Windows Job binding fails and root drain is unknown',
+    async () => {
+      vi.mocked(containWindowsEffectProcess).mockRejectedValueOnce(
+        new Error('injected Windows Job binding failure'),
+      );
+      vi.mocked(killChildProcessTree)
+        .mockResolvedValueOnce({ status: 'unknown' })
+        .mockResolvedValueOnce({ status: 'already-exited' });
+
+      await expect(toolWorktreeCreate(
+        { branch_name: 'failed-job-binding' },
+        mockContext,
+      )).rejects.toThrow(/Job binding failure|process-tree cleanup/i);
+      await vi.waitFor(() => {
+        expect(killChildProcessTree).toHaveBeenCalledTimes(2);
+      }, { timeout: 2_000 });
     },
   );
 });
@@ -591,14 +651,14 @@ describe('toolWorktreeRemove', () => {
     expect(parsed.restored).toBe(true);
   });
 
-  it('does not overlap a model-started shell effect', async () => {
+  it('does not wait for a model-started shell compatibility lease', async () => {
     const releaseShell = await acquireFileSystemMutationLease();
     try {
       await expect(toolWorktreeRemove({
         action: 'remove',
         worktree_path: '/test/worktree',
         discard_changes: true,
-      }, mockContext)).rejects.toThrow('filesystem effect is already active');
+      }, mockContext)).resolves.toContain('removed');
     } finally {
       await releaseShell();
     }

@@ -10,7 +10,6 @@ import path from 'path';
 import {
   containWindowsEffectProcess,
   emitKodaXDiagnostic,
-  isCurrentProcessWindowsJobContained,
   killChildProcessTree,
   prepareJavaScriptChildLaunch,
   registerManagedChildProcess,
@@ -23,14 +22,9 @@ import {
   isAgentHomeHardRemovalTarget,
 } from '../permissions/agent-home-policy.js';
 import {
-  withHostFileSystemNamespaceMutation,
   withPathMutation,
   scheduleUnrefBackgroundRetry,
-  type FileSystemMutationLeaseRelease,
 } from './_internal/file-mutation-queue.js';
-
-type BindEffectProcess = FileSystemMutationLeaseRelease['bindEffectProcess'];
-type FinishEffectProcess = FileSystemMutationLeaseRelease['finishEffectProcess'];
 
 const POSIX_GIT_GATE = 'IFS= read -r gate && [ "$gate" = go ] && exec "$KODAX_GIT_EXECUTABLE" "$@"';
 const WINDOWS_GIT_GATE = [
@@ -98,8 +92,6 @@ function gatedGitInvocation(args: readonly string[]): {
 function execGitFile(
   args: readonly string[],
   cwd: string,
-  bindEffectProcess: BindEffectProcess,
-  finishEffectProcess: FinishEffectProcess,
   allowedExitCodes: readonly number[] = [0],
 ): Promise<{ readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -124,7 +116,6 @@ function execGitFile(
               throw new Error('Git process tree is still not proven drained.');
             }
           }
-          await finishEffectProcess();
           unregister();
         },
         () => undefined,
@@ -133,7 +124,7 @@ function execGitFile(
           emitKodaXDiagnostic({
             source: 'coding:worktree-filesystem-effect',
             level: 'warn',
-            message: 'Automatic Git process-tree drain recovery is still pending; the namespace fence remains closed.',
+            message: 'Automatic Git process-tree drain recovery is still pending.',
             detail: error,
           });
         },
@@ -141,12 +132,11 @@ function execGitFile(
     };
     const waitForEffectDrain = async (): Promise<void> => {
       if (windowsEffectJob !== undefined) {
-        // A rejected Job proof is permanent and cannot be replaced by a root-
-        // only process check. Propagate it without marking the namespace effect
-        // finished; later effects remain fail-closed until reconciliation.
+        // A rejected Job proof cannot be replaced by a root-only process check.
+        // Propagate it and keep terminating the managed tree in the background;
+        // Git's own repository locks remain the cross-process authority.
         try {
           await windowsEffectJob.drained;
-          await finishEffectProcess();
           unregister();
           return;
         } catch (error: unknown) {
@@ -159,7 +149,6 @@ function execGitFile(
         try {
           const result = await killChildProcessTree(child);
           if (result.status !== 'unknown') {
-            await finishEffectProcess();
             unregister();
             return;
           }
@@ -169,7 +158,7 @@ function execGitFile(
             emitKodaXDiagnostic({
               source: 'coding:worktree-filesystem-effect',
               level: 'warn',
-              message: 'Git process-tree drain failed; the target worktree remains queued.',
+              message: 'Git process-tree drain failed; the target worktree state is uncertain.',
               detail: error,
             });
           }
@@ -182,7 +171,7 @@ function execGitFile(
         emitKodaXDiagnostic({
           source: 'coding:worktree-filesystem-effect',
           level: 'warn',
-          message: 'Git process-tree drain remained unknown; the namespace fence stays active.',
+          message: 'Git process-tree drain remained unknown; automatic cleanup remains pending.',
         });
       }
       scheduleDrainRecovery();
@@ -231,27 +220,76 @@ function execGitFile(
       }, { manualUnregister: true, requireDurableRecord: true });
     } catch (error) {
       abandoned = true;
-      void killChildProcessTree(child);
+      void killChildProcessTree(child).then((result) => {
+        if (result.status === 'unknown') scheduleDrainRecovery();
+      }).catch((terminationError: unknown) => {
+        emitKodaXDiagnostic({
+          source: 'coding:worktree-filesystem-effect',
+          level: 'warn',
+          message: 'Git cleanup failed after durable child registration was rejected.',
+          detail: terminationError,
+        });
+        scheduleDrainRecovery();
+      });
       reject(error);
       return;
     }
     if (child.pid === undefined || child.stdin === null) {
-      binding = Promise.reject(new Error('Git gate did not expose a managed process and stdin.'));
+      abandoned = true;
+      const failure = new Error('Git gate did not expose a managed process and stdin.');
+      void killChildProcessTree(child).then((result) => {
+        if (result.status === 'unknown') scheduleDrainRecovery();
+        else unregister();
+      }).catch((terminationError: unknown) => {
+        emitKodaXDiagnostic({
+          source: 'coding:worktree-filesystem-effect',
+          level: 'warn',
+          message: 'Git gate cleanup failed before process binding completed.',
+          detail: terminationError,
+        });
+        scheduleDrainRecovery();
+      });
+      reject(failure);
     } else {
       binding = (async () => {
         if (process.platform === 'win32') {
           windowsEffectJob = await containWindowsEffectProcess(child.pid!);
         }
-        await bindEffectProcess(
-          windowsEffectJob?.supervisorPid ?? child.pid!,
-          windowsEffectJob !== undefined || isCurrentProcessWindowsJobContained(),
-        );
         child.stdin!.end('go\n');
       })().catch(async (error: unknown) => {
-        await killChildProcessTree(child);
-        await windowsEffectJob?.drained.catch(() => undefined);
-        throw error;
+        let drainProven = false;
+        let terminationFailure: unknown;
+        try {
+          drainProven = (await killChildProcessTree(child)).status !== 'unknown';
+        } catch (caught: unknown) {
+          terminationFailure = caught;
+        }
+        if (windowsEffectJob !== undefined) {
+          try {
+            await terminateWindowsEffectJob(windowsEffectJob.jobName);
+            drainProven = true;
+          } catch (caught: unknown) {
+            terminationFailure = terminationFailure === undefined
+              ? caught
+              : new AggregateError(
+                  [terminationFailure, caught],
+                  'Git root termination and bounded Windows Job termination both failed.',
+                );
+          }
+        }
+        if (drainProven) unregister();
+        else scheduleDrainRecovery();
+        const failure = terminationFailure === undefined
+          ? error
+          : new AggregateError(
+              [error, terminationFailure],
+              'Git launch binding and process-tree cleanup both failed.',
+            );
+        abandoned = true;
+        reject(failure);
+        throw failure;
       });
+      void binding.catch(() => undefined);
     }
   });
 }
@@ -352,10 +390,7 @@ async function createWorktree(
   }
   return withPathMutation(
     worktreePath,
-    async () => withHostFileSystemNamespaceMutation(async (
-      bindEffectProcess,
-      finishEffectProcess,
-    ) => {
+    async () => {
       if (!explicitBaseDir && isAgentHomeHardMutationTarget(worktreePath, cwd)) {
         throw new Error(`Worktree path targets protected KodaX state: ${worktreePath}`);
       }
@@ -372,8 +407,6 @@ async function createWorktree(
         const configuredFilters = await execGitFile(
           ['config', '--local', '--get-regexp', '^filter\\..*\\.(clean|smudge|process)$'],
           cwd,
-          bindEffectProcess,
-          finishEffectProcess,
           [0, 1],
         );
         if (configuredFilters.stdout.trim()) {
@@ -382,8 +415,6 @@ async function createWorktree(
         await execGitFile(
           ['worktree', 'add', '-b', branch, worktreePath],
           cwd,
-          bindEffectProcess,
-          finishEffectProcess,
         );
         worktreeCreated = true;
         await ctx.workspaceSandboxRoots?.register(worktreePath);
@@ -394,8 +425,6 @@ async function createWorktree(
             await execGitFile(
               ['worktree', 'remove', worktreePath, '--force'],
               cwd,
-              bindEffectProcess,
-              finishEffectProcess,
             );
           } catch (rollbackError: unknown) {
             failures.push(rollbackError);
@@ -404,8 +433,6 @@ async function createWorktree(
             await execGitFile(
               ['branch', '-D', branch],
               cwd,
-              bindEffectProcess,
-              finishEffectProcess,
             );
           } catch (rollbackError: unknown) {
             failures.push(rollbackError);
@@ -419,7 +446,7 @@ async function createWorktree(
       }
 
       return JSON.stringify({ path: worktreePath, branch });
-    }),
+    },
   );
 }
 
@@ -490,10 +517,7 @@ async function removeWorktree(
     && isPathWithin(worktreePath, path.resolve(trustedBaseDir));
   return withPathMutation(
     path.resolve(worktreePath),
-    async () => withHostFileSystemNamespaceMutation(async (
-      bindEffectProcess,
-      finishEffectProcess,
-    ) => {
+    async () => {
       if (!trustedTarget && isAgentHomeHardRemovalTarget(worktreePath, cwd)) {
         throw new Error(`Worktree removal targets protected KodaX state: ${worktreePath}`);
       }
@@ -504,8 +528,6 @@ async function removeWorktree(
           const { stdout: statusOut } = await execGitFile(
             ['status', '--porcelain'],
             worktreePath,
-            bindEffectProcess,
-            finishEffectProcess,
           );
           const uncommittedFiles = statusOut
             .trim()
@@ -514,8 +536,6 @@ async function removeWorktree(
           const { stdout: revListOut } = await execGitFile(
             ['rev-list', '--count', 'HEAD', '--not', '--remotes'],
             worktreePath,
-            bindEffectProcess,
-            finishEffectProcess,
           );
           const localCommits = parseInt(revListOut.trim(), 10) || 0;
 
@@ -538,8 +558,6 @@ async function removeWorktree(
         const { stdout: branchOut } = await execGitFile(
           ['rev-parse', '--abbrev-ref', 'HEAD'],
           worktreePath,
-          bindEffectProcess,
-          finishEffectProcess,
         );
         branch = branchOut.trim();
       } catch {
@@ -565,8 +583,6 @@ async function removeWorktree(
         await execGitFile(
           ['worktree', 'remove', worktreePath, '--force'],
           cwd,
-          bindEffectProcess,
-          finishEffectProcess,
         );
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -578,8 +594,6 @@ async function removeWorktree(
           await execGitFile(
             ['branch', '-D', branch],
             cwd,
-            bindEffectProcess,
-            finishEffectProcess,
           );
         } catch {
           // The branch may not exist or may be checked out elsewhere.
@@ -594,7 +608,7 @@ async function removeWorktree(
         restored: true,
         message: `Worktree removed. Branch ${branch || '(unknown)'} deleted. Restored CWD.`,
       });
-    }),
+    },
   );
 }
 
