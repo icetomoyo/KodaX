@@ -8,8 +8,11 @@
  */
 
 let buffer = Buffer.alloc(0);
+const exitDuringNextRequest = process.argv.includes('--exit-during-next-request');
+let exitOnNextData = false;
 
 process.stdin.on('data', (chunk) => {
+  if (exitOnNextData) process.exit(0);
   buffer = Buffer.concat([buffer, chunk]);
   for (;;) {
     const headerEnd = buffer.indexOf('\r\n\r\n');
@@ -107,6 +110,7 @@ function handle(message) {
       });
       return;
     case 'textDocument/documentSymbol':
+      if (exitDuringNextRequest) exitOnNextData = true;
       send({
         jsonrpc: '2.0',
         id: message.id,

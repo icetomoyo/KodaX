@@ -319,10 +319,56 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
 
   proc.stderr.on('data', (chunk: Buffer) => debug?.(`[${serverId}] stderr: ${chunk.toString().trim()}`));
 
+  // vscode-jsonrpc 9.x turns a rejected request write into a second,
+  // unobservable rejection. Keep the first transport error on this connection
+  // and let sendProtocol surface it through the Promise KodaX actually awaits.
+  const rawWriter = new StreamMessageWriter(proc.stdin);
+  let transportFailed = false;
+  let transportError: unknown;
+
+  let disposeConnection = (): void => {};
+  const writer = {
+    onError: rawWriter.onError,
+    onClose: rawWriter.onClose,
+    dispose: (): void => rawWriter.dispose(),
+    end: (): void => rawWriter.end(),
+    async write(message: Parameters<typeof rawWriter.write>[0]): Promise<void> {
+      try {
+        await rawWriter.write(message);
+      } catch (error) {
+        if (!transportFailed) {
+          transportFailed = true;
+          transportError = error;
+          disposeConnection();
+        }
+      }
+    },
+  };
   const connection = createProtocolConnection(
     new StreamMessageReader(proc.stdout),
-    new StreamMessageWriter(proc.stdin),
+    writer,
   );
+  let connectionDisposed = false;
+  disposeConnection = (): void => {
+    if (connectionDisposed) return;
+    connectionDisposed = true;
+    try {
+      connection.dispose();
+    } catch (error) {
+      debug?.(`[${serverId}] connection dispose failed: ${(error as Error).message}`);
+    }
+  };
+
+  async function sendProtocol<T>(operation: () => Promise<T>): Promise<T> {
+    if (transportFailed) throw transportError;
+    try {
+      const result = await operation();
+      if (transportFailed) throw transportError;
+      return result;
+    } catch (error) {
+      throw transportFailed ? transportError : error;
+    }
+  }
 
   const pushDiagnostics = new Map<string, Diagnostic[]>();
   const pushListeners = new Set<(file: string, at: number) => void>();
@@ -362,20 +408,26 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
   });
 
   try {
+    const initialize = async (): Promise<void> => {
+      await sendProtocol(() => connection.sendRequest(
+        InitializeRequest.type,
+        buildInitializeParams(root, launch.initializationOptions),
+      ));
+      await sendProtocol(() => connection.sendNotification(InitializedNotification.type, {}));
+      await sendProtocol(() => connection.sendNotification(DidChangeConfigurationNotification.type, {
+        settings: launch.initializationOptions ?? {},
+      }));
+    };
     await Promise.race([
       withTimeout(
-        connection.sendRequest(InitializeRequest.type, buildInitializeParams(root, launch.initializationOptions)),
+        initialize(),
         initTimeout,
         `LSP initialize timed out for ${serverId}`,
       ),
       earlyExit,
     ]);
   } catch (error) {
-    try {
-      connection.dispose();
-    } catch {
-      // ignore
-    }
+    disposeConnection();
     await killChildProcessTree(proc);
     unregisterManagedChildOnce();
     throw error;
@@ -384,11 +436,6 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
     // shutdown's proc.kill) so it never surfaces as an unhandledRejection.
     earlyExit.catch(() => undefined);
   }
-
-  connection.sendNotification(InitializedNotification.type, {});
-  connection.sendNotification(DidChangeConfigurationNotification.type, {
-    settings: launch.initializationOptions ?? {},
-  });
 
   const openVersions = new Map<string, number>();
   // Resolve callbacks of in-flight waitForDiagnostics calls, so shutdown can
@@ -406,18 +453,18 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
       openVersions.set(key, 1);
       pushDiagnostics.delete(key);
       const sentAt = Date.now();
-      connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      await sendProtocol(() => connection.sendNotification(DidOpenTextDocumentNotification.type, {
         textDocument: { uri, languageId, version: 1, text },
-      });
+      }));
       return sentAt;
     }
     const version = previous + 1;
     openVersions.set(key, version);
     const sentAt = Date.now();
-    connection.sendNotification(DidChangeTextDocumentNotification.type, {
+    await sendProtocol(() => connection.sendNotification(DidChangeTextDocumentNotification.type, {
       textDocument: { uri, version },
       contentChanges: [{ text }],
-    });
+    }));
     return sentAt;
   }
 
@@ -457,7 +504,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
   async function definition(file: string, position: Position): Promise<Location[]> {
     const textDocument = { uri: pathToFileURL(file).href };
     const result = await navTimeout(
-      connection.sendRequest(DefinitionRequest.type, { textDocument, position }),
+      sendProtocol(() => connection.sendRequest(DefinitionRequest.type, { textDocument, position })),
       'definition',
     );
     return normalizeLocations(result);
@@ -465,17 +512,20 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
 
   async function hover(file: string, position: Position): Promise<Hover | null> {
     const textDocument = { uri: pathToFileURL(file).href };
-    return navTimeout(connection.sendRequest(HoverRequest.type, { textDocument, position }), 'hover');
+    return navTimeout(
+      sendProtocol(() => connection.sendRequest(HoverRequest.type, { textDocument, position })),
+      'hover',
+    );
   }
 
   async function references(file: string, position: Position): Promise<Location[]> {
     const textDocument = { uri: pathToFileURL(file).href };
     const result = await navTimeout(
-      connection.sendRequest(ReferencesRequest.type, {
+      sendProtocol(() => connection.sendRequest(ReferencesRequest.type, {
         textDocument,
         position,
         context: { includeDeclaration: true },
-      }),
+      })),
       'references',
     );
     return result ?? [];
@@ -484,7 +534,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
   async function documentSymbols(file: string): Promise<Array<DocumentSymbol | SymbolInformation>> {
     const textDocument = { uri: pathToFileURL(file).href };
     const result = await navTimeout(
-      connection.sendRequest(DocumentSymbolRequest.type, { textDocument }),
+      sendProtocol(() => connection.sendRequest(DocumentSymbolRequest.type, { textDocument })),
       'documentSymbol',
     );
     return result ?? [];
@@ -492,7 +542,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
 
   async function workspaceSymbols(query: string): Promise<Array<SymbolInformation | WorkspaceSymbol>> {
     const result = await navTimeout(
-      connection.sendRequest(WorkspaceSymbolRequest.type, { query }),
+      sendProtocol(() => connection.sendRequest(WorkspaceSymbolRequest.type, { query })),
       'workspaceSymbol',
     );
     return result ?? [];
@@ -501,7 +551,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
   async function implementation(file: string, position: Position): Promise<Location[]> {
     const textDocument = { uri: pathToFileURL(file).href };
     const result = await navTimeout(
-      connection.sendRequest(ImplementationRequest.type, { textDocument, position }),
+      sendProtocol(() => connection.sendRequest(ImplementationRequest.type, { textDocument, position })),
       'implementation',
     );
     return normalizeLocations(result);
@@ -510,7 +560,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
   async function prepareCallHierarchy(file: string, position: Position): Promise<CallHierarchyItem[]> {
     const textDocument = { uri: pathToFileURL(file).href };
     const result = await navTimeout(
-      connection.sendRequest(CallHierarchyPrepareRequest.type, { textDocument, position }),
+      sendProtocol(() => connection.sendRequest(CallHierarchyPrepareRequest.type, { textDocument, position })),
       'prepareCallHierarchy',
     );
     return result ?? [];
@@ -518,7 +568,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
 
   async function incomingCalls(item: CallHierarchyItem): Promise<CallHierarchyIncomingCall[]> {
     const result = await navTimeout(
-      connection.sendRequest(CallHierarchyIncomingCallsRequest.type, { item }),
+      sendProtocol(() => connection.sendRequest(CallHierarchyIncomingCallsRequest.type, { item })),
       'incomingCalls',
     );
     return result ?? [];
@@ -526,7 +576,7 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
 
   async function outgoingCalls(item: CallHierarchyItem): Promise<CallHierarchyOutgoingCall[]> {
     const result = await navTimeout(
-      connection.sendRequest(CallHierarchyOutgoingCallsRequest.type, { item }),
+      sendProtocol(() => connection.sendRequest(CallHierarchyOutgoingCallsRequest.type, { item })),
       'outgoingCalls',
     );
     return result ?? [];
@@ -541,16 +591,12 @@ export async function createLspClient(params: CreateLspClientParams): Promise<Ls
     // a write's mutation lock) unblock now rather than at timeout.
     for (const release of [...activeWaiters]) release();
     try {
-      await withTimeout(connection.sendRequest(ShutdownRequest.type), 2_000, 'shutdown timeout');
-      connection.sendNotification(ExitNotification.type);
+      await withTimeout(sendProtocol(() => connection.sendRequest(ShutdownRequest.type)), 2_000, 'shutdown timeout');
+      await sendProtocol(() => connection.sendNotification(ExitNotification.type));
     } catch {
       // Best-effort; fall through to dispose + kill.
     }
-    try {
-      connection.dispose();
-    } catch {
-      // ignore
-    }
+    disposeConnection();
     // Await actual process exit so the OS releases its handles (on Windows the
     // server's cwd stays locked until the process is reaped — otherwise a
     // caller deleting that directory hits EBUSY).

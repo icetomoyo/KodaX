@@ -100,6 +100,24 @@ describe('LSP protocol integration (real stdio handshake)', () => {
     }
   }, 15000);
 
+  it('contains a write failure when the server exits during a request', async () => {
+    const client = await createLspClient({
+      serverId: 'exiting-server',
+      root: tempDir,
+      launch: {
+        command: process.execPath,
+        args: [FIXTURE, '--exit-during-next-request'],
+      },
+      initializeTimeoutMs: 2_000,
+    });
+    try {
+      await expect(client.documentSymbols(tsFile)).resolves.toHaveLength(1);
+      await expect(client.workspaceSymbols('x'.repeat(1024 * 1024))).rejects.toThrow();
+    } finally {
+      await client.shutdown();
+    }
+  }, 15_000);
+
   it('end-to-end: LspService.getDiagnosticsBlock against a real server process', async () => {
     const server: LspServerInfo = {
       id: 'fake',
