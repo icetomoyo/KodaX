@@ -1323,11 +1323,9 @@ export type {
   ResolvedClassifierModel,
 } from './guardrails/auto-mode/model-resolver.js';
 export {
-  createAgentHomeShellBoundaryGuardrail,
   createAutoModeToolGuardrail,
 } from './guardrails/auto-mode/guardrail.js';
 export type {
-  AgentHomeShellBoundaryGuardrailOptions,
   AutoModeSharedState,
   AutoModeGuardrailConfig,
   AutoModeToolGuardrail,

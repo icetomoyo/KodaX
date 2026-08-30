@@ -240,9 +240,9 @@ export interface ChildExecutorOptions {
   /**
    * FEATURE_092 phase 2b.7b slice D: parent-Runner guardrails forwarded into
    * each child's `Runner.run` via `KodaXOptions.guardrails`. The auto-mode
-   * guardrail's mutable state (engine + denialTracker + circuitBreaker) is
-   * shared by passing the SAME instance — preventing children from reaching
-   * a fresh threshold and bypassing the parent's downgrade.
+   * guardrail's mutable review-denial and circuit-breaker state is shared by
+   * passing the SAME instance, so children cannot restart the parent's bounded
+   * denial budget.
    */
   readonly guardrails?: readonly import('@kodax-ai/agent').Guardrail[];
 
@@ -1375,8 +1375,8 @@ async function runReadChildBody(
           ? { disablePromptCache: options.parentOptions.disablePromptCache }
           : {}),
         // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so
-        // child tool calls go through the SAME auto-mode classifier instance
-        // (shared engine + denialTracker + circuitBreaker state).
+        // child tool calls go through the SAME Auto[LLM] reviewer guardrail
+        // (shared denial-tracker and circuit-breaker state).
         guardrails: options.guardrails,
         ...(childSession !== undefined ? { session: childSession } : {}),
         // FEATURE_221: a child of a white-labeled product inherits the parent's
@@ -1672,8 +1672,8 @@ async function runWriteChildBody(
           ? { disablePromptCache: options.parentOptions.disablePromptCache }
           : {}),
         // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so
-        // child tool calls go through the SAME auto-mode classifier instance
-        // (shared engine + denialTracker + circuitBreaker state).
+        // child tool calls go through the SAME Auto[LLM] reviewer guardrail
+        // (shared denial-tracker and circuit-breaker state).
         guardrails: options.guardrails,
         ...(childSession !== undefined ? { session: childSession } : {}),
         // FEATURE_221: write children inherit the parent's white-label product

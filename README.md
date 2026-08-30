@@ -557,8 +557,9 @@ or Auto[LLM], and reviewer infrastructure failure blocks with a safer-route
 message after one retry. Workspace containment now permits broad host reads,
 including Agent Home, credential locations, and global Git configuration,
 while retaining workspace/system-TMP-only writes and external network. See the
-[v0.7.78 design](docs/features/v0.7.78.md), the
-[SDK guide sections 29–30](public_docs/sdk/embedder-guide.md#29-evidence-gated-background-skill-learning-feature_263-v0778).
+[v0.7.96 design](docs/features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy),
+[ADR-069](docs/ADR.md#adr-069-sandbox-success-is-authority-while-host-escalation-is-a-separate-policy-boundary),
+and the [SDK permission guide](public_docs/sdk/embedder-guide.md#24-runtime-owned-permission-routing-and-plan-bridges-v0796).
 
 The release closure also preserves intent across adjacent surfaces: static
 Skill instructions load in Edit/Plan without granting later side effects,
@@ -566,9 +567,10 @@ dynamic Skill commands require an explicit host-controlled executor, root AMA
 handles explicit remember/correct/forget requests immediately through the
 governed `memory_intent` control plane while exceptional or inferred changes
 remain reviewable, Workflow Actor waits remain
-unbounded unless the workflow sets a deadline, and Runtime Auto capability v4
-advertises the same Auto[LLM]-only contract across embedded, Worker, and daemon
-hosts. Actor ownership additionally uses Runtime identity rather than PID alone,
+unbounded unless the workflow sets a deadline. Runtime Auto capability v5 and
+shared Session settings v2 advertise the same sandbox-first four-profile
+contract across embedded, Worker, and daemon hosts. Actor ownership additionally
+uses Runtime identity rather than PID alone,
 so PID reuse cannot pin a crashed owner. The resume Session picker also renders
 timestamps in the host's local timezone.
 
@@ -816,9 +818,13 @@ revision so a later CAS-checked Undo can resolve it. See
 This incompatible authority split is fenced by `sandboxRuntime:6`, so a new
 client never silently reuses a daemon that still implements the v0.7.95 graph.
 Existing Windows installations run `kodax sandbox setup` once: the cutover
-waits for old sandbox processes to exit, recreates the dedicated account with
-a new SID, and records the native protocol/SID generation. Missing migration
-state blocks native shell admission, not trusted text tools.
+waits for old sandbox processes to exit, removes only exact legacy KodaX
+sensitive-root guards with the previous group SID, recreates the dedicated account with
+a new SID, and records
+setup generation 4 with the native protocol/SID generation. Missing migration
+state blocks native shell admission, not trusted text tools. Ordinary command
+admission never repeats that legacy cleanup or revokes shared ACL state; each
+Runtime command retains an independent request, token, control channel, and Job.
 On Windows, the embedded release manifest pins text/shell protocols and hashes
 plus the ASRT release version and hash. Verified executables are staged in a
 content-addressed protected LocalAppData store independent of `KODAX_HOME`;
@@ -1013,18 +1019,17 @@ context diagnostics, and daemon protocol schemas, see
 The Space/IDE shared-daemon contract is documented in
 [SDK Embedder Guide section 23](public_docs/sdk/embedder-guide.md#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769).
 
-**v0.7.72–v0.7.73 Runtime permission contract:** Auto Mode is owned by the Runtime session,
-not by a UI hook. It reuses its LLM/rules guardrail across turns, classifies
-before the shared permission bridge, and persists explicit engine selection.
-The same session settings can select a classifier model and bounded
-timeout; `auto` defaults to LLM classification and fails with a recoverable
-configuration error when no effective classifier model exists, rather than
-silently falling back. In v0.7.78, classifier failures retry once and then use
-the Accept-edits safety boundary; they never change the engine to rules.
-Runtime permission prompts offer opaque, exact
+**Current Runtime permission contract (v0.7.96):** Auto Mode is owned by the
+Runtime session, not by a UI hook. Edits and Auto try the sandbox first;
+sandbox completion is final, while only a proven pre-start host boundary reaches
+Exec Policy and the Edits user decision or Auto[LLM] reviewer. Auto review has
+fixed 90/180-second attempt bounds and never falls back to Rules, Edits, or an
+automatic user prompt. Full Access skips sandbox and review but retains
+administrator policy and critical-effect denial. Runtime permission prompts
+offer opaque, exact
 allow-once/session/persistent grant suggestions; persistent grants are
 daemon-owned and revisioned. Host plan exit is exposed only when the host
-supplies an approval callback. See the [Runtime Auto Mode integration guide](public_docs/sdk/embedder-guide.md#24-runtime-owned-auto-mode-and-plan-approval-bridges-v0772v0773).
+supplies an approval callback. See the [Runtime permission integration guide](public_docs/sdk/embedder-guide.md#24-runtime-owned-permission-routing-and-plan-bridges-v0796).
 
 ## Repo Intelligence
 
@@ -1546,8 +1551,9 @@ KodaX provides 4 permission profiles:
 **Features:**
 - In `accept-edits` mode, choosing "always" can persist safe Bash allow-patterns
 - Plan mode includes system prompt context for LLM awareness
-- Sensitive/protected or unresolved targets enter Auto[LLM]/approval review;
-  ordinary reads outside the project are allowed
+- Sandboxed broad reads, including Agent Home and credential locations, finish
+  silently; only a proven pre-start host boundary reaches Auto[LLM]/approval
+  review
 - Pattern-based permission: Allow specific Bash commands (e.g., `Bash(npm install)`)
 - Unified diff display for write/edit operations
 - Edits and Auto first attempt the OS sandbox. Sandbox completion is final;

@@ -143,9 +143,11 @@ crash-safe receipt, then removed only after Job drain. Recovery verifies the
 recorded volume/file identity before changing the DACL; a missing or replaced
 object keeps the receipt and fails shell admission closed until repair. No ACL
 mutex or receipt participates in trusted text admission or spans the command
- lifetime. The v0.7.96 permission-profile migration idempotently removes the
- legacy KodaX-installed sensitive-root deny ACEs after proving the sandbox SID
- idle; new sandbox policy grants broad host reads instead. Native requests no
+ lifetime. Windows setup generation 4 idempotently removes the legacy KodaX-
+ installed sensitive-root deny ACEs with the previous group SID after proving
+ that account idle, then rotates it; ordinary command admission never invokes that
+ global migration or revokes shared ACL state. New sandbox policy grants broad
+ host reads instead. Native requests no
  longer add the protected artifact-cache root as a redundant `denyWrite` root,
  so upgrades neither grow those historical residues nor conflict with the
  control verifier. Existing cache denies remain unchanged: owner/protection,
@@ -241,14 +243,17 @@ to publish callbacks or begin new Runtime-mediated effects. Ordinary healthy
 after-turn input still defaults to coding mode; mode
 inheritance is reserved for work that actually drains behind durability repair.
 
-Auto-mode access to the agent-home directory preserves ordinary working-data
-access: Agent definitions, Sessions, tool results, and intermediate artifacts
-may be modified without review. The home root cannot be removed as a whole,
-Runtime mutations are hard-denied, and credential/security config plus generic
-sensitive files require review. The legacy `processes/children` registry is
-hard-denied to model writes; upgrade cleanup quarantines its unauthenticated
-records without signaling a process. Exact
-non-sensitive Runtime reads remain open.
+The workspace sandbox permits broad Agent Home reads, including credential,
+security-config, and Runtime paths, without a preflight review. At a proven
+host boundary, concrete credential reads and credential/security-control
+mutations become Auto[LLM] reviewer facts; a generic sensitive label alone is
+not a reason to deny. Ordinary Agent definitions, Sessions, tool results, and
+intermediate artifacts remain working data. These concrete home-root and
+Runtime-control-plane effects are evidence for Auto[LLM], not an Agent-Home
+special hard boundary: Full Access skips that reviewer exactly as documented.
+Only explicit administrator `forbid` policy and the narrow critical-effect
+fallback remain non-bypassable. Upgrade cleanup still quarantines legacy
+unauthenticated `processes/children` records without signaling a process.
 The v0.7.85 containment path used ASRT workspace sessions, a per-effect Job,
 policy-owner fallback, and a cross-process filesystem-effect lease. FEATURE_295
 supersedes that path for shell and controlled text tools; it remains only for
@@ -442,11 +447,12 @@ This prevents a prior multi-megabyte tool result from consuming the current
 permission verdict's transport/inference deadline.
 
 The public Runtime contract mirrors that boundary. REPL and root SDK entries
-export one pure Auto settings resolver plus its config-loading wrapper;
-Session state owns classifier model, timeout, and speculative window through
-the same serialized mutation queue. Auto-started daemon clients require
-`runtimeAutoModeGuardrail` v4, whose intent-aligned retry/Accept-edits behavior
-extends the v3 opaque exact-grant and concrete-matcher contract; version
+export the four canonical profiles plus the input-only `auto-in-project` alias.
+Session state owns only the reviewer model; normal review deadlines are fixed
+at 90 seconds plus one 180-second retry. Auto-started daemon clients require
+`runtimeAutoModeGuardrail` v5 and `sharedSessionSettings` v2, preventing an
+alpha.4 client from attaching to a daemon that still implements the earlier
+permission-before-sandbox or three-profile settings contract. Version
 negotiation treats requirements as minimums. Side-query diagnostics report
 only coarse, observed timing/retry facts, while guardrail spans start before
 and end after the awaited callback.
@@ -600,8 +606,9 @@ from Session/Run settings into root and descendant tool contexts. The resolver
 sanitizes bootstrap variables, loads the selected shell/profile in the real
 execution cwd, captures and validates a framed environment, sanitizes again,
 then uses the same explicit interpreter for the command. Cache identity binds
-the contract, canonical cwd, Session scratch identity, denied credential
-names, and refresh generation. Legacy callers bypass this resolver.
+the contract, canonical cwd, Session scratch identity, the fixed internal
+KodaX/Electron execution-control deny set, and refresh generation. Legacy
+callers bypass this resolver.
 
 ASRT containment is the first authority for Edits and Auto shell execution.
 Sandbox completion returns directly; a failure proven before target spawn

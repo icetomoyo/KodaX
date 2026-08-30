@@ -37,8 +37,10 @@
   // "thinking": true,
 
   // Agent harness: "ama" enables adaptive multi-agent use; "sa" forces one
-  // agent. Permission mode is "plan", "accept-edits", classifier-backed
-  // "auto", or unsandboxed "full-access".
+  // agent. Permission profiles are "plan", "accept-edits", sandbox-first
+  // "auto", or direct-host "full-access". Full Access still honors
+  // administrator/critical policy. Exec Policy is separate:
+  // ~/.kodax/exec-policy.jsonc (and explicitly trusted project policy).
   // "agentMode": "ama",
   // "permissionMode": "accept-edits",
   // User-level Bash allow patterns. Project additions belong in
@@ -48,6 +50,7 @@
   //   "classifierModel": "provider:model"
   // },
   // Optional policy body appended to the fixed Auto reviewer contract.
+  // Review runs only at a proven host boundary: 90s, then one infra-only 180s retry.
   // "autoReview": { "policy": "Prefer reversible, narrowly scoped operations." },
 
   // UI/manual locale.

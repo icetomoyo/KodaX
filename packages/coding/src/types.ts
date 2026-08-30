@@ -2199,7 +2199,11 @@ export interface KodaXOptions {
   workflow?: {
     readonly maxConcurrency?: number;
   };
-  /** Host environment names exposed only to final command targets. Defaults to none. */
+  /**
+   * Shell sandbox options. Command targets inherit the host environment by
+   * default; the legacy `envPass` field is accepted as inert compatibility
+   * input and does not grant additional authority.
+   */
   sandbox?: KodaXSandboxOptions;
   /** FEATURE_221: SDK-consumer self-manual injection (product name + topics). */
   selfManual?: KodaXSelfManualConfig;
@@ -2212,10 +2216,10 @@ export interface KodaXOptions {
   /**
    * FEATURE_092 (v0.7.33): caller-supplied run-scoped guardrails forwarded
    * to `Runner.run` via `RunOptions.guardrails`. Merged with the START
-   * agent's declared guardrails (agent-first, then opts). The REPL injects
-   * the AutoModeToolGuardrail here when `permissionMode === 'auto'`; SDK
-   * consumers can inject custom ToolGuardrail / InputGuardrail / OutputGuardrail
-   * instances. Empty / undefined leaves the agent's own declaration unchanged.
+   * agent's declared guardrails (agent-first, then opts). Runtime owns the
+   * Auto[LLM] reviewer at the proven host boundary; callers may still inject
+   * unrelated ToolGuardrail / InputGuardrail / OutputGuardrail instances.
+   * Empty / undefined leaves the agent's own declaration unchanged.
    */
   guardrails?: readonly import('@kodax-ai/agent').Guardrail[];
   /** AbortSignal for cancelling the API request */
@@ -2872,13 +2876,13 @@ export interface KodaXToolExecutionContext {
   /**
    * Parent-Runner guardrails surfaced into the tool-execution context so nested
    * Agent turns share the same mutable safety state. Sharing the SAME
-   * guardrail instance means the auto-mode `engine` + `denialTracker` +
-   * `circuitBreaker` state is observed across the parent/child boundary —
+   * guardrail instance means the Auto[LLM] review denial tracker and circuit
+   * breaker state are observed across the parent/child boundary —
    * rate-limit by hitting the threshold from a fresh tracker).
    *
    * Single-process / single-thread execution makes the shared mutable state
    * safe under JS run-to-completion semantics — concurrent child tool calls
-   * produce interleaved `recordBlock` / `recordAllow` updates with no tearing.
+   * produce interleaved review-state updates with no tearing.
    */
   guardrails?: readonly import('@kodax-ai/agent').Guardrail[];
   /**

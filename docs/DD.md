@@ -232,10 +232,13 @@ capabilities plus the dedicated account, per-launch logon, and Everyone
 compatibility SIDs. Real nested Node/cmd/PowerShell probes require the account
 SID, matching current Codex; Issue 309 records that an ambient-trustee child
 DACL can therefore bypass a later root capability. The token default DACL still
-excludes the account. Fixed exact sensitive-root denies are installed once with native
-no-follow handles and a newly materialized root is repaired idempotently at
-cold admission. Setup rotates the old account SID before
-recording a strict v2 protocol/SID machine marker. Linux and macOS prepare one
+excludes the account. Pre-alpha.4 exact sensitive-root denies are removed only
+by the versioned Windows setup cutover. Setup generation 4 proves the previous
+sandbox SID idle, removes the exactly owned guards with the previous group SID,
+rotates the account, and records the new protocol/SID generation. Ordinary command admission may
+authorize a missing current capability on an exact root, but it never runs
+legacy ACL cleanup or revokes another Session's shared ACL state. Linux and
+macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
 Windows allow-root ACL changes are exact-root only. The target's enabled
@@ -763,10 +766,13 @@ Key concepts:
 
 - permission modes come from REPL/CLI options and config;
 - tools declare side-effect class;
-- an auto session deterministically admits precisely modeled ordinary reads
-  and workspace/system-temp mutations before classifier latency;
-- remaining calls use the Runtime-owned guardrail before the generic permission
-  hook; only a guardrail `escalate` creates a shared broker request;
+- Plan rejects mutations; Edits and Auto[LLM] first attempt the OS sandbox;
+- sandbox completion is final authority, while only a proven pre-start
+  denial/unavailability reaches host Exec Policy and the profile boundary;
+- Auto review returns allow/deny only at that exact host boundary and never
+  manufactures a shared permission request; an allow produces one host attempt;
+- Full Access skips sandbox and Auto review but still applies administrator
+  forbids, explicit Exec Policy, and the narrow critical-effect fallback;
 - trusted-local workflow scripts require explicit confirmation;
 - verifier and stop-hook failures fail open where blocking would trap the user.
 
@@ -1061,21 +1067,20 @@ accepts both deprecated `expectedScope` and optional `expectedScopes`. Discovery
 pairs each physical root with exactly one expected scope, validates the pairing
 before scanning even an empty store, and never accepts a stale cross-root scope.
 
-The Auto permission analyzer uses the same protected agent-home predicates for
-file and shell mutations. Ordinary descendants, including `agents/*.md`, Sessions,
-tool results, and intermediate artifacts, may be read and written automatically.
-The home root cannot be removed or overwritten as a whole. Runtime mutations
-and writes to the legacy host-owned `processes/children` registry are hard-denied.
-Because that old location was historically model-writable, its records are
-quarantined for diagnosis and never used as process-signal authority.
-The host-owned `learned/` tree is also hard-denied to model mutation; Memory and
-Skill lifecycle APIs remain the only writers.
+Host-owned file mutation sinks keep their own namespace-integrity checks.
+Ordinary Agent Home descendants, including `agents/*.md`, Sessions, tool
+results, and intermediate artifacts, remain working data. Controlled file
+sinks do not replace the Runtime, legacy `processes/children`, or `learned/`
+lifecycle APIs; this is a non-shell host-namespace invariant, not a permission
+profile or Full Access shell restriction. Legacy unauthenticated process records
+are quarantined for diagnosis and never used as process-signal authority.
 Shell reads are broadly available inside the workspace sandbox, including the
 Runtime tree, Agent Home, credential locations, and global Git configuration.
-Host-boundary mutations of credential/security controls remain reviewer facts;
-ancestor traversal never inherits a child mutation exemption.
+Concrete Runtime, credential, security-control, and whole-home mutations become
+reviewer facts only if execution reaches the Auto[LLM] host boundary; ancestor
+traversal never inherits a child mutation exemption.
 
-File mutation sinks recheck the Runtime/home-root hard boundary immediately
+File mutation sinks recheck their host-owned namespace invariants immediately
 before execution. Undo records context-local canonical path identities and
 refuses restore after retargeting. Model-facing worktree creation ignores any
 undeclared base path; only the workflow controller can supply its Runtime-owned
@@ -1083,16 +1088,18 @@ worktree base through trusted execution context. Since FEATURE_295, controlled
 text sinks use the native trusted-text transaction described in section 3 and
 never acquire the legacy cross-process filesystem-effect lease. Worktree and
 other non-text namespace effects retain their separate legacy coordination.
-Recognized shell mutations of the Agent Home root or Runtime are blocked before
-the Auto reviewer; credential
-and security configuration remains on the reviewable branch.
+Recognized shell mutations of the Agent Home root, Runtime, credentials, and
+security configuration remain on the reviewable branch. Full Access skips this
+reviewer; only administrator `forbid` policy and the narrow critical-effect
+fallback remain non-bypassable.
 Shell authorization remains independent from containment. Windows v2 uses ASRT
 only for the network/account launch and the native host/runner path described in
 section 3 for per-command restricted token, private desktop, framed stdio, and
 creation-time Job containment. Different policies, Sessions, and Runtime
-processes do not share a command-lifetime filesystem-effect lease. Cold
-admission removes only exact obsolete KodaX sandbox-account read-deny ACEs and
-preserves unrelated ACLs; caller-supplied dynamic `denyRead` roots in the
+processes do not share a command-lifetime filesystem-effect lease. Setup
+generation 4 removes only exact obsolete KodaX sandbox-account read-deny ACEs
+after the old SID is idle and preserves unrelated ACLs; ordinary admission
+performs zero legacy cleanup. Caller-supplied dynamic `denyRead` roots in the
 standalone sandbox API keep their short execution-logon ACL transaction and
 crash-safe receipt. Linux and macOS use one ASRT bubblewrap or Seatbelt wrapper per command
 without a KodaX workspace-session owner. A pre-target-start sandbox preparation
@@ -1554,5 +1561,5 @@ spawn schema aligned with `AgentSpawnInput`, including required control keys.
 - Product requirements: [PRD.md](PRD.md)
 - High-level design: [HLD.md](HLD.md)
 - Architecture decisions: [ADR.md](ADR.md)
-- SDK embedder guide: [SDK_EMBEDDER_GUIDE.md](SDK_EMBEDDER_GUIDE.md)
+- SDK embedder guide: [embedder-guide.md](../public_docs/sdk/embedder-guide.md)
 - Release process: [release.md](release.md)

@@ -14,8 +14,10 @@
     "daemonShutdownVerification": 1,
     "integrationConfigResilience": 1,
     "managedRunDurability": 1,
+    "runtimeAutoModeGuardrail": 5,
     "runtimeExitSettlement": 2,
     "sessionEventJournal": 1,
+    "sharedSessionSettings": 2,
     "liveOutputSegments": 1
   },
   "workspaces": [
@@ -213,8 +215,10 @@
     "scripts/production-env.cjs",
     "README.md",
     "README_CN.md",
+    "public_docs/README.md",
     "public_docs/sdk/embedder-guide.md",
-    "public_docs/configuration/sandbox.md",
+    "public_docs/configuration",
+    "public_docs/getting-started",
     "LICENSE",
     "CHANGELOG.md"
   ]

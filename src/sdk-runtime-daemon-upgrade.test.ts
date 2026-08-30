@@ -63,6 +63,7 @@ vi.mock('./runtime-daemon/exit-settlement.js', async (importOriginal) => {
 
 import {
   connectKodaXRuntime,
+  createKodaXRuntime,
   KODAX_RUNTIME_SDK_CAPABILITIES,
   RuntimeDaemonCapabilityUpgradeError,
   settleKodaXRuntimeExit,
@@ -177,7 +178,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         conversationHistory: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 6 },
       },
@@ -221,7 +222,7 @@ describe('Runtime daemon capability upgrade', () => {
       daemonManagement: { version: 1 },
       managedRunDurability: { version: 1 },
       liveOutputSegments: { version: 1 },
-      runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+      runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
       sandboxRuntime: { version: 6 },
       sessionEventJournal: { version: 1 },
@@ -270,16 +271,25 @@ describe('Runtime daemon capability upgrade', () => {
     expect(newClose).toHaveBeenCalled();
   });
 
-  it('replaces an idle v3 daemon when auto-start requires the v4 non-persistent fallback contract', async () => {
+  it('replaces an idle v4 daemon when auto-start requires the v5 sandbox-first contract', async () => {
     const calls: string[] = [];
     const oldTransport = createLegacyTransport({
       preflight: createPreflight(),
       calls,
       close: vi.fn(async () => undefined),
       capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        crashOutcomeModel: { version: 2 },
         daemonManagement: { version: 1 },
+        daemonShutdownVerification: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 6 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
         runtimeAutoModeGuardrail: {
-          version: 3,
+          version: 4,
           owner: 'session-runtime',
           fallbackPersistsEngine: true,
         },
@@ -317,6 +327,100 @@ describe('Runtime daemon capability upgrade', () => {
     expect(newClose).toHaveBeenCalled();
   });
 
+  it('replaces an idle shared-settings v1 daemon when auto-start requires the four-profile v2 contract', async () => {
+    const calls: string[] = [];
+    const oldTransport = createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close: vi.fn(async () => undefined),
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        daemonShutdownVerification: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 6 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 1 },
+      },
+      onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
+    });
+    const newClose = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(oldTransport))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, newClose)));
+    upgradeMocks.readLockOwner.mockReturnValue({
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon',
+    });
+
+    const runtime = await connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+
+    expect(runtime.identity.runtimeId).toBe('runtime_current');
+    expect(calls).toEqual([
+      'old:initialize',
+      'old:daemon.management.get',
+      'old:daemon.rollbackToInline',
+      'old:close',
+      'new:initialize',
+    ]);
+    await runtime.close();
+    expect(newClose).toHaveBeenCalled();
+  });
+
+  it('enforces v5/v2 upgrade requirements through createKodaXRuntime daemon mode', async () => {
+    const calls: string[] = [];
+    const oldTransport = createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close: vi.fn(async () => undefined),
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        daemonShutdownVerification: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 6 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+      },
+      onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
+    });
+    const newClose = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(oldTransport))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, newClose)));
+    upgradeMocks.readLockOwner.mockReturnValue({
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon',
+    });
+
+    const runtime = await createKodaXRuntime({
+      mode: 'daemon',
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+
+    expect(runtime.identity.runtimeId).toBe('runtime_current');
+    expect(calls).toContain('old:daemon.rollbackToInline');
+    await runtime.close();
+    expect(newClose).toHaveBeenCalled();
+  });
+
   it.skipIf(process.platform !== 'win32').each([1, 2, 3])(
     'replaces an idle sandbox v%i daemon before exposing sandbox execution v4',
     async (sandboxVersion) => {
@@ -329,7 +433,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: { version: 2 },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: sandboxVersion, asrtVersion: '0.0.65' },
           sessionEventJournal: { version: 1 },
@@ -381,7 +485,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         crashOutcomeModel: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -431,7 +535,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         crashOutcomeModel: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
     })));
@@ -460,7 +564,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: { version: 2 },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: sandboxVersion, asrtVersion: '0.0.65' },
           sessionEventJournal: { version: 1 },
@@ -493,7 +597,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
     });
@@ -535,7 +639,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         managedRunDurability: undefined,
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -581,7 +685,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: version === undefined ? undefined : { version },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
         onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -629,7 +733,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonManagement: { version: 1 },
           sandboxRuntime: { version: 2 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
         onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -675,7 +779,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonManagement: { version: 1 },
           sandboxRuntime: { version: 2 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
       });
@@ -718,7 +822,9 @@ describe('Runtime daemon capability upgrade', () => {
       liveOutputSegments: 1,
       managedRunDurability: 1,
       runtimeExitSettlement: 2,
+      runtimeAutoModeGuardrail: 5,
       sandboxRuntime: 6,
+      sharedSessionSettings: 2,
       runtimeEventCoalescing: 1,
       sessionEventJournal: 1,
     });
@@ -732,7 +838,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 3, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
     });
@@ -776,7 +882,7 @@ describe('Runtime daemon capability upgrade', () => {
       actorSettlementConvergence: { version: 2 },
       daemonManagement: { version: 1 },
       managedRunDurability: { version: 1 },
-      runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+      runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
       sandboxRuntime: { version: 6 },
       sessionEventJournal: { version: 1 },
@@ -850,7 +956,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: undefined,
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 6 },
       },
@@ -882,7 +988,7 @@ describe('Runtime daemon capability upgrade', () => {
         capabilities: {
           daemonManagement: { version: 1 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: 6 },
         },
@@ -925,7 +1031,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 6 },
       },
@@ -1001,7 +1107,10 @@ describe('Runtime daemon capability upgrade', () => {
       calls,
       close: vi.fn(async () => undefined),
       omitLiveOutputSegments: true,
-      capabilities: { daemonManagement: { version: 1 } },
+      capabilities: {
+        daemonManagement: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+      },
       onInitialize: (params) => initializedParams.push(params),
     });
     upgradeMocks.createSocketTransport.mockResolvedValueOnce(transport);
@@ -1124,7 +1233,10 @@ describe('Runtime daemon capability upgrade', () => {
       calls,
       close: vi.fn(async () => undefined),
       omitLiveOutputSegments: true,
-      capabilities: { daemonManagement: { version: 1 } },
+      capabilities: {
+        daemonManagement: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+      },
     });
 
     await expect(connectKodaXRuntime({
@@ -1194,7 +1306,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         conversationHistory: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 6 },
       },
@@ -1234,7 +1346,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       },
     });
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(
@@ -1407,6 +1519,7 @@ function createLegacyTransport(input: {
             crashOutcomeModel: { version: 2 },
             managedRunDurability: { version: 1 },
             sessionEventJournal: { version: 1 },
+            sharedSessionSettings: { version: 2 },
             ...(input.omitLiveOutputSegments
               ? {}
               : { liveOutputSegments: { version: 1 } }),
@@ -1468,7 +1581,8 @@ function createCurrentTransport(
         liveOutputSegments: { version: 1 },
         sandboxRuntime: { version: 6 },
         sessionEventJournal: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
+        sharedSessionSettings: { version: 2 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         ...(process.platform === 'win32'
           ? { daemonShutdownVerification: { version: 1 } }

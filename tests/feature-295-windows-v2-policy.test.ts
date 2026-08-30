@@ -1346,7 +1346,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await expect(stat(escape)).rejects.toMatchObject({ code: 'ENOENT' });
   }, 45_000);
 
-  it('lets different Runtime processes and policies reach the target concurrently', async () => {
+  it('starts a second Runtime while a 120s policy remains active', async () => {
     const parent = await createWindowsV2TestRoot('kodax-v2-policy-concurrent-');
     roots.push(parent);
     const rootA = path.join(parent, 'A');
@@ -1354,15 +1354,19 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await Promise.all([mkdir(rootA), mkdir(rootB)]);
     const readyA = path.join(rootA, 'ready');
     const readyB = path.join(rootB, 'ready');
+    const releaseA = path.join(rootA, 'release');
     const sandboxRuntimeUrl = new URL('../src/sandbox-runtime.ts', import.meta.url).href;
     const targetScript = [
       'const fs=require("node:fs")',
       'fs.writeFileSync(process.argv[1],"ready")',
       'const wait=new Int32Array(new SharedArrayBuffer(4))',
-      'const deadline=Date.now()+10000',
-      'while(!fs.existsSync(process.argv[2])&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
-      'if(!fs.existsSync(process.argv[2])) process.exit(41)',
-      'process.stdout.write("peer-ready")',
+      'const release=process.argv[2]',
+      'if(release){',
+      '  const deadline=Date.now()+120000',
+      '  while(!fs.existsSync(release)&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+      '  if(!fs.existsSync(release)) process.exit(41)',
+      '}',
+      'process.stdout.write("target-ready")',
     ].join(';');
     const runtimeScript = [
       `import { runKodaXSandboxed } from ${JSON.stringify(sandboxRuntimeUrl)}`,
@@ -1370,10 +1374,10 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       'const result=await runKodaXSandboxed(input)',
       'process.stdout.write(JSON.stringify(result))',
     ].join(';');
-    const runRuntime = async (root: string, ownReady: string, peerReady: string) => {
+    const runRuntime = async (root: string, ownReady: string, release: string) => {
       const request = Buffer.from(JSON.stringify({
         command: process.execPath,
-        args: ['-e', targetScript, ownReady, peerReady],
+        args: ['-e', targetScript, ownReady, release],
         cwd: root,
         filesystem: {
           allowRead: [parent],
@@ -1382,13 +1386,13 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
           denyWrite: [],
         },
         network: { mode: 'allow' },
-        timeoutMs: 20_000,
+        timeoutMs: release.length > 0 ? 130_000 : 20_000,
         inheritEnvironment: true,
       }), 'utf8').toString('base64url');
       const { stdout } = await execFile(
         process.execPath,
         ['--import', 'tsx', '--input-type=module', '-e', runtimeScript, request],
-        { cwd: process.cwd(), env: process.env, timeout: 30_000, maxBuffer: 1024 * 1024 },
+        { cwd: process.cwd(), env: process.env, timeout: 140_000, maxBuffer: 1024 * 1024 },
       );
       return JSON.parse(stdout) as {
         readonly status: string;
@@ -1399,12 +1403,68 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       };
     };
 
-    const [policyA, policyB] = await Promise.all([
-      runRuntime(rootA, readyA, readyB),
-      runRuntime(rootB, readyB, readyA),
-    ]);
+    let holderSettled = false;
+    const policyAPromise = runRuntime(rootA, readyA, releaseA).finally(() => {
+      holderSettled = true;
+    });
+    let primaryFailure: unknown;
+    try {
+      const readyDeadline = Date.now() + 30_000;
+      while (Date.now() < readyDeadline) {
+        try {
+          await stat(readyA);
+          break;
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (holderSettled) {
+          try {
+            const earlyResult = await policyAPromise;
+            throw new Error(
+              `The first Runtime exited before its target became ready: ${JSON.stringify(earlyResult)}`,
+            );
+          } catch (error: unknown) {
+            throw new AggregateError(
+              [error],
+              'The first Runtime failed before its target became ready.',
+            );
+          }
+        }
+        await delay(25);
+      }
+      await expect(stat(readyA)).resolves.toBeDefined();
 
-    for (const result of [policyA, policyB]) {
+      const policyB = await runRuntime(rootB, readyB, '');
+      expect(holderSettled).toBe(false);
+      expect(policyB).toMatchObject({
+        status: 'completed',
+        sandboxed: true,
+        exitCode: 0,
+        stdout: 'target-ready',
+      });
+    } catch (error: unknown) {
+      primaryFailure = error;
+    } finally {
+      await writeFile(releaseA, 'release', 'utf8');
+    }
+
+    let policyA: Awaited<typeof policyAPromise> | undefined;
+    let holderFailure: unknown;
+    try {
+      policyA = await policyAPromise;
+    } catch (error: unknown) {
+      holderFailure = error;
+    }
+    if (primaryFailure !== undefined && holderFailure !== undefined) {
+      throw new AggregateError(
+        [primaryFailure, holderFailure],
+        'Both Windows v2 concurrent Runtime paths failed.',
+      );
+    }
+    if (holderFailure !== undefined) throw holderFailure;
+    if (primaryFailure !== undefined) throw primaryFailure;
+    if (policyA === undefined) throw new Error('The first Runtime returned no result.');
+    for (const result of [policyA]) {
       if (result.status !== 'completed') {
         throw new Error(`Windows v2 concurrent smoke unavailable: ${JSON.stringify(result.doctor)}`);
       }
@@ -1413,9 +1473,9 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         sandboxed: true,
         exitCode: 0,
       });
-      expect(result.stdout).toContain('peer-ready');
+      expect(result.stdout).toContain('target-ready');
     }
-  }, 60_000);
+  }, 180_000);
 
   it('shares one same-policy proxy when fixed Windows proxy ports are under pressure', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-shared-proxy-');

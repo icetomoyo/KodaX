@@ -521,7 +521,7 @@ export interface SessionManager {
    * sessions directory stays empty regardless of `session.id`.
    *
    * See {@link FileSessionStorage} for the concrete implementation and
-   * `docs/SDK_EMBEDDER_GUIDE.md` §6 for the end-to-end recipe.
+   * `public_docs/sdk/embedder-guide.md` §6 for the end-to-end recipe.
    */
   storage: FileSessionStorage;
 }

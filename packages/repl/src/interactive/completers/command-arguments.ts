@@ -32,7 +32,7 @@ const MODE_ARGS: ArgumentDefinition[] = [
   },
   {
     name: 'accept-edits',
-    description: 'File edits auto-approved, bash requires confirmation',
+    description: 'Sandbox first; user decides only at the host boundary',
     type: 'enum',
   },
   {
@@ -42,7 +42,7 @@ const MODE_ARGS: ArgumentDefinition[] = [
   },
   {
     name: 'full-access',
-    description: 'Run with unrestricted host access',
+    description: 'Direct host execution; Exec Policy still applies',
     type: 'enum',
   },
 ];

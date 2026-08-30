@@ -71,6 +71,7 @@ import type {
   RuntimeInput,
   RuntimePermissionRequestInput,
   RuntimeRunInputDeliveredEventPayload,
+  RuntimeSessionSettingsPatch,
   RuntimeStartRunInput,
 } from "./sdk-runtime.js";
 import type { RuntimeDaemonEndpoint } from "./runtime-daemon/transport.js";
@@ -102,6 +103,8 @@ const mutableNodeFs = createRequire(import.meta.url)("node:fs") as {
 const SESSION_EVENT_JOURNAL_CAPABILITY = {
   sessionEventJournal: { version: 1 },
   liveOutputSegments: { version: 1 },
+  runtimeAutoModeGuardrail: { version: 5, owner: "session-runtime" },
+  sharedSessionSettings: { version: 2 },
 } as const;
 
 const replMock = vi.hoisted(() => ({
@@ -281,11 +284,17 @@ describe("createKodaXRuntime", () => {
       "./sdk-runtime.js"
     );
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.conversationHistory).toBe(2);
+    expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(5);
+    expect(KODAX_RUNTIME_SDK_CAPABILITIES.sharedSessionSettings).toBe(2);
     const runtime = await createKodaXRuntime({
       mode: "embedded",
       isolation: "worker",
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "worker-sessions"),
+      requirements: {
+        runtimeAutoModeGuardrail: 5,
+        sharedSessionSettings: 2,
+      },
     });
 
     expect(runtime.identity).toMatchObject({
@@ -314,13 +323,27 @@ describe("createKodaXRuntime", () => {
       commandLifetimeFilesystemLease: false,
     });
     expect(runtime.capabilities.runtimeAutoModeGuardrail).toMatchObject({
-      version: 4,
+      version: 5,
+      sandboxFirst: true,
+      sandboxCompletionAuthority: true,
+      hostBoundaryReviewOnly: true,
+      escalationCreatesPermission: false,
+      automaticUserPromptOnDeny: false,
       defaultClassifierTimeoutMs: 90_000,
       retryClassifierTimeoutMs: 180_000,
       maxClassifierAttempts: 2,
     });
     expect(runtime.capabilities.runtimeAutoModeGuardrail)
       .not.toHaveProperty("defaultSpeculativeWindowMs");
+    expect(runtime.capabilities.sharedSessionSettings).toEqual({
+      version: 2,
+      permissionModes: ["plan", "accept-edits", "auto", "full-access"],
+      legacyPermissionModeAliases: { "auto-in-project": "auto" },
+      keys: expect.arrayContaining([
+        "permissionMode",
+        "autoModeClassifierModel",
+      ]),
+    });
     expect(runtime.capabilities.runtimeEventCoalescing).toEqual({
       version: 1,
     });
@@ -863,7 +886,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when an attach-only daemon lacks Runtime-owned Auto guardrails", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { createKodaXRuntime } = await import("./sdk-runtime.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -877,7 +900,8 @@ describe("createKodaXRuntime", () => {
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            sharedSessionSettings: { version: 1 },
+            runtimeAutoModeGuardrail: { version: 4, owner: "session-runtime" },
+            sharedSessionSettings: { version: 2 },
           },
         };
       },
@@ -887,9 +911,10 @@ describe("createKodaXRuntime", () => {
     };
 
     await expect(
-      connectKodaXRuntime({
-        transport,
-        requirements: { runtimeAutoModeGuardrail: 1 },
+      createKodaXRuntime({
+        mode: "daemon",
+        daemonTransport: transport,
+        autoStartDaemon: false,
       }),
     ).rejects.toThrow(/does not support.*runtimeAutoModeGuardrail/i);
   });
@@ -910,7 +935,7 @@ describe("createKodaXRuntime", () => {
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
             runtimeAutoModeGuardrail: {
-              version: 4,
+              version: 5,
               owner: "session-runtime",
             },
           },
@@ -929,7 +954,7 @@ describe("createKodaXRuntime", () => {
     ).rejects.toThrow(/does not support.*runtimeEventCoalescing/i);
   });
 
-  it("accepts a newer Runtime Auto guardrail capability for an older minimum requirement", async () => {
+  it("accepts a newer Runtime Auto guardrail capability for the alpha.4 minimum", async () => {
     const { connectKodaXRuntime } = await import("./sdk-runtime.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
@@ -944,7 +969,7 @@ describe("createKodaXRuntime", () => {
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            runtimeAutoModeGuardrail: { version: 2, owner: "session-runtime" },
+            runtimeAutoModeGuardrail: { version: 6, owner: "session-runtime" },
           },
         };
       },
@@ -955,7 +980,7 @@ describe("createKodaXRuntime", () => {
 
     const runtime = await connectKodaXRuntime({
       transport,
-      requirements: { runtimeAutoModeGuardrail: 1 },
+      requirements: { runtimeAutoModeGuardrail: 5 },
     });
     expect(runtime.identity.runtimeId).toBe("daemon-with-auto-guardrail-v2");
     await runtime.close();
@@ -1356,8 +1381,6 @@ describe("createKodaXRuntime", () => {
           prefix: ["git", "push"],
           decision: "forbidden",
           justification: "Publishing is administrator-controlled.",
-          source: "admin",
-          sourcePath: "host:admin",
         }],
         trustedProjectRoots: [tempRoot],
       },
@@ -2102,6 +2125,58 @@ describe("createKodaXRuntime", () => {
       recreated.sessions.getSettings(session.id),
     ).resolves.not.toHaveProperty("compactionTriggerTokens");
     await recreated.close();
+  });
+
+  it("normalizes the legacy persisted default permission mode to Edits", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const session = await runtime.sessions.create({
+      sessionId: "legacy-default-permission",
+      title: "Legacy default permission",
+    });
+    await runtime.close();
+
+    const settingsDir = path.join(
+      tempRoot,
+      ".kodax",
+      "runtime",
+      "session-settings",
+    );
+    await fs.mkdir(settingsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(settingsDir, `${encodeURIComponent(session.id)}.json`),
+      JSON.stringify({ permissionMode: "default" }),
+      "utf-8",
+    );
+
+    const recreated = await createKodaXRuntime({ homeDir: tempRoot });
+    await expect(recreated.sessions.getSettings(session.id)).resolves.toEqual({
+      permissionMode: "accept-edits",
+    });
+    await recreated.close();
+  });
+
+  it("canonicalizes SDK permission aliases and rejects unknown profile ids", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const session = await runtime.sessions.create({
+      title: "SDK permission profile input",
+    });
+
+    await expect(
+      runtime.sessions.updateSettings(session.id, {
+        permissionMode: "auto-in-project",
+      }),
+    ).resolves.toMatchObject({ permissionMode: "auto" });
+    await expect(
+      runtime.sessions.updateSettings(session.id, {
+        permissionMode: "invalid-mode",
+      } as unknown as RuntimeSessionSettingsPatch),
+    ).rejects.toThrow(
+      "permissionMode must be one of: plan, accept-edits, auto, full-access",
+    );
+
+    await runtime.close();
   });
 
   it("keeps 0.7.x compatibility aliases without restoring retired AMAW behavior", async () => {

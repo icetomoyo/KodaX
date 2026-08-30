@@ -33,6 +33,12 @@ export interface ExecPolicyRule {
   readonly compound?: boolean;
 }
 
+/** Host/config input before KodaX assigns trusted provenance. */
+export type ExecPolicyRuleInput = Omit<
+  ExecPolicyRule,
+  'source' | 'sourcePath'
+>;
+
 export interface ExecPolicyOperation {
   readonly tokens: readonly string[];
   readonly hostExecutable?: string;
@@ -55,7 +61,7 @@ export interface LoadExecPolicyOptions {
   readonly userConfigDir: string;
   readonly projectRoot?: string;
   readonly trustProjectPolicy?: boolean;
-  readonly adminRules?: readonly ExecPolicyRule[];
+  readonly adminRules?: readonly ExecPolicyRuleInput[];
 }
 
 export interface LoadExecPolicyResult {
@@ -116,11 +122,7 @@ export async function loadExecPolicy(
   const errors: Array<{ readonly path: string; readonly message: string }> = [];
   for (let index = 0; index < (options.adminRules?.length ?? 0); index += 1) {
     const value: unknown = options.adminRules?.[index];
-    const sourcePath = isRecord(value)
-      && typeof value.sourcePath === 'string'
-      && value.sourcePath.length > 0
-      ? value.sourcePath
-      : 'host:admin';
+    const sourcePath = 'host:admin';
     const parsed = parseRule(adminRuleValue(value), sourcePath, 'admin', index);
     if (parsed.ok) rules.push(parsed.rule);
     else errors.push({ path: sourcePath, message: parsed.error });

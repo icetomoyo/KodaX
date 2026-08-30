@@ -1,9 +1,6 @@
 import path from 'node:path';
-import os from 'node:os';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createAgentHomeShellBoundaryGuardrail,
   createAutoModeToolGuardrail,
 } from './guardrail.js';
 import type { AutoModeAskUser, AutoModeGuardrailConfig } from './guardrail.js';
@@ -17,8 +14,7 @@ import type {
   KodaXTextBlock,
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { runToolBeforeGuardrails } from '@kodax-ai/agent';
-import type { GuardrailContext, RunnerToolCall, ToolGuardrail } from '@kodax-ai/agent';
+import type { GuardrailContext, RunnerToolCall } from '@kodax-ai/agent';
 
 const emptyRules = { allow: [], soft_deny: [], environment: [] };
 
@@ -90,141 +86,6 @@ const callBash = (command: string): RunnerToolCall => ({
   id: 'c1',
   name: 'bash',
   input: { command },
-});
-
-describe('Agent Home shell boundary', () => {
-  it('allows exact ordinary Agent Home writes without requiring a sandbox', async () => {
-    const { setAgentConfigHome } = await import('@kodax-ai/agent');
-    const agentHome = await mkdtemp(path.join(os.tmpdir(), 'kodax-standalone-home-'));
-    await mkdir(path.join(agentHome, 'agents'));
-    setAgentConfigHome(agentHome);
-    try {
-      const guardrail = createAgentHomeShellBoundaryGuardrail({
-        projectRoot: process.cwd(),
-        executionCwd: process.cwd(),
-      });
-      const verdict = await guardrail.beforeTool!(callBash(
-        `Set-Content -Path "${path.join(agentHome, 'agents', 'reviewer.md')}" -Value result`,
-      ), ctx());
-
-      expect(verdict.action).toBe('allow');
-    } finally {
-      setAgentConfigHome(undefined);
-      await rm(agentHome, { recursive: true, force: true });
-    }
-  });
-
-  it('blocks opaque shell execution without authoritative host review', async () => {
-    const guardrail = createAgentHomeShellBoundaryGuardrail({
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
-    });
-    const verdict = await guardrail.beforeTool!(
-      callBash('node -e "eval(process.env.KODAX_TASK)"'),
-      ctx(),
-    );
-
-    expect(verdict.action).toBe('block');
-  });
-
-  it('blocks exact protected Agent Home reads when no host review exists', async () => {
-    const { setAgentConfigHome } = await import('@kodax-ai/agent');
-    const agentHome = await mkdtemp(path.join(os.tmpdir(), 'kodax-standalone-home-'));
-    setAgentConfigHome(agentHome);
-    try {
-      const guardrail = createAgentHomeShellBoundaryGuardrail({
-        projectRoot: process.cwd(),
-        executionCwd: process.cwd(),
-      });
-      const verdict = await guardrail.beforeTool!(
-        callBash(`type "${path.join(agentHome, 'config.json')}"`),
-        ctx(),
-      );
-
-      expect(verdict.action).toBe('block');
-    } finally {
-      setAgentConfigHome(undefined);
-      await rm(agentHome, { recursive: true, force: true });
-    }
-  });
-
-  it('allows opaque shell execution after authoritative host review', async () => {
-    const guardrail = createAgentHomeShellBoundaryGuardrail({
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
-      protectedReadReviewAvailable: true,
-    });
-    const verdict = await guardrail.beforeTool!(
-      callBash('node -e "eval(process.env.KODAX_TASK)"'),
-      ctx(),
-    );
-
-    expect(verdict.action).toBe('allow');
-  });
-
-  it('does not make host authorization depend on sandbox containment availability', async () => {
-    const guardrail = createAgentHomeShellBoundaryGuardrail({
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
-      protectedReadReviewAvailable: true,
-    });
-    const verdict = await guardrail.beforeTool!(
-      callBash('node -e "eval(process.env.KODAX_TASK)"'),
-      ctx(),
-    );
-
-    expect(verdict.action).toBe('allow');
-  });
-
-  it('does not treat mutation containment as protected-read approval', async () => {
-    const { setAgentConfigHome } = await import('@kodax-ai/agent');
-    const agentHome = await mkdtemp(path.join(os.tmpdir(), 'kodax-standalone-home-'));
-    setAgentConfigHome(agentHome);
-    try {
-      const guardrail = createAgentHomeShellBoundaryGuardrail({
-        projectRoot: process.cwd(),
-        executionCwd: process.cwd(),
-      });
-      const protectedRead = await guardrail.beforeTool!(
-        callBash(`type "${path.join(agentHome, 'config.json')}"`),
-        ctx(),
-      );
-      const opaqueRead = await guardrail.beforeTool!(
-        callBash('node -e "eval(process.env.KODAX_TASK)"'),
-        ctx(),
-      );
-
-      expect(protectedRead.action).toBe('block');
-      expect(opaqueRead.action).toBe('block');
-    } finally {
-      setAgentConfigHome(undefined);
-      await rm(agentHome, { recursive: true, force: true });
-    }
-  });
-
-  it('checks the final call after an earlier caller guardrail rewrites Bash', async () => {
-    const rewrite: ToolGuardrail = {
-      kind: 'tool',
-      name: 'caller-rewrite',
-      beforeTool: async (call) => ({
-        action: 'rewrite',
-        payload: callBash('node -e "eval(process.env.KODAX_TASK)"'),
-      }),
-    };
-    const boundary = createAgentHomeShellBoundaryGuardrail({
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
-    });
-
-    const outcome = await runToolBeforeGuardrails(
-      callBash('echo safe'),
-      [rewrite, boundary],
-      ctx(),
-      null,
-    );
-
-    expect(outcome.kind).toBe('block');
-  });
 });
 
 describe('AutoModeToolGuardrail — Tier 1', () => {
@@ -3901,7 +3762,7 @@ describe('AutoModeToolGuardrail — historical Tier 0 detector (FEATURE_158)', (
     }
   });
 
-  it('keeps credential writes reviewable after splitting the hard boundary', async () => {
+  it('keeps credential writes reviewable without a separate Agent Home boundary', async () => {
     const { setAgentConfigHome } = await import('@kodax-ai/agent');
     const agentHome = path.resolve('/tmp/test-kodax-review-home');
     setAgentConfigHome(agentHome);
@@ -3926,27 +3787,6 @@ describe('AutoModeToolGuardrail — historical Tier 0 detector (FEATURE_158)', (
     }
   });
 
-  it('keeps legacy user approval inert at the Agent Home hard boundary', async () => {
-    const { setAgentConfigHome } = await import('@kodax-ai/agent');
-    const agentHome = path.resolve('/tmp/test-kodax-rules-hard-home');
-    setAgentConfigHome(agentHome);
-    try {
-      const askUser = vi.fn<AutoModeAskUser>(async () => 'allow');
-      const g = createAutoModeToolGuardrail({
-        ...baseConfig(''),
-        askUser,
-      });
-
-      const verdict = await g.beforeTool!(callBash(
-        `Remove-Item -Recurse -Path "${path.join(agentHome, 'runtime')}"`,
-      ), ctx());
-
-      expect(verdict.action).toBe('block');
-      expect(askUser).not.toHaveBeenCalled();
-    } finally {
-      setAgentConfigHome(undefined);
-    }
-  });
 });
 
 describe('AutoModeToolGuardrail — signals threading (FEATURE_158)', () => {

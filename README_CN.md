@@ -195,16 +195,18 @@ option，以及多余参数都会失败且不改变目录。目标位置是所�
 基础设施失败重试一次后阻断并提示更安全路线，不降级权限模式。Workspace
 containment 允许包括 Agent Home、凭据位置和全局 Git 配置在内的广泛宿主读取，仍只
 允许 workspace/系统 TMP 写入，并保留外部网络。详见
-[v0.7.78 设计](docs/features/v0.7.78.md)、
-[SDK 指南第 29–30 节](public_docs/sdk/embedder-guide.md#29-evidence-gated-background-skill-learning-feature_263-v0778)。
+[v0.7.96 FEATURE_297](docs/features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy)、
+[ADR-069](docs/ADR.md#adr-069-sandbox-success-is-authority-while-host-escalation-is-a-separate-policy-boundary) 和
+[SDK 权限指南](public_docs/sdk/embedder-guide.md#24-runtime-owned-permission-routing-and-plan-bridges-v0796)。
 
 本次发布收口同时保证相邻表面不扭曲意图：Edit/Plan 可加载静态 Skill 指令，但不
 预授权其后续副作用；动态 Skill 命令必须由宿主显式控制 executor；根 AMA 会通过受
 治理的 `memory_intent` 控制面立即执行用户明确提出的记住、纠正与遗忘请求，只有异常
 或推断出的变更才进入可解释的决策；Workflow
 Actor wait 只有在 workflow 显式设置
-deadline 时才超时；embedded、Worker 与 daemon 的 Runtime Auto v4 均声明
-同一套仅 Auto[LLM] 合约。Actor owner 还会验证 Runtime identity，而不是只看
+deadline 时才超时；embedded、Worker 与 daemon 的 Runtime Auto v5 及共享
+Session settings v2 均声明同一套 sandbox-first 四权限档位合约。Actor owner
+还会验证 Runtime identity，而不是只看
 PID，因此 PID 复用不会卡住已崩溃 owner。恢复 Session 选择器也改为显示宿主本地时区。
 
 **v0.7.79 发布**：configured outbound A2A Agent 现在可持久化两项彼此独立、
@@ -330,7 +332,7 @@ Issue 308 记录 ASRT 0.0.65 对不同策略/Runtime 仍存在的固定端口容
 controller。Windows 可信替换会把旧 sandbox owner 的文件自动归一为可信 host
 owner，并保留有序的最终有效 ACE 策略；文件系统可在原子命名空间提交时规范化
 DACL protection/inheritance 控制位，旧父目录的继承权限不会被原样冻结。
-即使工作区整体可写，shell 也不能读写工作区内的 `.kodax/runtime` 控制状态。
+即使工作区整体可写，shell 可以读取但不能写入工作区内的 `.kodax/runtime` 控制状态。
 其 named pipe 创建时即应用仅 Host/SYSTEM 的 protected DACL，并保留
 多个 pending instance。受限目标无法连接或耗尽它；controller/broker 丢失会关闭
 通道并排空所有关联命令的 Job。native 请求与终态记录位于无 reparse、仅 host/SYSTEM
@@ -346,8 +348,11 @@ DACL protection/inheritance 控制位，旧父目录的继承权限不会被原�
 这次不兼容的权威拆分由 `sandboxRuntime:6` 门禁；新客户端不会静默复用仍执行
 v0.7.95 旧调用图的 daemon。
 现有 Windows 安装需要运行一次 `kodax sandbox setup`：切换流程会等待旧沙箱进程
-退出，使用新 SID 重建专用账户，并记录 native protocol/SID 代际。迁移状态缺失时
-只阻止 native shell 准入，不会阻止可信文本工具。
+退出，以旧 group SID 只移除可精确证明属于 KodaX 的旧 sensitive-root guard，
+再使用新 SID 重建专用账户，并记录 setup generation 4 与 native protocol/SID 代际。迁移状态缺失时
+只阻止 native shell 准入，不会阻止可信文本工具。普通命令 admission 不再重复这项
+legacy 清理，也不会撤销其他 Session 的共享 ACL 状态；每条 Runtime 命令仍有独立的
+request、token、控制通道与 Job。
 Windows 的嵌入发布 manifest 会钉住 text/shell 的 protocol 与 hash，以及 ASRT
 release version 与 hash。已校验的可执行文件进入独立于 `KODAX_HOME` 的 LocalAppData
 content-addressed 受保护存储；ASRT 在落库前与 broker 启动前都会重验。text 仅

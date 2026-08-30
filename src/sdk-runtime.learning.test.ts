@@ -276,6 +276,8 @@ describe('runtime.learning inline facade', () => {
               learningCenter: { version: 1 },
               sessionEventJournal: { version: 1 },
               liveOutputSegments: { version: 1 },
+              runtimeAutoModeGuardrail: { version: 5 },
+              sharedSessionSettings: { version: 2 },
               skillLearningLoop: {
                 version: 1,
                 activation: 'project_scoped_canary',

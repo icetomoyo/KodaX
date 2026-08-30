@@ -223,6 +223,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   uninstallCalls: 0,
   uninstallOptions: [] as Array<Readonly<Record<string, unknown>>>,
   nextInstalledUserSid: undefined as string | undefined,
+  nextInstalledGroupSid: undefined as string | undefined,
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -1177,6 +1178,7 @@ vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
           ...windowsSandboxMock.user,
           provisioned: true,
           sid: windowsSandboxMock.nextInstalledUserSid,
+          groupSid: windowsSandboxMock.nextInstalledGroupSid ?? windowsSandboxMock.user.groupSid,
           credPresent: true,
         };
       }
@@ -1301,7 +1303,7 @@ beforeEach(async () => {
   await writeFile(
     path.join(markerDirectory, 'windows-v2-cutover.json'),
     JSON.stringify({
-      version: 3,
+      version: 4,
       protocol: 7,
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
@@ -1423,6 +1425,7 @@ afterEach(async () => {
   windowsSandboxMock.uninstallCalls = 0;
   windowsSandboxMock.uninstallOptions.length = 0;
   windowsSandboxMock.nextInstalledUserSid = undefined;
+  windowsSandboxMock.nextInstalledGroupSid = undefined;
   sandboxWrapper.mode = 'attest';
   vi.unstubAllEnvs();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, {
@@ -2126,7 +2129,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await reused.cleanup();
   });
 
-  it('removes obsolete persistent read guards on cold shell admission', async () => {
+  it('does not remove obsolete persistent read guards on cold shell admission', async () => {
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cold-guards-'));
@@ -2149,7 +2152,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     if (prepared === undefined) throw new Error('expected guarded Windows v2 invocation');
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read'
-    )).map(({ args }) => args[1])).toEqual(['remove']);
+    )).map(({ args }) => args[1])).toEqual([]);
     await prepared.cleanup({ execution: 'not_started' });
   });
 
@@ -2399,7 +2402,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     })).rejects.toThrow(/trusted project Exec Policy snapshot disappeared/i);
   });
 
-  it('reconciles legacy credential deny ACLs before every shell admission', async () => {
+  it('never reconciles machine-wide legacy ACLs during shell admission', async () => {
     await resetSandboxRuntimeForTest();
     await writeFile(
       path.join(
@@ -2449,23 +2452,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const removals = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ));
-    expect(removals).toHaveLength(2);
-    for (const removal of removals) {
-      expect(removal.args.slice(2)).toEqual([
-        windowsSandboxMock.user.sid,
-        windowsSandboxMock.user.groupSid,
-      ]);
-      const removed = JSON.parse(removal.input ?? '[]') as readonly string[];
-      expect(removed.map((entry) => path.resolve(entry).toLowerCase())).toEqual(
-        expect.arrayContaining([
-          path.resolve(globalGitConfig).toLowerCase(),
-          path.resolve(agentConfig).toLowerCase(),
-        ]),
-      );
-      expect(removed.map((entry) => path.resolve(entry).toLowerCase())).toContain(
-        path.resolve(agentRuntime).toLowerCase(),
-      );
-    }
+    expect(removals).toEqual([]);
   });
 
   it('partitions shared network brokers by exact network authority', async () => {
@@ -2518,7 +2505,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       groupSid: 'S-1-5-21-2001',
     };
     await writeFile(cutoverMarkerFile(), JSON.stringify({
-      version: 3,
+      version: 4,
       protocol: 7,
       hostUserSid: windowsSandboxMock.hostUserSid,
       sandboxUserSid: windowsSandboxMock.user.sid,
@@ -2624,6 +2611,9 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       expect(outcome).toMatchObject({ status: 'ready', attempted: true });
       expect(windowsSandboxMock.uninstallCalls).toBe(0);
       expect(windowsSandboxMock.installCalls).toBe(1);
+      expect(capturedSyncSpawns.filter(({ args }) => (
+        args[0] === '__persistent-deny-read' && args[1] === 'remove'
+      ))).toHaveLength(0);
     } finally {
       restore();
     }
@@ -2652,6 +2642,9 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(outcome).toMatchObject({ status: 'ready', attempted: true });
     expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(true);
     expect(existsSync(windowsSandboxControlDirectory())).toBe(true);
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
   });
 
   it('does not repair an existing control DACL when a provisioned account SID is unavailable', async () => {
@@ -2723,6 +2716,63 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain(
       `"hostUserSid":"${windowsSandboxMock.hostUserSid}"`,
     );
+  });
+
+  it('migrates a previous setup generation once before admitting new commands', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 3,
+      protocol: 7,
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    const previousSid = windowsSandboxMock.user.sid;
+    const previousGroupSid = windowsSandboxMock.user.groupSid;
+    windowsSandboxMock.sidProcessesActive = false;
+    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
+    windowsSandboxMock.nextInstalledGroupSid = 'S-1-5-21-2001';
+
+    await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+      ready: false,
+      setupRequired: true,
+      diagnostics: expect.arrayContaining([
+        expect.stringContaining('[windows_v2_acl_cutover_required]'),
+      ]),
+    });
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(windowsSandboxMock.user.sid).not.toBe(previousSid);
+    const removals = capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ));
+    expect(removals).toHaveLength(1);
+    expect(removals[0]?.args[3]).toBe(previousGroupSid);
+    expect(removals[0]?.args[3]).not.toBe(windowsSandboxMock.user.groupSid);
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":4');
+
+    const removalsAfterSetup = capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    )).length;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-post-setup-admission-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({
+      toolCallId: 'post-versioned-setup',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a post-setup Windows v2 invocation');
+    await invocation.cleanup({ execution: 'not_started' });
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(removalsAfterSetup);
   });
 
   it('does not rotate the account while its SID still owns a live process', async () => {

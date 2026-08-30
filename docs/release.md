@@ -134,6 +134,40 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-alpha.4 release preparation
+
+Release state: `v0.7.96-alpha.4` is a source candidate. npm publication,
+GitHub pre-release creation, and tagging remain manual maintainer actions.
+The candidate replaces the permission-before-sandbox path with the FEATURE_297
+sandbox-first route, four permission profiles, JSONC Exec Policy, fixed
+90/180-second host-boundary review, broader sandbox reads/environment/network,
+and normal global Git behavior.
+
+Release gates:
+
+1. Root/Worker/daemon capability metadata must advertise
+   `runtimeAutoModeGuardrail:5` and `sharedSessionSettings:2`; an auto-starting
+   alpha.4 client must safely replace an idle v4 or shared-settings-v1 daemon,
+   while attach-only clients fail closed.
+2. Public declarations must expose exact canonical/input permission types,
+   host-owned Exec Policy and Auto-review options, ACP mode identifiers, and
+   the capability constant from the documented package entries.
+3. Legacy `auto-in-project`, `permissionMode: "default"`, Rules-engine fields,
+   and malformed auto-rules files must remain non-blocking compatibility input;
+   none may become Full Access or be rewritten destructively.
+4. README/README_CN, PRD/HLD/DD/ADR, feature tracker/design, public
+   configuration and SDK guides, config templates, changelog, test guide, and
+   `kodax_manual` must describe the same sandbox-first route.
+5. Focused permission/Runtime/daemon/ACP/manual tests, full typecheck, `git diff --check`,
+   build, package contents, generated declarations, and an empty-consumer smoke
+   of the root, `/runtime`, and `/repl` exports must pass.
+6. Tag or publish only the exact reviewed commit after CI is green. Publishing
+   packages, pushing Git refs, and creating releases remain explicit operator
+   actions and are not performed by this checklist.
+
+Only after these gates pass may the exact commit be tagged
+`v0.7.96-alpha.4`.
+
 ## v0.7.96-alpha.3 release preparation
 
 Release state: the root package, all four workspace packages, and every
@@ -1233,7 +1267,7 @@ separate manual operator step. Its scope is:
 
 FEATURE_278/279/282/283/285 were explicitly rescheduled to `v0.7.85` on
 2026-08-04 per the
-[roadmap reschedule](../FEATURE_LIST.md#2026-08-04-v0780-roadmap-reschedule);
+[roadmap reschedule](FEATURE_LIST.md#2026-08-04-v0780-roadmap-reschedule);
 v0.7.80 is a debug/patch slot and none of the items above claim a feature
 outcome. Issue 256 remains scheduled for `v0.7.84` and is not a v0.7.80 gate;
 Issue 275 was resolved in this release.
@@ -1320,7 +1354,7 @@ npm. The prepared scope below remains the record of that release gate:
 
 FEATURE_280 was explicitly rescheduled to `v0.7.81` on 2026-08-03, then to
 `v0.7.86` on 2026-08-04 per the
-[roadmap reschedule](../FEATURE_LIST.md#2026-08-04-v0780-roadmap-reschedule);
+[roadmap reschedule](FEATURE_LIST.md#2026-08-04-v0780-roadmap-reschedule);
 none of the items above claim its cache-stable prompt/tool-surface outcome.
 `docs/features/v0.7.79.md`, `FEATURE_LIST.md`, the README/README_CN release
 notes, and this checklist were updated together with that decision.

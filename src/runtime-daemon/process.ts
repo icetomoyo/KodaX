@@ -25,7 +25,10 @@ import {
   prepareInternalNodeLaunch,
   rememberChildProcessTree,
 } from "@kodax-ai/agent";
-import { parseExecPolicy, type ExecPolicyRule } from "@kodax-ai/coding";
+import {
+  parseExecPolicy,
+  type ExecPolicyRuleInput,
+} from "@kodax-ai/coding";
 
 import type { RuntimeDaemonClientTransport } from "./client.js";
 import {
@@ -73,7 +76,7 @@ export interface RuntimeDaemonProcessLeaseOptions {
 
 export interface RuntimeDaemonOwnerBootstrap {
   readonly execPolicy?: {
-    readonly adminRules?: readonly ExecPolicyRule[];
+    readonly adminRules?: readonly ExecPolicyRuleInput[];
     readonly trustedProjectRoots?: readonly string[];
   };
   readonly autoReview?: {
@@ -956,7 +959,7 @@ function parseRuntimeDaemonExecPolicy(
   };
 }
 
-function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRule[] {
+function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRuleInput[] {
   if (!Array.isArray(value)) {
     throw new Error("Runtime daemon owner adminRules must be an array.");
   }
@@ -970,8 +973,6 @@ function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRule[]
         "prefix",
         "decision",
         "justification",
-        "source",
-        "sourcePath",
         "match",
         "notMatch",
         "hostExecutable",
@@ -980,10 +981,6 @@ function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRule[]
       ],
       `owner adminRules[${index}]`,
     );
-    const sourcePath = typeof candidate.sourcePath === "string"
-      && candidate.sourcePath.length > 0
-      ? candidate.sourcePath
-      : "host:admin";
     const parsed = parseExecPolicy(JSON.stringify({
       rules: [{
         prefix: candidate.prefix,
@@ -995,13 +992,16 @@ function parseRuntimeDaemonAdminRules(value: unknown): readonly ExecPolicyRule[]
         network: candidate.network,
         compound: candidate.compound,
       }],
-    }), sourcePath, "admin");
+    }), "host:admin", "admin");
     if (!parsed.ok || parsed.rules[0] === undefined) {
       throw new Error(
         `Invalid Runtime daemon owner adminRules[${index}]: ${parsed.ok ? "missing rule" : parsed.error}`,
       );
     }
-    return parsed.rules[0];
+    const { source, sourcePath, ...input } = parsed.rules[0];
+    void source;
+    void sourcePath;
+    return input;
   });
 }
 

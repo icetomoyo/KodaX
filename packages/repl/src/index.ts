@@ -244,6 +244,7 @@ export {
 
 // === Permission helpers ===
 export type {
+  CanonicalPermissionMode,
   PermissionMode,
   ConfirmResult,
   PermissionContext,
@@ -262,7 +263,9 @@ export { RUNTIME_PERMISSION_PENDING_NOTICE } from "./runtime-permission.js";
 export {
   computeConfirmTools,
   FILE_MODIFICATION_TOOLS,
+  CANONICAL_PERMISSION_MODES,
   PERMISSION_MODES,
+  canonicalizePermissionMode,
   isPermissionMode,
   normalizePermissionMode,
   permissionModeDisplayName,

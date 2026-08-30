@@ -2307,6 +2307,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.runtimeEventCoalescing;
   delete safeOverrides.liveOutputSegments;
   delete safeOverrides.runtimeAutoModeGuardrail;
+  delete safeOverrides.sharedSessionSettings;
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
@@ -2356,9 +2357,13 @@ function runtimeDaemonCapabilities(
       ? { runtimeEventCoalescing: { version: 1 } }
       : {}),
     runtimeAutoModeGuardrail: {
-      version: 4,
+      version: 5,
       owner: "session-runtime",
-      escalationCreatesPermission: true,
+      sandboxFirst: true,
+      sandboxCompletionAuthority: true,
+      hostBoundaryReviewOnly: true,
+      escalationCreatesPermission: false,
+      automaticUserPromptOnDeny: false,
       defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
       retryClassifierTimeoutMs: 180_000,
       maxClassifierAttempts: 2,
@@ -2458,7 +2463,7 @@ function runtimeDaemonCapabilities(
         }
       : {}),
     sharedSessionSettings: {
-      version: 1,
+      version: 2,
       permissionModes: ["plan", "accept-edits", "auto", "full-access"],
       legacyPermissionModeAliases: { "auto-in-project": "auto" },
       keys: [

@@ -1029,18 +1029,18 @@ export function generateSavePattern(
 // ============== Path Checking ==============
 
 /**
- * Check if target path requires always-confirm (permanent protection zones)
+ * Check if a target path requires the user boundary when that boundary applies.
  *
- * Protected zones (always require confirmation, regardless of mode):
+ * Protected zones for Edits or an explicit prompt policy:
  * - .kodax/ project config directory
  * - ~/.kodax/ user config directory
  * - Paths outside the project root AND outside the system temp directory
  *
  * System temp directories (`os.tmpdir()` and `$TEMP` / `$TMP` / `$TMPDIR`) are
- * treated as a safe scratchpad in all modes — writing there is auto-allowed.
- * This aligns with plan mode's `isPlanModeAllowedPath` semantics: both modes
- * already explicitly permit system-temp writes, so accept-edits and
- * auto-in-project should not be stricter than plan mode on this dimension.
+ * treated as a safe scratchpad. Auto[LLM] uses these paths as reviewer evidence
+ * only after a proven host boundary, while Full Access skips this heuristic and
+ * still applies Exec Policy. Plan keeps its separate `isPlanModeAllowedPath`
+ * semantics.
  */
 export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): boolean {
   try {

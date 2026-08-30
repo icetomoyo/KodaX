@@ -44,7 +44,6 @@ import type {
 } from '@kodax-ai/agent';
 
 import {
-  checkAgentHomeHardDeny,
   checkAbsoluteDeny,
   type AbsoluteDenyCheck,
   type AbsoluteDenyResult,
@@ -370,12 +369,6 @@ export interface AutoModeGuardrailConfig {
 
   /** @deprecated Retained as inert source-compatibility input. */
   readonly speculativeWindowMs?: number;
-}
-
-export interface AgentHomeShellBoundaryGuardrailOptions {
-  readonly projectRoot: string;
-  readonly executionCwd: string;
-  readonly protectedReadReviewAvailable?: boolean;
 }
 
 /**
@@ -1203,78 +1196,6 @@ function isDeterministicallyAllowed(
   ));
 }
 
-function isStaticallyBoundShellCall(
-  permissionReview: AutoModePermissionReview,
-): boolean {
-  if (
-    permissionReview.analysis.status !== 'complete'
-    || permissionReview.analysis.binding !== 'exact'
-    || permissionReview.operations.length === 0
-  ) return false;
-  return permissionReview.operations.every((operation) => {
-    if (operation.kind === 'execute' || operation.kind === 'unknown') return false;
-    if ('target' in operation) return operation.target.boundary !== 'unresolved';
-    return 'source' in operation
-      && operation.source.boundary !== 'unresolved'
-      && operation.destination.boundary !== 'unresolved';
-  });
-}
-
-function hasProtectedShellRead(permissionReview: AutoModePermissionReview): boolean {
-  return permissionReview.operations.some((operation) => (
-    operation.kind === 'read' && operation.target.boundary === 'protected'
-  ));
-}
-
-export function createAgentHomeShellBoundaryGuardrail(
-  options: AgentHomeShellBoundaryGuardrailOptions,
-): ToolGuardrail {
-  return {
-    kind: 'tool',
-    name: 'agent-home-shell-boundary',
-    async beforeTool(call): Promise<GuardrailVerdict> {
-      const bridgeTarget = resolveToolBridgeTarget(call);
-      const guardedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
-      if (guardedCall.name !== 'bash') return { action: 'allow' };
-      const hardBoundary = checkAgentHomeHardDeny(
-        guardedCall,
-        options.projectRoot,
-        options.executionCwd,
-      );
-      if (hardBoundary.denied) {
-        return { action: 'block', reason: hardBoundary.reason };
-      }
-      try {
-        const review = await analyzeAutoModeCall(guardedCall, {
-          projectRoot: options.projectRoot,
-          executionCwd: options.executionCwd,
-          signals: [],
-        });
-        if (
-          review !== undefined
-          && hasProtectedShellRead(review)
-          && options.protectedReadReviewAvailable !== true
-        ) {
-          return {
-            action: 'block',
-            reason: 'Reading protected Agent Home data requires explicit host review.',
-          };
-        }
-        if (options.protectedReadReviewAvailable === true) return { action: 'allow' };
-        if (review !== undefined && isStaticallyBoundShellCall(review)) {
-          return { action: 'allow' };
-        }
-      } catch {
-        if (options.protectedReadReviewAvailable === true) return { action: 'allow' };
-      }
-      return {
-        action: 'block',
-        reason: 'The opaque shell command requires explicit host review.',
-      };
-    },
-  };
-}
-
 export function createAutoModeToolGuardrail(
   config: AutoModeGuardrailConfig,
 ): AutoModeToolGuardrail {
@@ -1364,8 +1285,8 @@ export function createAutoModeToolGuardrail(
     };
 
     // Catastrophic host operations are not authorization questions: block them
-    // before Auto[LLM]. Agent Home matches remain classifier facts because the
-    // narrow root/control-plane hard boundary was already checked above.
+    // before Auto[LLM]. Agent Home matches are reviewer evidence only; they do
+    // not create a second shell boundary outside the Runtime-owned route.
     const builtInTier0 = checkAbsoluteDeny(guardedCall, projectRoot, executionCwd);
     const tier0: AbsoluteDenyResult = (config.extraAbsoluteDenyChecks ?? []).reduce<AbsoluteDenyResult>((result, check) => (
       result.denied ? result : check(guardedCall, projectRoot, executionCwd)

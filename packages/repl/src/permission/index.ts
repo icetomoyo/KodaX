@@ -46,7 +46,6 @@ export {
 
 // Executor
 export { executeWithPermission, createPermissionContext } from './executor.js';
-export { allowsAcceptEditsClassifierFallback } from './accept-edits-fallback.js';
 export type { StandaloneExecPolicyOptions } from './standalone-shell-boundary.js';
 
 // FEATURE_158 (v0.7.39): REPL-side path-aware bash signal collector. Wired

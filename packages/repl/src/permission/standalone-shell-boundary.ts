@@ -11,7 +11,7 @@ import {
   KodaXTrustedTextMutationError,
   loadExecPolicy,
   type AutoModeToolGuardrail,
-  type ExecPolicyRule,
+  type ExecPolicyRuleInput,
   type KodaXPreparedShellSandboxInvocation,
   type KodaXShellHostExecutionAuthorizer,
   type KodaXShellHostExecutionRequest,
@@ -23,7 +23,7 @@ import type { PermissionMode } from './types.js';
 export type StandaloneShellPermissionReason = 'exec_policy_prompt' | 'mode_boundary';
 
 export interface StandaloneExecPolicyOptions {
-  readonly adminRules?: readonly ExecPolicyRule[];
+  readonly adminRules?: readonly ExecPolicyRuleInput[];
   readonly trustedProjectRoots?: readonly string[];
 }
 

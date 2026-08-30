@@ -80,9 +80,9 @@ export async function runKodaX(
       const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
         presetOptions: runtimeOptions,
         abortSignal: runtimeOptions.abortSignal,
-        // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails
-        // (e.g. AutoModeToolGuardrail injected by the REPL bootstrap when
-        // permissionMode === 'auto'). Runner merges with `agent.guardrails`.
+        // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails.
+        // Runtime owns Auto[LLM] review at the proven host boundary; these are
+        // additional caller policies merged with `agent.guardrails`.
         guardrails: runtimeOptions.guardrails,
         permissionIntent: runtimeOptions.context?.permissionIntent,
       });

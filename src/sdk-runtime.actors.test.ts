@@ -435,7 +435,7 @@ describe('F270 Runtime Actor facade', () => {
     for (const mutate of [
       () => runtime.sessions.updateSettings(
         session.id,
-        { permissionMode: 'default' },
+        { permissionMode: 'auto-in-project' },
       ),
       () => runtime.sessions.appendNotice({
         sessionId: session.id,

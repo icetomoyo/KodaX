@@ -502,7 +502,6 @@ const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
   'processes',
   'learned',
 ] as const;
-let windowsLegacyAclReconciliationMarkerWritten = false;
 const ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL = JSON.stringify(ELECTRON_NODE_ENV_SCRUB_IMPORT);
 const ELECTRON_RUN_AS_NODE_ENV_LITERAL = JSON.stringify(ELECTRON_RUN_AS_NODE_ENV);
 const TARGET_ARGV_BOOTSTRAP = String.raw`
@@ -1072,9 +1071,10 @@ function windowsSandboxV2SetupLockFile(): string {
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
+const WINDOWS_SANDBOX_V2_SETUP_VERSION = 4 as const;
 
 interface WindowsSandboxV2CutoverMarker {
-  readonly version: 3;
+  readonly version: typeof WINDOWS_SANDBOX_V2_SETUP_VERSION;
   readonly protocol: typeof WINDOWS_SANDBOX_V2_PROTOCOL;
   readonly hostUserSid: string;
   readonly sandboxUserSid: string;
@@ -1121,7 +1121,7 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
   const keys = Object.keys(marker).sort();
   if (
     keys.join(',') !== 'hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,version'
-    || marker.version !== 3
+    || marker.version !== WINDOWS_SANDBOX_V2_SETUP_VERSION
     || marker.protocol !== WINDOWS_SANDBOX_V2_PROTOCOL
     || typeof marker.hostUserSid !== 'string'
     || typeof marker.sandboxUserSid !== 'string'
@@ -1133,7 +1133,7 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
     throw new Error('the cutover marker has an incompatible schema or SID');
   }
   return {
-    version: 3,
+    version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
     hostUserSid: marker.hostUserSid,
     sandboxUserSid: marker.sandboxUserSid,
@@ -2107,7 +2107,6 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       throw new Error('Windows sandbox setup did not return complete account SIDs.');
     }
     installWindowsV2AccountCompatibility(installedUser.sid);
-    reconcileWindowsLegacyAclGuards(installedUser.sid, installedUser.groupSid);
     return doctorSandboxRuntime({ refresh: true });
   }
 
@@ -2122,6 +2121,12 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       );
     }
     await recoverWindowsSandboxAcls();
+    if (oldUser.groupSid === undefined) {
+      throw new Error(
+        'The legacy Windows sandbox group SID is unavailable; exact ACL migration cannot proceed.',
+      );
+    }
+    migrateWindowsLegacyAclGuardsForSetup(oldSid, oldUser.groupSid);
     const uninstalled = uninstallWindowsSandbox({ keepUser: false, srtWin: runner.srtWin });
     if (uninstalled.cancelled) throw new Error('Sandbox account rotation was cancelled.');
   }
@@ -2137,10 +2142,9 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     throw new Error('Windows sandbox account rotation did not produce a new SID; v2 remains fail-closed.');
   }
   installWindowsV2AccountCompatibility(installedUser.sid);
-  reconcileWindowsLegacyAclGuards(installedUser.sid, installedUser.groupSid);
   await verifyPreparedWindowsWfp(runner);
   writeWindowsSandboxV2CutoverMarker({
-    version: 3,
+    version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
     hostUserSid: windowsSandboxV2HostUserSid(),
     sandboxUserSid: installedUser.sid,
@@ -2553,7 +2557,6 @@ export async function resetSandboxRuntimeForTest(): Promise<void> {
   });
   const brokerResults = await Promise.allSettled(brokerStops);
   windowsNetworkBrokers.clear();
-  windowsLegacyAclReconciliationMarkerWritten = false;
   rmSync(windowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   const failures = brokerResults.flatMap((result) => (
@@ -3362,22 +3365,24 @@ function windowsLegacyAclReconciliationMarkerFile(): string {
   );
 }
 
-function reconcileWindowsLegacyAclGuards(
+function migrateWindowsLegacyAclGuardsForSetup(
   sandboxUserSid: string,
   sandboxGroupSid: string,
 ): void {
-  // An older KodaX process can reinstall an exact legacy deny ACE at any later
-  // admission. Removal is exact and idempotent, so repeat it before every new
-  // Windows target admission; only the diagnostic marker write is cached.
+  // Machine-wide ACL migration belongs to the versioned setup cutover. Ordinary
+  // command admission must remain read-only with respect to shared ACL state so
+  // independent Runtime processes can prepare and execute concurrently.
   const legacyRoots = windowsLegacyPersistentAclGuardRoots();
   removeWindowsLegacyAclGuards(legacyRoots, sandboxUserSid, sandboxGroupSid);
-  if (windowsLegacyAclReconciliationMarkerWritten) return;
   writeFileSync(
     windowsLegacyAclReconciliationMarkerFile(),
-    JSON.stringify({ version: 2, sandboxGroupSid }),
+    JSON.stringify({
+      version: 2,
+      setupVersion: WINDOWS_SANDBOX_V2_SETUP_VERSION,
+      sandboxGroupSid,
+    }),
     { encoding: 'utf8', mode: 0o600 },
   );
-  windowsLegacyAclReconciliationMarkerWritten = true;
 }
 
 function workspaceShellWriteRoots(
@@ -4722,11 +4727,6 @@ async function prepareWindowsV2Invocation(input: {
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const cutover = assertWindowsSandboxV2Cutover(
     getWindowsSandboxUserStatus({ srtWin: runner.srtWin }),
-  );
-  throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
-  reconcileWindowsLegacyAclGuards(
-    cutover.sandboxUserSid,
-    cutover.sandboxGroupSid,
   );
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const shellPolicy = withPreparedWindowsRunner(input.shellPolicy);

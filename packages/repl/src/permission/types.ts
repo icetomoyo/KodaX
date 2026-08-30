@@ -15,9 +15,9 @@ import {
 /**
  * Permission mode
  * - plan: Read-only planning, all modifications blocked unless explicitly whitelisted
- * - accept-edits: File edits auto-approved, shell commands require confirmation
+ * - accept-edits: Sandbox first; user confirmation only at a proven host boundary
  * - auto: Sandboxed execution with LLM review at the host boundary
- * - full-access: Host execution without sandbox or Auto review
+ * - full-access: Direct host execution without sandbox or Auto review; Exec Policy still applies
  *
  * `auto-in-project` remains accepted only as a persisted/CLI compatibility
  * input and is immediately normalized to `auto`.
@@ -163,8 +163,9 @@ export { MODIFICATION_TOOLS } from '@kodax-ai/coding';
 export { BASH_WRITE_COMMANDS } from '@kodax-ai/coding';
 
 /**
- * Strict whitelist of bash commands considered safe for read-only exploration in plan mode.
- * Any bash command not matching these bases will require user confirmation.
+ * Strict whitelist of bash commands considered safe for read-only exploration in Plan.
+ * Outside Plan it supplies boundary-classification evidence only; a command that completes
+ * in the sandbox does not require confirmation merely because it is absent from this list.
  */
 export { BASH_SAFE_READ_COMMANDS } from '@kodax-ai/coding';
 

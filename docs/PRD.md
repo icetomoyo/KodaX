@@ -1,6 +1,6 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 >
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.4` source
 > candidate (`v0.7.96-alpha.3` remains the latest Git tag / GitHub pre-release;
@@ -355,22 +355,31 @@ persistence, and restart boundaries.
 
 For a session with `permissionMode: 'auto'`, the Runtime owns the Auto reviewer
 at the exact host boundary. A shell call that completes in the sandbox never
-invokes it. Auto[LLM] defaults to automatic review and `allow`, not
-command-by-command root authorization. Under the bundled policy, the
-classifier may return `ask` only for (1) a concrete credential-store read or a concrete mutation of
-KodaX credential/permission/trust controls, or (2) direct destruction,
-formatting, or essential-resource exhaustion that can destabilize the system
-or make unrelated software unavailable. Project edits/deletes/moves, Git mutations
-including stash, and normal global dependency install/uninstall/reinstall are
-not approval reasons merely because they write. Command category, complexity,
-incomplete analysis, general uncertainty, or lack of an explicit per-command
-instruction is insufficient. A trusted `autoReview.policy` may add stricter
-review criteria without changing the fixed role or output contract. Static analysis may make sandbox admission cheap,
-but after a real host boundary it supplies facts only and cannot replace the
-final LLM decision. A reviewer denial cancels that attempt and tells the agent
-to seek a safer alternative; it opens no automatic permission prompt, persists
-no path/prefix/task denial, and a later informed natural-language instruction
-receives a fresh classifier decision.
+invokes it. Auto[LLM] defaults to automatic allow/deny review, not
+command-by-command root authorization. Concrete credential/trust-control
+mutation, direct destruction, formatting, or essential-resource exhaustion may
+justify denial until narrow, informed user direction exists in trusted
+conversation context. Critical effects and administrator forbids remain denied.
+Project edits/deletes/moves, Git mutations including stash, and normal global
+dependency install/uninstall/reinstall are not denial reasons merely because
+they write. Command category, complexity, incomplete analysis, general
+uncertainty, or lack of an explicit per-command instruction is insufficient. A
+trusted `autoReview.policy` may add stricter review criteria without changing
+the fixed role or allow/deny output contract. Static analysis may make sandbox
+admission cheap, but after a real host boundary it supplies facts only and
+cannot replace the final LLM decision. A reviewer denial cancels that attempt
+and tells the agent to seek a safer alternative; it opens no automatic
+permission prompt, persists no path/prefix/task denial, and a later informed
+natural-language instruction receives a fresh reviewer decision.
+
+Host execution is governed by a separate JSONC Exec Policy loaded from the
+user file, an explicitly trusted project file, and host-supplied administrator
+rules. Exact token-prefix rules return `allow`, `prompt`, or `forbidden`; the
+strictest match wins and administrator forbids are absolute. `prompt` is used
+only when an explicit rule or the Edits product boundary requests it—ordinary
+uncertainty does not become a prompt. Full Access bypasses sandbox and Auto
+review, but it does not bypass administrator forbids or the narrow critical
+fallback; ordinary unmatched development commands execute directly.
 
 The Auto LLM request must contain only bounded permission-relevant evidence,
 not the Runner's raw accumulated session. The current tool action remains
@@ -378,9 +387,9 @@ separate from a transcript that removes assistant prose/thinking, images, and
 unbounded historical tool output. Missing classifier identity is a recoverable
 configuration error only when a host-boundary review is needed. Timeout,
 provider, or response-contract failure is retried once (90 seconds, then 180
-seconds by default); a second failure blocks with safer-route feedback and
+seconds); a second failure blocks with safer-route feedback and
 never widens to a user prompt or another engine. Incompleteness itself is not
-an LLM `ask` reason.
+a denial reason.
 
 Interactive permission-mode changes must be deterministic: Shift-Tab cycles
 Plan -> Edits -> Auto[LLM] -> Full Access, and rapid changes are applied in user

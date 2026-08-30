@@ -78,7 +78,7 @@ export function authorWorkflowViaWorker(
 ): AuthorWorkflowViaWorkerHandle {
   if (!input.options.workflowRunsBaseDir) {
     throw new Error(
-      'authorWorkflowViaWorker: options.workflowRunsBaseDir is required — without it the Worker cannot wire run_workflow (see SDK_EMBEDDER_GUIDE.md §11).',
+      'authorWorkflowViaWorker: options.workflowRunsBaseDir is required — without it the Worker cannot wire run_workflow (see public_docs/sdk/embedder-guide.md §11).',
     );
   }
 

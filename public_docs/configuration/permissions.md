@@ -7,7 +7,7 @@ KodaX controls file-system and shell-command permissions through four profiles.
 | Mode | Behavior |
 |---|---|
 | **Plan** | Read-only analysis. KodaX inspects code and proposes a plan but makes no edits. |
-| **Edits** | KodaX can read and write files but asks before running shell commands. |
+| **Edits** | Trusted text edits apply directly; eligible shell commands try the sandbox first and ask only at a proven host boundary. |
 | **Auto[LLM]** | Uses the sandbox first; only a proven pre-start host boundary is reviewed by the LLM. |
 | **Full Access** | Runs directly on the host without a sandbox or Auto reviewer, while still honoring Exec Policy. |
 
@@ -42,9 +42,14 @@ body that cannot be inspected is denied rather than treated as unmatched.
 
 ## SDK permission control
 
-SDK callers can control permissions per Run through `KodaXOptions`. The same
-permission modes are available programmatically, and the Runtime guardrail
-decides before the permission UI.
+SDK callers control permissions through shared Runtime Session settings.
+Direct `runKodaX`/Coding consumers own their host guardrails and permission
+policy; `KodaXOptions` does not select a Runtime permission profile. The
+Runtime owns sandbox-first routing; clients must
+not add a second preflight classifier or reconstruct authority from a display
+preview. `RuntimePermissionMode` is the canonical four-mode output type, while
+`RuntimePermissionModeInput` additionally accepts the legacy
+`auto-in-project` input alias.
 
 ## Shell Execution Contract
 
@@ -65,4 +70,4 @@ When `shellExecution` is absent, the established interpreter path is unchanged.
 
 - [Sandbox](./sandbox.md) — Sandbox-first containment and host-boundary routing
 - [Configuration files](./config-files.md) — Config.json reference
-- [CLI reference](../guides/cli-reference.md) — `--mode` flag
+- [CLI permission control](../../README.md#permission-control) — `--mode` and `/mode`

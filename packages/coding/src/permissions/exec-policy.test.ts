@@ -494,7 +494,7 @@ describe('FEATURE_297 Exec Policy', () => {
     });
 
     expect(loaded.rules[0]?.source).toBe('admin');
-    expect(loaded.rules[0]?.sourcePath).toBe('memory');
+    expect(loaded.rules[0]?.sourcePath).toBe('host:admin');
   });
 
   it('reports malformed host-injected administrator rules', async () => {
@@ -512,7 +512,7 @@ describe('FEATURE_297 Exec Policy', () => {
 
     expect(loaded.rules).toEqual([]);
     expect(loaded.errors).toEqual([{
-      path: 'managed:exec-policy',
+      path: 'host:admin',
       message: expect.stringContaining('prefix'),
     }]);
   });

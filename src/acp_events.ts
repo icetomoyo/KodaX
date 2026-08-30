@@ -1,3 +1,14 @@
+/** Canonical permission profile ids shared by ACP configuration and events. */
+export const ACP_PERMISSION_MODE_IDS = [
+  'plan',
+  'accept-edits',
+  'auto',
+  'full-access',
+] as const;
+export type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
+export type AcpPermissionModeInput = AcpPermissionMode | 'auto-in-project';
+export type AcpRuntimePermissionMode = AcpPermissionMode;
+
 export type AcpRuntimeEvent =
   | {
     type: 'server_attached';
@@ -6,7 +17,7 @@ export type AcpRuntimeEvent =
     provider: string;
     model: string;
     cwd: string;
-    permissionMode: string;
+    permissionMode: AcpRuntimePermissionMode;
     reasoningMode: string;
     thinking: boolean;
     fixedCwd: boolean;
@@ -23,14 +34,14 @@ export type AcpRuntimeEvent =
     type: 'session_created';
     sessionId: string;
     cwd: string;
-    permissionMode: string;
+    permissionMode: AcpRuntimePermissionMode;
     mcpServers: number;
   }
   | {
     type: 'session_mode_changed';
     sessionId: string;
-    from: string;
-    to: string;
+    from: AcpRuntimePermissionMode;
+    to: AcpRuntimePermissionMode;
   }
   | {
     type: 'prompt_skipped';
@@ -77,7 +88,7 @@ export type AcpRuntimeEvent =
     sessionId: string;
     tool: string;
     toolId: string | null;
-    permissionMode: string;
+    permissionMode: AcpRuntimePermissionMode;
   }
   | {
     type: 'tool_permission_resolved';
@@ -85,10 +96,15 @@ export type AcpRuntimeEvent =
     tool: string;
     toolId: string | null;
     outcome:
+      /** @deprecated Accepted for 0.7.x source/wire-read compatibility; never emitted by alpha.4. */
       | 'auto_allowed_read_only_bash'
+      /** @deprecated Accepted for 0.7.x source/wire-read compatibility; never emitted by alpha.4. */
       | 'auto_allowed_remembered'
+      /** @deprecated Accepted for 0.7.x source/wire-read compatibility; never emitted by alpha.4. */
       | 'blocked_plan_mode'
+      /** @deprecated Accepted for 0.7.x source/wire-read compatibility; never emitted by alpha.4. */
       | 'auto_allowed_plan_mode'
+      /** @deprecated Accepted for 0.7.x source/wire-read compatibility; never emitted by alpha.4. */
       | 'auto_allowed_policy'
       | 'request_failed_disconnected'
       | 'request_failed_incomplete'

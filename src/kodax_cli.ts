@@ -200,6 +200,7 @@ import {
   renderSetupGuide,
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
+  type CanonicalPermissionMode,
   type ReplRuntimePermissionGrantSuggestion,
   type ReplRuntimePermissionPrompt,
   type PreparedInvocation,
@@ -558,7 +559,7 @@ interface InteractiveRuntimeRunnerInput {
   readonly options: KodaXOptions;
   readonly prompt: string;
   readonly sessionId: string;
-  readonly permissionMode?: string;
+  readonly permissionMode?: CanonicalPermissionMode;
   readonly autoModeSettings?: ReplRuntimeAutoModeSettings;
   readonly surface?: 'cli' | 'repl';
   readonly requestPermission?: ReplRuntimePermissionPrompt;

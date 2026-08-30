@@ -448,8 +448,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(permissions).toContain('explicit host-controlled executor');
     expect(sdk).toContain('grantSuggestions');
     expect(sdk).toContain('RuntimePermissionMatcher');
-    expect(sdk).toContain('runtimeAutoModeGuardrail` v4');
-    expect(sdk).toContain('requires v4');
+    expect(sdk).toContain('runtimeAutoModeGuardrail` v5');
+    expect(sdk).toContain('settings v2');
+    expect(sdk).toContain('requires v5/v2');
     expect(sdk).toContain('never restores a rules engine');
   });
 
@@ -554,7 +555,14 @@ describe('FEATURE_218 manual registry', () => {
     expect(permissions).toContain('Shift+Enter');
     expect(permissions).toContain('Auto[LLM]');
     expect(permissions).toContain('Full Access');
+    expect(permissions).toContain('- full-access:');
+    expect(permissions.toLowerCase()).toContain('sandbox completion');
+    expect(permissions).toContain('Exec Policy');
+    expect(permissions).toContain('90-second');
+    expect(permissions).toContain('180-second');
     expect(permissions).not.toContain('Auto[RULES]');
+    expect(permissions).not.toContain('LLM/rules');
+    expect(permissions).not.toContain('per action before');
     expect(permissions).not.toContain('/auto-engine');
   });
 
@@ -596,11 +604,27 @@ describe('FEATURE_218 manual registry', () => {
 
   it('documents the v0.7.96 broad-read workspace containment boundary', () => {
     const content = resolveKodaXManual({ topic: 'sandbox' }).content;
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 
     expect(content).toContain('broad host reads');
     expect(content).toContain('Agent Home');
     expect(content).toContain('global Git configuration');
     expect(content).toContain('workspace/system temp');
+    expect(sdk).toContain('`autoModeClassifierModel`');
+    expect(sdk).toContain('`config.json#autoReview.policy`');
+    expect(sdk).toContain('`autoReview.administratorPolicy`');
+    expect(sdk).toContain('`autoReview.modelGuidance`');
+    expect(sdk).toContain('`ACP_PERMISSION_MODE_IDS`');
+    expect(sdk).toContain('`AcpPermissionModeInput`');
+    expect(sdk).toContain('`AcpRuntimePermissionMode`');
+    expect(MANUAL_REGISTRY.a2a.sources).toContainEqual({
+      label: 'A2A SDK guide',
+      path: 'public_docs/sdk/embedder-guide.md',
+    });
+    expect(MANUAL_REGISTRY.compaction.sources).toContainEqual({
+      label: 'SDK guide',
+      path: 'public_docs/sdk/embedder-guide.md',
+    });
   });
 
   it('documents the split integration configuration instead of legacy core fields', () => {

@@ -48,6 +48,7 @@ import {
   validateCustomProviderConfig,
   type CodingActorCredentialAccessFactory,
   type ExecPolicyRule,
+  type ExecPolicyRuleInput,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -771,7 +772,7 @@ export interface CreateKodaXRuntimeOptions {
 }
 
 export interface RuntimeExecPolicyOptions {
-  readonly adminRules?: readonly ExecPolicyRule[];
+  readonly adminRules?: readonly ExecPolicyRuleInput[];
   /** Canonical project roots whose local `.kodax/exec-policy.jsonc` may load. */
   readonly trustedProjectRoots?: readonly string[];
 }
@@ -841,9 +842,11 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   daemonShutdownVerification: 1,
   effectiveConfig: 1,
   managedRunDurability: 1,
+  runtimeAutoModeGuardrail: 5,
   runtimeExitSettlement: 2,
   sandboxRuntime: 6,
   sessionEventJournal: 1,
+  sharedSessionSettings: 2,
   runtimeEventCoalescing: 1,
   liveOutputSegments: 1,
 } as const);
@@ -884,7 +887,7 @@ export interface RuntimeCapabilityRequirements {
   readonly connectionLifecycle?: 1;
   readonly typedRuntimeEvents?: 1;
   readonly daemonSafeRunInput?: 1;
-  readonly sharedSessionSettings?: 1;
+  readonly sharedSessionSettings?: 1 | 2;
   readonly durableRecoveryQueries?: 1;
   /** Require durable accepted-input and completed-turn boundaries for managed Runs. */
   readonly managedRunDurability?: 1;
@@ -911,7 +914,7 @@ export interface RuntimeCapabilityRequirements {
   /** Require the sandbox-first execution chain and permission fallback revision. */
   readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6;
   /** Runtime owns Auto[LLM] review at the proven host boundary. */
-  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4;
+  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5;
 }
 
 export type RuntimeOperationState =
@@ -1523,13 +1526,23 @@ export interface RuntimeConversationHistoryBoundary {
   readonly sourceRevision: string;
 }
 
+export type RuntimePermissionMode =
+  | "plan"
+  | "accept-edits"
+  | "auto"
+  | "full-access";
+
+export type RuntimePermissionModeInput =
+  | RuntimePermissionMode
+  | "auto-in-project";
+
 export interface RuntimeSessionSettings {
   readonly provider?: string;
   readonly model?: string;
   readonly effort?: KodaXOptions["effort"];
   readonly thinking?: boolean;
   readonly reasoningMode?: KodaXReasoningMode;
-  readonly permissionMode?: string;
+  readonly permissionMode?: RuntimePermissionMode;
   readonly executionCwd?: string;
   readonly shellExecution?: KodaXShellExecutionContract;
   readonly agentMode?: KodaXOptions["agentMode"];
@@ -1546,7 +1559,7 @@ export interface RuntimeSessionSettingsPatch {
   readonly effort?: KodaXOptions["effort"] | null;
   readonly thinking?: boolean | null;
   readonly reasoningMode?: KodaXReasoningMode | null;
-  readonly permissionMode?: string | null;
+  readonly permissionMode?: RuntimePermissionModeInput | null;
   readonly executionCwd?: string | null;
   readonly shellExecution?: KodaXShellExecutionContract | null;
   readonly agentMode?: KodaXOptions["agentMode"] | null;
@@ -3535,7 +3548,7 @@ interface RuntimeRunRecord {
   provider: string;
   model?: string;
   permissionBroker?: RuntimePermissionBroker;
-  permissionMode?: string;
+  permissionMode?: RuntimePermissionMode;
   autoModeClassifierModel?: string;
   autoReviewPolicy?: string;
   execPolicyRules?: readonly ExecPolicyRule[];
@@ -4030,6 +4043,8 @@ export async function createKodaXRuntime(
         ...options.requirements,
         sessionEventJournal: 1 as const,
         liveOutputSegments: 1 as const,
+        runtimeAutoModeGuardrail: 5 as const,
+        sharedSessionSettings: 2 as const,
         ...(autoStart
           ? {
             actorSettlementConvergence: 2 as const,
@@ -4041,7 +4056,6 @@ export async function createKodaXRuntime(
                   sandboxRuntime: 6 as const,
                 }
               : {}),
-            runtimeAutoModeGuardrail: 4 as const,
             runtimeEventCoalescing: 1 as const,
             ...(options.daemonOrphanExitMs !== undefined
               ? { daemonOrphanExit: 1 as const }
@@ -4143,9 +4157,13 @@ export async function createKodaXRuntime(
     },
     runtimeEventCoalescing: { version: 1 },
     runtimeAutoModeGuardrail: {
-      version: 4,
+      version: 5,
       owner: "session-runtime",
-      escalationCreatesPermission: true,
+      sandboxFirst: true,
+      sandboxCompletionAuthority: true,
+      hostBoundaryReviewOnly: true,
+      escalationCreatesPermission: false,
+      automaticUserPromptOnDeny: false,
       defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
       retryClassifierTimeoutMs: 180_000,
       maxClassifierAttempts: 2,
@@ -4154,6 +4172,22 @@ export async function createKodaXRuntime(
       permissionGrantSuggestions: true,
       concretePermissionMatchers: true,
       clientScopeExpansion: false,
+    },
+    sharedSessionSettings: {
+      version: 2,
+      permissionModes: ["plan", "accept-edits", "auto", "full-access"],
+      legacyPermissionModeAliases: { "auto-in-project": "auto" },
+      keys: [
+        "provider",
+        "model",
+        "effort",
+        "thinking",
+        "reasoningMode",
+        "permissionMode",
+        "executionCwd",
+        "agentMode",
+        "autoModeClassifierModel",
+      ],
     },
     ...(options.externalAgents !== undefined
       ? { externalAgentAdmin: { version: 1 } }
@@ -5206,6 +5240,8 @@ function daemonCapabilityRequirements(
     ...options.requirements,
     sessionEventJournal: 1,
     liveOutputSegments: 1,
+    runtimeAutoModeGuardrail: 5,
+    sharedSessionSettings: 2,
     ...(options.autoStart === true
       ? {
           actorSettlementConvergence: 2,
@@ -5214,7 +5250,6 @@ function daemonCapabilityRequirements(
           ...(process.platform === "win32"
             ? { daemonShutdownVerification: 1, sandboxRuntime: 6 }
             : {}),
-          runtimeAutoModeGuardrail: 4,
           runtimeEventCoalescing: 1,
           ...(options.daemonOrphanExitMs !== undefined
             ? { daemonOrphanExit: 1 }
@@ -5234,6 +5269,7 @@ function firstUpgradeableCapability(
     "managedRunDurability",
     "sessionEventJournal",
     "conversationHistory",
+    "sharedSessionSettings",
     "runtimeAutoModeGuardrail",
     "runtimeEventCoalescing",
     "liveOutputSegments",
@@ -20385,8 +20421,23 @@ function canonicalizeRuntimeSessionSettingsPatch(
     autoModeSpeculativeWindowMs: _ignoredLegacyWindow,
     ...canonical
   } = patch;
-  if (canonical.permissionMode !== "auto-in-project") return canonical;
-  return { ...canonical, permissionMode: "auto" };
+  if (
+    canonical.permissionMode === undefined
+    || canonical.permissionMode === null
+  ) {
+    return canonical;
+  }
+  const permissionMode = replApi.normalizePermissionMode(
+    canonical.permissionMode,
+  );
+  if (permissionMode === undefined) {
+    throw new Error(
+      "permissionMode must be one of: plan, accept-edits, auto, full-access",
+    );
+  }
+  return permissionMode === canonical.permissionMode
+    ? canonical
+    : { ...canonical, permissionMode };
 }
 
 function applyNullableCompactionPercentPatch(
@@ -20557,11 +20608,16 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
   const settings: RuntimeSessionSettings = {};
   setStringIfPresent(settings, "provider", value.provider);
   setStringIfPresent(settings, "model", value.model);
-  setStringIfPresent(
-    settings,
-    "permissionMode",
-    value.permissionMode === "auto-in-project" ? "auto" : value.permissionMode,
-  );
+  if (typeof value.permissionMode === "string") {
+    const permissionMode = replApi.normalizePermissionMode(
+      value.permissionMode === "default"
+        ? "accept-edits"
+        : value.permissionMode,
+    );
+    if (permissionMode !== undefined) {
+      setMutableSetting(settings, "permissionMode", permissionMode);
+    }
+  }
   setStringIfPresent(settings, "executionCwd", value.executionCwd);
   if (value.shellExecution !== undefined) {
     setMutableSetting(

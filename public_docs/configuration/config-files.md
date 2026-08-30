@@ -28,8 +28,12 @@ every supported core setting.
 
 ## Environment variables
 
-Every JSON setting has a `KODAX_UPPER_SNAKE_CASE` environment variable
-equivalent. Resolution order:
+Not every setting has a `KODAX_*` environment-variable equivalent. Common
+supported mappings include the table below; additional provider, fallback,
+repo-intelligence, and diagnostic mappings are documented in the annotated
+template. Settings without a mapping, including `autoReview.policy`, use the
+JSON file or an explicit SDK option. Resolution order for supported environment
+overrides:
 
 1. Explicit CLI/SDK option
 2. Environment variable (`KODAX_*`)
@@ -47,11 +51,14 @@ JSON names stay camelCase while environment names use `KODAX_UPPER_SNAKE_CASE`.
 
 ## Runtime mode
 
-Three Runtime modes are available:
+Two Runtime hosting modes are available:
 
 - **`embedded`** (default) — inline, lowest latency, private
-- **`worker`** — Worker-hosted, private, hard-disposable (V8 fault boundary)
 - **`daemon`** — process-isolated, shared across multiple clients
+
+Worker isolation is an SDK/host option inside embedded mode, expressed as
+`{ mode: 'embedded', isolation: 'worker' }`; `worker` is not a valid
+`runtimeMode` configuration value.
 
 ```bash
 kodax daemon start
@@ -117,4 +124,4 @@ kodax execpolicy check --trust-project-policy -- git push origin main
 - [Providers](./providers.md) — Provider configuration
 - [Custom providers](./custom-providers.md) — Custom endpoint configuration
 - [Sandbox](./sandbox.md) — OS-level containment
-- [SDK overview](../sdk/overview.md) — Runtime SDK and daemon API
+- [SDK embedder guide](../sdk/embedder-guide.md) — Runtime SDK and daemon API

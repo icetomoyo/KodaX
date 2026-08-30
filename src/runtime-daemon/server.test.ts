@@ -1682,8 +1682,16 @@ describe('runtime daemon dispatcher', () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-capabilities-'));
     try {
       const controlJournal = createRuntimeControlJournal({ rootDir });
+      const runtime = {
+        ...makeRuntime(),
+        capabilities: {
+          runtimeEventCoalescing: { version: 1 },
+          runtimeAutoModeGuardrail: { version: 1, owner: 'legacy-client' },
+          sharedSessionSettings: { version: 1, permissionModes: ['plan'] },
+        },
+      } satisfies KodaXRuntime;
       const dispatcher = createRuntimeDaemonDispatcher({
-        runtime: makeRuntime(),
+        runtime,
         controlJournal,
         allowAgentRegistrationAdmin: true,
       });
@@ -1769,9 +1777,13 @@ describe('runtime daemon dispatcher', () => {
           },
           runtimeEventCoalescing: { version: 1 },
           runtimeAutoModeGuardrail: {
-            version: 4,
+            version: 5,
             owner: 'session-runtime',
-            escalationCreatesPermission: true,
+            sandboxFirst: true,
+            sandboxCompletionAuthority: true,
+            hostBoundaryReviewOnly: true,
+            escalationCreatesPermission: false,
+            automaticUserPromptOnDeny: false,
             defaultClassifierTimeoutMs: 90_000,
             retryClassifierTimeoutMs: 180_000,
             maxClassifierAttempts: 2,
@@ -1782,7 +1794,7 @@ describe('runtime daemon dispatcher', () => {
             clientScopeExpansion: false,
           },
           sharedSessionSettings: {
-            version: 1,
+            version: 2,
             keys: expect.arrayContaining([
               'agentMode',
               'autoModeClassifierModel',
@@ -1799,6 +1811,7 @@ describe('runtime daemon dispatcher', () => {
         },
       });
       const settingsCapability = initialized.capabilities.sharedSessionSettings;
+      expect(settingsCapability.version).toBe(2);
       expect(settingsCapability.keys).not.toContain('autoModeEngine');
       expect(settingsCapability.keys).not.toContain('autoModeTimeoutMs');
       expect(settingsCapability.keys).not.toContain('autoModeSpeculativeWindowMs');

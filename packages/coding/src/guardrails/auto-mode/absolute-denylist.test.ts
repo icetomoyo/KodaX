@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setAgentConfigHome } from '@kodax-ai/agent';
 import type { RunnerToolCall } from '@kodax-ai/agent';
 
-import { checkAbsoluteDeny, checkAgentHomeHardDeny } from './absolute-denylist.js';
+import { checkAbsoluteDeny } from './absolute-denylist.js';
 
 const PROJECT_ROOT = path.resolve('/tmp/kodax-tier0-test-project');
 const USER_KODAX = path.join(
@@ -175,40 +175,16 @@ describe('Tier 0 — user_kodax_write (file tools)', () => {
     expect(result).toMatchObject({ denied: true, patternId: 'user_kodax_write' });
   });
 
-  it('separates hard Runtime/root denial from reviewable sensitive files', () => {
-    expect(checkAgentHomeHardDeny(write(USER_KODAX), PROJECT_ROOT).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
-      write(path.join(USER_KODAX, 'runtime', 'state.json')),
-      PROJECT_ROOT,
-    ).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
-      write(path.join(USER_KODAX, 'processes', 'children', 'forged.json')),
-      PROJECT_ROOT,
-    ).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
-      write(path.join(USER_KODAX, 'learned', 'projects', 'record.json')),
-      PROJECT_ROOT,
-    ).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
-      write(path.join(USER_KODAX, 'config.json')),
-      PROJECT_ROOT,
-    ).denied).toBe(false);
-    expect(checkAgentHomeHardDeny(
-      write(path.join(USER_KODAX, 'sessions', 'turn.json')),
-      PROJECT_ROOT,
-    ).denied).toBe(false);
-  });
-
-  it('hard-denies shell removal of Agent Home and Runtime selectors', () => {
-    expect(checkAgentHomeHardDeny(
+  it('detects shell removal of Agent Home and Runtime selectors', () => {
+    expect(checkAbsoluteDeny(
       bash(`rm -rf "${USER_KODAX}"`),
       PROJECT_ROOT,
     ).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
+    expect(checkAbsoluteDeny(
       bash(`rm -rf "${USER_KODAX}"/*`),
       PROJECT_ROOT,
     ).denied).toBe(true);
-    expect(checkAgentHomeHardDeny(
+    expect(checkAbsoluteDeny(
       bash(`Remove-Item -Recurse -Path "${path.join(USER_KODAX, 'runtime')}"`),
       PROJECT_ROOT,
     ).denied).toBe(true);
@@ -460,10 +436,8 @@ describe('Tier 0 — user_kodax_write (file tools)', () => {
       ]) {
         expect(checkAbsoluteDeny(bash(command), PROJECT_ROOT).denied, command)
           .toBe(false);
-        expect(checkAgentHomeHardDeny(bash(command), PROJECT_ROOT).denied, command)
-          .toBe(false);
       }
-      expect(checkAgentHomeHardDeny(
+      expect(checkAbsoluteDeny(
         bash(`rm "${path.join(link, 'state.json')}"`),
         PROJECT_ROOT,
       ).denied).toBe(true);
@@ -486,11 +460,11 @@ describe('Tier 0 — user_kodax_write (file tools)', () => {
     fs.symlinkSync(runtime, runtimeLink, process.platform === 'win32' ? 'junction' : 'dir');
     setAgentConfigHome(agentHome);
     try {
-      expect(checkAgentHomeHardDeny(
+      expect(checkAbsoluteDeny(
         bash(`rm -f "${path.join(scratch, 'ordinary-*', '*')}"`),
         PROJECT_ROOT,
       ).denied).toBe(false);
-      expect(checkAgentHomeHardDeny(
+      expect(checkAbsoluteDeny(
         bash(`rm -f "${path.join(scratch, 'runtime-*', '*')}"`),
         PROJECT_ROOT,
       ).denied).toBe(true);
@@ -500,7 +474,7 @@ describe('Tier 0 — user_kodax_write (file tools)', () => {
     }
   });
 
-  it('hard-denies recursive selectors and traversal mutations whose source contains Agent Home', () => {
+  it('detects recursive selectors and traversal mutations whose source contains Agent Home', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-hard-ancestor-'));
     const owner = path.join(root, 'owner');
     const agentHome = path.join(owner, '.kodax');
@@ -513,7 +487,7 @@ describe('Tier 0 — user_kodax_write (file tools)', () => {
         `mv "${owner}" "${path.join(root, 'backup')}"`,
         `chmod -R 700 "${path.join(root, '*')}"`,
       ]) {
-        expect(checkAgentHomeHardDeny(bash(command), PROJECT_ROOT), command)
+        expect(checkAbsoluteDeny(bash(command), PROJECT_ROOT), command)
           .toMatchObject({ denied: true, patternId: 'user_kodax_write' });
       }
     } finally {

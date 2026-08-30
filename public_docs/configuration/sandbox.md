@@ -202,14 +202,18 @@ staged in a protected content-addressed LocalAppData store independent of
 `KODAX_HOME`; ASRT is checked before materialization and again before broker
 startup. Windows text bytes remain Host/SYSTEM-only; the dedicated sandbox
 group SID receives read/execute, but not write/delete, on the shell artifact;
-and local Users receive only read/execute on the pinned ASRT executable. Fixed
+local Users receive only read/execute on the pinned ASRT executable.
 The current workspace sandbox grants broad host reads, including Agent Home,
-credential locations, and global Git configuration. During upgrade, cold
-admission removes only the exact obsolete KodaX sandbox-account read-deny ACEs;
-unrelated administrator ACLs are preserved byte-for-byte, and an ambiguous ACL
-fails closed instead of being rewritten. The ASRT directory is not passed as a
-final-target policy root. A fixed System32 provisioner may run during artifact
-bootstrap; text content and shell stdin never enter it.
+credential locations, and global Git configuration. During upgrade, versioned
+setup generation 4 removes only the exact obsolete KodaX sandbox-account read-
+deny ACEs after the old SID is idle and rotates the account generation.
+Unrelated administrator ACLs are preserved byte-for-byte, and an ambiguous ACL
+fails closed instead of being rewritten. Ordinary command admission never runs
+that legacy cleanup or revokes another Session's shared ACL state; independent
+Runtime processes keep separate requests, tokens, control channels, and Jobs.
+The ASRT directory is not passed as a final-target policy root. A fixed
+System32 provisioner may run during artifact bootstrap; text content and shell
+stdin never enter it.
 
 In a bundled build, the package-source ASRT executable may be a package-store
 hardlink. KodaX does not trust that link relationship: it performs a
@@ -267,4 +271,4 @@ recovered and callers must reread external state before deciding what to do.
 
 - [Permissions](./permissions.md) — Permission modes and Auto Mode
 - [Configuration files](./config-files.md) — Config.json reference
-- [SDK overview](../sdk/overview.md) — SDK sandbox subpath
+- [SDK sandbox API](../sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778) — SDK sandbox subpath

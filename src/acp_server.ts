@@ -66,8 +66,16 @@ import {
   type AcpLogLevel,
 } from './acp_logger.js';
 import {
+  ACP_PERMISSION_MODE_IDS,
   AcpEventEmitter,
   type AcpEventSink,
+  type AcpPermissionMode,
+  type AcpPermissionModeInput,
+} from './acp_events.js';
+export {
+  ACP_PERMISSION_MODE_IDS,
+  type AcpPermissionMode,
+  type AcpPermissionModeInput,
 } from './acp_events.js';
 import {
   createKodaXRuntime,
@@ -79,16 +87,6 @@ import {
   type RuntimeRunHandle,
   type RuntimeRunPhase,
 } from './sdk-runtime.js';
-
-/** Canonical permission profile ids advertised on the ACP wire. */
-export const ACP_PERMISSION_MODE_IDS = [
-  'plan',
-  'accept-edits',
-  'auto',
-  'full-access',
-] as const;
-export type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
-export type AcpPermissionModeInput = AcpPermissionMode | 'auto-in-project';
 
 // v0.7.42 — replaced the hardcoded `Set(['write', 'edit'])` with the
 // metadata-driven `isToolFileMutation` from `@kodax-ai/coding`. The old

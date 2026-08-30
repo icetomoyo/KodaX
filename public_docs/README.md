@@ -2,8 +2,10 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-alpha.3` (GitHub pre-release; npm publication
-remains manual). The alpha.3 line adds the v2 scoped Provider credential
+The current source candidate is `v0.7.96-alpha.4`; `v0.7.96-alpha.3` remains
+the latest GitHub pre-release and npm publication remains manual. Alpha.4 adds
+the four permission profiles, sandbox-first routing, JSONC Exec Policy,
+Auto[LLM] host-boundary review, and Full Access. The alpha.3 line adds the v2 scoped Provider credential
 broker (ADR-068): Provider secrets stay in the OS keychain and resolve per
 wire call for one closed purpose inside revocable leases, shared-daemon
 internal Agent turns require explicit scoped bindings and fail closed
@@ -116,7 +118,7 @@ stay host-owned when a non-empty CLI `uiHistory` exists.
 - [Providers & API Keys](./configuration/providers.md) — 16 built-in provider aliases
 - [Custom Providers](./configuration/custom-providers.md) — OpenAI/Anthropic-compatible endpoints
 - [Configuration Files](./configuration/config-files.md) — config.json, split files, env vars
-- [Permission Modes](./configuration/permissions.md) — Plan / Edits / Auto + Shell Execution Contract
+- [Permission Modes](./configuration/permissions.md) — Plan / Edits / Auto[LLM] / Full Access + Exec Policy
 - [Sandbox](./configuration/sandbox.md) — Optional OS-level containment (ASRT)
 
 ## SDK

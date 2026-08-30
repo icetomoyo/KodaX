@@ -40,11 +40,7 @@ import {
   analyzePowerShellMutation,
   isPowerShellMutationCommand,
 } from '../../permissions/powershell-mutation.js';
-import {
-  isAgentHomeHardMutationTarget,
-  isAgentHomeHardRemovalTarget,
-  isProtectedAgentHomeMutationTarget,
-} from '../../permissions/agent-home-policy.js';
+import { isProtectedAgentHomeMutationTarget } from '../../permissions/agent-home-policy.js';
 import {
   canonicalizeAutoModePath,
   isAutoWritableKodaxPath,
@@ -463,6 +459,7 @@ function existingRemovalSelectionContainsProtectedPath(
   if (!fs.existsSync(staticRoot)) return false;
   const normalizedPattern = resolvedPattern.replace(/\\/g, '/');
   const pending = [staticRoot];
+  const followedDirectories = new Set<string>();
   let visited = 0;
   while (pending.length > 0) {
     const directory = pending.pop()!;
@@ -480,7 +477,20 @@ function existingRemovalSelectionContainsProtectedPath(
         dot: true,
         nocase: process.platform === 'win32',
       }) && removalTreeContainsProtectedPath(candidate, canonicalHome)) return true;
-      if (entry.isDirectory()) pending.push(candidate);
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+        continue;
+      }
+      if (!entry.isSymbolicLink()) continue;
+      try {
+        if (!fs.statSync(candidate).isDirectory()) continue;
+        const canonicalDirectory = fs.realpathSync.native(candidate);
+        if (followedDirectories.has(canonicalDirectory)) continue;
+        followedDirectories.add(canonicalDirectory);
+        pending.push(candidate);
+      } catch {
+        return true;
+      }
     }
   }
   return false;
@@ -583,194 +593,6 @@ function checkUserKodaxBashWrite(
   return MISS;
 }
 
-function selectorMatchesHardAgentHomePath(
-  targetPath: string,
-  executionCwd: string,
-  agentHome: string,
-  removal = false,
-): boolean {
-  const resolved = resolveExecutionPath(targetPath, executionCwd);
-  if (!/[*?\[\]{}()!]/.test(resolved)) {
-    return removal
-      ? isAgentHomeHardRemovalTarget(targetPath, executionCwd)
-      : isAgentHomeHardMutationTarget(targetPath, executionCwd);
-  }
-  const canonicalHome = canonicalizeAutoModePath(agentHome) ?? path.resolve(agentHome);
-  const pattern = resolved.replace(/\\/g, '/');
-  const candidates = [agentHome, path.join(agentHome, 'runtime'), canonicalHome,
-    path.join(canonicalHome, 'runtime')];
-  return candidates.some((candidate) => minimatch(candidate.replace(/\\/g, '/'), pattern, {
-    dot: true,
-    nocase: process.platform === 'win32',
-  })) || existingSelectionMatchesHardPath(resolved, executionCwd, removal);
-}
-
-function existingSelectionMatchesHardPath(
-  patternPath: string,
-  executionCwd: string,
-  removal: boolean,
-  recursiveContainment = false,
-): boolean {
-  const parsed = path.parse(patternPath);
-  const segments = patternPath.slice(parsed.root.length).split(/[\\/]+/);
-  const firstGlob = segments.findIndex((segment) => /[*?\[\]{}()!]/.test(segment));
-  if (firstGlob < 0) return false;
-  const staticRoot = path.join(parsed.root, ...segments.slice(0, firstGlob));
-  if (!fs.existsSync(staticRoot)) return false;
-  const pattern = patternPath.replace(/\\/g, '/');
-  const selectorDepth = segments.length - firstGlob;
-  const hasGlobStar = segments.slice(firstGlob).includes('**');
-  const pending = [{ directory: staticRoot, depth: 0 }];
-  const followedDirectories = new Set<string>();
-  let visited = 0;
-  while (pending.length > 0) {
-    const { directory, depth } = pending.pop()!;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(directory, { withFileTypes: true });
-    } catch {
-      return true;
-    }
-    for (const entry of entries) {
-      if (++visited > 20_000) return true;
-      const candidate = path.join(directory, entry.name);
-      const normalizedCandidate = candidate.replace(/\\/g, '/');
-      const canMatch = minimatch(normalizedCandidate, pattern, {
-        dot: true,
-        nocase: process.platform === 'win32',
-        partial: true,
-      });
-      if (!canMatch) continue;
-      if (minimatch(normalizedCandidate, pattern, {
-        dot: true,
-        nocase: process.platform === 'win32',
-      }) && (recursiveContainment
-        ? traversedTargetHitsHardBoundary(candidate, executionCwd)
-        : removal
-          ? isAgentHomeHardRemovalTarget(candidate, executionCwd)
-          : isAgentHomeHardMutationTarget(candidate, executionCwd))) return true;
-      const childDepth = depth + 1;
-      if (!hasGlobStar && childDepth >= selectorDepth) continue;
-      if (entry.isDirectory()) {
-        pending.push({ directory: candidate, depth: childDepth });
-        continue;
-      }
-      if (!entry.isSymbolicLink()) continue;
-      let canonicalDirectory: string;
-      try {
-        if (!fs.statSync(candidate).isDirectory()) continue;
-        canonicalDirectory = fs.realpathSync.native(candidate);
-      } catch {
-        return true;
-      }
-      // A selector that traverses a symlink has different semantics from
-      // unlinking the symlink itself: descendants are effects on the target.
-      if (isAgentHomeHardMutationTarget(candidate, executionCwd)) return true;
-      if (!followedDirectories.has(canonicalDirectory)) {
-        followedDirectories.add(canonicalDirectory);
-        pending.push({ directory: candidate, depth: childDepth });
-      }
-    }
-  }
-  return false;
-}
-
-function traversedTargetHitsHardBoundary(
-  targetPath: string,
-  executionCwd: string,
-): boolean {
-  const resolvedTarget = resolveExecutionPath(targetPath, executionCwd);
-  try {
-    if (fs.lstatSync(resolvedTarget).isSymbolicLink()) {
-      return isAgentHomeHardRemovalTarget(targetPath, executionCwd);
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true;
-  }
-  let agentHome: string;
-  try {
-    agentHome = getAgentConfigHome();
-  } catch {
-    return false;
-  }
-  const lexicalHome = path.resolve(agentHome);
-  const canonicalHome = canonicalizeAutoModePath(agentHome) ?? lexicalHome;
-  const canonicalTarget = canonicalizeAutoModePath(targetPath, executionCwd) ?? resolvedTarget;
-  return isAgentHomeHardMutationTarget(targetPath, executionCwd)
-    || isPathInsideDirectory(lexicalHome, resolvedTarget)
-    || isPathInsideDirectory(canonicalHome, canonicalTarget);
-}
-
-function removalSelectionHitsHardBoundary(
-  targetPath: string,
-  executionCwd: string,
-  agentHome: string,
-): boolean {
-  const resolved = resolveExecutionPath(targetPath, executionCwd);
-  if (/[*?\[\]{}()!]/.test(resolved)) {
-    if (selectorMatchesHardAgentHomePath(targetPath, executionCwd, agentHome, true)) return true;
-    return existingSelectionMatchesHardPath(resolved, executionCwd, true, true);
-  }
-  return traversedTargetHitsHardBoundary(targetPath, executionCwd);
-}
-
-/** Unauthorizable Agent Home control-plane boundary for Auto review. */
-export function checkAgentHomeHardDeny(
-  call: RunnerToolCall,
-  projectRoot: string,
-  executionCwd = projectRoot,
-): AbsoluteDenyResult {
-  if (['write', 'edit', 'multi_edit', 'insert_after_anchor'].includes(call.name)) {
-    const target = typeof call.input.path === 'string' ? call.input.path : '';
-    return target && isAgentHomeHardMutationTarget(target, executionCwd)
-      ? { denied: true, patternId: 'user_kodax_write', reason: `The operation targets the Agent Home root or Runtime control plane: ${target}` }
-      : MISS;
-  }
-  if (call.name !== 'bash') return MISS;
-  const command = typeof call.input.command === 'string' ? call.input.command : '';
-  let agentHome: string;
-  try {
-    agentHome = getAgentConfigHome();
-  } catch {
-    return MISS;
-  }
-  const recursiveTargets = recursiveRemovalTargets(command);
-  for (const target of recursiveTargets) {
-    if (removalSelectionHitsHardBoundary(target, executionCwd, agentHome)) {
-      return { denied: true, patternId: 'user_kodax_write', reason: `The command can recursively remove the Agent Home root or Runtime control plane: ${target}` };
-    }
-  }
-  for (const target of parentRemovalTargets(command)) {
-    const resolved = resolveExecutionPath(target, executionCwd);
-    if (isPathInsideDirectory(resolved, path.resolve(agentHome))
-      || removalSelectionHitsHardBoundary(target, executionCwd, agentHome)) {
-      return { denied: true, patternId: 'user_kodax_write', reason: `The command can remove the Agent Home root through parent cleanup: ${target}` };
-    }
-  }
-  const traversedTargets = traversedMutationTargets(command);
-  for (const target of traversedTargets) {
-    const resolved = resolveExecutionPath(target, executionCwd);
-    if (/[*?\[\]{}()!]/.test(resolved)
-      ? existingSelectionMatchesHardPath(resolved, executionCwd, true, true)
-      : traversedTargetHitsHardBoundary(target, executionCwd)) {
-      return { denied: true, patternId: 'user_kodax_write', reason: `The command traverses the Agent Home root or Runtime control plane: ${target}` };
-    }
-  }
-  const recursive = new Set(recursiveTargets.map((target) => resolveExecutionPath(target, executionCwd)));
-  const traversed = new Set(traversedTargets.map((target) => resolveExecutionPath(target, executionCwd)));
-  const removalTargets = powerShellRemovalTargets(command);
-  const removalPaths = new Set(removalTargets.map((target) => resolveExecutionPath(target, executionCwd)));
-  const targets = [...collectDeterministicBashWriteTargets(command), ...removalTargets];
-  for (const target of targets) {
-    if (recursive.has(resolveExecutionPath(target, executionCwd))) continue;
-    if (traversed.has(resolveExecutionPath(target, executionCwd))) continue;
-    const removal = removalPaths.has(resolveExecutionPath(target, executionCwd));
-    if (selectorMatchesHardAgentHomePath(target, executionCwd, agentHome, removal)) {
-      return { denied: true, patternId: 'user_kodax_write', reason: `The command writes or deletes the Agent Home root or Runtime control plane: ${target}` };
-    }
-  }
-  return MISS;
-}
 // ============== Public entrypoint ==============
 
 /**

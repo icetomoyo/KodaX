@@ -30,6 +30,13 @@ All notable changes to this project will be documented in this file.
   network and system temporary writes, permit broad reads including Agent Home,
   credentials, and global Git configuration, and stop disabling global Git.
   The obsolete `sandbox.envPass` input is inert.
+- Advanced the public Runtime contract to `runtimeAutoModeGuardrail:5` and
+  `sharedSessionSettings:2`, with exact canonical/input permission types,
+  host-owned Exec Policy/Auto-review options, ACP mode exports, and safe daemon
+  replacement so an alpha.4 client cannot silently attach to alpha.3 routing.
+- Synchronized README, PRD/HLD/DD/ADR, feature and release records, public
+  configuration/SDK guides, config templates, package contents, test guide,
+  and `kodax_manual` with the same sandbox-first contract.
 
 ### Fixed
 
@@ -42,11 +49,27 @@ All notable changes to this project will be documented in this file.
   policy-opaque nested execution fails closed where an administrator forbid
   must remain absolute.
 - Added an exact Windows migration for obsolete KodaX sandbox-account read-deny
-  ACL entries while preserving unrelated administrator ACLs. Native requests
-  also stop adding the protected artifact cache as a redundant `denyWrite`
-  root, preventing new per-build residues and pre-start policy conflicts;
-  existing cache denies remain untouched because their provenance is not
-  provable from SID shape alone.
+  ACL entries while preserving unrelated administrator ACLs. The migration now
+  runs only during setup-generation-4 cutover after the old SID is idle; normal
+  command admission never repeats the machine-wide cleanup or revokes shared
+  ACL state. This removes the alpha.4 multi-Session regression where a
+  synchronous per-admission cleanup waited on the global ACL mutex and could
+  exceed the 60-second launch deadline. Native requests also stop adding the
+  protected artifact cache as a redundant `denyWrite` root, preventing new
+  per-build residues and pre-start policy conflicts; existing cache denies
+  remain untouched because their provenance is not provable from SID shape
+  alone. Real Windows coverage holds one command active for up to 120 seconds
+  while a second Runtime must complete its independent target before the first
+  is released.
+
+### Removed
+
+- Removed the public `/repl` export `allowsAcceptEditsClassifierFallback` with
+  no replacement. The Runtime now owns the only shell-boundary route;
+  embedders must not install a second Accept Edits classifier fallback.
+- Removed the stale public `createAgentHomeShellBoundaryGuardrail` helper and
+  its options type. It imposed a second Agent Home/opaque-shell block outside
+  the Runtime-owned sandbox-first route and has no replacement.
 
 ## [0.7.96-alpha.3] - 2026-08-29
 

@@ -24,6 +24,7 @@ export {
 export {
   AcpEventEmitter,
   type AcpEventSink,
+  type AcpRuntimePermissionMode,
   type AcpRuntimeEvent,
 } from './acp_events.js';
 export {
@@ -34,6 +35,7 @@ export {
   getKodaXRuntimeOwnerPolicy,
   getKodaXRuntimeOwnerState,
   handleRuntimePermissionRequest,
+  KODAX_RUNTIME_SDK_CAPABILITIES,
   parseRuntimeEvent,
   RuntimePermissionScopeUpgradeRequiredError,
   RuntimeTransportBoundaryError,
@@ -85,6 +87,9 @@ export type {
   RuntimeIdentity,
   RuntimeConnectionService,
   RuntimeConnectionState,
+  RuntimeCapabilityRequirements,
+  RuntimeAutoReviewOptions,
+  RuntimeExecPolicyOptions,
   RuntimeDaemonPreflight,
   RuntimeDaemonManagementService,
   RuntimeDaemonManagementState,
@@ -107,6 +112,8 @@ export type {
   RuntimePermissionPrompt,
   RuntimePermissionPromptContext,
   RuntimePermissionPromptResolution,
+  RuntimePermissionMode,
+  RuntimePermissionModeInput,
   RuntimePermissionFilter,
   RuntimePermissionGrant,
   RuntimePermissionGrantChangedEventPayload,
@@ -188,7 +195,14 @@ export type {
   KodaXSandboxSetupOutcome,
 } from './sdk-sandbox.js';
 // ACP server API - server `cwd` can pin the session-level executionCwd for prompts and tools.
-export { KodaXAcpServer, runAcpServer, type KodaXAcpServerOptions } from './acp_server.js';
+export {
+  ACP_PERMISSION_MODE_IDS,
+  KodaXAcpServer,
+  runAcpServer,
+  type AcpPermissionMode,
+  type AcpPermissionModeInput,
+  type KodaXAcpServerOptions,
+} from './acp_server.js';
 
 // REPL API - 从 @kodax-ai/repl 重新导出
 export {

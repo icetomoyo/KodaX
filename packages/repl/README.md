@@ -16,8 +16,8 @@ KodaX 的交互式终端层，基于 Ink/React，同时保留 readline 传统 RE
 
 Bare `-r` starts with the searchable session picker rather than importing the
 full CLI. Selecting a session transfers stdin to the resumed REPL; Esc releases
-the picker stdin and returns to the invoking terminal. Auto Mode configuration
-is passed to the Runtime guardrail, which decides before the permission UI.
+the picker stdin and returns to the invoking terminal. Runtime-owned permission
+routing tries the sandbox before any Edits user boundary or Auto[LLM] review.
 Automatic large-context compaction is always enabled: `triggerPercent` defaults
 to 75 (15-90), optional `triggerTokens` adds an absolute ceiling, and the smaller
 effective threshold wins. Runtime-backed REPL paths let the Runtime own the
@@ -154,6 +154,8 @@ upsertMcpServer('local-tools', { command: 'node', args: ['server.js'] });
 
 ```typescript
 import {
+  CANONICAL_PERMISSION_MODES,
+  canonicalizePermissionMode,
   computeConfirmTools,
   isPermissionMode,
   listSessions,
@@ -164,11 +166,12 @@ import {
   watchSessions,
 } from '@kodax-ai/kodax/repl';
 
-if (!isPermissionMode('default')) {
+const mode = canonicalizePermissionMode('auto-in-project');
+if (!isPermissionMode(mode) || !CANONICAL_PERMISSION_MODES.includes(mode)) {
   throw new Error('unexpected permission mode');
 }
 
-const confirmTools = computeConfirmTools('default');
+const confirmTools = computeConfirmTools('accept-edits');
 console.log(confirmTools);
 
 const firstPage = await listSessions({
@@ -216,7 +219,7 @@ Session-only consumers can import the same session APIs from `@kodax-ai/kodax/se
 - Explicit Skills: `resolveUserSkillInvocation`, `createUserSkillInvocation`, `prepareInvocationExecution`
 - Config: `loadConfig`, `prepareRuntimeConfig`, `saveConfig`, custom-provider CRUD, MCP-server CRUD
 - Sessions: `FileSessionStorage`, `findMostRecentResumableSession`, `listSessions`, `loadSession`, `readConversationHistory`, `readFullTranscript`, `readSessionCapture`, `exportSessionBundle`, `forkSession`, `rewindSession`, `archiveSession`, `watchSessions`
-- Permissions: `computeConfirmTools`, `isPermissionMode`, `isToolCallAllowed`, `getPlanModeBlockReason`
+- Permissions: `CanonicalPermissionMode`, `PermissionMode`, `CANONICAL_PERMISSION_MODES`, `canonicalizePermissionMode`, `computeConfirmTools`, `isPermissionMode`, `isToolCallAllowed`, `getPlanModeBlockReason`
 - Headless events: JSON/CLI event output includes `sidecar.message` for Sidecar Verifier `revise` / `blocked` messages
 - UI exports: `App`, `SimpleApp`, hooks, contexts, components, terminal-host utilities
 

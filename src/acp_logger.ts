@@ -207,36 +207,6 @@ function mapPermissionOutcomeToLogEntry(
   };
 
   switch (event.outcome) {
-    case 'auto_allowed_read_only_bash':
-      return {
-        level: 'debug',
-        message: 'ACP tool permission auto-allowed for read-only bash',
-        fields: baseFields,
-      };
-    case 'auto_allowed_remembered':
-      return {
-        level: 'info',
-        message: 'ACP tool permission reused remembered allowance',
-        fields: baseFields,
-      };
-    case 'blocked_plan_mode':
-      return {
-        level: 'info',
-        message: 'ACP tool blocked by plan mode',
-        fields: baseFields,
-      };
-    case 'auto_allowed_plan_mode':
-      return {
-        level: 'debug',
-        message: 'ACP tool auto-allowed in plan mode',
-        fields: baseFields,
-      };
-    case 'auto_allowed_policy':
-      return {
-        level: 'debug',
-        message: 'ACP tool auto-allowed by permission policy',
-        fields: baseFields,
-      };
     case 'request_failed_disconnected':
       return {
         level: 'error',
@@ -268,6 +238,15 @@ function mapPermissionOutcomeToLogEntry(
         fields: {
           ...baseFields,
           remember: event.remember ?? false,
+        },
+      };
+    default:
+      return {
+        level: 'info',
+        message: 'ACP legacy permission outcome observed',
+        fields: {
+          ...baseFields,
+          outcome: event.outcome,
         },
       };
   }

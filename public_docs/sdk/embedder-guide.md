@@ -5,10 +5,11 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the current source on the `v0.7.96-alpha.3` package line. npm
+This guide tracks the current source candidate on the `v0.7.96-alpha.4` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
-advertises Windows
-`sandboxRuntime:6`, `runtimeExitSettlement:2`, and `crashOutcomeModel:2`;
+advertises Windows `sandboxRuntime:6`, `runtimeAutoModeGuardrail:5`,
+`sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
+`crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
 (cross-Runtime per-file kernel locking, revision CAS, flushed atomic
 replacement, and a native restricted-token Windows shell runner behind
@@ -66,7 +67,7 @@ are NOT obvious from inspecting the type definitions alone:
 21. [Experimental governed memory — `/experimental-memory`](#21-experimental-governed-memory--experimental-memory-feature_260--feature_275-v0768v0777)
 22. [Bidirectional A2A 1.0 — `/a2a`](#22-bidirectional-a2a-10--a2a-feature_267-v0769)
 23. [Shared Coder daemon for Space and IDE hosts](#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769)
-24. [Runtime-owned Auto Mode and plan-approval bridges](#24-runtime-owned-auto-mode-and-plan-approval-bridges-v0772v0773)
+24. [Runtime-owned permission routing and plan bridges](#24-runtime-owned-permission-routing-and-plan-bridges-v0796)
 25. [Always-on context compaction and bounded transcript recovery](#25-always-on-context-compaction-and-bounded-transcript-recovery-v0774)
 26. [Agent mailbox control versus SDK event telemetry](#26-agent-mailbox-control-versus-sdk-event-telemetry-v0774)
 27. [Windows GUI background subprocess visibility](#27-windows-gui-background-subprocess-visibility-v0775)
@@ -528,7 +529,7 @@ documenting from type signatures but are worth knowing:
 | `@kodax-ai/kodax/coding` | `validateCustomProviderConfig(config)` | Same validator the SDK uses internally — no parallel schemas. |
 | `@kodax-ai/kodax/coding` | `ToolSideEffect` + 4 helpers | Tool metadata (`readonly` / `mutates-fs` / `mutates-shell` / `mutates-network` / `mutates-state`) for plan-mode gates + custom permission UIs. |
 | `@kodax-ai/kodax/coding` | `loadAgentsFiles(opts?)` | Load `AGENTS.md` cascade (project + user + global) for prompt assembly. |
-| `@kodax-ai/kodax/repl` | `bootstrapAutoMode(...)` | Bootstrap the auto-mode classifier guardrail. |
+| `@kodax-ai/kodax/repl` | `bootstrapAutoMode(...)` | Compatibility bootstrap for a standalone Auto reviewer; Runtime hosts own normal host-boundary review. |
 | `@kodax-ai/kodax/repl` | `loadCommands(...)` / `KODAX_COMMANDS_DIR` | Discover user-defined slash commands. |
 | `@kodax-ai/kodax/repl` | `listCustomProviders` / `upsertCustomProvider` / `removeCustomProvider` | Custom LLM provider CRUD. |
 | `@kodax-ai/kodax/repl` | `listMcpServers` / `upsertMcpServer` / `removeMcpServer` / `validateMcpServerConfig` | MCP server config CRUD. |
@@ -3646,7 +3647,7 @@ fields requires a protocol version bump.
 
 This subsection is the historical verification record for the original shared
 Runtime delivery. Current 0.7.80 release gates and evidence live in
-[`docs/release.md`](release.md#v0780-release-preparation).
+[`docs/release.md`](https://github.com/icetomoyo/KodaX/blob/main/docs/release.md#v0780-release-preparation).
 
 The v0.7.69 release validation covers the runtime migration, the Worker
 isolation follow-ups delivered ahead of their original v0.7.71/v0.7.72
@@ -4715,12 +4716,12 @@ const runtime = await connectKodaXRuntime({
     connectionLifecycle: 1,
     typedRuntimeEvents: 1,
     daemonSafeRunInput: 1,
-    sharedSessionSettings: 1,
+    sharedSessionSettings: 2,
     durableRecoveryQueries: 1,
     daemonManagement: 1,
     runtimeEventCoalescing: 1,
     liveOutputSegments: 1,
-    runtimeAutoModeGuardrail: 4,
+    runtimeAutoModeGuardrail: 5,
   },
 });
 ```
@@ -4733,8 +4734,11 @@ Coder. Products that depend on same-Run delivery should require
 (for example, SA execution) still return `unsupported_capability`; do not
 silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
-The SDK requires `runtimeAutoModeGuardrail:4` automatically for ordinary
-`autoStart: true`. Supplying `daemonOrphanExitMs` additionally requires the
+The SDK requires `runtimeAutoModeGuardrail:5` and
+`sharedSessionSettings:2` automatically for ordinary `autoStart: true`.
+The capability gate prevents an alpha.4 client from attaching to an alpha.3
+daemon that advertises the older permission-before-sandbox contract. Supplying
+`daemonOrphanExitMs` additionally requires the
 dedicated `daemonOrphanExit:1` capability and passes the option only when
 spawning a new daemon. It does not silently reinterpret an already-running
 persistent daemon: the SDK uses the normal fenced capability-upgrade path and
@@ -5359,11 +5363,13 @@ Write/Edit content may differ). Generic extension calls can receive only an
 exact in-memory Session grant. Raw command/argv data is not stored in the
 matcher; grants and audit contain only its fingerprint plus a bounded,
 secret-redacted operator label. Clients must not keep separate persistent
-permission rule stores. Runtime capability `runtimeAutoModeGuardrail` v4
-advertises this opaque concrete-grant contract plus the intent-aligned
-retry/Accept-edits behavior that never changes the engine to rules. Embedded,
-Worker, and daemon hosts all expose the same Auto[LLM]-only v4 contract; restart
-or upgrade an older daemon instead of falling back to a client-side alias.
+permission rule stores. Runtime capability `runtimeAutoModeGuardrail` v5
+advertises sandbox completion as authority, host-boundary-only Auto review,
+one bounded host retry, and no automatic user prompt on reviewer denial.
+`sharedSessionSettings` v2 advertises the four canonical profiles and the
+input-only `auto-in-project` alias. Embedded, Worker, and daemon hosts expose
+the same contract; restart or upgrade an older daemon instead of falling back
+to client-side routing.
 
 ### Broker Space keychain credentials
 
@@ -5655,6 +5661,30 @@ await runtime.sessions.updateSettings(session.id, {
 });
 ```
 
+The public SDK types are `RuntimePermissionMode` for canonical stored/output
+values and `RuntimePermissionModeInput` for accepted update input. Host-owned
+policy is configured through `CreateKodaXRuntimeOptions.execPolicy` /
+`RuntimeExecPolicyOptions` and `CreateKodaXRuntimeOptions.autoReview` /
+`RuntimeAutoReviewOptions`. `KODAX_RUNTIME_SDK_CAPABILITIES` is exported for
+pre-spawn checks; alpha.4 reports `runtimeAutoModeGuardrail:5` and
+`sharedSessionSettings:2`.
+
+ACP integrations can import the corresponding root SDK surface without
+duplicating the mode list:
+
+```ts
+import {
+  ACP_PERMISSION_MODE_IDS,
+  type AcpPermissionMode,
+  type AcpPermissionModeInput,
+  type AcpRuntimePermissionMode,
+} from '@kodax-ai/kodax';
+```
+
+`AcpPermissionMode` and `AcpRuntimePermissionMode` contain only canonical
+stored/output values. `AcpPermissionModeInput` additionally accepts the legacy
+`auto-in-project` alias at the input boundary.
+
 `auto-in-project` remains an input-only compatibility alias for `auto`. Legacy
 Auto engine, timeout, and speculative-window settings are ignored and omitted
 from new writes. Auto always means Auto[LLM]; there is no selectable rules
@@ -5725,6 +5755,12 @@ const runtime = await createKodaXRuntime({
 });
 ```
 
+`RuntimeExecPolicyOptions.adminRules` accepts `ExecPolicyRuleInput[]`, exported
+from the root and `/coding` SDK surfaces. This trusted-host input deliberately
+has no `source` or `sourcePath`: Runtime assigns `admin` / `host:admin`
+provenance itself, and the daemon owner rejects either provenance field on the
+wire. A renderer, model, or run cannot forge administrator ownership.
+
 `match` and `notMatch` in JSONC are load-time positive/negative examples for
 validating a prefix. `hostExecutable`, `network`, and `compound` are runtime
 qualifiers and match only when the trusted integration can prove those facts.
@@ -5740,7 +5776,12 @@ The v0.7.x public declarations retain the following migration aliases:
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |
 | `permissionMode: 'auto-in-project'` | `'auto'` | accepted only as input and immediately canonicalized; never persisted or advertised as a fifth profile |
+| persisted `permissionMode: 'default'` | `'accept-edits'` | legacy pre-four-profile records reopen as Edits instead of becoming unset |
 | legacy Auto engine, timeout, and window fields | fixed Auto[LLM] review | accepted only as inert migration input; never persisted or exposed as selectable settings |
+| `AutoModeRulesContext` | Auto[LLM] operation context | remains the active context type for `AutoModeCallAnalyzer`; its legacy name does not mean that an Auto Rules engine still runs |
+| `AutoModeGuardrailConfig.rules`, `AutoModeRulesDecision`, `AutoModeRulesEvaluator`, `AutoModeGuardrailConfig.askUser`, `AutoModeAskUser*`, `AutoModeDecisionDiagnostics`, and Runtime permission `autoModeDiagnostics` fields | Runtime-owned Auto[LLM] facts/review | retained only as deprecated 0.7.x source/wire compatibility; Rules/evaluator/ask-user values are ignored, diagnostics may round-trip only as non-authorizing legacy metadata, and none of these fields restores Auto Rules or the removed automatic prompt path |
+| `allowsAcceptEditsClassifierFallback` | no replacement | removed from the `/repl` barrel; the Runtime now owns the only shell boundary, so embedders must not install a second classifier fallback |
+| legacy ACP `tool_permission_resolved.outcome` literals | current request outcomes | retained as deprecated source/wire-read variants for 0.7.x consumers, but alpha.4 never emits them |
 
 ### Plan capability is opt-in
 
@@ -6286,7 +6327,7 @@ const result = await runKodaXSandboxed({
     mode: 'allowlist',
     origins: ['https://api.example.com'],
   },
-  // false by default: start with KodaX's minimal execution environment.
+  // true by default; set false explicitly for KodaX's minimal environment.
   inheritEnvironment: false,
   env: { REPORT_FORMAT: 'pdf' },
   timeoutMs: 120_000,

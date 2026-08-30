@@ -4160,7 +4160,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     void options.runtimeAutoModeControl?.syncSettings?.(
       context.sessionId,
-      currentConfig.permissionMode,
+      canonicalizePermissionMode(currentConfig.permissionMode),
       autoModeSettings,
     );
   }, [autoModeSettings, context.sessionId, currentConfig.permissionMode, options.runtimeAutoModeControl]);

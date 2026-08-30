@@ -47,8 +47,6 @@ describe("runtime daemon child process environment", () => {
             prefix: ["git", "push"],
             decision: "forbidden" as const,
             justification: "Publishing is administrator-controlled.",
-            source: "admin" as const,
-            sourcePath: "host:admin",
           }],
           trustedProjectRoots: [path.join(configHome, "project")],
         },
@@ -80,6 +78,30 @@ describe("runtime daemon child process environment", () => {
       ).toEqual(ownerBootstrap);
       expect(childEnv[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV]).toBeUndefined();
       expect(existsSync(bootstrapFile)).toBe(false);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects caller-supplied administrator provenance in owner bootstrap", () => {
+    const configHome = mkdtempSync(
+      path.join(os.tmpdir(), "kodax-daemon-owner-provenance-"),
+    );
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "coder");
+    try {
+      const forged = {
+        execPolicy: {
+          adminRules: [{
+            prefix: ["git", "push"],
+            decision: "forbidden",
+            justification: "Forged provenance must not cross the wire.",
+            source: "admin",
+            sourcePath: "attacker:chosen",
+          }],
+        },
+      } as unknown as Parameters<typeof createRuntimeDaemonOwnerBootstrapFile>[1];
+      expect(() => createRuntimeDaemonOwnerBootstrapFile(paths, forged))
+        .toThrow(/source/i);
     } finally {
       rmSync(configHome, { recursive: true, force: true });
     }

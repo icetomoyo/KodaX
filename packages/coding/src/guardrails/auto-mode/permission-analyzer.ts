@@ -836,7 +836,7 @@ function isProtectedAgentHome(targetPath: string): boolean {
  * Credential- and security-control-bearing subset of the user KodaX home
  * (`~/.kodax/`). After the read-side narrowing only these paths remain
  * `protected` for reads; every other `~/.kodax/` path is deterministically
- * readable. Writes use the narrower root/Runtime/credential hard boundary in
+ * readable. Writes use the narrower protected root/Runtime/credential boundary in
  * `checkUserKodaxWrite` independently of this classification.
  *
  * `target` is a resolved absolute path inside `agentHome`.

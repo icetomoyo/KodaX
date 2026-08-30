@@ -57,7 +57,7 @@ export interface ReplRuntimeAutoModeControl {
   getStats(sessionId: string): Promise<AutoModeStats | undefined>;
   syncSettings?(
     sessionId: string,
-    permissionMode: string,
+    permissionMode: CanonicalPermissionMode,
     settings: ReplRuntimeAutoModeSettings,
   ): Promise<AutoModeStats | undefined>;
   subscribe?(
@@ -84,4 +84,4 @@ export function toReplRuntimeAutoModeSettings(
 }
 import type { AutoModeStats } from '@kodax-ai/coding';
 import type { ResolvedAutoModeSettings } from './common/permission-config.js';
-import type { ConfirmResult } from './permission/types.js';
+import type { CanonicalPermissionMode, ConfirmResult } from './permission/types.js';

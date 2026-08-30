@@ -43,12 +43,12 @@ describe('session tool-output retention', () => {
     createSessionManager({ sessionsDir });
     expect(vi.getTimerCount()).toBe(timersBefore + 1);
     await vi.advanceTimersByTimeAsync(30_000);
-    vi.useRealTimers();
 
     await vi.waitFor(async () => {
       await expect(fs.stat(referenced)).resolves.toBeDefined();
       await expect(fs.stat(referencedStream)).resolves.toBeDefined();
       await expect(fs.stat(orphaned)).rejects.toMatchObject({ code: 'ENOENT' });
     });
+    vi.useRealTimers();
   });
 });

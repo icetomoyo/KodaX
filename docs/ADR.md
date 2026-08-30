@@ -315,7 +315,7 @@
 > descendant containment; Issue 256 requires spawn-time Job Objects plus a
 > Worker owner lease and is scheduled for v0.7.84.
 >
-> **v0.7.78 intent-aligned permission and learning addendum:** FEATURE_277
+> **Historical v0.7.78 permission addendum (superseded by ADR-069):** FEATURE_277
 > supersedes ADR-056's automatic LLM-to-rules fallback. Precisely modeled safe
 > operations bypass classifier latency; other classifier infrastructure
 > failures retry once and then use the Accept-edits boundary for that call.
@@ -371,7 +371,8 @@
 > Session selection invariant across CLI/REPL/coding entry points and restores
 > saved workspace identity before resumed execution. It also serializes
 > per-Session Auto setting writes and gives the UI a configured engine projection
-> while awaiting owner acknowledgement; sticky `Auto[RULES]` remains deliberate.
+> while awaiting owner acknowledgement. Its historical sticky `Auto[RULES]`
+> statement is superseded by ADR-069; current writes omit that engine.
 >
 > **v0.7.73 onboarding/Auto reliability addendum:** FEATURE_271 keeps first-run
 > provider setup metadata-only and pre-Runtime, while the Runtime-owned Auto LLM
@@ -1243,13 +1244,12 @@ v0.7.39 ADR-024 落地时把 `name`、`exports`、`bin` normalize、`publishConf
 
 ## ADR-025: auto[llm] 信号化分类器 — 决策层级倒置 + Windows-flag 误判结构性修复 (FEATURE_158, v0.7.39)
 
-**Status**: Accepted (2026-05-12)
+**Status**: Superseded by ADR-069 for current permission routing (originally
+accepted 2026-05-12).
 
-> **Current Auto[LLM] semantics (2026-08-03)**: ADR-060's decision-semantics
-> addendum supersedes this ADR's Tier 0 non-overridable gate for Auto[LLM].
-> Historical Tier 0 matches are now classifier facts and the LLM decision is
-> final; explicit Auto[Rules] retains the legacy deterministic gate. The
-> material below records the original FEATURE_158 design.
+> **Historical record**: ADR-060 first superseded this ADR's Tier 0 ordering;
+> ADR-069 now supersedes both the pre-sandbox classifier and Auto[RULES]
+> contracts. The material below records the original FEATURE_158 design.
 
 **TL;DR**：把 `auto` 模式的 REPL 同步硬规则（[`InkREPL.tsx`](../packages/repl/src/ui/InkREPL.tsx) Step 2.5 dangerous-bash + Step 3 protected-path）从**前置 veto** 改为**喂给 LLM 分类器的信号**；同时把 `~/.kodax/` 写、5 条 catastrophic 模式提升为 **Tier 0 绝对禁令**（LLM 不能 override）；引入 **speculative classify** 抹平延迟；保留 engine 降级到 'rules' 后**重新激活原硬规则路径**做兜底。结构性吃掉 [Issue 131](KNOWN_ISSUES.md#131) `looksLikePath` Windows-flag 误判（`findstr /R` / `dir /B` / `where /R` 等被当作 POSIX 绝对路径触发误确认）。对齐 CC `useCanUseTool` 单决策点 + `SAFE_YOLO_ALLOWLISTED_TOOLS` Tier 1 + `yoloClassifier` LLM-final 架构，但保留 KodaX 已有的 denial tracker / circuit breaker / engine 降级三件套。
 
@@ -4718,7 +4718,9 @@ and active-turn fencing remain mandatory until then.
 
 ## ADR-056: Runtime Owns Auto-Mode Permission Decisions and Host Capability Exposure
 
-**Status**: Accepted (2026-07-18)
+**Status**: Superseded in its permission-before-execution ordering by ADR-069
+(originally accepted 2026-07-18). Runtime ownership of shared-daemon state and
+typed host capability exposure remains current.
 
 **Driver**: `v0.7.72` shared-daemon permission-chain correction and `v0.7.73`
 public Runtime reliability closure
@@ -5596,11 +5598,12 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    the command runs, and removes exactly its owned ACE only after the runner
    proves the Job drained. A host crash leaves recovery evidence keyed by exact
    PID creation time; the next shell host recovers stale evidence under the same
-   short ACL mutex. Fixed Agent Home and credential denies are installed once
-   on exact existing roots for the stable sandbox group through native no-follow
-   handles. Cold admission idempotently installs a guard for an exact sensitive
-   root created after setup. They are not propagated afresh by every command.
-   This mutex covers only ACL commit/cleanup, never command
+   short ACL mutex. The earlier fixed Agent Home and credential guards are
+   historical as of ADR-069: setup generation 4 removes only their exactly
+   owned legacy ACEs after the previous sandbox SID is idle and rotates the
+   account generation. Ordinary admission never installs or removes those
+   machine-wide guards. This mutex covers only current-policy ACL
+   authorization/cleanup, never command
    lifetime or trusted text admission. The full-policy/root-clause split bounds
    persistent ACE growth; no speculative capability garbage collector is added.
    This remains ambient-read plus explicit deny, not a strict read whitelist.
@@ -5954,7 +5957,13 @@ environment allowlisting, and KodaX-specific Agent-Home/global-Git exceptions.
  while the current TypeScript request still redundantly placed that same root in
  `denyWrite`, which the corrected native control verifier rejects before start.
  Current Codex instead treats sandboxed success as the normal path and sends
- only a required unsandboxed retry to an approval/reviewer boundary.
+ only a required unsandboxed retry to an approval/reviewer boundary. The first
+ alpha.4 implementation also repeated exact legacy ACL removal on every Windows
+ command admission. That synchronous native migration competed for the machine-
+ wide ACL mutex with other Runtime processes, producing 60-second launch-
+ deadline failures and observed waits near 240 seconds. The runner itself
+ supports concurrency; the regression was a setup-versus-admission boundary
+ error.
 
 **Decision**: KodaX has four permission profiles: Plan, Edits, Auto[LLM], and
 Full Access. Plan is non-mutating. Edits and Auto[LLM] attempt the selected OS
@@ -5991,6 +6000,21 @@ administrator's same-shaped entry. Removing the request conflict stops new
 growth and lets admission proceed without silently redefining cache ACL
 ownership.
 
+Legacy sensitive-root ACL removal is a versioned setup operation, never a
+normal command-admission operation. Windows setup generation 4 waits until the
+previous sandbox SID is idle, removes only the provably owned legacy guards
+against the exact previous group SID, rotates the account/SID generation, and
+atomically records the new cutover marker. Removal is
+skipped for fresh install and same-generation repair. Older binaries reject
+ordinary admission when they see the v4 marker; their older explicit setup path
+can still downgrade the generation, so operators must not run setup from an
+older KodaX after cutover and must rerun current setup if that happens.
+After setup, each command keeps an independent native request, policy token,
+controller connection, and Job. Admission may idempotently authorize a missing
+current capability on an exact root, but it does not clear or revoke shared
+legacy ACL state. No serial command queue or concurrency-disable option is
+introduced.
+
 Auto review returns allow/deny for one exact host operation. Its configurable
 security body is `config.json#autoReview.policy`; its role and structured
 output remain fixed. Timeout/provider/invalid-output failure receives one
@@ -6009,6 +6033,10 @@ critical safeguard. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
+On Windows, upgrading from setup generation 3 requires one explicit
+`kodax sandbox setup` while old sandbox processes are stopped. The one-time
+migration can take the setup lock; normal commands never wait on that lock or
+the legacy ACL cleanup path, so independent Sessions retain true overlap.
 
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
 reviews and the unsafe fallthrough split); moving a complete deterministic

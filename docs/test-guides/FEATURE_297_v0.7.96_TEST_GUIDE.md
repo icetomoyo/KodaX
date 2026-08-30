@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Verify the four permission profiles, sandbox-first execution, host-boundary Auto[LLM] review, Exec Policy, and legacy Auto[RULES] migration introduced in v0.7.96-alpha.4.
+Verify the four permission profiles, sandbox-first execution, host-boundary Auto[LLM] review, Exec Policy, and inert legacy Auto[RULES] compatibility introduced in v0.7.96-alpha.4.
 
 ## Preconditions
 
@@ -75,20 +75,51 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 5. Confirm an explicit deny is not retried.
 6. Confirm the turn breaker opens after three consecutive denies or ten denies among the last fifty completed reviews; timeouts do not count as denies and the mode remains Auto[LLM].
 
+## SDK, Worker, and Daemon Compatibility
+
+1. From `@kodax-ai/kodax/runtime`, confirm `RuntimePermissionMode` exposes only
+   `plan | accept-edits | auto | full-access`, while
+   `RuntimePermissionModeInput` additionally accepts `auto-in-project`.
+2. Confirm `RuntimeExecPolicyOptions.adminRules` accepts rules without internal
+   `source` or `sourcePath`; the Runtime assigns administrator provenance.
+3. Confirm embedded and Worker Runtime capability metadata advertises
+   `runtimeAutoModeGuardrail:5` and `sharedSessionSettings:2` semantics.
+4. Start daemon mode against an idle v4 daemon and confirm the owner is safely
+   replaced before the client attaches. Repeat with guardrail v5 plus shared
+   settings v1 and confirm the v2 settings gate independently triggers upgrade.
+5. Attach explicitly to an incompatible daemon with auto-start disabled and
+   confirm it fails closed instead of routing permissions client-side.
+6. Inspect the packed declarations and smoke-import the root, `/runtime`, and
+   `/repl` entries. Confirm the exact permission, policy, capability constant,
+   and canonicalization exports are present.
+
 ## Windows ACL Upgrade
 
-1. On a disposable native artifact-cache root, reproduce the canonical allow
-   boundary plus old machine-capability and logon-SID deny residues.
-2. Confirm new native requests do not include the artifact-cache root in
+1. On a disposable Windows sandbox installation, record a setup-generation-3
+   cutover marker, exact legacy sensitive-root guards, and an ambiguous
+   administrator/cache deny with the same SID/mask shape as an older KodaX ACE.
+2. Confirm doctor reports setup required. Keep one old-sandbox-SID process alive
+   and confirm setup refuses to rotate it rather than mutating live shared ACL
+   state.
+3. Stop the process and run `kodax sandbox setup`. Confirm exactly one legacy
+   removal runs, the dedicated account SID rotates, and the cutover marker is
+   atomically rewritten as setup generation 4. The ambiguous administrator/
+   cache deny remains byte-for-byte unchanged.
+4. Confirm new native requests do not include the artifact-cache root in
    `denyWrite` and can pass the control-boundary preflight.
-3. Confirm provisioning and admission leave all historical deny entries
-   unchanged, including an administrator-added deny with the same SID/mask
-   shape as a former KodaX entry.
-4. Confirm the native artifact cache and workspace ACL counts do not grow after
-   repeated commands or after rebuilding the native artifacts.
+5. Run repeated commands and confirm ordinary admission invokes zero
+   `__persistent-deny-read remove` operations and does not revoke another
+   Session's shared ACL state. The native artifact-cache and workspace ACL
+   counts must not grow after commands or native rebuilds.
+6. Enable `KODAX_REAL_WINDOWS_SANDBOX_V2=1` and run the real dual-process test.
+   Its first Runtime reaches the target and remains eligible to run for 120
+   seconds; while it is active, a second Runtime with a different policy must
+   reach and complete its target before the first is released. Release the
+   first Runtime only after this overlap is proven. Do not add a serial queue or concurrency-
+   disable setting to make the test pass.
 
 ## Regression Closure
 
-- Run the focused permission, Auto reviewer, sandbox, Runtime, CLI, config migration, ACP, and daemon tests.
-- Run repository typecheck, lint, full tests, coverage, and build.
+- Run the focused permission, Auto reviewer, sandbox, Runtime, CLI, config compatibility, ACP, and daemon tests.
+- Run repository typecheck, `git diff --check`, full tests, coverage, and build.
 - Confirm generated configuration/help no longer advertises Auto[RULES], `/auto-engine`, or `sandbox.envPass`.
