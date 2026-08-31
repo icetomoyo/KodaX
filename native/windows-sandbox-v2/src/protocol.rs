@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_STREAM_BYTES: usize = 64 * 1024;
 

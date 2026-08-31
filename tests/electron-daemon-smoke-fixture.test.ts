@@ -29,13 +29,22 @@ interface ProbeRunResult {
   readonly stderr: string;
 }
 
+interface ProbeUnavailableResult {
+  readonly status: 'unavailable';
+  readonly sandboxed: false;
+  readonly reason: 'unsupported_policy';
+}
+
+type ProbeSandboxResult = ProbeRunResult | ProbeUnavailableResult;
+
 interface ProbeHarness {
   doctor(): Promise<ProbeDoctor>;
   toolBash(context: { readonly abortSignal?: AbortSignal }): Promise<string>;
   runSandboxed(input: {
     readonly args?: readonly string[];
+    readonly filesystem?: { readonly denyRead?: readonly string[] };
     readonly signal?: AbortSignal;
-  }): Promise<ProbeRunResult>;
+  }): Promise<ProbeSandboxResult>;
 }
 
 interface GeneratedExtension {
@@ -160,6 +169,10 @@ function completedProbe(stdout: string): ProbeRunResult {
   return { status: 'completed', sandboxed: true, exitCode: 0, stdout, stderr: '' };
 }
 
+function unsupportedDenyReadProbe(): ProbeUnavailableResult {
+  return { status: 'unavailable', sandboxed: false, reason: 'unsupported_policy' };
+}
+
 afterEach(() => {
   delete probeGlobal.__kodaxElectronProbeHarness;
   vi.restoreAllMocks();
@@ -270,14 +283,17 @@ describe('packaged Electron daemon environment probe', () => {
           commandCalls += 1;
           return 'Exit: 0\nshell-probe-ok\nnode-mode=absent\nprofile-toolchain-ok';
         },
-        runSandboxed: async () => {
+        runSandboxed: async (input) => {
           commandCalls += 1;
+          if ((input.filesystem?.denyRead?.length ?? 0) > 0) {
+            return unsupportedDenyReadProbe();
+          }
           return completedProbe('repaired');
         },
       };
       await activateExtension(extensionPath);
       await waitUntil(() => existsSync(proofPath));
-      expect(commandCalls).toBe(3);
+      expect(commandCalls).toBe(4);
       expect(doctorCalls).toBe(2);
       expect(readFileSync(proofPath, 'utf8')).not.toContain('probeError');
     } finally {
@@ -327,8 +343,11 @@ describe('packaged Electron daemon environment probe', () => {
         toolBash: async () => (
           'Exit: 0\nshell-probe-ok\nnode-mode=absent\nprofile-toolchain-ok'
         ),
-        runSandboxed: async () => {
+        runSandboxed: async (input) => {
           directCalls += 1;
+          if ((input.filesystem?.denyRead?.length ?? 0) > 0) {
+            return unsupportedDenyReadProbe();
+          }
           return completedProbe(directCalls === 1
             ? 'direct-sandbox-ok'
             : 'direct-powershell-ok');
@@ -342,10 +361,14 @@ describe('packaged Electron daemon environment probe', () => {
         readonly shellProbe?: string;
         readonly directSandboxProbe?: ProbeRunResult;
         readonly directPowerShellProbe?: ProbeRunResult;
+        readonly unsupportedDenyReadProbe?: ProbeUnavailableResult;
+        readonly unsupportedDenyReadTargetStarted?: boolean;
       };
       expect(proof.shellProbe).toBe('shell-probe-ok');
       expect(proof.directSandboxProbe?.stdout).toBe('direct-sandbox-ok');
       expect(proof.directPowerShellProbe?.stdout).toBe('direct-powershell-ok');
+      expect(proof.unsupportedDenyReadProbe?.reason).toBe('unsupported_policy');
+      expect(proof.unsupportedDenyReadTargetStarted).toBe(false);
       expect(proofJson.startsWith('{') && proofJson.endsWith('}')).toBe(true);
       expect(existsSync(`${proofPath}.${process.pid}.1.tmp`)).toBe(false);
     } finally {

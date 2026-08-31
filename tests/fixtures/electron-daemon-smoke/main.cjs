@@ -103,6 +103,19 @@ async function run() {
       + JSON.stringify(environmentProof.directPowerShellProbe),
     );
   }
+  if (
+    environmentProof.unsupportedDenyReadProbe?.status !== 'unavailable'
+    || environmentProof.unsupportedDenyReadProbe.reason !== 'unsupported_policy'
+    || environmentProof.unsupportedDenyReadTargetStarted !== false
+  ) {
+    throw new Error(
+      'Windows denyRead did not fail closed before target start: '
+      + JSON.stringify({
+        result: environmentProof.unsupportedDenyReadProbe,
+        targetStarted: environmentProof.unsupportedDenyReadTargetStarted,
+      }),
+    );
+  }
   const sessions = await Promise.all(Array.from(
     { length: parallelSessionCount },
     (_, index) => runtime.sessions.create({
@@ -362,7 +375,7 @@ function prepareEnvironmentProbeExtension() {
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(extensionPath, `
 import { spawnSync } from 'node:child_process';
-import { renameSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { KodaXBaseProvider } from ${JSON.stringify(llmUrl)};
 import { toolBash } from ${JSON.stringify(codingUrl)};
@@ -396,7 +409,7 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
         || !content.includes('runtime-sandbox-ok')
         || !content.includes('profile-toolchain-ok')
         || !content.includes('parallel-barrier-ok')
-        || !content.includes('deny-read-ok')
+        || !content.includes('global-config-readable')
         || !content.includes('abcdef0')
         || !content.includes('node-realpath-ok')
         || !content.toLowerCase().includes(${JSON.stringify(
@@ -442,9 +455,8 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
             `git rev-parse --short HEAD `
             + `&& node -e "const p=require('node:fs').realpathSync(process.execPath);`
             + `process.stdout.write('node-realpath='+p+'\\nnode-realpath-ok')" `
-            + `&& node -e "const fs=require('node:fs');try{fs.readFileSync(process.argv[1]);`
-            + `process.exit(74)}catch(error){if(!error||!['EACCES','EPERM'].includes(error.code))`
-            + `throw error;process.stdout.write('deny-read-ok\\n')}" `
+            + `&& node -e "require('node:fs').readFileSync(process.argv[1]);`
+            + `process.stdout.write('global-config-readable\\n')" `
             + `"${path.join(configDir, 'config.json')}" `
             + `&& if defined ELECTRON_RUN_AS_NODE `
             + `(exit /b 97) else (dir /b "${path.join(workspaceDir, 'quoted command directory')}" `
@@ -583,6 +595,23 @@ const directPowerShellProbe = await runPhase('direct-powershell-probe', (signal)
       timeoutMs: 60_000,
       signal,
     }));
+const unsupportedDenyReadMarker = ${JSON.stringify(path.join(standaloneProbeDir, 'deny-read-target-started.txt'))};
+const unsupportedDenyReadProbe = await runPhase(
+  'unsupported-deny-read-probe',
+  (signal) => runKodaXSandboxed({
+    command: process.execPath,
+    args: ['-e', "require('node:fs').writeFileSync(process.argv[1], 'started')", unsupportedDenyReadMarker],
+    cwd: ${JSON.stringify(standaloneProbeDir)},
+    filesystem: {
+      allowRead: [dirname(process.execPath), ${JSON.stringify(standaloneProbeDir)}],
+      allowWrite: [${JSON.stringify(standaloneProbeDir)}],
+      denyRead: [${JSON.stringify(configDir)}],
+    },
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+    timeoutMs: 60_000,
+    signal,
+  }),
+);
 if (!sandboxDoctor.ready) {
   sandboxDoctor = await doctorKodaXSandbox({ refresh: true });
   if (!sandboxDoctor.ready) {
@@ -605,6 +634,8 @@ writeEnvironmentProof({
   sandboxDoctor,
   directSandboxProbe,
   directPowerShellProbe,
+  unsupportedDenyReadProbe,
+  unsupportedDenyReadTargetStarted: existsSync(unsupportedDenyReadMarker),
 });
 } catch (error) {
   writeEnvironmentProof({

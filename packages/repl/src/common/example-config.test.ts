@@ -87,6 +87,9 @@ describe('ensureExampleConfigFile (F1 first-launch template)', () => {
     const a2a = getConfigTemplate('a2a');
     expect(a2a).toContain('"agents": {');
     expect(a2a.match(/^\s*"agents": \{/gmu)).toHaveLength(1);
+    expect(a2a).toContain('isolated Skill Script is POSIX-only');
+    expect(a2a).toContain('Windows is');
+    expect(a2a).toContain('required per-command denyRead is unsupported');
     expect(getConfigTemplate('extensions')).toContain('"paths": []');
   });
 

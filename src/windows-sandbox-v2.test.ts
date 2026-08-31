@@ -200,7 +200,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       cwd: 'C:\\work',
       allowRead: ['C:\\work'],
       allowWrite: ['C:\\work'],
-      denyRead: ['C:\\secret'],
+      denyRead: [],
       denyWrite: ['C:\\work\\.git'],
       controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
       terminalRecordPath: 'C:\\control\\windows-terminal.json',
@@ -211,7 +211,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     });
 
     expect(request).toMatchObject({
-      protocol: 8,
+      protocol: 9,
       generation,
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
@@ -225,6 +225,33 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     expect(request.policyCapabilitySid).toBe(
       windowsSandboxV2PolicyCapabilitySid(request.policyFingerprint),
     );
+  });
+
+  it('rejects per-command denyRead before constructing a WRITE_RESTRICTED request', () => {
+    expect(() => createWindowsSandboxV2RunRequest({
+      generation: 'g',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      sandboxUserSid: 'S-1-5-21-1-2-3-1001',
+      sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
+      asrtInvocation: {
+        executable: 'srt-win.exe',
+        prefixArgs: ['exec', '--'],
+        targetArgv: ['cmd.exe'],
+        childEnvironment: {},
+      },
+      targetArgv: ['cmd.exe'],
+      cwd: 'C:\\work',
+      allowRead: ['C:\\work'],
+      allowWrite: [],
+      denyRead: ['C:\\secret'],
+      denyWrite: [],
+      controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
+      terminalRecordPath: 'C:\\control\\windows-terminal.json',
+      terminalNonce: '12345678-1234-1234-1234-123456789abc',
+      operationDeadlineUnixMs: 123_456,
+      setupMarkerPath: 'C:\\control\\windows-v2-cutover.json',
+      setupMarkerSha256: 'c'.repeat(64),
+    })).toThrow(/denyRead is unsupported/);
   });
 
   it('rejects a request without an exact ASRT prefix or private pipe', () => {
@@ -288,7 +315,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     };
     expect(length).toBe(frame.byteLength - 4);
     expect(message).toEqual({
-      protocol: 8,
+      protocol: 9,
       targetEnvironment: [
         { name: 'Path', value: 'C:\\bin' },
         { name: 'SECRET', value: 'sentinel' },

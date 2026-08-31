@@ -5,7 +5,7 @@
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.4` source
 > candidate (`v0.7.96-alpha.3` remains the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
-> This baseline advertises Windows `sandboxRuntime:7`;
+> This baseline advertises Windows `sandboxRuntime:9`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
 > This document describes the current product. Historical pre-v0.7.43
@@ -207,14 +207,25 @@ The v0.7.96-alpha.4 source candidate adds FEATURE_297 and corrects the Windows
 sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
 does not run setup, legacy ACL migration, synchronous provisioning, or a
 command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;
-a missing additive ACE uses one short lock for that exact opened filesystem
-object and all roots share one five-second phase budget. Each command retains
+effective inherited normal-token grants are accepted and only a missing exact
+restricted capability is converged using `SET_ACCESS` and DACL readback,
+without a cross-process target mutex. Each command retains
 an independent token, pipe, Job, and terminal proof. Shared network brokers are
 kept referenced while starting or leased and detached only while idle. The
-one-time setup generation 8 / protocol 8 transition uses a crash-resumable
-legacy-drain marker, rotates the sandbox account only after the complete old
-pre-start window and old SID lifetime have ended, and gates every new target
-start with an open handle to the protected generation marker.
+setup generation 9 / protocol 9 transition reuses a healthy fixed sandbox
+account across setup versions, upgrades generation 8 without replaying its
+completed legacy ACL cleanup, and gates every new target start with an open
+handle to the protected generation marker. Setup publishes a protected
+non-ready `installing` marker, the elevated parent synchronously converges NUL
+compatibility and profile read capabilities, and the caller atomically publishes
+the ready marker only after success. No helper overlaps command admission and
+system TMP is not prewarmed. Windows per-command `denyRead` fails closed as
+`unsupported_policy` before target start because `WRITE_RESTRICTED` cannot
+enforce restricting SIDs for reads. If a custom `KODAX_HOME` is nested below the
+system temporary write root, the Runtime materializes only its fixed protected
+internal directories before constructing the Windows deny-write policy; a
+missing deny root cannot fail first launch, and this path acquires no lock or
+ACL transaction.
 
 ## 2. Target Users
 
@@ -501,6 +512,11 @@ context from append-order transcript history. Resumed interactive sessions
 should preserve durable terminal tool-card replay where sanitized `uiHistory`
 is available, while canonical `messages` / `lineage` remain the source of
 truth.
+
+Failed interactive turns may persist `presentationOnly: true` text items as a
+display-authoritative exception. They participate in resumability and restore
+exactly once in terminal order (Assistant summary, Sidecar verifier, terminal
+error) without entering canonical model context.
 
 Hosts that render ordinary chat require a third, SDK-owned view distinct from
 both active model context and raw audit scrollback. That projection folds only

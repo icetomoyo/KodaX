@@ -742,16 +742,32 @@ diagnostics rather than hidden.
 
 **v0.7.96-alpha.4 source candidate:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
-while ordinary admission is read-only when capabilities are already present
-and only adds a missing exact-root capability under a five-second exact-object
-mutex. No command-lifetime or machine-global filesystem coordinator is shared
+while ordinary admission accepts effective inherited normal-token access and
+only converges a missing exact-root restricted capability using `SET_ACCESS`
+and DACL readback, without waiting on a cross-process target mutex. Stable
+filesystem capability SIDs stay on the object and each command token selects
+its authority. Windows per-command `denyRead` returns structured
+`unsupported_policy` before setup, DACL mutation, or target start because the
+Codex-compatible `WRITE_RESTRICTED` token cannot enforce restricting SIDs for
+reads; the API field remains for cross-platform compatibility.
+No command-lifetime or machine-global filesystem coordinator is shared
 by Bash, trusted text, worktrees, Sessions, or Runtime processes. Every native
 command has an independent request, token, control channel, and Job; matching
 network authorities share a bounded broker pool without serializing command
-lifetime. Protocol 8/setup generation 8 holds the protected setup marker until
-durable target `Started`, and interrupted setup resumes its bounded pre-start
-drain instead of repeating migration in the command hot path. This candidate
-advertises `sandboxRuntime:7`. See the
+lifetime. Protocol 9/setup generation 9 holds the protected setup marker until
+durable target `Started`, reuses a healthy fixed sandbox account across setup
+versions, and upgrades generation-8 installations in place without replaying
+legacy ACL cleanup. Generation 8 remains the proof boundary for the one-time
+legacy migration. Setup first publishes a protected non-ready `installing`
+marker; the elevated parent synchronously installs NUL compatibility and profile
+read capabilities, and only then does the caller atomically publish the ready
+marker. No helper or migration overlaps ordinary admission, and system TMP is
+not prewarmed. This candidate
+also creates its five fixed protected Agent Home directories before constructing
+a Windows policy when a custom `KODAX_HOME` sits below the system-TMP write
+grant; missing deny roots therefore cannot reject first launch, and no lock or
+ACL transaction is added. This candidate advertises `sandboxRuntime:9`, so a
+linked CLI cannot silently reuse a daemon that still runs the setup-8 ACL path. See the
 [v0.7.96-alpha.4 release checklist](docs/release.md#v0796-alpha4-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
@@ -1289,8 +1305,10 @@ Agent, Skill, Extension-tool authority, workspace, tool-policy, or task-store
 changes require an explicit server restart. Managed
 A2A contexts default to `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/`.
 Exact Skill scripts require the opt-in isolated policy and a passing
-`kodax sandbox doctor` (`kodax sandbox setup` performs the explicit Windows
-provisioning or v2 account-SID cutover).
+`kodax sandbox doctor`. On current native protocol 9 this isolated Skill Script
+route is POSIX-only. Windows is unavailable because the route requires
+per-command `denyRead`, which the Windows `WRITE_RESTRICTED` backend rejects as
+`unsupported_policy`; `kodax sandbox setup` cannot enable it.
 
 ---
 

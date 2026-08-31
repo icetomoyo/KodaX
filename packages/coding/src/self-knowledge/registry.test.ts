@@ -145,14 +145,14 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('native shell protocol is version 8');
+    expect(sandbox).toContain('native shell protocol is version 9');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
     expect(sandbox).toContain('Doctor only verifies it');
     expect(sandbox).toContain('expired dead-PID request');
     expect(sandbox).toContain('windows-deny recovery records remain fail-closed');
-    expect(sandbox).toContain('sandboxRuntime:7');
+    expect(sandbox).toContain('sandboxRuntime:9');
     expect(sandbox).toContain('Workspace-local .kodax/runtime state remains readable but is denied to shell writes');
     expect(sandbox).toContain('reconstructs from event ledgers after truncation');
     expect(sandbox).toContain('descriptor-verified addon loading');
@@ -169,13 +169,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:7`');
+    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:9`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
     expect(sdk).toContain('bounded `capacityDebt`');
     expect(sdk).toContain('commits through the recovery ladder instead of aborting the Run');
     expect(sdk).toContain('irreducible overflow');
     expect(sandbox).toContain('Since v0.7.96, trusted text transactions and platform shell containment are');
-    expect(sandbox).toContain('v0.7.96 raises it to version 7');
+    expect(sandbox).toContain('v0.7.96 raises it to version 9');
   });
 
   it('documents the v0.7.96-alpha.3 scoped credential and daemon inventory contracts', () => {
@@ -198,7 +198,7 @@ describe('FEATURE_218 manual registry', () => {
 
     expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
-    expect(sdk).toContain('Only an overlapping denyRead request may recover');
+    expect(sdk).toContain('Windows per-command denyRead fails closed as unsupported_policy');
     expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
     expect(sdk).toContain('zero-byte, malformed, or truncated owner data');
     expect(sdk).toContain('finalizes its authoritative `KodaXResult` before emitting the');
@@ -207,7 +207,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('Since v0.7.95, Runtime rereads a terminal status');
     expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('without a machine-global admission mutex');
-    expect(sandbox).toContain('Full stale-receipt recovery remains setup work');
+    expect(sandbox).toContain('Setup alone retires pre-cutover receipts');
     expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
     expect(sandbox).toContain('Atomic control staging is retired only after exact dead-PID');
   });
@@ -295,7 +295,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('without a machine-global admission mutex');
     expect(sandbox).toContain('profile-specific host boundary');
-    expect(sandbox).toContain('setup-generation-8 cutover');
+    expect(sandbox).toContain('setup-generation-9 cutover');
+    expect(sandbox).toContain('protected two-phase marker');
+    expect(sandbox).toContain('No helper overlaps ordinary admission');
   });
 
   it('documents the v0.7.77 adaptive AMA and governed memory intervention contracts', () => {
@@ -551,6 +553,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(sessions).toContain('zero-message');
     expect(sessions).toContain('classic and Ink');
     expect(sessions).toContain('saved workspace');
+    expect(sessions).toContain('`presentationOnly`');
+    expect(sessions).toContain('do not re-append');
+    expect(sessions).toContain('next submit or graceful exit');
     expect(permissions).toContain('Shift-Tab');
     expect(permissions).toContain('Shift+Enter');
     expect(permissions).toContain('Auto[LLM]');

@@ -20,10 +20,7 @@ use windows::Win32::Storage::FileSystem::{
     GetFileInformationByHandleEx,
 };
 
-use crate::acl::{
-    ExecutionDenyCleanup, ensure_policy_aces_until, install_execution_deny_read_until,
-    verify_control_directory_boundary,
-};
+use crate::acl::{ensure_policy_aces_until, verify_control_directory_boundary};
 use crate::model::{
     BootstrapRequest, ErrorMessage, ExitMessage, HelloMessage, ReadyMessage, RunRequest,
     SpawnMessage, StartedMessage, StartedRecord, TerminalRecord, controller_pipe_server_pid,
@@ -34,8 +31,8 @@ use crate::protocol::{Frame, FrameKind, PROTOCOL_VERSION, read_frame, write_fram
 use crate::win::{
     NamedPipeServer, NamedPipeServers, OwnedHandle, PrivateDesktop, SpawnedHostChild,
     connect_controller_pipe, current_token, disconnect_named_pipe, named_pipe_available_bytes,
-    named_pipe_client_identity, process_creation_time, process_is_descendant_of,
-    spawn_asrt_launcher, terminate_process, token_user_sid, verify_protected_runner_process,
+    named_pipe_client_identity, process_is_descendant_of, spawn_asrt_launcher, terminate_process,
+    token_user_sid, verify_protected_runner_process,
 };
 
 const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
@@ -92,13 +89,6 @@ impl HostAbort {
                 disconnect_named_pipe(&pipe)?;
             }
             bail!("Windows sandbox launch was aborted before runner authentication completed");
-        }
-        Ok(())
-    }
-
-    fn ensure_open(&self, stage: &str) -> Result<()> {
-        if self.requested.load(Ordering::Acquire) {
-            bail!("Windows sandbox launch was aborted during {stage}");
         }
         Ok(())
     }
@@ -278,30 +268,125 @@ fn read_request(path: &Path) -> Result<RunRequest> {
 }
 
 fn hold_setup_marker(request: &RunRequest) -> Result<File> {
+    let token = current_token()?;
+    let host_sid = token_user_sid(token.raw())?;
     open_setup_marker(
         &request.setup_marker_path,
         &request.setup_marker_sha256,
         &request.filesystem_capability_nonce,
+        &host_sid,
+        &request.sandbox_user_sid,
+        &request.sandbox_group_sid,
+        None,
     )
 }
 
+pub fn setup_installing_marker_is_current(
+    path: &str,
+    expected_sha256: &str,
+    expected_capability_nonce: &str,
+    expected_sandbox_user_sid: &str,
+    expected_sandbox_group_sid: &str,
+) -> Result<bool> {
+    let token = current_token()?;
+    let host_sid = token_user_sid(token.raw())?;
+    Ok(try_open_setup_marker(
+        path,
+        expected_sha256,
+        expected_capability_nonce,
+        &host_sid,
+        expected_sandbox_user_sid,
+        expected_sandbox_group_sid,
+        Some("installing"),
+    )?
+    .is_some())
+}
+
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SetupMarkerCapability {
+    version: u32,
+    protocol: u16,
+    generation_nonce: String,
     filesystem_capability_nonce: String,
+    host_user_sid: String,
+    sandbox_user_sid: String,
+    sandbox_group_sid: String,
+    #[serde(default)]
+    state: Option<String>,
+}
+
+fn setup_marker_matches(
+    marker: &SetupMarkerCapability,
+    expected_capability_nonce: &str,
+    expected_host_sid: &str,
+    expected_sandbox_user_sid: &str,
+    expected_sandbox_group_sid: &str,
+    expected_state: Option<&str>,
+) -> Result<bool> {
+    let generation_nonce = uuid::Uuid::parse_str(&marker.generation_nonce)
+        .context("decode Windows sandbox setup generation nonce")?;
+    let capability_nonce = uuid::Uuid::parse_str(&marker.filesystem_capability_nonce)
+        .context("decode Windows sandbox filesystem capability nonce")?;
+    Ok(marker.version == 9
+        && marker.protocol == PROTOCOL_VERSION
+        && generation_nonce.get_version_num() == 4
+        && capability_nonce.get_version_num() == 4
+        && marker
+            .filesystem_capability_nonce
+            .eq_ignore_ascii_case(expected_capability_nonce)
+        && marker.host_user_sid.eq_ignore_ascii_case(expected_host_sid)
+        && marker
+            .sandbox_user_sid
+            .eq_ignore_ascii_case(expected_sandbox_user_sid)
+        && marker
+            .sandbox_group_sid
+            .eq_ignore_ascii_case(expected_sandbox_group_sid)
+        && marker.state.as_deref() == expected_state)
 }
 
 fn open_setup_marker(
     path: &str,
     expected_sha256: &str,
     expected_capability_nonce: &str,
+    expected_host_sid: &str,
+    expected_sandbox_user_sid: &str,
+    expected_sandbox_group_sid: &str,
+    expected_state: Option<&str>,
 ) -> Result<File> {
-    let mut file = OpenOptions::new()
+    try_open_setup_marker(
+        path,
+        expected_sha256,
+        expected_capability_nonce,
+        expected_host_sid,
+        expected_sandbox_user_sid,
+        expected_sandbox_group_sid,
+        expected_state,
+    )?
+    .ok_or_else(|| anyhow!("Windows sandbox setup marker generation changed before host launch"))
+}
+
+fn try_open_setup_marker(
+    path: &str,
+    expected_sha256: &str,
+    expected_capability_nonce: &str,
+    expected_host_sid: &str,
+    expected_sandbox_user_sid: &str,
+    expected_sandbox_group_sid: &str,
+    expected_state: Option<&str>,
+) -> Result<Option<File>> {
+    let mut file = match OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ.0)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(path)
-        .context("open Windows sandbox setup marker launch gate")?;
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).context("open Windows sandbox setup marker launch gate");
+        }
+    };
     let metadata = file
         .metadata()
         .context("inspect Windows sandbox setup marker launch gate")?;
@@ -316,17 +401,21 @@ fn open_setup_marker(
         .context("read Windows sandbox setup marker launch gate")?;
     let observed = format!("{:x}", Sha256::digest(&bytes));
     if !observed.eq_ignore_ascii_case(expected_sha256) {
-        bail!("Windows sandbox setup marker generation changed before host launch");
+        return Ok(None);
     }
     let marker: SetupMarkerCapability =
         serde_json::from_slice(&bytes).context("decode Windows sandbox setup marker capability")?;
-    if !marker
-        .filesystem_capability_nonce
-        .eq_ignore_ascii_case(expected_capability_nonce)
-    {
-        bail!("Windows sandbox filesystem capability nonce does not match setup authority");
+    if !setup_marker_matches(
+        &marker,
+        expected_capability_nonce,
+        expected_host_sid,
+        expected_sandbox_user_sid,
+        expected_sandbox_group_sid,
+        expected_state,
+    )? {
+        return Ok(None);
     }
-    Ok(file)
+    Ok(Some(file))
 }
 
 fn validate_terminal_record_path(request_path: &Path, terminal_path: &Path) -> Result<()> {
@@ -642,21 +731,7 @@ pub fn run(request_path: &Path) -> Result<u32> {
             .context("clone authenticated Windows sandbox abort pipe")?,
     )?;
     child.close_launch_stdin();
-    let runner_creation_time = process_creation_time(client_pid)?
-        .ok_or_else(|| anyhow!("Windows sandbox runner exited after authentication"))?;
     runner_watchdog.finish("runner authentication")?;
-    let execution_deny_lease = install_execution_deny_read_until(
-        &request,
-        control_directory,
-        &client_logon_sid,
-        client_pid,
-        request.operation_deadline_unix_ms,
-    )?;
-    deadline.ensure("denyRead authorization")?;
-    abort.ensure_open("denyRead authorization")?;
-    if process_creation_time(client_pid)? != Some(runner_creation_time) {
-        bail!("Windows sandbox runner identity changed during denyRead authorization");
-    }
     let target_watchdog =
         LaunchWatchdog::start(deadline.phase_deadline(LAUNCH_PHASE_TIMEOUT), abort.clone());
 
@@ -678,16 +753,7 @@ pub fn run(request_path: &Path) -> Result<u32> {
     );
     finalize_relay(
         relay_result,
-        || match execution_deny_lease {
-            Some(lease) => match lease.finish() {
-                ExecutionDenyCleanup::Completed => Ok(None),
-                ExecutionDenyCleanup::Deferred(diagnostic) => Ok(Some(diagnostic)),
-                ExecutionDenyCleanup::Failed(error) => {
-                    Err(error.context("clean Windows denyRead execution ACLs"))
-                }
-            },
-            None => Ok(None),
-        },
+        || Ok(None),
         |record| write_terminal_record(Path::new(&request.terminal_record_path), record),
         &request.terminal_nonce,
     )
@@ -707,9 +773,8 @@ fn finalize_relay(
 ) -> Result<u32> {
     match relay {
         Ok(settlement) => finalize_drained_run(settlement, cleanup, write_terminal, terminal_nonce),
-        // A relay error is not Job-drain proof. Keep the per-logon deny ACE and
-        // durable receipt until setup or an exact-overlap admission proves the
-        // authenticated runner process is dead.
+        // A relay error is not Job-drain proof, so it cannot publish a successful
+        // terminal record. Protocol 9 performs no command-scoped ACL cleanup.
         Err(relay_error) => Err(relay_error),
     }
 }
@@ -877,6 +942,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn setup_marker_requires_the_exact_generation_identity_and_phase() {
+        let ready: SetupMarkerCapability = serde_json::from_str(
+            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3"}"#,
+        )
+        .unwrap();
+        assert!(
+            setup_marker_matches(
+                &ready,
+                "00000000-0000-4000-8000-000000000002",
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                None,
+            )
+            .unwrap()
+        );
+        assert!(
+            !setup_marker_matches(
+                &ready,
+                "00000000-0000-4000-8000-000000000002",
+                "S-1-5-21-1",
+                "S-1-5-21-9",
+                "S-1-5-21-3",
+                None,
+            )
+            .unwrap()
+        );
+
+        let installing: SetupMarkerCapability = serde_json::from_str(
+            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","state":"installing"}"#,
+        )
+        .unwrap();
+        assert!(
+            setup_marker_matches(
+                &installing,
+                "00000000-0000-4000-8000-000000000002",
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                Some("installing"),
+            )
+            .unwrap()
+        );
+        assert!(serde_json::from_str::<SetupMarkerCapability>(
+            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","unexpected":true}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn phase_deadline_restarts_without_exceeding_the_operation_deadline() {
         let now = Instant::now();
         let operation = LaunchDeadline(now + Duration::from_secs(120));
@@ -970,14 +1085,77 @@ mod tests {
             uuid::Uuid::new_v4(),
         ));
         let capability_nonce = "00000000-0000-4000-8000-000000000003";
-        let payload =
-            br#"{"version":7,"filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003"}"#;
+        let payload = br#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3"}"#;
         std::fs::write(&path, payload).unwrap();
         let digest = format!("{:x}", Sha256::digest(payload));
 
-        let marker = open_setup_marker(path.to_str().unwrap(), &digest, capability_nonce).unwrap();
+        let marker = open_setup_marker(
+            path.to_str().unwrap(),
+            &digest,
+            capability_nonce,
+            "S-1-5-21-1",
+            "S-1-5-21-2",
+            "S-1-5-21-3",
+            None,
+        )
+        .unwrap();
         assert!(std::fs::remove_file(&path).is_err());
         drop(marker);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn setup_marker_probe_waits_for_the_exact_generation() {
+        let path = std::env::temp_dir().join(format!(
+            "kodax-setup-marker-probe-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4(),
+        ));
+        let capability_nonce = "00000000-0000-4000-8000-000000000003";
+        let payload = br#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","state":"installing"}"#;
+        let digest = format!("{:x}", Sha256::digest(payload));
+
+        assert!(
+            try_open_setup_marker(
+                path.to_str().unwrap(),
+                &digest,
+                capability_nonce,
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                Some("installing"),
+            )
+            .unwrap()
+            .is_none()
+        );
+        std::fs::write(&path, br#"{"version":7}"#).unwrap();
+        assert!(
+            try_open_setup_marker(
+                path.to_str().unwrap(),
+                &digest,
+                capability_nonce,
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                Some("installing"),
+            )
+            .unwrap()
+            .is_none()
+        );
+        std::fs::write(&path, payload).unwrap();
+        assert!(
+            try_open_setup_marker(
+                path.to_str().unwrap(),
+                &digest,
+                capability_nonce,
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                Some("installing"),
+            )
+            .unwrap()
+            .is_some()
+        );
         std::fs::remove_file(path).unwrap();
     }
 

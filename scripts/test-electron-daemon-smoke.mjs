@@ -72,6 +72,8 @@ try {
     sandboxDoctor,
     directSandboxProbe,
     directPowerShellProbe,
+    unsupportedDenyReadProbe,
+    unsupportedDenyReadTargetStarted,
     ...environmentProof
   } = result.environmentProof;
   assert.deepEqual(environmentProof, {
@@ -100,6 +102,17 @@ try {
   assert.equal(directPowerShellProbe?.exitCode, 0);
   assert.match(directPowerShellProbe?.stdout ?? '', /direct-powershell-ok/);
   assert.equal(directPowerShellProbe?.stderr, '');
+  assert.equal(
+    unsupportedDenyReadProbe?.status,
+    'unavailable',
+    'Windows denyRead must fail closed as unavailable.',
+  );
+  assert.equal(unsupportedDenyReadProbe?.reason, 'unsupported_policy');
+  assert.equal(
+    unsupportedDenyReadTargetStarted,
+    false,
+    'Unsupported Windows denyRead must not start its target.',
+  );
   await verifyConsoleProbe(consoleProbe);
   await assertNoAclPoisonMarkers(
     'Completed Shell commands must release every ACL owner while the packaged daemon remains active.',

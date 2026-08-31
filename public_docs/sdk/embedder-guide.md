@@ -7,13 +7,13 @@
 
 This guide tracks the current source candidate on the `v0.7.96-alpha.4` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
-advertises Windows `sandboxRuntime:7`, `runtimeAutoModeGuardrail:5`,
+advertises Windows `sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
 `crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
 (cross-Runtime per-file kernel locking, revision CAS, flushed atomic
 replacement, and a native restricted-token Windows shell runner behind
-native shell protocol version 8/setup generation 8 with no command-lifetime
+native shell protocol version 9/setup generation 9 with no command-lifetime
 global admission lock), and local tool-result capacity overflow
 records bounded `capacityDebt` and commits through a bounded recovery ladder
 instead of aborting the Run. On top of v0.7.95: self-healing Windows sandbox
@@ -1126,7 +1126,10 @@ returned from `loadFullTranscript()` with `type: 'client_notice'`,
 `source: 'client'`, and `payload.entersModelContext === false`.
 
 v0.7.51 extends the `uiHistory` schema so interactive sessions can persist
-sanitized terminal tool cards. Headless SDK sessions can still reconstruct
+sanitized terminal tool cards. Text items may set `presentationOnly: true` when
+their rendered content is authoritative even without a canonical message anchor;
+this is how failed managed turns retain the final Assistant summary, Sidecar
+Verifier verdict, and terminal error across `kodax -r`. Headless SDK sessions can still reconstruct
 tool-call display from canonical assistant `tool_use` and user `tool_result`
 messages when no TUI replay cache exists. Workflow progress remains on the
 `WorkflowProcessSnapshot` / lifecycle-controller surfaces from v0.7.50; session
@@ -4507,7 +4510,11 @@ store revisions. Card/auth/limits can hot reload; execution-authority changes
 require an explicit restart. Managed contexts live below
   `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/<context-key>/`. Exact Skill scripts require
 `process: isolated`, an admitted `scripts/...` path, and a passing
-`kodax sandbox doctor`; KodaX never falls back to an unsandboxed shell.
+`kodax sandbox doctor`; KodaX never falls back to an unsandboxed shell. On
+current native protocol 9, this isolated Skill Script route is POSIX-only.
+Windows is unavailable because the route requires per-command `denyRead`, which
+the Windows `WRITE_RESTRICTED` backend rejects as `unsupported_policy` before
+doctor, setup, DACL mutation, or target start.
 
 Every concrete file reached by `read`, `grep`, or `glob` is checked against the
 bound workspace. Child runs inherit ceilings for native reads, tools, Skills,
@@ -4710,7 +4717,7 @@ const runtime = await connectKodaXRuntime({
     runBoundHostTools: 1,
     coderOwnerFencing: 1,
     crashOutcomeModel: 2,
-    sandboxRuntime: 7,
+    sandboxRuntime: 9,
     coderFeatureMatrix: 1,
     sessionAdmission: 1,
     completeObservationSnapshot: 1,
@@ -4779,9 +4786,9 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `7` in v0.7.96-alpha.4
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `9` in v0.7.96-alpha.4
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
-`sandboxRuntime:7`, so an idle v6-or-older daemon is replaced; a busy or
+`sandboxRuntime:9`, so an idle v8-or-older daemon is replaced; a busy or
 multi-client daemon fails closed with restart guidance. Version 6 means that
 trusted text transactions are host-owned and the native shell runner has no
 command-lifetime filesystem-effect lease; a v5 daemon cannot be reused for
@@ -6326,7 +6333,7 @@ const result = await runKodaXSandboxed({
   filesystem: {
     allowRead: [projectDirectory, process.execPath],
     allowWrite: [projectDirectory, os.tmpdir()],
-    denyRead: [path.join(os.homedir(), '.ssh')],
+    denyRead: [],
     denyWrite: [path.join(projectDirectory, '.git', 'config')],
   },
   network: {
@@ -6357,16 +6364,20 @@ if (result.status === 'unavailable') {
 
 The generic executor supports network `allow`, `deny`, and exact HTTP(S)
 origin `allowlist` modes plus filesystem policy roots, environment inheritance,
-timeout, cancellation, and bounded output. ASRT permits ordinary reads by
-default: `denyRead` removes access and a more specific `allowRead` carves access
-back. `allowWrite` defines the writable roots, while `denyWrite` removes
+timeout, cancellation, and bounded output. On POSIX, ASRT permits ordinary
+reads by default and `denyRead` removes access. On Windows, a non-empty
+per-command `denyRead` returns `unavailable` with reason `unsupported_policy`
+before doctor, setup, DACL mutation, or target start because
+`WRITE_RESTRICTED` does not enforce restricting SIDs for reads. `allowWrite`
+defines the writable roots, while `denyWrite` removes
 subtrees and always takes precedence over `allowWrite`. The HTTP(S) `origins`
 are normalized to the hostname/port pair enforced by ASRT's network proxy. It
 never silently runs without containment: sandbox unavailability is the typed
 `{ status: 'unavailable', sandboxed: false, doctor, reason?, diagnostic? }`
 result. `doctor_not_ready` means readiness failed before launch;
 `backend_launch_failed` means the broker proved the wrapper could not spawn the
-target. In either case the API does not report a sandboxed completion.
+target; `unsupported_policy` means the requested platform policy cannot be
+enforced. In every case the API does not report a sandboxed completion.
 Missing, malformed, oversized, or invocation/backend-mismatched authority is a
 separate `{ status: 'execution_uncertain', reason: 'attestation_failed', ... }`
 result: the target may have started, so callers must not retry blindly. Broker
@@ -6418,42 +6429,38 @@ Windows, Linux, and macOS:
   only after the encoded creator PID is dead and the file is older than two
   launch budgets; live, unexpired, malformed, unknown, and deny-recovery state
   stays fail-closed.
-  Setup uses one elevated native helper with a small explicit base64 envelope
+  Setup uses one elevated native parent with a small explicit base64 envelope
   naming a versioned, digest-bound, single-use request in this protected
-  directory to install NUL compatibility and prewarm profile/TMP ACL roots.
-  The caller waits for confirmed helper exit, and exact-object mutex waits obey
-  the setup-wide deadline. Doctor and normal admission never invoke it.
+  directory and verifies the non-ready `installing` marker. It synchronously
+  converges NUL compatibility plus profile read capabilities; the caller
+  atomically publishes the ready marker only after confirmed parent success.
+  No helper overlaps ordinary admission, system TMP is not prewarmed, and doctor
+  and normal admission never invoke this setup path.
 
 The Windows private desktop uses an ephemeral full-policy capability. Persistent
-filesystem write authority instead uses stable capabilities derived from the
+filesystem authority instead uses stable capabilities derived from the
 setup's persistent filesystem nonce, final handle-canonical root, and
-`allowWrite`/`denyWrite` clause. Read roots use the shared sandbox group and do
-not implicitly carry a deny-write capability.
+`allowRead`/`allowWrite`/`denyWrite` clause. Every root keeps the same persistent
+ACE set, while each command token activates only its authorized clauses.
 The target's enabled Windows traverse privilege reaches an exact allowed root
 without persistent ACEs on private ancestors; admission never rewrites a
-profile/container DACL merely to make a descendant reachable. Because `WRITE_RESTRICTED` does not
-apply restricting SIDs to reads, `denyRead` uses an execution-logon ACE under a
-short ACL mutex. The host publishes a durable receipt before mutation, holds
-no-follow handles through Job drain, removes exactly its ACE afterward, and
-recovers a crashed owner only after validating PID creation time and the
-recorded volume/file identity. A missing or replaced target retains the receipt
-and fails later shell admission closed until repair. This transaction never
-gates trusted text tools or spans the command lifetime.
-Warm policy ACL admission is read-only. A missing additive capability uses a
-mutex derived from the exact opened filesystem object, and every root shares
-one five-second ACL phase budget rather than multiplying five seconds per root.
-Artifact/control provisioning and full stale receipt recovery are setup work,
-not ordinary command admission. A denyRead request may clean a dead-runner
-receipt only when it overlaps the exact requested object, using the same single
-ACL phase budget; unrelated receipts never acquire a lock.
+profile/container DACL merely to make a descendant reachable. Because
+`WRITE_RESTRICTED` does not apply restricting SIDs to reads, Windows
+per-command `denyRead` is unsupported and fails closed before target start.
+Command start/exit performs no logon-SID ACL mutation, cleanup, or receipt
+publication. Warm policy ACL admission is read-only. Effective inherited
+normal-token access is accepted; a missing exact restricted capability is
+converged with `SET_ACCESS` and re-read without acquiring or waiting on a
+cross-process target mutex. Artifact/control provisioning
+and pre-cutover receipt recovery are setup work, not ordinary command admission.
 
-Native protocol 8 requires the protected setup-marker path and digest on every
+Native protocol 9 requires the protected setup-marker path and digest on every
 request. The host keeps that marker open without delete sharing until the
 target's `Started` record is durable, which linearizes setup rotation with
-target start without a global admission lock. Setup generation 8 retires a
-protocol-7 marker through protected pending/draining state, so setup interruption
-resumes the complete legacy 300-second Bash deadline plus margin; subsequent
-command admission never waits on that migration.
+target start without a global admission lock. Setup generation 9 upgrades a
+healthy generation-8 account in place while preserving its SID/group and
+filesystem nonce, and does not replay the generation-8 one-time legacy ACL
+migration. Identity rotates only for missing or damaged account state.
 
 A shared network broker is referenced while readiness or a command lease is
 active and is detached from the Node event loop only while idle. Awaiting an
@@ -6527,6 +6534,13 @@ truncated cursor is reconstructed from the durable event ledgers. A standalone
 SDK host must declare any sensitive read paths required by its own threat
 boundary.
 
+If the resolved `KODAX_HOME` is below the system temporary write grant, the
+workspace-shell adapter materializes only the five fixed protected internal
+directories before constructing the Windows deny-write policy. This prevents a
+missing-root `unsupported` result on first launch without adding a setup call,
+ACL mutation, lock, or queue. Standalone `runKodaXSandboxed()` callers remain
+responsible for ensuring every explicit policy root they supply exists.
+
 `command` and `args` remain separate process arguments. On Windows KodaX uses
 an encoded bootstrap followed by `shell: false`, so `%VAR%`, `&`, embedded
 quotes, and spaces are not expanded or re-parsed by the host shell. The
@@ -6535,8 +6549,8 @@ environment; ASRT-owned proxy, CA, and Git safety variables retain precedence.
 `timeoutMs` covers the complete broker lifecycle, including ASRT
 initialization, the command, and cleanup. Ordinary admission never provisions
 artifacts/control state through synchronous PowerShell. A missing setup artifact
-fails with setup guidance; a cold additive ACL phase has one five-second total
-budget, not a per-root timeout.
+fails with setup guidance; cold additive ACL convergence shares one admission-
+phase deadline across roots and never waits on a KodaX target mutex.
 
 Custom shell adapters follow one lifecycle: `validateStart` immediately before
 spawn, spawn the prepared executable, `closeInput`, optional `attestStart`, then
@@ -6561,7 +6575,9 @@ start one ordinary host attempt. KodaX never retries after the target has
 started or start is uncertain, so a sandbox fault cannot duplicate command
 side effects. Remote A2A admitted Skill scripts
 retain their stronger isolation contract and do not fall back to an
-unsandboxed script. Embedded and daemon Runtime capability metadata expose
+unsandboxed script. On current native protocol 9 that route is POSIX-only and
+unavailable on Windows; Windows rejects its required per-command `denyRead` as
+`unsupported_policy`. Embedded and daemon Runtime capability metadata expose
 `sandboxRuntime` with the platform backend, ASRT version, supported control
 dimensions, elevation behavior, and fallback semantics.
 

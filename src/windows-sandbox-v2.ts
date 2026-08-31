@@ -8,7 +8,7 @@ import {
   type ResolveWindowsNativeArtifactOptions,
 } from './windows-native-artifacts.js';
 
-export const WINDOWS_SANDBOX_V2_PROTOCOL = 8;
+export const WINDOWS_SANDBOX_V2_PROTOCOL = 9;
 
 export interface AsrtWindowsInvocation {
   readonly executable: string;
@@ -291,6 +291,11 @@ export function createWindowsSandboxV2RunRequest(
 ): WindowsSandboxV2RunRequest {
   if (input.targetArgv.length === 0 || input.targetArgv[0]?.trim() === '') {
     throw new Error('Windows sandbox v2 target argv is empty.');
+  }
+  if (input.denyRead.length > 0) {
+    throw new Error(
+      'Per-command Windows denyRead is unsupported by the WRITE_RESTRICTED backend.',
+    );
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     .test(input.filesystemCapabilityNonce)) {

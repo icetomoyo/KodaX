@@ -43,6 +43,14 @@ describe('listCliResumeSessions', () => {
 
     await writeSession('included', { title: 'Included session' });
     await writeSession('empty', { activeMessageCount: 0 });
+    await writeSession('presentation-only', {
+      activeMessageCount: 0,
+      uiHistory: [
+        { type: 'assistant', text: '完整实验汇总', presentationOnly: true },
+        { type: 'sidecar', text: 'Sidecar Verifier blocked', presentationOnly: true },
+        { type: 'error', text: 'terminal failure', presentationOnly: true },
+      ],
+    });
     await writeSession('worker', { scope: 'managed-task-worker' });
     await writeSession('other-project', {
       gitRoot: otherProjectRoot,
@@ -55,12 +63,19 @@ describe('listCliResumeSessions', () => {
       limit: 1000,
     });
 
-    expect(sessions).toEqual([expect.objectContaining({
-      id: 'included',
-      title: 'Included session',
-      msgCount: 2,
-      surface: 'repl',
-    })]);
+    expect(sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'included',
+        title: 'Included session',
+        msgCount: 2,
+        surface: 'repl',
+      }),
+      expect.objectContaining({
+        id: 'presentation-only',
+        msgCount: 3,
+      }),
+    ]));
+    expect(sessions.map((session) => session.id)).not.toContain('empty');
   });
 
   it('sorts newest first, honors the limit, and counts legacy message lines', async () => {

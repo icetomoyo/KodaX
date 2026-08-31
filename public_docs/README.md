@@ -14,8 +14,8 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-restricted-token runner (alpha.4 native shell protocol version 8/setup
-generation 8, Windows `sandboxRuntime:7`, one-time `kodax sandbox setup`
+restricted-token runner (alpha.4 native shell protocol version 9/setup
+generation 9, Windows `sandboxRuntime:9`, one-time `kodax sandbox setup`
 cutover, and no command-lifetime global admission lock). It replaces the
 local tool-result capacity hard gate with capacity-debt admission and a
 bounded recovery ladder (`capacityDebt` metadata, floor-bounded output

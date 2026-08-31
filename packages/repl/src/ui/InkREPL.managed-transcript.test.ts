@@ -11,9 +11,15 @@ import {
   applyProviderRecoveryTransientReset,
   appendPersistedUiHistorySnapshot,
   buildAmaWorkStripFromStatus,
+  createFailedManagedForegroundCommitter,
+  commitFailedManagedForegroundBeforeCleanup,
+  commitFailedManagedForegroundLedger,
+  buildFailedManagedForegroundPersistenceItems,
   buildManagedForegroundTurnHistoryItems,
   buildManagedTaskTranscriptItems,
   buildRoundHistoryItems,
+  shouldPersistSessionSnapshot,
+  shouldCommitFailedManagedForeground,
   discardReplacedOutputSegmentItems,
   hasSubstantiveManagedAssistantText,
   restoreHistoryItemsFromSession,
@@ -1072,6 +1078,329 @@ describe("buildManagedForegroundTurnHistoryItems", () => {
 });
 
 describe("managed foreground assistant text guards", () => {
+  it("persists the visible managed answer before a terminal runner failure", () => {
+    const foregroundItems: HistoryItem[] = [
+      {
+        id: "answer",
+        type: "assistant",
+        text: "好的，本轮作罢。这里是完整实验汇总。",
+        timestamp: 10,
+      },
+      {
+        id: "sidecar",
+        type: "sidecar",
+        text: "Sidecar Verifier blocked the run.",
+        verdict: "blocked",
+        timestamp: 11,
+      },
+      {
+        id: "terminal-error",
+        type: "error",
+        text: "The managed runtime failed after verification.",
+        timestamp: 12,
+      },
+    ];
+
+    const additions = buildFailedManagedForegroundPersistenceItems(foregroundItems);
+    const persisted = appendPersistedUiHistorySnapshot([], additions);
+
+    expect(persisted).toEqual([
+      {
+        type: "assistant",
+        text: "好的，本轮作罢。这里是完整实验汇总。",
+        timestamp: 10,
+        presentationOnly: true,
+      },
+      {
+        type: "sidecar",
+        text: "Sidecar Verifier blocked the run.",
+        icon: "blocked",
+        timestamp: 11,
+        presentationOnly: true,
+      },
+      {
+        type: "error",
+        text: "The managed runtime failed after verification.",
+        timestamp: 12,
+        presentationOnly: true,
+      },
+    ]);
+
+    expect(restoreHistoryItemsFromSession({
+      messages: [{ role: "user", content: "run the experiment" }],
+      uiHistory: persisted,
+    })).toEqual([
+      { type: "user", text: "run the experiment" },
+      {
+        type: "assistant",
+        text: "好的，本轮作罢。这里是完整实验汇总。",
+        timestamp: 10,
+        isSessionUiOnly: true,
+      },
+      {
+        type: "sidecar",
+        text: "Sidecar Verifier blocked the run.",
+        verdict: "blocked",
+        timestamp: 11,
+        isSessionUiOnly: true,
+      },
+      {
+        type: "error",
+        text: "The managed runtime failed after verification.",
+        timestamp: 12,
+        isSessionUiOnly: true,
+      },
+    ]);
+  });
+
+  it("persists a first-turn failure with UI history but no canonical messages", () => {
+    expect(shouldPersistSessionSnapshot(0, 3)).toBe(true);
+    expect(shouldPersistSessionSnapshot(0, 0)).toBe(false);
+  });
+
+  it("commits a completed verifier ledger even after its foreground owner is cleared", () => {
+    expect(shouldCommitFailedManagedForeground(undefined, 2)).toBe(true);
+    expect(shouldCommitFailedManagedForeground("Worker", 0)).toBe(true);
+    expect(shouldCommitFailedManagedForeground(undefined, 0)).toBe(false);
+  });
+
+  it("moves the failed ledger into the staged snapshot before awaiting persistence", async () => {
+    const calls: string[] = [];
+    const items: HistoryItem[] = [{
+      id: "summary",
+      type: "assistant",
+      text: "Summary before recovery.",
+      timestamp: 1,
+    }];
+
+    let releasePersistence: (() => void) | undefined;
+    const persistence = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
+    const committed = commitFailedManagedForegroundLedger({
+      finalizeOrphanedTools: () => { calls.push("finalize"); },
+      flushText: () => { calls.push("flush"); },
+      readItems: () => items,
+      markUserItemsCommitted: () => { calls.push("mark"); },
+      persist: async (persisted) => {
+        calls.push("persist");
+        expect(persisted).toEqual([{
+          type: "assistant",
+          text: "Summary before recovery.",
+          timestamp: 1,
+          isSessionUiOnly: true,
+        }]);
+        await persistence;
+        calls.push("persisted");
+      },
+      clear: () => { calls.push("clear"); },
+    });
+    expect(calls).toEqual(["finalize", "flush", "mark", "clear", "persist"]);
+    releasePersistence?.();
+    await expect(committed).resolves.toBe(true);
+    expect(calls).toEqual(["finalize", "flush", "mark", "clear", "persist", "persisted"]);
+  });
+
+  it("retries failed-ledger persistence without staging the transcript twice", async () => {
+    const calls: string[] = [];
+    let persistAttempts = 0;
+    const commit = createFailedManagedForegroundCommitter({
+      finalizeOrphanedTools: () => { calls.push("finalize"); },
+      flushText: () => { calls.push("flush"); },
+      readItems: () => [{
+        id: "summary",
+        type: "assistant",
+        text: "Summary before recovery.",
+        timestamp: 1,
+      }],
+      markUserItemsCommitted: () => { calls.push("mark"); },
+      stage: (items) => {
+        calls.push("stage");
+        return appendPersistedUiHistorySnapshot([], items);
+      },
+      persist: async () => {
+        persistAttempts += 1;
+        calls.push(`persist-${persistAttempts}`);
+        if (persistAttempts === 1) throw new Error("transient persistence failure");
+      },
+      clear: () => { calls.push("clear"); },
+    });
+
+    await expect(commit()).rejects.toThrow("transient persistence failure");
+    await expect(commit()).resolves.toBe(true);
+    expect(calls).toEqual([
+      "finalize",
+      "flush",
+      "mark",
+      "stage",
+      "clear",
+      "persist-1",
+      "persist-2",
+    ]);
+  });
+
+  it("does not re-append a twice-rejected failed turn on the next submit", async () => {
+    let foregroundItems: HistoryItem[] = [
+      {
+        id: "first-answer",
+        type: "assistant",
+        text: "First partial answer.",
+        timestamp: 1,
+      },
+      {
+        id: "first-error",
+        type: "error",
+        text: "First turn failed.",
+        timestamp: 2,
+      },
+    ];
+    let snapshot = appendPersistedUiHistorySnapshot([], []);
+    const persistedSnapshots: Array<typeof snapshot> = [];
+    let persistenceAttempts = 0;
+    const stage = (items: Parameters<typeof appendPersistedUiHistorySnapshot>[1]) => {
+      snapshot = appendPersistedUiHistorySnapshot(snapshot, items);
+      return snapshot;
+    };
+    const firstCommit = createFailedManagedForegroundCommitter({
+      finalizeOrphanedTools: () => undefined,
+      flushText: () => undefined,
+      readItems: () => foregroundItems,
+      markUserItemsCommitted: () => undefined,
+      stage,
+      persist: async (staged) => {
+        persistenceAttempts += 1;
+        persistedSnapshots.push(staged);
+        throw new Error(`persistence failure ${persistenceAttempts}`);
+      },
+      clear: () => { foregroundItems = []; },
+    });
+
+    await expect(firstCommit()).rejects.toThrow("persistence failure 1");
+    await expect(firstCommit()).rejects.toThrow("persistence failure 2");
+
+    foregroundItems.push(
+      {
+        id: "second-answer",
+        type: "assistant",
+        text: "Second answer.",
+        timestamp: 3,
+      },
+      {
+        id: "second-error",
+        type: "error",
+        text: "Second turn failed.",
+        timestamp: 4,
+      },
+    );
+    const nextSubmitCommit = createFailedManagedForegroundCommitter({
+      finalizeOrphanedTools: () => undefined,
+      flushText: () => undefined,
+      readItems: () => foregroundItems,
+      markUserItemsCommitted: () => undefined,
+      stage,
+      persist: async (staged) => {
+        persistenceAttempts += 1;
+        persistedSnapshots.push(staged);
+      },
+      clear: () => { foregroundItems = []; },
+    });
+
+    await expect(nextSubmitCommit()).resolves.toBe(true);
+    expect(persistenceAttempts).toBe(3);
+    expect(persistedSnapshots[0]).toBe(persistedSnapshots[1]);
+    expect(snapshot).toEqual([
+      {
+        type: "assistant",
+        text: "First partial answer.",
+        timestamp: 1,
+        presentationOnly: true,
+      },
+      {
+        type: "error",
+        text: "First turn failed.",
+        timestamp: 2,
+        presentationOnly: true,
+      },
+      {
+        type: "assistant",
+        text: "Second answer.",
+        timestamp: 3,
+        presentationOnly: true,
+      },
+      {
+        type: "error",
+        text: "Second turn failed.",
+        timestamp: 4,
+        presentationOnly: true,
+      },
+    ]);
+  });
+
+  it("keeps a twice-rejected failed turn staged for the exit retry", async () => {
+    let foregroundItems: HistoryItem[] = [
+      {
+        id: "answer",
+        type: "assistant",
+        text: "Partial answer before exit.",
+        timestamp: 10,
+      },
+      {
+        id: "error",
+        type: "error",
+        text: "Turn failed before exit.",
+        timestamp: 11,
+      },
+    ];
+    let snapshot = appendPersistedUiHistorySnapshot([], []);
+    const persistedSnapshots: Array<typeof snapshot> = [];
+    const commit = createFailedManagedForegroundCommitter({
+      finalizeOrphanedTools: () => undefined,
+      flushText: () => undefined,
+      readItems: () => foregroundItems,
+      markUserItemsCommitted: () => undefined,
+      stage: (items) => {
+        snapshot = appendPersistedUiHistorySnapshot(snapshot, items);
+        return snapshot;
+      },
+      persist: async (staged) => {
+        persistedSnapshots.push(staged);
+        throw new Error("persistence unavailable");
+      },
+      clear: () => { foregroundItems = []; },
+    });
+
+    await expect(commit()).rejects.toThrow("persistence unavailable");
+    await expect(commit()).rejects.toThrow("persistence unavailable");
+    persistedSnapshots.push(snapshot);
+
+    expect(foregroundItems).toEqual([]);
+    expect(persistedSnapshots).toHaveLength(3);
+    expect(persistedSnapshots[0]).toBe(persistedSnapshots[1]);
+    expect(persistedSnapshots[2]).toEqual([
+      {
+        type: "assistant",
+        text: "Partial answer before exit.",
+        timestamp: 10,
+        presentationOnly: true,
+      },
+      {
+        type: "error",
+        text: "Turn failed before exit.",
+        timestamp: 11,
+        presentationOnly: true,
+      },
+    ]);
+  });
+
+  it("runs terminal UI cleanup even when the final failed-ledger commit rejects", async () => {
+    const cleanup = vi.fn();
+    await expect(commitFailedManagedForegroundBeforeCleanup({
+      commit: async () => { throw new Error("persistence stayed unavailable"); },
+      cleanup,
+    })).rejects.toThrow("persistence stayed unavailable");
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it("preserves terminal partial provider output until a replacement segment starts", () => {
     let response = "partial answer";
     let thinkingContent = "partial reasoning";

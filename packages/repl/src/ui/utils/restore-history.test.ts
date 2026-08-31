@@ -298,6 +298,50 @@ describe("restore-history / canonical transcript authority", () => {
     ]);
   });
 
+  it("restores an explicitly presentation-only failed-turn tail in exact order", () => {
+    const result = restoreHistoryItemsFromSession({
+      messages: [{ role: "user", content: "run the experiment" }],
+      uiHistory: [
+        {
+          type: "assistant",
+          text: "Complete experiment summary before verification.",
+          presentationOnly: true,
+        },
+        {
+          type: "sidecar",
+          text: "The verifier blocked the run.",
+          icon: "blocked",
+          presentationOnly: true,
+        },
+        {
+          type: "error",
+          text: "The managed runtime failed after verification.",
+          presentationOnly: true,
+        },
+      ],
+    });
+
+    expect(result).toEqual([
+      { type: "user", text: "run the experiment" },
+      {
+        type: "assistant",
+        text: "Complete experiment summary before verification.",
+        isSessionUiOnly: true,
+      },
+      {
+        type: "sidecar",
+        text: "The verifier blocked the run.",
+        verdict: "blocked",
+        isSessionUiOnly: true,
+      },
+      {
+        type: "error",
+        text: "The managed runtime failed after verification.",
+        isSessionUiOnly: true,
+      },
+    ]);
+  });
+
   it("does not revive ordinary text when non-empty messages yield no visible seeds", () => {
     const result = restoreHistoryItemsFromSession({
       messages: [{ role: "system", content: "internal scaffolding" }],

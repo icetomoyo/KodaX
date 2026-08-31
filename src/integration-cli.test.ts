@@ -98,6 +98,8 @@ describe("integration CLI", () => {
 
     expect(output).toContain('"agents": {');
     expect(output.match(/^\s*"agents": \{/gmu)).toHaveLength(1);
+    expect(output).toContain('isolated Skill Script is POSIX-only');
+    expect(output).toContain('required per-command denyRead is unsupported');
     expect(existsSync(configHome)).toBe(false);
   });
 

@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { findMostRecentResumableSession } from './resumable-session.js';
+import {
+  countResumableSessionItems,
+  findMostRecentResumableSession,
+} from './resumable-session.js';
+
+describe('countResumableSessionItems', () => {
+  it('counts only structurally valid presentation-only text history', () => {
+    expect(countResumableSessionItems(0, [
+      { presentationOnly: true },
+      { type: 'assistant', presentationOnly: true },
+      { type: 'tool_group', tools: [], presentationOnly: true },
+      { type: 'assistant', text: 'restored summary', presentationOnly: true },
+      { type: 'sidecar', text: 'verifier result', presentationOnly: true },
+    ])).toBe(2);
+  });
+});
 
 describe('findMostRecentResumableSession', () => {
   it('requests a broad scan and skips empty placeholders', async () => {

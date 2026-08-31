@@ -1,5 +1,5 @@
 import { EventEmitter, once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -854,14 +854,14 @@ vi.mock('node:child_process', async (importOriginal) => {
           writeFileSync(
             path.join(path.dirname(brokerRequest.terminalRecordPath), `windows-started-${recordIdentity}`),
             JSON.stringify({
-              protocol: 8,
+              protocol: 9,
               nonce: brokerRequest.terminalNonce,
               targetPid: process.pid,
               jobContained: true,
             }),
           );
           writeFileSync(brokerRequest.terminalRecordPath, JSON.stringify({
-            protocol: 8,
+            protocol: 9,
             nonce: brokerRequest.terminalNonce,
             jobDrained: true,
             targetExitCode: 0,
@@ -1296,7 +1296,6 @@ import {
   createAsrtSkillScriptRunner,
   doctorSandboxRuntime,
   clearPreviousBootWindowsSandboxAclMarkers,
-  overrideLegacyWindowsSandboxAdmissionDrainForTest,
   overrideWindowsSandboxV2CutoverDirectoryForTest,
   overrideWindowsSetupCapabilityInstallerForTest,
   prepareSandboxRuntimeForSetup,
@@ -1412,8 +1411,8 @@ beforeEach(async () => {
   await writeFile(
     path.join(cutoverDirectory, 'windows-v2-cutover.json'),
     JSON.stringify({
-      version: 8,
-      protocol: 8,
+      version: 9,
+      protocol: 9,
       generationNonce: '00000000-0000-4000-8000-000000000001',
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       hostUserSid: windowsSandboxMock.hostUserSid,
@@ -2077,9 +2076,9 @@ describe('Windows git safe.directory argv takeover', () => {
     },
   );
 
-  it('reports the v7 split-authority capability', () => {
+  it('reports the v9 setup-and-stable-ACL capability', () => {
     const capability = sandboxRuntimeCapability();
-    expect(capability.version).toBe(7);
+    expect(capability.version).toBe(9);
     expect(capability.gitSafeDirectory).toBe('authorized-repo-roots');
     expect(capability.delayedEffectDrainRecovery).toBe('automatic');
     expect(capability.sameBootAclRecovery).toBe('sandbox-user-process-probe');
@@ -2227,7 +2226,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(brokerRequest.controllerExecutable).toMatch(/kodax-windows-sandbox\.exe$/i);
     expect(brokerRequest.srtWinSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(brokerRequest.controllerSha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(brokerRequest.controllerProtocol).toBe(8);
+    expect(brokerRequest.controllerProtocol).toBe(9);
     expect(brokerRequest.config.filesystem.allowRead).not.toContain(
       path.dirname(brokerRequest.srtWinPath),
     );
@@ -2310,6 +2309,29 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(capturedSyncSpawns.some(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'install'
     ))).toBe(false);
+  });
+
+  it('fails closed on unsupported Windows denyRead before doctor or target launch', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-deny-read-unsupported-'));
+    tempRoots.push(root);
+    const syncSpawnCount = capturedSyncSpawns.length;
+    const targetSpawnCount = capturedSpawnArgv.length;
+
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [root], allowWrite: [], denyRead: [root] },
+      network: { mode: 'deny' },
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      sandboxed: false,
+      reason: 'unsupported_policy',
+      diagnostic: expect.stringContaining('denyRead is unsupported'),
+      doctor: { ready: false, setupRequired: false },
+    });
+    expect(capturedSyncSpawns).toHaveLength(syncSpawnCount);
+    expect(capturedSpawnArgv).toHaveLength(targetSpawnCount);
   });
 
   it('does not hide a blocking doctor failure behind repairable guard diagnostics', async () => {
@@ -2461,6 +2483,42 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(normalize(request.denyWrite)).not.toContain(
       path.resolve(root, '.kodax', 'exec-policy.jsonc').toLowerCase(),
     );
+    await invocation.cleanup();
+  });
+
+  it('materializes protected Agent Home directories before a temporary-root policy is built', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-agent-home-materialize-'));
+    tempRoots.push(root);
+    const agentHome = path.join(root, '.kodax');
+    const workspace = path.join(root, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    vi.stubEnv('KODAX_HOME', agentHome);
+    const sandbox = createAsrtShellSandbox({
+      workspaceRoot: workspace,
+      shouldSandbox: () => true,
+    });
+
+    const invocation = await sandbox.prepare({
+      toolCallId: 'materialize-agent-home',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: workspace,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+    for (const directory of [
+      'sandbox-runtime',
+      'native-text-state-v1',
+      'runtime',
+      'processes',
+      'learned',
+    ]) {
+      expect(statSync(path.join(agentHome, directory)).isDirectory()).toBe(true);
+    }
     await invocation.cleanup();
   });
 
@@ -2786,8 +2844,8 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       await writeFile(
         path.join(cutoverDirectory, 'windows-v2-cutover.json'),
         JSON.stringify({
-          version: 8,
-          protocol: 8,
+          version: 9,
+          protocol: 9,
           generationNonce: randomUUID(),
           filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
           hostUserSid: windowsSandboxMock.hostUserSid,
@@ -2839,8 +2897,8 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     windowsNetworkBrokerMock.beforeReady = () => {
       windowsNetworkBrokerMock.beforeReady = undefined;
       writeFileSync(cutoverMarkerFile(), JSON.stringify({
-        version: 8,
-        protocol: 8,
+        version: 9,
+        protocol: 9,
         generationNonce: randomUUID(),
         filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
         hostUserSid: windowsSandboxMock.hostUserSid,
@@ -2940,8 +2998,8 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     };
 
     await writeFile(cutoverMarkerFile(), JSON.stringify({
-      version: 8,
-      protocol: 8,
+      version: 9,
+      protocol: 9,
       generationNonce: '00000000-0000-4000-8000-000000000002',
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       hostUserSid: windowsSandboxMock.hostUserSid,
@@ -3003,39 +3061,27 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(guardCalls).toEqual([]);
   });
 
-  it('keeps persistent sensitive roots out of per-command deny ACL transactions', async () => {
+  it('rejects per-command denyRead before creating a native ACL transaction', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-persistent-deny-'));
     tempRoots.push(root);
     const customDeny = path.join(root, 'policy-secret');
     await mkdir(customDeny);
     await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({ ready: true });
 
+    const brokerRequestCount = capturedBrokerRequests.length;
     await expect(runKodaXSandboxed({
       command: process.execPath,
       args: ['--version'],
       cwd: root,
       filesystem: { allowRead: [root], allowWrite: [], denyRead: [customDeny] },
       network: { mode: 'deny' },
-    })).resolves.toMatchObject({ status: 'completed', sandboxed: true });
-
-    const request = capturedBrokerRequests.findLast((candidate) => (
-      Array.isArray(candidate.targetArgv)
-    )) as {
-      readonly denyRead: readonly string[];
-      readonly denyWrite: readonly string[];
-    } | undefined;
-    if (request === undefined) throw new Error('expected a native Windows request');
-    expect(request.denyRead.map((entry) => entry.toLowerCase())).toContain(
-      customDeny.toLowerCase(),
-    );
-    for (const protectedRoot of trustedTextNativeArtifactStateRoots()) {
-      expect(request.denyRead.map((entry) => entry.toLowerCase())).not.toContain(
-        protectedRoot.toLowerCase(),
-      );
-    }
-    expect(request.denyWrite.map((entry) => entry.toLowerCase())).not.toContain(
-      windowsNativeArtifactCacheRoot().toLowerCase(),
-    );
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      sandboxed: false,
+      reason: 'unsupported_policy',
+      diagnostic: expect.stringContaining('denyRead is unsupported'),
+    });
+    expect(capturedBrokerRequests).toHaveLength(brokerRequestCount);
   });
 
   it('reinstalls a missing NUL compatibility ACE without rotating the current v2 account', async () => {
@@ -3050,35 +3096,45 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
 
     const setupRequests: Array<{
-      readonly version: 1;
+      readonly version: 2;
       readonly sandboxSid: string;
       readonly sandboxGroupSid: string;
       readonly filesystemCapabilityNonce: string;
+      readonly setupMarkerPath: string;
+      readonly setupMarkerSha256: string;
       readonly readRoots: readonly string[];
       readonly writeRoots: readonly string[];
     }> = [];
     const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      const markerBytes = readFileSync(request.setupMarkerPath);
+      expect(createHash('sha256').update(markerBytes).digest('hex'))
+        .toBe(request.setupMarkerSha256);
+      expect(JSON.parse(markerBytes.toString('utf8'))).toMatchObject({
+        version: 9,
+        protocol: 9,
+        state: 'installing',
+      });
       setupRequests.push(request);
       windowsSandboxMock.nullDeviceReady = true;
     });
     try {
       const outcome = await prepareSandboxRuntimeForSetup();
-      expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: 'ready', attempted: true });
       expect(windowsSandboxMock.uninstallCalls).toBe(0);
       expect(windowsSandboxMock.installCalls).toBe(1);
       expect(setupRequests).toHaveLength(1);
       expect(setupRequests[0]).toMatchObject({
-        version: 1,
+        version: 2,
         sandboxSid: windowsSandboxMock.user.sid,
         sandboxGroupSid: windowsSandboxMock.user.groupSid,
         filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
       });
+      expect(setupRequests[0]?.setupMarkerPath).toBe(cutoverMarkerFile());
+      expect(setupRequests[0]?.setupMarkerSha256).toMatch(/^[0-9a-f]{64}$/);
       expect(setupRequests[0]?.readRoots.some((root) => (
         isPathInside(root, path.dirname(process.execPath))
       ))).toBe(true);
-      expect(setupRequests[0]?.writeRoots.some((root) => (
-        isPathInside(root, realpathSync.native(os.tmpdir()))
-      ))).toBe(true);
+      expect(setupRequests[0]?.writeRoots).toEqual([]);
       expect(capturedSyncSpawns.some(({ args }) => args[0] === '__setup-acl-roots')).toBe(false);
       expect(capturedSyncSpawns.filter(({ args }) => (
         args[0] === '__persistent-deny-read' && args[1] === 'remove'
@@ -3091,29 +3147,49 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   it('does not publish a setup generation when elevated capability setup fails', async () => {
     windowsSandboxMock.nullDeviceReady = false;
     windowsSandboxMock.sidProcessesActive = false;
-    const restore = overrideWindowsSetupCapabilityInstallerForTest(() => {
+    let pendingMarker: unknown;
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      pendingMarker = JSON.parse(readFileSync(request.setupMarkerPath, 'utf8'));
       throw new Error('injected elevated setup failure');
     });
     try {
       const outcome = await prepareSandboxRuntimeForSetup();
       expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
       expect(outcome.error).toContain('injected elevated setup failure');
-      expect(existsSync(cutoverMarkerFile())).toBe(false);
+      expect(pendingMarker).toMatchObject({ version: 9, protocol: 9, state: 'installing' });
+      expect(() => JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8'))).not.toThrow();
+      await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+        ready: false,
+        setupRequired: true,
+      });
       expect(capturedSyncSpawns.some(({ args }) => args[0] === '__setup-acl-roots')).toBe(false);
     } finally {
       restore();
     }
   });
 
-  it('does not reinstall a same-SID setup generation while that account is active', async () => {
+  it('reinstalls a same-SID setup generation while that account is active', async () => {
     windowsSandboxMock.nullDeviceReady = false;
     windowsSandboxMock.sidProcessesActive = true;
 
     const outcome = await prepareSandboxRuntimeForSetup();
 
-    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
-    expect(outcome.error).toContain('still has a live process');
-    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(windowsSandboxMock.installCalls).toBe(1);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    const setupSpawn = capturedSyncSpawns.find(({ args }) => {
+      const encodedIndex = args.indexOf('-EncodedCommand');
+      if (encodedIndex < 0) return false;
+      return Buffer.from(args[encodedIndex + 1] ?? '', 'base64')
+        .toString('utf16le')
+        .includes('__setup-account-capabilities');
+    });
+    expect(setupSpawn).toBeDefined();
+    const encodedIndex = setupSpawn?.args.indexOf('-EncodedCommand') ?? -1;
+    const setupScript = Buffer.from(setupSpawn?.args[encodedIndex + 1] ?? '', 'base64')
+      .toString('utf16le');
+    expect(setupScript).toContain('$process.WaitForExit()');
+    expect(setupScript).not.toMatch(/Start-Process[^\r\n]*\s-Wait(?:\s|$)/);
   });
 
   it('provisions a fresh native cache before first-account control setup', async () => {
@@ -3126,7 +3202,6 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       () => cutoverDirectory,
     );
     await rm(cutoverDirectory, { recursive: true, force: true });
-    const restoreDrain = overrideLegacyWindowsSandboxAdmissionDrainForTest(async () => undefined);
     const legacyCutover = path.join(
       path.resolve(process.env.ProgramData!),
       'KodaX',
@@ -3144,7 +3219,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
 
     expect(existsSync(windowsNativeArtifactCacheRoot())).toBe(false);
-    const outcome = await prepareSandboxRuntimeForSetup().finally(restoreDrain);
+    const outcome = await prepareSandboxRuntimeForSetup();
 
     if (outcome.status !== 'ready') {
       throw new Error(`Fresh Windows sandbox setup failed: ${JSON.stringify(outcome)}`);
@@ -3212,28 +3287,25 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(windowsSandboxMock.uninstallCalls).toBe(uninstallCallsAfterInitialization);
   });
 
-  it('rotates an existing account SID before recording the v2 cutover', async () => {
+  it('reuses a healthy fixed account SID when recording a missing v2 cutover', async () => {
     await rm(cutoverMarkerFile(), { force: true });
     const previousSid = windowsSandboxMock.user.sid;
     windowsSandboxMock.sidProcessesActive = false;
-    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
-
     const outcome = await prepareSandboxRuntimeForSetup();
 
     expect(outcome).toMatchObject({ status: 'ready', attempted: true });
-    expect(windowsSandboxMock.uninstallCalls).toBe(1);
-    expect(windowsSandboxMock.uninstallOptions.at(-1)).toMatchObject({ keepUser: false });
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
     expect(windowsSandboxMock.installCalls).toBe(1);
-    expect(windowsSandboxMock.user.sid).not.toBe(previousSid);
+    expect(windowsSandboxMock.user.sid).toBe(previousSid);
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain(
-      '"sandboxUserSid":"S-1-5-21-2000"',
+      `"sandboxUserSid":"${previousSid}"`,
     );
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain(
       `"hostUserSid":"${windowsSandboxMock.hostUserSid}"`,
     );
   });
 
-  it('migrates a previous setup generation once before admitting new commands', async () => {
+  it('migrates a previous setup generation without rotating its healthy identity', async () => {
     await writeFile(cutoverMarkerFile(), JSON.stringify({
       version: 3,
       protocol: 8,
@@ -3244,8 +3316,6 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     const previousSid = windowsSandboxMock.user.sid;
     const previousGroupSid = windowsSandboxMock.user.groupSid;
     windowsSandboxMock.sidProcessesActive = false;
-    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
-    windowsSandboxMock.nextInstalledGroupSid = 'S-1-5-21-2001';
 
     await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
       ready: false,
@@ -3258,14 +3328,16 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     const outcome = await prepareSandboxRuntimeForSetup();
 
     expect(outcome).toMatchObject({ status: 'ready', attempted: true });
-    expect(windowsSandboxMock.user.sid).not.toBe(previousSid);
+    expect(windowsSandboxMock.user.sid).toBe(previousSid);
+    expect(windowsSandboxMock.user.groupSid).toBe(previousGroupSid);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
     const removals = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ));
     expect(removals).toHaveLength(1);
     expect(removals[0]?.args[3]).toBe(previousGroupSid);
-    expect(removals[0]?.args[3]).not.toBe(windowsSandboxMock.user.groupSid);
-    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":8');
+    expect(removals[0]?.args[3]).toBe(windowsSandboxMock.user.groupSid);
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":9');
 
     const removalsAfterSetup = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
@@ -3290,7 +3362,105 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     ))).toHaveLength(removalsAfterSetup);
   });
 
-  it('retires the protocol-7 ProgramData marker and drains its pre-start window once', async () => {
+  it('refuses destructive legacy ACL migration while the previous sandbox SID is active', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 3,
+      protocol: 7,
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = true;
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
+    if (outcome.status !== 'unavailable') throw new Error('expected migration to fail closed');
+    expect(outcome.error).toContain('close sandboxed shells');
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
+    expect(existsSync(cutoverMarkerFile())).toBe(false);
+  });
+
+  it('cuts protocol 8 over to protocol 9 without rotating its healthy identity', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 8,
+      protocol: 8,
+      generationNonce: '00000000-0000-4000-8000-000000000002',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    const previousSid = windowsSandboxMock.user.sid;
+    const previousGroupSid = windowsSandboxMock.user.groupSid;
+    windowsSandboxMock.sidProcessesActive = true;
+
+    await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+      ready: false,
+      setupRequired: true,
+    });
+    await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
+    });
+
+    expect(windowsSandboxMock.user.sid).toBe(previousSid);
+    expect(windowsSandboxMock.user.groupSid).toBe(previousGroupSid);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
+    const marker = JSON.parse(await readFile(cutoverMarkerFile(), 'utf8')) as {
+      readonly version: number;
+      readonly protocol: number;
+      readonly filesystemCapabilityNonce: string;
+    };
+    expect(marker).toMatchObject({
+      version: 9,
+      protocol: 9,
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+    });
+  });
+
+  it('upgrades a setup-8 protocol-9 account in place without replaying legacy ACL cleanup', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 8,
+      protocol: 9,
+      generationNonce: '00000000-0000-4000-8000-000000000002',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = true;
+
+    await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
+    });
+
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":9');
+  });
+
+  it('fails Windows isolated Skill scripts before doctor or snapshot staging', async () => {
+    const snapshotRoot = path.join(tempRoots[0]!, 'unsupported-windows-skill-snapshots');
+    await expect(createAsrtSkillScriptRunner({
+      registry: {} as Parameters<typeof createAsrtSkillScriptRunner>[0]['registry'],
+      admissions: {},
+      snapshotRoot,
+      workspaceAccess: 'none',
+      network: { mode: 'deny' },
+    })).rejects.toThrow(/required per-command denyRead policy is unsupported/i);
+    await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retires the protocol-7 ProgramData marker without a hard-timeout drain', async () => {
     await rm(cutoverMarkerFile(), { force: true });
     const legacyMarker = path.join(
       path.resolve(process.env.ProgramData!),
@@ -3306,30 +3476,14 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       sandboxGroupSid: windowsSandboxMock.user.groupSid,
     }), 'utf8');
     windowsSandboxMock.sidProcessesActive = false;
-    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
-    let drains = 0;
-    let drainDelayMs = 0;
-    const restore = overrideLegacyWindowsSandboxAdmissionDrainForTest(async (delayMs) => {
-      drains += 1;
-      drainDelayMs = delayMs;
-    });
-    try {
-      const outcome = await prepareSandboxRuntimeForSetup();
-      if (outcome.status !== 'ready') throw new Error(outcome.error);
-      expect(outcome).toMatchObject({
-        status: 'ready',
-        attempted: true,
-      });
-    } finally {
-      restore();
-    }
-    expect(drains).toBe(1);
-    expect(drainDelayMs).toBeGreaterThan(0);
-    expect(drainDelayMs).toBeLessThanOrEqual(301_000);
+    const outcome = await prepareSandboxRuntimeForSetup();
+    if (outcome.status !== 'ready') throw new Error(outcome.error);
+    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
     await expect(stat(legacyMarker)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('resumes an interrupted protocol-7 admission drain before rotating the account', async () => {
+  it('removes an obsolete protocol-7 drain marker without waiting', async () => {
     await rm(cutoverMarkerFile(), { force: true });
     const drainMarker = path.join(cutoverDirectory, 'windows-v2-legacy-drain.json');
     await writeFile(drainMarker, JSON.stringify({
@@ -3338,38 +3492,55 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       deadlineUnixMs: Date.now() + 60_000,
     }), 'utf8');
     windowsSandboxMock.sidProcessesActive = false;
-    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
-    let drains = 0;
-    let drainDelayMs = 0;
-    const restore = overrideLegacyWindowsSandboxAdmissionDrainForTest(async (delayMs) => {
-      drains += 1;
-      drainDelayMs = delayMs;
+    await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
     });
-    try {
-      await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
-        status: 'ready',
-        attempted: true,
-      });
-    } finally {
-      restore();
-    }
-    expect(drains).toBe(1);
-    expect(drainDelayMs).toBeGreaterThan(0);
-    expect(drainDelayMs).toBeLessThanOrEqual(60_000);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
     await expect(stat(drainMarker)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('does not rotate the account while its SID still owns a live process', async () => {
+  it('refuses an ambiguous missing-marker migration while the sandbox SID is active', async () => {
     await rm(cutoverMarkerFile(), { force: true });
     windowsSandboxMock.sidProcessesActive = true;
-    windowsSandboxMock.nextInstalledUserSid = 'S-1-5-21-2000';
-
     const outcome = await prepareSandboxRuntimeForSetup();
 
     expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
-    expect(outcome.error).toContain('still has a live process');
+    if (outcome.status !== 'unavailable') throw new Error('expected ambiguous migration to fail closed');
+    expect(outcome.error).toContain('close sandboxed shells');
     expect(windowsSandboxMock.uninstallCalls).toBe(0);
     expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
+  });
+
+  it('repairs a missing cutover marker online after exact setup migration proof', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    await writeFile(
+      path.join(
+        path.resolve(process.env.ProgramData!),
+        'KodaX',
+        'sandbox-runtime',
+        'read-policy-v2.json',
+      ),
+      JSON.stringify({
+        version: 2,
+        setupVersion: 8,
+        sandboxGroupSid: windowsSandboxMock.user.groupSid,
+      }),
+      'utf8',
+    );
+    windowsSandboxMock.sidProcessesActive = true;
+
+    const outcome = await prepareSandboxRuntimeForSetup();
+
+    expect(outcome).toMatchObject({ status: 'ready', attempted: true });
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(windowsSandboxMock.installCalls).toBe(1);
+    expect(capturedSyncSpawns.filter(({ args }) => (
+      args[0] === '__persistent-deny-read' && args[1] === 'remove'
+    ))).toHaveLength(0);
   });
 });
 

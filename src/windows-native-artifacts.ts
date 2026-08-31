@@ -832,6 +832,19 @@ function Remove-ProvenStaleControlEntries([string]$candidate) {
       throw
     }
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 1048576) { continue }
+    $warmupMatch = [regex]::Match($item.Name, '^windows-read-warmup-([0-9]+)-[0-9a-fA-F-]{36}\.log$')
+    if ($warmupMatch.Success) {
+      $warmupPid = 0L
+      if ([long]::TryParse($warmupMatch.Groups[1].Value, [ref]$warmupPid) -and
+        $warmupPid -gt 0 -and
+        $warmupPid -le [uint32]::MaxValue -and
+        -not (Test-ControlOwnerProcessAlive ([uint32]$warmupPid))) {
+        # Protocol-9 alpha builds left an authority-free warmup diagnostic.
+        # Its dead creator proves no process can append to it.
+        [IO.File]::Delete($entry)
+      }
+      continue
+    }
     $stagingMatch = [regex]::Match($item.Name, '^windows-(resume|started)-([0-9]+)-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
     $denyStagingMatch = [regex]::Match($item.Name, '^windows-deny-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
     if ($stagingMatch.Success -or $denyStagingMatch.Success) {

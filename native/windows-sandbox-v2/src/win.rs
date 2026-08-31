@@ -5,23 +5,23 @@ use std::mem::{size_of, zeroed};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::path::Path;
 use std::ptr::null_mut;
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use windows::Win32::Foundation::{
-    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS,
-    ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
-    ERROR_PIPE_LISTENING, ERROR_SUCCESS, FILETIME, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE,
-    GetLastError, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
-    SetHandleInformation, SetLastError, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA,
+    ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SUCCESS, FILETIME,
+    GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL,
+    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, SetLastError, WAIT_OBJECT_0,
+    WAIT_TIMEOUT,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, NO_MULTIPLE_TRUSTEE,
-    SDDL_REVISION_1, SE_KERNEL_OBJECT, SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID,
-    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    SDDL_REVISION_1, SE_KERNEL_OBJECT, SET_ACCESS, SetEntriesInAclW, SetSecurityInfo,
+    TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows::Win32::Security::{
     ACL, AdjustTokenPrivileges, CreateRestrictedToken, DACL_SECURITY_INFORMATION,
@@ -65,13 +65,12 @@ use windows::Win32::System::SystemServices::{
     ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, SE_GROUP_LOGON_ID,
 };
 use windows::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateMutexW,
-    CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetCurrentProcessId, GetCurrentThread,
-    GetExitCodeProcess, GetProcessTimes, InitializeProcThreadAttributeList,
-    LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken, OpenThreadToken,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_ACCESS_RIGHTS,
-    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ReleaseMutex, ResumeThread,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW,
+    CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetCurrentProcessId, GetCurrentThread, GetExitCodeProcess, GetProcessTimes,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken,
+    OpenThreadToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+    PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread,
     STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
@@ -657,7 +656,7 @@ pub fn ensure_null_device_access(sandbox_sid: &str) -> Result<()> {
     }
     let entry = EXPLICIT_ACCESS_W {
         grfAccessPermissions: FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0,
-        grfAccessMode: GRANT_ACCESS,
+        grfAccessMode: SET_ACCESS,
         grfInheritance: Default::default(),
         Trustee: TRUSTEE_W {
             pMultipleTrustee: null_mut(),
@@ -697,7 +696,7 @@ pub fn ensure_null_device_access(sandbox_sid: &str) -> Result<()> {
     if set != ERROR_SUCCESS {
         bail!("SetSecurityInfo(NUL) failed with {set:?}");
     }
-    Ok(())
+    verify_null_device_access(sandbox_sid)
 }
 
 pub fn verify_null_device_access(sandbox_sid: &str) -> Result<()> {
@@ -1909,11 +1908,7 @@ fn target_command_line(argv: &[String]) -> String {
         if command.len() >= 3 && command.starts_with("\"\"") && command.ends_with('"') {
             return format!("{} {}", command_line(&argv[..=command_index]), command);
         }
-        return format!(
-            "{} \"{}\"",
-            command_line(&argv[..=command_index]),
-            command,
-        );
+        return format!("{} \"{}\"", command_line(&argv[..=command_index]), command,);
     }
     command_line(argv)
 }
@@ -1946,152 +1941,6 @@ fn quote_windows_arg(value: &str) -> String {
     result.push_str(&"\\".repeat(slashes * 2));
     result.push('"');
     result
-}
-
-const ACL_NAMESPACE_BOUNDARY: &str = "KodaX-Sandbox-ACL-Boundary-v2";
-const ACL_NAMESPACE_ALIAS: &str = "KodaXSandboxAclV2";
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn AddSIDToBoundaryDescriptor(boundary: *mut *mut c_void, sid: *mut c_void) -> i32;
-    fn ClosePrivateNamespace(handle: *mut c_void, flags: u32) -> i32;
-    fn CreateBoundaryDescriptorW(name: *const u16, flags: u32) -> *mut c_void;
-    fn CreatePrivateNamespaceW(
-        attributes: *const SECURITY_ATTRIBUTES,
-        boundary: *const c_void,
-        alias: *const u16,
-    ) -> *mut c_void;
-    fn DeleteBoundaryDescriptor(boundary: *mut c_void);
-    fn OpenPrivateNamespaceW(boundary: *const c_void, alias: *const u16) -> *mut c_void;
-}
-
-struct HostPrivateNamespace {
-    raw: *mut c_void,
-    boundary: *mut c_void,
-    _user_sid: LocalSid,
-    user_sid_text: String,
-}
-
-unsafe impl Send for HostPrivateNamespace {}
-unsafe impl Sync for HostPrivateNamespace {}
-
-impl HostPrivateNamespace {
-    fn open() -> Result<Self> {
-        let token = current_token()?;
-        let user_sid_text = token_user_sid(token.raw())?;
-        let user_sid = LocalSid::from_string(&user_sid_text)?;
-        let boundary_name = wide(ACL_NAMESPACE_BOUNDARY);
-        let mut boundary = unsafe { CreateBoundaryDescriptorW(boundary_name.as_ptr(), 0) };
-        if boundary.is_null() {
-            bail!(
-                "CreateBoundaryDescriptorW(ACL namespace): {}",
-                io::Error::last_os_error()
-            );
-        }
-        if unsafe { AddSIDToBoundaryDescriptor(&mut boundary, user_sid.raw().0) } == 0 {
-            unsafe { DeleteBoundaryDescriptor(boundary) };
-            bail!(
-                "AddSIDToBoundaryDescriptor(ACL namespace): {}",
-                io::Error::last_os_error()
-            );
-        }
-        let descriptor = LocalSecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;GA;;;SY)(A;;GA;;;{user_sid_text})"
-        ))?;
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor.0.0,
-            bInheritHandle: false.into(),
-        };
-        let alias = wide(ACL_NAMESPACE_ALIAS);
-        let mut raw = unsafe { CreatePrivateNamespaceW(&attributes, boundary, alias.as_ptr()) };
-        let create_error = unsafe { GetLastError() };
-        if raw.is_null() && create_error == ERROR_ALREADY_EXISTS {
-            raw = unsafe { OpenPrivateNamespaceW(boundary, alias.as_ptr()) };
-        }
-        if raw.is_null() {
-            let error = io::Error::last_os_error();
-            unsafe { DeleteBoundaryDescriptor(boundary) };
-            return Err(error).context("open host ACL private namespace");
-        }
-        Ok(Self {
-            raw,
-            boundary,
-            _user_sid: user_sid,
-            user_sid_text,
-        })
-    }
-}
-
-impl Drop for HostPrivateNamespace {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = ClosePrivateNamespace(self.raw, 0);
-            DeleteBoundaryDescriptor(self.boundary);
-        }
-    }
-}
-
-static ACL_NAMESPACE: OnceLock<HostPrivateNamespace> = OnceLock::new();
-static ACL_NAMESPACE_INIT: Mutex<()> = Mutex::new(());
-
-fn host_acl_namespace() -> Result<&'static HostPrivateNamespace> {
-    if let Some(namespace) = ACL_NAMESPACE.get() {
-        return Ok(namespace);
-    }
-    let _initialization = ACL_NAMESPACE_INIT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(namespace) = ACL_NAMESPACE.get() {
-        return Ok(namespace);
-    }
-    ACL_NAMESPACE
-        .set(HostPrivateNamespace::open()?)
-        .map_err(|_| anyhow!("ACL private namespace initialization raced"))?;
-    ACL_NAMESPACE
-        .get()
-        .ok_or_else(|| anyhow!("ACL private namespace was not published"))
-}
-
-pub struct NamedMutex(OwnedHandle);
-
-impl NamedMutex {
-    pub fn acquire(name: &str, timeout_ms: u32) -> Result<Self> {
-        if name.is_empty() || name.contains(['\\', '/']) {
-            bail!("Windows sandbox ACL mutex name is invalid");
-        }
-        let namespace = host_acl_namespace()?;
-        let descriptor = LocalSecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;GA;;;SY)(A;;GA;;;{})",
-            namespace.user_sid_text
-        ))?;
-        let security = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor.0.0,
-            bInheritHandle: false.into(),
-        };
-        let name = wide(&format!("{ACL_NAMESPACE_ALIAS}\\{name}"));
-        let handle = unsafe { CreateMutexW(Some(&security), false, PCWSTR(name.as_ptr())) }
-            .context("CreateMutexW(ACL transaction)")?;
-        let handle = OwnedHandle::new(handle, "ACL transaction mutex")?;
-        let result = unsafe { WaitForSingleObject(handle.raw(), timeout_ms) };
-        match result {
-            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
-            WAIT_TIMEOUT => bail!("Windows sandbox ACL transaction mutex timed out"),
-            _ => bail!(
-                "Windows sandbox ACL transaction mutex wait returned 0x{:x}",
-                result.0
-            ),
-        }
-    }
-}
-
-impl Drop for NamedMutex {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = ReleaseMutex(self.0.raw());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -2278,30 +2127,5 @@ mod tests {
         assert!(decoded.contains("Path=C:\\bin\0"));
         assert!(decoded.contains("\u{73af}\u{5883}=\u{503c}\0"));
         assert!(!decoded.contains("RUSTUP_HOME="));
-    }
-
-    #[test]
-    fn acl_mutex_is_owner_scoped_and_recovers_abandonment() {
-        let name = format!(
-            "test-{}-{}",
-            unsafe { GetCurrentProcessId() },
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let (owned_tx, owned_rx) = std::sync::mpsc::channel();
-        let owner_name = name.clone();
-        std::thread::spawn(move || {
-            let mutex = NamedMutex::acquire(&owner_name, 1_000).unwrap();
-            owned_tx.send(()).unwrap();
-            std::mem::forget(mutex);
-        })
-        .join()
-        .unwrap();
-        owned_rx.recv().unwrap();
-
-        let recovered = NamedMutex::acquire(&name, 1_000).unwrap();
-        drop(recovered);
     }
 }

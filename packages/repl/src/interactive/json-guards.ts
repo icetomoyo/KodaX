@@ -5,6 +5,7 @@ import type {
   KodaXJsonValue,
   KodaXMessage,
   KodaXSessionUiHistoryItem,
+  KodaXSessionUiTextHistoryItemType,
   KodaXSessionUiToolCall,
   KodaXSessionUiToolCallStatus,
   SessionErrorMetadata,
@@ -12,7 +13,7 @@ import type {
 import type { KodaXManagedTask } from '@kodax-ai/coding';
 
 const MESSAGE_ROLES = new Set<KodaXMessage['role']>(['user', 'assistant', 'system']);
-const UI_TEXT_ITEM_TYPES = new Set([
+const UI_TEXT_ITEM_TYPES: ReadonlySet<string> = new Set<KodaXSessionUiTextHistoryItemType>([
   'user',
   'assistant',
   'system',
@@ -21,6 +22,7 @@ const UI_TEXT_ITEM_TYPES = new Set([
   'event',
   'info',
   'hint',
+  'sidecar',
 ]);
 const UI_TOOL_STATUSES = new Set<KodaXSessionUiToolCallStatus>([
   'success',
@@ -211,6 +213,7 @@ export function isKodaXSessionUiHistoryItem(value: unknown): value is KodaXSessi
   return UI_TEXT_ITEM_TYPES.has(value.type)
     && typeof value.text === 'string'
     && isOptionalHistoryTimestamp(value.timestamp)
+    && (value.presentationOnly === undefined || value.presentationOnly === true)
     && (value.icon === undefined || typeof value.icon === 'string')
     && (value.compactText === undefined || typeof value.compactText === 'string');
 }

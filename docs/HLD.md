@@ -131,29 +131,26 @@ capabilities plus shared-group read access and the dedicated account, per-launch
 compatibility SIDs, matching current Codex), uses a nonce-bound policy-capability private desktop, and creates the target suspended
 inside a no-breakaway, kill-on-close Job before `Ready` and resume. Linux and
 macOS shell commands use per-command ASRT bubblewrap/Seatbelt preparation with
-no KodaX workspace-session owner. One-time Windows v2 setup rotates the pre-v2 account SID and records the new
-SID/protocol machine generation before shell admission.
+no KodaX workspace-session owner. Windows v2 setup reuses a healthy fixed
+account SID across setup versions and records the protected protocol generation
+before shell admission; only damaged identity state rotates.
 The Windows private desktop uses a full-policy capability, while persistent
-filesystem write ACEs use the setup's stable filesystem nonce + canonical-root +
-`allowWrite`/`denyWrite` clause capabilities. Read roots use the shared sandbox
-group and do not imply a deny-write capability. The restricted target's enabled traverse privilege reaches exact
+filesystem ACEs use the setup's stable filesystem nonce + canonical-root +
+`allowRead`/`allowWrite`/`denyWrite` clause capabilities. Every root keeps the
+same policy-independent ACE set; the restricted token activates only the
+capabilities required by that command. The restricted target's enabled traverse privilege reaches exact
 allowed roots without persistent private-ancestor ACEs or profile-DACL
-propagation. Because `WRITE_RESTRICTED` does not enforce read denies,
-`denyRead` uses an execution-logon ACE committed under a short ACL mutex and a
-crash-safe receipt, then removed only after Job drain. Recovery verifies the
-recorded volume/file identity before changing the DACL; a missing or replaced
-object keeps the receipt and fails shell admission closed until repair. No ACL
-mutex or receipt participates in trusted text admission or spans the command
- lifetime. Windows setup generation 8 retires protocol 7, records and resumes
- an interrupted one-time drain, waits its full bounded pre-start window, and
- removes the legacy KodaX-installed sensitive-
- root deny ACEs with the previous group SID after proving that account idle,
- then rotates it. One setup-only elevated native helper receives a small
- explicit base64 envelope, validates its versioned digest-bound request inside
- the protected control directory, and performs NUL
- compatibility plus broad read/TMP ACL prewarm before marker publication;
- the setup caller waits for confirmed helper exit, and exact-object mutex waits
- cannot exceed the setup-wide deadline;
+propagation. Because `WRITE_RESTRICTED` does not enforce restricting SIDs for
+reads, Windows per-command `denyRead` fails closed as `unsupported_policy`
+before setup, DACL mutation, or target start. Windows setup generation 9
+upgrades a healthy generation-8 identity in place without replaying the
+generation-8 legacy ACL migration proof. One setup-only elevated native parent
+receives a small explicit base64 envelope, validates its versioned digest-bound
+`installing` marker inside the protected control directory, and synchronously
+converges NUL compatibility plus profile read capabilities. The setup caller
+atomically publishes the ready marker only after that parent succeeds; no helper
+overlaps ordinary admission, and system TMP is authorized on demand rather than
+prewarmed;
  ordinary command admission never invokes UAC, that migration, or
  revokes shared ACL state. New sandbox policy grants broad
  host reads instead. Native requests no
@@ -161,6 +158,13 @@ mutex or receipt participates in trusted text admission or spans the command
  so upgrades neither grow those historical residues nor conflict with the
  control verifier. Existing cache denies remain unchanged: owner/protection,
  masks, flags, and SID shapes cannot prove individual ACE provenance.
+This setup-9/stable-ACL boundary advances `sandboxRuntime` to 9 so a newly linked
+client replaces an idle v8 daemon and refuses to mix with a busy one.
+If the resolved Agent Home is itself below a granted system-TMP root, the
+Runtime creates the five fixed host-owned internal directories before adding
+them to `denyWrite`. This is local directory materialization, not setup,
+capability convergence, or a synchronization boundary; it prevents native root
+validation from rejecting a non-existent deny root on first launch.
 The protected control directory is doctor-verified and setup-repaired only
 after the sandbox SID is idle. Repair can retire an expired dead-PID request or
 a dead-owner terminal record that already proves Job drainage; live,
@@ -185,16 +189,17 @@ Neither platform treats an on-disk file as persistent lock ownership.
 Windows v2 shell invocations do not own a command-lifetime filesystem-effect
 lease. Arbitrary shell writes remain normal OS races and are not serialized by
 the text CAS.
-Protocol 8 binds every request to the protected setup marker's path and digest.
+Protocol 9 binds every request to the protected setup marker's path and digest.
 The native host holds a non-delete-sharing marker handle through durable target
 `Started`, so setup rotation and command start are linearized without a global
-admission lock. A warm exact ACL policy is read-only; a missing ACE takes only
-an exact-filesystem-object mutex, and all roots share one five-second phase
-budget. Setup alone provisions artifacts/control state and performs legacy or
-full crash recovery. A denyRead admission may clean a dead-runner receipt only
-when it overlaps the exact requested object, under that same bounded phase; it
-does not lock unrelated work. Each command otherwise owns independent pipes, token, Job,
-resume/started records, terminal proof, and deny receipt. Exact-authority
+admission lock. A warm exact ACL policy is read-only; effective inherited
+normal-token grants are accepted, while a missing exact restricted capability
+is converged using `SET_ACCESS` and DACL readback without a cross-process target
+mutex. Setup alone provisions artifacts/control state and performs legacy or
+full crash recovery. Unsupported Windows `denyRead` never reaches ordinary
+command admission; setup alone may retire pre-cutover receipts.
+Each command otherwise owns independent pipes, token, Job,
+resume/started records, and terminal proof. Exact-authority
 network brokers remain reusable and retire a failed readiness attempt.
 When terminal proof fails on the final reference, cleanup retires that broker
 before an immediate same-authority command can reuse its dead controller;
@@ -285,9 +290,9 @@ ordering and otherwise use Git's own cross-process locks. The current
 v0.7.96 boundaries are defined above: trusted text is host-authorized and never
 enters the shell graph, while Windows shell uses per-command native token/Job
 containment and Linux/macOS use one ASRT command wrapper per invocation. Legacy
-sensitive-root guards are retired by bounded upgrade reconciliation. Dynamic `denyRead`
-retains its execution-logon receipt and short ACL transaction without owning a
-command-lifetime mutex or affecting trusted text.
+sensitive-root guards and pre-cutover execution-deny receipts are retired by
+setup-only upgrade reconciliation. Dynamic Windows `denyRead` is reported as
+unsupported before target start; POSIX keeps the ASRT policy field.
 Learned Skill discovery likewise treats local and remote project identities as
 distinct physical roots, searches each applicable root, and directs lifecycle
 mutations back to the store that owns the discovered record.
@@ -714,6 +719,9 @@ requirements span both product and SDK:
 - session snapshots and runtime state persistence;
 - durable terminal tool-card replay from sanitized `uiHistory`, with canonical
   `messages` / `lineage` remaining the source of truth;
+- failed-turn `presentationOnly` text is the narrow display-authoritative
+  exception: persist it exactly once and restore Assistant summary, Sidecar
+  verifier, then terminal error without adding model-context messages;
 - searchable bare-resume selection that defers the full CLI load until a
   selection, returns Esc directly to the invoking terminal, and hands stdin to
   the resumed REPL only after selection;

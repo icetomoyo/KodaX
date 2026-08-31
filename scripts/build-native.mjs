@@ -122,7 +122,7 @@ if (process.platform === 'win32') {
   );
   manifest.shellSandbox = {
     file: path.basename(shellOutput),
-    protocol: 8,
+    protocol: 9,
     sha256: sha256(shellOutput),
   };
   const { asrtRunnerPath, asrtVersion } = pinnedAsrtRunner(targetArch);

@@ -338,12 +338,16 @@ export type KodaXSandboxNetworkPolicy =
 export interface KodaXSandboxFilesystemPolicy {
   /**
    * Read roots required by the command. ASRT permits ordinary reads by
-   * default. An explicit denyRead remains authoritative beneath these roots.
+   * default. POSIX denyRead roots remain authoritative beneath these roots.
    */
   readonly allowRead: readonly string[];
   /** The only roots in which the command may create, modify, or remove data. */
   readonly allowWrite: readonly string[];
-  /** Read-denied roots; denyRead takes precedence over allowRead. */
+  /**
+   * Read-denied roots. POSIX backends enforce these before allowRead. The
+   * Windows WRITE_RESTRICTED backend fails closed with `unsupported_policy`
+   * before setup, DACL mutation, or target start when this list is non-empty.
+   */
   readonly denyRead?: readonly string[];
   /** Write-denied roots; denyWrite takes precedence over allowWrite. */
   readonly denyWrite?: readonly string[];
@@ -375,7 +379,7 @@ export type KodaXSandboxRunResult =
     readonly status: 'unavailable';
     readonly sandboxed: false;
     readonly doctor: SandboxRuntimeDoctorResult;
-    readonly reason?: 'doctor_not_ready' | 'backend_launch_failed';
+    readonly reason?: 'doctor_not_ready' | 'backend_launch_failed' | 'unsupported_policy';
     readonly diagnostic?: string;
   }
   | {
@@ -398,7 +402,7 @@ export interface SandboxSetupOutcome {
 }
 
 export interface KodaXSandboxCapability {
-  readonly version: 7;
+  readonly version: 9;
   readonly asrtVersion: string;
   readonly platform: NodeJS.Platform;
   readonly backend: 'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
@@ -431,7 +435,7 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
         ? 'linux-bubblewrap'
         : 'unsupported';
   return {
-    version: 7,
+    version: 9,
     asrtVersion: KODAX_ASRT_VERSION,
     platform: process.platform,
     backend,
@@ -1103,8 +1107,8 @@ function windowsSandboxV2SetupLockFile(): string {
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
-const WINDOWS_SANDBOX_V2_SETUP_VERSION = 8 as const;
-const WINDOWS_LEGACY_ADMISSION_DRAIN_MS = KODAX_HARD_TIMEOUT * 1_000 + 1_000;
+const WINDOWS_SANDBOX_V2_SETUP_VERSION = 9 as const;
+const WINDOWS_LEGACY_ACL_MIGRATION_VERSION = 8 as const;
 
 interface WindowsSandboxV2CutoverMarker {
   readonly version: typeof WINDOWS_SANDBOX_V2_SETUP_VERSION;
@@ -1116,22 +1120,19 @@ interface WindowsSandboxV2CutoverMarker {
   readonly sandboxGroupSid: string;
 }
 
-type WindowsSandboxLegacyDrainMarker =
-  | {
-      readonly version: 1;
-      readonly state: 'pending';
-    }
-  | {
-      readonly version: 1;
-      readonly state: 'draining';
-      readonly deadlineUnixMs: number;
-    };
+interface WindowsSandboxV2InstallingMarker extends WindowsSandboxV2CutoverMarker {
+  readonly state: 'installing';
+}
+
+interface PreviousWindowsSandboxV2CutoverIdentity {
+  readonly version: number;
+  readonly hostUserSid: string;
+  readonly sandboxUserSid: string;
+  readonly sandboxGroupSid: string;
+}
 
 let cachedWindowsSandboxV2HostUserSid: string | undefined;
 let windowsSandboxV2CutoverDirectory = windowsNativeArtifactCacheRoot;
-let waitForLegacyWindowsSandboxAdmissions = (delayMs: number) => new Promise<void>(
-  (resolve) => setTimeout(resolve, delayMs),
-);
 let cachedWindowsSandboxV2Cutover: WindowsSandboxV2CutoverMarker | undefined;
 const preparedWindowsShellArtifacts = new Map<
   string,
@@ -1176,16 +1177,6 @@ export function overrideWindowsSandboxV2CutoverDirectoryForTest(
   windowsSandboxV2CutoverDirectory = resolveDirectory;
   return () => {
     windowsSandboxV2CutoverDirectory = previous;
-  };
-}
-
-export function overrideLegacyWindowsSandboxAdmissionDrainForTest(
-  wait: (delayMs: number) => Promise<void>,
-): () => void {
-  const previous = waitForLegacyWindowsSandboxAdmissions;
-  waitForLegacyWindowsSandboxAdmissions = wait;
-  return () => {
-    waitForLegacyWindowsSandboxAdmissions = previous;
   };
 }
 
@@ -1240,6 +1231,50 @@ function readWindowsSandboxV2CutoverMarker(): WindowsSandboxV2CutoverMarker | un
     throw new Error('the cutover marker is not a private regular file');
   }
   return parseWindowsSandboxV2CutoverMarker(readFileSync(file, 'utf8'));
+}
+
+function readPreviousWindowsSandboxV2CutoverIdentity(
+): PreviousWindowsSandboxV2CutoverIdentity | undefined {
+  const file = windowsSandboxV2CutoverMarkerFile();
+  let metadata: ReturnType<typeof lstatSync>;
+  try {
+    metadata = lstatSync(file);
+  } catch (error: unknown) {
+    if (isFileSystemError(error, 'ENOENT')) return undefined;
+    throw error;
+  }
+  if (
+    !metadata.isFile()
+    || metadata.isSymbolicLink()
+    || metadata.nlink !== 1
+    || metadata.size > WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES
+  ) {
+    throw new Error('the previous cutover marker is not a private bounded regular file');
+  }
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('the previous cutover marker is not an object');
+  }
+  const marker = parsed as Readonly<Record<string, unknown>>;
+  if (
+    typeof marker.version !== 'number'
+    || !Number.isSafeInteger(marker.version)
+    || marker.version <= 0
+    || typeof marker.hostUserSid !== 'string'
+    || typeof marker.sandboxUserSid !== 'string'
+    || typeof marker.sandboxGroupSid !== 'string'
+    || !/^S-\d+(?:-\d+)+$/i.test(marker.hostUserSid)
+    || !/^S-\d+(?:-\d+)+$/i.test(marker.sandboxUserSid)
+    || !/^S-\d+(?:-\d+)+$/i.test(marker.sandboxGroupSid)
+  ) {
+    throw new Error('the previous cutover marker has an incompatible identity');
+  }
+  return {
+    version: marker.version,
+    hostUserSid: marker.hostUserSid,
+    sandboxUserSid: marker.sandboxUserSid,
+    sandboxGroupSid: marker.sandboxGroupSid,
+  };
 }
 
 function windowsSandboxV2CutoverError(reason: string): Error {
@@ -1409,38 +1444,13 @@ function writeWindowsSandboxV2CutoverMarker(
   writePrivateJsonFile(windowsSandboxV2CutoverMarkerFile(), marker);
 }
 
-function readWindowsSandboxLegacyDrainMarker(): WindowsSandboxLegacyDrainMarker | undefined {
-  const file = windowsSandboxLegacyDrainMarkerFile();
-  if (!existsSync(file)) return undefined;
-  const metadata = lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error('the legacy admission drain marker is not a regular file');
-  }
-  if (metadata.size > WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES) {
-    throw new Error('the legacy admission drain marker exceeds its size bound');
-  }
-  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('the legacy admission drain marker is not an object');
-  }
-  const marker = parsed as Readonly<Record<string, unknown>>;
-  const keys = Object.keys(marker).sort().join(',');
-  if (marker.state === 'pending') {
-    if (keys !== 'state,version' || marker.version !== 1) {
-      throw new Error('the legacy admission drain marker has an incompatible schema');
-    }
-    return { version: 1, state: 'pending' };
-  }
-  if (
-    keys !== 'deadlineUnixMs,state,version'
-    || marker.state !== 'draining'
-    || typeof marker.deadlineUnixMs !== 'number'
-    || !Number.isSafeInteger(marker.deadlineUnixMs)
-    || marker.deadlineUnixMs <= 0
-  ) {
-    throw new Error('the legacy admission drain marker has an incompatible schema');
-  }
-  return { version: 1, state: 'draining', deadlineUnixMs: marker.deadlineUnixMs };
+function stageWindowsSandboxV2CutoverMarker(
+  marker: WindowsSandboxV2CutoverMarker,
+): WindowsSandboxV2InstallingMarker {
+  const installing: WindowsSandboxV2InstallingMarker = { ...marker, state: 'installing' };
+  cachedWindowsSandboxV2Cutover = undefined;
+  writePrivateJsonFile(windowsSandboxV2CutoverMarkerFile(), installing);
+  return installing;
 }
 
 async function invalidateWindowsSandboxV2CutoverForSetup(): Promise<void> {
@@ -1448,30 +1458,10 @@ async function invalidateWindowsSandboxV2CutoverForSetup(): Promise<void> {
   await removeWindowsSandboxCutoverMarkerForSetup(windowsSandboxV2CutoverMarkerFile());
 }
 
-async function invalidateLegacyWindowsSandboxCutoverForSetup(): Promise<number> {
+async function retireLegacyWindowsSandboxCutoverForSetup(): Promise<void> {
   const file = path.join(windowsSandboxAclCoordinationDirectory(), 'windows-v2-cutover.json');
-  const drainFile = windowsSandboxLegacyDrainMarkerFile();
-  let marker = readWindowsSandboxLegacyDrainMarker();
-  const legacyMarkerExists = existsSync(file);
-  if (!legacyMarkerExists && marker === undefined) return 0;
-  if (legacyMarkerExists) {
-    writePrivateJsonFile(drainFile, { version: 1, state: 'pending' });
-    marker = { version: 1, state: 'pending' };
-  }
   await removeWindowsSandboxCutoverMarkerForSetup(file);
-  if (marker?.state === 'pending') {
-    marker = {
-      version: 1,
-      state: 'draining',
-      deadlineUnixMs: Date.now() + WINDOWS_LEGACY_ADMISSION_DRAIN_MS,
-    };
-    writePrivateJsonFile(drainFile, marker);
-  }
-  if (marker?.state !== 'draining') return 0;
-  return Math.max(0, Math.min(
-    marker.deadlineUnixMs - Date.now(),
-    WINDOWS_LEGACY_ADMISSION_DRAIN_MS,
-  ));
+  await removeWindowsSandboxCutoverMarkerForSetup(windowsSandboxLegacyDrainMarkerFile());
 }
 
 function recoverWindowsV2ExecutionDeniesForSetup(): void {
@@ -2261,15 +2251,20 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
 
 const INSTALL_WINDOWS_SETUP_CAPABILITIES = String.raw`
 $ErrorActionPreference = 'Stop'
-$process = Start-Process -FilePath $env:KODAX_NATIVE_SETUP_EXE -ArgumentList @('__setup-account-capabilities', $env:KODAX_NATIVE_SETUP_ENVELOPE) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-exit $process.ExitCode
+$process = Start-Process -FilePath $env:KODAX_NATIVE_SETUP_EXE -ArgumentList @('__setup-account-capabilities', $env:KODAX_NATIVE_SETUP_ENVELOPE) -Verb RunAs -PassThru -WindowStyle Hidden
+$process.WaitForExit()
+$exitCode = $process.ExitCode
+$process.Dispose()
+exit $exitCode
 `;
 
 interface WindowsSetupCapabilityRequest {
-  readonly version: 1;
+  readonly version: 2;
   readonly sandboxSid: string;
   readonly sandboxGroupSid: string;
   readonly filesystemCapabilityNonce: string;
+  readonly setupMarkerPath: string;
+  readonly setupMarkerSha256: string;
   readonly readRoots: readonly string[];
   readonly writeRoots: readonly string[];
 }
@@ -2284,6 +2279,8 @@ const installWindowsSetupCapabilities: WindowsSetupCapabilityInstaller = (execut
     !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxSid)
     || !/^S-1-5-21(?:-\d+)+$/i.test(request.sandboxGroupSid)
     || request.sandboxSid.toLowerCase() === request.sandboxGroupSid.toLowerCase()
+    || !path.isAbsolute(request.setupMarkerPath)
+    || !/^[0-9a-f]{64}$/i.test(request.setupMarkerSha256)
   ) {
     throw new Error('Windows sandbox account authority is invalid for capability setup.');
   }
@@ -2349,16 +2346,21 @@ function installWindowsV2AccountCapabilities(
   sandboxSid: string,
   sandboxGroupSid: string,
   filesystemCapabilityNonce: string,
+  marker: WindowsSandboxV2CutoverMarker | WindowsSandboxV2InstallingMarker,
 ): void {
   windowsSetupCapabilityInstaller(
     resolveWindowsSandboxV2Executable({ provision: true }).path,
     {
-      version: 1,
+      version: 2,
       sandboxSid,
       sandboxGroupSid,
       filesystemCapabilityNonce,
+      setupMarkerPath: windowsSandboxV2CutoverMarkerFile(),
+      setupMarkerSha256: createHash('sha256')
+        .update(JSON.stringify(marker), 'utf8')
+        .digest('hex'),
       readRoots: windowsSandboxSetupReadRoots(),
-      writeRoots: windowsSandboxSetupWriteRoots(),
+      writeRoots: [],
     },
   );
 }
@@ -2392,13 +2394,12 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
   // weaker parent DACL and make later artifact verification fail closed.
   resolveWindowsSandboxV2Executable({ provision: true });
   const filesystemCapabilityNonce = previousWindowsFilesystemCapabilityNonce() ?? randomUUID();
-  let previousCutover: WindowsSandboxV2CutoverMarker | undefined;
+  let previousCutover: PreviousWindowsSandboxV2CutoverIdentity | undefined;
+  let previousCutoverInvalid = false;
   try {
-    previousCutover = readWindowsSandboxV2CutoverMarker();
+    previousCutover = readPreviousWindowsSandboxV2CutoverIdentity();
   } catch (error: unknown) {
-    if (!(error instanceof SyntaxError || errorText(error).includes('cutover marker'))) {
-      throw new Error('Cannot inspect the Windows sandbox setup generation.', { cause: error });
-    }
+    previousCutoverInvalid = true;
     emitKodaXDiagnostic({
       source: 'sandbox:windows-v2-setup',
       level: 'warn',
@@ -2406,25 +2407,25 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       detail: error,
     });
   }
-  // Protocol-7 Runtimes read the former ProgramData marker and do not know the
-  // protocol-8 marker-handle gate. Remove that authority once, then drain the
-  // full Bash hard-timeout window: a legacy admission may already have read the
-  // marker but can never retain pre-start authority beyond that deadline.
-  const legacyAdmissionDrainMs = await invalidateLegacyWindowsSandboxCutoverForSetup();
-  // Setup never shares a valid account generation with new admissions.
+  // Versioned setup owns migration. Retire legacy markers without placing a
+  // hard-timeout delay in front of every upgrade; a healthy fixed account is
+  // updated in place, as in Codex, so existing sessions keep their identity.
+  await retireLegacyWindowsSandboxCutoverForSetup();
   await invalidateWindowsSandboxV2CutoverForSetup();
-  if (legacyAdmissionDrainMs > 0) {
-    await waitForLegacyWindowsSandboxAdmissions(legacyAdmissionDrainMs);
-  }
-  await removeWindowsSandboxCutoverMarkerForSetup(windowsSandboxLegacyDrainMarkerFile());
   const runner = await prepareWindowsSandboxRunner([], true);
   const oldUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   const oldSid = oldUser.sid;
-  const markerMatchesCurrentUser = previousCutover !== undefined
-    && windowsSandboxAccountDiagnostics(oldUser).length === 0
-    && oldUser.sid === previousCutover.sandboxUserSid
+  const accountIsHealthy = windowsSandboxAccountDiagnostics(oldUser).length === 0
+    && oldUser.sid !== undefined
+    && oldUser.groupSid !== undefined;
+  const previousIdentityMatches = previousCutover === undefined || (
+    oldUser.sid === previousCutover.sandboxUserSid
     && oldUser.groupSid === previousCutover.sandboxGroupSid
-    && windowsSandboxV2HostUserSid() === previousCutover.hostUserSid;
+    && windowsSandboxV2HostUserSid() === previousCutover.hostUserSid
+  );
+  const canReuseCurrentAccount = accountIsHealthy
+    && !previousCutoverInvalid
+    && previousIdentityMatches;
   recoverWindowsV2ExecutionDeniesForSetup();
   let controlStateFailure: unknown;
   try {
@@ -2459,12 +2460,18 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     const repaired = await doctorSandboxRuntime({ refresh: true });
     if (repaired.ready) return repaired;
   }
-  if (markerMatchesCurrentUser) {
-    if (oldSid !== undefined && !await windowsSandboxSidIsIdle(oldSid)) {
-      throw new Error(
-        'The Windows sandbox account still has a live process; '
-        + 'close sandboxed shells and retry "kodax sandbox setup".',
-      );
+  if (canReuseCurrentAccount) {
+    const needsLegacyAclMigration = (previousCutover?.version ?? 0)
+      < WINDOWS_LEGACY_ACL_MIGRATION_VERSION
+      && !windowsLegacyAclMigrationIsCurrent(oldUser.groupSid!);
+    if (needsLegacyAclMigration) {
+      if (!await windowsSandboxSidIsIdle(oldUser.sid!)) {
+        throw new Error(
+          'Legacy Windows sandbox ACL migration requires the sandbox account to be idle; '
+          + 'close sandboxed shells and retry "kodax sandbox setup".',
+        );
+      }
+      migrateWindowsLegacyAclGuardsForSetup(oldUser.sid!, oldUser.groupSid!);
     }
     const result = installWindowsSandbox({ srtWin: runner.srtWin });
     if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
@@ -2472,17 +2479,14 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     if (installedUser.sid === undefined || installedUser.groupSid === undefined) {
       throw new Error('Windows sandbox setup did not return complete account SIDs.');
     }
+    if (installedUser.sid !== oldUser.sid || installedUser.groupSid !== oldUser.groupSid) {
+      throw new Error('Windows sandbox in-place setup unexpectedly changed its account identity.');
+    }
     resolveWindowsSandboxV2Executable({
       sandboxReadSid: installedUser.groupSid,
       provision: true,
     });
-    installWindowsV2AccountCapabilities(
-      installedUser.sid,
-      installedUser.groupSid,
-      filesystemCapabilityNonce,
-    );
-    await verifyPreparedWindowsWfp(runner);
-    writeWindowsSandboxV2CutoverMarker({
+    const nextCutover: WindowsSandboxV2CutoverMarker = {
       version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
       protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
       generationNonce: randomUUID(),
@@ -2490,7 +2494,16 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       hostUserSid: windowsSandboxV2HostUserSid(),
       sandboxUserSid: installedUser.sid,
       sandboxGroupSid: installedUser.groupSid,
-    });
+    };
+    const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
+    installWindowsV2AccountCapabilities(
+      installedUser.sid,
+      installedUser.groupSid,
+      filesystemCapabilityNonce,
+      installingCutover,
+    );
+    await verifyPreparedWindowsWfp(runner);
+    writeWindowsSandboxV2CutoverMarker(nextCutover);
     return doctorSandboxRuntime({ refresh: true });
   }
 
@@ -2529,13 +2542,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     sandboxReadSid: installedUser.groupSid,
     provision: true,
   });
-  installWindowsV2AccountCapabilities(
-    installedUser.sid,
-    installedUser.groupSid,
-    filesystemCapabilityNonce,
-  );
-  await verifyPreparedWindowsWfp(runner);
-  writeWindowsSandboxV2CutoverMarker({
+  const nextCutover: WindowsSandboxV2CutoverMarker = {
     version: WINDOWS_SANDBOX_V2_SETUP_VERSION,
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
     generationNonce: randomUUID(),
@@ -2543,7 +2550,16 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     hostUserSid: windowsSandboxV2HostUserSid(),
     sandboxUserSid: installedUser.sid,
     sandboxGroupSid: installedUser.groupSid,
-  });
+  };
+  const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
+  installWindowsV2AccountCapabilities(
+    installedUser.sid,
+    installedUser.groupSid,
+    filesystemCapabilityNonce,
+    installingCutover,
+  );
+  await verifyPreparedWindowsWfp(runner);
+  writeWindowsSandboxV2CutoverMarker(nextCutover);
   return doctorSandboxRuntime({ refresh: true });
 }
 
@@ -3894,6 +3910,36 @@ function windowsLegacyAclReconciliationMarkerFile(): string {
   );
 }
 
+function windowsLegacyAclMigrationIsCurrent(sandboxGroupSid: string): boolean {
+  const file = windowsLegacyAclReconciliationMarkerFile();
+  let metadata: ReturnType<typeof lstatSync>;
+  try {
+    metadata = lstatSync(file);
+  } catch (error: unknown) {
+    if (isFileSystemError(error, 'ENOENT')) return false;
+    throw error;
+  }
+  if (
+    !metadata.isFile()
+    || metadata.isSymbolicLink()
+    || metadata.nlink !== 1
+    || metadata.size > WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES
+  ) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const marker = parsed as Readonly<Record<string, unknown>>;
+  return Object.keys(marker).sort().join(',') === 'sandboxGroupSid,setupVersion,version'
+    && marker.version === 2
+    && marker.setupVersion === WINDOWS_LEGACY_ACL_MIGRATION_VERSION
+    && marker.sandboxGroupSid === sandboxGroupSid;
+}
+
 function migrateWindowsLegacyAclGuardsForSetup(
   sandboxUserSid: string,
   sandboxGroupSid: string,
@@ -3907,7 +3953,7 @@ function migrateWindowsLegacyAclGuardsForSetup(
     windowsLegacyAclReconciliationMarkerFile(),
     JSON.stringify({
       version: 2,
-      setupVersion: WINDOWS_SANDBOX_V2_SETUP_VERSION,
+      setupVersion: WINDOWS_LEGACY_ACL_MIGRATION_VERSION,
       sandboxGroupSid,
     }),
     { encoding: 'utf8', mode: 0o600 },
@@ -3926,10 +3972,6 @@ function windowsSandboxSetupReadRoots(): string[] {
     ...windowsSandboxProfileReadRoots(home),
     ...windowsNativeRuntimeReadScopes(workspaceShellRuntimeReadScopes(process.env)),
   ]);
-}
-
-function windowsSandboxSetupWriteRoots(): string[] {
-  return workspaceShellWriteRoots(canonicalTempDirectories(), '');
 }
 
 function workspaceShellWriteRoots(
@@ -4334,6 +4376,19 @@ function workspaceShellSandboxConfig(
     ],
     agentHome,
   );
+  const protectedAgentHomeWriteRoots = [
+    controlDirectory,
+    ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
+      (directory) => path.join(agentHome, directory),
+    ),
+  ];
+  if (process.platform === 'win32') {
+    for (const protectedRoot of protectedAgentHomeWriteRoots) {
+      if (writeRoots.some((granted) => isInside(granted, protectedRoot))) {
+        mkdirSync(protectedRoot, { recursive: true });
+      }
+    }
+  }
   const linkedGit = windowsLinkedWorktreeGitAccess(workspaceRoot);
   const allowReadCandidates = [
       ...(process.platform === 'win32'
@@ -4363,11 +4418,8 @@ function workspaceShellSandboxConfig(
       allowRead,
       allowWrite: writeRoots,
       denyWrite: [
-        controlDirectory,
+        ...protectedAgentHomeWriteRoots,
         ...trustedTextNativeArtifactStateRoots(),
-        ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
-          (directory) => path.join(agentHome, directory),
-        ),
         ...trustedProjectExecPolicyDenyWrite(trustedProjectExecPolicyPath),
         ...existingWorkspaceDenyWrites(workspaceRoot),
         ...(linkedGit.gitfile !== undefined ? [linkedGit.gitfile] : []),
@@ -4630,6 +4682,22 @@ export async function runKodaXSandboxed(
     denyRead: normalizedSandboxPaths(input.filesystem.denyRead, cwd),
     denyWrite: normalizedSandboxPaths(input.filesystem.denyWrite, cwd),
   };
+  if (process.platform === 'win32' && (normalizedFilesystem.denyRead?.length ?? 0) > 0) {
+    const diagnostic = 'Per-command Windows denyRead is unsupported by the WRITE_RESTRICTED backend.';
+    return {
+      status: 'unavailable',
+      sandboxed: false,
+      reason: 'unsupported_policy',
+      diagnostic,
+      doctor: {
+        ready: false,
+        platform: process.platform,
+        version: KODAX_ASRT_VERSION,
+        diagnostics: [diagnostic],
+        setupRequired: false,
+      },
+    };
+  }
   if (process.platform === 'win32') {
     assertWindowsSandboxControlStateNotDirectlyAccessible(normalizedFilesystem);
   }
@@ -5754,6 +5822,11 @@ export function createAsrtShellSandbox(
 }
 
 export async function createAsrtSkillScriptRunner(input: CreateSkillScriptRunnerInput): Promise<KodaXSkillScriptRunner> {
+  if (process.platform === 'win32') {
+    throw new Error(
+      'Windows isolated Skill scripts are unavailable because their required per-command denyRead policy is unsupported by the WRITE_RESTRICTED backend.',
+    );
+  }
   const doctor = await doctorSandboxRuntime();
   if (!doctor.ready) throw new Error(`ASRT ${KODAX_ASRT_VERSION} is not ready: ${doctor.diagnostics.join(' ') || 'run kodax sandbox setup'}`);
   const runnerRoot = path.join(input.snapshotRoot, randomUUID());

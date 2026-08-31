@@ -4,9 +4,9 @@
 >
 > **v0.7.96-alpha.4 concurrency correction:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
-> protocol 8/setup generation 8 uses a required protected marker start gate,
-> read-only warm ACL admission, exact-object short mutation locks with one
-> five-second total phase budget, setup-only provisioning/full recovery, reusable
+> protocol 9/setup generation 9 uses a required protected marker start gate,
+> one policy-independent stable capability ACL set per root, lock-free additive convergence with
+> DACL readback, setup-only provisioning/full recovery, reusable
 > exact-authority brokers, and independent request/token/pipe/Job lifecycles.
 >
 > **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
@@ -5597,20 +5597,16 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    targets and nested allow/deny precedence are preflighted before the first
    persistent DACL mutation.
 
-   `WRITE_RESTRICTED` does not consult restricting SIDs for reads. `denyRead`
-   is therefore an execution-scoped deny ACE for the authenticated runner logon
-   SID, not a capability ACE. The host records a flushed, atomically published
-   receipt before the short ACL mutation, holds no-follow target handles while
-   the command runs, and removes exactly its owned ACE only after the runner
-   proves the Job drained. A host crash leaves recovery evidence keyed by exact
-   PID creation time; the next shell host recovers stale evidence under the same
-   short ACL mutex. The earlier fixed Agent Home and credential guards are
-   historical as of ADR-069/070: setup generation 8 removes only their exactly
-   owned legacy ACEs after the previous sandbox SID is idle and rotates the
-   account generation. Ordinary admission never installs or removes those
-   machine-wide guards. This mutex covers only current-policy ACL
-   authorization/cleanup, never command
-   lifetime or trusted text admission. The full-policy/root-clause split bounds
+   `WRITE_RESTRICTED` does not consult restricting SIDs for reads. ADR-070
+   therefore supersedes this ADR's dynamic Windows `denyRead` design: a
+   non-empty per-command `denyRead` fails closed as `unsupported_policy` before
+   setup, DACL mutation, or target start. Ordinary command start/exit performs
+   no logon-SID ACL mutation, cleanup, or receipt publication. The earlier fixed Agent Home
+   and credential guards are historical as of ADR-069/070: setup generation 8
+   removes only their exactly owned legacy ACEs after the previous sandbox SID
+   is idle while retaining a healthy account identity. Explicit setup also owns
+   pre-cutover execution-deny receipt recovery. Ordinary admission never scans
+   or mutates that migration state. The write-root clause model bounds
    persistent ACE growth; no speculative capability garbage collector is added.
    This remains ambient-read plus explicit deny, not a strict read whitelist.
    Because the compatibility SIDs remain in the restricted pass, an explicit
@@ -6007,23 +6003,27 @@ growth and lets admission proceed without silently redefining cache ACL
 ownership.
 
 Legacy sensitive-root ACL removal is a versioned setup operation, never a
-normal command-admission operation. Windows setup generation 8 retires the
-protocol-7 ProgramData marker, drains its complete bounded pre-start window, waits until
-the previous sandbox SID is idle, removes only the provably owned legacy guards
-against the exact previous group SID, rotates the account/SID generation, and
-atomically records the new protected cutover marker. Removal is
-skipped for fresh install and same-generation repair. Protocol-7 binaries never
-read the protected protocol-8 marker; removing their ProgramData marker is what
-closes that authority before the bounded drain. The faulty generation-5
-protocol-8 build reads the protected marker but rejects generation 8 and its
-required nonce. Either older setup path can still downgrade state, so operators
-must not run setup from an older KodaX after cutover and must rerun current setup
-if that happens.
-After setup, each command keeps an independent native request, policy token,
-controller connection, and Job. Admission may idempotently authorize a missing
-current capability on an exact root, but it does not clear or revoke shared
-legacy ACL state. No serial command queue or concurrency-disable option is
-introduced.
+normal command-admission operation. Setup generation 8 is the durable proof for
+that one-time cleanup: it removes only provably owned legacy guards against the
+exact installed group SID after proving that SID idle. Setup generation 9
+upgrades a healthy generation-8 account in place, preserving its SID/group and
+filesystem nonce without replaying cleanup even when that SID is active. Only a
+missing, damaged, or identity-mismatched account rotates. Protocol-7 binaries
+never read the protected marker; protocol 9 and `sandboxRuntime:9` fence old
+native and daemon actors. An older setup path can still downgrade state, so
+operators must rerun current setup after using an older KodaX.
+
+Setup first publishes a protected non-ready `installing` marker. The setup-only
+elevated parent validates that exact digest-bound marker and synchronously
+converges NUL compatibility plus profile read capabilities; after it succeeds,
+the caller atomically publishes the ready marker. No helper overlaps ordinary
+admission and setup does not prewarm system TMP. After setup, each command keeps
+an independent native request, policy token, controller connection, and Job. Every
+canonical root has the same stable `AllowRead`/`AllowWrite`/`DenyWrite` ACE set,
+and the current token selects its exact authority. Admission may idempotently
+add a missing ACE and verify DACL readback, but never clears or revokes shared
+state. No serial command queue, admission mutex, or concurrency-disable option
+is introduced.
 
 Auto review returns allow/deny for one exact host operation. Its configurable
 security body is `config.json#autoReview.policy`; its role and structured
@@ -6043,10 +6043,11 @@ critical safeguard. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
-On Windows, upgrading from any pre-8 setup generation requires one explicit
-`kodax sandbox setup` while old sandbox processes are stopped. The one-time
-migration can take the setup lock; normal commands never wait on that lock or
-the legacy ACL cleanup path, so independent Sessions retain true overlap.
+On Windows, upgrading from any pre-8 setup generation or pre-9 native protocol
+requires one explicit `kodax sandbox setup`. A healthy fixed account is updated in place even while
+an existing sandbox process uses that SID; destructive account repair still
+requires the old SID to be idle. Normal commands never wait on the setup lock
+or the legacy ACL cleanup path, so independent Sessions retain true overlap.
 
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
 reviews and the unsafe fallthrough split); moving a complete deterministic
@@ -6058,7 +6059,7 @@ another tool/Agent or a Starlark VM for policy (violates KodaX's minimalist
 boundary); parsing or migrating legacy auto-rules (lets dead configuration
 block the new mode).
 
-## ADR-070: Windows Sandbox Coordination Is Setup-Scoped or Exact-Object-Scoped
+## ADR-070: Windows Sandbox Coordination Is Setup-Scoped or Capability-Scoped
 
 **Status**: Accepted for v0.7.96-alpha.4 (Issue 326); refines ADR-065, ADR-066,
 and ADR-069 after the production concurrency regression.
@@ -6082,32 +6083,33 @@ lock.
 1. Machine-wide changes belong to explicit versioned setup. Artifact/control
    provisioning, legacy guard removal, and full stale-deny recovery never run
    in ordinary command admission. The setup lock only excludes another setup.
-2. Warm ACL admission is read-only. A missing additive ACE is installed under
-   a mutex named from the exact no-follow volume/file identity. All policy roots
-   share one five-second phase deadline. Unrelated objects cannot wait on one
-   another; N roots cannot multiply the budget. Generation 8 persists one
+2. Warm ACL admission is read-only. Normal-token grants accept effective
+   inherited access from the sandbox group/account, Builtin Users,
+   Authenticated Users, or Everyone. A missing exact restricted capability ACE
+   is converged with `SET_ACCESS` and re-read without acquiring or waiting on a
+   cross-process ACL target mutex. The old `AclRoot` namespace is
+   never consulted by ordinary admission. All policy roots share one admission
+   phase deadline; it is not a lock wait or a serial queue. Generation 8 persists one
    random filesystem-capability namespace independently of protocol, binary
-   hash, and sandbox-account maintenance. Explicit setup prewarms profile
-   top-level read roots and canonical system-TMP write roots; ordinary
-   admission verifies those warm roots and converges only a genuinely new
-   exact root, never recursively clears or rewrites the profile.
-3. `denyRead` uses the same exact-object mutex only for install/remove of one
-   command's authenticated logon-SID ACE. Before installing on an object, it
-   may recover a dead-runner receipt that overlaps that exact requested object;
-   it neither locks nor cleans an unrelated live command. Its durable receipt
-   and opened target identity support exact crash recovery. No ACL mutex spans
-   target execution. Published receipts are immutable; readers share read and
-   delete access (but never write access), so scanning a live receipt cannot
-   block its exact owner or recovery path from retiring it.
-4. Native protocol 8 requires a protected setup-marker path, random generation
+   hash, and sandbox-account maintenance. Explicit setup synchronously
+   converges profile top-level read capabilities before publishing ready;
+   canonical system-TMP writes remain on-demand. Ordinary admission verifies
+   prepared roots and converges only a genuinely new exact root, never clears
+   or revokes another command's capability state.
+3. Windows per-command `denyRead` is rejected as structured
+   `unsupported_policy` before doctor, setup, DACL mutation, or target start.
+   `WRITE_RESTRICTED` consults restricting SIDs for writes, not reads, so a
+   policy-capability deny ACE cannot enforce this contract. The API field stays
+   for cross-platform compatibility. Explicit setup alone may read and retire
+   pre-cutover receipts/ACEs as a one-time migration.
+4. Native protocol 9 requires a protected setup-marker path, random generation
    nonce, and SHA-256. The
    host opens it without delete sharing and retains the handle until its
    nonce-bound `Started` record is durable. Setup invalidation therefore waits
-   only on admitted start windows, not complete command lifetimes. The one-time
-   protocol-7 cutover instead records protected `pending`/`draining` state,
-   removes its old marker, and drains the full 300s legacy Bash deadline plus
-   margin because old hosts cannot participate in the new handle gate. An
-   interrupted setup resumes that drain rather than rotating early.
+   only on admitted start windows, not complete command lifetimes. Setup-version
+   changes preserve a healthy fixed user/group SID and filesystem nonce; legacy
+   protocol-8 and older obsolete drain markers are retired without a 301-second wait.
+   Only destructive account repair waits for the old SID to become idle.
 5. Remove the command-lifetime filesystem-effect coordinator. Trusted text
    uses only its final-resource kernel lock/CAS; worktree operations serialize
    only the same exact target path inside one process and otherwise rely on
@@ -6128,8 +6130,7 @@ lock.
    ASRT's machine-global fixed proxy ports so another Runtime is not starved.
 7. Cleanup cannot manufacture success. Started-or-unknown execution requires a
    verified Job-drained terminal record; a termination failure propagates.
-   Overlapping stale recovery and the original owner converge idempotently on
-   absent exact ACEs/receipts. Control repair removes an atomic-publication
+   Control repair removes an atomic-publication
    staging file only when its actual writer PID is dead and the file is older
    than two launch budgets. Foreground Bash and the public SDK both validate the
    setup generation immediately before spawn and clean a prepared invocation as
@@ -6138,16 +6139,19 @@ lock.
 
 **Consequences**: two KodaX processes may run different sandboxed Bash commands
 and write different workspace files without sharing a KodaX admission lock.
-The only ordinary contention is on the same concrete ACL object, the same
+Normal effective-access checks avoid shared DACL writes; exact same-root
+restricted capabilities have a stable identical shape and require no KodaX
+named mutex. Remaining concrete ordering is the same
 trusted text namespace slot, the same exact worktree path inside one process,
-or Git's own repository locks. A setup upgrade may be deliberately slow once;
-normal development is not. Protocol 8 is intentionally incompatible with
-protocol 7 so an old request cannot silently omit the start-generation proof.
+or Git's own repository locks. A setup-version upgrade reuses the healthy
+fixed identity and must not recursively propagate redundant profile ACLs.
+Protocol 9 is intentionally incompatible with protocol 8 and older actors so a
+pre-correction Runtime cannot silently re-enter the removed ACL-mutex path.
 
 **Rejected alternatives**: a serial shell queue or “disable concurrency”
 option (hides the defect and diverges from Codex); a repository-wide worktree
 owner (duplicates Git locks and blocks independent worktrees); a longer global
 ACL timeout (preserves head-of-line blocking); per-root phase budgets (recreates
-the 75-second multiplication); a 30-second protocol-7 grace (shorter than the
-legacy 300-second command deadline); and automatic deletion of ambiguous ACL or
+the 75-second multiplication); a protocol-7 hard-timeout drain (blocks setup
+despite fixed-identity reuse); and automatic deletion of ambiguous ACL or
 control state (cannot prove ownership).

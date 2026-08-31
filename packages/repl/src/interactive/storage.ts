@@ -104,9 +104,11 @@ import {
 import {
   commitResumeIndexEntry,
   prepareResumeIndexEntry,
+  readResumeIndex,
   resumeIndexProjectDir,
   type ResumeIndexEntry,
 } from '../session/resume-index.js';
+import { countResumableSessionItems } from '../session/resumable-session.js';
 export type {
   ConversationPageCacheChunk,
   ConversationPageCacheChunkInput,
@@ -3028,6 +3030,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     extensionCount: number;
     activeEntryId?: string | null;
     activeMessageCount: number;
+    presentationOnlyHistoryCount: number;
     lineageIdentityFilter?: string;
     lineageIdentityFilterHash?: string;
     bundleBoundaryRevision?: string;
@@ -3083,6 +3086,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
         : data.lineage.activeEntryId,
       activeMessageCount: activeMessageCount
         ?? (data.lineage ? countActiveLineageMessages(data.lineage) : data.messages.length),
+      presentationOnlyHistoryCount: data.uiHistory === undefined
+        ? prev?.presentationOnlyHistoryCount ?? 0
+        : countResumableSessionItems(0, data.uiHistory),
       // A full-lineage no-false-negative witness is admitted lazily from the
       // cache manifest by prepareSessionAppend(). Main-file entries alone are
       // insufficient because older ids may live in the islands sidecar.
@@ -3927,13 +3933,17 @@ export class FileSessionStorage implements KodaXSessionStorage {
     );
     const resumeProjectDir = resumeIndexProjectDir(targetPath);
     const targetsActiveSession = path.basename(path.dirname(targetPath)) !== 'archived';
+    const resumeItemCount = countResumableSessionItems(
+      meta.activeMessageCount ?? 0,
+      meta.uiHistory,
+    );
     const resumable = targetsActiveSession
       && meta.scope !== 'managed-task-worker'
-      && (meta.activeMessageCount ?? 0) > 0;
+      && resumeItemCount > 0;
     const resumeEntry = createResumeIndexEntry(
       id,
       meta.title,
-      meta.activeMessageCount ?? 0,
+      resumeItemCount,
       meta.createdAt,
       meta.runtimeInfo?.surface,
     );
@@ -4329,14 +4339,18 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const appendedContent = `\n${parts.join('\n')}`;
       const nextScope = preparedDelta.scope ?? cached.scope ?? 'user';
       const targetsActiveSession = path.basename(path.dirname(cached.filePath)) !== 'archived';
+      const nextPresentationOnlyHistoryCount = preparedDelta.uiHistory === undefined
+        ? cached.presentationOnlyHistoryCount
+        : countResumableSessionItems(0, preparedDelta.uiHistory);
+      const nextResumeItemCount = nextActiveMessageCount + nextPresentationOnlyHistoryCount;
       const resumable = targetsActiveSession
         && nextScope !== 'managed-task-worker'
-        && nextActiveMessageCount > 0;
+        && nextResumeItemCount > 0;
       const resumeProjectDir = resumeIndexProjectDir(cached.filePath);
       const resumeEntry = createResumeIndexEntry(
         id,
         preparedDelta.title,
-        nextActiveMessageCount,
+        nextResumeItemCount,
         undefined,
         cached.surface,
       );
@@ -4387,6 +4401,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         extensionCount: cached.extensionCount + newExtensions.length,
         activeEntryId: preparedDelta.activeEntryId,
         activeMessageCount: nextActiveMessageCount,
+        presentationOnlyHistoryCount: nextPresentationOnlyHistoryCount,
         scope: nextScope,
         lineageIdentityFilter: nextLineageIdentityFilter,
         lineageIdentityFilterHash: nextLineageIdentityFilterHash,
@@ -5367,6 +5382,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     // Project-scoped reads still validate each metadata identity they already
     // open so an out-of-band or legacy misplaced file cannot cross projects.
     const candidatePaths: Array<{ path: string; archived: boolean }> = [];
+    const indexedResumeEntries = new Map<string, ResumeIndexEntry>();
     const locatedPaths: string[] = [];
     const currentProjectIdentity = currentRuntime === undefined
       ? undefined
@@ -5398,14 +5414,21 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const projectFiles = await Promise.all(
         projectDirNames.slice(offset, offset + LIST_DIRECTORY_CONCURRENCY).map(async (key) => {
           const projectDir = this.projectDir(key);
-          const [active, archived] = await Promise.all([
+          const [active, archived, resumeEntries] = await Promise.all([
             readDirectory(projectDir),
             readDirectory(path.join(projectDir, 'archived')),
+            readResumeIndex(projectDir).catch((error: unknown) => {
+              reportStorageDiagnostic('warn', `Unable to read the resume index in ${key}.`, error);
+              return undefined;
+            }),
           ]);
-          return { projectDir, active, archived };
+          return { projectDir, active, archived, resumeEntries };
         }),
       );
       for (const project of projectFiles) {
+        const projectResumeById = new Map(
+          project.resumeEntries?.map((entry) => [entry.id, entry] as const) ?? [],
+        );
         if (!project.active.complete || !project.archived.complete) {
           locationTraversalComplete = false;
         }
@@ -5414,6 +5437,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
           const filePath = path.join(project.projectDir, file);
           locatedPaths.push(filePath);
           candidatePaths.push({ path: filePath, archived: false });
+          const indexed = projectResumeById.get(path.basename(file, '.jsonl'));
+          if (indexed !== undefined) indexedResumeEntries.set(filePath, indexed);
         }
         for (const file of project.archived.files) {
           if (!file.endsWith('.jsonl') || isSidecar(file)) continue;
@@ -5503,10 +5528,25 @@ export class FileSessionStorage implements KodaXSessionStorage {
             typeof first.activeMessageCount === 'number' && first.activeMessageCount >= 0
               ? first.activeMessageCount
               : Math.max(0, (await countSessionLines(filePath)) - 1 - extensionRecordCount);
+          const indexedResume = archived ? undefined : indexedResumeEntries.get(filePath);
+          let resumeItemCount = indexedResume?.msgCount
+            ?? countResumableSessionItems(activeMessageCount, first.uiHistory);
+          if (!archived && indexedResume === undefined && resumeItemCount === 0) {
+            // Prepared tails are append-only, so an originally empty Session
+            // may gain its first canonical or presentation-only item in a
+            // trailing meta_update. Keep the common non-empty head/index path
+            // bounded; only empty candidates need the full compatibility read.
+            const latest = await readPersistedSessionFile(filePath);
+            const latestActiveMessageCount = latest?.meta?.activeMessageCount;
+            resumeItemCount = countResumableSessionItems(
+              typeof latestActiveMessageCount === 'number' ? latestActiveMessageCount : 0,
+              latest?.meta?.uiHistory,
+            );
+          }
           return {
             id: path.basename(filePath, '.jsonl'),
-            title: typeof first.title === 'string' ? first.title : '',
-            msgCount: activeMessageCount,
+            title: indexedResume?.title ?? (typeof first.title === 'string' ? first.title : ''),
+            msgCount: resumeItemCount,
             ...(typeof first.tag === 'string' ? { tag: first.tag } : {}),
             createdAt: typeof first.createdAt === 'string' ? first.createdAt : undefined,
             // v0.7.46 fix — fall back to `sessionGitRoot` when the meta
@@ -5720,12 +5760,16 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const activeMessageCount = resolved.data.lineage
         ? countActiveLineageMessages(resolved.data.lineage)
         : resolved.data.messages.length;
+      const resumeItemCount = countResumableSessionItems(
+        activeMessageCount,
+        resolved.data.uiHistory,
+      );
       const resumable = resolved.data.scope !== 'managed-task-worker'
-        && activeMessageCount > 0;
+        && resumeItemCount > 0;
       const resumeEntry = createResumeIndexEntry(
         id,
         resolved.data.title,
-        activeMessageCount,
+        resumeItemCount,
         resolved.createdAt,
         resolved.data.runtimeInfo?.surface,
       );

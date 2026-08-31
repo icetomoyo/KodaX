@@ -95,18 +95,22 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 
 ## Windows ACL Upgrade
 
-1. On a disposable Windows sandbox installation, record a setup-generation-3
+1. On a disposable Windows sandbox installation, record a pre-generation-8
    cutover marker, exact legacy sensitive-root guards, and an ambiguous
    administrator/cache deny with the same SID/mask shape as an older KodaX ACE.
-2. Confirm doctor reports setup required. Keep one old-sandbox-SID process alive
-   and confirm setup refuses to rotate it rather than mutating live shared ACL
-   state.
-3. Stop the process and run `kodax sandbox setup`. Confirm exactly one legacy
-   removal runs, the dedicated account SID rotates, and the cutover marker is
-   atomically rewritten as protected setup generation 8/protocol 8. The protocol-
-   7 marker must be retired only after its full bounded pre-start window drains.
-   The ambiguous administrator/
-   cache deny remains byte-for-byte unchanged.
+2. Confirm doctor reports setup required. Keep one healthy old-sandbox-SID
+   process alive and run `kodax sandbox setup`; setup must update in place,
+   preserve its account SID/group and filesystem nonce, and not wait for that
+   command lifetime. In a separate damaged-identity fixture, confirm destructive
+   repair still refuses to rotate a live SID.
+3. Confirm exactly one legacy removal runs at generation 8. Generation 9 first
+   publishes a protected non-ready `installing` marker, synchronously converges
+   setup capabilities, and atomically rewrites it as the ready setup generation
+   9/protocol 9 marker only after success.
+   A healthy generation-8 installation upgrades in place without replaying
+   legacy removal, including while its sandbox SID is active. Protocol-8 and older
+   markers must be retired without a fixed hard-timeout drain. The ambiguous
+   administrator/cache deny remains byte-for-byte unchanged.
 4. Confirm new native requests do not include the artifact-cache root in
    `denyWrite` and can pass the control-boundary preflight.
 5. Run repeated commands and confirm ordinary admission invokes zero

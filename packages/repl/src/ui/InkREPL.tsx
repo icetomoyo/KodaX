@@ -1025,6 +1025,84 @@ function toCreatableHistoryItem(item: HistoryItem): CreatableHistoryItem {
   }
 }
 
+export function buildFailedManagedForegroundPersistenceItems(
+  foregroundItems: readonly HistoryItem[],
+): CreatableHistoryItem[] {
+  return foregroundItems.map((item) => ({
+    ...toCreatableHistoryItem(item),
+    isSessionUiOnly: true,
+  }));
+}
+
+export function shouldPersistSessionSnapshot(
+  canonicalMessageCount: number,
+  persistedUiHistoryCount: number,
+): boolean {
+  return canonicalMessageCount > 0 || persistedUiHistoryCount > 0;
+}
+
+export function shouldCommitFailedManagedForeground(
+  workerId: string | undefined,
+  ledgerItemCount: number,
+): boolean {
+  return Boolean(workerId) || ledgerItemCount > 0;
+}
+
+export function createFailedManagedForegroundCommitter<TStaged>(actions: {
+  readonly finalizeOrphanedTools: () => void;
+  readonly flushText: () => void;
+  readonly readItems: () => readonly HistoryItem[];
+  readonly markUserItemsCommitted: (items: readonly HistoryItem[]) => void;
+  readonly stage: (items: readonly CreatableHistoryItem[]) => TStaged;
+  readonly persist: (staged: TStaged) => Promise<void>;
+  readonly clear: () => void;
+}): () => Promise<boolean> {
+  let staged: TStaged | undefined;
+  return async () => {
+    if (staged === undefined) {
+      actions.finalizeOrphanedTools();
+      actions.flushText();
+      const items = actions.readItems();
+      if (items.length === 0) return false;
+      actions.markUserItemsCommitted(items);
+      staged = actions.stage(buildFailedManagedForegroundPersistenceItems(items));
+      // Staging moves the visible ledger into the ordered UI snapshot. Clear
+      // the source now so a later submit cannot append the same failed turn a
+      // second time after both durable attempts reject. The staged snapshot
+      // remains available to this committer and to the host's exit retry.
+      actions.clear();
+    }
+    await actions.persist(staged);
+    staged = undefined;
+    return true;
+  };
+}
+
+export async function commitFailedManagedForegroundLedger(actions: {
+  readonly finalizeOrphanedTools: () => void;
+  readonly flushText: () => void;
+  readonly readItems: () => readonly HistoryItem[];
+  readonly markUserItemsCommitted: (items: readonly HistoryItem[]) => void;
+  readonly persist: (items: readonly CreatableHistoryItem[]) => Promise<void>;
+  readonly clear: () => void;
+}): Promise<boolean> {
+  return createFailedManagedForegroundCommitter({
+    ...actions,
+    stage: (items) => items,
+  })();
+}
+
+export async function commitFailedManagedForegroundBeforeCleanup(actions: {
+  readonly commit: () => Promise<void>;
+  readonly cleanup: () => void;
+}): Promise<void> {
+  try {
+    await actions.commit();
+  } finally {
+    actions.cleanup();
+  }
+}
+
 function sanitizeInterruptedAssistantText(text: string): string {
   if (isControlPlaneOnlyAssistantText(text)) {
     return "";
@@ -1395,6 +1473,7 @@ function toPersistedUiHistoryItem(
       text,
       icon: verdictIcon,
       ...(timestamp === undefined ? {} : { timestamp }),
+      ...(item.isSessionUiOnly === true ? { presentationOnly: true } : {}),
     };
   }
 
@@ -1405,11 +1484,15 @@ function toPersistedUiHistoryItem(
     ? item.compactText.trimEnd()
     : undefined;
   const timestamp = persistedHistoryTimestamp(item);
+  const presentationOnly = item.isSessionUiOnly === true
+    ? { presentationOnly: true as const }
+    : {};
 
   return {
     type: item.type,
     text,
     ...(timestamp === undefined ? {} : { timestamp }),
+    ...presentationOnly,
     ...(icon ? { icon } : {}),
     ...(compactText ? { compactText } : {}),
   };
@@ -8114,14 +8197,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [context]);
 
   const persistContextState = useCallback(async (uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
-    if (context.messages.length === 0) {
+    const persistedUiHistory = trimPersistedUiHistorySnapshot(
+      uiHistoryOverride ?? persistedUiHistoryRef.current,
+    );
+    // A first managed turn can fail before the runtime publishes canonical
+    // messages. Its presentation-only Assistant/Sidecar/error ledger is still
+    // a real session and must survive /quit and -r. Skip only a truly empty
+    // bootstrap context.
+    if (!shouldPersistSessionSnapshot(context.messages.length, persistedUiHistory.length)) {
       return;
     }
 
     const title = extractTitle(context.messages);
-    const persistedUiHistory = trimPersistedUiHistorySnapshot(
-      uiHistoryOverride ?? persistedUiHistoryRef.current,
-    );
     persistedUiHistoryRef.current = persistedUiHistory;
     context.title = title;
     context.uiHistory = persistedUiHistory;
@@ -10030,6 +10117,43 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         capturedOutput.push(formatCapturedConsoleOutput(args));
       };
 
+      let failedManagedForegroundPending = false;
+      const finalizeOrphanedManagedTools = (): void => {
+        if (userInterruptedRef.current) return;
+        const orphanedTools = finalizeAllExecutingToolCalls(
+          ToolCallStatus.Cancelled,
+          () => ({
+            error: "Run ended before the tool result was observed.",
+            output: undefined,
+          }),
+        );
+        if (orphanedTools.length > 0 && managedForegroundOwnerRef.current.workerId) {
+          orphanedTools.forEach((tool) => syncManagedForegroundToolGroup(tool));
+        }
+      };
+      const commitFailedManagedForegroundDurably = createFailedManagedForegroundCommitter({
+        finalizeOrphanedTools: finalizeOrphanedManagedTools,
+        flushText: flushForegroundTextBuffer,
+        readItems: () => managedForegroundTurnItemsRef.current,
+        markUserItemsCommitted: markLedgerUserItemsCommitted,
+        stage: (items) => {
+          const nextUiHistory = appendPersistedUiHistorySnapshot(
+            persistedUiHistoryRef.current,
+            items,
+          );
+          persistedUiHistoryRef.current = nextUiHistory;
+          addHistoryItems([...items]);
+          return nextUiHistory;
+        },
+        persist: persistContextStateInBackground,
+        clear: clearManagedForegroundTurnHistory,
+      });
+      const commitFailedManagedForeground = async (): Promise<void> => {
+        if (!failedManagedForegroundPending) return;
+        if (await commitFailedManagedForegroundDurably()) {
+          failedManagedForegroundPending = false;
+        }
+      };
       try {
         await runQueueableAgentSequence(
           processed,
@@ -10112,14 +10236,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           //     with Ink's rendered output and showing in the wrong slot
           //     when a managed-foreground worker just crashed.
           // The history-item path below is the single rendering source of
-          // truth and lands in the correct chronological slot.
-          if (managedForegroundOwnerRef.current.workerId) {
+          // truth and lands in the correct chronological slot. A completed
+          // verifier can clear the owner before a later terminal failure, so
+          // the still-visible ledger is also authoritative failure history.
+          const hasManagedFailureHistory = shouldCommitFailedManagedForeground(
+            managedForegroundOwnerRef.current.workerId,
+            managedForegroundTurnItemsRef.current.length,
+          );
+          if (hasManagedFailureHistory) {
+            // Commit any pending text delta before the terminal error so the
+            // persisted order matches the transcript the user just saw.
+            flushForegroundTextBuffer();
             appendManagedForegroundLedgerItem({
               id: `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               type: "error",
               text: errorContent,
               timestamp: Date.now(),
             } as HistoryItem);
+            failedManagedForegroundPending = true;
           } else {
             appendHistoryItemsWithPersistence([{
               type: "error",
@@ -10127,22 +10261,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }]);
           }
 
-          if (shouldOfferSessionRecovery({ error, messageCount: context.messages.length })) {
+          const shouldOfferRecovery = shouldOfferSessionRecovery({
+            error,
+            messageCount: context.messages.length,
+          });
+          if (shouldOfferRecovery) {
             const recoveryHintItem = {
               type: "info" as const,
               text: SESSION_RECOVERY_HINT_MESSAGE,
             };
-            if (managedForegroundOwnerRef.current.workerId) {
+            if (hasManagedFailureHistory) {
               appendManagedForegroundLedgerItem({
                 id: `recover-hint-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 ...recoveryHintItem,
                 timestamp: Date.now(),
               } as HistoryItem);
-              persistHistoryAdditionsInBackground([recoveryHintItem]);
             } else {
               appendHistoryItemsWithPersistence([recoveryHintItem]);
             }
 
+            // The recovery dialog may wait indefinitely or replace the active
+            // session. Persist and clear the source ledger before either can
+            // happen so a failed turn cannot be lost or written into the new
+            // recovery session.
+            await commitFailedManagedForeground();
             const result = await showConfirmDialog("confirm", {
               _alwaysConfirm: true,
               _message: SESSION_RECOVERY_CONFIRM_MESSAGE,
@@ -10161,6 +10303,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               }
             }
           }
+          await commitFailedManagedForeground();
         }
       } finally {
         // Restore console.log
@@ -10198,38 +10341,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // already cleared `liveToolCalls` and the foreground turn
         // history, so this would be a no-op and adding a Cancelled
         // patch into history items that no longer exist is wasted work.
-        if (!userInterruptedRef.current) {
-          const orphanedTools = finalizeAllExecutingToolCalls(
-            ToolCallStatus.Cancelled,
-            () => ({
-              error: "Run ended before the tool result was observed.",
-              output: undefined,
-            }),
-          );
-          if (orphanedTools.length > 0 && managedForegroundOwnerRef.current.workerId) {
-            orphanedTools.forEach((tool) => syncManagedForegroundToolGroup(tool));
-          }
-        }
-
-        setIsLoading(false);
-        stopStreaming();
-        clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
-        clearChildActivityRecords();
-        clearThinkingContent();
-        // After a run ends (success or abort), worker-scoped onIterationEnd events
-        // may have left context.contextTokenSnapshot pointing at a sub-agent's
-        // token count rather than the parent context. In AMA mode the parent
-        // REPL never gets a final iteration event of its own, so the snapshot
-        // stays stale and the status bar shows an inflated value that never
-        // drops. Re-derive the snapshot from the authoritative local messages
-        // before refreshing the live count.
-        const authoritativeTokens = estimateTokens(context.messages);
-        context.contextTokenSnapshot = {
-          currentTokens: authoritativeTokens,
-          baselineEstimatedTokens: authoritativeTokens,
-          source: 'estimate',
-        };
-        setLiveTokenCount(authoritativeTokens);
+        finalizeOrphanedManagedTools();
+        // Idempotent fallback for failures thrown before the catch path could
+        // reach its pre-dialog commit. Cleanup remains unconditional when the
+        // final durable retry still fails, while the persistence error keeps
+        // propagating to the caller.
+        await commitFailedManagedForegroundBeforeCleanup({
+          commit: commitFailedManagedForeground,
+          cleanup: () => {
+            setIsLoading(false);
+            stopStreaming();
+            clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
+            clearChildActivityRecords();
+            clearThinkingContent();
+            // After a run ends (success or abort), worker-scoped onIterationEnd events
+            // may have left context.contextTokenSnapshot pointing at a sub-agent's
+            // token count rather than the parent context. In AMA mode the parent
+            // REPL never gets a final iteration event of its own, so the snapshot
+            // stays stale and the status bar shows an inflated value that never
+            // drops. Re-derive the snapshot from the authoritative local messages
+            // before refreshing the live count.
+            const authoritativeTokens = estimateTokens(context.messages);
+            context.contextTokenSnapshot = {
+              currentTokens: authoritativeTokens,
+              baselineEstimatedTokens: authoritativeTokens,
+              source: 'estimate',
+            };
+            setLiveTokenCount(authoritativeTokens);
+          },
+        });
       }
     },
     [
@@ -10254,6 +10394,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       getFullResponse,
       getThinkingContent,
       appendManagedForegroundLedgerItem,
+      clearManagedForegroundTurnHistory,
+      flushForegroundTextBuffer,
+      markLedgerUserItemsCommitted,
       appendHistoryItemsToCurrentSnapshot,
       appendHistoryItemsWithPersistence,
       appendLastAssistantToHistory,

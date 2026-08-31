@@ -105,6 +105,7 @@ const SESSION_EVENT_JOURNAL_CAPABILITY = {
   liveOutputSegments: { version: 1 },
   runtimeAutoModeGuardrail: { version: 5, owner: "session-runtime" },
   sharedSessionSettings: { version: 2 },
+  ...(process.platform === "win32" ? { sandboxRuntime: { version: 9 } } : {}),
 } as const;
 
 const replMock = vi.hoisted(() => ({
@@ -311,7 +312,7 @@ describe("createKodaXRuntime", () => {
       rollback: true,
     });
     expect(runtime.capabilities.sandboxRuntime).toMatchObject({
-      version: 7,
+      version: 9,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
       unavailableBehavior: "structured-no-execution",
@@ -1363,6 +1364,37 @@ describe("createKodaXRuntime", () => {
     expect(readRuntimeDaemonState(paths)).toBeUndefined();
     expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
   });
+
+  it.runIf(process.platform === "win32")(
+    "fences an attach-only Windows execution client from a protocol-8 sandbox daemon",
+    async () => {
+      const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+      const transport: RuntimeDaemonClientTransport = {
+        async request(method) {
+          if (method !== "initialize") return null;
+          return {
+            identity: {
+              runtimeId: "daemon-with-legacy-windows-sandbox",
+              mode: "daemon",
+              profile: "default",
+              startedAt: "2026-08-30T00:00:00.000Z",
+              version: "0.7.96-alpha.3",
+            },
+            capabilities: {
+              ...SESSION_EVENT_JOURNAL_CAPABILITY,
+              sandboxRuntime: { version: 8 },
+            },
+          };
+        },
+        subscribe() {
+          return { close() {} };
+        },
+      };
+
+      await expect(connectKodaXRuntime({ transport, autoStart: false }))
+        .rejects.toThrow(/does not support.*sandboxRuntime/i);
+    },
+  );
 
   it("bootstraps trusted daemon policy only for a new owner and rejects policy on attach", async () => {
     const { connectKodaXRuntime, createKodaXRuntime } =

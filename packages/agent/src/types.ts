@@ -400,6 +400,8 @@ export interface KodaXSessionUiTextHistoryItem {
   text: string;
   /** Original UI event time in epoch milliseconds. Absent on older sessions. */
   timestamp?: number;
+  /** Display-only item that is authoritative even without a canonical message anchor. */
+  presentationOnly?: true;
   icon?: string;
   compactText?: string;
 }

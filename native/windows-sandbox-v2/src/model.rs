@@ -138,6 +138,9 @@ impl RunRequest {
                 bail!("Windows sandbox policy contains an empty or invalid path");
             }
         }
+        if !self.deny_read.is_empty() {
+            bail!("Per-command Windows denyRead is unsupported by the WRITE_RESTRICTED backend");
+        }
         Ok(())
     }
 }
@@ -281,6 +284,7 @@ pub fn capability_sid(fingerprint: &str) -> Result<String> {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FilesystemCapabilityKind {
+    AllowRead,
     AllowWrite,
     DenyWrite,
 }
@@ -288,6 +292,7 @@ pub enum FilesystemCapabilityKind {
 impl FilesystemCapabilityKind {
     pub fn label(self) -> &'static str {
         match self {
+            Self::AllowRead => "allow-read",
             Self::AllowWrite => "allow-write",
             Self::DenyWrite => "deny-write",
         }
@@ -350,6 +355,9 @@ mod tests {
         let allow_write =
             filesystem_capability_sid(generation, root, FilesystemCapabilityKind::AllowWrite)
                 .unwrap();
+        let allow_read =
+            filesystem_capability_sid(generation, root, FilesystemCapabilityKind::AllowRead)
+                .unwrap();
         assert_eq!(
             allow_write,
             filesystem_capability_sid(generation, same, FilesystemCapabilityKind::AllowWrite,)
@@ -360,6 +368,7 @@ mod tests {
             filesystem_capability_sid(generation, root, FilesystemCapabilityKind::DenyWrite,)
                 .unwrap(),
         );
+        assert_ne!(allow_read, allow_write);
         assert_ne!(
             allow_write,
             filesystem_capability_sid("generation-b", root, FilesystemCapabilityKind::AllowWrite,)
@@ -407,7 +416,7 @@ mod tests {
     #[test]
     fn request_accepts_a_normal_windows_account_sid() {
         let fingerprint = "0".repeat(64);
-        let request = RunRequest {
+        let mut request = RunRequest {
             protocol: PROTOCOL_VERSION,
             generation: "generation-a".into(),
             filesystem_capability_nonce: "00000000-0000-4000-8000-000000000003".into(),
@@ -431,6 +440,14 @@ mod tests {
             setup_marker_sha256: "0".repeat(64),
         };
         request.validate().unwrap();
+        request.deny_read = vec![r"C:\secret".into()];
+        assert!(
+            request
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Per-command Windows denyRead is unsupported")
+        );
     }
 
     #[test]

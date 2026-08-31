@@ -824,6 +824,49 @@ describe('FileSessionStorage', () => {
     expect(typeof listed[0]?.createdAt).toBe('string');
   });
 
+  it('round-trips a presentation-only failed managed turn', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const gitRoot = path.resolve(KODAX_REPO_ROOT).replace(/\\/g, '/');
+    const uiHistory = [
+      {
+        type: 'assistant' as const,
+        text: 'Complete experiment summary before verification.',
+        timestamp: 1_000,
+        presentationOnly: true as const,
+      },
+      {
+        type: 'sidecar' as const,
+        text: 'The experiment is blocked.',
+        icon: 'blocked',
+        timestamp: 2_000,
+        presentationOnly: true as const,
+      },
+      {
+        type: 'error' as const,
+        text: 'The managed runtime failed after verification.',
+        timestamp: 3_000,
+        presentationOnly: true as const,
+      },
+    ];
+
+    await storage.save('sidecar-ui-history', {
+      messages: [],
+      title: 'Sidecar UI History',
+      gitRoot,
+      uiHistory,
+    });
+
+    const resumed = await storage.load('sidecar-ui-history');
+    expect(resumed).toMatchObject({ uiHistory });
+
+    await storage.save('sidecar-ui-history', resumed!);
+    await expect(storage.load('sidecar-ui-history')).resolves.toMatchObject({ uiHistory });
+    await expect(storage.list(gitRoot)).resolves.toEqual([
+      expect.objectContaining({ id: 'sidecar-ui-history', msgCount: 3 }),
+    ]);
+  });
+
   it('uses runtimeInfo.executionCwd as the project key for non-git sessions', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const { UNKNOWN_PROJECT_KEY, deriveProjectKeyFromData } = await import('./project-key.js');
@@ -5552,6 +5595,40 @@ describe('FileSessionStorage', () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>)
       .filter((line) => line._type === 'meta_update');
     expect(metaUpdates.at(-1)?.activeMessageCount).toBe(2);
+  });
+
+  it('lists presentation-only failure history appended through a prepared tail', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const sessionsDir = testSessionsDir();
+    const sessionId = 'session-prepared-presentation-only';
+    const storage = new FileSessionStorage({ sessionsDir });
+    await storage.save(sessionId, {
+      messages: [],
+      title: 'Prepared failure history',
+      gitRoot: KODAX_REPO_ROOT,
+      lineage: createSessionLineage([]),
+    });
+    await storage.load(sessionId);
+    const baseline = await storage.prepareSessionAppend(sessionId);
+    if (baseline === null) throw new Error('expected presentation-only prepared boundary');
+    await storage.appendPreparedSessionTail(sessionId, {
+      baseline,
+      title: 'Prepared failure history',
+      activeEntryId: null,
+      lineageEntries: [],
+      uiHistory: [
+        { type: 'assistant', text: 'summary', presentationOnly: true },
+        { type: 'sidecar', text: 'verifier', presentationOnly: true },
+        { type: 'error', text: 'terminal failure', presentationOnly: true },
+      ],
+    });
+
+    const cold = new FileSessionStorage({ sessionsDir });
+    await expect(cold.list(KODAX_REPO_ROOT, { limit: 1000 })).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: sessionId, msgCount: 3 }),
+      ]),
+    );
   });
 
   it('snapshots a mutable public tail before awaiting validation', async () => {

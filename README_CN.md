@@ -295,12 +295,22 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 
 **v0.7.96-alpha.4 源码候选版**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
-精确 root capability 时才在 5 秒预算内持有精确对象短锁。Bash、可信文本、worktree、
+精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
+跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
+只携带本次授权能力。Windows 每命令 `denyRead` 会在 setup、DACL 修改和目标启动前
+以结构化 `unsupported_policy` 失败关闭，因为 Codex 对齐的 `WRITE_RESTRICTED` token
+无法把 restricting SID 用于读权限；该字段继续保留跨平台 API 兼容。Bash、可信文本、worktree、
 Session 与 Runtime 进程之间不再共享命令生命周期或机器级 filesystem coordinator。
 每条 native 命令拥有独立 request、token、控制通道和 Job；相同网络权威使用有界
-broker pool，但不串行命令生命周期。protocol 8/setup generation 8 会把受保护 setup
-marker 持有到目标 `Started` 已持久化；被中断的 setup 继续有界 pre-start drain，而不在
-命令热路径重复迁移。本候选版广告 `sandboxRuntime:7`。详见
+broker pool，但不串行命令生命周期。protocol 9/setup generation 9 会把受保护 setup
+marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康的固定沙箱账户与 SID，
+已有 generation 8 安装会原地升级且不会重放 legacy ACL 清理；generation 8 继续仅作为
+一次性 legacy 迁移的证明边界。setup 先发布受保护且不可执行的 `installing` marker；高权限
+父进程同步完成 NUL 兼容性与 profile 读 capability，调用方随后才原子发布 ready marker。
+不存在与普通命令准入重叠的 helper 或迁移，也不预热系统 TMP。自定义 `KODAX_HOME` 位于系统 TMP
+写入根下时，KodaX 会在构造 Windows 策略前仅创建五个固定的受保护内部目录，避免不存在的
+deny root 拒绝首次启动；该动作不增加锁、ACL 事务或命令生命周期协调。本候选版广告
+`sandboxRuntime:9`，因此 npm link 后的新 CLI 不会静默复用仍运行 setup-8 ACL 路径的旧 daemon。详见
 [v0.7.96-alpha.4 发布清单](docs/release.md#v0796-alpha4-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
@@ -1192,8 +1202,10 @@ A2A 配置迁移与历史任务 owner 迁移是两件事。如果升级 realm-aw
 `--subject`；正常服务不会猜测或双读 legacy owner key。
 
 托管 A2A 上下文默认位于 `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/`。
-精确授权的 Skill 脚本必须使用隔离策略，并通过 `kodax sandbox doctor`；
-Windows 的一次性显式初始化由 `kodax sandbox setup` 完成。
+精确授权的 Skill 脚本必须使用隔离策略，并通过 `kodax sandbox doctor`。
+当前 native protocol 9 下，该隔离 Skill Script 路径仅支持 POSIX；Windows 不可用，
+因为它必须使用每命令 `denyRead`，而 Windows `WRITE_RESTRICTED` 后端会以
+`unsupported_policy` 拒绝该策略；`kodax sandbox setup` 不能启用此路径。
 
 **v0.7.72 会话恢复与队列闭环：**裸 `kodax -r` 先加载可搜索选择器，不为列出
 session 预加载完整 CLI；选中后才把 stdin 交给恢复后的 REPL，Esc 会释放选择器的

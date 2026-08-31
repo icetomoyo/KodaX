@@ -31,6 +31,15 @@ Required assertions:
    resume/save projections, and do not duplicate after a UI-only quit suffix.
 5. With `messages=[]` and a usable `uiHistory`, display-only items such as
    sidecar or persisted tool cards still restore.
+   Persist a `sidecar` item through the real `FileSessionStorage.save()` and
+   `load()` path, then quit and resume again; the item must remain present after
+   both loads and must not be filtered by JSON validation.
+    Also force a managed run to fail after it has rendered a final Assistant
+    summary and Sidecar verdict. Persist and restore the Assistant summary,
+    Sidecar, and terminal error in that exact order; this failure path bypasses
+    normal round completion. Reject the first persistence attempt and let the
+    run-end fallback retry it; UI history and the restored session must still
+    contain exactly one copy of each item.
 6. Unmatched ordinary user/assistant/thinking text from a stale cache is
    discarded whenever canonical messages exist.
 7. A non-empty CLI `uiHistory` does not synthesize `agent-completed` or

@@ -84,19 +84,6 @@ interface RuntimeRecoveryProbe {
   readonly stopPath: string;
 }
 
-function executionDenyReceiptContainsPath(payload: string, expectedPath: string): boolean {
-  const value = JSON.parse(payload) as unknown;
-  if (value === null || typeof value !== 'object') return false;
-  const targets = Reflect.get(value, 'targets');
-  if (!Array.isArray(targets)) return false;
-  const expected = path.resolve(expectedPath).toLowerCase();
-  return targets.some((target) => {
-    if (target === null || typeof target !== 'object') return false;
-    const candidate = Reflect.get(target, 'canonicalPath');
-    return typeof candidate === 'string' && path.resolve(candidate).toLowerCase() === expected;
-  });
-}
-
 const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, milliseconds);
 });
@@ -107,6 +94,32 @@ async function createWindowsV2TestRoot(prefix: string): Promise<string> {
     ?? os.tmpdir();
   await mkdir(base, { recursive: true });
   return mkdtemp(path.join(base, prefix));
+}
+
+async function populateWideWindowsTestTree(root: string, fileCount = 24_000): Promise<void> {
+  const payloadRoot = path.join(root, 'wide-tree');
+  const filesPerDirectory = 100;
+  const directoryCount = Math.ceil(fileCount / filesPerDirectory);
+  await mkdir(payloadRoot);
+  await Promise.all(Array.from({ length: directoryCount }, (_value, index) => (
+    mkdir(path.join(payloadRoot, `d-${index.toString().padStart(4, '0')}`))
+  )));
+  for (let start = 0; start < fileCount; start += 128) {
+    const end = Math.min(start + 128, fileCount);
+    await Promise.all(Array.from({ length: end - start }, (_value, offset) => {
+      const index = start + offset;
+      const directoryIndex = Math.floor(index / filesPerDirectory);
+      return writeFile(
+        path.join(
+          payloadRoot,
+          `d-${directoryIndex.toString().padStart(4, '0')}`,
+          `f-${index.toString().padStart(5, '0')}`,
+        ),
+        '',
+        'utf8',
+      );
+    }));
+  }
 }
 
 async function protectPrivateTestDirectory(directory: string): Promise<void> {
@@ -880,13 +893,14 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
     expect(await windowsDaclSddl(parent)).toBe(parentDacl);
   }, 60_000);
 
-  it('enforces denyRead without blocking an overlapping allowed workspace', async () => {
+  it('fails closed on unsupported denyRead before target start or DACL mutation', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-deny-read-');
     roots.push(root);
     const workspace = path.join(root, 'workspace');
     const secret = path.join(root, 'secret');
     await Promise.all([mkdir(workspace), mkdir(secret)]);
     await writeFile(path.join(secret, 'value.txt'), 'host-only-secret', 'utf8');
+    const secretDacl = await windowsDaclSddl(secret);
     const probe = [
       'const fs=require("node:fs")',
       'const path=require("node:path")',
@@ -910,19 +924,14 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
       inheritEnvironment: true,
     });
 
-    if (result.status !== 'completed') {
-      throw new Error(`denyRead policy smoke unavailable: ${JSON.stringify(result)}`);
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`denyRead policy smoke failed: ${JSON.stringify(result)}`);
-    }
     expect(result).toMatchObject({
-      status: 'completed',
-      sandboxed: true,
-      exitCode: 0,
-      stdout: 'deny-read-ok',
+      status: 'unavailable',
+      sandboxed: false,
+      reason: 'unsupported_policy',
+      diagnostic: expect.stringContaining('denyRead is unsupported'),
     });
-    await expect(readFile(path.join(workspace, 'allowed.txt'), 'utf8')).resolves.toBe('allowed');
+    await expect(stat(path.join(workspace, 'allowed.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await windowsDaclSddl(secret)).toBe(secretDacl);
   }, 60_000);
 
   it('keeps the shared controller pipe host-only under restricted connection pressure', async () => {
@@ -1144,6 +1153,10 @@ describe.runIf(realWindowsV2)('FEATURE_295 real Windows policy isolation', () =>
       control,
       `windows-deny-${randomUUID()}.${process.pid}.${'c'.repeat(32)}.tmp`,
     );
+    const staleWarmupLog = path.join(
+      control,
+      `windows-read-warmup-4294967294-${randomUUID()}.log`,
+    );
     const corruption = String.raw`
 $ErrorActionPreference = 'Stop'
 $path = $env:KODAX_CONTROL_TEST_PATH
@@ -1165,6 +1178,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         writeFile(staleStartedStage, '{}', { flag: 'wx' }),
         writeFile(staleDenyStage, '{}', { flag: 'wx' }),
         writeFile(liveDenyStage, '{}', { flag: 'wx' }),
+        writeFile(staleWarmupLog, '', { flag: 'wx' }),
       ]);
       const staleTime = new Date(Date.now() - 120_000);
       await Promise.all([
@@ -1189,6 +1203,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       await expect(stat(staleRequest)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(staleStartedStage)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(staleDenyStage)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(staleWarmupLog)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(liveRequest)).resolves.toBeDefined();
       await expect(stat(liveDenyStage)).resolves.toBeDefined();
       await rm(liveRequest, { force: true });
@@ -1209,6 +1224,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         rm(staleStartedStage, { force: true }),
         rm(staleDenyStage, { force: true }),
         rm(liveDenyStage, { force: true }),
+        rm(staleWarmupLog, { force: true }),
       ].map(async (cleanup) => cleanup.catch(() => undefined)));
       try {
         verifyWindowsSandboxControlDirectory();
@@ -1394,7 +1410,13 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await expect(stat(escape)).rejects.toMatchObject({ code: 'ENOENT' });
   }, 45_000);
 
-  it('starts a second Runtime while a 120s policy remains active', async () => {
+  it.each([
+    ['the exact same write root', 'same-root'],
+    ['an ancestor read plus a child write root', 'ancestor-read-child-write'],
+  ] as const)('starts two cold Runtime processes with %s and keeps the first active', async (
+    _label,
+    scenario,
+  ) => {
     const parent = await createWindowsV2TestRoot('kodax-v2-policy-concurrent-');
     roots.push(parent);
     const rootA = path.join(parent, 'A');
@@ -1402,13 +1424,23 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await Promise.all([mkdir(rootA), mkdir(rootB)]);
     const readyA = path.join(rootA, 'ready');
     const readyB = path.join(rootB, 'ready');
+    const verifyA = path.join(rootA, 'verify');
+    const verifiedA = path.join(rootA, 'verified');
     const releaseA = path.join(rootA, 'release');
     const sandboxRuntimeUrl = new URL('../src/sandbox-runtime.ts', import.meta.url).href;
     const targetScript = [
       'const fs=require("node:fs")',
       'fs.writeFileSync(process.argv[1],"ready")',
       'const wait=new Int32Array(new SharedArrayBuffer(4))',
-      'const release=process.argv[2]',
+      'const verify=process.argv[2]',
+      'const verified=process.argv[3]',
+      'const release=process.argv[4]',
+      'if(verify){',
+      '  const deadline=Date.now()+120000',
+      '  while(!fs.existsSync(verify)&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
+      '  if(!fs.existsSync(verify)) process.exit(40)',
+      '  fs.writeFileSync(verified,"still-writable")',
+      '}',
       'if(release){',
       '  const deadline=Date.now()+120000',
       '  while(!fs.existsSync(release)&&Date.now()<deadline) Atomics.wait(wait,0,0,25)',
@@ -1422,14 +1454,21 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       'const result=await runKodaXSandboxed(input)',
       'process.stdout.write(JSON.stringify(result))',
     ].join(';');
-    const runRuntime = async (root: string, ownReady: string, release: string) => {
+    const runRuntime = async (
+      root: string,
+      ownReady: string,
+      verify: string,
+      verified: string,
+      release: string,
+      writeRoot: string,
+    ) => {
       const request = Buffer.from(JSON.stringify({
         command: process.execPath,
-        args: ['-e', targetScript, ownReady, release],
+        args: ['-e', targetScript, ownReady, verify, verified, release],
         cwd: root,
         filesystem: {
           allowRead: [parent],
-          allowWrite: [root],
+          allowWrite: [writeRoot],
           denyRead: [],
           denyWrite: [],
         },
@@ -1452,9 +1491,18 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     };
 
     let holderSettled = false;
-    const policyAPromise = runRuntime(rootA, readyA, releaseA).finally(() => {
+    const policyAPromise = runRuntime(
+      rootA,
+      readyA,
+      verifyA,
+      verifiedA,
+      releaseA,
+      parent,
+    ).finally(() => {
       holderSettled = true;
     });
+    let policyBOutcome: Promise<{ result: Awaited<ReturnType<typeof runRuntime>> } | { error: unknown }>
+      | undefined;
     let primaryFailure: unknown;
     try {
       const readyDeadline = Date.now() + 30_000;
@@ -1483,20 +1531,40 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       await expect(stat(readyA)).resolves.toBeDefined();
 
       const policyBStartedAt = Date.now();
-      const policyB = await runRuntime(rootB, readyB, '');
+      const policyBWriteRoot = scenario === 'same-root' ? parent : rootB;
+      policyBOutcome = runRuntime(rootB, readyB, '', '', '', policyBWriteRoot).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      const policyB = await policyBOutcome;
+      if ('error' in policyB) throw policyB.error;
       const policyBElapsedMs = Date.now() - policyBStartedAt;
       expect(holderSettled).toBe(false);
       expect(policyBElapsedMs).toBeLessThan(15_000);
-      expect(policyB).toMatchObject({
+      expect(policyB.result).toMatchObject({
         status: 'completed',
         sandboxed: true,
         exitCode: 0,
         stdout: 'target-ready',
       });
+      await writeFile(verifyA, 'verify', 'utf8');
+      const verifyDeadline = Date.now() + 15_000;
+      while (Date.now() < verifyDeadline) {
+        try {
+          await stat(verifiedA);
+          break;
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (holderSettled) break;
+        await delay(25);
+      }
+      await expect(readFile(verifiedA, 'utf8')).resolves.toBe('still-writable');
     } catch (error: unknown) {
       primaryFailure = error;
     } finally {
       await writeFile(releaseA, 'release', 'utf8');
+      if (policyBOutcome !== undefined) await policyBOutcome;
     }
 
     let policyA: Awaited<typeof policyAPromise> | undefined;
@@ -1525,6 +1593,166 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         exitCode: 0,
       });
       expect(result.stdout).toContain('target-ready');
+    }
+  }, 180_000);
+
+  it.each([
+    ['the exact same write root', 'same-root'],
+    ['an ancestor read plus child write roots', 'ancestor-read-child-write'],
+  ] as const)('starts two truly cold Runtime processes against a 24k-entry tree with %s', async (
+    _label,
+    scenario,
+  ) => {
+    const cutoverValue: unknown = JSON.parse(await readFile(
+      path.join(windowsNativeArtifactCacheRoot(), 'windows-v2-cutover.json'),
+      'utf8',
+    ));
+    if (
+      cutoverValue === null
+      || typeof cutoverValue !== 'object'
+      || typeof Reflect.get(cutoverValue, 'sandboxGroupSid') !== 'string'
+    ) {
+      throw new Error('Windows v2 cutover marker omitted the sandbox group SID.');
+    }
+    resolveWindowsSandboxV2Executable({
+      sandboxReadSid: Reflect.get(cutoverValue, 'sandboxGroupSid') as string,
+      provision: true,
+    });
+    const parent = await createWindowsV2TestRoot('kodax-v2-policy-cold-24k-');
+    roots.push(parent);
+    await protectPrivateTestDirectory(parent);
+    const rootA = scenario === 'same-root' ? parent : path.join(parent, 'A');
+    const rootB = scenario === 'same-root' ? parent : path.join(parent, 'B');
+    if (scenario !== 'same-root') await Promise.all([mkdir(rootA), mkdir(rootB)]);
+    await populateWideWindowsTestTree(parent);
+    const gate = path.join(parent, 'release-runtime-admission');
+    const releaseA = path.join(parent, 'release-runtime-a');
+    const runtimeReadyA = path.join(parent, 'runtime-a-ready');
+    const runtimeReadyB = path.join(parent, 'runtime-b-ready');
+    const outputA = path.join(rootA, 'output-a.txt');
+    const outputB = path.join(rootB, 'output-b.txt');
+    const sandboxRuntimeUrl = new URL('../src/sandbox-runtime.ts', import.meta.url).href;
+    const runtimeScript = [
+      'import fs from "node:fs"',
+      `import { runKodaXSandboxed } from ${JSON.stringify(sandboxRuntimeUrl)}`,
+      'const ready=process.argv[1]',
+      'const gate=process.argv[2]',
+      'const request=JSON.parse(Buffer.from(process.argv[3],"base64url").toString("utf8"))',
+      'fs.writeFileSync(ready,"ready")',
+      'const wait=new Int32Array(new SharedArrayBuffer(4))',
+      'const deadline=Date.now()+30000',
+      'while(!fs.existsSync(gate)&&Date.now()<deadline) Atomics.wait(wait,0,0,10)',
+      'if(!fs.existsSync(gate)) throw new Error("cold admission gate timed out")',
+      'const result=await runKodaXSandboxed(request)',
+      'process.stdout.write(JSON.stringify(result))',
+    ].join(';');
+    const targetScript = [
+      'const fs=require("node:fs")',
+      'fs.writeFileSync(process.argv[1],process.argv[2])',
+      'const release=process.argv[3]',
+      'if(release){',
+      '  const wait=new Int32Array(new SharedArrayBuffer(4))',
+      '  const deadline=Date.now()+120000',
+      '  while(!fs.existsSync(release)&&Date.now()<deadline) Atomics.wait(wait,0,0,10)',
+      '  if(!fs.existsSync(release)) process.exit(42)',
+      '}',
+    ].join(';');
+    const request = (
+      cwd: string,
+      output: string,
+      content: string,
+      release: string,
+    ) => Buffer.from(JSON.stringify({
+      command: process.execPath,
+      args: ['-e', targetScript, output, content, release],
+      cwd,
+      filesystem: {
+        allowRead: scenario === 'same-root' ? [] : [parent],
+        allowWrite: [cwd],
+        denyRead: [],
+        denyWrite: [],
+      },
+      network: { mode: 'allow' },
+      timeoutMs: release.length > 0 ? 130_000 : 20_000,
+      inheritEnvironment: true,
+    }), 'utf8').toString('base64url');
+    const launch = (
+      ready: string,
+      cwd: string,
+      output: string,
+      content: string,
+      release: string,
+    ) => execFile(
+      process.execPath,
+      [
+        '--import', 'tsx', '--input-type=module', '-e', runtimeScript,
+        ready, gate, request(cwd, output, content, release),
+      ],
+      { cwd: process.cwd(), env: process.env, timeout: 140_000, maxBuffer: 1024 * 1024 },
+    );
+
+    let runtimeASettled = false;
+    const runtimeA = launch(runtimeReadyA, rootA, outputA, 'A', releaseA).finally(() => {
+      runtimeASettled = true;
+    });
+    const runtimeB = launch(runtimeReadyB, rootB, outputB, 'B', '');
+    const readyDeadline = Date.now() + 15_000;
+    while (Date.now() < readyDeadline) {
+      const observations = await Promise.all([runtimeReadyA, runtimeReadyB].map(async (file) => {
+        try {
+          await stat(file);
+          return true;
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+          throw error;
+        }
+      }));
+      if (observations.every(Boolean)) break;
+      await delay(10);
+    }
+    await expect(Promise.all([stat(runtimeReadyA), stat(runtimeReadyB)])).resolves.toBeDefined();
+
+    let completionB: Awaited<typeof runtimeB> | undefined;
+    let completionA: Awaited<typeof runtimeA> | undefined;
+    let primaryFailure: unknown;
+    try {
+      const releasedAt = Date.now();
+      await writeFile(gate, 'release', 'utf8');
+      completionB = await runtimeB;
+      expect(Date.now() - releasedAt).toBeLessThan(15_000);
+      expect(runtimeASettled).toBe(false);
+      const outputDeadline = Date.now() + 15_000;
+      while (Date.now() < outputDeadline) {
+        try {
+          await stat(outputA);
+          break;
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (runtimeASettled) break;
+        await delay(10);
+      }
+      await expect(readFile(outputA, 'utf8')).resolves.toBe('A');
+      await expect(readFile(outputB, 'utf8')).resolves.toBe('B');
+    } catch (error: unknown) {
+      primaryFailure = error;
+    } finally {
+      await writeFile(releaseA, 'release', 'utf8');
+      completionA = await runtimeA;
+    }
+    if (primaryFailure !== undefined) throw primaryFailure;
+    if (completionA === undefined || completionB === undefined) {
+      throw new Error('Cold Runtime completion was unavailable.');
+    }
+    const results = [completionA, completionB].map((completion) => JSON.parse(
+      completion.stdout,
+    ) as KodaXSandboxRunResult);
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: 'completed',
+        sandboxed: true,
+        exitCode: 0,
+      });
     }
   }, 180_000);
 
@@ -1700,7 +1928,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     }
   }, 60_000);
 
-  it('keeps concurrent denyRead leases execution-scoped and removes every receipt', async () => {
+  it('fails concurrent denyRead policies closed without starting targets or writing receipts', async () => {
     const root = await createWindowsV2TestRoot('kodax-v2-concurrent-deny-read-');
     roots.push(root);
     const deniedRoots = await Promise.all(Array.from({ length: 15 }, async (_, index) => {
@@ -1710,6 +1938,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       return denied;
     }));
     const secret = path.join(deniedRoots[0]!, 'secret.txt');
+    const deniedDacl = await windowsDaclSddl(deniedRoots[0]!);
     const receiptsBefore = (await readdir(windowsSandboxControlDirectory()))
       .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
       .sort();
@@ -1738,9 +1967,15 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     )));
     for (const result of results) {
       expect(result).toMatchObject({
-        status: 'completed', sandboxed: true, exitCode: 0, stdout: 'deny-read-held',
+        status: 'unavailable',
+        sandboxed: false,
+        reason: 'unsupported_policy',
       });
     }
+    for (let index = 0; index < 4; index += 1) {
+      await expect(stat(path.join(root, `ready-${index}`))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(await windowsDaclSddl(deniedRoots[0]!)).toBe(deniedDacl);
     const receiptsAfter = (await readdir(windowsSandboxControlDirectory()))
       .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
       .sort();
@@ -1837,14 +2072,16 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       roots.push(root);
       const markerPath = path.join(root, 'processes.json');
       const written = path.join(root, `after-${terminatedRole}.md`);
-      const denied = path.join(root, 'denied');
-      await mkdir(denied);
-      await writeFile(path.join(denied, 'secret.txt'), 'secret', 'utf8');
+      const executionReceiptsBefore = terminatedRole === 'host'
+        ? (await readdir(windowsSandboxControlDirectory()))
+            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+            .sort()
+        : [];
       const runtime = launchSandboxRuntime(
         root,
         markerPath,
         undefined,
-        terminatedRole === 'host' ? [denied] : [],
+        [],
       );
       let runtimeSettled = false;
       let tracked: readonly WindowsProcessIdentity[] = [];
@@ -1902,35 +2139,27 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
 
         if (terminatedRole === 'host') {
           const receiptsAfterCrash = (await readdir(windowsSandboxControlDirectory()))
-            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'));
-          const ownedReceipts = await Promise.all(receiptsAfterCrash.map(async (name) => (
-            readFile(path.join(windowsSandboxControlDirectory(), name), 'utf8')
-          )));
-          expect(ownedReceipts.filter((receipt) => (
-            executionDenyReceiptContainsPath(receipt, denied)
-          ))).toHaveLength(1);
-          const recovery = await runKodaXSandboxed({
+            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+            .sort();
+          expect(receiptsAfterCrash).toEqual(executionReceiptsBefore);
+          const subsequent = await runKodaXSandboxed({
             command: process.execPath,
-            args: ['-e', 'process.stdout.write("recovered")'],
+            args: ['-e', 'process.stdout.write("subsequent")'],
             cwd: root,
             filesystem: {
-              allowRead: [root], allowWrite: [root], denyRead: [denied], denyWrite: [],
+              allowRead: [root], allowWrite: [root], denyRead: [], denyWrite: [],
             },
             network: { mode: 'allow' },
             timeoutMs: 15_000,
             inheritEnvironment: true,
           });
-          expect(recovery).toMatchObject({
-            status: 'completed', sandboxed: true, exitCode: 0, stdout: 'recovered',
+          expect(subsequent).toMatchObject({
+            status: 'completed', sandboxed: true, exitCode: 0, stdout: 'subsequent',
           });
-          const receiptsAfterRecovery = (await readdir(windowsSandboxControlDirectory()))
-            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'));
-          const remainingReceipts = await Promise.all(receiptsAfterRecovery.map(async (name) => (
-            readFile(path.join(windowsSandboxControlDirectory(), name), 'utf8')
-          )));
-          expect(remainingReceipts.some((receipt) => (
-            executionDenyReceiptContainsPath(receipt, denied)
-          ))).toBe(false);
+          const receiptsAfterSubsequentRun = (await readdir(windowsSandboxControlDirectory()))
+            .filter((name) => name.startsWith('windows-deny-') && name.endsWith('.json'))
+            .sort();
+          expect(receiptsAfterSubsequentRun).toEqual(executionReceiptsBefore);
         }
       } finally {
         for (const identity of [...tracked].reverse()) {
@@ -2085,7 +2314,9 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       exitCode: 0,
     });
     expect(result.stdout).toContain('DENIED:KodaXTextTxV2:5');
-    expect(result.stdout).toContain('DENIED:KodaXSandboxAclV2:5');
+    expect(result.stdout).toMatch(
+      /(?:DENIED:KodaXSandboxAclV2:5|UNAVAILABLE:KodaXSandboxAclV2:[23])/,
+    );
     expect(result.stdout).not.toContain('OPENED');
   }, 60_000);
 

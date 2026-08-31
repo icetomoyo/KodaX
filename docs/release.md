@@ -145,9 +145,9 @@ and normal global Git behavior.
 
 Release gates:
 
-1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:7`,
+1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:9`,
    `runtimeAutoModeGuardrail:5`, and `sharedSessionSettings:2`; an auto-starting
-   alpha.4 client must safely replace an idle sandbox-v6, guardrail-v4, or shared-settings-v1 daemon,
+   alpha.4 client must safely replace an idle sandbox-v8-or-older, guardrail-v4, or shared-settings-v1 daemon,
    while attach-only clients fail closed.
 2. Public declarations must expose exact canonical/input permission types,
    host-owned Exec Policy and Auto-review options, ACP mode identifiers, and
@@ -158,9 +158,13 @@ Release gates:
 4. README/README_CN, PRD/HLD/DD/ADR-070, Issue 326, feature tracker/design, public
    configuration and SDK guides, config templates, changelog, test guide, and
    `kodax_manual` must describe the same sandbox-first route.
-5. Protocol 8/setup generation 8, the native sidecar/hash manifest, receipt
+5. Protocol 9/setup generation 9, the generation-8 one-time migration proof,
+   protected two-phase synchronous setup with no admission-overlapping helper,
+   the native sidecar/hash manifest, receipt
    convergence, bounded-idle broker release, and the real opt-in Windows
-   120-second dual-Runtime overlap must pass the Issue 326 regression guide.
+   120-second dual-Runtime overlap must pass the Issue 326 regression guide. A
+   fresh custom `KODAX_HOME` below system TMP must also launch without a missing
+   protected deny-root failure.
 6. Focused permission/Runtime/daemon/ACP/manual tests, full typecheck, `git diff --check`,
    build, package contents, generated declarations, and an empty-consumer smoke
    of the root, `/runtime`, and `/repl` exports must pass. Root and

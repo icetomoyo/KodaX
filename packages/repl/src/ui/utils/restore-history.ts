@@ -59,12 +59,16 @@ function toCreatableTextHistoryItem(
   item: Exclude<KodaXSessionUiHistoryItem, { type: "tool_group" }>,
 ): CreatableHistoryItem {
   const timestamp = item.timestamp === undefined ? {} : { timestamp: item.timestamp };
+  const presentationOnly = item.presentationOnly === true
+    ? { isSessionUiOnly: true as const }
+    : {};
   switch (item.type) {
     case "assistant":
       return {
         type: "assistant",
         text: item.text,
         ...timestamp,
+        ...presentationOnly,
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
     case "thinking":
@@ -72,6 +76,7 @@ function toCreatableTextHistoryItem(
         type: "thinking",
         text: item.text,
         ...timestamp,
+        ...presentationOnly,
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
     case "event":
@@ -79,6 +84,7 @@ function toCreatableTextHistoryItem(
         type: "event",
         text: item.text,
         ...timestamp,
+        ...presentationOnly,
         ...(item.icon ? { icon: item.icon } : {}),
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
@@ -87,25 +93,32 @@ function toCreatableTextHistoryItem(
         type: "info",
         text: item.text,
         ...timestamp,
+        ...presentationOnly,
         ...(item.icon ? { icon: item.icon } : {}),
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
     case "user":
-      return { type: "user", text: item.text, ...timestamp };
+      return { type: "user", text: item.text, ...timestamp, ...presentationOnly };
     case "system":
-      return { type: "system", text: item.text, ...timestamp };
+      return { type: "system", text: item.text, ...timestamp, ...presentationOnly };
     case "error":
-      return { type: "error", text: item.text, ...timestamp };
+      return { type: "error", text: item.text, ...timestamp, ...presentationOnly };
     case "hint":
-      return { type: "hint", text: item.text, ...timestamp };
+      return { type: "hint", text: item.text, ...timestamp, ...presentationOnly };
     case "sidecar": {
       // The icon slot carries the encoded verdict/delivery (see toPersistedUiHistoryItem).
       const encoded = item.icon;
       if (encoded === "budget-exhausted") {
-        return { type: "sidecar", text: item.text, delivery: "budget-exhausted", ...timestamp };
+        return {
+          type: "sidecar",
+          text: item.text,
+          delivery: "budget-exhausted",
+          ...timestamp,
+          ...presentationOnly,
+        };
       }
       const verdict = encoded === "blocked" ? "blocked" : "revise";
-      return { type: "sidecar", text: item.text, verdict, ...timestamp };
+      return { type: "sidecar", text: item.text, verdict, ...timestamp, ...presentationOnly };
     }
   }
 }
@@ -360,7 +373,7 @@ function markUiOnlyItem(
   const isOrdinaryText = item.type === "assistant"
     || item.type === "thinking"
     || (item.type === "user" && !item.text.trimStart().startsWith("/"));
-  return isOrdinaryText && !allowOrdinaryText
+  return isOrdinaryText && !allowOrdinaryText && item.isSessionUiOnly !== true
     ? undefined
     : { ...item, isSessionUiOnly: true };
 }

@@ -26,8 +26,8 @@ shell lifetime.
 - Linux has `bubblewrap`, `socat`, and `ripgrep`, and its kernel/security policy
   permits unprivileged user namespaces. CI must prove this with a real
   `bwrap --unshare-net --unshare-pid` probe rather than dependency presence.
-- For an upgrade, close every old sandboxed command before setup. Confirm setup
-  rotates the dedicated account SID and doctor reports
+- For an upgrade, keep one sandboxed command active during setup. Confirm setup
+  preserves the healthy dedicated account SID/group and doctor reports
   `windows_v2_acl_cutover_required` before, but not after, the cutover.
 
 ## Trusted text checks
@@ -129,14 +129,18 @@ shell lifetime.
    Repeat with a write root and a read-only root below a protected private
    parent. Node `realpathSync` and the declared root must work, while parent
    enumeration, a known sibling read/write, and child ACE inheritance remain
-   denied. Run four same-policy shells concurrently with one shared `denyRead`
-   root and verify all reach the target, all four reads fail, execution receipts
-   are independent, and no receipt remains after Job drain. Kill one native host
-   while that deny is active; trusted Write must still succeed, and the next
-   shell must recover the exact stale receipt by PID creation time. A different
-   write root must derive a different stable clause capability. Replace or
-   remove a receipt target before recovery and verify shell admission remains
-   fail-closed with the receipt retained; trusted Write/Edit must remain usable.
+   denied. Run four concurrent Windows requests with one non-empty `denyRead`
+   root and verify all return structured `unsupported_policy` before doctor,
+   DACL mutation, or target start; no ready marker or execution receipt is
+   created. Trusted Write must remain available afterward.
+    A different write root must derive a different stable clause capability.
+    Separately seed a pre-cutover deny receipt and verify only explicit setup
+    retires its exact legacy ACE; ordinary admission must not scan it.
+    Then use a fresh custom `KODAX_HOME` below system TMP with none of its
+    protected internal directories present. The first workspace-shell request
+    must materialize exactly those fixed directories and reach the target;
+    parallel requests must not report a missing deny root or acquire an ACL
+    transaction mutex.
 6. On Linux and macOS, overlap separate ASRT bubblewrap/Seatbelt commands and a
    trusted text write. Verify there is no KodaX workspace-session process,
    owner/reset/poison record, or filesystem-effect lease spanning the command.
@@ -182,11 +186,11 @@ shell lifetime.
     cmd, and PowerShell subprocesses work and that a fresh `%TEMP%` root reaches
     the target inside the existing 15-second budget;
     keep Issue 309's explicit/protected child-DACL bypass documented as open.
-13. Complete setup before one exact sensitive Agent Home directory exists, then
-    create that directory and perform a cold shell admission from two Runtime
-    processes. Native no-follow guard installation must be idempotent under the
-    owner-recovering cross-process mutex, both commands must proceed, and no
-    command-lifetime lock may remain.
+13. Create one cold root with at least 24,000 entries and authorize it
+    concurrently from two Runtime processes with different supported policies.
+    Stable capability convergence must be idempotent under `SET_ACCESS` plus
+    DACL readback, both commands must proceed, and no `AclRoot` or
+    command-lifetime lock may be acquired.
 
 ## Packaging and regression gates
 

@@ -13,20 +13,29 @@ Issue 326 is resolved in the alpha.4 source candidate. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a
-cross-process filesystem-effect coordinator. Protocol 8/setup generation 8
-moves machine work to setup, makes warm ACL admission read-only, uses only an
-exact-object short mutex with one five-second total phase budget, requires a
+cross-process filesystem-effect coordinator. Protocol 9/setup generation 9
+keeps one stable read/write/deny capability ACE set on each canonical root and
+uses each command token to select authority. Missing ACEs converge additively
+with `SET_ACCESS`/DACL readback without a cross-process target mutex; setup uses
+a protected non-ready `installing` marker and synchronously converges NUL
+compatibility plus profile read capabilities before publishing ready. No helper
+overlaps ordinary admission. Generation 8 remains only the completed
+legacy ACL migration proof. Windows
+per-command `denyRead` now fails closed as `unsupported_policy` before setup,
+DACL mutation, or target start because `WRITE_RESTRICTED` cannot enforce its
+restricting SID for reads. Protocol 9 also requires a
 hash-bound marker held through target `Started`, retires failed broker
-readiness, keeps active brokers referenced, resumes interrupted legacy drains,
-recovers a dead denyRead receipt only for an overlapping requested object, and
-reads immutable receipts with read/delete sharing so one scan cannot block
+readiness, keeps active brokers referenced, retires legacy drain markers without waiting,
+retires pre-cutover deny receipts only during explicit setup, and
+reads legacy receipts with read/delete sharing so one scan cannot block
 exact cleanup. Caller-local broker deadlines no longer retire a healthy shared
 startup, active-pool saturation fails before start without lifecycle waiting,
 prepared Bash/SDK requests are released on synchronous spawn failure, and an
 uncertain Git Job-binding cleanup retains managed-child recovery. This removes
 the Bash/write/worktree command-lifetime fence. Generation 8 keeps a persistent
-random filesystem-capability namespace and performs broad profile/TMP ACL
-preparation only during explicit setup; ordinary admission never recursively
+random filesystem-capability namespace and reuses a healthy fixed account SID
+across setup versions. Setup accepts effective profile read ACLs instead of
+recursively propagating redundant grants; ordinary admission never recursively
 mutates those roots. Real
 dual-Runtime coverage requires the second Runtime to complete in under 15
 seconds while a first 120-second target remains active. See
@@ -976,8 +985,8 @@ command-lifetime filesystem fence would not repair the access-control gap.
 
 An inheritable OWNER RIGHTS deny for `WRITE_DAC`/`WRITE_OWNER` was tested and
 rejected: it also applies to host-owned existing descendants and prevents the
-trusted native host from installing or recovering execution-scoped `denyRead`
-ACEs. Recursive stamping would reintroduce the slow, globally mutable ACL graph
+trusted native host from performing legacy deny-ACE recovery. Recursive stamping
+would reintroduce the slow, globally mutable ACL graph
 that FEATURE_295 removes.
 
 Close this issue only with a Windows authority model that removes ambient
@@ -13963,7 +13972,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 204 (34 Open, 170 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 205 (34 Open, 171 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

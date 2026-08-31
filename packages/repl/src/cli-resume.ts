@@ -27,6 +27,7 @@ import {
   type SessionPickerItem,
   type SessionPickerRunOptions,
 } from './ui/SessionPicker.js';
+import { countResumableSessionItems } from './session/resumable-session.js';
 
 const SESSION_HEAD_READ_BYTES = 65536;
 const SESSION_READ_CONCURRENCY = 48;
@@ -288,6 +289,7 @@ function applyMetaUpdate(
     ...(typeof update.activeMessageCount === 'number' && update.activeMessageCount >= 0
       ? { activeMessageCount: update.activeMessageCount }
       : {}),
+    ...(Array.isArray(update.uiHistory) ? { uiHistory: update.uiHistory } : {}),
     ...(typeof update.scope === 'string' ? { scope: update.scope } : {}),
   };
 }
@@ -327,14 +329,17 @@ async function applyEffectiveTailMetadata(
 
 async function readMessageCount(filePath: string, meta: Record<string, unknown>): Promise<number> {
   if (typeof meta.activeMessageCount === 'number' && meta.activeMessageCount >= 0) {
-    return meta.activeMessageCount;
+    return countResumableSessionItems(meta.activeMessageCount, meta.uiHistory);
   }
   const content = (await fs.readFile(filePath, 'utf8')).trim();
   if (!content) return 0;
   const extensionRecords = typeof meta.extensionRecordCount === 'number' && meta.extensionRecordCount > 0
     ? meta.extensionRecordCount
     : 0;
-  return Math.max(0, content.split('\n').length - 1 - extensionRecords);
+  return countResumableSessionItems(
+    Math.max(0, content.split('\n').length - 1 - extensionRecords),
+    meta.uiHistory,
+  );
 }
 
 function runtimeSummary(meta: Record<string, unknown>): PersistedRuntimeSummary | undefined {

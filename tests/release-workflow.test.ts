@@ -204,7 +204,7 @@ describe('GitHub release workflow', () => {
     const release = readFileSync(resolve('scripts/release.mjs'), 'utf8');
 
     expect(buildNative).toContain('manifest.asrtRunner = {');
-    expect(buildNative).toContain('protocol: 8');
+    expect(buildNative).toContain('protocol: 9');
     expect(buildNative).toContain("'LICENSE-APACHE.txt'");
     expect(buildNative).toContain("'NOTICE-windows-sandbox.txt'");
     expect(buildNative).toContain("file: 'srt-win.exe'");
@@ -219,7 +219,7 @@ describe('GitHub release workflow', () => {
       expect(source).toContain('asrtRunner.version');
     }
     expect(buildBinary).toContain('copied ASRT runner hash does not match its manifest');
-    expect(release).toContain("['shellSandbox', 8, 'kodax-windows-sandbox.exe']");
+    expect(release).toContain("['shellSandbox', 9, 'kodax-windows-sandbox.exe']");
     expect(release).not.toContain("['shellSandbox', 5, 'kodax-windows-sandbox.exe']");
     expect(release).toContain('ASRT runner hash does not match its manifest');
     expect(release).toContain('expectedLegalFiles');

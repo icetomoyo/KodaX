@@ -7,8 +7,8 @@ coordination path and that setup, ACL, broker, and terminal recovery cannot
 recreate the observed 60/75/240-second stalls.
 
 Use a disposable Windows sandbox account/workspace. Build the current native
-artifact first and run `kodax sandbox setup` once. Protocol 8/setup generation
-8 and `sandboxRuntime:7` are required; do not test a protocol-8 TypeScript bundle against a protocol-7
+artifact first and run `kodax sandbox setup` once. Protocol 9/setup generation
+9 and `sandboxRuntime:9` are required; do not test a protocol-9 TypeScript bundle against an older
 native sidecar.
 
 ## Automated gates
@@ -25,16 +25,19 @@ npx vitest run tests/feature-295-windows-v2-policy.test.ts
 
 Expected:
 
-- native protocol is 8 and the setup marker is generation 8;
-- the generation-8 marker retains one valid random filesystem-capability nonce;
-  one setup-only elevated helper receives an explicit base64 envelope and
-  prewarms profile top-level/existing canonical TMP ACLs together with NUL
-  compatibility before marker publication; the caller does not release the
-  setup lock before helper exit, and exact-object waits obey the overall setup
-  deadline;
+- native protocol is 9 and the setup marker is generation 9;
+- the generation-9 marker retains the existing valid random filesystem-capability
+  nonce; generation 8 remains the one-time legacy ACL migration proof;
+  setup first publishes a protected non-ready `installing` marker; one setup-only
+  elevated parent receives an explicit base64 envelope, verifies that exact
+  marker, and synchronously converges NUL compatibility plus profile top-level
+  read capabilities. The caller publishes ready only after success, no helper
+  overlaps ordinary admission, and system TMP is not prewarmed;
 - the native/unit suites have no global-ACL-mutex assertion or timeout;
-- a 120-second holder target remains alive while a second independent Runtime
-  starts and completes in less than 15 seconds;
+- two independent Runtime processes pass both cold cases on roots containing at
+  least 24,000 entries: the exact same write root, and ancestor-read/child-write.
+  The second starts and completes in less than 15 seconds while the first
+  remains alive, and the first capability remains installed;
 - four same-policy commands succeed while three consecutive fixed proxy ports
   are occupied;
 - an independent Runtime cannot exit with Node's unsettled-top-level-await code
@@ -42,18 +45,17 @@ Expected:
 - timeout/cancel returns only after Job-drain proof;
 - dead, aged atomic staging is retired during explicit control repair, while a
   live creator's state remains fail-closed.
-- after a native host is killed, the next denyRead request for the same exact
-  object recovers that dead-runner receipt; unrelated roots are not locked.
-- a same-SID setup republishes a fresh generation nonce only after the sandbox
-  SID is idle; old prepared requests fail before target start;
+- concurrent Windows denyRead policies all return `unsupported_policy` before
+  target start, DACL mutation, or execution-receipt creation;
+- a same-SID setup republishes a fresh generation nonce while preserving the
+  healthy fixed identity; old prepared requests fail before target start;
 - a short caller timeout does not poison another caller sharing the same broker,
   including when the patient caller starts only after the short caller returns;
 - five distinct active broker leases remain live while a sixth fails promptly
   before target start, and idle brokers release fixed proxy ports after the
   bounded reuse grace;
-- an open immutable denyRead receipt does not block its exact owner from
-  deleting it; concurrent owner/recovery cleanup converges without a sharing
-  violation;
+- setup can retire a pre-cutover immutable denyRead receipt without making
+  ordinary admission scan or wait on that migration state;
 - foreground Bash and the public SDK release prepared requests after a
   synchronous spawn failure, and the SDK refuses a changed setup generation
   without spawning the native host;
@@ -85,9 +87,14 @@ Pass conditions:
 - B's delete/recreate succeeds within its own policy;
 - A reaches `done` at its requested time;
 - no output contains `ACL transaction mutex timed out`, `ACL authorization
-  deadline expired`, or `protocol 8 failed`;
+  deadline expired`, or `protocol 9 failed`;
 - no `model-filesystem-effects.*` file is created or consulted by the current
   processes.
+- a normal persistent capability grant never reports or waits on an `AclRoot`
+  mutex name; cold convergence uses `SET_ACCESS` plus DACL readback, and
+  unrelated roots remain independent;
+- concurrent denyRead runs do not start and create no new
+  `windows-deny-*.json` receipt;
 
 ## Same-object and worktree boundaries
 
@@ -102,28 +109,29 @@ Pass conditions:
 
 ## Setup/admission cutover
 
-1. Start a protocol-8 command and pause it after admission but before target
+1. Start a protocol-9 command and pause it after admission but before target
    `Started` using the test hook.
 2. Start setup. Marker replacement must wait because the host owns a
    non-delete-sharing marker handle.
 3. Release target start. Confirm the resume and started records become durable,
    then setup may replace the marker.
-4. Supply a protocol-8 request without marker path/digest. Native decode or
+4. Supply a protocol-9 request without marker path/digest. Native decode or
    validation must reject it before ACL mutation/target start.
-5. For a protocol-7 migration fixture, remove the legacy marker and simulate a
-   pending admission beyond 30 seconds. Setup must not rotate during that
-   window; the contract drains the full 300-second Bash bound plus margin once.
-6. Interrupt setup after it retires the old marker but before the drain ends.
-   The next setup must resume the protected pending/draining state and must not
-   rotate the account early.
+5. For a protocol-8-or-older migration fixture, create both the legacy cutover marker
+   and an obsolete drain marker. Setup must remove both without a 301-second
+   wait and preserve a healthy account SID/group.
+6. Corrupt or remove the account identity and confirm only this destructive
+   repair path waits for the old SID to become idle before rotation.
 
 ## Failure interpretation
 
-- A same-object ACL update may wait up to the single five-second ACL phase
-  budget. Different objects must not wait on it.
+- Normal-token access accepts effective inherited ACLs and performs no shared
+  DACL write. Missing exact restricted capabilities never wait on a KodaX ACL
+  mutex. Exact same-root policies derive the same stable capability; the
+  ancestor-read/child-write case must not overwrite the ancestor capability.
 - A same-repository Git operation may encounter Git's own lock/conflict. That
   is not a KodaX sandbox admission mutex.
-- Explicit setup can wait for a legacy cutover or live old SID. Ordinary Bash,
+- Explicit destructive setup can wait for a damaged live old SID. Ordinary Bash,
   write, and worktree admission must never wait on the setup lock.
 - Missing/replaced deny targets and malformed terminal evidence remain
   intentionally fail-closed; they must not be converted into success or an

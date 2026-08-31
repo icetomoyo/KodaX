@@ -49,31 +49,50 @@ All notable changes to this project will be documented in this file.
   policy-opaque nested execution fails closed where an administrator forbid
   must remain absolute.
 - Corrected the Windows shell concurrency regression at its setup/admission
-  boundary. Protocol 8/setup generation 8 removes the machine-global ACL mutex
-  from ordinary admission: a complete warm policy is read-only, a missing ACE
-  is added under a short mutex for that exact filesystem object, and all roots
-  share one five-second ACL phase budget. This removes both the observed
-  240-second global-mutex stall and the deterministic 75-second failure caused
-  by applying a separate five-second wait to each of 15 roots. Generation 8
-  persists a random filesystem-capability namespace across protocol/account
-  maintenance. A single setup-only elevated native helper receives a small
-  explicit base64 envelope, validates its versioned digest-bound request from
-  the protected control directory, and is awaited through confirmed exit. Its
-  exact-object mutex waits are included in the setup-wide deadline rather than
-  extending beyond it. The helper
-  prewarms profile top-level read roots plus existing canonical system-TMP write
-  roots together with NUL compatibility, so ordinary admission neither invokes
-  UAC nor recursively
-  rewrites broad profile ACLs nor churns capabilities after a native rebuild.
+  boundary. Protocol 9/setup generation 9 removes every machine-global ACL
+  mutex from ordinary admission. Each canonical root receives one
+  policy-independent stable ACE set for `AllowRead`, `AllowWrite`, and
+  `DenyWrite`; the command token activates only its exact capabilities. Missing
+  ACEs converge additively with `SET_ACCESS` plus DACL readback, without
+  revocation, a cross-process target mutex, or a serialized command lifetime.
+  This removes both the observed 240-second global-mutex stall and the
+  deterministic 75-second failure caused by applying a separate five-second
+  mutex wait to each of 15 roots. Generation 8 remains the proof boundary for
+  the one-time legacy ACL removal; generation 9 upgrades a healthy account in
+  place, preserving its SID/group and filesystem nonce without replaying that
+  cleanup. Setup first publishes a protected non-ready `installing` marker; the
+  elevated parent validates that exact digest-bound marker and synchronously
+  converges NUL compatibility plus profile read capabilities. The caller
+  publishes the ready marker only after the parent succeeds. No helper or
+  migration overlaps ordinary admission, system TMP is not prewarmed, and
+  `sandboxRuntime` advances to `9`,
+  so a newly linked CLI replaces an idle daemon that still carries the setup-8
+  ACL behavior and refuses a busy one instead of mixing generations.
+- Fixed first-launch policy construction when a custom `KODAX_HOME` is below the
+  system temporary write root. KodaX now creates only its fixed protected
+  `sandbox-runtime`, `native-text-state-v1`, `runtime`, `processes`, and `learned`
+  directories before passing them as Windows deny-write roots, so native
+  validation never rejects a missing host-owned root. This adds no lock, queue,
+  ACL mutation, or command-lifetime coordination.
+- Preserved failed managed-turn history across `kodax -r`. The run-end failure
+  path now commits the already-rendered Assistant summary, Sidecar Verifier
+  verdict, and terminal error in their original order. The JSON load guard also
+  accepts the typed `sidecar` item, including a save/load/save/load round trip;
+  a first failed turn containing only this presentation history remains
+  resumable and visible in the session index. If its first durable write fails,
+  the retry reuses the already-staged snapshot instead of appending the
+  Assistant/Sidecar/error batch a second time.
+  Sessions already overwritten by an older build cannot reconstruct text that
+  was never committed to their session file.
 - Moved native artifact/control provisioning and legacy ACL recovery out of the
   command hot path. Setup owns those machine changes; ordinary commands only
-  verify already provisioned state. Protocol 8 requires a hash-bound protected
+  verify already provisioned state. Protocol 9 requires a hash-bound protected
   setup marker, and the native host holds its non-delete-sharing handle until
   the target's `Started` record is durable. Setup therefore cannot rotate a
-  generation across an admitted target-start window. The one-time protocol-7
-  marker retirement uses a protected two-phase marker so an interrupted setup
-  resumes the drain, and waits the full legacy 300-second Bash hard bound
-  instead of guessing a 30-second window.
+  generation across an admitted target-start window. Protocol-8 and older marker
+  retirement is setup-only and does not impose the former 301-second admission
+  drain; a healthy fixed account is reused so existing sessions keep their
+  identity while the new protected marker is published.
 - Removed the cross-process command-lifetime filesystem-effect coordinator from
   Bash, trusted text tools, and worktree lifecycle. Same-file text mutations
   retain their narrow kernel/CAS ordering; same-path worktree calls retain a
@@ -82,7 +101,15 @@ All notable changes to this project will be documented in this file.
   migration and old coordinator files are ignored, so stale alpha state cannot
   block a new KodaX process.
 - Made each native shell independently own its request, pipes, restricted
-  token, Job, resume/started records, terminal proof, and denyRead receipt.
+  token, Job, resume/started records, and terminal proof. Windows per-command
+  `denyRead` now fails closed as structured `unsupported_policy` before doctor,
+  setup, DACL mutation, or target start: `WRITE_RESTRICTED` does not enforce a
+  restricting capability SID for reads, so claiming containment was incorrect.
+  Consequently, isolated Skill Script execution on current native protocol 9
+  is POSIX-only; `createAsrtSkillScriptRunner` rejects Windows as unavailable
+  instead of weakening its required per-command `denyRead` policy.
+  The field remains wire/API compatible, and setup alone can retire legacy
+  execution receipts and ACEs.
   Terminal/termination proof failures now propagate through cleanup instead of
   being reported as a successful command. Crash-left atomic-publication staging
   files are removed only after an exact dead-PID and age proof. Network brokers
@@ -95,11 +122,10 @@ All notable changes to this project will be documented in this file.
   reference, cleanup synchronously retires the old broker before a same-authority
   command can acquire it. A failure with another live holder does not stop or
   poison that holder.
-- Made immutable denyRead receipts share read/delete access so receipt scans do
-  not block another command's exact cleanup. Caller-local timeout or abort no
-  longer marks a healthy shared broker failed; a sequential later caller can
-  join the same in-flight startup. A fully active five-broker pool fails before
-  target start instead of waiting on an unrelated command lifecycle.
+- Caller-local timeout or abort no longer marks a healthy shared broker failed;
+  a sequential later caller can join the same in-flight startup. A fully active
+  five-broker pool fails before target start instead of waiting on an unrelated
+  command lifecycle.
 - Closed prepared-invocation leaks in foreground Bash and the public sandbox
   SDK. Generation validation now runs immediately before native host spawn;
   synchronous spawn failure and other proven pre-start exits remove the native
@@ -111,10 +137,8 @@ All notable changes to this project will be documented in this file.
   made a successfully attested background shell immediately exit with “path
   not found” before running its requested program, including when a quoted
   executable is followed by an unquoted final argument.
-- A denyRead admission no longer performs a machine-wide stale-receipt cleanup.
-  It may recover only a dead-runner receipt that overlaps its exact requested
-  object, under the same one-phase deadline. This preserves host-crash recovery
-  without making unrelated commands or roots wait on it.
+- Legacy execution-scoped denyRead receipts are read only by explicit setup for
+  one-time migration. Ordinary admission never scans or repairs them.
 - Native requests also stop adding the protected artifact cache as a redundant
   `denyWrite` root; setup generation 8 removes only provable obsolete
   sandbox-account guards and preserves ambiguous administrator ACLs. Real

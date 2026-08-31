@@ -58,10 +58,14 @@ fn main() {
                 std::process::exit(42);
             }
             let error = GetLastError();
-            println!("DENIED:{}:{error}", namespace[1]);
+            if error == 2 || error == 3 {
+                println!("UNAVAILABLE:{}:{error}", namespace[1]);
+            } else {
+                println!("DENIED:{}:{error}", namespace[1]);
+            }
             LocalFree(sid);
             DeleteBoundaryDescriptor(boundary);
-            if error != 5 {
+            if error != 2 && error != 3 && error != 5 {
                 std::process::exit(46);
             }
         }

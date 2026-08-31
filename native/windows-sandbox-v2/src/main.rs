@@ -19,13 +19,15 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
-#[derive(Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SetupAccountCapabilitiesRequest {
     version: u32,
     sandbox_sid: String,
     sandbox_group_sid: String,
     filesystem_capability_nonce: String,
+    setup_marker_path: String,
+    setup_marker_sha256: String,
     read_roots: Vec<String>,
     write_roots: Vec<String>,
 }
@@ -42,30 +44,54 @@ struct SetupAccountCapabilitiesEnvelope {
 #[cfg(windows)]
 impl SetupAccountCapabilitiesRequest {
     fn validate(&self) -> anyhow::Result<()> {
-        ensure!(self.version == 1, "Unsupported setup account capability request version");
+        ensure!(
+            self.version == 2,
+            "Unsupported setup account capability request version"
+        );
         ensure!(
             self.sandbox_sid.starts_with("S-1-5-21-")
                 && self.sandbox_group_sid.starts_with("S-1-5-21-")
-                && !self.sandbox_sid.eq_ignore_ascii_case(&self.sandbox_group_sid),
+                && !self
+                    .sandbox_sid
+                    .eq_ignore_ascii_case(&self.sandbox_group_sid),
             "Setup account capability request contains invalid local account authority",
         );
         let nonce = uuid::Uuid::parse_str(&self.filesystem_capability_nonce)
             .map_err(|_| anyhow::anyhow!("Invalid setup filesystem capability nonce"))?;
-        ensure!(nonce.get_version_num() == 4, "Invalid setup filesystem capability nonce");
+        ensure!(
+            nonce.get_version_num() == 4,
+            "Invalid setup filesystem capability nonce"
+        );
+        ensure!(
+            !self.setup_marker_path.is_empty()
+                && !self.setup_marker_path.contains('\0')
+                && std::path::Path::new(&self.setup_marker_path).is_absolute()
+                && self.setup_marker_path.encode_utf16().count() <= 32_767,
+            "Setup account capability request contains an invalid setup marker path",
+        );
+        ensure!(
+            self.setup_marker_sha256.len() == 64
+                && self
+                    .setup_marker_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "Setup account capability request contains an invalid setup marker digest",
+        );
         ensure!(
             self.read_roots.len() + self.write_roots.len() <= 1_024,
             "Setup account capability request exceeds 1024 roots",
         );
         ensure!(
-            self.read_roots
-                .iter()
-                .chain(&self.write_roots)
-                .all(|path| {
-                    !path.is_empty()
-                        && !path.contains('\0')
-                        && std::path::Path::new(path).is_absolute()
-                        && path.encode_utf16().count() <= 32_767
-                }),
+            self.write_roots.is_empty(),
+            "Elevated setup account capability requests cannot grant write roots",
+        );
+        ensure!(
+            self.read_roots.iter().chain(&self.write_roots).all(|path| {
+                !path.is_empty()
+                    && !path.contains('\0')
+                    && std::path::Path::new(path).is_absolute()
+                    && path.encode_utf16().count() <= 32_767
+            }),
             "Setup account capability request contains invalid paths",
         );
         Ok(())
@@ -86,8 +112,8 @@ fn decode_setup_account_capabilities_request(
         observed_sha256.eq_ignore_ascii_case(expected_sha256),
         "Setup account capability request digest changed before elevation",
     );
-    let request: SetupAccountCapabilitiesRequest = serde_json::from_slice(bytes)
-        .context("decode setup account capability request")?;
+    let request: SetupAccountCapabilitiesRequest =
+        serde_json::from_slice(bytes).context("decode setup account capability request")?;
     request.validate()?;
     Ok(request)
 }
@@ -103,8 +129,8 @@ fn decode_setup_account_capabilities_envelope(
     let bytes = STANDARD
         .decode(encoded)
         .context("decode setup account capability envelope")?;
-    let envelope: SetupAccountCapabilitiesEnvelope = serde_json::from_slice(&bytes)
-        .context("decode setup account capability envelope JSON")?;
+    let envelope: SetupAccountCapabilitiesEnvelope =
+        serde_json::from_slice(&bytes).context("decode setup account capability envelope JSON")?;
     ensure!(
         envelope.version == 1,
         "Unsupported setup account capability envelope version",
@@ -116,8 +142,7 @@ fn decode_setup_account_capabilities_envelope(
         "Invalid setup account capability envelope request path",
     );
     ensure!(
-        envelope.sha256.len() == 64
-            && envelope.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        envelope.sha256.len() == 64 && envelope.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "Invalid setup account capability envelope digest",
     );
     Ok(envelope)
@@ -125,10 +150,13 @@ fn decode_setup_account_capabilities_envelope(
 
 #[cfg(windows)]
 fn verify_setup_account_capability_request_path(path: &std::path::Path) -> anyhow::Result<()> {
-    ensure!(path.is_absolute(), "Setup account capability request path must be absolute");
-    let control_directory = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Setup account capability request has no control directory"))?;
+    ensure!(
+        path.is_absolute(),
+        "Setup account capability request path must be absolute"
+    );
+    let control_directory = path.parent().ok_or_else(|| {
+        anyhow::anyhow!("Setup account capability request has no control directory")
+    })?;
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -140,13 +168,40 @@ fn verify_setup_account_capability_request_path(path: &std::path::Path) -> anyho
     let (pid, nonce) = identity
         .split_once('-')
         .ok_or_else(|| anyhow::anyhow!("Setup account capability request identity is invalid"))?;
-    ensure!(pid.parse::<u32>().is_ok_and(|value| value > 0), "Invalid setup request PID");
-    let nonce = uuid::Uuid::parse_str(nonce)
-        .map_err(|_| anyhow::anyhow!("Invalid setup request nonce"))?;
+    ensure!(
+        pid.parse::<u32>().is_ok_and(|value| value > 0),
+        "Invalid setup request PID"
+    );
+    let nonce =
+        uuid::Uuid::parse_str(nonce).map_err(|_| anyhow::anyhow!("Invalid setup request nonce"))?;
     ensure!(nonce.get_version_num() == 4, "Invalid setup request nonce");
     let token = win::current_token()?;
     let host_sid = win::token_user_sid(token.raw())?;
     acl::verify_setup_control_directory_boundary(control_directory, &host_sid)
+}
+
+#[cfg(windows)]
+fn verify_setup_marker_path(
+    request_path: &std::path::Path,
+    marker_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let control_directory = request_path.parent().ok_or_else(|| {
+        anyhow::anyhow!("Setup account capability request has no control directory")
+    })?;
+    let artifact_cache = control_directory.parent().ok_or_else(|| {
+        anyhow::anyhow!("Protected setup control directory has no artifact cache parent")
+    })?;
+    let expected = std::fs::canonicalize(artifact_cache.join("windows-v2-cutover.json"))
+        .context("resolve the protected Windows sandbox setup marker")?;
+    let observed = std::fs::canonicalize(marker_path)
+        .context("resolve the requested Windows sandbox setup marker")?;
+    ensure!(
+        expected
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&observed.to_string_lossy()),
+        "Setup account capability marker is outside the protected artifact cache boundary",
+    );
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -172,15 +227,28 @@ fn run() -> anyhow::Result<u32> {
             if args.next().is_some() {
                 anyhow::bail!("Account capability setup accepts one envelope");
             }
-            let envelope = decode_setup_account_capabilities_envelope(
-                envelope
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("Setup account capability envelope is not Unicode"))?,
-            )?;
+            let envelope =
+                decode_setup_account_capabilities_envelope(envelope.to_str().ok_or_else(
+                    || anyhow::anyhow!("Setup account capability envelope is not Unicode"),
+                )?)?;
             let request_path = std::path::PathBuf::from(envelope.request_path);
             verify_setup_account_capability_request_path(&request_path)?;
             let bytes = host::read_and_retire_request_file(&request_path)?;
             let request = decode_setup_account_capabilities_request(&bytes, &envelope.sha256)?;
+            verify_setup_marker_path(
+                &request_path,
+                std::path::Path::new(&request.setup_marker_path),
+            )?;
+            ensure!(
+                host::setup_installing_marker_is_current(
+                    &request.setup_marker_path,
+                    &request.setup_marker_sha256,
+                    &request.filesystem_capability_nonce,
+                    &request.sandbox_sid,
+                    &request.sandbox_group_sid,
+                )?,
+                "Setup account capability marker is not current",
+            );
             win::ensure_null_device_access(&request.sandbox_sid)?;
             acl::ensure_setup_acl_roots(
                 &request.read_roots,
@@ -188,6 +256,16 @@ fn run() -> anyhow::Result<u32> {
                 &request.sandbox_group_sid,
                 &request.filesystem_capability_nonce,
             )?;
+            ensure!(
+                host::setup_installing_marker_is_current(
+                    &request.setup_marker_path,
+                    &request.setup_marker_sha256,
+                    &request.filesystem_capability_nonce,
+                    &request.sandbox_sid,
+                    &request.sandbox_group_sid,
+                )?,
+                "Setup account capability marker changed during ACL preparation",
+            );
             Ok(0)
         }
         "__verify-null-device" => {
@@ -323,7 +401,7 @@ mod tests {
 
     #[test]
     fn setup_account_capability_request_is_digest_bound_and_rejects_unknown_fields() {
-        let valid = br#"{"version":1,"sandboxSid":"S-1-5-21-1","sandboxGroupSid":"S-1-5-21-2","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","readRoots":["C:\\Runtime"],"writeRoots":["C:\\Temp"]}"#;
+        let valid = br#"{"version":2,"sandboxSid":"S-1-5-21-1","sandboxGroupSid":"S-1-5-21-2","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","setupMarkerPath":"C:\\Control\\setup.json","setupMarkerSha256":"0000000000000000000000000000000000000000000000000000000000000000","readRoots":["C:\\Runtime"],"writeRoots":[]}"#;
         decode_setup_account_capabilities_request(valid, &digest(valid)).unwrap();
         assert!(
             decode_setup_account_capabilities_request(valid, &"0".repeat(64))
@@ -332,7 +410,7 @@ mod tests {
                 .contains("digest changed")
         );
 
-        let unknown = br#"{"version":1,"sandboxSid":"S-1-5-21-1","sandboxGroupSid":"S-1-5-21-2","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","readRoots":[],"writeRoots":[],"unexpected":true}"#;
+        let unknown = br#"{"version":2,"sandboxSid":"S-1-5-21-1","sandboxGroupSid":"S-1-5-21-2","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","setupMarkerPath":"C:\\Control\\setup.json","setupMarkerSha256":"0000000000000000000000000000000000000000000000000000000000000000","readRoots":[],"writeRoots":[],"unexpected":true}"#;
         assert!(decode_setup_account_capabilities_request(unknown, &digest(unknown)).is_err());
     }
 
@@ -341,7 +419,10 @@ mod tests {
         let encoded = "eyJ2ZXJzaW9uIjoxLCJyZXF1ZXN0UGF0aCI6IkM6XFxDb250cm9sXFx3aW5kb3dzLXNldHVwLTEtMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxLmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0=";
         let envelope = decode_setup_account_capabilities_envelope(encoded).unwrap();
         assert_eq!(envelope.version, 1);
-        assert_eq!(envelope.request_path, r"C:\Control\windows-setup-1-00000000-0000-4000-8000-000000000001.json");
+        assert_eq!(
+            envelope.request_path,
+            r"C:\Control\windows-setup-1-00000000-0000-4000-8000-000000000001.json"
+        );
         assert_eq!(envelope.sha256, "0".repeat(64));
 
         assert!(decode_setup_account_capabilities_envelope("not-base64").is_err());
@@ -353,15 +434,38 @@ mod tests {
             .map(|index| format!(r"C:\Runtime\{index}"))
             .collect::<Vec<_>>();
         let payload = serde_json::to_vec(&serde_json::json!({
-            "version": 1,
+            "version": 2,
             "sandboxSid": "S-1-5-21-1",
             "sandboxGroupSid": "S-1-5-21-2",
             "filesystemCapabilityNonce": "00000000-0000-4000-8000-000000000003",
+            "setupMarkerPath": r"C:\Control\setup.json",
+            "setupMarkerSha256": "0".repeat(64),
             "readRoots": roots,
-            "writeRoots": [r"C:\Temp"],
+            "writeRoots": [],
         }))
         .unwrap();
         decode_setup_account_capabilities_request(&payload, &digest(&payload)).unwrap();
+    }
+
+    #[test]
+    fn elevated_setup_account_capabilities_reject_write_roots() {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "sandboxSid": "S-1-5-21-1",
+            "sandboxGroupSid": "S-1-5-21-2",
+            "filesystemCapabilityNonce": "00000000-0000-4000-8000-000000000003",
+            "setupMarkerPath": r"C:\Control\setup.json",
+            "setupMarkerSha256": "0".repeat(64),
+            "readRoots": [],
+            "writeRoots": [r"C:\Temp"],
+        }))
+        .unwrap();
+        assert!(
+            decode_setup_account_capabilities_request(&payload, &digest(&payload))
+                .unwrap_err()
+                .to_string()
+                .contains("cannot grant write roots")
+        );
     }
 
     #[test]

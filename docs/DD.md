@@ -234,28 +234,39 @@ compatibility SIDs. Real nested Node/cmd/PowerShell probes require the account
 SID, matching current Codex; Issue 309 records that an ambient-trustee child
 DACL can therefore bypass a later root capability. The token default DACL still
 excludes the account. Pre-alpha.4 exact sensitive-root denies are removed only
-by the versioned Windows setup cutover. Setup generation 8 retires the protocol-
-7 marker, drains the full legacy Bash deadline, proves the previous sandbox SID
-idle, removes the exactly owned guards with the previous group SID, rotates the
-account, and records the new protected protocol/SID generation. Ordinary command admission may
-authorize a missing current capability on an exact root, but it never runs
+by the generation-8 legacy migration proof. Setup generation 9 preserves a
+healthy fixed account identity and upgrades generation 8 in place without
+replaying that destructive cleanup. Setup writes a protected non-ready
+`installing` marker, its elevated parent synchronously converges NUL compatibility
+and profile read capabilities, and the caller then publishes the ready marker;
+it does not prewarm system TMP. Ordinary command admission may
+authorize a missing stable capability ACE on an exact root, but it never runs
 legacy ACL cleanup or revokes another Session's shared ACL state. Linux and
 macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
-Protocol 8 requires a marker path and SHA-256 on every request. The native host
+Protocol 9 requires a marker path and SHA-256 on every request. The native host
 holds that marker without delete sharing until its resume/started proof is
-durable. Warm ACL verification is read-only; a cold additive update uses a
-mutex derived from the exact opened object's volume/file identity, and all
-roots consume one five-second ACL phase budget. Artifact and control-directory
+durable. Warm ACL verification is read-only; effective inherited normal-token
+access is accepted, while a missing exact restricted capability uses
+`SET_ACCESS` and DACL readback without a cross-process target mutex.
+Artifact and control-directory
 provisioning is setup-only. Ordinary admission performs bounded verification
-and starts an independent request/token/pipe/Job lifecycle. A denyRead request
-may recover a dead-runner receipt only when it overlaps the exact requested
-object; full stale-receipt recovery remains setup work.
-Generation-8 setup invokes one elevated native helper with a versioned,
-digest-bound, single-use request below the protected control directory. That
-helper performs NUL compatibility and setup ACL prewarm synchronously; normal
-doctor/admission never invokes it. A final-reference terminal-proof failure
+and starts an independent request/token/pipe/Job lifecycle. Windows `denyRead`
+returns structured `unsupported_policy` before setup, DACL mutation, or target
+start; ordinary start/exit creates no execution receipt. Setup alone retires legacy
+receipts and their pre-cutover ACEs.
+Before selecting Windows shell policy, `workspaceShellSandboxConfig()` checks
+whether any fixed host-owned Agent Home deny-write directory lies below an
+actual write grant (notably a custom `KODAX_HOME` below system TMP). It creates
+only those fixed directories before emitting the policy. This avoids an
+`ENOENT` denial-root validation failure without widening authority, mutating an
+ACL, or introducing a mutex/queue.
+Generation-9 setup invokes one elevated native parent with a versioned,
+digest-bound, single-use request below the protected control directory. It
+synchronously converges NUL compatibility and profile top-level read
+capabilities before publishing ready; no detached prewarm helper overlaps
+ordinary admission. A final-reference terminal-proof failure
 synchronously retires the broker before same-authority reuse, while an
 unrelated live holder is left running.
 Windows allow-root ACL changes are exact-root only. The target's enabled
@@ -974,6 +985,10 @@ Session behavior spans agent, coding, and repl:
   Presentation-only synthetic completion events (`agent-completed` and legacy
   `task-completed`) are the exception: a non-empty `uiHistory` owns whether the
   CLI displayed them, while headless/no-cache restore derives them from messages.
+  Failed-turn Assistant summaries, Sidecar verifier verdicts, and terminal
+  errors may also be marked `presentationOnly: true`; valid text items make an
+  otherwise context-empty Session resumable, persist exactly once across write
+  retries, and replay in that order without entering canonical model context.
 
 Public session APIs should preserve id-based usage while allowing storage layout
 to evolve. New storage features must be backward-compatible with old JSONL
@@ -1115,19 +1130,22 @@ Shell authorization remains independent from containment. Windows v2 uses ASRT
 only for the network/account launch and the native host/runner path described in
 section 3 for per-command restricted token, private desktop, framed stdio, and
 creation-time Job containment. Different policies, Sessions, and Runtime
-processes do not share a command-lifetime filesystem-effect lease. Setup
-generation 8/protocol 8 removes only exact obsolete KodaX sandbox-account read-
-deny ACEs after the legacy pre-start window drains and the old SID is idle,
-then publishes a protected marker whose handle gates target start. A protected
-two-phase drain marker makes that one-time wait resume safely if setup exits
-between retiring protocol 7 and completing its bounded drain. Ordinary
-admission performs zero legacy cleanup or provisioning. The elevated setup
-helper receives only an explicit base64 envelope naming a digest-bound request
-in protected control state; the caller waits for helper exit, and every setup
-ACL mutex wait consumes the same overall setup deadline. Caller-supplied dynamic `denyRead` roots in the
-standalone sandbox API keep their short execution-logon ACL transaction and
-crash-safe immutable receipt; receipt reads share read/delete access and cannot
-serialize exact owner cleanup. Foreground Bash and the SDK validate setup state
+processes do not share a command-lifetime filesystem-effect lease. The
+generation-8 migration proof records removal of exact obsolete KodaX
+sandbox-account read-deny ACEs. Setup generation 9/protocol 9 reuses a healthy
+fixed SID and filesystem nonce, upgrades generation 8 without replaying cleanup,
+and publishes a protected marker whose handle gates target start. Ordinary
+admission performs zero legacy cleanup or setup provisioning. The elevated
+setup parent receives only an explicit base64 envelope naming a digest-bound
+`installing` marker in protected control state and synchronously converges NUL
+compatibility plus profile read capabilities; the caller publishes the ready
+marker only after the parent succeeds, with no detached helper.
+The public/daemon capability is `sandboxRuntime:9`; an idle v8 daemon is
+replaced and a busy one is rejected before sandbox execution.
+Caller-supplied
+dynamic Windows `denyRead` roots in the standalone sandbox API fail closed as
+`unsupported_policy` before target start; ordinary start/exit creates no
+execution receipt or ACL cleanup transaction. Foreground Bash and the SDK validate setup state
 immediately before spawn and release prepared state on a synchronous pre-start
 failure. Caller-local broker deadlines release only their reference, while a
 fully active broker pool fails before target start rather than waiting for a

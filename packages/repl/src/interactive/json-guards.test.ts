@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isKodaXMessage } from './json-guards.js';
+import { isKodaXMessage, isKodaXSessionUiHistoryItem } from './json-guards.js';
 
 describe('session JSON guards', () => {
   it('accepts every persisted multimodal tool-result content variant', () => {
@@ -26,5 +26,18 @@ describe('session JSON guards', () => {
         { type: 'cache-boundary', hint: 'system' },
       ],
     })).toBe(true);
+  });
+
+  it('accepts only the explicit presentation-only provenance value', () => {
+    expect(isKodaXSessionUiHistoryItem({
+      type: 'assistant',
+      text: 'Visible failed-turn summary.',
+      presentationOnly: true,
+    })).toBe(true);
+    expect(isKodaXSessionUiHistoryItem({
+      type: 'assistant',
+      text: 'Invalid provenance.',
+      presentationOnly: false,
+    })).toBe(false);
   });
 });
