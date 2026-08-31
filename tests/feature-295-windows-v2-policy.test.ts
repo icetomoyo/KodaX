@@ -1720,7 +1720,12 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       await writeFile(gate, 'release', 'utf8');
       completionB = await runtimeB;
       expect(Date.now() - releasedAt).toBeLessThan(15_000);
-      expect(runtimeASettled).toBe(false);
+      if (runtimeASettled) {
+        const early = await runtimeA;
+        throw new Error(
+          `The first cold Runtime settled before the second completed: stdout=${JSON.stringify(early.stdout)} stderr=${JSON.stringify(early.stderr)}`,
+        );
+      }
       const outputDeadline = Date.now() + 15_000;
       while (Date.now() < outputDeadline) {
         try {
@@ -1731,6 +1736,12 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
         }
         if (runtimeASettled) break;
         await delay(10);
+      }
+      if (runtimeASettled) {
+        const early = await runtimeA;
+        throw new Error(
+          `The first cold Runtime settled before release: stdout=${JSON.stringify(early.stdout)} stderr=${JSON.stringify(early.stderr)}`,
+        );
       }
       await expect(readFile(outputA, 'utf8')).resolves.toBe('A');
       await expect(readFile(outputB, 'utf8')).resolves.toBe('B');

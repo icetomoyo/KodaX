@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -417,6 +417,205 @@ describe('Windows native artifact trust boundary', () => {
         fs.rmSync(temporary, { recursive: true, force: true });
       }
     },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'publishes a missing content hash and reuses the warm artifact without PowerShell',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-self-heal-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const nativeDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const sourcePath = path.join(nativeDirectory, 'kodax_windows_shell_sandbox.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const bytes = Buffer.from('self-healing KodaX shell artifact');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(localAppData, { recursive: true });
+        fs.mkdirSync(nativeDirectory, { recursive: true });
+        fs.writeFileSync(sourcePath, bytes);
+        vi.stubGlobal(
+          'KODAX_WINDOWS_NATIVE_MANIFEST_JSON',
+          windowsManifestText('a'.repeat(64), sha256),
+        );
+
+        const cold = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true },
+        );
+        vi.stubEnv('SystemRoot', path.join(temporary, 'missing-system-root'));
+        const warm = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true },
+        );
+        expect(warm.path).toBe(cold.path);
+        expect(fs.readFileSync(cold.path)).toEqual(bytes);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'fails closed when protected artifact bytes change after an ACL is externally weakened',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-acl-drift-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const nativeDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const sourcePath = path.join(nativeDirectory, 'kodax_windows_shell_sandbox.exe');
+      vi.stubEnv('LOCALAPPDATA', path.join(temporary, 'local-app-data'));
+      try {
+        const bytes = Buffer.from('KodaX shell artifact with ACL drift');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(path.dirname(windowsNativeArtifactCacheRoot()), { recursive: true });
+        fs.mkdirSync(nativeDirectory, { recursive: true });
+        fs.writeFileSync(sourcePath, bytes);
+        vi.stubGlobal(
+          'KODAX_WINDOWS_NATIVE_MANIFEST_JSON',
+          windowsManifestText('a'.repeat(64), sha256),
+        );
+        const artifact = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true },
+        );
+        const script = String.raw`
+$acl = [IO.File]::GetAccessControl($env:KODAX_TEST_ARTIFACT)
+$everyone = [Security.Principal.SecurityIdentifier]::new('S-1-1-0')
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($everyone, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)
+[void]$acl.AddAccessRule($rule)
+[IO.File]::SetAccessControl($env:KODAX_TEST_ARTIFACT, $acl)
+`;
+        const powershell = path.join(
+          process.env.SystemRoot ?? String.raw`C:\Windows`,
+          'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+        );
+        const mutation = spawnSync(powershell, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+        ], {
+          env: { ...process.env, KODAX_TEST_ARTIFACT: artifact.path },
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+        expect(mutation.status, mutation.stderr).toBe(0);
+        fs.writeFileSync(artifact.path, Buffer.alloc(bytes.byteLength, 0x78));
+
+        expect(() => resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true },
+        )).toThrow(/native artifact hash mismatch/i);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'atomically converges two processes publishing the same missing content hash',
+    async () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-publish-race-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const nativeDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const sourcePath = path.join(nativeDirectory, 'kodax_windows_shell_sandbox.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      const gate = path.join(temporary, 'start');
+      try {
+        const bytes = Buffer.from('concurrent KodaX shell artifact publication');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        const manifestText = windowsManifestText('a'.repeat(64), sha256);
+        fs.mkdirSync(nativeDirectory, { recursive: true });
+        fs.mkdirSync(localAppData, { recursive: true });
+        fs.writeFileSync(sourcePath, bytes);
+        const implementation = pathToFileURL(path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          'windows-native-artifacts.ts',
+        )).href;
+        const script = String.raw`
+import fs from 'node:fs';
+const input = JSON.parse(process.argv[1]);
+globalThis.KODAX_WINDOWS_NATIVE_MANIFEST_JSON = input.manifestText;
+const api = await import(input.implementation);
+fs.writeFileSync(input.ready, 'ready', { flag: 'wx' });
+while (!fs.existsSync(input.gate)) await new Promise((resolve) => setTimeout(resolve, 10));
+const artifact = api.resolveWindowsNativeArtifact(input.moduleFileUrl, 'shellSandbox', 1, { provision: true });
+process.stdout.write(JSON.stringify({ path: artifact.path, bytes: fs.readFileSync(artifact.path, 'utf8') }));
+`;
+        const children = [0, 1].map((index) => {
+          const ready = path.join(temporary, `ready-${index}`);
+          const child = spawn(process.execPath, [
+            '--import', 'tsx', '--input-type=module', '-e', script,
+            JSON.stringify({
+              implementation,
+              moduleFileUrl: pathToFileURL(moduleFile).href,
+              sourcePath,
+              manifestText,
+              gate,
+              ready,
+            }),
+          ], {
+            cwd: path.resolve('.'),
+            env: { ...process.env, LOCALAPPDATA: localAppData },
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+          child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+          const completed = new Promise<{ readonly stdout: string; readonly stderr: string }>(
+            (resolve, reject) => {
+              child.once('error', reject);
+              child.once('close', (code) => {
+                if (code === 0) resolve({ stdout, stderr });
+                else reject(new Error(`artifact publisher ${index} exited ${String(code)}: ${stderr}`));
+              });
+            },
+          );
+          return { ready, completed };
+        });
+        await vi.waitUntil(
+          () => children.every(({ ready }) => fs.existsSync(ready)),
+          { timeout: 10_000, interval: 20 },
+        );
+        fs.writeFileSync(gate, 'go', { flag: 'wx' });
+        const outputs = await Promise.all(children.map(({ completed }) => completed));
+        const artifacts = outputs.map(({ stdout }) => JSON.parse(stdout) as {
+          readonly path: string;
+          readonly bytes: string;
+        });
+        expect(artifacts[0]?.path.toLowerCase()).toBe(artifacts[1]?.path.toLowerCase());
+        expect(artifacts.map(({ bytes: content }) => content)).toEqual([
+          bytes.toString('utf8'),
+          bytes.toString('utf8'),
+        ]);
+        const destinationDirectory = path.dirname(artifacts[0]!.path);
+        expect(fs.readdirSync(destinationDirectory).filter((name) => name.endsWith('.tmp')))
+          .toEqual([]);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+    30_000,
   );
 
   it.runIf(process.platform === 'win32')(

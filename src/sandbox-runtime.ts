@@ -97,6 +97,7 @@ import {
   repairWindowsSandboxControlDirectory,
   resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
+  verifyProtectedWindowsNativeArtifactImage,
   verifyWindowsSandboxControlDirectory,
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
@@ -928,7 +929,7 @@ interface PreparedWindowsSandboxRunner {
   readonly srtWin: ReturnType<typeof resolveSrtWin>;
 }
 
-let preparedWindowsRunnerPromise: Promise<PreparedWindowsSandboxRunner> | undefined;
+const preparedWindowsRunnerPromises = new Map<boolean, Promise<PreparedWindowsSandboxRunner>>();
 let preparedWindowsRunner: PreparedWindowsSandboxRunner | undefined;
 
 function errorText(error: unknown): string {
@@ -976,9 +977,27 @@ export function resolveSrtWinSourcePath(
 
 async function prepareWindowsSandboxRunner(
   untrustedWriteRoots: readonly string[] = [],
-  provision = false,
+  provision = true,
 ): Promise<PreparedWindowsSandboxRunner> {
-  if (preparedWindowsRunnerPromise === undefined) {
+  const cachedPreparation = preparedWindowsRunnerPromises.get(provision);
+  if (cachedPreparation !== undefined) {
+    const cached = await cachedPreparation;
+    try {
+      verifyProtectedWindowsNativeArtifactImage(cached.path, cached.sha256);
+      assertWindowsAsrtRunnerTrustOutsideWriteRoots(
+        cached.developmentTrustRoots,
+        untrustedWriteRoots,
+      );
+      return cached;
+    } catch {
+      if (preparedWindowsRunnerPromises.get(provision) === cachedPreparation) {
+        preparedWindowsRunnerPromises.delete(provision);
+        preparedWindowsRunner = undefined;
+      }
+      return prepareWindowsSandboxRunner(untrustedWriteRoots, provision);
+    }
+  }
+  if (!preparedWindowsRunnerPromises.has(provision)) {
     const preparation = (async () => {
       const protectedRunner = resolveWindowsAsrtRunnerArtifact(
         import.meta.url,
@@ -998,15 +1017,15 @@ async function prepareWindowsSandboxRunner(
       preparedWindowsRunner = runner;
       return runner;
     })();
-    preparedWindowsRunnerPromise = preparation;
+    preparedWindowsRunnerPromises.set(provision, preparation);
     void preparation.catch(() => {
-      if (preparedWindowsRunnerPromise === preparation) {
-        preparedWindowsRunnerPromise = undefined;
+      if (preparedWindowsRunnerPromises.get(provision) === preparation) {
+        preparedWindowsRunnerPromises.delete(provision);
         preparedWindowsRunner = undefined;
       }
     });
   }
-  const runner = await preparedWindowsRunnerPromise;
+  const runner = await preparedWindowsRunnerPromises.get(provision)!;
   assertWindowsAsrtRunnerTrustOutsideWriteRoots(
     runner.developmentTrustRoots,
     untrustedWriteRoots,
@@ -1144,7 +1163,7 @@ function windowsSandboxV2HostUserSid(): string {
   if (cachedWindowsSandboxV2HostUserSid !== undefined) {
     return cachedWindowsSandboxV2HostUserSid;
   }
-  const artifact = resolveWindowsSandboxV2Executable({ provision: false });
+  const artifact = resolveWindowsSandboxV2Executable({ provision: true });
   const result = spawnSync(artifact.path, ['__current-user-sid'], {
     env: sanitizedEnvironment(),
     encoding: 'utf8',
@@ -1347,22 +1366,35 @@ function currentWindowsSandboxV2Cutover(
 function prepareWindowsShellArtifact(
   sandboxReadSid: string,
   untrustedWriteRoots: readonly string[],
+  provision = true,
 ): Promise<ReturnType<typeof resolveWindowsSandboxV2Executable>> {
-  let prepared = preparedWindowsShellArtifacts.get(sandboxReadSid);
+  const cacheKey = `${sandboxReadSid}\0${provision ? 'provision' : 'verify'}`;
+  let prepared = preparedWindowsShellArtifacts.get(cacheKey);
+  const cached = prepared !== undefined;
   if (prepared === undefined) {
     prepared = Promise.resolve().then(() => resolveWindowsSandboxV2Executable({
       sandboxReadSid,
-      provision: false,
+      provision,
     }));
-    preparedWindowsShellArtifacts.set(sandboxReadSid, prepared);
+    preparedWindowsShellArtifacts.set(cacheKey, prepared);
     void prepared.catch(() => {
-      if (preparedWindowsShellArtifacts.get(sandboxReadSid) === prepared) {
-        preparedWindowsShellArtifacts.delete(sandboxReadSid);
+      if (preparedWindowsShellArtifacts.get(cacheKey) === prepared) {
+        preparedWindowsShellArtifacts.delete(cacheKey);
       }
     });
   }
   assertWindowsNativeArtifactStoreNotDirectlyWritable(untrustedWriteRoots);
-  return prepared.then((artifact) => {
+  return prepared.then(async (artifact) => {
+    if (cached) {
+      try {
+        verifyProtectedWindowsNativeArtifactImage(artifact.path, artifact.sha256);
+      } catch {
+        if (preparedWindowsShellArtifacts.get(cacheKey) === prepared) {
+          preparedWindowsShellArtifacts.delete(cacheKey);
+        }
+        return prepareWindowsShellArtifact(sandboxReadSid, untrustedWriteRoots, provision);
+      }
+    }
     assertWindowsAsrtRunnerTrustOutsideWriteRoots(
       artifact.developmentTrustRoots,
       untrustedWriteRoots,
@@ -2207,21 +2239,18 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
   }
   if (process.platform === 'win32') {
     try {
-      const runner = await prepareWindowsSandboxRunner();
+      const runner = await prepareWindowsSandboxRunner([], false);
       const user = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
       const accountDiagnostics = windowsSandboxAccountDiagnostics(user);
       if (accountDiagnostics.length > 0 || !user.sid || !user.groupSid) {
         setupRequired = true;
         diagnostics.push(...accountDiagnostics);
       } else {
-        resolveWindowsSandboxV2Executable({
-          sandboxReadSid: user.groupSid,
-          provision: false,
-        });
+        const controller = await prepareWindowsShellArtifact(user.groupSid, [], false);
         verifyWindowsSandboxControlDirectory();
         try {
           cachedWindowsSandboxV2Cutover = assertWindowsSandboxV2Cutover(user);
-          verifyWindowsV2AccountCompatibility(user.sid);
+          verifyWindowsV2AccountCompatibility(user.sid, controller.path);
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
           setupRequired = true;
@@ -2365,9 +2394,12 @@ function installWindowsV2AccountCapabilities(
   );
 }
 
-function verifyWindowsV2AccountCompatibility(sandboxSid: string): void {
+function verifyWindowsV2AccountCompatibility(
+  sandboxSid: string,
+  executable: string,
+): void {
   const result = spawnSync(
-    resolveWindowsSandboxV2Executable({ provision: false }).path,
+    executable,
     ['__verify-null-device', sandboxSid],
     {
       env: sanitizedEnvironment(),
@@ -2810,6 +2842,7 @@ interface SandboxProcessResult {
 
 const SANDBOX_TERMINATION_FORCE_MS = 250;
 const SANDBOX_TERMINATION_HARD_MS = 1_500;
+const WINDOWS_V2_PRE_RESUME_TERMINATION_MS = 1_000;
 const WINDOWS_V2_TERMINATION_ATTESTATION_MS = 12_000;
 
 async function collectProcess(
@@ -2959,7 +2992,7 @@ export async function resetSandboxRuntimeForTest(): Promise<void> {
   cachedWindowsBootIdentity = undefined;
   doctorPromise = undefined;
   doctorExpiresAt = 0;
-  preparedWindowsRunnerPromise = undefined;
+  preparedWindowsRunnerPromises.clear();
   preparedWindowsRunner = undefined;
   cachedWindowsSandboxV2Cutover = undefined;
   preparedWindowsShellArtifacts.clear();
@@ -3265,40 +3298,33 @@ function createWindowsV2ProcessControl(
     const termination = new Promise<void>((resolve, reject) => {
       const phase = phases.get(child);
       const provenNotStarted = phase === undefined || phase === 'pre-start-unavailable';
+      const preResume = phase !== 'started';
       const stdin = child.stdin;
       if (stdin === null) {
         reject(new Error('Native sandbox control pipe was not created.'));
         return;
       }
-      if (child.exitCode !== null || child.signalCode !== null) {
-        phases.set(child, 'terminal');
-        if (provenNotStarted) resolve();
-        else void verifyTerminalRecord().then(resolve, reject);
-        return;
-      }
-      let settled = false;
-      let emergencyStarted = false;
-      let deliveryFailure: Error | undefined;
-      const finish = (error?: Error): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        child.off('close', onClose);
-        child.off('error', onChildError);
-        stdin.off('error', onStdinError);
-        if (error === undefined) resolve();
-        else reject(error);
-      };
-      const onClose = (code: number | null, closeSignal: NodeJS.Signals | null): void => {
-        if (emergencyStarted) return;
-        phases.set(child, 'terminal');
-        if (provenNotStarted) {
-          finish();
-          return;
+      const verifyClosedBoundary = async (
+        code: number | null,
+        closeSignal: NodeJS.Signals | null,
+        deliveryFailure?: Error,
+      ): Promise<void> => {
+        if (provenNotStarted) return;
+        if (preResume) {
+          try {
+            await verifyLaunchRecord(resumeRecordPath);
+          } catch (error: unknown) {
+            if (isFileSystemError(error, 'ENOENT')) {
+              phases.set(child, 'pre-start-unavailable');
+              return;
+            }
+            throw error;
+          }
         }
-        void verifyTerminalRecord().then(
-          () => finish(),
-          (recordError: unknown) => finish(new Error(
+        try {
+          await verifyTerminalRecord();
+        } catch (recordError: unknown) {
+          throw new Error(
             `Native sandbox closed without a Job-drain attestation (code ${String(code)}, `
             + `signal ${String(closeSignal)}).`,
             {
@@ -3307,7 +3333,47 @@ function createWindowsV2ProcessControl(
                 'Native sandbox terminal record verification failed.',
               ),
             },
-          )),
+          );
+        }
+      };
+      if (child.exitCode !== null || child.signalCode !== null) {
+        void verifyClosedBoundary(child.exitCode, child.signalCode).then(
+          () => {
+            phases.set(child, 'terminal');
+            resolve();
+          },
+          reject,
+        );
+        return;
+      }
+      let settled = false;
+      let emergencyStarted = false;
+      let deliveryFailure: Error | undefined;
+      let terminationBudgetMs = preResume
+        ? WINDOWS_V2_PRE_RESUME_TERMINATION_MS
+        : WINDOWS_V2_TERMINATION_ATTESTATION_MS;
+      const terminationStartedAt = Date.now();
+      let timer: NodeJS.Timeout | undefined;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        child.off('close', onClose);
+        child.off('error', onChildError);
+        stdin.off('error', onStdinError);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const onClose = (code: number | null, closeSignal: NodeJS.Signals | null): void => {
+        if (emergencyStarted) return;
+        void verifyClosedBoundary(code, closeSignal, deliveryFailure).then(
+          () => {
+            phases.set(child, 'terminal');
+            finish();
+          },
+          (error: unknown) => finish(
+            error instanceof Error ? error : new Error(String(error)),
+          ),
         );
       };
       const onChildError = (error: Error): void => {
@@ -3316,27 +3382,43 @@ function createWindowsV2ProcessControl(
       const onStdinError = (error: Error): void => {
         deliveryFailure ??= error;
       };
-      const timer = setTimeout(() => {
+      const startEmergencyCleanup = (): void => {
+        if (settled || emergencyStarted) return;
         emergencyStarted = true;
         void killChildProcessTree(child, { forceMs: 500, taskkillMs: 500 }).then(
-          (result) => finish(new AggregateError(
-            [
-              new Error(
-                `Native sandbox did not attest Job drain within `
-                + `${WINDOWS_V2_TERMINATION_ATTESTATION_MS} ms.`,
-              ),
-              ...(deliveryFailure === undefined ? [] : [deliveryFailure]),
-              ...(result.status === 'unknown'
-                ? [new Error('Emergency process-tree termination was not confirmed.')]
-                : []),
-            ],
-            'Native sandbox termination was not confirmed by its runner.',
-          )),
+          (result) => {
+            if (result.status === 'unknown') {
+              finish(new AggregateError(
+                [
+                  new Error('Emergency process-tree termination was not confirmed.'),
+                  ...(deliveryFailure === undefined ? [] : [deliveryFailure]),
+                ],
+                'Native sandbox termination was not confirmed by its runner.',
+              ));
+              return;
+            }
+            void verifyClosedBoundary(child.exitCode, child.signalCode, deliveryFailure).then(
+              () => {
+                phases.set(child, 'terminal');
+                finish();
+              },
+              (error: unknown) => finish(new AggregateError(
+                [
+                  new Error(
+                    `Native sandbox did not attest Job drain within `
+                    + `${terminationBudgetMs} ms.`,
+                  ),
+                  error,
+                ],
+                'Native sandbox termination was not confirmed by its runner.',
+              )),
+            );
+          },
           (error: unknown) => finish(new AggregateError(
             [
               new Error(
                 `Native sandbox did not attest Job drain within `
-                + `${WINDOWS_V2_TERMINATION_ATTESTATION_MS} ms.`,
+                + `${terminationBudgetMs} ms.`,
               ),
               ...(deliveryFailure === undefined ? [] : [deliveryFailure]),
               error,
@@ -3344,7 +3426,32 @@ function createWindowsV2ProcessControl(
             'Native sandbox termination and emergency cleanup both failed.',
           )),
         );
-      }, WINDOWS_V2_TERMINATION_ATTESTATION_MS);
+      };
+      const onTerminationBudgetExpired = (): void => {
+        if (!preResume) {
+          startEmergencyCleanup();
+          return;
+        }
+        void verifyLaunchRecord(resumeRecordPath).then(
+          () => {
+            if (settled || emergencyStarted) return;
+            terminationBudgetMs = WINDOWS_V2_TERMINATION_ATTESTATION_MS;
+            const remaining = Math.max(
+              0,
+              terminationBudgetMs - (Date.now() - terminationStartedAt),
+            );
+            timer = setTimeout(startEmergencyCleanup, remaining);
+            timer.unref();
+          },
+          (error: unknown) => {
+            if (!isFileSystemError(error, 'ENOENT')) {
+              deliveryFailure ??= error instanceof Error ? error : new Error(String(error));
+            }
+            startEmergencyCleanup();
+          },
+        );
+      };
+      timer = setTimeout(onTerminationBudgetExpired, terminationBudgetMs);
       timer.unref();
       child.once('close', onClose);
       child.once('error', onChildError);
@@ -4718,7 +4825,28 @@ export async function runKodaXSandboxed(
   };
   const network = input.network ?? { mode: 'deny' };
   const endpoints = sdkSandboxEndpoints(network);
-  const doctor = await doctorSandboxRuntime();
+  let doctor = await doctorSandboxRuntime();
+  if (process.platform === 'win32' && !doctor.ready) {
+    let provisioningFailure: unknown;
+    try {
+      const runner = await prepareWindowsSandboxRunner(normalizedFilesystem.allowWrite, true);
+      const user = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
+      if (user.groupSid !== undefined) {
+        await prepareWindowsShellArtifact(user.groupSid, normalizedFilesystem.allowWrite);
+      }
+    } catch (error: unknown) {
+      provisioningFailure = error;
+    }
+    doctor = await doctorSandboxRuntime({ refresh: true });
+    if (provisioningFailure !== undefined) {
+      doctor = {
+        ...doctor,
+        ready: false,
+        setupRequired: true,
+        diagnostics: [errorText(provisioningFailure), ...doctor.diagnostics],
+      };
+    }
+  }
   if (!doctor.ready) {
     return {
       status: 'unavailable',

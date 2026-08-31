@@ -7,14 +7,17 @@ coordination path and that setup, ACL, broker, and terminal recovery cannot
 recreate the observed 60/75/240-second stalls.
 
 Use a disposable Windows sandbox account/workspace. Build the current native
-artifact first and run `kodax sandbox setup` once. Protocol 9/setup generation
-9 and `sandboxRuntime:9` are required; do not test a protocol-9 TypeScript bundle against an older
-native sidecar.
+artifact first. The first current client must publish a missing content hash
+automatically; run `kodax sandbox setup` once only when the account/setup
+generation itself is absent or stale. Protocol 9/setup generation 9 and
+`sandboxRuntime:9` are required; do not test a protocol-9 TypeScript bundle
+against an older native sidecar.
 
 ## Automated gates
 
 ```powershell
 npm run build:native
+npx vitest run src/windows-native-artifacts.test.ts src/sdk-runtime-daemon-upgrade.test.ts
 npx vitest run src/windows-sandbox-v2.test.ts src/sandbox-runtime.test.ts
 npx vitest run packages/coding/src/tools/bash.test.ts
 npx vitest run packages/coding/src/tools/worktree.test.ts
@@ -26,6 +29,18 @@ npx vitest run tests/feature-295-windows-v2-policy.test.ts
 Expected:
 
 - native protocol is 9 and the setup marker is generation 9;
+- an idle older daemon is replaced, a busy older daemon is not force-killed,
+  a newer daemon is not downgraded, and an unknown/non-SemVer owner is not
+  mutated;
+- a missing current artifact hash self-publishes once with a protected
+  owner/DACL; every warm command performs local stable-identity/path/hash
+  verification without PowerShell, and byte drift fails closed even when file
+  timestamps are otherwise unchanged;
+- two independent processes racing to publish the same missing hash converge on
+  one complete image with no staging residue or global mutex;
+- pre-Resume cancellation terminates the exact host tree without the extra
+  12-second terminal wait, while post-Resume termination still requires durable
+  Job-drain evidence;
 - the generation-9 marker retains the existing valid random filesystem-capability
   nonce; generation 8 remains the one-time legacy ACL migration proof;
   setup first publishes a protected non-ready `installing` marker; one setup-only

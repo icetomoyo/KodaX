@@ -274,6 +274,19 @@ function readVerifiedArtifact(file: string, expected: string): Buffer {
   return readHashPinnedArtifact(file, expected, true);
 }
 
+export function verifyProtectedWindowsNativeArtifactImage(
+  file: string,
+  expectedSha256: string,
+): string {
+  readVerifiedArtifact(file, expectedSha256);
+  const canonicalRoot = fs.realpathSync.native(windowsNativeArtifactCacheRoot());
+  const canonicalFile = fs.realpathSync.native(file);
+  if (!sameOrInside(canonicalRoot, canonicalFile)) {
+    throw new Error('Protected native artifact escaped its physical cache root.');
+  }
+  return canonicalFile;
+}
+
 export function windowsNativeArtifactCacheRoot(): string {
   const localAppData = process.env.LOCALAPPDATA
     ?? path.join(os.homedir(), 'AppData', 'Local');
@@ -656,6 +669,7 @@ $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $usersSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
 $sandboxSid = if ([string]::IsNullOrEmpty([string]$payload.sandboxReadSid)) { $null } else { [Security.Principal.SecurityIdentifier]::new([string]$payload.sandboxReadSid) }
 $localUsersReadExecute = [bool]$payload.localUsersReadExecute
+$allowCreate = [bool]$payload.allowCreate
 $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
 $none = [Security.AccessControl.PropagationFlags]::None
 $allow = [Security.AccessControl.AccessControlType]::Allow
@@ -717,6 +731,7 @@ function Ensure-ProtectedDirectory([string]$candidate) {
     Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
     return
   }
+  if (-not $allowCreate) { throw "protected artifact directory is missing: $candidate" }
   [void][IO.Directory]::CreateDirectory($candidate, (New-DirectorySecurity))
   Assert-NoReparse $candidate
   Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
@@ -745,6 +760,7 @@ $destination = [IO.Path]::Combine($destinationDirectory, [string]$payload.file)
 $temporary = [IO.Path]::Combine($destinationDirectory, '.' + [IO.Path]::GetRandomFileName() + '.tmp')
 try {
   if (-not (Test-Path -LiteralPath $destination)) {
+    if (-not $allowCreate) { throw 'protected artifact is missing' }
     $stream = [IO.FileStream]::new($temporary, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::None, 65536, [IO.FileOptions]::WriteThrough, (New-FileSecurity))
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     try { [IO.File]::Move($temporary, $destination) } catch { if (-not (Test-Path -LiteralPath $destination)) { throw } }
@@ -984,6 +1000,7 @@ function provisionProtectedArtifact(input: {
   readonly bytes: Buffer;
   readonly sandboxReadSid?: string;
   readonly localUsersReadExecute?: boolean;
+  readonly allowCreate?: boolean;
 }): string {
   if (input.sandboxReadSid !== undefined && !/^S-\d+(?:-\d+)+$/i.test(input.sandboxReadSid)) {
     throw new Error('Native artifact sandbox-read SID is invalid.');
@@ -1013,6 +1030,7 @@ function provisionProtectedArtifact(input: {
       bytes: input.bytes.toString('base64'),
       sandboxReadSid: input.sandboxReadSid ?? '',
       localUsersReadExecute: input.localUsersReadExecute === true,
+      allowCreate: input.allowCreate !== false,
     }),
     encoding: 'utf8',
     env: process.env,
@@ -1039,13 +1057,22 @@ function provisionProtectedArtifact(input: {
   return canonicalDestination;
 }
 
-function verifyProtectedArtifact(input: {
+function verifyOrProvisionProtectedArtifact(input: {
   readonly kind: WindowsProtectedArtifactKind;
   readonly entry: Pick<WindowsNativeArtifactEntry, 'file' | 'sha256'>;
+  readonly bytes: Buffer;
+  readonly provision: boolean;
   readonly sandboxReadSid?: string;
   readonly localUsersReadExecute?: boolean;
 }): string {
-  const cacheRoot = windowsNativeArtifactCacheRoot();
+  const artifact = {
+    kind: input.kind,
+    entry: input.entry,
+    ...(input.sandboxReadSid === undefined ? {} : { sandboxReadSid: input.sandboxReadSid }),
+    ...(input.localUsersReadExecute === undefined
+      ? {}
+      : { localUsersReadExecute: input.localUsersReadExecute }),
+  };
   const destination = path.join(
     protectedArtifactDirectory(
       input.kind,
@@ -1055,13 +1082,15 @@ function verifyProtectedArtifact(input: {
     ),
     input.entry.file,
   );
-  readVerifiedArtifact(destination, input.entry.sha256);
-  const canonicalRoot = fs.realpathSync.native(cacheRoot);
-  const canonicalDestination = fs.realpathSync.native(destination);
-  if (!sameOrInside(canonicalRoot, canonicalDestination)) {
-    throw new Error('Protected native artifact escaped its physical cache root.');
+  try {
+    return verifyProtectedWindowsNativeArtifactImage(destination, input.entry.sha256);
+  } catch (error: unknown) {
+    const code = error instanceof Error && 'code' in error
+      ? Reflect.get(error, 'code')
+      : undefined;
+    if (!input.provision || (code !== 'ENOENT' && code !== 'ENOTDIR')) throw error;
+    return provisionProtectedArtifact({ ...artifact, bytes: input.bytes, allowCreate: true });
   }
-  return canonicalDestination;
 }
 
 export function provisionWindowsAsrtRunner(
@@ -1144,16 +1173,16 @@ export function resolveWindowsAsrtRunnerArtifact(
         manifest.asrtRunner.sha256,
         !embeddedManifest,
       );
-      const protectedRunner = options.provision === false
-        ? {
-            path: verifyProtectedArtifact({
-              kind: 'asrtRunner',
-              entry: manifest.asrtRunner,
-              localUsersReadExecute: true,
-            }),
-            sha256: manifest.asrtRunner.sha256,
-          }
-        : provisionWindowsAsrtRunner(bytes, manifest.asrtRunner.sha256);
+      const protectedRunner = {
+        path: verifyOrProvisionProtectedArtifact({
+          kind: 'asrtRunner',
+          entry: manifest.asrtRunner,
+          bytes,
+          provision: options.provision !== false,
+          localUsersReadExecute: true,
+        }),
+        sha256: manifest.asrtRunner.sha256,
+      };
       return {
         ...protectedRunner,
         developmentTrustRoots: candidate.developmentTrustRoots,
@@ -1203,22 +1232,15 @@ export function resolveWindowsNativeArtifact(
       }
       const artifactPath = path.join(directory, entry.file);
       const bytes = readVerifiedArtifact(artifactPath, entry.sha256);
-      const protectedPath = options.provision === false
-        ? verifyProtectedArtifact({
-            kind,
-            entry,
-            ...(options.sandboxReadSid === undefined
-              ? {}
-              : { sandboxReadSid: options.sandboxReadSid }),
-          })
-        : provisionProtectedArtifact({
-            kind,
-            entry,
-            bytes,
-            ...(options.sandboxReadSid === undefined
-              ? {}
-              : { sandboxReadSid: options.sandboxReadSid }),
-          });
+      const protectedPath = verifyOrProvisionProtectedArtifact({
+        kind,
+        entry,
+        bytes,
+        provision: options.provision !== false,
+        ...(options.sandboxReadSid === undefined
+          ? {}
+          : { sandboxReadSid: options.sandboxReadSid }),
+      });
       return {
         path: protectedPath,
         entry,

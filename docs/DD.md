@@ -1,12 +1,12 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-08-31
+> Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
-> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297 + Issue 326
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.5` (FEATURE_297 + Issue 326
 > sandbox concurrency correction; not tagged)
 >
 > This DD describes current implementation structure. Retired V1 chain details
@@ -250,9 +250,11 @@ holds that marker without delete sharing until its resume/started proof is
 durable. Warm ACL verification is read-only; effective inherited normal-token
 access is accepted, while a missing exact restricted capability uses
 `SET_ACCESS` and DACL readback without a cross-process target mutex.
-Artifact and control-directory
-provisioning is setup-only. Ordinary admission performs bounded verification
-and starts an independent request/token/pipe/Job lifecycle. Windows `denyRead`
+Control-directory provisioning and migration are setup-only. A missing
+content-addressed executable image may be atomically published by the first
+execution; an existing image is never repaired by admission. Ordinary admission
+performs local path/identity/hash verification and starts an independent
+request/token/pipe/Job lifecycle. Windows `denyRead`
 returns structured `unsupported_policy` before setup, DACL mutation, or target
 start; ordinary start/exit creates no execution receipt. Setup alone retires legacy
 receipts and their pre-cutover ACEs.
@@ -442,7 +444,12 @@ Daemon and embedded capability metadata advertise the same four canonical
 profiles, the `auto-in-project` input alias, fixed reviewer attempts, and the
 Runtime-owned boundary route. Capability checks accept `advertised >= required`;
 auto-start may fence and replace an idle older daemon, but attach-only/busy paths
-return a recoverable error without mutation.
+return a recoverable error without mutation. Version comparison follows SemVer:
+an older idle owner is replaced, an active older owner is never force-killed,
+and an older client does not downgrade a newer owner.
+An invalid or otherwise non-comparable daemon version is a recoverable,
+zero-mutation boundary; only a version proven older may trigger version
+self-healing.
 
 `sideQuery()` owns a fixed-field `SideQueryDiagnostics` envelope: provider,
 model, effective timeout, elapsed time, retry count/wait, optional first-output
@@ -1140,8 +1147,25 @@ setup parent receives only an explicit base64 envelope naming a digest-bound
 `installing` marker in protected control state and synchronously converges NUL
 compatibility plus profile read capabilities; the caller publishes the ready
 marker only after the parent succeeds, with no detached helper.
-The public/daemon capability is `sandboxRuntime:9`; an idle v8 daemon is
-replaced and a busy one is rejected before sandbox execution.
+Native executable publication is separate from setup migration. Publication
+uses the fixed System32 boundary to construct and verify owner/DACL state. Every
+ordinary admission then verifies stable single-link file identity, physical
+cache containment, and the content hash locally; it launches no PowerShell
+verifier and treats no mutable timestamp as authority. If a new release hash has
+no protected destination, the first caller publishes it through an atomic,
+content-addressed operation; concurrent callers share the immutable winner and
+no command-lifetime or global mutex is introduced. Existing malformed content
+fails closed instead of being repaired on admission.
+The native host observes termination immediately after consuming bootstrap,
+before synchronous pre-launch preparation. A per-command abort completion
+boundary keeps the process alive until Job-drain evidence is durable. Node treats
+an absent nonce-bound Resume record only after confirmed host-tree death as
+proof that the target never ran; once Resume exists, terminal Job-drain evidence
+remains mandatory.
+The public/daemon capability is `sandboxRuntime:9`; SemVer is also part of the
+execution contract. An idle older daemon is replaced, a busy older daemon is
+rejected before sandbox execution, a newer daemon is never downgraded, and an
+unknown/non-SemVer owner is never mutated.
 Caller-supplied
 dynamic Windows `denyRead` roots in the standalone sandbox API fail closed as
 `unsupported_policy` before target start; ordinary start/exit creates no

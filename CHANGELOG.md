@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
+## [0.7.96-alpha.5] - 2026-09-01
+
+### Fixed
+
+- Completed the Windows sandbox concurrency correction without adding a
+  machine-global command lock or queue. Every command owns its runner pipes,
+  exact process handle, creation-time kill-on-close Job, cancellation state,
+  and terminal evidence; cancellation is observed before synchronous launch
+  preparation and all abort paths finish Job drainage before host exit.
+- Removed the remaining startup/termination race: a command that has not
+  published a nonce-bound Resume record may use the one-second pre-start
+  cleanup path, while a Resume discovered during that window extends the wait
+  to the normal terminal-attestation budget instead of being killed early.
+- Made content-addressed Windows native artifacts self-healing on execution.
+  A missing new-version artifact is published atomically, concurrent publishers
+  converge without a global mutex, and ordinary commands verify stable file
+  identity, physical cache containment, and content hash without launching a
+  PowerShell verifier. Owner/DACL construction remains part of atomic
+  publication; `sandbox doctor` remains verify-only.
+- Made Runtime daemon upgrades version-safe. An alpha.5 execution client
+  replaces an idle older daemon on first connection, leaves a busy older daemon
+  running with a recoverable error, never downgrades a newer daemon, and never
+  mutates an owner whose version is not comparable SemVer.
+
 ## [0.7.96-alpha.4] - 2026-08-30
 
 ### Changed
@@ -34,6 +58,10 @@ All notable changes to this project will be documented in this file.
   `sharedSessionSettings:2`, with exact canonical/input permission types,
   host-owned Exec Policy/Auto-review options, ACP mode exports, and safe daemon
   replacement so an alpha.4 client cannot silently attach to alpha.3 routing.
+  An idle older daemon is replaced automatically; a busy older daemon is left
+  intact and reported as a recoverable upgrade boundary, while a newer daemon
+  is never downgraded by an older client. A non-SemVer/unknown daemon version is
+  likewise left untouched because its ordering cannot be proven.
 - Synchronized README, PRD/HLD/DD/ADR, feature and release records, public
   configuration/SDK guides, config templates, package contents, test guide,
   and `kodax_manual` with the same sandbox-first contract.
@@ -84,15 +112,29 @@ All notable changes to this project will be documented in this file.
   Assistant/Sidecar/error batch a second time.
   Sessions already overwritten by an older build cannot reconstruct text that
   was never committed to their session file.
-- Moved native artifact/control provisioning and legacy ACL recovery out of the
-  command hot path. Setup owns those machine changes; ordinary commands only
-  verify already provisioned state. Protocol 9 requires a hash-bound protected
+- Moved control-directory provisioning and legacy ACL recovery out of the
+  command hot path. Setup owns those machine changes. Native executable images
+  use a content-addressed self-healing boundary instead: ordinary admission
+  verifies stable file identity, physical cache containment, and the protected
+  hash locally, without a PowerShell subprocess. A newly installed or
+  `npm link`ed hash is atomically published once if and only if its destination
+  is missing; publication constructs and verifies owner/DACL state. Concurrent
+  publishers share the immutable winner without a global mutex, and corrupted
+  content remains fail-closed rather than being silently repaired. Protocol 9
+  requires a hash-bound protected
   setup marker, and the native host holds its non-delete-sharing handle until
   the target's `Started` record is durable. Setup therefore cannot rotate a
   generation across an admitted target-start window. Protocol-8 and older marker
   retirement is setup-only and does not impose the former 301-second admission
   drain; a healthy fixed account is reused so existing sessions keep their
   identity while the new protected marker is published.
+- Closed the remaining native-host termination gaps. The host consumes its
+  bootstrap and begins cancellation observation before synchronous ACL/desktop
+  preparation, binds the runner process handle before protocol decoding, and
+  waits for the winning abort path to durably publish Job-drain evidence before
+  exiting. Before the nonce-bound Resume record exists, confirmed host-tree
+  termination proves that no target ran and avoids an extra 12-second terminal
+  attestation wait.
 - Removed the cross-process command-lifetime filesystem-effect coordinator from
   Bash, trusted text tools, and worktree lifecycle. Same-file text mutations
   retain their narrow kernel/CAS ordering; same-path worktree calls retain a

@@ -5289,6 +5289,75 @@ function firstUpgradeableCapability(
   return undefined;
 }
 
+function firstRequiredDaemonUpgrade(
+  identity: RuntimeIdentity,
+  capabilities: Readonly<Record<string, unknown>>,
+  requirements: RuntimeCapabilityRequirements,
+  requireCurrentVersion: boolean,
+): { readonly name: string; readonly version: number } | undefined {
+  const currentVersion = replApi.KODAX_VERSION;
+  const versionOrder = !requireCurrentVersion || currentVersion === "0.0.0"
+    ? 0
+    : compareSemanticVersions(identity.version, currentVersion);
+  if (versionOrder === undefined) {
+    throw new RuntimeDaemonCapabilityUpgradeError(
+      `Runtime daemon version ${JSON.stringify(identity.version)} is not a comparable Semantic Version. The client will not replace an owner whose version ordering is unknown.`,
+      undefined,
+      undefined,
+      "runtimeVersion",
+    );
+  }
+  const capability = firstUpgradeableCapability(capabilities, requirements);
+  if (capability !== undefined) return capability;
+  if (!requireCurrentVersion) return undefined;
+  return currentVersion !== "0.0.0" && versionOrder === -1
+    ? { name: "runtimeVersion", version: 1 }
+    : undefined;
+}
+
+function compareSemanticVersions(left: string, right: string): -1 | 0 | 1 | undefined {
+  const parse = (value: string): {
+    readonly core: readonly bigint[];
+    readonly prerelease: readonly (bigint | string)[];
+  } | undefined => {
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value);
+    if (match === null) return undefined;
+    const prerelease: (bigint | string)[] = [];
+    for (const part of (match[4] ?? '').split('.').filter(Boolean)) {
+      if (/^\d+$/.test(part)) {
+        if (!/^(0|[1-9]\d*)$/.test(part)) return undefined;
+        prerelease.push(BigInt(part));
+      } else {
+        prerelease.push(part);
+      }
+    }
+    return {
+      core: [BigInt(match[1]!), BigInt(match[2]!), BigInt(match[3]!)],
+      prerelease,
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (a === undefined || b === undefined) return undefined;
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index]! < b.core[index]! ? -1 : 1;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    return a.prerelease.length === b.prerelease.length ? 0 : a.prerelease.length === 0 ? 1 : -1;
+  }
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b.prerelease[index];
+    if (leftPart === rightPart) continue;
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    if (typeof leftPart === 'bigint' && typeof rightPart === 'string') return -1;
+    if (typeof leftPart === 'string' && typeof rightPart === 'bigint') return 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+}
+
 function parseProbedDaemon(
   lease: RuntimeDaemonProcessLease | undefined,
 ): {
@@ -5595,7 +5664,12 @@ async function connectKodaXRuntimeInternal(
     const probedDaemon = parseProbedDaemon(lease);
     const probedUpgrade = probedDaemon === undefined
       ? undefined
-      : firstUpgradeableCapability(probedDaemon.capabilities, requirements);
+      : firstRequiredDaemonUpgrade(
+          probedDaemon.identity,
+          probedDaemon.capabilities,
+          requirements,
+          contract === "execution",
+        );
     const requestedClientInfo: RuntimeClientInfo = {
       name: options.clientInfo?.name ?? "kodax-sdk",
       instanceId:
@@ -5647,9 +5721,11 @@ async function connectKodaXRuntimeInternal(
         ? initialized.journalEpoch
         : undefined;
     grantedScopes = parseRuntimeGrantedScopes(initialized.grantedScopes);
-    const requiredUpgrade = firstUpgradeableCapability(
+    const requiredUpgrade = firstRequiredDaemonUpgrade(
+      identity,
       daemonCapabilities,
       requirements,
+      contract === "execution",
     );
     if (
       probedDaemon !== undefined
@@ -5663,6 +5739,18 @@ async function connectKodaXRuntimeInternal(
       );
     }
     if (requiredUpgrade !== undefined) {
+      if (
+        contract === "execution"
+        && replApi.KODAX_VERSION !== "0.0.0"
+        && compareSemanticVersions(identity.version, replApi.KODAX_VERSION) === 1
+      ) {
+        throw new RuntimeDaemonCapabilityUpgradeError(
+          `A newer Runtime daemon does not satisfy ${requiredUpgrade.name} v${requiredUpgrade.version}. The older client will not replace it; use a compatible KodaX client.`,
+          undefined,
+          undefined,
+          requiredUpgrade.name,
+        );
+      }
       if (
         !allowCapabilityUpgrade ||
         options.autoStart !== true ||

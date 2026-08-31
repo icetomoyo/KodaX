@@ -1,8 +1,8 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-08-31
+> Last updated: 2026-09-01
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.4` source
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.5` source
 > candidate (`v0.7.96-alpha.3` remains the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:9`;
@@ -203,7 +203,7 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-alpha.4 source candidate adds FEATURE_297 and corrects the Windows
+The v0.7.96-alpha.5 source candidate adds FEATURE_297 and corrects the Windows
 sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
 does not run setup, legacy ACL migration, synchronous provisioning, or a
 command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;

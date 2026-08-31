@@ -1,12 +1,12 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-08-31
+> Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.3`
 > (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
-> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.4` (FEATURE_297 + Issue 326
+> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.5` (FEATURE_297 + Issue 326
 > sandbox concurrency correction; not tagged)
 >
 > This HLD is intentionally current-state only. The old pre-v0.7.43
@@ -480,7 +480,7 @@ export the four canonical profiles plus the input-only `auto-in-project` alias.
 Session state owns only the reviewer model; normal review deadlines are fixed
 at 90 seconds plus one 180-second retry. Auto-started daemon clients require
 `runtimeAutoModeGuardrail` v5 and `sharedSessionSettings` v2, preventing an
-alpha.4 client from attaching to a daemon that still implements the earlier
+alpha.5 client from attaching to a daemon that still implements the earlier
 permission-before-sandbox or three-profile settings contract. Version
 negotiation treats requirements as minimums. Side-query diagnostics report
 only coarse, observed timing/retry facts, while guardrail spans start before

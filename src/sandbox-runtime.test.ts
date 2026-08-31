@@ -209,6 +209,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   hostUserSid: 'S-1-5-21-9000',
   runnerSource: '',
   nullDeviceReady: true,
+  deleteArtifactDuringControlVerification: undefined as string | undefined,
   wfpOutcome: 'blocked' as 'blocked' | 'access_denied' | 'timeout',
   aclRecoveryOutcome: 'success' as 'success' | 'failure' | 'malformed',
   aclRecoveryOutcomes: [] as Array<'success' | 'failure' | 'malformed'>,
@@ -344,11 +345,14 @@ vi.mock('node:child_process', async (importOriginal) => {
         };
       }
       if (args.length === 2 && args[0] === '__verify-null-device') {
+        const executableExists = existsSync(command);
         return {
-          status: windowsSandboxMock.nullDeviceReady ? 0 : 2,
+          status: windowsSandboxMock.nullDeviceReady && executableExists ? 0 : 2,
           signal: null,
           stdout: '',
-          stderr: windowsSandboxMock.nullDeviceReady ? '' : 'missing exact sandbox-account ACE',
+          stderr: windowsSandboxMock.nullDeviceReady && executableExists
+            ? ''
+            : 'missing exact sandbox-account ACE or executable',
         };
       }
       if (args.length === 2 && args[0] === '__recover-execution-denies') {
@@ -404,6 +408,13 @@ vi.mock('node:child_process', async (importOriginal) => {
             stdout: '',
             stderr: '',
           };
+        }
+        if (
+          windowsSandboxMock.deleteArtifactDuringControlVerification !== undefined
+          && script.includes('control directory ACL')
+        ) {
+          rmSync(windowsSandboxMock.deleteArtifactDuringControlVerification, { force: true });
+          windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
         }
       }
       if (args.includes('wfp') && args.includes('verify')) {
@@ -1528,6 +1539,7 @@ afterEach(async () => {
   sandboxInitialize.mockResolvedValue();
   windowsSandboxMock.runnerSource = '';
   windowsSandboxMock.nullDeviceReady = true;
+  windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
   windowsSandboxMock.wfpOutcome = 'blocked';
   windowsSandboxMock.aclRecoveryOutcome = 'success';
   windowsSandboxMock.aclRecoveryOutcomes.length = 0;
@@ -2189,6 +2201,126 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(capturedSpawnArgv).toHaveLength(launchesBefore);
   });
 
+  it('keeps doctor verify-only when a controller disappears between checks', async () => {
+    const controller = resolveWindowsSandboxV2Executable({
+      sandboxReadSid: windowsSandboxMock.user.groupSid,
+      provision: true,
+    });
+    windowsSandboxMock.deleteArtifactDuringControlVerification = controller.path;
+    try {
+      await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+        ready: false,
+        setupRequired: true,
+        diagnostics: expect.arrayContaining([
+          expect.stringMatching(/NUL-device compatibility|executable/i),
+        ]),
+      });
+      expect(existsSync(controller.path)).toBe(false);
+    } finally {
+      windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
+      resolveWindowsSandboxV2Executable({
+        sandboxReadSid: windowsSandboxMock.user.groupSid,
+        provision: true,
+      });
+    }
+  });
+
+  it('self-heals a missing current controller on first execution after verify-only doctor', async () => {
+    const controller = resolveWindowsSandboxV2Executable({
+      sandboxReadSid: windowsSandboxMock.user.groupSid,
+      provision: true,
+    });
+    await rm(controller.path, { force: true });
+    await resetSandboxRuntimeForTest();
+
+    await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+      ready: false,
+      setupRequired: true,
+    });
+    expect(existsSync(controller.path)).toBe(false);
+
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-controller-self-heal-'));
+    tempRoots.push(root);
+    await expect(runKodaXSandboxed({
+      command: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      filesystem: { allowRead: [], allowWrite: [] },
+      network: { mode: 'deny' },
+    })).resolves.toMatchObject({ status: 'completed', sandboxed: true });
+    expect(existsSync(controller.path)).toBe(true);
+    await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+      ready: true,
+      setupRequired: false,
+    });
+  });
+
+  it('does not let concurrent verify-only doctor suppress execution artifact self-healing', async () => {
+    const runner = resolveWindowsAsrtRunnerArtifact(
+      import.meta.url,
+      resolveSrtWinSourcePath(),
+      KODAX_ASRT_VERSION,
+      { provision: true },
+    );
+    const controller = resolveWindowsSandboxV2Executable({
+      sandboxReadSid: windowsSandboxMock.user.groupSid,
+      provision: true,
+    });
+    await rm(runner.path, { force: true });
+    await rm(controller.path, { force: true });
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-doctor-execution-race-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+
+    const doctor = doctorSandboxRuntime({ refresh: true });
+    const prepared = sandbox.prepare({
+      toolCallId: 'doctor-execution-race',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const [, invocation] = await Promise.all([doctor, prepared]);
+
+    expect(invocation).toBeDefined();
+    expect(existsSync(runner.path)).toBe(true);
+    expect(existsSync(controller.path)).toBe(true);
+    await invocation?.cleanup();
+  });
+
+  it('keeps controller self-healing independent from concurrent verify-only doctor', async () => {
+    const controller = resolveWindowsSandboxV2Executable({
+      sandboxReadSid: windowsSandboxMock.user.groupSid,
+      provision: true,
+    });
+    await rm(controller.path, { force: true });
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-controller-doctor-race-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+
+    const doctor = doctorSandboxRuntime({ refresh: true });
+    const prepared = sandbox.prepare({
+      toolCallId: 'controller-doctor-race',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const [, invocation] = await Promise.all([doctor, prepared]);
+
+    expect(invocation).toBeDefined();
+    expect(existsSync(controller.path)).toBe(true);
+    await invocation?.cleanup();
+  });
+
   it('prepares a cold shell adapter and shares one network broker across concurrent commands', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cold-adapter-'));
@@ -2699,6 +2831,30 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(standaloneBrokerDetachMock.controlRefCalls).toBeGreaterThan(0);
   });
 
+  it.runIf(process.platform === 'win32')(
+    'keeps trusted PowerShell artifact verification out of warm SDK command admission',
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-artifact-revalidation-'));
+      tempRoots.push(root);
+      const request = {
+        command: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        filesystem: { allowRead: [] as string[], allowWrite: [] as string[] },
+        network: { mode: 'deny' as const },
+      };
+
+      await expect(runKodaXSandboxed(request)).resolves.toMatchObject({
+        status: 'completed', sandboxed: true,
+      });
+      vi.stubEnv('SystemRoot', path.join(root, 'missing-system-root'));
+
+      await expect(runKodaXSandboxed(request)).resolves.toMatchObject({
+        status: 'completed', sandboxed: true,
+      });
+    },
+  );
+
   it('does not let one short caller deadline poison a shared broker startup', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-deadline-'));
     tempRoots.push(root);
@@ -2750,7 +2906,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       prepare('terminal-third'),
       new Promise<never>((_resolve, reject) => setTimeout(
         () => reject(new Error('third command waited for an unrelated holder')),
-        500,
+        5_000,
       )),
     ]);
     if (third === undefined) throw new Error('expected the third Windows v2 invocation');
@@ -2760,6 +2916,72 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       third.cleanup({ execution: 'not_started' }),
     ]);
   });
+
+  it.runIf(process.platform === 'win32')(
+    'extends pre-start termination when a durable Resume record appears',
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-resume-termination-'));
+      tempRoots.push(root);
+      stubbornBroker.mode = 'silent';
+      const running = runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        filesystem: { allowRead: [], allowWrite: [] },
+        network: { mode: 'deny' },
+        timeoutMs: 4_000,
+      });
+      void running.catch(() => undefined);
+      await vi.waitUntil(
+        () => capturedBrokerRequests.some((candidate) => (
+          typeof candidate.terminalRecordPath === 'string'
+        )),
+        { timeout: 8_000, interval: 20 },
+      );
+      const request = capturedBrokerRequests.find((candidate) => (
+        typeof candidate.terminalRecordPath === 'string'
+      )) as {
+        readonly terminalRecordPath: string;
+        readonly terminalNonce: string;
+      };
+      const recordIdentity = path.basename(request.terminalRecordPath)
+        .slice('windows-terminal-'.length);
+      const resumeRecordPath = path.join(
+        path.dirname(request.terminalRecordPath),
+        `windows-resume-${recordIdentity}`,
+      );
+      await writeFile(resumeRecordPath, JSON.stringify({
+        protocol: 9,
+        nonce: request.terminalNonce,
+        targetPid: process.pid,
+        jobContained: true,
+      }), 'utf8');
+      const host = windowsEffectJobMock.latestChild;
+      if (host === undefined) throw new Error('expected a native sandbox host');
+      host.stdin.once('finish', () => {
+        setTimeout(() => {
+          writeFileSync(request.terminalRecordPath, JSON.stringify({
+            protocol: 9,
+            nonce: request.terminalNonce,
+            jobDrained: true,
+            targetExitCode: 1,
+            terminationRequested: true,
+            denyReadCleanupDeferred: false,
+          }));
+          host.exitCode = 1;
+          host.stdout.end();
+          host.stderr.end();
+          host.stdio[3].end();
+          host.emit('exit', 1, null);
+          host.emit('close', 1, null);
+        }, 1_500);
+      });
+
+      await expect(running).rejects.toThrow(/attestation timed out|timeout/i);
+      expect(capturedProcessTreeKillOptions).toEqual([]);
+    },
+    15_000,
+  );
 
   it('retires an unreferenced broker after terminal proof fails before immediate reuse', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-retire-'));
@@ -2789,7 +3011,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       prepare('terminal-retire-replacement'),
       new Promise<never>((_resolve, reject) => setTimeout(
         () => reject(new Error('replacement reused a broker with a lost controller')),
-        500,
+        5_000,
       )),
     ]);
     if (replacement === undefined) throw new Error('expected a replacement Windows v2 invocation');
@@ -2956,7 +3178,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       cwd: root,
       filesystem: { allowRead: [], allowWrite: [] },
       network: { mode: 'deny' },
-      timeoutMs: 25,
+      timeoutMs: 4_000,
     })).rejects.toThrow(/preparation|readiness|timeout/i);
 
     await new Promise<void>((resolve) => setTimeout(resolve, 1_100));

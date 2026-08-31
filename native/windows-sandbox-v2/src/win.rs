@@ -70,9 +70,9 @@ use windows::Win32::System::Threading::{
     GetCurrentProcessId, GetCurrentThread, GetExitCodeProcess, GetProcessTimes,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken,
     OpenThreadToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-    PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_TERMINATE, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -437,10 +437,16 @@ pub fn verify_protected_runner_process(
     pid: u32,
     host_sid: &str,
     sandbox_user_sid: &str,
-) -> Result<()> {
-    let process = unsafe { OpenProcess(PROCESS_ACCESS_RIGHTS(READ_CONTROL.0), false, pid) }
-        .context("OpenProcess(runner DACL readback)")?;
-    let process = OwnedHandle::new(process, "runner DACL readback")?;
+) -> Result<OwnedHandle> {
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_ACCESS_RIGHTS(READ_CONTROL.0 | PROCESS_TERMINATE.0),
+            false,
+            pid,
+        )
+    }
+    .context("OpenProcess(runner authentication and lifetime)")?;
+    let process = OwnedHandle::new(process, "authenticated runner lifetime")?;
     let mut owner = PSID::default();
     let mut dacl: *mut ACL = null_mut();
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
@@ -509,7 +515,7 @@ pub fn verify_protected_runner_process(
     if !owner_rights_deny || !host_allow || !system_allow {
         bail!("runner process DACL did not preserve its host/SYSTEM/OWNER RIGHTS boundary");
     }
-    Ok(())
+    Ok(process)
 }
 
 fn policy_restrictions(
@@ -1298,6 +1304,10 @@ impl KillOnCloseJob {
         }
     }
 
+    pub fn try_clone(&self, label: &str) -> Result<Self> {
+        Ok(Self(self.0.try_clone(label)?))
+    }
+
     pub fn raw(&self) -> HANDLE {
         self.0.raw()
     }
@@ -1509,11 +1519,16 @@ pub struct SpawnedHostChild {
     launch_stdin: Option<std::fs::File>,
     diagnostics: Option<std::fs::File>,
     diagnostic_thread: Option<std::thread::JoinHandle<()>>,
+    launch_job: KillOnCloseJob,
 }
 
 impl SpawnedHostChild {
     pub fn abort_process(&self) -> Result<OwnedHandle> {
         self.process.try_clone("ASRT launcher abort")
+    }
+
+    pub fn abort_job(&self) -> Result<KillOnCloseJob> {
+        self.launch_job.try_clone("ASRT launch Job abort")
     }
 
     pub fn resume(&self) -> Result<()> {
@@ -1597,9 +1612,12 @@ pub fn spawn_asrt_launcher(
     // connects; target stdin is carried later by the KodaX framed protocol.
     let launch_stdin = child_stdin_pipe()?;
     let diagnostics = child_output_pipe()?;
+    let launch_job = KillOnCloseJob::create()?;
     let mut handles = [launch_stdin.child.raw(), diagnostics.child.raw()];
-    let mut attributes = ProcThreadAttributes::new(1)?;
+    let mut job_handle = launch_job.raw();
+    let mut attributes = ProcThreadAttributes::new(2)?;
     attributes.set_handles(&mut handles)?;
+    attributes.set_job(&mut job_handle)?;
     let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -1643,11 +1661,12 @@ pub fn spawn_asrt_launcher(
         launch_stdin: Some(launch_stdin.parent.into_file()),
         diagnostics: Some(diagnostics.parent.into_file()),
         diagnostic_thread: None,
+        launch_job,
     })
 }
 
 pub fn terminate_process(process: &OwnedHandle, code: u32) -> Result<()> {
-    unsafe { TerminateProcess(process.raw(), code) }.context("TerminateProcess(ASRT launcher)")
+    unsafe { TerminateProcess(process.raw(), code) }.context("TerminateProcess")
 }
 
 pub fn disconnect_named_pipe(pipe: &std::fs::File) -> Result<()> {

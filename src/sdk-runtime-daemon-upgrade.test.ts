@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { KODAX_VERSION } from '@kodax-ai/repl';
 
 const upgradeMocks = vi.hoisted(() => ({
   acquireProcessLease: vi.fn(),
@@ -76,6 +77,27 @@ import type { RuntimeDaemonPaths } from './runtime-daemon/state.js';
 
 const PROFILE = 'upgrade-test';
 const RUNTIME_ID = 'runtime_legacy';
+const CURRENT_VERSION_CORE = /^(\d+)\.(\d+)\.(\d+)/.exec(KODAX_VERSION);
+if (CURRENT_VERSION_CORE === null) {
+  throw new Error(`Test requires a Semantic Version KODAX_VERSION, received ${KODAX_VERSION}.`);
+}
+const CURRENT_MAJOR = BigInt(CURRENT_VERSION_CORE[1]!);
+const CURRENT_MINOR = BigInt(CURRENT_VERSION_CORE[2]!);
+const CURRENT_PATCH = BigInt(CURRENT_VERSION_CORE[3]!);
+const CURRENT_NUMBERED_PRERELEASE = /^(\d+)\.(\d+)\.(\d+)-([0-9A-Za-z-]+)\.(\d+)$/.exec(
+  KODAX_VERSION,
+);
+const OLDER_RUNTIME_VERSION = CURRENT_NUMBERED_PRERELEASE !== null
+  && BigInt(CURRENT_NUMBERED_PRERELEASE[5]!) > 0n
+  ? `${CURRENT_NUMBERED_PRERELEASE[1]}.${CURRENT_NUMBERED_PRERELEASE[2]}`
+    + `.${CURRENT_NUMBERED_PRERELEASE[3]}-${CURRENT_NUMBERED_PRERELEASE[4]}`
+    + `.${BigInt(CURRENT_NUMBERED_PRERELEASE[5]!) - 1n}`
+  : CURRENT_PATCH > 0n
+    ? `${CURRENT_MAJOR}.${CURRENT_MINOR}.${CURRENT_PATCH - 1n}+fixture`
+    : CURRENT_MINOR > 0n
+      ? `${CURRENT_MAJOR}.${CURRENT_MINOR - 1n}.0+fixture`
+      : `${CURRENT_MAJOR - 1n}.0.0+fixture`;
+const NEWER_RUNTIME_VERSION = `${CURRENT_MAJOR + 1n}.0.0`;
 
 describe('Runtime daemon capability upgrade', () => {
   beforeEach(() => {
@@ -167,6 +189,223 @@ describe('Runtime daemon capability upgrade', () => {
 
     await runtime.close();
     expect(newClose).toHaveBeenCalled();
+  });
+
+  it('replaces an idle older KodaX daemon even when its capabilities still satisfy the contract', async () => {
+    const calls: string[] = [];
+    const oldTransport = createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close: vi.fn(async () => undefined),
+      runtimeVersion: OLDER_RUNTIME_VERSION,
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+      onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
+    });
+    const newClose = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(oldTransport))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, newClose)));
+    upgradeMocks.readLockOwner.mockReturnValue({
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon',
+    });
+
+    const runtime = await connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+
+    expect(runtime.identity).toMatchObject({
+      runtimeId: 'runtime_current',
+      version: KODAX_VERSION,
+    });
+    expect(calls).toEqual([
+      'old:initialize',
+      'old:daemon.management.get',
+      'old:daemon.rollbackToInline',
+      'old:close',
+      'new:initialize',
+    ]);
+    await runtime.close();
+    expect(newClose).toHaveBeenCalled();
+  });
+
+  it('keeps an older KodaX daemon alive until its active work is idle', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight({ blockers: ['active_runs'], canStop: false }),
+      calls,
+      close,
+      runtimeVersion: OLDER_RUNTIME_VERSION,
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+    })));
+
+    await expect(connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    })).rejects.toMatchObject({
+      code: 'daemon_capability_upgrade_required',
+      capability: 'runtimeVersion',
+      preflight: { blockers: ['active_runs'], canStop: false },
+    });
+    expect(calls).toEqual([
+      'old:initialize',
+      'old:daemon.management.get',
+      'old:close',
+    ]);
+    expect(close).toHaveBeenCalledOnce();
+    expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a newer daemon whose capabilities satisfy this client', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close,
+      runtimeVersion: NEWER_RUNTIME_VERSION,
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+    })));
+
+    const runtime = await connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+
+    expect(runtime.identity.version).toBe(NEWER_RUNTIME_VERSION);
+    expect(calls).toEqual(['old:initialize']);
+    await runtime.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('does not downgrade a newer daemon when its capability contract is incompatible', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close,
+      runtimeVersion: NEWER_RUNTIME_VERSION,
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+    })));
+
+    await expect(connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    })).rejects.toMatchObject({
+      code: 'daemon_capability_upgrade_required',
+      capability: 'runtimeAutoModeGuardrail',
+    });
+    expect(calls).toEqual(['old:initialize', 'old:close']);
+    expect(close).toHaveBeenCalledOnce();
+    expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
+  });
+
+  it('never replaces a daemon whose version ordering cannot be proven', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close,
+      runtimeVersion: `v${NEWER_RUNTIME_VERSION}`,
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+    })));
+
+    await expect(connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    })).rejects.toMatchObject({
+      code: 'daemon_capability_upgrade_required',
+      capability: 'runtimeVersion',
+    });
+    expect(calls).toEqual(['old:initialize', 'old:close']);
+    expect(close).toHaveBeenCalledOnce();
+    expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
   });
 
   it('replaces an idle daemon whose ordinary conversation history contract is still v1', async () => {
@@ -1503,6 +1742,7 @@ function createLegacyTransport(input: {
   readonly calls: string[];
   readonly close: () => Promise<void>;
   readonly capabilities?: Readonly<Record<string, unknown>>;
+  readonly runtimeVersion?: string;
   readonly omitLiveOutputSegments?: boolean;
   readonly onInitialize?: (params: unknown) => void;
   readonly onRollback?: () => void;
@@ -1531,6 +1771,7 @@ function createLegacyTransport(input: {
               runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
             }),
           },
+          input.runtimeVersion,
         );
       }
       if (method === 'daemon.management.get') {
@@ -1592,7 +1833,7 @@ function createCurrentTransport(
           idleOnly: true,
           bootstrapGrace: true,
         },
-      });
+      }, KODAX_VERSION);
     },
     subscribe() {
       return { close() {} };
@@ -1607,6 +1848,7 @@ function createCurrentTransport(
 function initializeResult(
   runtimeId: string,
   capabilities: Readonly<Record<string, unknown>>,
+  version = runtimeId === RUNTIME_ID ? '0.7.85' : '0.7.86',
 ): Readonly<Record<string, unknown>> {
   return {
     identity: {
@@ -1614,7 +1856,7 @@ function initializeResult(
       mode: 'daemon',
       profile: PROFILE,
       startedAt: '2026-07-19T00:00:00.000Z',
-      version: runtimeId === RUNTIME_ID ? '0.7.85' : '0.7.86',
+      version,
       isolation: 'process',
     },
     capabilities,

@@ -134,11 +134,43 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-alpha.4 release preparation
+## v0.7.96-alpha.5 release preparation
 
-Release state: `v0.7.96-alpha.4` is a source candidate. npm publication,
-GitHub pre-release creation, and tagging remain manual maintainer actions.
-The candidate replaces the permission-before-sandbox path with the FEATURE_297
+Release state: `v0.7.96-alpha.5` is a source candidate. npm publication,
+GitHub pre-release creation, and tagging remain manual maintainer actions. It
+contains the alpha.4 permission-profile work and completes Issue 326 with
+per-command runner/pipe/Job lifecycles, no machine-global command-hot-path
+  mutex or queue, atomic native-artifact self-healing, subprocess-free warm
+  path/identity/hash verification, and SemVer-bounded idle-daemon replacement.
+
+Release gates:
+
+1. Every root/workspace package and lockfile entry is `0.7.96-alpha.5`; an
+   alpha.5 client replaces an idle older daemon, refuses to kill a busy older
+   daemon, does not downgrade a newer daemon, and does not mutate an unknown
+   version.
+2. Native protocol/setup remain generation 9. Independent sessions overlap;
+   cancellation, timeout, controller loss, and target/runner/host termination
+   produce durable per-command Job-drain evidence without a global queue.
+3. Missing current-hash native artifacts self-heal on execution through atomic
+   publication. Doctor is verify-only; publication owns owner/DACL construction,
+   and every warm command performs local path/identity/hash verification without
+   a PowerShell subprocess. Existing malformed content fails closed.
+4. Typecheck, native fmt/test/clippy, focused Vitest suites, real opt-in Windows
+   dual-Runtime/background/termination gates, build, declaration generation,
+   and `git diff --check` pass on the exact commit.
+5. Tag or publish only after review and CI. This checklist does not push refs,
+   create releases, or publish packages.
+
+Only after these gates pass may the exact commit be tagged
+`v0.7.96-alpha.5`.
+
+## v0.7.96-alpha.4 release preparation (superseded)
+
+Release state: `v0.7.96-alpha.4` was superseded before tagging by alpha.5 and
+must not be tagged, released, or published. This historical checklist records
+the permission-profile work now carried by alpha.5. It replaces the
+permission-before-sandbox path with the FEATURE_297
 sandbox-first route, four permission profiles, JSONC Exec Policy, fixed
 90/180-second host-boundary review, broader sandbox reads/environment/network,
 and normal global Git behavior.
@@ -173,8 +205,7 @@ Release gates:
    packages, pushing Git refs, and creating releases remain explicit operator
    actions and are not performed by this checklist.
 
-Only after these gates pass may the exact commit be tagged
-`v0.7.96-alpha.4`.
+Do not tag `v0.7.96-alpha.4`; use the alpha.5 release gates above.
 
 ## v0.7.96-alpha.3 release preparation
 

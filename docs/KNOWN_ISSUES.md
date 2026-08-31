@@ -1,15 +1,15 @@
 # Known Issues
 
-_Last Updated: 2026-08-31_
+_Last Updated: 2026-09-01_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
-## v0.7.96-alpha.4 Concurrency Correction
+## v0.7.96-alpha.5 Concurrency Stabilization
 
-Issue 326 is resolved in the alpha.4 source candidate. The failure was not an
+Issue 326 is resolved in the alpha.5 source candidate. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a
@@ -40,6 +40,18 @@ mutates those roots. Real
 dual-Runtime coverage requires the second Runtime to complete in under 15
 seconds while a first 120-second target remains active. See
 [ISSUE_326_v0.7.96_REGRESSION_GUIDE.md](test-guides/ISSUE_326_v0.7.96_REGRESSION_GUIDE.md).
+
+The alpha.5 client also self-heals stale process/image state without widening
+the concurrency boundary. It safely replaces an idle older daemon, refuses to
+force-stop a busy one, and never downgrades a newer daemon. An unknown/non-SemVer
+owner is also preserved and reported rather than guessed older. A missing protected
+artifact for the current content hash is published atomically on first use;
+publication constructs and verifies owner/DACL state, while every ordinary
+command verifies stable identity, physical path, and hash locally without a
+PowerShell subprocess. Invalid existing content remains fail-closed. The host
+also observes cancellation before pre-launch preparation and waits for the
+winning per-command abort to publish terminal evidence, removing the former
+60-second-plus-12-second compound failure shape without a global lock.
 
 ## v0.7.96-alpha.3 Release Corrections
 
@@ -231,7 +243,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.4 | 2026-08-30 | 2026-08-31 |
+| 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.5 | 2026-08-30 | 2026-09-01 |
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
 | 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
 | 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
