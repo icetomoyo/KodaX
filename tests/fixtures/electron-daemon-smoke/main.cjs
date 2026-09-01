@@ -206,6 +206,11 @@ async function run() {
         if (completed.phase !== 'completed') {
           throw completed.error ?? new Error(`Runtime shell query ended in phase ${completed.phase}.`);
         }
+        if (completed.result?.lastText !== 'done') {
+          throw new Error(
+            `Runtime shell query returned an invalid sandbox result: ${completed.result?.lastText ?? 'missing result'}`,
+          );
+        }
         await waitForAppliedSandboxObservation(handle.runId);
         appliedSandboxCount += 1;
       } catch (error) {
@@ -417,7 +422,16 @@ class WindowsHideSmokeProvider extends KodaXBaseProvider {
         )})
         || !content.includes('quoted-command-ok.txt')
       ) {
-        throw new Error('Runtime sandbox Bash result was not successful: ' + content);
+        return {
+          textBlocks: [{
+            type: 'text',
+            text: 'smoke-failure: Runtime sandbox Bash result was not successful: ' + content,
+          }],
+          toolBlocks: [],
+          thinkingBlocks: [],
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          stopReason: 'end_turn',
+        };
       }
       return {
         textBlocks: [{ type: 'text', text: 'done' }],
