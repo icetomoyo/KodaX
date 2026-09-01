@@ -29,6 +29,11 @@ All notable changes to this project will be documented in this file.
   development harnesses reconnect without a forced replacement, while every
   documented versioned-capability boundary, the never-downgrade guard, and
   the non-SemVer fail-closed path are unchanged.
+- Restored the portable shell adapter's protected-read gate that the
+  sandbox-first routing restructure dropped: on POSIX, a model Bash read
+  carve-back that targets the trusted text native state roots fails
+  preparation with the structured protected-state error before any broker
+  spawn, matching the SDK executor and Windows control-state gates.
 - Made content-addressed Windows native artifacts self-healing on execution.
   A missing new-version artifact is published atomically, concurrent publishers
   converge without a global mutex, and ordinary commands verify stable file
