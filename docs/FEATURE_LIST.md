@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-alpha.3` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-alpha.5` source candidate (not yet tagged or published) |
+| Current released version | `v0.7.96-alpha.5` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-alpha.5` pre-release (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Total tracked features | `81` |
 | InProgress | `1` |
@@ -26,7 +26,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized in the v0.7.96-alpha.5 source candidate; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized in the v0.7.96-alpha.5 pre-release; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -513,6 +513,24 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.96-alpha.5 Release Record
+
+`v0.7.96-alpha.5` is a GitHub pre-release. It ships `FEATURE_297` and
+stabilizes Issue 326: four canonical permission profiles (Plan, Edits,
+Auto[LLM], Full Access) replace the legacy Plan/Edits/Auto[RULES]/Auto[LLM]
+shape, shell containment is sandbox-first with Exec Policy and Auto review
+only at a proven host boundary, and the Windows sandbox drops every
+machine-global admission mutex, command-lifetime coordinator, and queue.
+Native shell protocol 9/setup generation 9 keeps one stable capability ACE
+set per root with DACL-readback convergence, protected two-phase setup, and
+independent per-command token/pipe/Job lifecycles; missing current-hash
+native artifacts self-heal through atomic publication; and Runtime daemon
+upgrades become SemVer-bounded (idle older daemon replaced, busy one left
+running with a recoverable boundary, newer one never downgraded). Windows
+`sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`, and
+`sharedSessionSettings:2` are unchanged from the alpha.4 design. npm
+publication remains a manual maintainer step.
 
 ## v0.7.96-alpha.3 Release Record
 
@@ -1565,7 +1583,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` candidate | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
+| `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.5 concurrency correction | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 9 + setup generation 9 (with generation 8 retained only as the legacy-migration proof), one stable read/write/deny capability ACL set per root, protected two-phase synchronous setup with no overlapping helper, DACL-readback convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, bounded-idle exact-authority brokers, and a real dual-Runtime overlap gate. |
 | `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | `v0.7.96-alpha.1` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) | Replaces the local tool-result capacity hard gate with capacity-debt admission, a bounded recovery ladder, floor-bounded output reserve, paged oversized-input degradation, and `context_capacity` terminal classification (ADR-067). |
 | `294` | Host Tools First-Class Visibility | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_294--host-tools-first-class-visibility-2026-08-16) | Materializes leased Host Tools as run-scoped model tools, adds cache-stable host capability context, conservative plan-mode metadata, registry-first dispatch, revoke/collision hardening, and exact A2A `host:` authorization. |

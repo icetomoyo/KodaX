@@ -2,8 +2,8 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current source candidate is `v0.7.96-alpha.5`; `v0.7.96-alpha.3` remains
-the latest GitHub pre-release and npm publication remains manual. Alpha.5 carries
+The current release is `v0.7.96-alpha.5` (GitHub pre-release; npm publication
+remains manual). Alpha.5 carries
 the alpha.4 permission profiles, sandbox-first routing, JSONC Exec Policy,
 Auto[LLM] host-boundary review, and Full Access, and completes Windows sandbox
 concurrency/self-healing without adding a command lock, queue, or permission restriction.

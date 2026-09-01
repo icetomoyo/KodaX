@@ -740,7 +740,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-alpha.5 source candidate:** Windows shell admission now follows the
+**v0.7.96-alpha.5 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -762,11 +762,11 @@ legacy migration. Setup first publishes a protected non-ready `installing`
 marker; the elevated parent synchronously installs NUL compatibility and profile
 read capabilities, and only then does the caller atomically publish the ready
 marker. No helper or migration overlaps ordinary admission, and system TMP is
-not prewarmed. This candidate
+not prewarmed. This release
 also creates its five fixed protected Agent Home directories before constructing
 a Windows policy when a custom `KODAX_HOME` sits below the system-TMP write
 grant; missing deny roots therefore cannot reject first launch, and no lock or
-ACL transaction is added. This candidate advertises `sandboxRuntime:9`, so a
+ACL transaction is added. This release advertises `sandboxRuntime:9`, so a
 linked CLI cannot silently reuse a daemon that still runs the setup-8 ACL path. See the
 [v0.7.96-alpha.5 release checklist](docs/release.md#v0796-alpha5-release-preparation).
 

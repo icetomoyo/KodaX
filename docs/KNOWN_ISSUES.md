@@ -7,9 +7,9 @@ _Last Updated: 2026-09-01_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
-## v0.7.96-alpha.5 Concurrency Stabilization
+## v0.7.96-alpha.5 Release Corrections
 
-Issue 326 is resolved in the alpha.5 source candidate. The failure was not an
+Issue 326 is resolved in the v0.7.96-alpha.5 pre-release. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a

@@ -136,8 +136,9 @@ Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
 ## v0.7.96-alpha.5 release preparation
 
-Release state: `v0.7.96-alpha.5` is a source candidate. npm publication,
-GitHub pre-release creation, and tagging remain manual maintainer actions. It
+Release state: `v0.7.96-alpha.5` is tagged and published as a GitHub
+pre-release on the release-record commit. npm publication remains a manual
+maintainer action. It
 contains the alpha.4 permission-profile work and completes Issue 326 with
 per-command runner/pipe/Job lifecycles, no machine-global command-hot-path
   mutex or queue, atomic native-artifact self-healing, subprocess-free warm

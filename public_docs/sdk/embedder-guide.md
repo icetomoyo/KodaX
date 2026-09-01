@@ -5,7 +5,7 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the current source candidate on the `v0.7.96-alpha.5` package line. npm
+This guide tracks the `v0.7.96-alpha.5` pre-release package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows `sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and

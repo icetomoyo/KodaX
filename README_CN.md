@@ -293,7 +293,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96-alpha.5 源码候选版**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-alpha.5 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -309,7 +309,7 @@ marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康�
 父进程同步完成 NUL 兼容性与 profile 读 capability，调用方随后才原子发布 ready marker。
 不存在与普通命令准入重叠的 helper 或迁移，也不预热系统 TMP。自定义 `KODAX_HOME` 位于系统 TMP
 写入根下时，KodaX 会在构造 Windows 策略前仅创建五个固定的受保护内部目录，避免不存在的
-deny root 拒绝首次启动；该动作不增加锁、ACL 事务或命令生命周期协调。本候选版广告
+deny root 拒绝首次启动；该动作不增加锁、ACL 事务或命令生命周期协调。本版本广告
 `sandboxRuntime:9`，因此 npm link 后的新 CLI 不会静默复用仍运行 setup-8 ACL 路径的旧 daemon。
 失败的 broker 代际会立即脱离复用但不会停止仍在运行的 holder，并继续计入固定端口容量直到进程
 实际关闭；启动/控制阶段各自以 15 秒为界，不会缩短命令执行 deadline。多个 npm-link/`kodax -r`

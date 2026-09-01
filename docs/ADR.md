@@ -2,7 +2,7 @@
 
 > Last updated: 2026-09-01
 >
-> **v0.7.96-alpha.5 concurrency stabilization:** ADR-070 removes the global ACL
+> **v0.7.96-alpha.5 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 9/setup generation 9 uses a required protected marker start gate,
 > one policy-independent stable capability ACL set per root, lock-free additive convergence with

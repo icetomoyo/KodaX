@@ -2,12 +2,11 @@
 
 > Last updated: 2026-09-01
 >
-> Current published baseline: `v0.7.96-alpha.3`
-> (`@kodax-ai/kodax@0.7.96-alpha.3`; Windows `sandboxRuntime:6`,
+> Current published baseline: `v0.7.96-alpha.5`
+> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:9`,
+> `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
-> Source candidate: `@kodax-ai/kodax@0.7.96-alpha.5` (FEATURE_297 + Issue 326
-> sandbox concurrency correction; not tagged)
 >
 > This DD describes current implementation structure. Retired V1 chain details
 > were deleted from this active document; use git history and historical feature
