@@ -168,6 +168,7 @@ export function buildToolExecutionContext(
     shellExecution: options.context?.shellExecution,
     sandbox: options.sandbox,
     shellSandbox: options.context?.shellSandbox,
+    authorizeShellHostExecution: options.context?.authorizeShellHostExecution,
     trustedTextMutationHost: options.context?.trustedTextMutationHost,
     workspaceSandboxRoots: options.context?.workspaceSandboxRoots,
     sessionScratchDir,

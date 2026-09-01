@@ -55,8 +55,11 @@ Sandboxed commands inherit the host environment, including ordinary
 development identity, and can access external networks. A fixed internal deny
 set removes KodaX/Electron execution-control variables. Reads are broad,
 including Agent Home, credential locations, and global Git configuration.
-Writes stay bounded to the workspace and system temporary directory. The
-obsolete `sandbox.envPass` input is ignored.
+Writes stay bounded to the workspace and platform temporary roots. On Windows,
+the target receives an empty private child below the system temporary directory,
+and `TEMP`, `TMP`, and `TMPDIR` point to it for the target lifetime. POSIX keeps
+its platform-canonical Temp roots and inherited Temp variables. The obsolete
+`sandbox.envPass` input is ignored.
 
 ## Historical Windows workspace Shell behavior (v0.7.86-v0.7.95)
 
@@ -159,9 +162,10 @@ write authority even though the surrounding workspace is writable; Session journ
 cursor files, daemon records, and grants remain host-owned control state.
 The private desktop uses an ephemeral full-policy capability. Filesystem write
 authority instead uses stable capabilities derived from the setup's persistent
-filesystem nonce, final canonical root, and `allowWrite`/`denyWrite` clause.
-Normal read access is supplied by the shared sandbox group; read roots do not
-create a separate capability or an implicit deny-write capability. The dedicated account,
+filesystem nonce, final canonical root, and `allowRead`/`allowWrite`/`denyWrite`
+clause. Every canonical root receives the same stable capability ACE set; a
+read-only command token activates `allowRead` plus `denyWrite`, while a writable
+token activates `allowWrite`. The dedicated account,
 per-launch logon, and Everyone SIDs remain in the restricting set because real
 subprocess creation requires them, matching current Codex; Issue 309 documents
 the remaining ambient-trustee child-DACL boundary. The shared sandbox group
@@ -183,7 +187,8 @@ generation match share one reusable process-level ASRT network broker; their nat
 requests, restricted policy tokens, controller connections, and Jobs remain
 independent. The broker is referenced while starting or leased and detached
 from the Node event loop only while idle. A readiness, target-start, or
-terminal-proof failure immediately detaches that broker generation from reuse;
+terminal-proof failure, or trusted terminal proof of runner/controller loss,
+immediately detaches that broker generation from reuse;
 existing holders are not stopped, and a later caller uses a new generation.
 Detached processes remain in fixed-port capacity accounting until `close`.
 Each startup/control phase has a 15-second bound without replacing the command
@@ -200,10 +205,11 @@ The broker also owns a verified native liveness controller. Its named pipe is
 created with a protected Host/SYSTEM-only DACL, rejects remote clients, and
 keeps multiple pending instances for concurrent host launches. Restricted
 targets cannot connect to or exhaust this control path. Broker/controller loss
-closes the affected controller handles and drains their Jobs. A command-local
-failure only detaches that generation from future reuse; it does not close
+closes the affected controller handles and drains their Jobs. A broker-attributed
+command failure only detaches that generation from future reuse; it does not close
 unrelated active holders.
-This authority split is advertised as `sandboxRuntime:9`; auto-started clients
+This authority split and its private-Temp/recovery contract are advertised as
+`sandboxRuntime:10`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`
 cutover. Setup generation 9 upgrades generation 8 in place, reuses a healthy
@@ -231,11 +237,11 @@ Unrelated administrator ACLs are preserved byte-for-byte, and an ambiguous ACL
 fails closed instead of being rewritten. Ordinary command admission never runs
 that legacy cleanup or revokes another Session's shared ACL state; independent
 Runtime processes keep separate requests, tokens, control channels, and Jobs.
-When a custom `KODAX_HOME` is inside the system temporary write root, KodaX
-creates its fixed protected `sandbox-runtime`, `native-text-state-v1`, `runtime`,
-`processes`, and `learned` directories before policy construction. Windows can
-therefore validate every deny-write root on the first command. This local
-materialization does not acquire a lock, perform setup, or mutate ACLs.
+Each shell receives a unique empty Temp child. The shared system Temp/AppData
+roots are never ordinary-admission ACL targets, including when `KODAX_HOME` is
+nested below them. Protected Agent Home directories are materialized only when
+an actual requested write root contains them; Temp placement alone does not
+widen that authority or add a lock, setup call, or shared ACL mutation.
 The ASRT directory is not passed as a final-target policy root. A fixed
 System32 provisioner runs only during explicit artifact/setup bootstrap. One
 setup-only elevated native parent receives a small explicit base64 envelope,
@@ -243,7 +249,8 @@ reads a versioned digest-bound single-use request from the protected control
 directory, verifies the protected non-ready `installing` marker, and
 synchronously converges NUL compatibility plus profile read capabilities. The
 setup caller atomically publishes the ready marker only after confirmed parent
-success; no helper overlaps ordinary admission and system TMP is not prewarmed;
+success; no helper overlaps ordinary admission and shared system Temp is not
+prewarmed or rewritten;
 ordinary command admission verifies already-provisioned artifacts and control
 state without launching synchronous PowerShell. Text content and shell stdin
 never enter it. Started-or-unknown cleanup succeeds only with a verified Job-

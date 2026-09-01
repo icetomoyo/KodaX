@@ -194,7 +194,8 @@ option，以及多余参数都会失败且不改变目录。目标位置是所�
 成功完成时静默返回，只有可证明的启动前边界才进入 Edits 或 Auto[LLM]；reviewer
 基础设施失败重试一次后阻断并提示更安全路线，不降级权限模式。Workspace
 containment 允许包括 Agent Home、凭据位置和全局 Git 配置在内的广泛宿主读取，仍只
-允许 workspace/系统 TMP 写入，并保留外部网络。详见
+允许 workspace 与平台临时目录写入；Windows 使用系统 TMP 下的每命令私有目录，
+POSIX 保留平台 canonical Temp 根与继承变量。外部网络继续可用。详见
 [v0.7.96 FEATURE_297](docs/features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy)、
 [ADR-069](docs/ADR.md#adr-069-sandbox-success-is-authority-while-host-escalation-is-a-separate-policy-boundary) 和
 [SDK 权限指南](public_docs/sdk/embedder-guide.md#24-runtime-owned-permission-routing-and-plan-bridges-v0796)。
@@ -307,10 +308,12 @@ marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康�
 已有 generation 8 安装会原地升级且不会重放 legacy ACL 清理；generation 8 继续仅作为
 一次性 legacy 迁移的证明边界。setup 先发布受保护且不可执行的 `installing` marker；高权限
 父进程同步完成 NUL 兼容性与 profile 读 capability，调用方随后才原子发布 ready marker。
-不存在与普通命令准入重叠的 helper 或迁移，也不预热系统 TMP。自定义 `KODAX_HOME` 位于系统 TMP
-写入根下时，KodaX 会在构造 Windows 策略前仅创建五个固定的受保护内部目录，避免不存在的
-deny root 拒绝首次启动；该动作不增加锁、ACL 事务或命令生命周期协调。本版本广告
-`sandboxRuntime:9`，因此 npm link 后的新 CLI 不会静默复用仍运行 setup-8 ACL 路径的旧 daemon。
+不存在与普通命令准入重叠的 helper 或迁移，也不会在命令准入中预热或改写共享系统 TMP。
+每条命令会在系统临时目录下获得一个空的私有 Temp 子目录，`TEMP`/`TMP`/`TMPDIR` 均指向它；
+每个 canonical root 收敛相同的稳定 capability ACE 集合，由命令 token 只激活本次授权能力，
+且不会降级其他命令已有授权。
+该路径不增加锁、ACL 清场或命令生命周期协调。本版本广告
+`sandboxRuntime:10`，因此 npm link 后的新 CLI 不会静默复用缺少本次准入与自愈契约的旧 daemon。
 失败的 broker 代际会立即脱离复用但不会停止仍在运行的 holder，并继续计入固定端口容量直到进程
 实际关闭；启动/控制阶段各自以 15 秒为界，不会缩短命令执行 deadline。多个 npm-link/`kodax -r`
 客户端同时遇到空闲旧 daemon 时，会以认证临时身份选出一个替换者，其余客户端脱离后等待或续跑
@@ -660,7 +663,8 @@ KodaX 不会自动运行 `sudo` 或系统包管理器。Edits 与 Auto[LLM] 会�
 见 [SDK sandbox 指南](public_docs/sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778)。
 
 sandbox shell 默认继承宿主环境和普通开发凭据，并允许外部网络；固定的
-KodaX/Electron 执行控制变量仍会被移除。写入范围保持在 workspace 与系统 TMP，
+KodaX/Electron 执行控制变量仍会被移除。写入范围保持在 workspace 与平台临时目录；
+Windows 使用系统 TMP 下的每命令私有目录，POSIX 保留平台 canonical Temp 根与继承变量。
 宿主读取范围则包含 Agent Home、凭据位置和真实的全局 Git 配置。
 
 Qwen Token Plan 需要选择 `qwen-token-plan` 并使用单独的凭据；`QWEN_API_KEY`

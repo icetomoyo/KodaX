@@ -152,7 +152,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('Doctor only verifies it');
     expect(sandbox).toContain('expired dead-PID request');
     expect(sandbox).toContain('windows-deny recovery records remain fail-closed');
-    expect(sandbox).toContain('sandboxRuntime:9');
+    expect(sandbox).toContain('sandboxRuntime:10');
     expect(sandbox).toContain('Workspace-local .kodax/runtime state remains readable but is denied to shell writes');
     expect(sandbox).toContain('reconstructs from event ledgers after truncation');
     expect(sandbox).toContain('descriptor-verified addon loading');
@@ -169,7 +169,7 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:9`');
+    expect(sdk).toContain('The v0.7.96 SDK advertises Windows `sandboxRuntime:10`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
     expect(sdk).toContain('bounded `capacityDebt`');
     expect(sdk).toContain('commits through the recovery ladder instead of aborting the Run');

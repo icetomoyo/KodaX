@@ -152,7 +152,12 @@ Release gates:
    version.
 2. Native protocol/setup remain generation 9. Independent sessions overlap;
    cancellation, timeout, controller loss, and target/runner/host termination
-   produce durable per-command Job-drain evidence without a global queue.
+   produce durable per-command Job-drain evidence without a global queue. Warm
+   admission changes no shared Temp/AppData ACL: each command receives an empty
+   private Temp child. Every canonical root converges the same stable capability
+   ACE set and the command token activates only its authorized clauses.
+   A native controller/runner-path failure retires only that broker generation;
+   existing holders continue and the next command starts a replacement.
 3. Missing current-hash native artifacts self-heal on execution through atomic
    publication. Doctor is verify-only; publication owns owner/DACL construction,
    and every warm command performs local path/identity/hash verification without
@@ -178,9 +183,9 @@ and normal global Git behavior.
 
 Release gates:
 
-1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:9`,
+1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:10`,
    `runtimeAutoModeGuardrail:5`, and `sharedSessionSettings:2`; an auto-starting
-   alpha.4 client must safely replace an idle sandbox-v8-or-older, guardrail-v4, or shared-settings-v1 daemon,
+   alpha.4 client must safely replace an idle sandbox-v9-or-older, guardrail-v4, or shared-settings-v1 daemon,
    while attach-only clients fail closed.
 2. Public declarations must expose exact canonical/input permission types,
    host-owned Exec Policy and Auto-review options, ACP mode identifiers, and
@@ -196,8 +201,8 @@ Release gates:
    the native sidecar/hash manifest, receipt
    convergence, bounded-idle broker release, and the real opt-in Windows
    120-second dual-Runtime overlap must pass the Issue 326 regression guide. A
-   fresh custom `KODAX_HOME` below system TMP must also launch without a missing
-   protected deny-root failure.
+   fresh custom `KODAX_HOME` below system TMP must also launch without widening
+   the shared Temp ACL or reporting a missing protected deny-root.
 6. Focused permission/Runtime/daemon/ACP/manual tests, full typecheck, `git diff --check`,
    build, package contents, generated declarations, and an empty-consumer smoke
    of the root, `/runtime`, and `/repl` exports must pass. Root and

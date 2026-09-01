@@ -10,7 +10,7 @@ Use a disposable Windows sandbox account/workspace. Build the current native
 artifact first. The first current client must publish a missing content hash
 automatically; run `kodax sandbox setup` once only when the account/setup
 generation itself is absent or stale. Protocol 9/setup generation 9 and
-`sandboxRuntime:9` are required; do not test a protocol-9 TypeScript bundle
+`sandboxRuntime:10` is required; do not test a protocol-9 TypeScript bundle
 against an older native sidecar.
 
 ## Automated gates
@@ -47,7 +47,8 @@ Expected:
   elevated parent receives an explicit base64 envelope, verifies that exact
   marker, and synchronously converges NUL compatibility plus profile top-level
   read capabilities. The caller publishes ready only after success, no helper
-  overlaps ordinary admission, and system TMP is not prewarmed;
+  overlaps ordinary admission, and the shared system Temp root is never an
+  ordinary-admission ACL target;
 - the native/unit suites have no global-ACL-mutex assertion or timeout;
 - two independent Runtime processes pass both cold cases on roots containing at
   least 24,000 entries: the exact same write root, and ancestor-read/child-write.
@@ -125,6 +126,8 @@ Pass conditions:
 - terminal B starts promptly; it must not wait 60, 75, 120, or 240 seconds;
 - A remains alive while B completes;
 - B's delete/recreate succeeds within its own policy;
+- each Bash target's `TEMP`, `TMP`, and `TMPDIR` resolve to its own empty child
+  below system Temp, and no command rewrites the shared Temp/AppData DACL;
 - A reaches `done` at its requested time;
 - no output contains `ACL transaction mutex timed out`, `ACL authorization
   deadline expired`, or `protocol 9 failed`;

@@ -60,7 +60,9 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 1. Define a disposable environment variable and confirm a sandboxed Bash command inherits it without `sandbox.envPass`.
 2. Confirm fixed KodaX/Electron execution-control variables remain absent from the target environment.
 3. Confirm sandboxed reads can inspect host files, Agent Home, credential paths, and the real global Git configuration.
-4. Confirm writes succeed in the workspace and system temporary directory but not arbitrary host locations.
+4. Confirm writes succeed in the workspace and platform Temp roots. On Windows,
+   confirm the command uses its private directory named by `TEMP`/`TMP`/`TMPDIR`
+   and cannot write arbitrary host locations or sibling system-Temp paths.
 5. Confirm unauthenticated and authenticated external network access can succeed inside the sandbox when the inherited environment provides the needed identity.
 6. In Auto[LLM], modify global Git configuration: confirm sandbox write refusal reaches the reviewer, reviewer allow produces one host attempt, and reviewer deny produces none.
 

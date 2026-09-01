@@ -8,6 +8,28 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Removed the two remaining Codex-alignment gaps that could make Bash unusable.
+  Every canonical Windows root now converges the same stable read/write/deny
+  capability ACE set, while each command token activates only its authorized
+  capabilities. Admission accepts already-effective grants before mutation and
+  never downgrades or clears a capability installed for another command. Windows
+  shell `%TEMP%`/`%TMP%`/`%TMPDIR%` now point to one empty private directory per
+  command under the system temporary directory, so ordinary admission never
+  recursively rewrites the shared system Temp/AppData tree. No lock, queue, or
+  command retry was added.
+- Restored SDK/daemon host-boundary fallback by forwarding
+  `authorizeShellHostExecution` through the Coding tool-execution context. A
+  cleanup-proven pre-start sandbox failure can therefore reach the existing
+  Auto[LLM]/Exec Policy decision instead of stopping at the misleading
+  "requires a new permission decision" message.
+- Advanced the Windows SDK/daemon sandbox contract to `sandboxRuntime:10`.
+  An idle same-version daemon from an earlier npm-link build is now replaced
+  through the existing authenticated upgrade path instead of silently reusing
+  its older admission behavior; busy daemons remain fail-closed and untouched.
+- Retire a shared Windows network-broker generation when a started native host
+  proves runner/controller-path loss. Existing holders remain untouched, while
+  the next command creates a fresh generation instead of reusing a controller
+  that is already exiting and waiting for target-start attestation to time out.
 - Completed the Windows sandbox concurrency correction without adding a
   machine-global command lock or queue. Every command owns its runner pipes,
   exact process handle, creation-time kill-on-close Job, cancellation state,
@@ -131,7 +153,8 @@ All notable changes to this project will be documented in this file.
   converges NUL compatibility plus profile read capabilities. The caller
   publishes the ready marker only after the parent succeeds. No helper or
   migration overlaps ordinary admission, system TMP is not prewarmed, and
-  `sandboxRuntime` advances to `9`,
+  native protocol/setup advance to `9`, while the published Runtime capability
+  is `sandboxRuntime:10`;
   so a newly linked CLI replaces an idle daemon that still carries the setup-8
   ACL behavior and refuses a busy one instead of mixing generations.
 - Fixed first-launch policy construction when a custom `KODAX_HOME` is below the

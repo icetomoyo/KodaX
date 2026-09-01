@@ -229,8 +229,10 @@ history. SDK embedders can use the same capability independently through
 Sandboxed shell commands inherit the host environment, including ordinary
 development credentials, and retain external network access. A fixed internal
 deny set removes KodaX/Electron execution-control variables. Writes remain
-bounded to the workspace and system temporary directory; broad host reads,
-including Agent Home and global Git configuration, are available.
+bounded to the workspace and platform temporary roots. On Windows, each command
+receives a private directory under the system temporary directory; `%TEMP%`,
+`%TMP%`, and `%TMPDIR%` point to that directory.
+Broad host reads, including Agent Home and global Git configuration, are available.
 
 For Qwen Token Plan, select `qwen-token-plan` and use its separate credential;
 `QWEN_API_KEY` does not authenticate this route:
@@ -556,7 +558,8 @@ sandbox completion is silent; only a proven pre-start boundary reaches Edits
 or Auto[LLM], and reviewer infrastructure failure blocks with a safer-route
 message after one retry. Workspace containment now permits broad host reads,
 including Agent Home, credential locations, and global Git configuration,
-while retaining workspace/system-TMP-only writes and external network. See the
+while retaining workspace/platform-Temp writes (a private per-command Temp child
+on Windows), plus external network. See the
 [v0.7.96 design](docs/features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy),
 [ADR-069](docs/ADR.md#adr-069-sandbox-success-is-authority-while-host-escalation-is-a-separate-policy-boundary),
 and the [SDK permission guide](public_docs/sdk/embedder-guide.md#24-runtime-owned-permission-routing-and-plan-bridges-v0796).
@@ -761,13 +764,12 @@ legacy ACL cleanup. Generation 8 remains the proof boundary for the one-time
 legacy migration. Setup first publishes a protected non-ready `installing`
 marker; the elevated parent synchronously installs NUL compatibility and profile
 read capabilities, and only then does the caller atomically publish the ready
-marker. No helper or migration overlaps ordinary admission, and system TMP is
-not prewarmed. This release
-also creates its five fixed protected Agent Home directories before constructing
-a Windows policy when a custom `KODAX_HOME` sits below the system-TMP write
-grant; missing deny roots therefore cannot reject first launch, and no lock or
-ACL transaction is added. This release advertises `sandboxRuntime:9`, so a
-linked CLI cannot silently reuse a daemon that still runs the setup-8 ACL path. See the
+marker. No helper or migration overlaps ordinary admission, and the shared
+system TMP root is not prewarmed or rewritten during command admission. Each
+command instead receives an empty private Temp child. Every canonical root
+converges the same stable capability ACE set, while the command token activates
+only its authorized capabilities. This release advertises `sandboxRuntime:10`, so a
+linked CLI cannot silently reuse a daemon that predates this admission and recovery contract. See the
 [v0.7.96-alpha.5 release checklist](docs/release.md#v0796-alpha5-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,

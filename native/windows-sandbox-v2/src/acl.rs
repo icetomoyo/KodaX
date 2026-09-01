@@ -422,27 +422,42 @@ impl AceSnapshot {
         aggregate & mask == mask
     }
 
-    fn pass_grants_without_deny(&self, sids: &[&str], mask: u32, inherit: bool) -> bool {
-        let inheritance = (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0 as u8;
-        let applies = |ace: &&ObservedAce| {
-            ace.flags & INHERIT_ONLY_ACE.0 as u8 == 0
-                && (!self.directory
-                    || !inherit
-                    || (ace.flags & inheritance == inheritance
-                        && ace.flags & NO_PROPAGATE_INHERIT_ACE.0 as u8 == 0))
-                && sids.iter().any(|sid| ace.sid.eq_ignore_ascii_case(sid))
-        };
+    fn effective_mask(&self, sids: &[&str], applies: impl Fn(&ObservedAce) -> bool) -> u32 {
         let denied = self
             .aces
             .iter()
-            .filter(|ace| ace.mode == AclMode::Deny && applies(ace))
+            .filter(|ace| {
+                ace.mode == AclMode::Deny
+                    && applies(ace)
+                    && sids.iter().any(|sid| ace.sid.eq_ignore_ascii_case(sid))
+            })
             .fold(0u32, |combined, ace| combined | ace.mask);
         let granted = self
             .aces
             .iter()
-            .filter(|ace| ace.mode == AclMode::Grant && applies(ace))
+            .filter(|ace| {
+                ace.mode == AclMode::Grant
+                    && applies(ace)
+                    && sids.iter().any(|sid| ace.sid.eq_ignore_ascii_case(sid))
+            })
             .fold(0u32, |combined, ace| combined | ace.mask);
-        denied & mask == 0 && granted & mask == mask
+        granted & !denied
+    }
+
+    fn pass_grants_without_deny(&self, sids: &[&str], mask: u32, inherit: bool) -> bool {
+        let current = self.effective_mask(sids, |ace| ace.flags & INHERIT_ONLY_ACE.0 as u8 == 0);
+        if current & mask != mask {
+            return false;
+        }
+        if !self.directory || !inherit {
+            return true;
+        }
+        let inheritance = (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0 as u8;
+        let inherited = self.effective_mask(sids, |ace| {
+            ace.flags & inheritance == inheritance
+                && ace.flags & NO_PROPAGATE_INHERIT_ACE.0 as u8 == 0
+        });
+        inherited & mask == mask
     }
 
     fn satisfies(&self, required: &RequiredAce, sandbox_user_sid: &str) -> bool {
@@ -459,13 +474,13 @@ impl AceSnapshot {
                 required.inherit,
             );
         }
-        if !required.inherit && required.mode == AclMode::Grant {
+        if required.mode == AclMode::Grant {
             return match required.pass {
                 AccessPass::Normal => unreachable!("normal grants return above"),
                 AccessPass::Restricted => self.pass_grants_without_deny(
                     &[required.sid.as_str(), EVERYONE_SID],
                     required.mask,
-                    false,
+                    required.inherit,
                 ),
             };
         }
@@ -618,16 +633,10 @@ fn policy_operations(
             .and_modify(|entry| entry.3 = true)
             .or_insert((path, false, false, true));
     }
-    // The restricted target enables SeChangeNotifyPrivilege, so Windows can
-    // traverse to an exact allowed root without persistent ACEs on its
-    // ancestors. Mutating a private container DACL here can trigger inheritance
-    // propagation through an unrelated profile tree.
     let mut operations = Vec::new();
-    // Persistent root ACLs are policy-independent. The target token, not a
-    // mutable shared DACL variant, selects which stable capability is active for
-    // this command. Two cold Runtime processes can therefore converge on the
-    // same root without an admission mutex or a read policy downgrading a live
-    // writer's shared group ACE.
+    // Every writer for one canonical root publishes the same persistent ACE
+    // set. The token alone selects the active capabilities, so concurrent
+    // read/write admissions cannot overwrite one another with different DACLs.
     for (_, (path, allow_read, allow_write, deny_write)) in roots {
         operations.extend(stable_root_operations(
             path,
@@ -1363,9 +1372,8 @@ fn target_satisfies_operations(
         .iter()
         .map(RequiredAce::from_operation)
         .collect::<Vec<_>>();
-    Ok(target
-        .read_aces()?
-        .required_aces_are_canonical(&required, sandbox_user_sid))
+    let snapshot = target.read_aces()?;
+    Ok(snapshot.required_aces_are_canonical(&required, sandbox_user_sid))
 }
 
 fn apply_operations(
@@ -1399,9 +1407,8 @@ fn apply_operations(
         if target_satisfies_operations(&target, &operations, sandbox_user_sid)? {
             continue;
         }
-        // Match Codex's stable capability model: ordinary admission never joins
-        // a cross-process ACL mutex. Normal-token access is accepted from
-        // effective inherited ACEs; restricted capabilities remain exact.
+        // Match Codex's admission model: current roots converge through
+        // additive, read-back-verified updates without a cross-process mutex.
         for attempt in 0..3 {
             operation_deadline_timeout_ms(acl_phase_deadline, "policy ACL authorization commit")?;
             match target.apply_and_verify(&operations, sandbox_user_sid) {
@@ -1429,14 +1436,7 @@ fn satisfied_policy_capability_sids(
     let targets = open_grouped_operations(operations, generation, sandbox_user_sid)?;
     let mut filesystem_capability_sids = BTreeSet::new();
     for (target, operations) in &targets {
-        let required = operations
-            .iter()
-            .map(RequiredAce::from_operation)
-            .collect::<Vec<_>>();
-        if !target
-            .read_aces()?
-            .required_aces_are_canonical(&required, sandbox_user_sid)
-        {
+        if !target_satisfies_operations(target, operations, sandbox_user_sid)? {
             return Ok(None);
         }
         for operation in operations {
@@ -1929,6 +1929,48 @@ mod tests {
 
     use super::*;
     use crate::model::capability_sid;
+
+    #[test]
+    fn split_object_and_container_inheritance_does_not_prove_recursive_access() {
+        let sid = "S-1-5-21-1-2-3-9999";
+        let snapshot = AceSnapshot {
+            directory: true,
+            aces: vec![
+                ObservedAce {
+                    index: 0,
+                    mode: AclMode::Grant,
+                    sid: sid.into(),
+                    mask: READ_EXECUTE_MASK,
+                    flags: 0,
+                },
+                ObservedAce {
+                    index: 1,
+                    mode: AclMode::Grant,
+                    sid: sid.into(),
+                    mask: READ_EXECUTE_MASK,
+                    flags: OBJECT_INHERIT_ACE.0 as u8,
+                },
+                ObservedAce {
+                    index: 2,
+                    mode: AclMode::Grant,
+                    sid: sid.into(),
+                    mask: READ_EXECUTE_MASK,
+                    flags: CONTAINER_INHERIT_ACE.0 as u8,
+                },
+            ],
+        };
+
+        assert!(!snapshot.satisfies(
+            &RequiredAce::new(
+                AclMode::Grant,
+                sid,
+                READ_EXECUTE_MASK,
+                true,
+                AccessPass::Restricted,
+            ),
+            sid,
+        ));
+    }
 
     #[test]
     fn canonical_control_path_overlap_is_bidirectional_and_component_bounded() {

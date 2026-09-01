@@ -5,8 +5,8 @@
 > **v0.7.96-alpha.5 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 9/setup generation 9 uses a required protected marker start gate,
-> one policy-independent stable capability ACL set per root, lock-free additive convergence with
-> DACL readback, setup-only provisioning/full recovery, reusable
+> one stable capability SID per root/clause, a deterministic per-root ACE set with
+> effective-access checks and DACL readback, setup-only provisioning/full recovery, reusable
 > exact-authority brokers, and independent request/token/pipe/Job lifecycles.
 >
 > **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
@@ -5979,8 +5979,8 @@ administrator forbidden policy or the narrow critical-effect fallback.
 Exec Policy is a separate JSONC file with Codex-shaped token-prefix
 `allow`/`prompt`/`forbidden` decisions; KodaX does not embed Starlark. It is
 evaluated for host execution, not before every sandbox attempt. Broad sandbox
-reads, workspace and system-TMP writes, external network, and the inherited
-host environment are normal. `sandbox.envPass`, Auto[RULES], `/auto-engine`,
+reads, workspace/platform-Temp writes (private per-command Temp on Windows), external network,
+and the inherited host environment are normal. `sandbox.envPass`, Auto[RULES], `/auto-engine`,
 legacy auto-rules loading/trust, helper-script bans, Agent-Home/credential read
 denials, and global-Git disabling are removed. Legacy rules files are ignored
 without parsing or migration; legacy Rules-engine selections normalize to
@@ -6009,7 +6009,7 @@ exact installed group SID after proving that SID idle. Setup generation 9
 upgrades a healthy generation-8 account in place, preserving its SID/group and
 filesystem nonce without replaying cleanup even when that SID is active. Only a
 missing, damaged, or identity-mismatched account rotates. Protocol-7 binaries
-never read the protected marker; protocol 9 and `sandboxRuntime:9` fence old
+never read the protected marker; protocol 9 and `sandboxRuntime:10` fence old
 native and daemon actors. An older setup path can still downgrade state, so
 operators must rerun current setup after using an older KodaX.
 
@@ -6018,12 +6018,14 @@ elevated parent validates that exact digest-bound marker and synchronously
 converges NUL compatibility plus profile read capabilities; after it succeeds,
 the caller atomically publishes the ready marker. No helper overlaps ordinary
 admission and setup does not prewarm system TMP. After setup, each command keeps
-an independent native request, policy token, controller connection, and Job. Every
-canonical root has the same stable `AllowRead`/`AllowWrite`/`DenyWrite` ACE set,
-and the current token selects its exact authority. Admission may idempotently
-add a missing ACE and verify DACL readback, but never clears or revokes shared
-state. No serial command queue, admission mutex, or concurrency-disable option
-is introduced.
+an independent native request, policy token, controller connection, and Job.
+Every canonical root deterministically converges the same stable
+read/deny/write capability ACE set after checking effective access. The command
+token alone activates the authorized clauses; admission never clears an existing
+ACE or downgrades authority used by another command. Shell Temp variables point to
+an empty per-command child under system TMP, so the shared Temp/AppData DACL is
+not a command-admission target. No serial command queue, admission mutex, or
+concurrency-disable option is introduced.
 
 Auto review returns allow/deny for one exact host operation. Its configurable
 security body is `config.json#autoReview.policy`; its role and structured
@@ -6120,7 +6122,8 @@ lock.
    proves the tree gone.
 6. Exact-authority network brokers are bounded reusable resources with a short,
    cancellable idle-reuse grace. A readiness, target-start, or terminal-proof
-   failure immediately detaches that generation from reuse. Existing holders
+   failure, or trusted terminal proof of runner/controller loss, immediately
+   detaches that generation from reuse. Existing holders
    may finish on the detached generation; a same-authority caller creates a new
    generation without waiting for or stopping them. Detached generations remain
    in live-capacity accounting until process exit, so replacement cannot overrun

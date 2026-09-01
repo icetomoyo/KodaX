@@ -3,7 +3,7 @@
 > Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.5`
-> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:9`,
+> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:10`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -23,7 +23,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The published package is `@kodax-ai/kodax@0.7.96-alpha.3`, which adds the v2
+The published package is `@kodax-ai/kodax@0.7.96-alpha.5`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -238,9 +238,12 @@ healthy fixed account identity and upgrades generation 8 in place without
 replaying that destructive cleanup. Setup writes a protected non-ready
 `installing` marker, its elevated parent synchronously converges NUL compatibility
 and profile read capabilities, and the caller then publishes the ready marker;
-it does not prewarm system TMP. Ordinary command admission may
-authorize a missing stable capability ACE on an exact root, but it never runs
-legacy ACL cleanup or revokes another Session's shared ACL state. Linux and
+it does not prewarm system TMP. Ordinary command admission converges the same
+stable read/deny/write capability ACE set for every canonical root; the command
+token alone activates its authorized clauses. Admission never runs legacy ACL
+cleanup or revokes another Session's shared ACL state. Windows shell Temp variables point to an
+empty per-command directory under system TMP, preventing recursive writes to
+the shared Temp/AppData DACL. Linux and
 macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
@@ -257,18 +260,19 @@ request/token/pipe/Job lifecycle. Windows `denyRead`
 returns structured `unsupported_policy` before setup, DACL mutation, or target
 start; ordinary start/exit creates no execution receipt. Setup alone retires legacy
 receipts and their pre-cutover ACEs.
-Before selecting Windows shell policy, `workspaceShellSandboxConfig()` checks
-whether any fixed host-owned Agent Home deny-write directory lies below an
-actual write grant (notably a custom `KODAX_HOME` below system TMP). It creates
-only those fixed directories before emitting the policy. This avoids an
-`ENOENT` denial-root validation failure without widening authority, mutating an
-ACL, or introducing a mutex/queue.
+Before selecting Windows shell policy, `workspaceShellSandboxConfig()` creates
+fixed host-owned Agent Home deny-write directories only when an actual requested
+write root contains them. Merely placing `KODAX_HOME` below the system Temp path
+does not widen that write policy because the shell receives a separate private
+Temp child. This avoids both an `ENOENT` denial-root failure and a broad shared
+Temp grant without introducing a mutex/queue.
 Generation-9 setup invokes one elevated native parent with a versioned,
 digest-bound, single-use request below the protected control directory. It
 synchronously converges NUL compatibility and profile top-level read
 capabilities before publishing ready; no detached prewarm helper overlaps
-ordinary admission. A target-start or terminal-proof failure immediately
-detaches that broker generation from reuse. Existing holders may finish on the
+ordinary admission. A target-start or terminal-proof failure, or trusted
+terminal proof of runner/controller loss, immediately detaches that broker
+generation from reuse. Existing holders may finish on the
 detached generation, while new same-authority commands create a replacement;
 detached processes still count against the fixed ASRT port capacity until they
 actually exit. Each startup/control phase has its own 15-second bound without
@@ -426,7 +430,8 @@ override, while `config.json#autoReview.policy` supplies only the configurable
 security-policy body.
 
 Plan rejects mutations. Edits and Auto attempt the Runtime-owned workspace
-sandbox first, with broad reads, workspace/system-TMP writes, external network,
+sandbox first, with broad reads, workspace/platform-Temp writes (a private
+per-command Temp child on Windows), external network,
 and the inherited host environment. A completed sandbox execution is final and
 silent. Only a proven pre-start denial or unavailable backend reaches Exec
 Policy and then the Edits user boundary or Auto reviewer. A started or uncertain
@@ -1172,7 +1177,7 @@ boundary keeps the process alive until Job-drain evidence is durable. Node treat
 an absent nonce-bound Resume record only after confirmed host-tree death as
 proof that the target never ran; once Resume exists, terminal Job-drain evidence
 remains mandatory.
-The public/daemon capability is `sandboxRuntime:9`; SemVer is also part of the
+The public/daemon capability is `sandboxRuntime:10`; SemVer is also part of the
 execution contract. An idle older daemon is replaced, a busy older daemon is
 rejected before sandbox execution, a newer daemon is never downgraded, and an
 unknown/non-SemVer owner is never mutated.

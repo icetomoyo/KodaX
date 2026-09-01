@@ -3,7 +3,7 @@
 > Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.5`
-> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:9`,
+> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:10`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -135,9 +135,9 @@ account SID across setup versions and records the protected protocol generation
 before shell admission; only damaged identity state rotates.
 The Windows private desktop uses a full-policy capability, while persistent
 filesystem ACEs use the setup's stable filesystem nonce + canonical-root +
-`allowRead`/`allowWrite`/`denyWrite` clause capabilities. Every root keeps the
-same policy-independent ACE set; the restricted token activates only the
-capabilities required by that command. The restricted target's enabled traverse privilege reaches exact
+`allowRead`/`allowWrite`/`denyWrite` clause capabilities. Every canonical root
+converges the same stable ACE set, and the command token activates only its
+authorized clauses. The restricted target's enabled traverse privilege reaches exact
 allowed roots without persistent private-ancestor ACEs or profile-DACL
 propagation. Because `WRITE_RESTRICTED` does not enforce restricting SIDs for
 reads, Windows per-command `denyRead` fails closed as `unsupported_policy`
@@ -148,8 +148,8 @@ receives a small explicit base64 envelope, validates its versioned digest-bound
 `installing` marker inside the protected control directory, and synchronously
 converges NUL compatibility plus profile read capabilities. The setup caller
 atomically publishes the ready marker only after that parent succeeds; no helper
-overlaps ordinary admission, and system TMP is authorized on demand rather than
-prewarmed;
+overlaps ordinary admission. Shell Temp variables use an empty per-command child
+under system TMP, so command admission never rewrites the shared Temp/AppData root;
  ordinary command admission never invokes UAC, that migration, or
  revokes shared ACL state. New sandbox policy grants broad
  host reads instead. Native requests no
@@ -157,9 +157,10 @@ prewarmed;
  so upgrades neither grow those historical residues nor conflict with the
  control verifier. Existing cache denies remain unchanged: owner/protection,
  masks, flags, and SID shapes cannot prove individual ACE provenance.
-This setup-9/stable-ACL boundary advances `sandboxRuntime` to 9 so a newly linked
-client replaces an idle v8 daemon and refuses to mix with a busy one.
-If the resolved Agent Home is itself below a granted system-TMP root, the
+This setup-9/stable-ACL plus private-Temp/recovery boundary advances
+`sandboxRuntime` to 10 so a newly linked client replaces an idle v9 daemon and
+refuses to mix with a busy one.
+If the resolved Agent Home is itself below an actual requested write root, the
 Runtime creates the five fixed host-owned internal directories before adding
 them to `denyWrite`. This is local directory materialization, not setup,
 capability convergence, or a synchronization boundary; it prevents native root
@@ -200,8 +201,9 @@ command admission; setup alone may retire pre-cutover receipts.
 Each command otherwise owns independent pipes, token, Job,
 resume/started records, and terminal proof. Exact-authority
 network brokers remain reusable and retire a failed readiness attempt.
-When target-start or terminal proof fails, cleanup immediately detaches that
-broker generation from reuse. Existing holders finish against the detached
+When target-start or terminal proof fails, or trusted terminal proof reports
+runner/controller loss, cleanup immediately detaches that broker generation
+from reuse. Existing holders finish against the detached
 generation, while new commands create a replacement without waiting or stopping
 those holders. Detached generations remain in live-capacity accounting until
 their processes exit, preventing rolling replacement from overcommitting ASRT's
@@ -652,7 +654,8 @@ explicit host-owned executor that returns `unavailable` instead of applying
 the local fallback. `/sandbox` and optional `tool.sandbox` events are diagnostic
 surfaces; ordinary REPL history remains unchanged. KodaX's workspace-shell
 policy allows broad reads, including Agent Home, credential locations, and
-global Git configuration; writes stay within workspace/system temp. The
+global Git configuration; writes stay within the workspace and platform Temp
+roots, with a private per-command Temp child on Windows. The
 generic SDK executor continues to apply its caller-owned policy.
 
 The permission boundary treats `gitRoot` as an allowed repository boundary and

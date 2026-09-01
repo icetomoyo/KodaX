@@ -406,7 +406,7 @@ export interface SandboxSetupOutcome {
 }
 
 export interface KodaXSandboxCapability {
-  readonly version: 9;
+  readonly version: 10;
   readonly asrtVersion: string;
   readonly platform: NodeJS.Platform;
   readonly backend: 'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
@@ -439,7 +439,7 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
         ? 'linux-bubblewrap'
         : 'unsupported';
   return {
-    version: 9,
+    version: 10,
     asrtVersion: KODAX_ASRT_VERSION,
     platform: process.platform,
     backend,
@@ -3163,6 +3163,9 @@ function createWindowsV2ProcessControl(
     const cleanupDiagnostic = typeof value === 'object' && value !== null
       ? Reflect.get(value, 'denyReadCleanupDiagnostic')
       : undefined;
+    const brokerRetirementRecommended = typeof value === 'object' && value !== null
+      ? Reflect.get(value, 'brokerRetirementRecommended')
+      : undefined;
     if (
       typeof value !== 'object'
       || value === null
@@ -3171,6 +3174,7 @@ function createWindowsV2ProcessControl(
       || Reflect.get(value, 'jobDrained') !== true
       || !Number.isSafeInteger(Reflect.get(value, 'targetExitCode'))
       || typeof Reflect.get(value, 'terminationRequested') !== 'boolean'
+      || typeof brokerRetirementRecommended !== 'boolean'
       || typeof cleanupDeferred !== 'boolean'
       || (
         cleanupDeferred
@@ -3183,6 +3187,7 @@ function createWindowsV2ProcessControl(
     ) {
       throw new Error('Native sandbox terminal record was invalid.');
     }
+    if (brokerRetirementRecommended) retireBrokerAfterStartFailure = true;
     if (cleanupDeferred) {
       emitKodaXDiagnostic({
         source: 'sandbox:windows-v2',
@@ -4162,10 +4167,9 @@ async function removeWorkspaceShellTempDirectory(tempDirectory: string): Promise
 }
 
 function workspaceShellTempWriteRoots(shellTempDirectory?: string): string[] {
-  return [...new Set([
-    ...canonicalTempDirectories(),
-    ...(shellTempDirectory === undefined ? [] : [path.dirname(shellTempDirectory)]),
-  ])];
+  return process.platform === 'win32'
+    ? shellTempDirectory === undefined ? [] : [shellTempDirectory]
+    : canonicalTempDirectories();
 }
 
 function windowsAgentHomeAccessRoot(
@@ -5537,28 +5541,80 @@ async function prepareWindowsV2ShellInvocation(input: {
   readonly signal?: AbortSignal;
   readonly deadlineAt?: number;
 }): Promise<Awaited<ReturnType<KodaXShellSandbox['prepare']>>> {
-  const runtimeReadScopes = windowsNativeRuntimeReadScopes(
-    workspaceShellRuntimeReadScopes(input.env, input.executable),
-  );
-  const shellPolicy = workspaceShellCommandSandboxConfig(
+  const shellTempDirectory = createWorkspaceShellTempDirectory(
     input.workspaceRoot,
-    undefined,
-    input.agentHomeAccess,
-    input.filesystemAccess,
-    runtimeReadScopes,
-    input.trustedProjectExecPolicyPath,
+    'windows-v2-command',
   );
-  return prepareWindowsV2Invocation({
-    shellPolicy,
-    executable: input.executable,
-    args: input.args,
-    cwd: input.cwd,
-    env: input.env,
-    endpoints: [],
-    allowAllNetwork: true,
-    signal: input.signal,
-    deadlineAt: input.deadlineAt,
-  });
+  try {
+    await mkdir(shellTempDirectory, { recursive: true, mode: 0o700 });
+    const runtimeReadScopes = windowsNativeRuntimeReadScopes(
+      workspaceShellRuntimeReadScopes(input.env, input.executable),
+    );
+    const shellPolicy = workspaceShellCommandSandboxConfig(
+      input.workspaceRoot,
+      shellTempDirectory,
+      input.agentHomeAccess,
+      input.filesystemAccess,
+      runtimeReadScopes,
+      input.trustedProjectExecPolicyPath,
+    );
+    const prepared = await prepareWindowsV2Invocation({
+      shellPolicy,
+      executable: input.executable,
+      args: input.args,
+      cwd: input.cwd,
+      env: {
+        ...input.env,
+        TEMP: shellTempDirectory,
+        TMP: shellTempDirectory,
+        TMPDIR: shellTempDirectory,
+      },
+      endpoints: [],
+      allowAllNetwork: true,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
+    });
+    if (prepared === undefined) {
+      await removeWorkspaceShellTempDirectory(shellTempDirectory);
+      return undefined;
+    }
+    let cleanupPromise: ReturnType<KodaXPreparedShellSandboxInvocation['cleanup']> | undefined;
+    return {
+      ...prepared,
+      cleanup(cleanupInput) {
+        cleanupPromise ??= (async () => {
+          let sandboxCleanup: Awaited<ReturnType<typeof prepared.cleanup>>;
+          try {
+            sandboxCleanup = await prepared.cleanup(cleanupInput);
+          } catch (error: unknown) {
+            if (cleanupInput?.execution === 'started_or_unknown') throw error;
+            try {
+              await removeWorkspaceShellTempDirectory(shellTempDirectory);
+            } catch (tempCleanupError: unknown) {
+              throw new AggregateError(
+                [error, tempCleanupError],
+                'Windows native shell and private temp cleanup failed.',
+              );
+            }
+            throw error;
+          }
+          await removeWorkspaceShellTempDirectory(shellTempDirectory);
+          return sandboxCleanup;
+        })();
+        return cleanupPromise;
+      },
+    };
+  } catch (error: unknown) {
+    try {
+      await removeWorkspaceShellTempDirectory(shellTempDirectory);
+    } catch (cleanupError: unknown) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Windows native shell preparation and private temp cleanup both failed.',
+      );
+    }
+    throw error;
+  }
 }
 
 async function prepareWindowsV2Invocation(input: {

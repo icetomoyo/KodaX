@@ -296,6 +296,20 @@ describe('F270 actor principal wiring', () => {
     });
   });
 
+  it('forwards the host-boundary shell authorizer to tool contexts', () => {
+    const authorize = async () => true;
+    const ctx = buildToolExecutionContext({
+      options: {
+        provider: 'mock',
+        context: { authorizeShellHostExecution: authorize },
+      },
+      runtime: undefined,
+      managedProtocolPayloadRef: { current: undefined },
+    });
+
+    expect(ctx.authorizeShellHostExecution).toBe(authorize);
+  });
+
   it('binds SDK sandbox envPass to the current run and child snapshot', () => {
     const sandbox = { envPass: ['GH_TOKEN'] } as const;
     const ctx = buildToolExecutionContext({

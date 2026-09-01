@@ -5,7 +5,7 @@
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.5`
 > (`v0.7.96-alpha.5` is the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
-> This baseline advertises Windows `sandboxRuntime:9`;
+> This baseline advertises Windows `sandboxRuntime:10`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
 > This document describes the current product. Historical pre-v0.7.43
@@ -219,11 +219,14 @@ handle to the protected generation marker. Setup publishes a protected
 non-ready `installing` marker, the elevated parent synchronously converges NUL
 compatibility and profile read capabilities, and the caller atomically publishes
 the ready marker only after success. No helper overlaps command admission and
-system TMP is not prewarmed. Windows per-command `denyRead` fails closed as
+system TMP is not prewarmed or rewritten; shell Temp variables point to one
+private per-command child. Every canonical root converges the same stable
+capability ACE set, while the command token activates only its authorized capabilities.
+Windows per-command `denyRead` fails closed as
 `unsupported_policy` before target start because `WRITE_RESTRICTED` cannot
-enforce restricting SIDs for reads. If a custom `KODAX_HOME` is nested below the
-system temporary write root, the Runtime materializes only its fixed protected
-internal directories before constructing the Windows deny-write policy; a
+enforce restricting SIDs for reads. If an actual requested write root contains
+a custom `KODAX_HOME`, the Runtime materializes only its fixed protected internal
+directories before constructing the Windows deny-write policy; a
 missing deny root cannot fail first launch, and this path acquires no lock or
 ACL transaction.
 
@@ -367,8 +370,9 @@ with typed filesystem/network/environment/timeout/output policy; that
 standalone executor returns structured `unavailable` and never chooses an
 ordinary unsandboxed fallback for the host. KodaX's own workspace-shell
 containment must allow broad host reads, including Agent Home, credential
-locations, and global Git configuration, while limiting writes to workspace
-and system temporary roots. A standalone SDK host remains responsible for its
+locations, and global Git configuration, while limiting writes to the workspace
+and platform Temp roots; Windows targets receive a private per-command Temp child.
+A standalone SDK host remains responsible for its
 own filesystem threat boundary.
 
 Sidecar completion must distinguish an optional offer made after the current

@@ -522,13 +522,15 @@ Auto[LLM], Full Access) replace the legacy Plan/Edits/Auto[RULES]/Auto[LLM]
 shape, shell containment is sandbox-first with Exec Policy and Auto review
 only at a proven host boundary, and the Windows sandbox drops every
 machine-global admission mutex, command-lifetime coordinator, and queue.
-Native shell protocol 9/setup generation 9 keeps one stable capability ACE
-set per root with DACL-readback convergence, protected two-phase setup, and
+Native shell protocol 9/setup generation 9 keeps stable root/clause capability
+SIDs, converges the same stable ACE set for every canonical root after
+effective-access checks, lets the command token select its authority, uses a
+private per-command Temp child, and retains protected two-phase setup plus
 independent per-command token/pipe/Job lifecycles; missing current-hash
 native artifacts self-heal through atomic publication; and Runtime daemon
 upgrades become SemVer-bounded (idle older daemon replaced, busy one left
 running with a recoverable boundary, newer one never downgraded). Windows
-`sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`, and
+`sandboxRuntime:10`, `runtimeAutoModeGuardrail:5`, and
 `sharedSessionSettings:2` are unchanged from the alpha.4 design. npm
 publication remains a manual maintainer step.
 

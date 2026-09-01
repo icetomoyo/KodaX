@@ -53,6 +53,7 @@ struct HostAbort {
     requested: Arc<AtomicBool>,
     completed: Arc<(Mutex<bool>, Condvar)>,
     started: Arc<AtomicBool>,
+    broker_retirement_recommended: Arc<AtomicBool>,
     runner_abort: Arc<Mutex<Option<RunnerAbort>>>,
     runner_writer: Arc<Mutex<Option<File>>>,
     asrt_process: Arc<OwnedHandle>,
@@ -78,6 +79,7 @@ impl HostAbort {
             requested: Arc::new(AtomicBool::new(false)),
             completed: Arc::new((Mutex::new(false), Condvar::new())),
             started: Arc::new(AtomicBool::new(false)),
+            broker_retirement_recommended: Arc::new(AtomicBool::new(false)),
             runner_abort: Arc::new(Mutex::new(None)),
             runner_writer: Arc::new(Mutex::new(None)),
             asrt_process: Arc::new(asrt_process),
@@ -113,6 +115,9 @@ impl HostAbort {
                     job_drained: true,
                     target_exit_code: 1,
                     termination_requested: true,
+                    broker_retirement_recommended: self
+                        .broker_retirement_recommended
+                        .load(Ordering::Acquire),
                     deny_read_cleanup_deferred: false,
                     deny_read_cleanup_diagnostic: None,
                 },
@@ -220,6 +225,11 @@ impl HostAbort {
         self.started.load(Ordering::Acquire)
     }
 
+    fn mark_broker_fault(&self) {
+        self.broker_retirement_recommended
+            .store(true, Ordering::Release);
+    }
+
     fn request_termination(&self, started: bool) -> Result<()> {
         if started {
             return self
@@ -265,6 +275,7 @@ impl ControllerMonitor {
                 || std::thread::sleep(Duration::from_millis(10)),
             );
             if outcome == ControllerOutcome::Lost {
+                abort.mark_broker_fault();
                 abort.request();
             }
             outcome
@@ -971,6 +982,7 @@ fn finalize_drained_run(
         job_drained: true,
         target_exit_code: settlement.target_exit_code,
         termination_requested: settlement.termination_requested,
+        broker_retirement_recommended: false,
         deny_read_cleanup_deferred: cleanup_deferred,
         deny_read_cleanup_diagnostic: cleanup_diagnostic,
     });
@@ -1046,8 +1058,17 @@ fn relay_after_hello(
     deadline.ensure("Started attestation")?;
     launch_watchdog.finish("target Started")?;
     loop {
-        let frame = read_frame(&mut event_pipe)?
-            .ok_or_else(|| anyhow!("Windows sandbox runner disconnected before Exit"))?;
+        let frame = match read_frame(&mut event_pipe) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => {
+                abort.mark_broker_fault();
+                bail!("Windows sandbox runner disconnected before Exit");
+            }
+            Err(error) => {
+                abort.mark_broker_fault();
+                return Err(error);
+            }
+        };
         match frame.kind {
             FrameKind::Stdout => {
                 let mut output = std::io::stdout().lock();

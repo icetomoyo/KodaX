@@ -251,6 +251,7 @@ pub struct TerminalRecord {
     pub job_drained: bool,
     pub target_exit_code: u32,
     pub termination_requested: bool,
+    pub broker_retirement_recommended: bool,
     pub deny_read_cleanup_deferred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deny_read_cleanup_diagnostic: Option<String>,

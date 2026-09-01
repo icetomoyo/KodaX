@@ -7,7 +7,7 @@
 
 This guide tracks the `v0.7.96-alpha.5` pre-release package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
-advertises Windows `sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`,
+advertises Windows `sandboxRuntime:10`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
 `crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
@@ -2908,9 +2908,9 @@ recovery and only the last owner recovers. Incompatible policy or pre-start
 infrastructure failure returns to the already-authorized normal permission path.
 A missing lifecycle attestation after target start remains fail-closed and is
 never repaired by replaying the command. Runtime sandbox capability v3 first
-fenced older daemon policy revisions in v0.7.86. The current contract is
-`sandboxRuntime:5`: auto-start replaces an idle older daemon and fails closed
-while it is busy. Version 5 adds automatic same-boot Windows ACL recovery: a
+fenced older daemon policy revisions in v0.7.86. The v0.7.95 contract was
+`sandboxRuntime:5`: auto-start replaced an idle older daemon and failed closed
+while it was busy. Version 5 added automatic same-boot Windows ACL recovery: a
 sandbox-user SID probe must prove that no unrelated process remains before an
 uncontained `unconfirmed-owner` ticket is cleared. Probe uncertainty is
 diagnosed and retried automatically; it never becomes permission to reset ACLs.
@@ -4716,7 +4716,7 @@ const runtime = await connectKodaXRuntime({
     runBoundHostTools: 1,
     coderOwnerFencing: 1,
     crashOutcomeModel: 2,
-    sandboxRuntime: 9,
+    sandboxRuntime: 10,
     coderFeatureMatrix: 1,
     sessionAdmission: 1,
     completeObservationSnapshot: 1,
@@ -4785,9 +4785,9 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `9` in v0.7.96-alpha.5
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `10` in v0.7.96-alpha.5
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
-`sandboxRuntime:9`, so an idle v8-or-older daemon is replaced. Concurrent
+`sandboxRuntime:10`, so an idle v9-or-older daemon is replaced. Concurrent
 authenticated upgrade clients converge on one fenced replacement, including
 the exact prepared-ticket/revision-CAS attach window; a busy daemon or one with
 untrusted clients remains untouched and returns structured restart guidance. Version 6 means that
@@ -5719,8 +5719,9 @@ Edits / Auto -> sandbox
                                                                 ` deny  -> safer-route result
 ```
 
-The workspace sandbox permits broad host reads, workspace and system-TMP
-writes, external network access, and inherited host environment variables. It
+The workspace sandbox permits broad host reads, workspace and platform-Temp
+writes, external network access, and inherited host environment variables. On
+Windows, the Temp grant is a private per-command child. It
 does not permit arbitrary host writes. Sandbox completion is authoritative and
 does not initialize or call Auto review. Only a proven pre-start denial or
 unavailable backend may create a host-boundary decision. The Runtime owns the
@@ -6435,14 +6436,15 @@ Windows, Linux, and macOS:
   directory and verifies the non-ready `installing` marker. It synchronously
   converges NUL compatibility plus profile read capabilities; the caller
   atomically publishes the ready marker only after confirmed parent success.
-  No helper overlaps ordinary admission, system TMP is not prewarmed, and doctor
-  and normal admission never invoke this setup path.
+  No helper overlaps ordinary admission, shared system Temp is not prewarmed or
+  rewritten, and doctor and normal admission never invoke this setup path.
 
 The Windows private desktop uses an ephemeral full-policy capability. Persistent
 filesystem authority instead uses stable capabilities derived from the
 setup's persistent filesystem nonce, final handle-canonical root, and
-`allowRead`/`allowWrite`/`denyWrite` clause. Every root keeps the same persistent
-ACE set, while each command token activates only its authorized clauses.
+`allowRead`/`allowWrite`/`denyWrite` clause. Every canonical root converges the
+same stable capability ACE set; each command token activates only its authorized
+clauses.
 The target's enabled Windows traverse privilege reaches an exact allowed root
 without persistent ACEs on private ancestors; admission never rewrites a
 profile/container DACL merely to make a descendant reachable. Because
@@ -6530,7 +6532,8 @@ long-lived KodaX workspace-session owner or filesystem-effect lease.
 KodaX's own local workspace-shell policy does not add KodaX-specific read
 denials: Agent Home, ordinary credential locations, global Git configuration,
 and workspace-local `.kodax/runtime` are readable. Writes remain bounded to
-the workspace and system temporary directories, and `.kodax/runtime` remains
+the workspace and platform Temp roots; Windows uses an empty per-command child
+below system Temp. `.kodax/runtime` remains
 write-denied even when the surrounding workspace is writable. Its per-Session
 sequence cursor is a recoverable derived index: a lock-held durable write does
 not require Windows DELETE sharing, retries short sharing conflicts, and a
@@ -6538,11 +6541,12 @@ truncated cursor is reconstructed from the durable event ledgers. A standalone
 SDK host must declare any sensitive read paths required by its own threat
 boundary.
 
-If the resolved `KODAX_HOME` is below the system temporary write grant, the
-workspace-shell adapter materializes only the five fixed protected internal
-directories before constructing the Windows deny-write policy. This prevents a
-missing-root `unsupported` result on first launch without adding a setup call,
-ACL mutation, lock, or queue. Standalone `runKodaXSandboxed()` callers remain
+On Windows, the workspace-shell adapter gives every shell a unique empty Temp
+child and points `TEMP`, `TMP`, and `TMPDIR` to it. The shared system Temp/AppData
+roots are not admission ACL targets, even when `KODAX_HOME` is nested below them.
+POSIX keeps its platform-canonical Temp roots and inherited Temp variables.
+Protected Agent Home directories are materialized only when an actual requested
+write root contains them. Standalone `runKodaXSandboxed()` callers remain
 responsible for ensuring every explicit policy root they supply exists.
 
 `command` and `args` remain separate process arguments. On Windows KodaX uses

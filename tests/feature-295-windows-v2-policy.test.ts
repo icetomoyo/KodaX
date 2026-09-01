@@ -588,7 +588,8 @@ function launchSandboxRuntime(
     `import { runKodaXSandboxed } from ${JSON.stringify(sandboxRuntimeUrl)}`,
     'const decode=value=>JSON.parse(Buffer.from(value,"base64url").toString("utf8"))',
     'const encode=value=>Buffer.from(JSON.stringify(value)).toString("base64url")',
-    'const run=async input=>{try{return {kind:"result",result:await runKodaXSandboxed(input)}}catch(error){return {kind:"error",message:error instanceof Error?error.message:String(error)}}}',
+    'const describe=error=>error instanceof AggregateError?[error.message,...error.errors.map(describe)].join(" | "):error instanceof Error?error.message:String(error)',
+    'const run=async input=>{try{return {kind:"result",result:await runKodaXSandboxed(input)}}catch(error){return {kind:"error",message:describe(error)}}}',
     'const first=await run(decode(process.argv[1]))',
     'if(process.argv[2]===undefined){process.stdout.write("TERMINAL:"+encode(first))}else{process.stdout.write("FIRST:"+encode(first)+"\\n");const second=await run(decode(process.argv[2]));process.stdout.write("SECOND:"+encode(second))}',
   ].join(';');
@@ -1838,7 +1839,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     ].join('\n');
     const workerInput = Buffer.from(JSON.stringify({
       root: workerRoot,
-      command: `del /f /q "${target}" && echo SECOND_RUNTIME_OK`,
+      command: `del /f /q "${target}" && powershell -NoProfile -Command "$probe=Join-Path $env:TEMP 'kodax-private-temp-probe'; Set-Content -LiteralPath $probe -Value ok; Write-Output ('SECOND_RUNTIME_OK TEMP=' + $env:TEMP)"`,
     }), 'utf8').toString('base64url');
 
     let primaryFailure: unknown;
@@ -1859,6 +1860,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       };
       expect(workerElapsedMs).toBeLessThan(15_000);
       expect(worker.result).toContain('SECOND_RUNTIME_OK');
+      expect(worker.result).toContain(`${path.sep}kodax-sandbox${path.sep}`);
       expect(worker.observations.some((item) => item.state === 'applied')).toBe(true);
       await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
 

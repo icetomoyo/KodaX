@@ -892,6 +892,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             jobDrained: true,
             targetExitCode: 0,
             terminationRequested: false,
+            brokerRetirementRecommended: false,
             denyReadCleanupDeferred: false,
           }));
         }
@@ -2113,9 +2114,9 @@ describe('Windows git safe.directory argv takeover', () => {
     },
   );
 
-  it('reports the v9 setup-and-stable-ACL capability', () => {
+  it('reports the v10 private-Temp and recovery capability over setup v9', () => {
     const capability = sandboxRuntimeCapability();
-    expect(capability.version).toBe(9);
+    expect(capability.version).toBe(10);
     expect(capability.gitSafeDirectory).toBe('authorized-repo-roots');
     expect(capability.delayedEffectDrainRecovery).toBe('automatic');
     expect(capability.sameBootAclRecovery).toBe('sandbox-user-process-probe');
@@ -2545,12 +2546,16 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     };
     const canonicalTarget = await realpath(target);
     const canonicalTemp = await realpath(os.tmpdir());
+    const canonicalPrivateTempRoot = path.join(canonicalTemp, 'kodax-sandbox');
     expect(request.allowRead.map((entry) => entry.toLowerCase())).not.toContain(
       canonicalTarget.toLowerCase(),
     );
-    expect(request.allowWrite.map((entry) => entry.toLowerCase())).toContain(
+    expect(request.allowWrite.map((entry) => entry.toLowerCase())).not.toContain(
       canonicalTemp.toLowerCase(),
     );
+    expect(request.allowWrite.some((entry) => (
+      isPathInside(canonicalPrivateTempRoot, entry)
+    ))).toBe(true);
     expect(request.allowRead.map((entry) => entry.toLowerCase())).not.toContain(
       linked.toLowerCase(),
     );
@@ -2594,7 +2599,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
-  it('allows broad home reads and writes to the host temporary directory', async () => {
+  it('allows broad home reads and isolates host temporary writes per command', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));
     tempRoots.push(root);
@@ -2635,15 +2640,54 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(normalize(request.allowRead)).toContain(agentHome.toLowerCase());
     expect(normalize(request.denyRead)).not.toContain(path.resolve(globalGitConfig).toLowerCase());
     expect(normalize(request.denyRead)).not.toContain(agentHome.toLowerCase());
-    expect(normalize(request.allowWrite)).toContain(path.resolve(os.tmpdir()).toLowerCase());
-    expect(normalize(request.allowWrite)).not.toContain(path.resolve(root).toLowerCase());
+    expect(normalize(request.allowWrite)).not.toContain(path.resolve(os.tmpdir()).toLowerCase());
+    expect(normalize(request.allowWrite)).toContain(path.resolve(root).toLowerCase());
+    const privateTemp = request.allowWrite.find((entry) => (
+      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+    ));
+    expect(privateTemp).toBeDefined();
+    expect(statSync(privateTemp!).isDirectory()).toBe(true);
     expect(normalize(request.denyWrite)).not.toContain(
       path.resolve(root, '.kodax', 'exec-policy.jsonc').toLowerCase(),
     );
     await invocation.cleanup();
+    expect(() => statSync(privateTemp!)).toThrow();
   });
 
-  it('materializes protected Agent Home directories before a temporary-root policy is built', async () => {
+  it('removes a private command Temp when policy construction fails', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-temp-policy-failure-'));
+    tempRoots.push(root);
+    const invalidAgentHome = path.join(root, 'agent-home-file');
+    await writeFile(invalidAgentHome, 'not a directory', 'utf8');
+    vi.stubEnv('KODAX_HOME', invalidAgentHome);
+    const privateTempRoot = path.join(
+      os.tmpdir(),
+      'kodax-sandbox',
+      createHash('sha256').update('windows-v2-command').digest('hex').slice(0, 16),
+    );
+    const before = (await readDirectoryIfPresent(privateTempRoot))
+      .filter((entry) => entry.startsWith(`${process.pid}-`))
+      .sort();
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+
+    await expect(sandbox.prepare({
+      toolCallId: 'temp-policy-failure',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+    })).rejects.toThrow();
+
+    const after = (await readDirectoryIfPresent(privateTempRoot))
+      .filter((entry) => entry.startsWith(`${process.pid}-`))
+      .sort();
+    expect(after).toEqual(before);
+  });
+
+  it('does not widen an Agent Home under system Temp into the private command Temp policy', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-agent-home-materialize-'));
     tempRoots.push(root);
@@ -2667,15 +2711,18 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       fallbackToNormalExecution: false,
     });
     if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
-    for (const directory of [
-      'sandbox-runtime',
-      'native-text-state-v1',
-      'runtime',
-      'processes',
-      'learned',
-    ]) {
-      expect(statSync(path.join(agentHome, directory)).isDirectory()).toBe(true);
-    }
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly allowWrite: readonly string[];
+    };
+    expect(request.allowWrite.some((entry) => (
+      path.resolve(entry).toLowerCase() === path.resolve(agentHome).toLowerCase()
+        || isPathInside(entry, agentHome)
+    ))).toBe(false);
+    expect(request.allowWrite.some((entry) => (
+      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+    ))).toBe(true);
     await invocation.cleanup();
   });
 
@@ -2993,11 +3040,18 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const failedRequestFile = failed.args.at(-1);
     if (failedRequestFile === undefined) throw new Error('expected a native request file');
     const failedRequest = JSON.parse(readFileSync(failedRequestFile, 'utf8')) as {
+      readonly allowWrite: readonly string[];
       readonly terminalRecordPath: string;
     };
+    const failedPrivateTemp = failedRequest.allowWrite.find((entry) => (
+      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+    ));
+    if (failedPrivateTemp === undefined) throw new Error('expected a private command Temp');
+    tempRoots.push(failedPrivateTemp);
     await writeFile(failedRequest.terminalRecordPath, '{}', 'utf8');
 
     await expect(failed.cleanup({ execution: 'started_or_unknown' })).rejects.toThrow(/terminal|cleanup/i);
+    expect(statSync(failedPrivateTemp).isDirectory()).toBe(true);
     const third = await Promise.race([
       prepare('terminal-third'),
       new Promise<never>((_resolve, reject) => setTimeout(
@@ -3062,6 +3116,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
             jobDrained: true,
             targetExitCode: 1,
             terminationRequested: true,
+            brokerRetirementRecommended: false,
             denyReadCleanupDeferred: false,
           }));
           host.exitCode = 1;
@@ -3079,7 +3134,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     15_000,
   );
 
-  it('retires an unreferenced broker after terminal proof fails before immediate reuse', async () => {
+  it('retires an unreferenced broker after trusted terminal proof reports controller loss', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-retire-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
@@ -3099,10 +3154,19 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     if (failedRequestFile === undefined) throw new Error('expected a native request file');
     const failedRequest = JSON.parse(readFileSync(failedRequestFile, 'utf8')) as {
       readonly terminalRecordPath: string;
+      readonly terminalNonce: string;
     };
-    await writeFile(failedRequest.terminalRecordPath, '{}', 'utf8');
+    await writeFile(failedRequest.terminalRecordPath, JSON.stringify({
+      protocol: 9,
+      nonce: failedRequest.terminalNonce,
+      jobDrained: true,
+      targetExitCode: 1,
+      terminationRequested: true,
+      brokerRetirementRecommended: true,
+      denyReadCleanupDeferred: false,
+    }), 'utf8');
 
-    await expect(failed.cleanup({ execution: 'started_or_unknown' })).rejects.toThrow(/terminal|cleanup/i);
+    await failed.cleanup({ execution: 'started_or_unknown' });
     const replacement = await Promise.race([
       prepare('terminal-retire-replacement'),
       new Promise<never>((_resolve, reject) => setTimeout(
@@ -3208,6 +3272,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       jobDrained: true,
       targetExitCode: 0,
       terminationRequested: false,
+      brokerRetirementRecommended: false,
       denyReadCleanupDeferred: false,
     }), 'utf8');
     holderChild.exitCode = 0;
@@ -3419,6 +3484,80 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     if (replacement === undefined) throw new Error('expected replacement invocation');
     expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
     await replacement.cleanup({ execution: 'not_started' });
+  });
+
+  it('does not retire a healthy broker when target stderr imitates an internal disconnect', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-started-controller-loss-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const failed = await prepare('started-spoofed-disconnect-first');
+    if (failed?.processControl === undefined) throw new Error('expected process control');
+    const requestFile = failed.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly terminalRecordPath: string;
+      readonly terminalNonce: string;
+    };
+    const recordIdentity = path.basename(request.terminalRecordPath)
+      .slice('windows-terminal-'.length);
+    stubbornBroker.mode = 'silent';
+    const child = spawn(failed.executable, [...failed.args], {
+      cwd: root,
+      env: failed.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 5_000;
+    await failed.processControl.closeInput?.(child, undefined, deadlineAt);
+    await writeFile(path.join(
+      path.dirname(request.terminalRecordPath),
+      `windows-started-${recordIdentity}`,
+    ), JSON.stringify({
+      protocol: 9,
+      nonce: request.terminalNonce,
+      targetPid: process.pid,
+      jobContained: true,
+    }), 'utf8');
+    await writeFile(request.terminalRecordPath, JSON.stringify({
+      protocol: 9,
+      nonce: request.terminalNonce,
+      jobDrained: true,
+      targetExitCode: 1,
+      terminationRequested: true,
+      brokerRetirementRecommended: false,
+      denyReadCleanupDeferred: false,
+    }), 'utf8');
+    await expect(
+      failed.processControl.attestStart?.(child, undefined, deadlineAt),
+    ).resolves.toEqual({ state: 'started' });
+    child.stderr?.emit(
+      'data',
+      Buffer.from('kodax-windows-sandbox protocol 9 failed: '
+        + 'Windows sandbox runner disconnected before Exit'),
+    );
+    child.exitCode = 2;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 2, null);
+    child.emit('close', 2, null);
+    await failed.processControl.terminate(child);
+    await failed.cleanup({ execution: 'started_or_unknown' });
+    stubbornBroker.mode = 'none';
+
+    const reused = await prepare('started-spoofed-disconnect-reused');
+    if (reused === undefined) throw new Error('expected reused broker invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    await reused.cleanup({ execution: 'not_started' });
   });
 
   it('keeps a healthy broker after a native-host bootstrap-delivery timeout', async () => {
