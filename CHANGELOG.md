@@ -23,6 +23,12 @@ All notable changes to this project will be documented in this file.
   bootstrap input, so a forged or policy-opaque request is rejected with its
   structured error instead of stalling until the operation deadline. Valid
   commands still observe termination control before setup and launch.
+- Treated the Runtime daemon `0.0.0` development sentinel as having no
+  provable SemVer ordering. Such an owner attaches in place instead of being
+  classified as an older daemon for the version boundary, so SDK test and
+  development harnesses reconnect without a forced replacement, while every
+  documented versioned-capability boundary, the never-downgrade guard, and
+  the non-SemVer fail-closed path are unchanged.
 - Made content-addressed Windows native artifacts self-healing on execution.
   A missing new-version artifact is published atomically, concurrent publishers
   converge without a global mutex, and ordinary commands verify stable file
