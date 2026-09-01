@@ -4546,6 +4546,9 @@ function workspaceShellSandboxConfig(
   const allowRead = process.platform === 'win32'
     ? existingMinimalWindowsAclGuardRoots(allowReadCandidates)
     : [...new Set(allowReadCandidates)];
+  if (process.platform !== 'win32') {
+    assertTrustedTextNativeStateNotDirectlyReadable(allowRead);
+  }
   return {
     network: {
       allowedDomains: [],
