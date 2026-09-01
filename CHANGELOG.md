@@ -17,6 +17,12 @@ All notable changes to this project will be documented in this file.
   published a nonce-bound Resume record may use the one-second pre-start
   cleanup path, while a Resume discovered during that window extends the wait
   to the normal terminal-attestation budget instead of being killed early.
+- Restored fail-closed admission ordering in the Windows native host: policy
+  boundary validation (protected control-state overlap, restricted-account,
+  and terminal-record checks) runs before the host consumes controller
+  bootstrap input, so a forged or policy-opaque request is rejected with its
+  structured error instead of stalling until the operation deadline. Valid
+  commands still observe termination control before setup and launch.
 - Made content-addressed Windows native artifacts self-healing on execution.
   A missing new-version artifact is published atomically, concurrent publishers
   converge without a global mutex, and ordinary commands verify stable file
