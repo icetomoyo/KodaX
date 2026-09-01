@@ -29,6 +29,7 @@ import {
   SkillRegistry,
   withKodaXFileLock,
 } from "@kodax-ai/agent";
+import { KODAX_VERSION } from "@kodax-ai/repl";
 import type {
   AgentActorSaveAttempt,
   AgentActorSavePhase,
@@ -578,7 +579,7 @@ describe("createKodaXRuntime", () => {
             mode: "embedded",
             profile: "default",
             startedAt: "2026-07-10T00:00:00.000Z",
-            version: "0.7.66",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
@@ -686,7 +687,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-15T00:00:00.000Z",
-            version: "0.7.69",
+            version: KODAX_VERSION,
           },
           capabilities: { ...SESSION_EVENT_JOURNAL_CAPABILITY },
         };
@@ -715,7 +716,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-08-28T00:00:00.000Z",
-            version: "0.7.96-alpha.2",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
@@ -749,7 +750,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-28T00:00:00.000Z",
-            version: "0.7.77",
+            version: KODAX_VERSION,
           },
           capabilities: { ...SESSION_EVENT_JOURNAL_CAPABILITY },
         };
@@ -836,7 +837,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-15T00:00:00.000Z",
-            version: "0.7.70",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
@@ -868,7 +869,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-18T00:00:00.000Z",
-            version: "0.7.71",
+            version: KODAX_VERSION,
           },
           capabilities: { ...SESSION_EVENT_JOURNAL_CAPABILITY },
         };
@@ -966,7 +967,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-20T00:00:00.000Z",
-            version: "0.7.73",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
@@ -1093,7 +1094,7 @@ describe("createKodaXRuntime", () => {
               mode: "embedded",
               profile: "default",
               startedAt: "2026-07-09T00:00:00.000Z",
-              version: "0.7.66",
+              version: KODAX_VERSION,
             },
             capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
           };
@@ -1160,7 +1161,7 @@ describe("createKodaXRuntime", () => {
                 mode: "daemon",
                 profile: "default",
                 startedAt: "2026-07-09T00:00:00.000Z",
-                version: "0.7.66",
+                version: KODAX_VERSION,
               },
               capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
             });
@@ -1224,7 +1225,7 @@ describe("createKodaXRuntime", () => {
                 mode: "daemon",
                 profile,
                 startedAt: "2026-07-09T00:00:00.000Z",
-                version: "0.7.66",
+                version: KODAX_VERSION,
               },
               capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
             });
@@ -1282,7 +1283,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-09T00:00:00.000Z",
-            version: "0.7.66",
+            version: KODAX_VERSION,
           },
           capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
         };
@@ -17488,7 +17489,7 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-27T00:00:00.000Z",
-            version: "0.7.77",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
