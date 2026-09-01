@@ -77,11 +77,31 @@ Expected:
 - an already wrapped quoted executable under Windows `cmd /S /C` reaches the
   real target with quoted and unquoted final arguments and exits 0 instead of
   producing a path-not-found footer;
-- after controller loss with the final broker reference, cleanup retires the
-  old broker before an immediate same-authority command starts; another live
-  holder is not stopped by a command-local terminal-proof failure;
+- after controller loss, cleanup detaches the failed broker generation even
+  while another lease remains live; the holder is not stopped and an immediate
+  same-authority command starts on a fresh generation without waiting; detached
+  processes remain counted against the five-broker live capacity until exit;
+- a broker spawn error followed by `close` but no `exit` does not consume live
+  capacity, while an unconfirmed termination remains counted until its actual
+  process closes;
+- a native-host bootstrap-pipe delivery timeout does not retire the already
+  healthy shared broker because the broker has not yet participated in that
+  phase;
+- each native startup/control phase is bounded to 15 seconds without replacing
+  the command deadline; cleanup-proven pre-Resume failure reaches the existing host
+  permission boundary, while started/uncertain work is never replayed;
 - failed Git Job binding with an unknown root drain retains managed-child
   recovery until the tree is proved gone.
+
+For npm-linked upgrade recovery, leave one idle daemon from the preceding build
+running and start two `kodax -r` clients concurrently. Exactly one temporary
+upgrade client must perform the fenced replacement; both clients must reconnect
+to the current daemon and run sandboxed Bash. Repeat with the second client
+attaching after the first client's preflight, then again after its durable
+prepared-exit ticket but before the revision CAS. Repeat the prepared-ticket
+case with three clients: one follower resumes the ticket, the others observe
+the owner change, and every client reconnects. A busy old daemon must remain
+untouched and return the existing structured incompatibility instead.
 
 ## Manual two-process Bash/write overlap
 

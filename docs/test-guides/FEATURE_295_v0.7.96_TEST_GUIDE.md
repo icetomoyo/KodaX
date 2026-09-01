@@ -242,7 +242,8 @@ shell lifetime.
   process cleanup suites remain green.
 - Confirm a cold installed package can prepare Windows shell directly without
   a preceding in-process doctor call; slow static preparation must not consume
-  the target's fresh 30-second native launch budget.
+  the target's independent 15-second native startup budget or the command's
+  separate execution budget.
 - Confirm release notes and doctor documentation retain Issues 307, 308, and
   309: the final
   target is creation-time Job-contained, while eliminating the ASRT-created

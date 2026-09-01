@@ -182,9 +182,13 @@ Within one Runtime, commands whose canonical network policy and sandbox-account
 generation match share one reusable process-level ASRT network broker; their native
 requests, restricted policy tokens, controller connections, and Jobs remain
 independent. The broker is referenced while starting or leased and detached
-from the Node event loop only while idle. A failed readiness attempt is retired instead of poisoning the
-next caller. A caller-local timeout releases only its own reference and does
-not cancel a healthy shared startup; a sequential caller may still join it. If
+from the Node event loop only while idle. A readiness, target-start, or
+terminal-proof failure immediately detaches that broker generation from reuse;
+existing holders are not stopped, and a later caller uses a new generation.
+Detached processes remain in fixed-port capacity accounting until `close`.
+Each startup/control phase has a 15-second bound without replacing the command
+deadline. A caller-local timeout releases only its own reference and does not
+cancel a healthy shared startup; a sequential caller may still join it. If
 all five distinct broker slots are actively leased, a sixth policy fails before
 target start rather than waiting for another command lifecycle. Different
 network policies never share that authority. ASRT
@@ -196,8 +200,9 @@ The broker also owns a verified native liveness controller. Its named pipe is
 created with a protected Host/SYSTEM-only DACL, rejects remote clients, and
 keeps multiple pending instances for concurrent host launches. Restricted
 targets cannot connect to or exhaust this control path. Broker/controller loss
-closes every controller handle, drains active Jobs, and lets a later command
-create a fresh broker.
+closes the affected controller handles and drains their Jobs. A command-local
+failure only detaches that generation from future reuse; it does not close
+unrelated active holders.
 This authority split is advertised as `sandboxRuntime:9`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`

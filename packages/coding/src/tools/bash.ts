@@ -771,6 +771,15 @@ async function executeToolBash(
       } finally {
         unregister();
       }
+      if (
+        sandboxPreStartUnavailable
+        && sandboxCleanupError === undefined
+        && !ctx.abortSignal?.aborted
+      ) {
+        throw new ShellSandboxPreStartError(
+          sandboxPreStartDiagnostic ?? sandboxLifecycleErrorDetail(inputFailure),
+        );
+      }
       throw inputFailure;
     }
     return { proc, unregister };

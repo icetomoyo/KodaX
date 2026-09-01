@@ -1,6 +1,6 @@
 import { EventEmitter, once } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -90,8 +90,11 @@ const capturedWindowsNetworkBrokerRequests = vi.hoisted(
 const capturedWindowsNetworkBrokerStops = vi.hoisted(() => ({ count: 0 }));
 const windowsNetworkBrokerMock = vi.hoisted(() => ({
   silentReadiness: false,
+  spawnErrorBeforeReady: false,
   readinessDelayMs: 0,
   beforeReady: undefined as (() => void) | undefined,
+  stopOutcome: 'clean' as 'clean' | 'unknown',
+  nativeBootstrapWritePending: false,
 }));
 const aclRecoveryGateChildren = vi.hoisted(() => new WeakSet<object>());
 const boundedMetadataReadMock = vi.hoisted(() => ({
@@ -601,8 +604,20 @@ vi.mock('node:child_process', async (importOriginal) => {
         };
         capturedWindowsNetworkBrokerRequests.push(request);
         rmSync(requestFile, { force: true });
+        if (windowsNetworkBrokerMock.spawnErrorBeforeReady) {
+          queueMicrotask(() => {
+            const error = new Error('injected broker spawn error');
+            child.stderr.end(error.message);
+            child.stdout.end();
+            control.end();
+            child.emit('error', error);
+            child.emit('close', null, null);
+          });
+          return child;
+        }
         child.stdin.once('finish', () => {
           capturedWindowsNetworkBrokerStops.count += 1;
+          if (windowsNetworkBrokerMock.stopOutcome === 'unknown') return;
           queueMicrotask(() => {
             child.exitCode = 0;
             control.end();
@@ -993,6 +1008,13 @@ vi.mock('node:child_process', async (importOriginal) => {
           complete();
         });
         return child;
+      }
+      if (
+        windowsNetworkBrokerMock.nativeBootstrapWritePending
+        && typeof requestFile === 'string'
+        && path.basename(requestFile).startsWith('windows-shell-')
+      ) {
+        Reflect.set(child.stdin, 'write', vi.fn(() => true));
       }
       captureRequest();
       if (stubbornBroker.mode !== 'none') {
@@ -1453,6 +1475,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  windowsNetworkBrokerMock.stopOutcome = 'clean';
+  windowsNetworkBrokerMock.nativeBootstrapWritePending = false;
   fileSystemMock.rmFailurePath = undefined;
   fileSystemMock.writeBrokerRequestFailure = false;
   fileSystemMock.writeAclPoisonMarkerFailure = false;
@@ -1531,6 +1555,7 @@ afterEach(async () => {
   capturedWindowsNetworkBrokerRequests.length = 0;
   capturedWindowsNetworkBrokerStops.count = 0;
   windowsNetworkBrokerMock.silentReadiness = false;
+  windowsNetworkBrokerMock.spawnErrorBeforeReady = false;
   windowsNetworkBrokerMock.readinessDelayMs = 0;
   windowsNetworkBrokerMock.beforeReady = undefined;
   deferredBrokerRead.enabled = false;
@@ -2782,6 +2807,77 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(removals).toEqual([]);
   });
 
+  it('keeps the native operation deadline independent from static preparation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-startup-deadline-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const preparedAt = Date.now();
+    const invocation = await sandbox.prepare({
+      toolCallId: 'startup-deadline',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      deadlineAt: preparedAt + 180_000,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly operationDeadlineUnixMs: number;
+    };
+
+    expect(request.operationDeadlineUnixMs).toBe(preparedAt + 180_000);
+    await invocation.cleanup({ execution: 'not_started' });
+  });
+
+  it('reports pre-start unavailability when termination proves target Resume never occurred', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-pre-start-observation-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const deadlineAt = Date.now() + 180_000;
+    const invocation = await sandbox.prepare({
+      toolCallId: 'pre-start-observation',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      deadlineAt,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation?.processControl === undefined) {
+      throw new Error('expected Windows v2 process control');
+    }
+    stubbornBroker.mode = 'silent';
+    const child = spawn(invocation.executable, [...invocation.args], {
+      cwd: root,
+      env: invocation.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    await invocation.processControl.closeInput?.(child, undefined, deadlineAt);
+    vi.useFakeTimers();
+    try {
+      const attestation = expect(
+        invocation.processControl.attestStart?.(child, undefined, deadlineAt),
+      ).rejects.toThrow(/attestation timed out/i);
+      await vi.advanceTimersByTimeAsync(16_000);
+      await attestation;
+    } finally {
+      vi.useRealTimers();
+    }
+    await invocation.processControl.terminate(child);
+
+    await expect(invocation.cleanup({ execution: 'started_or_unknown' })).resolves.toMatchObject({
+      state: 'pre_start_unavailable',
+    });
+  }, 10_000);
+
   it('partitions shared network brokers by exact network authority', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-partition-'));
     tempRoots.push(root);
@@ -2877,7 +2973,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
   });
 
-  it('does not retire a healthy shared broker after one command terminal-proof failure', async () => {
+  it('replaces a shared broker after terminal proof fails without interrupting active leases', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-isolation-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
@@ -2910,7 +3006,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       )),
     ]);
     if (third === undefined) throw new Error('expected the third Windows v2 invocation');
-    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
     await Promise.all([
       holder.cleanup({ execution: 'not_started' }),
       third.cleanup({ execution: 'not_started' }),
@@ -3019,6 +3115,457 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
     await replacement.cleanup({ execution: 'not_started' });
   });
+
+  it('replaces a failed shared broker without waiting for an unrelated active lease', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broker-rolling-replace-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const holder = await prepare('rolling-replace-holder');
+    if (holder?.processControl === undefined) {
+      throw new Error('expected a Windows v2 holder invocation');
+    }
+    const holderRequestFile = holder.args.at(-1);
+    if (holderRequestFile === undefined) throw new Error('expected a holder request file');
+    const holderRequest = JSON.parse(readFileSync(holderRequestFile, 'utf8')) as {
+      readonly terminalRecordPath: string;
+      readonly terminalNonce: string;
+    };
+    const holderRecordIdentity = path.basename(holderRequest.terminalRecordPath)
+      .slice('windows-terminal-'.length);
+
+    stubbornBroker.mode = 'silent';
+    const holderChild = spawn(holder.executable, [...holder.args], {
+      cwd: root,
+      env: holder.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const holderDeadlineAt = Date.now() + 5_000;
+    await holder.processControl.closeInput?.(holderChild, undefined, holderDeadlineAt);
+    await writeFile(path.join(
+      path.dirname(holderRequest.terminalRecordPath),
+      `windows-started-${holderRecordIdentity}`,
+    ), JSON.stringify({
+      protocol: 9,
+      nonce: holderRequest.terminalNonce,
+      targetPid: process.pid,
+      jobContained: true,
+    }), 'utf8');
+    await expect(
+      holder.processControl.attestStart?.(holderChild, undefined, holderDeadlineAt),
+    ).resolves.toEqual({ state: 'started' });
+    const failed = await prepare('rolling-replace-failure');
+    if (failed?.processControl === undefined) throw new Error('expected failed process control');
+    const failedChild = spawn(failed.executable, [...failed.args], {
+      cwd: root,
+      env: failed.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const failedDeadlineAt = Date.now() + 120_000;
+    await failed.processControl.closeInput?.(failedChild, undefined, failedDeadlineAt);
+    vi.useFakeTimers();
+    try {
+      const failure = expect(
+        failed.processControl.attestStart?.(failedChild, undefined, failedDeadlineAt),
+      ).rejects.toThrow(/attestation timed out/i);
+      await vi.advanceTimersByTimeAsync(16_000);
+      await failure;
+    } finally {
+      vi.useRealTimers();
+    }
+    failedChild.exitCode = 1;
+    failedChild.stdout?.destroy();
+    failedChild.stderr?.destroy();
+    failedChild.emit('exit', 1, null);
+    failedChild.emit('close', 1, null);
+    await failed.processControl.terminate(failedChild);
+    await failed.cleanup({ execution: 'started_or_unknown' });
+    stubbornBroker.mode = 'none';
+
+    const replacement = await Promise.race([
+      prepare('rolling-replace-next'),
+      new Promise<never>((_resolve, reject) => setTimeout(
+        () => reject(new Error('replacement waited for the unrelated holder')),
+        5_000,
+      )),
+    ]);
+    if (replacement === undefined) throw new Error('expected a replacement Windows v2 invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+    await writeFile(holderRequest.terminalRecordPath, JSON.stringify({
+      protocol: 9,
+      nonce: holderRequest.terminalNonce,
+      jobDrained: true,
+      targetExitCode: 0,
+      terminationRequested: false,
+      denyReadCleanupDeferred: false,
+    }), 'utf8');
+    holderChild.exitCode = 0;
+    holderChild.stdout?.destroy();
+    holderChild.stderr?.destroy();
+    holderChild.emit('exit', 0, null);
+    holderChild.emit('close', 0, null);
+    await Promise.all([
+      holder.cleanup({ execution: 'started_or_unknown' }),
+      replacement.cleanup({ execution: 'not_started' }),
+    ]);
+  }, 15_000);
+
+  it('counts detached live brokers against the fixed Windows proxy capacity', async () => {
+    const roots = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), `kodax-v2-detached-capacity-${index}-`));
+      tempRoots.push(root);
+      return root;
+    }));
+    const primary = createAsrtShellSandbox({ workspaceRoot: roots[0]!, shouldSandbox: () => true });
+    const writeGeneration = async (): Promise<void> => {
+      await writeFile(
+        path.join(cutoverDirectory, 'windows-v2-cutover.json'),
+        JSON.stringify({
+          version: 9,
+          protocol: 9,
+          generationNonce: randomUUID(),
+          filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+          hostUserSid: windowsSandboxMock.hostUserSid,
+          sandboxUserSid: windowsSandboxMock.user.sid,
+          sandboxGroupSid: windowsSandboxMock.user.groupSid,
+        }),
+        'utf8',
+      );
+    };
+    const prepareAt = (root: string, toolCallId: string) => createAsrtShellSandbox({
+      workspaceRoot: root,
+      shouldSandbox: () => true,
+    }).prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const held: Array<NonNullable<Awaited<ReturnType<typeof prepareAt>>>> = [];
+    try {
+      const detachedHolder = await primary.prepare({
+        toolCallId: 'detached-capacity-holder',
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: roots[0]!,
+        env: process.env,
+        fallbackToNormalExecution: false,
+      });
+      if (detachedHolder === undefined) throw new Error('expected a detached holder');
+      held.push(detachedHolder);
+      const failed = await primary.prepare({
+        toolCallId: 'detached-capacity-failure',
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: roots[0]!,
+        env: process.env,
+        fallbackToNormalExecution: false,
+      });
+      if (failed?.processControl === undefined) throw new Error('expected failed process control');
+      stubbornBroker.mode = 'silent';
+      const failedChild = spawn(failed.executable, [...failed.args], {
+        cwd: roots[0]!,
+        env: failed.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      const failedDeadlineAt = Date.now() + 120_000;
+      await failed.processControl.closeInput?.(failedChild, undefined, failedDeadlineAt);
+      vi.useFakeTimers();
+      try {
+        const failure = expect(
+          failed.processControl.attestStart?.(failedChild, undefined, failedDeadlineAt),
+        ).rejects.toThrow(/attestation timed out/i);
+        await vi.advanceTimersByTimeAsync(16_000);
+        await failure;
+      } finally {
+        vi.useRealTimers();
+      }
+      failedChild.exitCode = 1;
+      failedChild.stdout?.destroy();
+      failedChild.stderr?.destroy();
+      failedChild.emit('exit', 1, null);
+      failedChild.emit('close', 1, null);
+      await failed.processControl.terminate(failedChild);
+      await failed.cleanup({ execution: 'started_or_unknown' });
+      stubbornBroker.mode = 'none';
+
+      for (let index = 0; index < 4; index += 1) {
+        await writeGeneration();
+        const invocation = await prepareAt(
+          roots[index]!,
+          `detached-capacity-live-${index}`,
+        );
+        if (invocation === undefined) throw new Error('expected a live broker holder');
+        held.push(invocation);
+      }
+      await writeGeneration();
+      await expect(prepareAt(roots[4]!, 'detached-capacity-overflow'))
+        .rejects.toThrow(/capacity is fully active; no command was started/i);
+      expect(capturedWindowsNetworkBrokerRequests).toHaveLength(5);
+    } finally {
+      stubbornBroker.mode = 'none';
+      await Promise.all(held.map((invocation) => (
+        invocation.cleanup({ execution: 'not_started' })
+      )));
+    }
+  }, 20_000);
+
+  it('does not replace a healthy broker after caller-local start attestation abort', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-attestation-abort-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const aborted = await prepare('attestation-abort-first');
+    if (aborted?.processControl === undefined) throw new Error('expected process control');
+    stubbornBroker.mode = 'silent';
+    const child = spawn(aborted.executable, [...aborted.args], {
+      cwd: root,
+      env: aborted.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 120_000;
+    await aborted.processControl.closeInput?.(child, undefined, deadlineAt);
+    const controller = new AbortController();
+    controller.abort(new Error('caller cancelled'));
+    await expect(
+      aborted.processControl.attestStart?.(child, controller.signal, deadlineAt),
+    ).rejects.toThrow(/caller cancelled/i);
+    child.exitCode = 1;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 1, null);
+    child.emit('close', 1, null);
+    await aborted.processControl.terminate(child);
+    await aborted.cleanup({ execution: 'started_or_unknown' });
+    stubbornBroker.mode = 'none';
+
+    const reused = await prepare('attestation-abort-reused');
+    if (reused === undefined) throw new Error('expected reused broker invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    await reused.cleanup({ execution: 'not_started' });
+  });
+
+  it('replaces a broker when the native host closes before Resume under its own startup budget', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-native-start-close-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const failed = await prepare('native-start-close-first');
+    if (failed?.processControl === undefined) throw new Error('expected process control');
+    stubbornBroker.mode = 'silent';
+    const child = spawn(failed.executable, [...failed.args], {
+      cwd: root,
+      env: failed.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 120_000;
+    await failed.processControl.closeInput?.(child, undefined, deadlineAt);
+    const attestation = failed.processControl.attestStart?.(child, undefined, deadlineAt);
+    child.stderr?.emit(
+      'data',
+      Buffer.from('Windows sandbox launch deadline expired during runner authentication'),
+    );
+    child.exitCode = 1;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 1, null);
+    child.emit('close', 1, null);
+    await expect(attestation).resolves.toMatchObject({ state: 'pre_start_unavailable' });
+    await failed.processControl.terminate(child);
+    await failed.cleanup({ execution: 'started_or_unknown' });
+    stubbornBroker.mode = 'none';
+
+    const replacement = await prepare('native-start-close-replacement');
+    if (replacement === undefined) throw new Error('expected replacement invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+    await replacement.cleanup({ execution: 'not_started' });
+  });
+
+  it('keeps a healthy broker after a native-host bootstrap-delivery timeout', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-bootstrap-timeout-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const prepare = (toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const failed = await prepare('bootstrap-timeout-first');
+    if (failed?.processControl === undefined) throw new Error('expected process control');
+    windowsNetworkBrokerMock.nativeBootstrapWritePending = true;
+    const child = spawn(failed.executable, [...failed.args], {
+      cwd: root,
+      env: failed.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 20_000;
+    vi.useFakeTimers();
+    try {
+      const delivery = expect(
+        failed.processControl.closeInput?.(child, undefined, deadlineAt),
+      ).rejects.toThrow(/bootstrap delivery timed out/i);
+      await vi.advanceTimersByTimeAsync(16_000);
+      await delivery;
+    } finally {
+      vi.useRealTimers();
+    }
+    child.exitCode = 1;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 1, null);
+    child.emit('close', 1, null);
+    await failed.processControl.terminate(child);
+    await failed.cleanup({ execution: 'started_or_unknown' });
+    windowsNetworkBrokerMock.nativeBootstrapWritePending = false;
+
+    const reused = await prepare('bootstrap-timeout-reuse');
+    if (reused === undefined) throw new Error('expected reused invocation');
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(1);
+    await reused.cleanup({ execution: 'not_started' });
+  });
+
+  it('keeps an unconfirmed broker process in live port-capacity accounting', async () => {
+    const roots = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), `kodax-v2-unknown-stop-${index}-`));
+      tempRoots.push(root);
+      return root;
+    }));
+    const sandbox = createAsrtShellSandbox({
+      workspaceRoot: roots[0]!,
+      shouldSandbox: () => true,
+    });
+    const prepare = (root: string, toolCallId: string) => sandbox.prepare({
+      toolCallId,
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    const failed = await prepare(roots[0]!, 'unknown-stop-first');
+    if (failed?.processControl === undefined) throw new Error('expected process control');
+    stubbornBroker.mode = 'silent';
+    const child = spawn(failed.executable, [...failed.args], {
+      cwd: roots[0]!,
+      env: failed.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 120_000;
+    await failed.processControl.closeInput?.(child, undefined, deadlineAt);
+    const attestation = failed.processControl.attestStart?.(child, undefined, deadlineAt);
+    child.exitCode = 1;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 1, null);
+    child.emit('close', 1, null);
+    await expect(attestation).resolves.toMatchObject({ state: 'pre_start_unavailable' });
+    await failed.processControl.terminate(child);
+    stubbornBroker.mode = 'none';
+    windowsNetworkBrokerMock.stopOutcome = 'unknown';
+    processTreeKillMock.outcome = 'unknown';
+    vi.useFakeTimers();
+    try {
+      const cleanup = expect(
+        failed.cleanup({ execution: 'started_or_unknown' }),
+      ).rejects.toThrow(/cleanup failed/i);
+      await vi.advanceTimersByTimeAsync(6_000);
+      await cleanup;
+    } finally {
+      vi.useRealTimers();
+    }
+    windowsNetworkBrokerMock.stopOutcome = 'clean';
+    processTreeKillMock.outcome = 'actual';
+
+    const held: NonNullable<Awaited<ReturnType<typeof prepare>>>[] = [];
+    try {
+      for (let index = 0; index < 4; index += 1) {
+        await writeFile(
+          path.join(cutoverDirectory, 'windows-v2-cutover.json'),
+          JSON.stringify({
+            version: 9,
+            protocol: 9,
+            generationNonce: `00000000-0000-4000-8000-${String(index + 10).padStart(12, '0')}`,
+            filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+            hostUserSid: windowsSandboxMock.hostUserSid,
+            sandboxUserSid: windowsSandboxMock.user.sid,
+            sandboxGroupSid: windowsSandboxMock.user.groupSid,
+          }),
+          'utf8',
+        );
+        const invocation = await prepare(roots[index + 1]!, `unknown-stop-live-${index}`);
+        if (invocation === undefined) throw new Error('expected live invocation');
+        held.push(invocation);
+      }
+      await writeFile(
+        path.join(cutoverDirectory, 'windows-v2-cutover.json'),
+        JSON.stringify({
+          version: 9,
+          protocol: 9,
+          generationNonce: '00000000-0000-4000-8000-000000000099',
+          filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+          hostUserSid: windowsSandboxMock.hostUserSid,
+          sandboxUserSid: windowsSandboxMock.user.sid,
+          sandboxGroupSid: windowsSandboxMock.user.groupSid,
+        }),
+        'utf8',
+      );
+      await expect(prepare(roots[0]!, 'unknown-stop-overflow')).rejects.toThrow();
+      expect(capturedWindowsNetworkBrokerRequests).toHaveLength(5);
+    } finally {
+      processTreeKillMock.releaseUnknown?.();
+      processTreeKillMock.releaseUnknown = undefined;
+      await Promise.all(held.map((invocation) => invocation.cleanup({ execution: 'not_started' })));
+    }
+  }, 20_000);
 
   it('retires an idle shared broker after its bounded reuse grace', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-idle-'));
@@ -3172,16 +3719,17 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     tempRoots.push(root);
     windowsNetworkBrokerMock.silentReadiness = true;
 
+    const startedAt = performance.now();
     await expect(runKodaXSandboxed({
       command: process.execPath,
       args: ['--version'],
       cwd: root,
       filesystem: { allowRead: [], allowWrite: [] },
       network: { mode: 'deny' },
-      timeoutMs: 4_000,
+      timeoutMs: 60_000,
     })).rejects.toThrow(/preparation|readiness|timeout/i);
+    expect(performance.now() - startedAt).toBeLessThan(18_000);
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
     expect(capturedWindowsNetworkBrokerStops.count).toBeGreaterThanOrEqual(1);
     windowsNetworkBrokerMock.silentReadiness = false;
     await expect(runKodaXSandboxed({
@@ -3192,6 +3740,24 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       network: { mode: 'deny' },
     })).resolves.toMatchObject({ status: 'completed', sandboxed: true });
     expect(capturedWindowsNetworkBrokerRequests).toHaveLength(2);
+  }, 25_000);
+
+  it('does not consume live broker capacity after spawn errors without exit events', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-spawn-error-'));
+    tempRoots.push(root);
+    windowsNetworkBrokerMock.spawnErrorBeforeReady = true;
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        filesystem: { allowRead: [], allowWrite: [] },
+        network: { mode: 'deny' },
+      })).rejects.toThrow(/spawn error|readiness|cleanup/i);
+    }
+
+    expect(capturedWindowsNetworkBrokerRequests).toHaveLength(6);
   });
 
   it('partitions shared network brokers after a same-account setup generation change', async () => {

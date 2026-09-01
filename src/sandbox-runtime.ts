@@ -234,6 +234,9 @@ interface WindowsNetworkBrokerState {
 
 function retireWindowsNetworkBrokerState(state: WindowsNetworkBrokerState): void {
   state.failed = true;
+  if (windowsNetworkBrokers.get(state.key) === state) {
+    windowsNetworkBrokers.delete(state.key);
+  }
 }
 
 function setWindowsNetworkBrokerReferenced(
@@ -262,7 +265,7 @@ interface WindowsNetworkBrokerExit {
 
 interface WindowsNetworkBrokerLease {
   readonly ready: WindowsNetworkBrokerReady & { readonly ok: true };
-  release(options?: { readonly retireIfLast?: boolean }): Promise<void>;
+  release(options?: { readonly retire?: boolean }): Promise<void>;
 }
 
 type WindowsNetworkBrokerReady =
@@ -458,7 +461,9 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
 const MAX_OUTPUT_BYTES = 1_048_576;
 const SCRIPT_TIMEOUT_MS = 120_000;
 const WINDOWS_V2_LAUNCH_TIMEOUT_MS = 30_000;
+const WINDOWS_V2_LAUNCH_PHASE_TIMEOUT_MS = 15_000;
 const windowsNetworkBrokers = new Map<string, WindowsNetworkBrokerState>();
+const windowsNetworkBrokerLiveStates = new Set<WindowsNetworkBrokerState>();
 const WINDOWS_NETWORK_PORTS_PER_BROKER = 2;
 const [WINDOWS_NETWORK_PROXY_PORT_LOW, WINDOWS_NETWORK_PROXY_PORT_HIGH]
   = DEFAULT_WINDOWS_PROXY_PORT_RANGE;
@@ -2997,12 +3002,13 @@ export async function resetSandboxRuntimeForTest(): Promise<void> {
   cachedWindowsSandboxV2Cutover = undefined;
   preparedWindowsShellArtifacts.clear();
   preparedWindowsControlDirectoryPromise = undefined;
-  const brokerStops = [...windowsNetworkBrokers.values()].map((state) => {
+  const brokerStops = [...windowsNetworkBrokerLiveStates].map((state) => {
     state.references = 0;
     return stopSharedWindowsNetworkBroker(state);
   });
   const brokerResults = await Promise.allSettled(brokerStops);
   windowsNetworkBrokers.clear();
+  windowsNetworkBrokerLiveStates.clear();
   windowsNetworkBrokerUseSequence = 0;
   rmSync(windowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
   rmSync(legacyWindowsSandboxAclPoisonDirectory(), { recursive: true, force: true });
@@ -3021,6 +3027,8 @@ function sandboxAbortError(signal: AbortSignal): Error {
 }
 
 interface WindowsV2ProcessControl extends KodaXShellSandboxProcessControl {
+  getPreStartUnavailableDiagnostic(): string | undefined;
+  shouldRetireBrokerAfterStartFailure(): boolean;
   waitForTerminalObservation(): Promise<void>;
 }
 
@@ -3044,6 +3052,9 @@ function createWindowsV2ProcessControl(
     ReturnType<NonNullable<KodaXShellSandboxProcessControl['attestStart']>>
   >();
   const phases = new WeakMap<ReturnType<typeof spawn>, ControlPhase>();
+  let preStartUnavailableDiagnostic: string | undefined;
+  let startAttestationFailureDiagnostic: string | undefined;
+  let retireBrokerAfterStartFailure = false;
   let terminalObservation: Promise<void> | undefined;
   const initialInput = Buffer.concat([
     Buffer.from(bootstrap),
@@ -3055,12 +3066,16 @@ function createWindowsV2ProcessControl(
     signal,
     deadlineAt,
   ) => {
+    const phaseDeadlineAt = Math.min(
+      deadlineAt,
+      Date.now() + WINDOWS_V2_LAUNCH_PHASE_TIMEOUT_MS,
+    );
     const stdin = child.stdin;
     if (stdin === null) {
       return Promise.reject(new Error('Native sandbox bootstrap pipe was not created.'));
     }
     if (signal?.aborted) return Promise.reject(sandboxAbortError(signal));
-    if (Date.now() >= deadlineAt) {
+    if (Date.now() >= phaseDeadlineAt) {
       return Promise.reject(new Error('Native sandbox bootstrap delivery timed out.'));
     }
     let stderrTail = Buffer.alloc(0);
@@ -3075,7 +3090,7 @@ function createWindowsV2ProcessControl(
       let diagnosticTimer: NodeJS.Timeout | undefined;
       const timer = setTimeout(
         () => finish(new Error('Native sandbox bootstrap delivery timed out.')),
-        Math.max(1, deadlineAt - Date.now()),
+        Math.max(1, phaseDeadlineAt - Date.now()),
       );
       timer.unref();
       const finish = (error?: Error): void => {
@@ -3203,6 +3218,11 @@ function createWindowsV2ProcessControl(
   ) => {
     const existing = startAttestations.get(child);
     if (existing !== undefined) return existing;
+    const phaseDeadlineAt = Math.min(
+      deadlineAt,
+      Date.now() + WINDOWS_V2_LAUNCH_PHASE_TIMEOUT_MS,
+    );
+    const phaseOwnsDeadline = phaseDeadlineAt < deadlineAt;
     const attestation = new Promise<
       | { readonly state: 'started' }
       | { readonly state: 'pre_start_unavailable'; readonly diagnostic: string }
@@ -3225,8 +3245,18 @@ function createWindowsV2ProcessControl(
         child.off('close', onClose);
         signal?.removeEventListener('abort', onAbort);
         stderr?.off('data', onStderr);
-        if (error !== undefined) reject(error);
-        else if (result !== undefined) resolve(result);
+        if (error !== undefined) {
+          startAttestationFailureDiagnostic = errorText(error);
+          reject(error);
+        } else if (result !== undefined) {
+          if (result.state === 'pre_start_unavailable') {
+            preStartUnavailableDiagnostic = result.diagnostic;
+            if (!signal?.aborted && Date.now() < deadlineAt) {
+              retireBrokerAfterStartFailure = true;
+            }
+          }
+          resolve(result);
+        }
       };
       const onStderr = (chunk: Buffer): void => {
         stderrTail = Buffer.concat([stderrTail, chunk]).subarray(-4_096);
@@ -3274,7 +3304,8 @@ function createWindowsV2ProcessControl(
           finish(undefined, new Error(diagnostic));
           return;
         }
-        if (Date.now() >= deadlineAt) {
+        if (Date.now() >= phaseDeadlineAt) {
+          if (phaseOwnsDeadline) retireBrokerAfterStartFailure = true;
           finish(undefined, new Error('Native sandbox target-start attestation timed out.'));
           return;
         }
@@ -3315,6 +3346,8 @@ function createWindowsV2ProcessControl(
             await verifyLaunchRecord(resumeRecordPath);
           } catch (error: unknown) {
             if (isFileSystemError(error, 'ENOENT')) {
+              preStartUnavailableDiagnostic ??= startAttestationFailureDiagnostic
+                ?? 'Native sandbox target Resume never occurred.';
               phases.set(child, 'pre-start-unavailable');
               return;
             }
@@ -3476,6 +3509,8 @@ function createWindowsV2ProcessControl(
     closeInput,
     attestStart,
     terminate,
+    getPreStartUnavailableDiagnostic: () => preStartUnavailableDiagnostic,
+    shouldRetireBrokerAfterStartFailure: () => retireBrokerAfterStartFailure,
     async waitForTerminalObservation() {
       const active = terminalObservation;
       if (active === undefined) {
@@ -5235,6 +5270,7 @@ function createWindowsNetworkBrokerState(
     stopRequested: false,
     stderrTail: Buffer.alloc(0),
   };
+  windowsNetworkBrokerLiveStates.add(state);
   state.ready = (async () => {
     try {
       await writeFile(state.requestFile, JSON.stringify(request), { flag: 'wx', mode: 0o600 });
@@ -5275,10 +5311,13 @@ function createWindowsNetworkBrokerState(
           detail: error,
         });
       });
-      child.once('exit', (code, signal) => {
+      child.once('close', () => {
+        windowsNetworkBrokerLiveStates.delete(state);
         if (state.stopping === undefined && windowsNetworkBrokers.get(key) === state) {
           windowsNetworkBrokers.delete(key);
         }
+      });
+      child.once('exit', (code, signal) => {
         if (!state.stopRequested && (code !== 0 || signal !== null)) {
           retireWindowsNetworkBrokerState(state);
           emitKodaXDiagnostic({
@@ -5295,7 +5334,7 @@ function createWindowsNetworkBrokerState(
         ready = await readWindowsNetworkBrokerReady(
           child,
           undefined,
-          Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS,
+          Date.now() + WINDOWS_V2_LAUNCH_PHASE_TIMEOUT_MS,
         );
       } catch (error: unknown) {
         const diagnostic = state.stderrTail.toString('utf8').trim();
@@ -5346,6 +5385,7 @@ async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState):
       throw new AggregateError(failures, 'Shared Windows network broker cleanup failed.');
     }
   })().finally(() => {
+    if (state.child === undefined) windowsNetworkBrokerLiveStates.delete(state);
     setWindowsNetworkBrokerReferenced(state, false);
     if (windowsNetworkBrokers.get(state.key) === state) {
       windowsNetworkBrokers.delete(state.key);
@@ -5356,11 +5396,11 @@ async function stopSharedWindowsNetworkBroker(state: WindowsNetworkBrokerState):
 
 async function releaseWindowsNetworkBrokerState(
   state: WindowsNetworkBrokerState,
-  retireIfLast = false,
+  retire = false,
 ): Promise<void> {
+  if (retire) retireWindowsNetworkBrokerState(state);
   state.references = Math.max(0, state.references - 1);
   if (state.references !== 0) return;
-  if (retireIfLast) retireWindowsNetworkBrokerState(state);
   setWindowsNetworkBrokerReferenced(state, false);
   touchWindowsNetworkBroker(state);
   if (state.failed) {
@@ -5386,12 +5426,12 @@ async function evictIdleWindowsNetworkBroker(
   signal?: AbortSignal,
   deadlineAt?: number,
 ): Promise<void> {
-  if (windowsNetworkBrokers.size < WINDOWS_NETWORK_BROKER_CAPACITY) return;
-  const idle = [...windowsNetworkBrokers.values()]
+  if (windowsNetworkBrokerLiveStates.size < WINDOWS_NETWORK_BROKER_CAPACITY) return;
+  const idle = [...windowsNetworkBrokerLiveStates]
     .filter((state) => state.references === 0 && state.stopping === undefined)
     .sort((left, right) => left.lastUsed - right.lastUsed)[0];
   if (idle === undefined) {
-    const stopping = [...windowsNetworkBrokers.values()]
+    const stopping = [...windowsNetworkBrokerLiveStates]
       .flatMap((state) => state.stopping === undefined ? [] : [state.stopping]);
     if (stopping.length > 0) {
       await waitForSandboxRunnerPreparation(
@@ -5440,7 +5480,7 @@ async function acquireWindowsNetworkBroker(
       continue;
     }
     if (state === undefined) {
-      if (windowsNetworkBrokers.size >= WINDOWS_NETWORK_BROKER_CAPACITY) {
+      if (windowsNetworkBrokerLiveStates.size >= WINDOWS_NETWORK_BROKER_CAPACITY) {
         await evictIdleWindowsNetworkBroker(signal, deadlineAt);
         continue;
       }
@@ -5455,10 +5495,10 @@ async function acquireWindowsNetworkBroker(
     state.references += 1;
     if (state.references === 1) setWindowsNetworkBrokerReferenced(state, true);
     let released = false;
-    const release = async (options?: { readonly retireIfLast?: boolean }): Promise<void> => {
+    const release = async (options?: { readonly retire?: boolean }): Promise<void> => {
       if (released) return;
       released = true;
-      await releaseWindowsNetworkBrokerState(state, options?.retireIfLast === true);
+      await releaseWindowsNetworkBrokerState(state, options?.retire === true);
     };
     try {
       const readyPromise = state.ready;
@@ -5615,7 +5655,8 @@ async function prepareWindowsV2Invocation(input: {
     const nativeStartedRecordFile = path.join(controlDirectory, `windows-started-${recordIdentity}`);
     const nativeResumeRecordFile = path.join(controlDirectory, `windows-resume-${recordIdentity}`);
     const terminalNonce = randomUUID();
-    const operationDeadlineUnixMs = input.deadlineAt ?? preparationDeadlineAt;
+    const operationDeadlineUnixMs = input.deadlineAt
+      ?? Date.now() + WINDOWS_V2_LAUNCH_TIMEOUT_MS;
     const targetEnvironment = mergeWindowsSandboxTargetEnvironment(
       ready.asrtChildEnvironment,
       input.env,
@@ -5691,7 +5732,10 @@ async function prepareWindowsV2Invocation(input: {
             }
           }
           const results = await Promise.allSettled([
-            ownedBrokerLease.release({ retireIfLast: terminalFailure !== undefined }),
+            ownedBrokerLease.release({
+              retire: terminalFailure !== undefined
+                || processControl.shouldRetireBrokerAfterStartFailure(),
+            }),
             rm(ownedRequestFile, { force: true }),
             rm(nativeResumeRecordFile, { force: true }),
             rm(nativeStartedRecordFile, { force: true }),
@@ -5703,6 +5747,14 @@ async function prepareWindowsV2Invocation(input: {
           if (terminalFailure !== undefined) failures.unshift(terminalFailure);
           if (failures.length > 0) {
             throw new AggregateError(failures, 'Windows native shell cleanup failed.');
+          }
+          const preStartDiagnostic = processControl.getPreStartUnavailableDiagnostic();
+          if (preStartDiagnostic !== undefined) {
+            return {
+              version: 1,
+              state: 'pre_start_unavailable',
+              diagnostic: preStartDiagnostic,
+            };
           }
           return {
             version: 1,

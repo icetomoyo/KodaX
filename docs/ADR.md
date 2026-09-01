@@ -6119,10 +6119,15 @@ lock.
    the managed-child record remains registered until background drain recovery
    proves the tree gone.
 6. Exact-authority network brokers are bounded reusable resources with a short,
-   cancellable idle-reuse grace. A failed readiness attempt retires its state; a
-   caller timeout or abort only releases that caller's reference and never
-   poisons a healthy shared startup. A sequential caller may join that same
-   startup. A
+   cancellable idle-reuse grace. A readiness, target-start, or terminal-proof
+   failure immediately detaches that generation from reuse. Existing holders
+   may finish on the detached generation; a same-authority caller creates a new
+   generation without waiting for or stopping them. Detached generations remain
+   in live-capacity accounting until process exit, so replacement cannot overrun
+   ASRT's fixed port range. Each startup/control phase is bounded to 15 seconds
+   without replacing the caller's command deadline. A caller-local timeout or
+   abort only releases that caller's reference and never poisons a healthy
+   shared startup. A sequential caller may join that same startup. A
    fully active pool returns a proven pre-start unavailable result instead of
    waiting on another command lifecycle. The
    child and control handles remain referenced while starting or leased and

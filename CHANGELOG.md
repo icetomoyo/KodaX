@@ -27,6 +27,19 @@ All notable changes to this project will be documented in this file.
   replaces an idle older daemon on first connection, leaves a busy older daemon
   running with a recoverable error, never downgrades a newer daemon, and never
   mutates an owner whose version is not comparable SemVer.
+- Completed sandbox self-healing at the process facts that own it. Failed
+  target-start/controller generations roll out of reuse without stopping live
+  holders; an unconfirmed process remains in fixed-port capacity accounting
+  until `close`, while spawn failure without an OS process cannot leak capacity.
+  Native-host bootstrap delivery failure does not blame or retire a healthy
+  shared broker. No command lock, queue, or new permission restriction was
+  introduced.
+- Made simultaneous and staggered npm-linked/`kodax -r` upgrade clients
+  converge on one idle incompatible-daemon replacement, including a peer that
+  attaches between preflight and settlement or after the durable prepared
+  ticket but before its revision CAS. One authenticated follower resumes that
+  exact durable ticket after detaching while the first client and any other
+  followers only observe the owner change; active or untrusted work remains untouched.
 
 ## [0.7.96-alpha.4] - 2026-08-30
 
@@ -160,14 +173,24 @@ All notable changes to this project will be documented in this file.
   remains referenced while starting or leased and detaches from the Node event
   loop only when idle, preventing independent Runtime processes from exiting
   with an unsettled top-level command.
-- Closed the controller-loss reuse race: when terminal proof fails on the final
-  reference, cleanup synchronously retires the old broker before a same-authority
-  command can acquire it. A failure with another live holder does not stop or
-  poison that holder.
-- Caller-local timeout or abort no longer marks a healthy shared broker failed;
-  a sequential later caller can join the same in-flight startup. A fully active
-  five-broker pool fails before target start instead of waiting on an unrelated
-  command lifecycle.
+- Closed the controller-loss reuse race without waiting for unrelated commands.
+  Any broker generation implicated by target-start or terminal-proof failure is
+  removed from the reusable map immediately; existing leases finish on that old
+  generation, while the next same-authority command creates a fresh generation.
+  Detached generations remain in live-capacity accounting until their process
+  exits, so rolling replacement cannot overrun ASRT's fixed proxy ports. No
+  holder is stopped and no lock or queue is added. A caller-local timeout or
+  abort still leaves a healthy shared startup intact.
+- Capped each Windows native startup/control phase at 15 seconds without
+  replacing the caller's command deadline, matching Codex's phase-local runner
+  startup bound. If termination then proves that the nonce-bound Resume record never
+  existed, Bash reports pre-start unavailability through the existing permission
+  boundary; started or uncertain commands remain non-replayable.
+- Made simultaneous npm-linked clients self-heal one idle incompatible daemon.
+  Token-authenticated temporary upgrade identities elect one inventory leader;
+  followers detach and reconnect after the existing fenced replacement. This
+  adds no ordinary command lock, queue, permission restriction, or daemon kill
+  of active work.
 - Closed prepared-invocation leaks in foreground Bash and the public sandbox
   SDK. Generation validation now runs immediately before native host spawn;
   synchronous spawn failure and other proven pre-start exits remove the native

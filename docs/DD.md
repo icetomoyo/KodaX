@@ -268,9 +268,13 @@ Generation-9 setup invokes one elevated native parent with a versioned,
 digest-bound, single-use request below the protected control directory. It
 synchronously converges NUL compatibility and profile top-level read
 capabilities before publishing ready; no detached prewarm helper overlaps
-ordinary admission. A final-reference terminal-proof failure
-synchronously retires the broker before same-authority reuse, while an
-unrelated live holder is left running.
+ordinary admission. A target-start or terminal-proof failure immediately
+detaches that broker generation from reuse. Existing holders may finish on the
+detached generation, while new same-authority commands create a replacement;
+detached processes still count against the fixed ASRT port capacity until they
+actually exit. Each startup/control phase has its own 15-second bound without
+shortening the caller's command deadline, and a caller-local abort or shorter
+deadline does not retire a healthy shared broker.
 Windows allow-root ACL changes are exact-root only. The target's enabled
 traverse privilege reaches private descendant roots without rewriting ancestor
 container DACLs, avoiding inheritance propagation through unrelated profile
@@ -1166,6 +1170,14 @@ The public/daemon capability is `sandboxRuntime:9`; SemVer is also part of the
 execution contract. An idle older daemon is replaced, a busy older daemon is
 rejected before sandbox execution, a newer daemon is never downgraded, and an
 unknown/non-SemVer owner is never mutated.
+When multiple new clients encounter the same idle older daemon together, their
+token-authenticated temporary upgrade identities elect one inventory leader.
+Followers detach and reconnect after the existing fenced replacement; this is
+a bounded upgrade-only convergence path, not a command-path lock or queue. If
+a peer attaches after the durable prepared-exit ticket but before the revision
+CAS, one authenticated follower resumes the exact durable ticket after
+detaching, while the original client and any other followers wait only for the
+already elected replacement owner.
 Caller-supplied
 dynamic Windows `denyRead` roots in the standalone sandbox API fail closed as
 `unsupported_policy` before target start; ordinary start/exit creates no

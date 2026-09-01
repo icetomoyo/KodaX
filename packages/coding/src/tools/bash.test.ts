@@ -687,6 +687,94 @@ describe('toolBash', () => {
     expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
   });
 
+  it('routes an attestation timeout through the host boundary when cleanup proves no target started', async () => {
+    const closeInput = vi.fn(async (child: ChildProcess) => {
+      child.stdin?.end();
+    });
+    const terminate = vi.fn(async (child: ChildProcess) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+      child.kill('SIGKILL');
+      await closed;
+    });
+    const cleanup = vi.fn(async () => ({
+      version: 1 as const,
+      state: 'pre_start_unavailable' as const,
+      diagnostic: 'native target-start attestation timed out before Resume',
+    }));
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+
+    const result = await toolBash({
+      command: nodeOutputCommand('host ran after proven pre-start timeout'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-attestation-timeout-pre-start',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(() => undefined, 1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput,
+            attestStart: async () => {
+              throw new Error('Native sandbox target-start attestation timed out.');
+            },
+            terminate,
+          },
+          cleanup,
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(completedCommandBody(result)).toContain('host ran after proven pre-start timeout');
+    expect(closeInput).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'started_or_unknown' });
+    expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+  });
+
+  it('does not request host authorization after cancellation during start attestation', async () => {
+    const controller = new AbortController();
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const result = await toolBash({ command: nodeOutputCommand('must not run') }, {
+      backups: new Map(),
+      toolCallId: 'bash-attestation-cancelled',
+      abortSignal: controller.signal,
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', 'setInterval(() => undefined, 1000)'],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async (child: ChildProcess) => { child.stdin?.end(); },
+            attestStart: async () => {
+              controller.abort();
+              throw new DOMException('Operation aborted', 'AbortError');
+            },
+            terminate: async (child: ChildProcess) => {
+              if (child.exitCode !== null || child.signalCode !== null) return;
+              const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+              child.kill('SIGKILL');
+              await closed;
+            },
+          },
+          cleanup: async () => ({
+            version: 1 as const,
+            state: 'pre_start_unavailable' as const,
+            diagnostic: 'target never resumed',
+          }),
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(result).toContain('[Cancelled]');
+    expect(authorizeShellHostExecution).not.toHaveBeenCalled();
+  });
+
   it('routes a proven sandbox wrapper spawn failure through one host boundary', async () => {
     const authorizeShellHostExecution = vi.fn(async () => true as const);
     const result = await toolBash({

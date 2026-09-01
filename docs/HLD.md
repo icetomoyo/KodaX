@@ -201,9 +201,15 @@ command admission; setup alone may retire pre-cutover receipts.
 Each command otherwise owns independent pipes, token, Job,
 resume/started records, and terminal proof. Exact-authority
 network brokers remain reusable and retire a failed readiness attempt.
-When terminal proof fails on the final reference, cleanup retires that broker
-before an immediate same-authority command can reuse its dead controller;
-another live holder is not stopped by a command-local proof failure.
+When target-start or terminal proof fails, cleanup immediately detaches that
+broker generation from reuse. Existing holders finish against the detached
+generation, while new commands create a replacement without waiting or stopping
+those holders. Detached generations remain in live-capacity accounting until
+their processes exit, preventing rolling replacement from overcommitting ASRT's
+fixed port pool. Each native startup/control phase is bounded to 15 seconds
+without shortening the command deadline; caller-local abort or a shorter caller
+deadline does not retire a healthy shared broker. A cleanup-proven pre-Resume failure may re-enter the existing
+permission boundary, while started or uncertain work is never replayed.
 The final Windows target is creation-time contained. Issue 307 separately
 tracks the ASRT-owned shared-account runner's pre-main window, which also
 exists in current Codex and requires an upstream spawn boundary to eliminate.

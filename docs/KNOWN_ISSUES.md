@@ -28,8 +28,8 @@ hash-bound marker held through target `Started`, retires failed broker
 readiness, keeps active brokers referenced, retires legacy drain markers without waiting,
 retires pre-cutover deny receipts only during explicit setup, and
 reads legacy receipts with read/delete sharing so one scan cannot block
-exact cleanup. Caller-local broker deadlines no longer retire a healthy shared
-startup, active-pool saturation fails before start without lifecycle waiting,
+exact cleanup. A caller-local deadline before broker acquisition does not retire
+a healthy shared startup, active-pool saturation fails before start without lifecycle waiting,
 prepared Bash/SDK requests are released on synchronous spawn failure, and an
 uncertain Git Job-binding cleanup retains managed-child recovery. This removes
 the Bash/write/worktree command-lifetime fence. Generation 8 keeps a persistent
@@ -52,6 +52,22 @@ PowerShell subprocess. Invalid existing content remains fail-closed. The host
 also observes cancellation before pre-launch preparation and waits for the
 winning per-command abort to publish terminal evidence, removing the former
 60-second-plus-12-second compound failure shape without a global lock.
+If multiple npm-linked clients meet the same idle incompatible daemon together,
+token-authenticated temporary upgrade identities elect one inventory leader;
+followers detach and reconnect after the existing fenced replacement. This
+upgrade-only convergence adds no ordinary command lock or queue and never
+force-stops active work.
+
+The follow-up correction also removes a failed shared broker generation from
+reuse immediately even if an unrelated background lease is still active. That
+lease finishes on the detached generation; new commands create a replacement
+without waiting, stopping the holder, or adding coordination. Native startup is
+bounded by a 15-second phase-local watchdog without replacing the caller's
+command deadline. Detached broker processes continue to count against live port
+capacity until exit, and caller-local abort does not retire a healthy broker. If
+cleanup proves that Resume never occurred,
+the existing sandbox-unavailable permission boundary may recover the command;
+started or uncertain work remains non-replayable.
 
 ## v0.7.96-alpha.3 Release Corrections
 

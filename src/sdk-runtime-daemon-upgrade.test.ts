@@ -68,6 +68,7 @@ import {
   KODAX_RUNTIME_SDK_CAPABILITIES,
   RuntimeDaemonCapabilityUpgradeError,
   settleKodaXRuntimeExit,
+  type RuntimeDaemonClientSnapshot,
   type RuntimeDaemonManagementState,
   type RuntimeDaemonPreflight,
 } from './sdk-runtime.js';
@@ -189,6 +190,409 @@ describe('Runtime daemon capability upgrade', () => {
 
     await runtime.close();
     expect(newClose).toHaveBeenCalled();
+  });
+
+  it('lets concurrent temporary upgrade clients converge on one legacy daemon replacement', async () => {
+    const calls: string[] = [];
+    const legacyCapabilities = {
+      actorSettlementConvergence: { version: 2 },
+      crashOutcomeModel: { version: 2 },
+      daemonClientInventory: { version: 1 },
+      daemonManagement: { version: 1 },
+      liveOutputSegments: { version: 1 },
+      managedRunDurability: { version: 1 },
+      runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
+      runtimeEventCoalescing: { version: 1 },
+      sandboxRuntime: { version: 9 },
+      sessionEventJournal: { version: 1 },
+      sharedSessionSettings: { version: 2 },
+      ...(process.platform === 'win32'
+        ? { daemonShutdownVerification: { version: 1 } }
+        : {}),
+    };
+    const clients = new Map<string, RuntimeDaemonClientSnapshot>();
+    let connectionSequence = 0;
+    let legacyActive = true;
+    upgradeMocks.readDaemonToken.mockReturnValue('daemon-token');
+    let releaseSecondAttached = (): void => undefined;
+    const secondAttached = new Promise<void>((resolve) => { releaseSecondAttached = resolve; });
+    let releaseSettlementStarted = (): void => undefined;
+    const settlementStarted = new Promise<void>((resolve) => { releaseSettlementStarted = resolve; });
+    const createSharedLegacyTransport = (): RuntimeDaemonClientTransport => {
+      const daemonConnectionId = `connection_${String(++connectionSequence).padStart(3, '0')}`;
+      let principalId: string | undefined;
+      let closed = false;
+      return {
+        async request(method, params) {
+          calls.push(`old:${method}`);
+          if (method === 'initialize') {
+            const clientInfo = (params as { readonly clientInfo?: {
+              readonly instanceId?: string;
+              readonly name?: string;
+            } }).clientInfo;
+            principalId = clientInfo?.instanceId;
+            if (principalId === undefined) throw new Error('expected upgrade principal');
+            clients.set(principalId, {
+              daemonConnectionId,
+              principalId,
+              name: clientInfo?.name,
+              clientType: 'automation',
+              connectedAt: '2026-07-19T00:00:00.000Z',
+            });
+            if (clients.size === 2) releaseSecondAttached();
+            return initializeResult(RUNTIME_ID, legacyCapabilities);
+          }
+          if (method === 'daemon.management.get') {
+            const snapshots = [...clients.values()];
+            return createManagementState(createPreflight({
+              clientCount: snapshots.length,
+              clients: snapshots,
+              blockers: snapshots.length > 1 ? ['connected_clients'] : [],
+              canStop: snapshots.length <= 1,
+            }));
+          }
+          if (method === 'daemon.rollbackToInline') {
+            legacyActive = false;
+            upgradeMocks.readLockOwner.mockReturnValue(undefined);
+            return {
+              accepted: true,
+              runtimeId: RUNTIME_ID,
+              revision: 8,
+              ownerPolicy: {
+                mode: 'inline',
+                revision: 4,
+                updatedAt: '2026-07-19T00:00:01.000Z',
+              },
+            };
+          }
+          throw new Error(`Unexpected shared legacy request: ${method}`);
+        },
+        subscribe() {
+          return { close() {} };
+        },
+        async close() {
+          if (closed) return;
+          closed = true;
+          if (principalId !== undefined) clients.delete(principalId);
+          calls.push('old:close');
+        },
+      };
+    };
+    upgradeMocks.readLockOwner.mockReturnValue({
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon',
+    });
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => (
+      legacyActive
+        ? createLease(
+            createSharedLegacyTransport(),
+            initializeResult(RUNTIME_ID, legacyCapabilities),
+          )
+        : createLease(createCurrentTransport(calls, async () => undefined))
+    ));
+    upgradeMocks.settleExit
+      .mockImplementationOnce(async () => {
+        releaseSettlementStarted();
+        await secondAttached;
+        return {
+          status: 'blocked',
+          reason: 'active_work',
+          nextAction: 'keep-open',
+          message: 'A temporary peer attached after preflight.',
+        } as const;
+      })
+      .mockImplementationOnce(async (input: {
+        runtime: {
+          daemon: {
+            stopForInline(request: {
+              expectedRuntimeId: string;
+              expectedRevision: number;
+              expectedOwnerPolicyRevision: number;
+            }): Promise<unknown>;
+          };
+          close(): Promise<void>;
+        };
+      }) => {
+        await input.runtime.daemon.stopForInline({
+          expectedRuntimeId: RUNTIME_ID,
+          expectedRevision: 7,
+          expectedOwnerPolicyRevision: 3,
+        });
+        await input.runtime.close();
+        return { status: 'clean', repairs: [] } as const;
+      });
+
+    const firstPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    await settlementStarted;
+    const secondPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    const [first, second] = await Promise.all([firstPending, secondPending]);
+
+    expect(first.identity.runtimeId).toBe('runtime_current');
+    expect(second.identity.runtimeId).toBe('runtime_current');
+    expect(calls.filter((call) => call === 'old:daemon.rollbackToInline')).toHaveLength(1);
+    expect(upgradeMocks.settleExit).toHaveBeenCalledTimes(2);
+    await Promise.all([first.close(), second.close()]);
+  });
+
+  it('converges all clients when three authenticated upgrade peers attach after exit preparation', async () => {
+    const calls: string[] = [];
+    const daemonToken = 'daemon-token';
+    const owner = {
+      runtimeId: RUNTIME_ID,
+      pid: 101,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      kind: 'daemon' as const,
+    };
+    const prepared = {
+      version: 1 as const,
+      settlementId: 'settlement_peer_race',
+      owner,
+      phase: 'prepared' as const,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      updatedAt: '2026-07-19T00:00:01.000Z',
+    };
+    const legacyCapabilities = {
+      actorSettlementConvergence: { version: 2 },
+      crashOutcomeModel: { version: 2 },
+      daemonClientInventory: { version: 1 },
+      daemonManagement: { version: 1 },
+      liveOutputSegments: { version: 1 },
+      managedRunDurability: { version: 1 },
+      runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
+      runtimeEventCoalescing: { version: 1 },
+      sandboxRuntime: { version: 9 },
+      sessionEventJournal: { version: 1 },
+      sharedSessionSettings: { version: 2 },
+      ...(process.platform === 'win32'
+        ? { daemonShutdownVerification: { version: 1 } }
+        : {}),
+    };
+    const clients = new Map<string, RuntimeDaemonClientSnapshot>();
+    let connectionSequence = 0;
+    let legacyActive = true;
+    let preparedVisible = false;
+    let releasePrepared = (): void => undefined;
+    const preparedStarted = new Promise<void>((resolve) => { releasePrepared = resolve; });
+    let releasePeersAttached = (): void => undefined;
+    const peersAttached = new Promise<void>((resolve) => { releasePeersAttached = resolve; });
+    let followerCloseCount = 0;
+    let releaseFollowersClosed = (): void => undefined;
+    const followersClosed = new Promise<void>((resolve) => {
+      releaseFollowersClosed = resolve;
+    });
+    let releaseFirstSettlement = (): void => undefined;
+    const firstSettlementFinished = new Promise<void>((resolve) => {
+      releaseFirstSettlement = resolve;
+    });
+    const createSharedLegacyTransport = (): RuntimeDaemonClientTransport => {
+      const daemonConnectionId = `connection_${String(++connectionSequence).padStart(3, '0')}`;
+      let principalId: string | undefined;
+      let closed = false;
+      return {
+        async request(method, params) {
+          calls.push(`old:${method}`);
+          if (method === 'initialize') {
+            const clientInfo = (params as { readonly clientInfo?: {
+              readonly instanceId?: string;
+              readonly name?: string;
+            } }).clientInfo;
+            principalId = clientInfo?.instanceId;
+            if (principalId === undefined) throw new Error('expected upgrade principal');
+            clients.set(principalId, {
+              daemonConnectionId,
+              principalId,
+              name: clientInfo?.name,
+              clientType: 'automation',
+              connectedAt: '2026-07-19T00:00:00.000Z',
+            });
+            if (clients.size === 4) releasePeersAttached();
+            return initializeResult(RUNTIME_ID, legacyCapabilities);
+          }
+          if (method === 'daemon.management.get') {
+            const snapshots = [...clients.values()];
+            return createManagementState(createPreflight({
+              clientCount: snapshots.length,
+              clients: snapshots,
+              blockers: snapshots.length > 1 ? ['connected_clients'] : [],
+              canStop: snapshots.length <= 1,
+            }));
+          }
+          if (method === 'daemon.rollbackToInline') {
+            legacyActive = false;
+            preparedVisible = false;
+            return {
+              accepted: true,
+              runtimeId: RUNTIME_ID,
+              revision: 8,
+              ownerPolicy: {
+                mode: 'inline',
+                revision: 4,
+                updatedAt: '2026-07-19T00:00:01.000Z',
+              },
+            };
+          }
+          throw new Error(`Unexpected prepared-peer request: ${method}`);
+        },
+        subscribe() {
+          return { close() {} };
+        },
+        async close() {
+          if (closed) return;
+          closed = true;
+          if (principalId !== undefined) clients.delete(principalId);
+          calls.push('old:close');
+          if (daemonConnectionId !== 'connection_001') {
+            followerCloseCount += 1;
+            if (followerCloseCount === 3) releaseFollowersClosed();
+          }
+        },
+      };
+    };
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => (
+      legacyActive
+        ? createLease(
+            createSharedLegacyTransport(),
+            initializeResult(RUNTIME_ID, legacyCapabilities),
+          )
+        : createLease(createCurrentTransport(calls, async () => undefined))
+    ));
+    upgradeMocks.readDaemonToken.mockReturnValue(daemonToken);
+    upgradeMocks.readDaemonState.mockImplementation(() => ({
+      runtimeId: RUNTIME_ID,
+      profile: PROFILE,
+      pid: owner.pid,
+      startedAt: owner.createdAt,
+      endpoint: '\\\\.\\pipe\\kodax-upgrade-test',
+      version: OLDER_RUNTIME_VERSION,
+      status: 'ready',
+      configHome: path.join('C:', 'kodax-upgrade-test', '.kodax'),
+    }));
+    upgradeMocks.readExitIntent.mockImplementation(() => (
+      preparedVisible ? prepared : undefined
+    ));
+    upgradeMocks.readLockOwner.mockImplementation(() => legacyActive ? owner : undefined);
+    let settlementCall = 0;
+    let runtimeSettlementCall = 0;
+    let releaseRecoveryConnections = (): void => undefined;
+    const recoveryConnections = new Promise<void>((resolve) => {
+      releaseRecoveryConnections = resolve;
+    });
+    let recoveryConnectionCount = 0;
+    upgradeMocks.settleExit.mockImplementation(async (input: {
+      runtime?: {
+        daemon: {
+          stopForInline(request: {
+            expectedRuntimeId: string;
+            expectedRevision: number;
+            expectedOwnerPolicyRevision: number;
+          }): Promise<unknown>;
+        };
+        close(): Promise<void>;
+      };
+    }) => {
+      settlementCall += 1;
+      if (settlementCall === 1) {
+        if (input.runtime === undefined) throw new Error('expected first runtime');
+        preparedVisible = true;
+        releasePrepared();
+        await peersAttached;
+        await followersClosed;
+        await input.runtime.close();
+        releaseFirstSettlement();
+        return {
+          status: 'blocked',
+          reason: 'stop_not_accepted',
+          nextAction: 'relaunch-space',
+          message: 'A temporary peer attached after the prepared intent was written.',
+        } as const;
+      }
+      if (input.runtime === undefined) {
+        await firstSettlementFinished;
+        return {
+          status: 'blocked',
+          reason: 'stop_not_accepted',
+          nextAction: 'relaunch-space',
+          message: 'Resume the retained prepared ticket.',
+        } as const;
+      }
+      const runtimeSettlementOrdinal = ++runtimeSettlementCall;
+      await recoveryConnections;
+      if (runtimeSettlementOrdinal === 1) {
+        return {
+          status: 'blocked',
+          reason: 'active_work',
+          nextAction: 'keep-open',
+          message: 'Another authenticated follower is resuming the prepared ticket.',
+        } as const;
+      }
+      if (runtimeSettlementOrdinal === 2) {
+        return {
+          status: 'blocked',
+          reason: 'owner_changed',
+          nextAction: 'keep-open',
+          message: 'The replacement owner won while this follower was attaching.',
+        } as const;
+      }
+      await input.runtime.daemon.stopForInline({
+        expectedRuntimeId: RUNTIME_ID,
+        expectedRevision: 7,
+        expectedOwnerPolicyRevision: 3,
+      });
+      await input.runtime.close();
+      return { status: 'clean', repairs: [] } as const;
+    });
+    upgradeMocks.createSocketTransport.mockImplementation(async () => {
+      recoveryConnectionCount += 1;
+      if (recoveryConnectionCount === 3) releaseRecoveryConnections();
+      return createSharedLegacyTransport();
+    });
+
+    const firstPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    await preparedStarted;
+    const secondPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    const thirdPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    const fourthPending = connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    const [first, second, third, fourth] = await Promise.all([
+      firstPending,
+      secondPending,
+      thirdPending,
+      fourthPending,
+    ]);
+
+    expect(first.identity.runtimeId).toBe('runtime_current');
+    expect(second.identity.runtimeId).toBe('runtime_current');
+    expect(third.identity.runtimeId).toBe('runtime_current');
+    expect(fourth.identity.runtimeId).toBe('runtime_current');
+    expect(upgradeMocks.createSocketTransport).toHaveBeenCalledTimes(3);
+    expect(upgradeMocks.settleExit).toHaveBeenCalledTimes(7);
+    expect(calls.filter((call) => call === 'old:daemon.rollbackToInline')).toHaveLength(1);
+    await Promise.all([first.close(), second.close(), third.close(), fourth.close()]);
   });
 
   it('replaces an idle older KodaX daemon even when its capabilities still satisfy the contract', async () => {

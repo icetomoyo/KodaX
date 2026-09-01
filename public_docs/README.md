@@ -2,10 +2,12 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current source candidate is `v0.7.96-alpha.4`; `v0.7.96-alpha.3` remains
-the latest GitHub pre-release and npm publication remains manual. Alpha.4 adds
-the four permission profiles, sandbox-first routing, JSONC Exec Policy,
-Auto[LLM] host-boundary review, and Full Access. The alpha.3 line adds the v2 scoped Provider credential
+The current source candidate is `v0.7.96-alpha.5`; `v0.7.96-alpha.3` remains
+the latest GitHub pre-release and npm publication remains manual. Alpha.5 carries
+the alpha.4 permission profiles, sandbox-first routing, JSONC Exec Policy,
+Auto[LLM] host-boundary review, and Full Access, and completes Windows sandbox
+concurrency/self-healing without adding a command lock, queue, or permission restriction.
+The alpha.3 line adds the v2 scoped Provider credential
 broker (ADR-068): Provider secrets stay in the OS keychain and resolve per
 wire call for one closed purpose inside revocable leases, shared-daemon
 internal Agent turns require explicit scoped bindings and fail closed
@@ -14,7 +16,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-restricted-token runner (alpha.4 native shell protocol version 9/setup
+restricted-token runner (alpha.5 native shell protocol version 9/setup
 generation 9, Windows `sandboxRuntime:9`, one-time `kodax sandbox setup`
 cutover, and no command-lifetime global admission lock). It replaces the
 local tool-result capacity hard gate with capacity-debt admission and a

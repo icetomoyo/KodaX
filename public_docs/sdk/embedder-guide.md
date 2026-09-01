@@ -5,7 +5,7 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the current source candidate on the `v0.7.96-alpha.4` package line. npm
+This guide tracks the current source candidate on the `v0.7.96-alpha.5` package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows `sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
@@ -16,10 +16,9 @@ replacement, and a native restricted-token Windows shell runner behind
 native shell protocol version 9/setup generation 9 with no command-lifetime
 global admission lock), and local tool-result capacity overflow
 records bounded `capacityDebt` and commits through a bounded recovery ladder
-instead of aborting the Run. On top of v0.7.95: self-healing Windows sandbox
-cleanup (a recoverable machine-global
-cleanup Job, unattended recovery tickets, generation-checked background
-retries, dynamic-worktree policy registration), stale learning-lock
+instead of aborting the Run. On top of v0.7.95: per-command Windows sandbox
+runner/pipe/Job lifecycles, setup-only machine migration and recovery, rolling
+failed-broker replacement without an ordinary command lock or queue, stale learning-lock
 reclamation with fullscreen terminal teardown, exact-input Explicit Skill
 execution, and coding-result finalization before the public completion
 signal, on top of concurrent sandboxed text mutations,
@@ -4744,7 +4743,7 @@ silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
 The SDK requires `runtimeAutoModeGuardrail:5` and
 `sharedSessionSettings:2` automatically for ordinary `autoStart: true`.
-The capability gate prevents an alpha.4 client from attaching to an alpha.3
+The capability gate prevents an alpha.5 client from attaching to an alpha.3
 daemon that advertises the older permission-before-sandbox contract. Supplying
 `daemonOrphanExitMs` additionally requires the
 dedicated `daemonOrphanExit:1` capability and passes the option only when
@@ -4786,10 +4785,12 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `9` in v0.7.96-alpha.4
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `9` in v0.7.96-alpha.5
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
-`sandboxRuntime:9`, so an idle v8-or-older daemon is replaced; a busy or
-multi-client daemon fails closed with restart guidance. Version 6 means that
+`sandboxRuntime:9`, so an idle v8-or-older daemon is replaced. Concurrent
+authenticated upgrade clients converge on one fenced replacement, including
+the exact prepared-ticket/revision-CAS attach window; a busy daemon or one with
+untrusted clients remains untouched and returns structured restart guidance. Version 6 means that
 trusted text transactions are host-owned and the native shell runner has no
 command-lifetime filesystem-effect lease; a v5 daemon cannot be reused for
 those semantics. The former `model-filesystem-effects.*` coordinator state is
@@ -5679,7 +5680,7 @@ values and `RuntimePermissionModeInput` for accepted update input. Host-owned
 policy is configured through `CreateKodaXRuntimeOptions.execPolicy` /
 `RuntimeExecPolicyOptions` and `CreateKodaXRuntimeOptions.autoReview` /
 `RuntimeAutoReviewOptions`. `KODAX_RUNTIME_SDK_CAPABILITIES` is exported for
-pre-spawn checks; alpha.4 reports `runtimeAutoModeGuardrail:5` and
+pre-spawn checks; alpha.5 reports `runtimeAutoModeGuardrail:5` and
 `sharedSessionSettings:2`.
 
 ACP integrations can import the corresponding root SDK surface without
@@ -5794,7 +5795,7 @@ The v0.7.x public declarations retain the following migration aliases:
 | `AutoModeRulesContext` | Auto[LLM] operation context | remains the active context type for `AutoModeCallAnalyzer`; its legacy name does not mean that an Auto Rules engine still runs |
 | `AutoModeGuardrailConfig.rules`, `AutoModeRulesDecision`, `AutoModeRulesEvaluator`, `AutoModeGuardrailConfig.askUser`, `AutoModeAskUser*`, `AutoModeDecisionDiagnostics`, and Runtime permission `autoModeDiagnostics` fields | Runtime-owned Auto[LLM] facts/review | retained only as deprecated 0.7.x source/wire compatibility; Rules/evaluator/ask-user values are ignored, diagnostics may round-trip only as non-authorizing legacy metadata, and none of these fields restores Auto Rules or the removed automatic prompt path |
 | `allowsAcceptEditsClassifierFallback` | no replacement | removed from the `/repl` barrel; the Runtime now owns the only shell boundary, so embedders must not install a second classifier fallback |
-| legacy ACP `tool_permission_resolved.outcome` literals | current request outcomes | retained as deprecated source/wire-read variants for 0.7.x consumers, but alpha.4 never emits them |
+| legacy ACP `tool_permission_resolved.outcome` literals | current request outcomes | retained as deprecated source/wire-read variants for 0.7.x consumers, but alpha.5 never emits them |
 
 ### Plan capability is opt-in
 
@@ -6500,8 +6501,11 @@ There is no filesystem-effect lease spanning a command lifetime and no
 owner/reset/allow-revoke/poison admission gate shared with text tools. Shells
 from different Sessions, Runtime processes, and policies may run concurrently
 within the documented distinct-broker capacity. One Runtime reuses a healthy
-broker only for an exact network-policy/setup-generation match; a failed
-readiness attempt is retired, while unlike policies and
+broker only for an exact network-policy/setup-generation match. A readiness,
+target-start, or terminal-proof failure immediately detaches that generation
+from reuse without stopping unrelated holders; detached processes remain in
+live capacity accounting until `close`. Each startup/control phase is bounded
+to 15 seconds without replacing the command deadline. Unlike policies and
 Runtime processes remain subject to ASRT 0.0.65's ten-port/five-broker limit
 (Issue 308), without hidden serialization or authority sharing.
 KodaX does not serialize arbitrary shell writes to the same file; those remain

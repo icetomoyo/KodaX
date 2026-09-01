@@ -39,7 +39,7 @@ pub const TERMINATION_CONFIRMED_EXIT_CODE: u32 = 254;
 const CONTROL_OPEN: u8 = 0;
 const CONTROL_TERMINATION_REQUESTED: u8 = 1;
 const CONTROL_LOST: u8 = 2;
-const LAUNCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
+const LAUNCH_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
 const LAUNCH_ABORT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
