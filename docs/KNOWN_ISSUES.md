@@ -259,6 +259,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96 development | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.5 | 2026-08-30 | 2026-09-01 |
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
 | 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
@@ -473,6 +474,48 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 327: Windows Bun release loses terminal input after selecting a session with bare `kodax -r`
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5)
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-09-01
+- **Resolved**: 2026-09-01
+
+#### Original Problem
+
+The official Windows release ZIP restores the selected conversation after bare
+`kodax -r`, but the resumed REPL no longer accepts keyboard input. `kodax -c`
+and `kodax -r <session-id>` remain usable because they do not create a picker
+renderer before the REPL renderer. The failure reproduces with a recent small
+Session and with a Session-free two-renderer harness, so legacy Session content
+is not causal.
+
+#### Context
+
+The checksum-matched v0.7.96-alpha.5 Windows archive embeds Bun 1.4.0. The
+picker terminal controller restores cooked mode while unmounting, then the REPL
+controller references, resumes, and re-enables raw mode. Under the compiled Bun
+Windows TTY, the stream reports active/raw/flowing with listeners attached but
+stops emitting input. Node execution and direct-ID resume remain healthy.
+
+#### Root Cause
+
+The picker and REPL independently own raw-mode teardown. Releasing raw mode
+between sequential owned renderers crosses a Bun/Windows terminal boundary that
+cannot be recovered by the existing `ref()` and `resume()` calls.
+
+#### Resolution
+
+The picker now transfers raw-mode ownership only after a successful selection
+when the next interactive surface is the owned renderer. The successor claims
+that ownership and restores cooked mode on final exit; cancellation,
+preparation failure, and classic REPL routing keep the prior cleanup behavior.
+Renderer and picker regressions cover the handoff and failure paths. A Bun
+1.4.0 Windows standalone build completed all packaging smoke checks, then a
+real PTY accepted `handoff-ok` after `kodax -r` selection and exited cleanly.
 
 ### 325: Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined`
 
@@ -14000,11 +14043,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 205 (34 Open, 171 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 206 (34 Open, 172 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-01: Issue 327 resolved (bare resume Bun/Windows input handoff)
+
+- Confirmed against the checksum-matched v0.7.96-alpha.5 Windows ZIP and a
+  Session-free two-renderer harness. Successful selection now transfers
+  raw-mode ownership from the picker to the owned REPL without weakening
+  cancellation, failure, classic REPL, or final terminal cleanup. The rebuilt
+  Bun 1.4.0 Windows executable accepts input after resume in a real PTY.
 
 ### 2026-08-28: Issue 325 resolved (Windows boot-identity helper restore)
 

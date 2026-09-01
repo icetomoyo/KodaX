@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from '../tui/renderer-runtime.js';
+import { resolveInteractiveSurfacePreference } from '../tui/runtime.js';
 
 const SELECTION_TRANSITION_PAINT_MS = 40;
 
@@ -185,7 +186,9 @@ export async function runSessionPicker(
   let selected: SessionPickerItem | undefined;
   let cancelled = false;
   let selectionFailed = false;
+  let selectionPrepared = false;
   let selectionError: unknown;
+  const preserveRawModeOnSelect = resolveInteractiveSurfacePreference() === 'ink';
   const pageSize = Math.max(4, Math.min(12, (process.stdout.rows ?? 24) - 8));
   const instance = render(
     <SessionPicker
@@ -194,6 +197,7 @@ export async function runSessionPicker(
       onSelect={async (session) => {
         selected = session;
         await options.prepareSelection?.(session);
+        selectionPrepared = true;
       }}
       onSelectionError={(error) => {
         selectionFailed = true;
@@ -207,6 +211,7 @@ export async function runSessionPicker(
       stderr: process.stderr,
       exitOnCtrlC: false,
       patchConsole: false,
+      preserveRawModeOnUnmount: () => preserveRawModeOnSelect && selectionPrepared,
     },
   );
   try {

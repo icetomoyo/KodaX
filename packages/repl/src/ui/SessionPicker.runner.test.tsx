@@ -10,6 +10,10 @@ vi.mock('../tui/renderer-runtime.js', async (importOriginal) => ({
   render: tuiMocks.render,
 }));
 
+vi.mock('../tui/runtime.js', () => ({
+  resolveInteractiveSurfacePreference: () => 'ink',
+}));
+
 import { runSessionPicker, type SessionPickerItem } from './SessionPicker.js';
 
 describe('runSessionPicker', () => {
@@ -41,15 +45,20 @@ describe('runSessionPicker', () => {
       const rendered = tuiMocks.render.mock.calls[0]?.[0] as React.ReactElement<{
         onSelect: (selected: SessionPickerItem) => Promise<void>;
       }>;
+      const renderOptions = tuiMocks.render.mock.calls[0]?.[1] as {
+        preserveRawModeOnUnmount?: () => boolean;
+      };
       const selectionPromise = rendered.props.onSelect(session);
 
       await Promise.resolve();
       expect(prepareSelection).toHaveBeenCalledWith(session);
+      expect(renderOptions.preserveRawModeOnUnmount?.()).toBe(false);
       expect(unmount).not.toHaveBeenCalled();
       expect(cleanup).not.toHaveBeenCalled();
 
       finishPreparation?.();
       await selectionPromise;
+      expect(renderOptions.preserveRawModeOnUnmount?.()).toBe(true);
       resolveExit?.();
 
       await expect(resultPromise).resolves.toBe(session);
@@ -100,7 +109,11 @@ describe('runSessionPicker', () => {
         onSelect: (selected: SessionPickerItem) => Promise<void>;
         onSelectionError: (error: unknown) => void;
       }>;
+      const renderOptions = tuiMocks.render.mock.calls[0]?.[1] as {
+        preserveRawModeOnUnmount?: () => boolean;
+      };
       await rendered.props.onSelect(session).catch(rendered.props.onSelectionError);
+      expect(renderOptions.preserveRawModeOnUnmount?.()).toBe(false);
       resolveExit?.();
 
       await expect(resultPromise).rejects.toBe(failure);

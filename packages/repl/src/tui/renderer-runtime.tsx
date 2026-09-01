@@ -23,7 +23,9 @@ import parseKeypress, {
 } from "./core/parse-keypress.js";
 import { createInputParser } from "./core/input-parser.js";
 
-type InkRenderOptions = RenderOptions;
+type InkRenderOptions = RenderOptions & {
+  readonly preserveRawModeOnUnmount?: () => boolean;
+};
 export interface StdoutState {
   readonly stdout: NodeJS.WriteStream;
 }
@@ -51,6 +53,8 @@ interface TerminalInputSource {
   unref?: () => void;
   isRaw?: boolean;
 }
+
+const transferredRawModeInputs = new WeakSet<TerminalInputSource>();
 
 export interface TerminalSize {
   columns: number;
@@ -117,6 +121,7 @@ const TuiRuntimeContext = createContext<TuiRuntimeContextValue | null>(null);
 
 interface MutableTuiRuntimeContextValue extends TuiRuntimeContextValue {
   attachExit: (exit: () => void) => void;
+  preserveRawModeOnUnmount: () => boolean;
 }
 
 const fallbackStdout = {
@@ -159,10 +164,12 @@ export function createTerminalInputController({
   stdin,
   setRawMode,
   isRawModeSupported,
+  preserveRawModeOnDetach,
 }: {
   stdin: TerminalInputSource | undefined;
   setRawMode: StdinState["setRawMode"];
   isRawModeSupported: boolean;
+  preserveRawModeOnDetach?: () => boolean;
 }): TerminalInputController {
   const subscriptions = new Set<TerminalInputSubscription>();
   let attachedInput: TerminalInputSource | undefined;
@@ -191,7 +198,16 @@ export function createTerminalInputController({
   const detachInput = () => {
     const input = attachedInput;
     input?.off?.("data", handleData);
-    disableRawModeIfOwned();
+    if (
+      input
+      && rawModeEnabledByController
+      && preserveRawModeOnDetach?.() === true
+    ) {
+      transferredRawModeInputs.add(input);
+      rawModeEnabledByController = false;
+    } else {
+      disableRawModeIfOwned();
+    }
     if (inputRefOwned) {
       input?.unref?.();
       inputRefOwned = false;
@@ -210,6 +226,8 @@ export function createTerminalInputController({
     }
 
     if (attachedInput !== stdin) {
+      const inheritedRawMode = transferredRawModeInputs.delete(stdin)
+        && stdin.isRaw === true;
       if (stdin.hasRef?.() !== true && typeof stdin.ref === "function") {
         stdin.ref();
         inputRefOwned = true;
@@ -222,6 +240,7 @@ export function createTerminalInputController({
       // example the session picker followed by the REPL) cannot lose input.
       stdin.resume?.();
       attachedInput = stdin;
+      rawModeEnabledByController = inheritedRawMode;
     }
 
     const requiresRawMode = isRawModeSupported && hasRawModeSubscribers(subscriptions);
@@ -263,7 +282,7 @@ export function createTerminalInputController({
 
 interface TuiRuntimeProviderProps {
   children: React.ReactNode;
-  runtime: TuiRuntimeContextValue;
+  runtime: MutableTuiRuntimeContextValue;
 }
 
 const TuiRuntimeProvider: React.FC<TuiRuntimeProviderProps> = ({
@@ -305,8 +324,14 @@ const TuiRuntimeProvider: React.FC<TuiRuntimeProviderProps> = ({
       stdin: runtime.stdin,
       setRawMode: runtime.setRawMode,
       isRawModeSupported: runtime.isRawModeSupported,
+      preserveRawModeOnDetach: runtime.preserveRawModeOnUnmount,
     }),
-    [runtime.stdin, runtime.isRawModeSupported, runtime.setRawMode],
+    [
+      runtime.stdin,
+      runtime.isRawModeSupported,
+      runtime.preserveRawModeOnUnmount,
+      runtime.setRawMode,
+    ],
   );
 
   useEffect(() => () => {
@@ -373,6 +398,7 @@ function createRuntimeValue(
       stdout.write(chunk);
       return true;
     },
+    preserveRawModeOnUnmount: options?.preserveRawModeOnUnmount ?? (() => false),
     subscribeInput: () => () => undefined,
     attachExit(exit: () => void) {
       instanceExit = exit;

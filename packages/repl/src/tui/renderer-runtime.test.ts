@@ -34,6 +34,23 @@ class MockInput extends EventEmitter {
   }
 }
 
+class BunWindowsMockInput extends MockInput {
+  private rawModeWasReleased = false;
+
+  override setRawMode(enabled: boolean) {
+    if (this.isRaw && !enabled) {
+      this.rawModeWasReleased = true;
+    }
+    super.setRawMode(enabled);
+  }
+
+  override emitInput(chunk: Buffer): void {
+    if (!this.rawModeWasReleased) {
+      super.emitInput(chunk);
+    }
+  }
+}
+
 class MockOutput extends EventEmitter {
   isTTY = true;
   columns = 120;
@@ -157,22 +174,32 @@ describe("renderer-runtime useInput", () => {
   it("hands terminal input from a completed renderer to the next renderer", async () => {
     const stdout = new MockOutput() as unknown as NodeJS.WriteStream;
     const stderr = new MockOutput() as unknown as NodeJS.WriteStream;
-    const mockInput = new MockInput();
+    const mockInput = new BunWindowsMockInput();
     const stdin = mockInput as unknown as NodeJS.ReadStream;
+    let handoffReady = false;
 
     function PickerHarness() {
       const { exit } = useApp();
       useInput((_input, key) => {
-        if (key.return) exit();
+        if (key.return) {
+          handoffReady = true;
+          exit();
+        }
       });
       return null;
     }
 
-    const picker = render(React.createElement(PickerHarness), { stdout, stderr, stdin });
+    const picker = render(React.createElement(PickerHarness), {
+      stdout,
+      stderr,
+      stdin,
+      preserveRawModeOnUnmount: () => handoffReady,
+    });
     const pickerExit = picker.waitUntilExit();
     mockInput.emitInput(Buffer.from("\r"));
     await pickerExit;
     picker.cleanup();
+    expect(mockInput.isRaw).toBe(true);
 
     const replHandler = vi.fn();
     function ReplHarness() {
@@ -187,6 +214,7 @@ describe("renderer-runtime useInput", () => {
 
     repl.unmount();
     repl.cleanup();
+    expect(mockInput.isRaw).toBe(false);
   });
 
   it("delivers Ctrl+C to an active input handler", () => {
