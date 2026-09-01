@@ -378,8 +378,8 @@ describe('FEATURE_218 manual registry', () => {
 
     expect(sdk).toContain('Since v0.7.86');
     expect(sdk).toContain('process-start identity');
-    expect(sdk).toContain('termination proof before ACL recovery');
-    expect(sdk).toContain('never replays the command');
+    expect(sdk).toContain('per-command process-tree and Job-drain proof');
+    expect(sdk).toContain('prevents replay of that command');
     expect(sdk).toContain('initialize fresh KODAX_HOME policy roots');
     expect(sdk).toContain('lease-cleanup failure');
     expect(sdk).toContain('remains open after v0.7.87');
