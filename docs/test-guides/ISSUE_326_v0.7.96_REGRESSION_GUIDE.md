@@ -74,6 +74,11 @@ Expected:
 - foreground Bash and the public SDK release prepared requests after a
   synchronous spawn failure, and the SDK refuses a changed setup generation
   without spawning the native host;
+- rejected/closed/oversized broker-control output still releases the prepared
+  Bash request, and asynchronous background spawn rejection is reported as a
+  pre-start failure rather than success with `PID: undefined`;
+- a foreground or background target that exits before start attestation returns
+  still preserves output, records its exit, and releases its prepared request;
 - an already wrapped quoted executable under Windows `cmd /S /C` reaches the
   real target with quoted and unquoted final arguments and exits 0 instead of
   producing a path-not-found footer;

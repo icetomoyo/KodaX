@@ -875,7 +875,14 @@ with bounded diagnostics. A spawned wrapper without target-start authority is
 broker stdin and target-start/fallback authority returns through a bounded FD3
 frame bound to the invocation and expected backend; the target never inherits
 that descriptor. Missing or invalid authority is `execution_uncertain`, not a
-retryable not-started result. The internal workspace-shell adapter allows broad
+retryable not-started result. Broker-control collection and request cleanup
+settle independently, so a control close/error/overflow cannot bypass cleanup.
+Background execution is acknowledged only after the wrapper exposes an OS PID;
+asynchronous spawn rejection is handled by the same proven pre-start boundary
+and is never rendered as `PID: undefined`. Per-command settlement and output
+capture attach immediately after spawn, before start attestation, so a fast
+target cannot exit through an unobserved lifecycle window. The internal
+workspace-shell adapter allows broad
 host reads, including Agent Home, credential locations, and global Git
  configuration. Writes remain bound to canonical workspace roots and system
  temporary directories. The standalone SDK executor keeps its caller-owned

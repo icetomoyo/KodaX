@@ -404,6 +404,34 @@ describe('toolBash', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
+  it('still runs request cleanup when broker control output is rejected', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const script = [
+      'const fs=require("node:fs")',
+      "process.stdin.resume()",
+      "process.stdin.on('end',()=>{fs.writeSync(3,Buffer.from('oversized-control'));process.stdout.write('broker-finished')})",
+    ].join(';');
+
+    const result = await toolBash({ command: 'broker-control-overflow' }, {
+      backups: new Map(),
+      toolCallId: 'broker-control-overflow',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', script],
+          env: process.env,
+          stdinPrefix: Buffer.from('request'),
+          controlChannel: { fd: 3, maxOutputBytes: 4 },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(result).toContain('control output exceeded 4 bytes');
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'started_or_unknown' });
+  });
+
   it('keeps bootstrap pipe errors observed through close after cancellation', async () => {
     const marker = path.join(tempDir, 'native-bootstrap-started');
     const controller = new AbortController();
@@ -1402,6 +1430,104 @@ describe('toolBash', () => {
     expect(content).toContain('[Exit:');
     await expect(withFileMutation(path.join(tempDir, 'after-fast-background.txt'), async () => 'ready'))
       .resolves.toBe('ready');
+  });
+
+  it('does not report an asynchronously rejected background spawn as started', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const authorizeShellHostExecution = vi.fn(async () => false as const);
+    const missingExecutable = path.join(tempDir, 'missing-sandbox-wrapper.exe');
+
+    const result = await toolBash({ command: 'missing-background-wrapper', run_in_background: true }, {
+      backups: new Map(),
+      toolCallId: 'missing-background-wrapper',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: missingExecutable,
+          args: [],
+          env: process.env,
+          cleanup,
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(result).toContain('[Denied] Host execution was not authorized');
+    expect(result).not.toContain('Command started in background');
+    expect(result).not.toContain('PID: undefined');
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'not_started' });
+    expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+  });
+
+  it('cleans a background command that closes before native start attestation returns', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const result = await toolBash({ command: 'fast-background-before-attestation', run_in_background: true }, {
+      backups: new Map(),
+      toolCallId: 'fast-background-before-attestation',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', "process.stdout.write('closed-before-attestation')"],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async (child: ChildProcess) => { child.stdin?.end(); },
+            attestStart: async (child: ChildProcess) => {
+              if (child.exitCode === null && child.signalCode === null) {
+                await new Promise<void>((resolve) => child.once('close', () => resolve()));
+              }
+              return { state: 'started' as const };
+            },
+            terminate: async () => undefined,
+          },
+          cleanup,
+        }),
+      },
+    });
+    const outputPath = parseBackgroundOutputPath(result);
+
+    try {
+      await expect.poll(() => cleanup.mock.calls.length, { timeout: 1_000 }).toBe(1);
+      await expect.poll(async () => fs.readFile(outputPath, 'utf8'), { timeout: 1_000 })
+        .toContain('[Exit: 0]');
+      await expect.poll(async () => fs.readFile(outputPath, 'utf8'), { timeout: 1_000 })
+        .toContain('closed-before-attestation');
+      expect(cleanup).toHaveBeenCalledWith({ execution: 'started_or_unknown' });
+    } finally {
+      await fs.rm(outputPath, { force: true });
+    }
+  });
+
+  it('settles a foreground command that closes before native start attestation returns', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const result = await toolBash({ command: 'fast-foreground-before-attestation', timeout: 1 }, {
+      backups: new Map(),
+      toolCallId: 'fast-foreground-before-attestation',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', "process.stdout.write('closed-before-attestation')"],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async (child: ChildProcess) => { child.stdin?.end(); },
+            attestStart: async (child: ChildProcess) => {
+              if (child.exitCode === null && child.signalCode === null) {
+                await new Promise<void>((resolve) => child.once('close', () => resolve()));
+              }
+              return { state: 'started' as const };
+            },
+            terminate: async () => undefined,
+          },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(result).toContain('Exit: 0');
+    expect(result).toContain('closed-before-attestation');
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ execution: 'started_or_unknown' });
   });
 
   it('does not report a background command started before native target-start attestation', async () => {

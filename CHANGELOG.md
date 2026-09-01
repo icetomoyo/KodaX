@@ -57,6 +57,14 @@ All notable changes to this project will be documented in this file.
   ticket but before its revision CAS. One authenticated follower resumes that
   exact durable ticket after detaching while the first client and any other
   followers only observe the owner change; active or untrusted work remains untouched.
+- Closed two portable Bash lifecycle gaps without adding a command lock or
+  retry loop. Broker-control close/error/overflow now still runs the prepared
+  request cleanup before reporting failure, and background execution is not
+  reported as started until the wrapper has an OS PID; asynchronous spawn
+  rejection therefore cannot return `PID: undefined` or leak prepared state.
+  Process settlement and output capture are attached immediately after spawn,
+  so a fast target that exits during start attestation cannot lose its output,
+  completion footer, or request cleanup.
 
 ## [0.7.96-alpha.4] - 2026-08-30
 

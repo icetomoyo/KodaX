@@ -146,17 +146,69 @@ function collectPreparedShellControl(
   return new Promise<Uint8Array>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
-    control.on('data', (chunk: Buffer) => {
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      control.off('data', onData);
+      control.off('error', onError);
+      control.off('end', onEnd);
+      control.off('close', onClose);
+      if (error === undefined) resolve(Buffer.concat(chunks));
+      else reject(error);
+    };
+    const onData = (chunk: Buffer): void => {
       bytes += chunk.byteLength;
       if (bytes > maxOutputBytes) {
-        reject(new Error(`Sandbox broker control output exceeded ${maxOutputBytes} bytes.`));
+        finish(new Error(`Sandbox broker control output exceeded ${maxOutputBytes} bytes.`));
         control.destroy();
         return;
       }
       chunks.push(chunk);
-    });
-    control.once('error', reject);
-    control.once('end', () => resolve(Buffer.concat(chunks)));
+    };
+    const onError = (error: Error): void => finish(error);
+    const onEnd = (): void => finish();
+    const onClose = (): void => finish();
+    control.on('data', onData);
+    control.once('error', onError);
+    control.once('end', onEnd);
+    control.once('close', onClose);
+  });
+}
+
+function waitForChildSpawn(proc: ManagedChildProcess): Promise<void> {
+  if (proc.pid !== undefined) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error): void => {
+      proc.off('spawn', onSpawn);
+      proc.off('error', onError);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const onSpawn = (): void => finish(
+      proc.pid === undefined ? new Error('Shell process spawned without a process id.') : undefined,
+    );
+    const onError = (error: Error): void => finish(error);
+    proc.once('spawn', onSpawn);
+    proc.once('error', onError);
+  });
+}
+
+type ChildProcessSettlement =
+  | { readonly type: 'close'; readonly code: number | null }
+  | { readonly type: 'error'; readonly error: Error };
+
+function observeChildSettlement(proc: ManagedChildProcess): Promise<ChildProcessSettlement> {
+  return new Promise<ChildProcessSettlement>((resolve) => {
+    const finish = (result: ChildProcessSettlement): void => {
+      proc.off('close', onClose);
+      proc.off('error', onError);
+      resolve(result);
+    };
+    const onClose = (code: number | null): void => finish({ type: 'close', code });
+    const onError = (error: Error): void => finish({ type: 'error', error });
+    proc.once('close', onClose);
+    proc.once('error', onError);
   });
 }
 
@@ -499,12 +551,31 @@ async function executeToolBash(
     execution: 'not_started' | 'started_or_unknown' = 'not_started',
   ): Promise<void> => {
     if (!sandboxInvocation) return;
-    sandboxCleanup ??= (async () => sandboxInvocation.cleanup({
-      execution,
-      ...(sandboxControlOutput === undefined
-        ? {}
-        : { controlOutput: await sandboxControlOutput }),
-    }))()
+    sandboxCleanup ??= (async () => {
+      let controlOutput: Uint8Array | undefined;
+      let controlFailure: unknown;
+      if (sandboxControlOutput !== undefined) {
+        try {
+          controlOutput = await sandboxControlOutput;
+        } catch (error: unknown) {
+          controlFailure = error;
+        }
+      }
+      try {
+        const observation = await sandboxInvocation.cleanup({
+          execution,
+          ...(controlOutput === undefined ? {} : { controlOutput }),
+        });
+        if (controlFailure !== undefined) throw controlFailure;
+        return observation;
+      } catch (cleanupError: unknown) {
+        if (controlFailure === undefined || cleanupError === controlFailure) throw cleanupError;
+        throw new AggregateError(
+          [controlFailure, cleanupError],
+          'Sandbox control collection and request cleanup both failed.',
+        );
+      }
+    })()
       .then((observation) => {
         if (observation?.state === 'pre_start_unavailable') {
           sandboxPreStartUnavailable = true;
@@ -645,8 +716,10 @@ async function executeToolBash(
 
   const spawnManagedCommand = async (
     kind: 'bash' | 'bash-background',
+    observeOutput: (proc: ManagedChildProcess) => void,
   ): Promise<{
     readonly proc: ManagedChildProcess;
+    readonly settlement: Promise<ChildProcessSettlement>;
     readonly unregister: () => void;
   }> => {
     try {
@@ -656,10 +729,24 @@ async function executeToolBash(
       throw new ShellSandboxPreStartError(sandboxLifecycleErrorDetail(error));
     }
     let proc: ManagedChildProcess;
+    let settlement: Promise<ChildProcessSettlement>;
     try {
       proc = spawnCommand();
+      settlement = observeChildSettlement(proc);
+      observeOutput(proc);
     } catch (error: unknown) {
       await cleanupSandbox('not_started');
+      throw error;
+    }
+    try {
+      await waitForChildSpawn(proc);
+    } catch (error: unknown) {
+      await cleanupSandbox('not_started');
+      if (sandboxInvocation !== undefined && sandboxCleanupError === undefined) {
+        const diagnostic = sandboxPreStartDiagnostic
+          ?? `Sandbox wrapper failed before assigning a process id: ${sandboxLifecycleErrorDetail(error)}`;
+        throw new ShellSandboxPreStartError(diagnostic);
+      }
       throw error;
     }
     let unregister: (() => void) | undefined;
@@ -782,7 +869,7 @@ async function executeToolBash(
       }
       throw inputFailure;
     }
-    return { proc, unregister };
+    return { proc, settlement, unregister };
   };
 
   const cleanupStartedCommand = async (
@@ -819,11 +906,41 @@ async function executeToolBash(
       );
     }
 
+    const stopBackgroundChild = (child: ManagedChildProcess): void => {
+      if (sandboxInvocation?.processControl !== undefined) {
+        void sandboxInvocation.processControl.terminate(child).catch((error: unknown) => {
+          emitKodaXDiagnostic({
+            source: 'coding:bash-sandbox',
+            level: 'warn',
+            message: 'Native background command termination was not attested.',
+            detail: error,
+          });
+        });
+      } else {
+        killChildProcessTreeBestEffort(child, {
+          forceMs: BACKGROUND_ABORT_KILL_MS,
+          taskkillMs: BACKGROUND_ABORT_KILL_MS,
+        });
+      }
+    };
     let proc: ManagedChildProcess;
+    let settlement: Promise<ChildProcessSettlement>;
     let unregisterManagedChild: () => void;
     try {
-      ({ proc, unregister: unregisterManagedChild } = await spawnManagedCommand(
+      ({ proc, settlement, unregister: unregisterManagedChild } = await spawnManagedCommand(
         'bash-background',
+        (spawned) => {
+          logStream.on('error', (error) => {
+            try {
+              ctx.reportToolProgress?.(`[Background capture failed; stopping command] ${error.message}`);
+            } catch {
+              // The process stop below is authoritative; progress rendering is optional.
+            }
+            stopBackgroundChild(spawned);
+          });
+          spawned.stdout?.pipe(logStream, { end: false });
+          spawned.stderr?.pipe(logStream, { end: false });
+        },
       ));
     } catch (error) {
       logStream.destroy();
@@ -854,40 +971,13 @@ async function executeToolBash(
       process.off('exit', cleanupOnProcessExit);
       if (onAbort) abortSignal?.removeEventListener('abort', onAbort);
     };
-    const stopBackgroundProcess = (): void => {
-      if (sandboxInvocation?.processControl !== undefined) {
-        void sandboxInvocation.processControl.terminate(proc).catch((error: unknown) => {
-          emitKodaXDiagnostic({
-            source: 'coding:bash-sandbox',
-            level: 'warn',
-            message: 'Native background command termination was not attested.',
-            detail: error,
-          });
-        });
-      } else {
-        killChildProcessTreeBestEffort(proc, {
-          forceMs: BACKGROUND_ABORT_KILL_MS,
-          taskkillMs: BACKGROUND_ABORT_KILL_MS,
-        });
-      }
-    };
+    const stopBackgroundProcess = (): void => stopBackgroundChild(proc);
     let backgroundCleanup: Promise<void> | undefined;
     const finishBackground = (): Promise<void> => {
       backgroundCleanup ??= cleanupStartedCommand(proc, unregisterManagedChild)
         .finally(clearProcessHooks);
       return backgroundCleanup;
     };
-    logStream.on('error', (error) => {
-      try {
-        ctx.reportToolProgress?.(`[Background capture failed; stopping command] ${error.message}`);
-      } catch {
-        // The process stop below is authoritative; progress rendering is optional.
-      }
-      stopBackgroundProcess();
-    });
-
-    proc.stdout?.pipe(logStream, { end: false });
-    proc.stderr?.pipe(logStream, { end: false });
     const reportBackgroundCleanupFailure = (error: unknown): void => {
       emitKodaXDiagnostic({
         source: 'coding:bash-sandbox',
@@ -909,19 +999,13 @@ async function executeToolBash(
       return `\n[Error] Required OS sandbox execution could not be verified: ${detail}\n`
         + '[Safety] The command was not retried because it may have started.\n';
     };
-    proc.on('close', (code) => {
-      void finishBackground().then(() => {
-        if (!logStream.destroyed) {
-          logStream.write(backgroundSandboxFailure() ?? `\n[Exit: ${code}]\n`);
-          logStream.end();
-        }
-      }).catch(reportBackgroundCleanupFailure);
-    });
-    proc.on('error', (error) => {
+    void settlement.then((result) => {
       void finishBackground().then(() => {
         if (!logStream.destroyed) {
           logStream.write(
-            backgroundSandboxFailure() ?? `\n[Error: ${error.message}]\n`,
+            backgroundSandboxFailure() ?? (result.type === 'close'
+              ? `\n[Exit: ${result.code}]\n`
+              : `\n[Error: ${result.error.message}]\n`),
           );
           logStream.end();
         }
@@ -937,11 +1021,30 @@ async function executeToolBash(
     return `Command started in background.\nPID: ${proc.pid}\nOutput: ${outputFile}\n\nUse the read tool to check output when done. A final [Exit: ...] footer confirms capture completed; if it is absent, the command is still running or capture failed.`;
   }
 
+  const bashOutputPolicy = getToolResultPolicy('bash');
+  const collectorOptions = {
+    spoolThresholdBytes: bashOutputPolicy.maxBytes,
+    spoolThresholdLines: bashOutputPolicy.maxLines,
+  };
+  const stdout = createBashOutputCollector(collectorOptions);
+  const stderr = createBashOutputCollector(collectorOptions);
+  const disposeCollectors = (): void => {
+    disposeBashOutputCollector(stdout);
+    disposeBashOutputCollector(stderr);
+  };
   let proc: ManagedChildProcess;
+  let settlement: Promise<ChildProcessSettlement>;
   let unregisterManagedChild: () => void;
   try {
-    ({ proc, unregister: unregisterManagedChild } = await spawnManagedCommand('bash'));
+    ({ proc, settlement, unregister: unregisterManagedChild } = await spawnManagedCommand(
+      'bash',
+      (spawned) => {
+        spawned.stdout?.on('data', (chunk: Buffer) => appendBashOutputChunk(stdout, chunk));
+        spawned.stderr?.on('data', (chunk: Buffer) => appendBashOutputChunk(stderr, chunk));
+      },
+    ));
   } catch (error) {
+    disposeCollectors();
     if (error instanceof ShellSandboxPreStartError) {
       return executeAtHostBoundary(
         'sandbox_unavailable',
@@ -976,17 +1079,6 @@ async function executeToolBash(
         process.off('exit', cleanupOnProcessExit);
       });
       return finishForegroundRequest;
-    };
-    const bashOutputPolicy = getToolResultPolicy('bash');
-    const collectorOptions = {
-      spoolThresholdBytes: bashOutputPolicy.maxBytes,
-      spoolThresholdLines: bashOutputPolicy.maxLines,
-    };
-    const stdout = createBashOutputCollector(collectorOptions);
-    const stderr = createBashOutputCollector(collectorOptions);
-    const disposeCollectors = (): void => {
-      disposeBashOutputCollector(stdout);
-      disposeBashOutputCollector(stderr);
     };
     let settled = false;
     let stopReason: 'cancelled' | 'timeout' | undefined;
@@ -1169,8 +1261,7 @@ async function executeToolBash(
         abortSignal.addEventListener('abort', onAbort, { once: true });
         // Clean up listener when process exits naturally to avoid leak.
         const cleanupAbortListener = () => abortSignal.removeEventListener('abort', onAbort);
-        proc.once('close', cleanupAbortListener);
-        proc.once('error', cleanupAbortListener);
+        void settlement.then(cleanupAbortListener);
       }
     }
 
@@ -1207,7 +1298,6 @@ async function executeToolBash(
     };
 
     proc.stdout?.on('data', (chunk: Buffer) => {
-      appendBashOutputChunk(stdout, chunk);
       // Best-effort UTF-8 decode for the live tail. Multi-byte chars
       // straddling a chunk boundary may render imperfectly for one frame
       // — acceptable for a transient progress hint (the captured output
@@ -1216,15 +1306,16 @@ async function executeToolBash(
       reportLiveProgress(false);
     });
     proc.stderr?.on('data', (chunk: Buffer) => {
-      appendBashOutputChunk(stderr, chunk);
       // stderr also feeds the live tail — many CLIs (npm / cargo / pytest)
       // emit progress to stderr.
       liveTail = (liveTail + chunk.toString('utf-8')).slice(-LIVE_TAIL_MAX_CHARS);
       reportLiveProgress(false);
     });
-    proc.on('close', code => {
-      markProcessClosed();
-      void (async () => {
+    void settlement.then((result) => {
+      if (result.type === 'close') {
+        const code = result.code;
+        markProcessClosed();
+        void (async () => {
         let stdoutDecoded: DecodeResult | undefined;
         let stderrDecoded: DecodeResult | undefined;
         try {
@@ -1342,16 +1433,17 @@ async function executeToolBash(
           disposeCollectors();
           settle(out);
         }
-      })().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        disposeCollectors();
-        settle(
-          `Command: ${command}\nExit: ${code}\n` +
-            `[warn] Bash output post-processing failed before raw fallback could render: ${message}`,
-        );
-      });
-    });
-    proc.on('error', error => {
+        })().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          disposeCollectors();
+          settle(
+            `Command: ${command}\nExit: ${code}\n` +
+              `[warn] Bash output post-processing failed before raw fallback could render: ${message}`,
+          );
+        });
+        return;
+      }
+      const error = result.error;
       void (async () => {
         if (stopReason) return;
         if (timer) clearTimeout(timer);
