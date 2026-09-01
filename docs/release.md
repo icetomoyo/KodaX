@@ -134,6 +134,36 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-alpha.6 release preparation
+
+Release state: `v0.7.96-alpha.6` is prepared from the current branch but is not
+tagged or published by this checklist. npm publication remains a manual
+maintainer action.
+
+Release gates:
+
+1. Every root/workspace package and lockfile entry is `0.7.96-alpha.6`; public
+   declarations, README/README_CN, PRD/HLD/DD/ADR, feature/release records,
+   SDK/configuration guides, regression guides, changelog, and `kodax_manual`
+   describe the same sandbox-first contract.
+2. Recognized nested shell forms remain recursively inspectable; unlowerable
+   bodies stay opaque for exact outer Exec Policy and the normal Edits/Auto[LLM]
+   host-boundary decision. Only explicit matched forbids and concrete critical
+   effects are non-bypassable.
+3. A loaded embedded Windows native manifest resolves its exact verified
+   protected-cache hash before mutable package/link source. A missing exact hash
+   publishes atomically. Neither path adds a command lock, serial queue, or retry.
+4. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
+   start, target-start, terminal-proof, and host-fallback gates overlap without
+   a machine-global admission boundary.
+5. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
+   declaration generation, package-independence checks, documentation links,
+   and `git diff --check` pass on the exact commit. GitHub CI must be green before
+   tagging or publishing.
+
+Only after these gates pass may the exact commit be tagged
+`v0.7.96-alpha.6`.
+
 ## v0.7.96-alpha.5 release preparation
 
 Release state: `v0.7.96-alpha.5` is tagged and published as a GitHub
@@ -161,7 +191,9 @@ Release gates:
 3. Missing current-hash native artifacts self-heal on execution through atomic
    publication. Doctor is verify-only; publication owns owner/DACL construction,
    and every warm command performs local path/identity/hash verification without
-   a PowerShell subprocess. Existing malformed content fails closed.
+   a PowerShell subprocess. Existing malformed content fails closed. Alpha.6
+   later made a loaded embedded manifest prefer its exact protected-cache
+   generation before mutable npm-link source.
 4. Typecheck, native fmt/test/clippy, focused Vitest suites, real opt-in Windows
    dual-Runtime/background/termination gates, build, declaration generation,
    and `git diff --check` pass on the exact commit.

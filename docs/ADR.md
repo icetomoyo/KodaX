@@ -2,7 +2,7 @@
 
 > Last updated: 2026-09-01
 >
-> **v0.7.96-alpha.5 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-alpha.6 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 9/setup generation 9 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with
@@ -5988,11 +5988,12 @@ Auto[LLM] and never to Full Access.
 
 Administrator forbids are recursively checked through recognized shell entry
 forms, including `cmd /C`/`/K`, PowerShell command selectors and abbreviations,
-and strictly decoded UTF-16LE `EncodedCommand` payloads. An invalid nested
-selector is a non-overridable critical fallback. A script body that cannot be
-inspected is denied whenever an administrator forbid exists; the administrator
-must explicitly admit the interpreter surface instead of relying on a hidden
-inner-command exception.
+and strictly decoded UTF-16LE `EncodedCommand` payloads. If a nested body cannot
+be lowered reliably, KodaX keeps the complete outer argv opaque, matching Codex:
+exact outer/interpreter policy still applies and otherwise the operation reaches
+the normal Edits or Auto[LLM] host boundary. Parser uncertainty alone is not a
+synthetic critical effect. Explicit administrator forbids and concrete critical
+effects remain non-bypassable.
 
 Windows request policy no longer carries a redundant deny on the protected
 native artifact cache. Historical cache-root deny residues are preserved:
@@ -6026,6 +6027,15 @@ ACE or downgrades authority used by another command. Shell Temp variables point 
 an empty per-command child under system TMP, so the shared Temp/AppData DACL is
 not a command-admission target. No serial command queue, admission mutex, or
 concurrency-disable option is introduced.
+
+An embedded native manifest is also a process-generation boundary. Resolution
+first verifies and reuses the immutable protected-cache executable for that
+manifest's exact content hash; only a missing exact hash consults the packaged or
+linked source and publishes it atomically. A long-lived npm-linked CLI/SDK process
+therefore cannot switch to native bytes from a later rebuild while retaining its
+already loaded TypeScript protocol/evidence schema. Development manifests remain
+source-authoritative. This is content-addressed generation selection, not a
+command-path lock, retry, or setup operation.
 
 Auto review returns allow/deny for one exact host operation. Its configurable
 security body is `config.json#autoReview.policy`; its role and structured

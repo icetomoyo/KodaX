@@ -4,10 +4,21 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
-## [0.7.96-alpha.5] - 2026-09-01
+## [0.7.96-alpha.6] - 2026-09-02
 
 ### Fixed
 
+- Kept unlowerable nested shell commands opaque, matching Codex's host-policy
+  boundary. Recognized `cmd` and PowerShell forms are still recursively checked,
+  explicit outer/interpreter rules still apply, and concrete critical effects
+  remain fail-closed; parser uncertainty now reaches the normal Edits or
+  Auto[LLM] decision instead of becoming a synthetic non-overridable forbid.
+- Pinned every loaded embedded Windows native manifest to its exact immutable
+  protected-cache generation. A long-lived npm-linked CLI or SDK process now
+  reuses the already verified executable for its embedded hash before consulting
+  a mutable rebuilt `dist/native` source, so overlapping builds cannot mix a
+  TypeScript host with another native evidence generation. A genuinely new hash
+  is still published atomically, without a command lock, queue, or retry loop.
 - Removed the two remaining Codex-alignment gaps that could make Bash unusable.
   Every canonical Windows root now converges the same stable read/write/deny
   capability ACE set, while each command token activates only its authorized
@@ -30,6 +41,23 @@ All notable changes to this project will be documented in this file.
   proves runner/controller-path loss. Existing holders remain untouched, while
   the next command creates a fresh generation instead of reusing a controller
   that is already exiting and waiting for target-start attestation to time out.
+- Preserved terminal input across bare `kodax -r` session selection in the
+  compiled Bun/Windows release. A successful picker hands raw-mode ownership to
+  the next owned renderer; cancellation, preparation failure, classic REPL, and
+  final terminal cleanup retain their existing behavior.
+- Closed two portable Bash lifecycle gaps without adding a command lock or
+  retry loop. Broker-control close/error/overflow now still runs the prepared
+  request cleanup before reporting failure, and background execution is not
+  reported as started until the wrapper has an OS PID; asynchronous spawn
+  rejection therefore cannot return `PID: undefined` or leak prepared state.
+  Process settlement and output capture are attached immediately after spawn,
+  so a fast target that exits during start attestation cannot lose its output,
+  completion footer, or request cleanup.
+
+## [0.7.96-alpha.5] - 2026-09-01
+
+### Fixed
+
 - Completed the Windows sandbox concurrency correction without adding a
   machine-global command lock or queue. Every command owns its runner pipes,
   exact process handle, creation-time kill-on-close Job, cancellation state,
@@ -79,15 +107,6 @@ All notable changes to this project will be documented in this file.
   ticket but before its revision CAS. One authenticated follower resumes that
   exact durable ticket after detaching while the first client and any other
   followers only observe the owner change; active or untrusted work remains untouched.
-- Closed two portable Bash lifecycle gaps without adding a command lock or
-  retry loop. Broker-control close/error/overflow now still runs the prepared
-  request cleanup before reporting failure, and background execution is not
-  reported as started until the wrapper has an OS PID; asynchronous spawn
-  rejection therefore cannot return `PID: undefined` or leak prepared state.
-  Process settlement and output capture are attached immediately after spawn,
-  so a fast target that exits during start attestation cannot lose its output,
-  completion footer, or request cleanup.
-
 ## [0.7.96-alpha.4] - 2026-08-30
 
 ### Changed
@@ -131,11 +150,12 @@ All notable changes to this project will be documented in this file.
 - Removed the shell-tool fallback that could execute unsandboxed after native
   sandbox bootstrap and termination both failed. The boundary is now explicit,
   policy-reviewed, and single-attempt.
-- Closed administrator Exec Policy bypasses through nested Windows shells.
+- Closed administrator Exec Policy bypasses through recognized nested Windows shells.
   `cmd /C` and `/K`, PowerShell command selectors/abbreviations, and strict
-  UTF-16LE `EncodedCommand` payloads are recursively evaluated; invalid or
-  policy-opaque nested execution fails closed where an administrator forbid
-  must remain absolute.
+  UTF-16LE `EncodedCommand` payloads are recursively evaluated. Unlowerable
+  bodies remain opaque full-argv operations for exact outer policy and the
+  normal Edits/Auto[LLM] boundary; only explicit matched forbids and concrete
+  critical effects are non-bypassable.
 - Corrected the Windows shell concurrency regression at its setup/admission
   boundary. Protocol 9/setup generation 9 removes every machine-global ACL
   mutex from ordinary admission. Each canonical root receives one

@@ -294,7 +294,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96-alpha.5 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-alpha.6 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -314,11 +314,15 @@ marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康�
 且不会降级其他命令已有授权。
 该路径不增加锁、ACL 清场或命令生命周期协调。本版本广告
 `sandboxRuntime:10`，因此 npm link 后的新 CLI 不会静默复用缺少本次准入与自愈契约的旧 daemon。
+已加载的 embedded native manifest 还会持续使用其精确内容哈希对应的受保护缓存代际；后续
+`npm link` 重建不能让长生命周期进程切换到不匹配的 native 证据格式。无法可靠降低的嵌套
+shell 内容保留为 opaque 完整 argv，由精确 Exec Policy 与正常 Edits/Auto[LLM] 宿主边界处理，
+不会仅因解析不确定就生成不可覆盖的硬拒绝。
 失败的 broker 代际会立即脱离复用但不会停止仍在运行的 holder，并继续计入固定端口容量直到进程
 实际关闭；启动/控制阶段各自以 15 秒为界，不会缩短命令执行 deadline。多个 npm-link/`kodax -r`
 客户端同时遇到空闲旧 daemon 时，会以认证临时身份选出一个替换者，其余客户端脱离后等待或续跑
 同一精确 prepared ticket；忙碌或不可信的 daemon 仍保持不动并返回结构化边界。详见
-[v0.7.96-alpha.5 发布清单](docs/release.md#v0796-alpha5-release-preparation)。
+[v0.7.96-alpha.6 发布清单](docs/release.md#v0796-alpha6-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

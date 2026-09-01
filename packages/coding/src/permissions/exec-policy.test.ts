@@ -255,7 +255,6 @@ describe('FEATURE_297 Exec Policy', () => {
 
   it.each([
     '-e',
-    '-ec',
     '-en',
     '-enc',
     '-enco',
@@ -303,14 +302,15 @@ describe('FEATURE_297 Exec Policy', () => {
     'powershell -Command',
     'powershell -EncodedCommand !!!',
     'powershell -enc',
-  ])('fails closed for an invalid nested shell shape: %s', (command) => {
-    expect(evaluateShellExecPolicy(command, [])).toMatchObject({
-      decision: 'forbidden',
-      criticalFallback: true,
+  ])('keeps an invalid nested shell shape opaque for normal host review: %s', (command) => {
+    expect(evaluateShellExecPolicy(command, [])).toEqual({
+      decision: 'unmatched',
+      matched: [],
+      criticalFallback: false,
     });
   });
 
-  it('strictly rejects malformed UTF-16LE and oversized PowerShell encodings', () => {
+  it('keeps malformed or oversized PowerShell encodings opaque', () => {
     const unpairedSurrogate = Buffer.from([0x00, 0xd8]).toString('base64');
     const nonCanonical = 'QQB=';
     const oversized = 'A'.repeat(128 * 1024 + 4);
@@ -319,36 +319,54 @@ describe('FEATURE_297 Exec Policy', () => {
     expect(evaluateShellExecPolicy(
       `powershell -enc ${unpairedSurrogate}`,
       [exactAllow],
-    ).decision).toBe('forbidden');
+    ).decision).toBe('allow');
     expect(evaluateShellExecPolicy(`powershell -enc ${nonCanonical}`, []).decision)
-      .toBe('forbidden');
+      .toBe('unmatched');
     expect(evaluateShellExecPolicy(`powershell -enc ${oversized}`, []).decision)
-      .toBe('forbidden');
+      .toBe('unmatched');
   });
 
-  it('fails closed when a nested command body cannot be parsed reliably', () => {
+  it('honors an exact outer rule when a nested command body stays opaque', () => {
     const command = 'powershell -Command g`it push';
     const exactAllow = rule(['powershell', '-Command', 'g`it', 'push'], 'allow');
 
     expect(evaluateShellExecPolicy(command, [exactAllow])).toMatchObject({
-      decision: 'forbidden',
-      criticalFallback: true,
-      matched: expect.arrayContaining([expect.objectContaining({
-        sourcePath: 'builtin:critical-effects/uninspectable_nested_shell',
-      })]),
+      decision: 'allow',
+      criticalFallback: false,
     });
   });
 
-  it('fails closed on opaque PowerShell scripts when administrator forbids exist', () => {
+  it('keeps an unlowerable PowerShell command opaque for normal host review', () => {
+    const command = [
+      'powershell -NoProfile -Command',
+      '"Write-Output (\'BG_IDENTITY: \' + (whoami));',
+      'Write-Output (\'BG_TOKEN: \' + ((whoami /groups | Select-String \'S-1-15-2-\')) )"',
+    ].join(' ');
+
+    expect(evaluateShellExecPolicy(command, [])).toEqual({
+      decision: 'unmatched',
+      matched: [],
+      criticalFallback: false,
+    });
+  });
+
+  it('does not apply an unrelated administrator forbid to an opaque PowerShell script', () => {
     const adminForbid = {
       ...rule(['git', 'push'], 'forbidden'),
       source: 'admin' as const,
     };
+    const encoded = Buffer.from('git push', 'utf16le').toString('base64');
 
     expect(evaluateShellExecPolicy('pwsh -File script.ps1', [adminForbid]).decision)
-      .toBe('forbidden');
+      .toBe('unmatched');
     expect(evaluateShellExecPolicy('pwsh script.ps1', [adminForbid]).decision)
-      .toBe('forbidden');
+      .toBe('unmatched');
+    expect(evaluateShellExecPolicy(`pwsh -ec ${encoded}`, [adminForbid]).decision)
+      .toBe('unmatched');
+    expect(evaluateShellExecPolicy('pwsh -File script.ps1', [{
+      ...rule(['pwsh'], 'forbidden'),
+      source: 'admin' as const,
+    }]).decision).toBe('forbidden');
   });
 
   it('does not treat ordinary wrapper-looking arguments as nested commands', () => {

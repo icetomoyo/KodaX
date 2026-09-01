@@ -211,6 +211,11 @@ unrelated active holders.
 This authority split and its private-Temp/recovery contract are advertised as
 `sandboxRuntime:10`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
+Each loaded embedded Windows native manifest first resolves the exact verified
+protected-cache executable for its content hash. Only a missing exact generation
+consults mutable package or npm-link source and publishes atomically. This keeps
+overlapping old/new processes on their own native evidence schemas without a
+shell lock, queue, or command retry.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`
 cutover. Setup generation 9 upgrades generation 8 in place, reuses a healthy
 fixed account SID/group and filesystem nonce, and records protocol 9 in

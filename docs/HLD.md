@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-01
 >
-> Current published baseline: `v0.7.96-alpha.5`
-> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:10`,
+> Current published baseline: `v0.7.96-alpha.6`
+> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:10`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -171,9 +171,11 @@ a dead-owner terminal record that already proves Job drainage; live,
 unexpired, malformed, unknown, and deny-recovery records remain fail-closed.
 On Windows, an embedded release manifest pins the text/shell sidecar protocols
 and hashes plus the ASRT release version and hash. Verified bytes are staged in
-a protected content-addressed LocalAppData store; the ASRT source is checked
-before materialization and the staged executable is rechecked before broker
-startup. Text remains Host/SYSTEM-only, the shell artifact grants read/execute
+a protected content-addressed LocalAppData store. A loaded embedded manifest
+resolves its exact verified protected-cache hash before consulting mutable
+package/link source; source verification and atomic publication occur only when
+that exact generation is absent. The staged executable is rechecked before
+broker startup. Text remains Host/SYSTEM-only, the shell artifact grants read/execute
 to the dedicated sandbox group SID, and ASRT grants local Users read/execute;
 none grants sandbox write/delete. Unix keeps its binding in a protected Agent
 Home cache and loads it through a digest-verified no-follow descriptor below a
@@ -487,7 +489,7 @@ export the four canonical profiles plus the input-only `auto-in-project` alias.
 Session state owns only the reviewer model; normal review deadlines are fixed
 at 90 seconds plus one 180-second retry. Auto-started daemon clients require
 `runtimeAutoModeGuardrail` v5 and `sharedSessionSettings` v2, preventing an
-alpha.5 client from attaching to a daemon that still implements the earlier
+alpha.6 client from attaching to a daemon that still implements the earlier
 permission-before-sandbox or three-profile settings contract. Version
 negotiation treats requirements as minimums. Side-query diagnostics report
 only coarse, observed timing/retry facts, while guardrail spans start before

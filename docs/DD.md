@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-01
 >
-> Current published baseline: `v0.7.96-alpha.5`
-> (`@kodax-ai/kodax@0.7.96-alpha.5`; Windows `sandboxRuntime:10`,
+> Current published baseline: `v0.7.96-alpha.6`
+> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:10`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -23,7 +23,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The published package is `@kodax-ai/kodax@0.7.96-alpha.5`, which includes the v2
+The published package is `@kodax-ai/kodax@0.7.96-alpha.6`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -1166,11 +1166,16 @@ Native executable publication is separate from setup migration. Publication
 uses the fixed System32 boundary to construct and verify owner/DACL state. Every
 ordinary admission then verifies stable single-link file identity, physical
 cache containment, and the content hash locally; it launches no PowerShell
-verifier and treats no mutable timestamp as authority. If a new release hash has
-no protected destination, the first caller publishes it through an atomic,
+verifier and treats no mutable timestamp as authority. For an embedded manifest,
+the already verified protected executable for its exact hash is resolved before
+the mutable package/link source. If that exact generation is absent, the source
+is verified and the first caller publishes it through an atomic,
 content-addressed operation; concurrent callers share the immutable winner and
 no command-lifetime or global mutex is introduced. Existing malformed content
-fails closed instead of being repaired on admission.
+fails closed instead of being repaired on admission. Filesystem development
+manifests remain source-first. This prevents a long-lived npm-linked process
+from retaining one TypeScript evidence schema while loading a helper from a
+later rebuild.
 The native host observes termination immediately after consuming bootstrap,
 before synchronous pre-launch preparation. A per-command abort completion
 boundary keeps the process alive until Job-drain evidence is durable. Node treats

@@ -743,7 +743,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-alpha.5 release:** Windows shell admission now follows the
+**v0.7.96-alpha.6 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -769,8 +769,14 @@ system TMP root is not prewarmed or rewritten during command admission. Each
 command instead receives an empty private Temp child. Every canonical root
 converges the same stable capability ACE set, while the command token activates
 only its authorized capabilities. This release advertises `sandboxRuntime:10`, so a
-linked CLI cannot silently reuse a daemon that predates this admission and recovery contract. See the
-[v0.7.96-alpha.5 release checklist](docs/release.md#v0796-alpha5-release-preparation).
+linked CLI cannot silently reuse a daemon that predates this admission and recovery contract.
+Each loaded embedded native manifest also keeps its exact content-addressed
+protected-cache generation across later `npm link` rebuilds; another build
+cannot swap a long-lived process onto a mismatched native evidence schema.
+Unlowerable nested shell bodies remain opaque for exact Exec Policy plus the
+normal Edits/Auto[LLM] host boundary, rather than becoming a parser-generated
+hard forbid. See the
+[v0.7.96-alpha.6 release checklist](docs/release.md#v0796-alpha6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

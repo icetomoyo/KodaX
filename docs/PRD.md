@@ -2,8 +2,8 @@
 
 > Last updated: 2026-09-01
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.5`
-> (`v0.7.96-alpha.5` is the latest Git tag / GitHub pre-release;
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.6`
+> (`v0.7.96-alpha.6` is the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
 > This baseline advertises Windows `sandboxRuntime:10`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
@@ -203,7 +203,7 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-alpha.5 pre-release adds FEATURE_297 and corrects the Windows
+The v0.7.96-alpha.6 pre-release carries FEATURE_297 and completes the Windows
 sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
 does not run setup, legacy ACL migration, synchronous provisioning, or a
 command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;
@@ -374,6 +374,10 @@ locations, and global Git configuration, while limiting writes to the workspace
 and platform Temp roots; Windows targets receive a private per-command Temp child.
 A standalone SDK host remains responsible for its
 own filesystem threat boundary.
+On Windows, a loaded embedded native manifest must retain its exact immutable
+content-hash generation across later package or npm-link rebuilds. Resolution
+must reuse the verified protected cache before mutable source and publish only a
+missing exact generation, without serializing independent shell commands.
 
 Sidecar completion must distinguish an optional offer made after the current
 request is satisfied from clarification required to satisfy the request.

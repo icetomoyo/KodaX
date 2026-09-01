@@ -1093,6 +1093,32 @@ function verifyOrProvisionProtectedArtifact(input: {
   }
 }
 
+function resolveExistingProtectedArtifact(input: {
+  readonly kind: WindowsProtectedArtifactKind;
+  readonly entry: Pick<WindowsNativeArtifactEntry, 'file' | 'sha256'>;
+  readonly sandboxReadSid?: string;
+  readonly localUsersReadExecute?: boolean;
+}): string | undefined {
+  const destination = path.join(
+    protectedArtifactDirectory(
+      input.kind,
+      input.entry.sha256,
+      input.sandboxReadSid,
+      input.localUsersReadExecute === true,
+    ),
+    input.entry.file,
+  );
+  try {
+    return verifyProtectedWindowsNativeArtifactImage(destination, input.entry.sha256);
+  } catch (error: unknown) {
+    const code = error instanceof Error && 'code' in error
+      ? Reflect.get(error, 'code')
+      : undefined;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    throw error;
+  }
+}
+
 export function provisionWindowsAsrtRunner(
   bytes: Buffer,
   expectedSha256: string,
@@ -1165,6 +1191,20 @@ export function resolveWindowsAsrtRunnerArtifact(
           `asrtRunner version ${manifest.asrtRunner.version} does not match ${expectedVersion}`,
         );
       }
+      if (embeddedManifest) {
+        const protectedPath = resolveExistingProtectedArtifact({
+          kind: 'asrtRunner',
+          entry: manifest.asrtRunner,
+          localUsersReadExecute: true,
+        });
+        if (protectedPath !== undefined) {
+          return {
+            path: protectedPath,
+            sha256: manifest.asrtRunner.sha256,
+            developmentTrustRoots: [],
+          };
+        }
+      }
       // Package stores may hard-link production source bytes. Only an embedded
       // digest is an immutable trust root; development manifests and sources
       // remain single-link so writable aliases cannot redefine both together.
@@ -1229,6 +1269,23 @@ export function resolveWindowsNativeArtifact(
       );
       if (entry.protocol !== expectedProtocol) {
         throw new Error(`${kind} protocol ${entry.protocol} does not match ${expectedProtocol}`);
+      }
+      if (trustedManifestText !== undefined) {
+        const protectedPath = resolveExistingProtectedArtifact({
+          kind,
+          entry,
+          ...(options.sandboxReadSid === undefined
+            ? {}
+            : { sandboxReadSid: options.sandboxReadSid }),
+        });
+        if (protectedPath !== undefined) {
+          return {
+            path: protectedPath,
+            entry,
+            manifest,
+            developmentTrustRoots: [],
+          };
+        }
       }
       const artifactPath = path.join(directory, entry.file);
       const bytes = readVerifiedArtifact(artifactPath, entry.sha256);

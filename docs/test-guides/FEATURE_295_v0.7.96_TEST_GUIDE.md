@@ -203,11 +203,13 @@ shell lifetime.
   restricted target starts.
 - Import the embedded-manifest-pinned ASRT source once from a two-link
   package-store fixture. It must materialize a byte-identical, single-link
-  protected cache executable. Mutating the linked source afterward must fail
-  digest validation; concurrent growth beyond the size bound must fail before
-  an unbounded read. A filesystem development manifest or source with multiple
-  links must be rejected. The protected cache and its ACL/link-count
-  requirements must not be relaxed.
+  protected cache executable. Mutating the linked source afterward must not
+  change that already loaded embedded manifest's generation: resolution reuses
+  the exact verified protected-cache hash. If that cache generation is absent,
+  modified source bytes must fail digest validation; concurrent growth beyond
+  the size bound must fail before an unbounded read. A filesystem development
+  manifest or source with multiple links must be rejected. The protected cache
+  and its ACL/link-count requirements must not be relaxed.
 - Read back the protected Windows store ACLs: text is Host/SYSTEM-only, shell
   grants read/execute to the dedicated sandbox group SID, and ASRT grants
   read/execute to local Users. No sandbox/local-Users trustee may have

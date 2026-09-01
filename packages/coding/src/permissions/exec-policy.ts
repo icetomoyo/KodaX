@@ -9,8 +9,7 @@ export type ExecPolicyCriticalEffect =
   | 'rm_rf_root'
   | 'mkfs_or_format'
   | 'dd_disk_write'
-  | 'fork_bomb'
-  | 'uninspectable_nested_shell';
+  | 'fork_bomb';
 
 type NestedShellCommand =
   | { readonly kind: 'command'; readonly command: string; readonly hostExecutable: string }
@@ -191,11 +190,9 @@ function evaluateOperation(
   }
 
   if (critical !== undefined) {
-    const exactAllow = critical === 'uninspectable_nested_shell'
-      ? undefined
-      : matched.find(
-        (rule) => rule.decision === 'allow' && rule.prefix.length === operation.tokens.length,
-      );
+    const exactAllow = matched.find(
+      (rule) => rule.decision === 'allow' && rule.prefix.length === operation.tokens.length,
+    );
     const stricter = matched.find((rule) => rule.decision !== 'allow');
     if (stricter !== undefined) return decisionResult(stricter, matched, true);
     if (exactAllow !== undefined) return decisionResult(exactAllow, matched, false);
@@ -317,20 +314,7 @@ function evaluateNestedAdministratorForbidden(
       for (const stage of stages) {
         appendTokens(normalizeHostShellTokens(stage.argv, nested.hostExecutable), nestedCompound);
       }
-    } else if (
-      rules.some((rule) => rule.source === 'admin' && rule.decision === 'forbidden')
-    ) {
-      const fallback = opaqueNestedShellFallbackRule(
-        `${executable} command syntax is not inspectable.`,
-      );
-      evaluations.push(decisionResult(fallback, [fallback], true));
     }
-  } else if (
-    nested.kind === 'opaque'
-    && rules.some((rule) => rule.source === 'admin' && rule.decision === 'forbidden')
-  ) {
-    const fallback = opaqueNestedShellFallbackRule(nested.reason);
-    evaluations.push(decisionResult(fallback, [fallback], true));
   }
   return evaluations;
 }
@@ -763,7 +747,7 @@ function criticalEffect(
   if (nested.kind === 'command') {
     return criticalEffectInCommand(nested.command, nested.hostExecutable);
   }
-  if (nested.kind === 'invalid') return 'uninspectable_nested_shell';
+  if (nested.kind === 'invalid') return undefined;
   if (executable === 'rm' && hasRecursiveAndForceFlags(args)) {
     return args.some((token) => isRootRemovalTarget(token)) ? 'rm_rf_root' : undefined;
   }
@@ -910,7 +894,7 @@ function criticalEffectInCommand(
 ): ExecPolicyCriticalEffect | undefined {
   if (isForkBomb(command)) return 'fork_bomb';
   const tree = parseBashCommand(command);
-  if (tree.unparseable) return 'uninspectable_nested_shell';
+  if (tree.unparseable) return undefined;
   for (const statement of tree.statements) {
     for (const stage of statement.stages) {
       const effect = criticalEffect(normalizeHostShellTokens(stage.argv, hostExecutable));
@@ -960,7 +944,6 @@ function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule 
     mkfs_or_format: 'Unmatched command formats or repartitions a block device.',
     dd_disk_write: 'Unmatched command writes raw bytes directly to a block device.',
     fork_bomb: 'Unmatched command can exhaust host process and CPU resources.',
-    uninspectable_nested_shell: 'Nested shell command syntax cannot be inspected safely.',
   };
   return {
     prefix: [],
@@ -968,16 +951,6 @@ function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule 
     justification: justification[effect],
     source: 'bundled',
     sourcePath: `builtin:critical-effects/${effect}`,
-  };
-}
-
-function opaqueNestedShellFallbackRule(reason: string): ExecPolicyRule {
-  return {
-    prefix: [],
-    decision: 'forbidden',
-    justification: `Administrator forbidden policy cannot inspect this nested shell: ${reason}`,
-    source: 'bundled',
-    sourcePath: 'builtin:admin-forbidden/opaque-nested-shell',
   };
 }
 

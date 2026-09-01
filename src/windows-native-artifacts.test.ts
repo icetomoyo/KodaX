@@ -293,11 +293,13 @@ describe('Windows native artifact trust boundary', () => {
         expect(runner.sha256).toBe(sha256);
 
         fs.writeFileSync(sourcePath, Buffer.from('tampered package-manager runner'));
-        expect(() => resolveWindowsAsrtRunnerArtifact(
+        const resumed = resolveWindowsAsrtRunnerArtifact(
           pathToFileURL(moduleFile).href,
           sourcePath,
           '0.0.65',
-        )).toThrow(/native artifact hash mismatch/);
+        );
+        expect(resumed.path).toBe(runner.path);
+        expect(fs.readFileSync(resumed.path)).toEqual(bytes);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }
@@ -352,11 +354,13 @@ describe('Windows native artifact trust boundary', () => {
         expect(fs.readFileSync(runner.path)).toEqual(bytes);
         expect(runner.developmentTrustRoots).toEqual([]);
         fs.writeFileSync(physicalSourcePath, 'tampered');
-        expect(() => resolveWindowsAsrtRunnerArtifact(
+        const resumed = resolveWindowsAsrtRunnerArtifact(
           pathToFileURL(moduleFile).href,
           sourcePath,
           '0.0.65',
-        )).toThrow(/native artifact hash mismatch/);
+        );
+        expect(resumed.path).toBe(runner.path);
+        expect(fs.readFileSync(resumed.path)).toEqual(bytes);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }
@@ -408,11 +412,13 @@ describe('Windows native artifact trust boundary', () => {
 
         expect(fs.readFileSync(runner.path)).toEqual(bytes);
         fs.writeFileSync(sourcePath, 'tampered');
-        expect(() => resolveWindowsNativeArtifact(
+        const resumed = resolveWindowsNativeArtifact(
           pathToFileURL(moduleFile).href,
           'shellSandbox',
           1,
-        )).toThrow(/native artifact hash mismatch/);
+        );
+        expect(resumed.path).toBe(runner.path);
+        expect(fs.readFileSync(resumed.path)).toEqual(bytes);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }
@@ -458,6 +464,53 @@ describe('Windows native artifact trust boundary', () => {
         );
         expect(warm.path).toBe(cold.path);
         expect(fs.readFileSync(cold.path)).toEqual(bytes);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'reuses the embedded hash generation after a linked development source advances',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-linked-generation-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const nativeDirectory = path.join(
+        path.dirname(moduleFile),
+        'native',
+        `win32-${process.arch}`,
+      );
+      const sourcePath = path.join(nativeDirectory, 'kodax_windows_shell_sandbox.exe');
+      const localAppData = path.join(temporary, 'local-app-data');
+      const sandboxReadSid = 'S-1-5-21-11-12-13-14';
+      vi.stubEnv('LOCALAPPDATA', localAppData);
+      try {
+        const original = Buffer.from('KodaX native generation alpha');
+        const originalSha256 = createHash('sha256').update(original).digest('hex');
+        fs.mkdirSync(localAppData, { recursive: true });
+        fs.mkdirSync(nativeDirectory, { recursive: true });
+        fs.writeFileSync(sourcePath, original);
+        vi.stubGlobal(
+          'KODAX_WINDOWS_NATIVE_MANIFEST_JSON',
+          windowsManifestText('a'.repeat(64), originalSha256),
+        );
+
+        const first = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true, sandboxReadSid },
+        );
+        fs.writeFileSync(sourcePath, 'KodaX native generation beta');
+
+        const resumed = resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href,
+          'shellSandbox',
+          1,
+          { provision: true, sandboxReadSid },
+        );
+        expect(resumed.path).toBe(first.path);
+        expect(fs.readFileSync(resumed.path)).toEqual(original);
       } finally {
         fs.rmSync(temporary, { recursive: true, force: true });
       }

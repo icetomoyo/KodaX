@@ -36,9 +36,12 @@ narrow critical-effect fallback.
 
 Administrator forbids are also checked inside recognized nested shell entry
 forms: `cmd /C`/`/K`, PowerShell command selectors and abbreviations, and
-strictly decoded UTF-16LE `EncodedCommand` payloads. Invalid nested payloads
-cannot be exact-allow overrides. When an administrator forbid exists, a script
-body that cannot be inspected is denied rather than treated as unmatched.
+strictly decoded UTF-16LE `EncodedCommand` payloads. If a nested body cannot be
+lowered reliably, KodaX keeps the complete outer argv opaque. Exact
+outer/interpreter policy still applies; otherwise Edits or Auto[LLM] performs
+the normal host-boundary decision. Parse uncertainty alone is not a critical
+effect, while explicit administrator forbids and concrete critical effects
+remain non-bypassable.
 
 ## SDK permission control
 

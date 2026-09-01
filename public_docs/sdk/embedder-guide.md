@@ -5,7 +5,7 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the `v0.7.96-alpha.5` pre-release package line. npm
+This guide tracks the `v0.7.96-alpha.6` pre-release package line. npm
 publication and version assignment remain manual maintainer steps. The SDK
 advertises Windows `sandboxRuntime:10`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
@@ -1291,9 +1291,13 @@ npm link @kodax-ai/kodax                       # consume the linked checkout
 ```
 
 After this, `import { ... } from '@kodax-ai/kodax/repl'` in your host
-app resolves to `/path/to/KodaX/dist/sdk-repl.js`. Subsequent edits
-inside KodaX require **re-running `npm run build`** — the link points
-at the bundled output, not source.
+app resolves to `/path/to/KodaX/dist/sdk-repl.js`. Subsequent edits inside KodaX
+require **re-running `npm run build`** — the link points at the bundled output,
+not source. Builds replace mutable `dist` files, but an already running process retains
+the embedded Windows native manifest it loaded. KodaX resolves that manifest's
+exact content-addressed protected-cache generation before the rebuilt source,
+so overlapping old/new SDK processes do not mix native protocol evidence. Start
+a new host process to consume the new build; no manual cache deletion is needed.
 
 ### Tearing down the link
 
@@ -4680,6 +4684,11 @@ retains the ordinary-file identity, bounded-read, embedded SHA-256, and
 protected-cache checks. It does not trust virtual ASAR file metadata or fall
 back to unchecked native bytes. Missing physical artifacts therefore fail with
 an actionable native-artifact diagnostic before a sandbox process is launched.
+Once an embedded manifest's exact hash has been materialized, resolution reuses
+that verified protected-cache generation before consulting mutable packaged or
+linked source. This keeps a long-lived Electron/SDK process on one native
+evidence schema while a new build is prepared. A new process with a new embedded
+hash publishes its own immutable generation atomically.
 
 ```ts
 import { connectKodaXRuntime } from '@kodax-ai/kodax/runtime';
@@ -4743,7 +4752,7 @@ silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
 The SDK requires `runtimeAutoModeGuardrail:5` and
 `sharedSessionSettings:2` automatically for ordinary `autoStart: true`.
-The capability gate prevents an alpha.5 client from attaching to an alpha.3
+The capability gate prevents an alpha.6 client from attaching to an alpha.3
 daemon that advertises the older permission-before-sandbox contract. Supplying
 `daemonOrphanExitMs` additionally requires the
 dedicated `daemonOrphanExit:1` capability and passes the option only when
@@ -4785,7 +4794,7 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `10` in v0.7.96-alpha.5
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `10` in v0.7.96-alpha.6
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
 `sandboxRuntime:10`, so an idle v9-or-older daemon is replaced. Concurrent
 authenticated upgrade clients converge on one fenced replacement, including
@@ -5680,7 +5689,7 @@ values and `RuntimePermissionModeInput` for accepted update input. Host-owned
 policy is configured through `CreateKodaXRuntimeOptions.execPolicy` /
 `RuntimeExecPolicyOptions` and `CreateKodaXRuntimeOptions.autoReview` /
 `RuntimeAutoReviewOptions`. `KODAX_RUNTIME_SDK_CAPABILITIES` is exported for
-pre-spawn checks; alpha.5 reports `runtimeAutoModeGuardrail:5` and
+pre-spawn checks; alpha.6 reports `runtimeAutoModeGuardrail:5` and
 `sharedSessionSettings:2`.
 
 ACP integrations can import the corresponding root SDK surface without
@@ -5796,7 +5805,7 @@ The v0.7.x public declarations retain the following migration aliases:
 | `AutoModeRulesContext` | Auto[LLM] operation context | remains the active context type for `AutoModeCallAnalyzer`; its legacy name does not mean that an Auto Rules engine still runs |
 | `AutoModeGuardrailConfig.rules`, `AutoModeRulesDecision`, `AutoModeRulesEvaluator`, `AutoModeGuardrailConfig.askUser`, `AutoModeAskUser*`, `AutoModeDecisionDiagnostics`, and Runtime permission `autoModeDiagnostics` fields | Runtime-owned Auto[LLM] facts/review | retained only as deprecated 0.7.x source/wire compatibility; Rules/evaluator/ask-user values are ignored, diagnostics may round-trip only as non-authorizing legacy metadata, and none of these fields restores Auto Rules or the removed automatic prompt path |
 | `allowsAcceptEditsClassifierFallback` | no replacement | removed from the `/repl` barrel; the Runtime now owns the only shell boundary, so embedders must not install a second classifier fallback |
-| legacy ACP `tool_permission_resolved.outcome` literals | current request outcomes | retained as deprecated source/wire-read variants for 0.7.x consumers, but alpha.5 never emits them |
+| legacy ACP `tool_permission_resolved.outcome` literals | current request outcomes | retained as deprecated source/wire-read variants for 0.7.x consumers, but alpha.6 never emits them |
 
 ### Plan capability is opt-in
 
