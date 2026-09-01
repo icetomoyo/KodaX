@@ -776,14 +776,10 @@ pub fn run(request_path: &Path) -> Result<u32> {
     let resume_record = launch_record_path(Path::new(&request.terminal_record_path), "resume")?;
     let started_record = launch_record_path(Path::new(&request.terminal_record_path), "started")?;
     let deadline = LaunchDeadline::from_unix_ms(request.operation_deadline_unix_ms)?;
-    let mut input = std::io::stdin().lock();
-    let bootstrap = read_bootstrap(&mut input)?;
-    consume_initial_close_stdin(&mut input)?;
-    drop(input);
-    let abort_slot = Arc::new(OnceLock::new());
-    let control_outcome = Arc::new(AtomicU8::new(CONTROL_OPEN));
-    start_termination_control(Arc::clone(&abort_slot), Arc::clone(&control_outcome));
-    deadline.ensure("bootstrap")?;
+    // Policy admission stays fail-closed before the host consumes controller
+    // input: a forged or policy-opaque request must exit with its structured
+    // error instead of stalling on the bootstrap handshake. Valid requests
+    // still observe termination control before setup and launch below.
     let current = current_token()?;
     let host_sid = token_user_sid(current.raw())?;
     let control_directory = request_path
@@ -793,6 +789,14 @@ pub fn run(request_path: &Path) -> Result<u32> {
     if host_sid == request.sandbox_user_sid {
         bail!("Windows sandbox host must not run as the restricted account");
     }
+    let mut input = std::io::stdin().lock();
+    let bootstrap = read_bootstrap(&mut input)?;
+    consume_initial_close_stdin(&mut input)?;
+    drop(input);
+    let abort_slot = Arc::new(OnceLock::new());
+    let control_outcome = Arc::new(AtomicU8::new(CONTROL_OPEN));
+    start_termination_control(Arc::clone(&abort_slot), Arc::clone(&control_outcome));
+    deadline.ensure("bootstrap")?;
     let setup_marker = hold_setup_marker(&request)?;
     let (controller, controller_pid) = connect_controller_pipe(
         &request.controller_pipe,
