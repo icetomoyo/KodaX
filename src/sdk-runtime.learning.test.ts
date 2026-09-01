@@ -11,6 +11,7 @@ import {
   resolveProjectLearnedAreaRoot,
 } from '@kodax-ai/agent';
 import type { RuntimeLearningService } from '@kodax-ai/kodax/runtime';
+import { KODAX_VERSION } from '@kodax-ai/repl';
 import type { RuntimeDaemonClientTransport } from './runtime-daemon/client.js';
 import { bindRuntimeLearningClient, createRuntimeLearningOwner } from './runtime-learning.js';
 import { createKodaXRuntime } from './sdk-runtime.js';
@@ -270,7 +271,7 @@ describe('runtime.learning inline facade', () => {
               mode: 'daemon',
               profile: 'default',
               startedAt: '2026-07-29T00:00:00.000Z',
-              version: '0.7.78',
+              version: KODAX_VERSION,
             },
             capabilities: {
               learningCenter: { version: 1 },
