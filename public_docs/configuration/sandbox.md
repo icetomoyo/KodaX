@@ -247,6 +247,11 @@ roots are never ordinary-admission ACL targets, including when `KODAX_HOME` is
 nested below them. Protected Agent Home directories are materialized only when
 an actual requested write root contains them; Temp placement alone does not
 widen that authority or add a lock, setup call, or shared ACL mutation.
+The fixed hashed Temp parent is only a naming container and is not owned or
+removed by an individual command. After native lifecycle/Job-drain proof,
+KodaX removes only that command's unique leaf; if Windows still reports the leaf
+busy after a brief bounded retry, KodaX emits a cleanup warning without changing
+the already proven command result. Missing lifecycle proof remains fail-closed.
 The ASRT directory is not passed as a final-target policy root. A fixed
 System32 provisioner runs only during explicit artifact/setup bootstrap. One
 setup-only elevated native parent receives a small explicit base64 envelope,

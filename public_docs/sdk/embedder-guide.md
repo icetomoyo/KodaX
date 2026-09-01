@@ -2891,8 +2891,10 @@ process-start identity, so PID reuse cannot preserve stale ownership.
 On Windows, sandbox ACL owner markers are durable and recovery is serialized
 across Runtime profiles. A sandbox stop waits for process-tree termination proof
 before ACL recovery. Missing attestation fences later filesystem effects and
-does not replay the command; spawn, lease-release, and cleanup failures remain
-combined in the lifecycle diagnostic for operator recovery.
+does not replay the command; spawn, lease-release, and authoritative lifecycle
+cleanup failures remain combined in the lifecycle diagnostic for operator
+recovery. After lifecycle proof, best-effort deletion of a command-owned private
+Temp leaf cannot replace the proven result; failure is reported as a warning.
 
 POSIX workspace sessions use the same replacement fence: an unconfirmed
 process-tree or cleanup failure latches the sandbox safety state and prevents a
@@ -6584,6 +6586,12 @@ change or synchronous host-spawn exception is a proven `not_started` cleanup:
 the native request and broker lease are released exactly once. After spawn it
 uses target-start and terminal/Job-drain evidence; it never treats wrapper spawn
 alone as proof that the requested command ran.
+
+Each Windows command owns only its unique private-Temp leaf. The shared hashed
+parent is never removed on the command path. After native lifecycle cleanup has
+returned authoritative proof, a brief bounded leaf-removal failure is diagnostic
+housekeeping and does not change the SDK result; before proof, cleanup remains
+fail-closed and cannot cause host replay.
 
 When ASRT is unavailable, or preparation fails before the target starts, KodaX
 reaches a separate host boundary. Exec Policy is evaluated first; Edits uses a

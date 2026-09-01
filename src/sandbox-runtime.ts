@@ -26,7 +26,6 @@ import {
   readFile,
   realpath,
   rm,
-  rmdir,
   stat,
   writeFile,
 } from 'node:fs/promises';
@@ -4160,9 +4159,11 @@ function createWorkspaceShellTempDirectory(
 }
 
 async function removeWorkspaceShellTempDirectory(tempDirectory: string): Promise<void> {
-  await rm(tempDirectory, { recursive: true, force: true });
-  await rmdir(path.dirname(tempDirectory)).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') throw error;
+  await rm(tempDirectory, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 2 : 0,
+    retryDelay: 50,
   });
 }
 
@@ -5598,7 +5599,16 @@ async function prepareWindowsV2ShellInvocation(input: {
             }
             throw error;
           }
-          await removeWorkspaceShellTempDirectory(shellTempDirectory);
+          try {
+            await removeWorkspaceShellTempDirectory(shellTempDirectory);
+          } catch (error: unknown) {
+            emitKodaXDiagnostic({
+              source: 'sandbox:windows-v2',
+              level: 'warn',
+              message: 'Private Windows shell Temp cleanup was deferred after lifecycle proof.',
+              detail: error,
+            });
+          }
           return sandboxCleanup;
         })();
         return cleanupPromise;

@@ -156,7 +156,11 @@ Release gates:
 4. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
    start, target-start, terminal-proof, and host-fallback gates overlap without
    a machine-global admission boundary.
-5. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
+5. Injecting `EPERM` into post-proof private-Temp leaf removal must preserve the
+   proven command result and emit a warning. Per-command cleanup must never
+   remove the shared hashed parent or delay an independent shell; native
+   lifecycle/Job-drain failure remains fail-closed.
+6. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
    declaration generation, package-independence checks, documentation links,
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
    tagging or publishing.

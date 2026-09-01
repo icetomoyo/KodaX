@@ -6148,6 +6148,13 @@ lock.
    ASRT's machine-global fixed proxy ports so another Runtime is not starved.
 7. Cleanup cannot manufacture success. Started-or-unknown execution requires a
    verified Job-drained terminal record; a termination failure propagates.
+   The converse also holds: after native lifecycle cleanup proves either a
+   Job-drained result or pre-start non-execution, deletion of the command's
+   private Temp leaf is housekeeping and cannot revoke that result. A command
+   owns only its unique leaf; the fixed shared parent is not removed by ordinary
+   command cleanup. Windows retries leaf deletion only briefly and reports a
+   deferred-cleanup warning if it remains busy. This adds no shared scavenger,
+   lock, queue, or replay path.
    Control repair removes an atomic-publication
    staging file only when its actual writer PID is dead and the file is older
    than two launch budgets. Foreground Bash and the public SDK both validate the

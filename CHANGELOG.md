@@ -19,6 +19,13 @@ All notable changes to this project will be documented in this file.
   a mutable rebuilt `dist/native` source, so overlapping builds cannot mix a
   TypeScript host with another native evidence generation. A genuinely new hash
   is still published atomically, without a command lock, queue, or retry loop.
+- Stopped per-command Windows cleanup from deleting the shared private-Temp
+  parent. The native command's lifecycle/Job-drain result is now authoritative
+  before its unique Temp leaf is removed; a bounded leaf cleanup failure emits
+  a diagnostic instead of turning an already proven exit into a Tool Error.
+  This fixes the intermittent `rmdir ...\\kodax-sandbox\\<root>: EPERM` seen
+  under concurrent packaged Electron smoke without adding a lock, queue, or
+  command replay.
 - Removed the two remaining Codex-alignment gaps that could make Bash unusable.
   Every canonical Windows root now converges the same stable read/write/deny
   capability ACE set, while each command token activates only its authorized

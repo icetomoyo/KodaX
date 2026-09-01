@@ -96,6 +96,10 @@ Expected:
 - each native startup/control phase is bounded to 15 seconds without replacing
   the command deadline; cleanup-proven pre-Resume failure reaches the existing host
   permission boundary, while started/uncertain work is never replayed;
+- after lifecycle/Job-drain proof, injected `EPERM` while deleting one command's
+  private Temp leaf preserves the proven result and emits a warning; cleanup
+  never removes the shared hashed parent, and an overlapping or subsequent
+  shell starts without waiting on that housekeeping;
 - failed Git Job binding with an unknown root drain retains managed-child
   recovery until the tree is proved gone.
 

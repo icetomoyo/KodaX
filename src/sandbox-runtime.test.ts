@@ -2647,11 +2647,52 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     ));
     expect(privateTemp).toBeDefined();
     expect(statSync(privateTemp!).isDirectory()).toBe(true);
+    const privateTempParent = path.dirname(privateTemp!);
     expect(normalize(request.denyWrite)).not.toContain(
       path.resolve(root, '.kodax', 'exec-policy.jsonc').toLowerCase(),
     );
     await invocation.cleanup();
     expect(() => statSync(privateTemp!)).toThrow();
+    expect(statSync(privateTempParent).isDirectory()).toBe(true);
+  });
+
+  it('keeps a proven sandbox outcome when private Temp deletion is blocked', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-temp-cleanup-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({
+      toolCallId: 'temp-cleanup-after-proof',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation === undefined) throw new Error('expected a Windows v2 invocation');
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly allowWrite: readonly string[];
+    };
+    const privateTemp = request.allowWrite.find((entry) => (
+      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+    ));
+    expect(privateTemp).toBeDefined();
+    fileSystemMock.rmFailurePath = privateTemp;
+    try {
+      await expect(invocation.cleanup({ execution: 'not_started' })).resolves.toBeDefined();
+      expect(capturedDiagnostics).toContainEqual(expect.objectContaining({
+        source: 'sandbox:windows-v2',
+        level: 'warn',
+        message: 'Private Windows shell Temp cleanup was deferred after lifecycle proof.',
+      }));
+    } finally {
+      fileSystemMock.rmFailurePath = undefined;
+      await rm(privateTemp!, { recursive: true, force: true });
+    }
   });
 
   it('removes a private command Temp when policy construction fails', async () => {

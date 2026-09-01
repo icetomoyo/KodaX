@@ -243,7 +243,12 @@ stable read/deny/write capability ACE set for every canonical root; the command
 token alone activates its authorized clauses. Admission never runs legacy ACL
 cleanup or revokes another Session's shared ACL state. Windows shell Temp variables point to an
 empty per-command directory under system TMP, preventing recursive writes to
-the shared Temp/AppData DACL. Linux and
+the shared Temp/AppData DACL. Ordinary command cleanup removes only that unique
+leaf, never the shared hashed parent. Native lifecycle/Job-drain proof settles
+first; after that proof, Windows performs only a short bounded leaf-removal
+retry and reports a warning if the leaf remains busy instead of changing the
+command result. Before lifecycle proof, cleanup and terminal failures remain
+fail-closed and cannot authorize host replay. Linux and
 macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.

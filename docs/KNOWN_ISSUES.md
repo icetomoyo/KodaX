@@ -80,6 +80,17 @@ cleanup proves that Resume never occurred,
 the existing sandbox-unavailable permission boundary may recover the command;
 started or uncertain work remains non-replayable.
 
+A final packaged-Electron gate exposed a separate post-execution housekeeping
+bug rather than another admission or attestation failure. The target had
+started, produced every expected output marker, exited zero, and published
+Job-drain proof, but per-command cleanup then attempted to remove the shared
+hashed private-Temp parent and received `EPERM`. That auxiliary failure replaced
+the proven success with a Tool Error. Alpha.6 now removes only the command-owned
+Temp leaf, never the shared parent; a brief leaf-removal retry may be deferred
+with an explicit warning after lifecycle proof. Authoritative native cleanup or
+terminal-proof failures still propagate, and no lock, queue, background
+scavenger, permission widening, or command replay was introduced.
+
 ## v0.7.96-alpha.3 Release Corrections
 
 The v0.7.96-alpha.3 pre-release ships the v2 scoped Provider credential
