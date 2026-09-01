@@ -773,6 +773,44 @@ describe('Runtime daemon capability upgrade', () => {
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
   });
 
+  it('attaches in place to a daemon that reports the 0.0.0 development sentinel', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(),
+      calls,
+      close,
+      runtimeVersion: '0.0.0',
+      capabilities: {
+        actorSettlementConvergence: { version: 2 },
+        conversationHistory: { version: 2 },
+        crashOutcomeModel: { version: 2 },
+        daemonManagement: { version: 1 },
+        liveOutputSegments: { version: 1 },
+        managedRunDurability: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeEventCoalescing: { version: 1 },
+        sandboxRuntime: { version: 9 },
+        sessionEventJournal: { version: 1 },
+        sharedSessionSettings: { version: 2 },
+        ...(process.platform === 'win32'
+          ? { daemonShutdownVerification: { version: 1 } }
+          : {}),
+      },
+    })));
+
+    const runtime = await connectKodaXRuntime({
+      autoStart: true,
+      profile: PROFILE,
+      homeDir: path.join('C:', 'kodax-upgrade-test'),
+    });
+    expect(runtime.identity.version).toBe('0.0.0');
+    expect(calls).toEqual(['old:initialize']);
+    expect(upgradeMocks.createSocketTransport).not.toHaveBeenCalled();
+    await runtime.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('never replaces a daemon whose version ordering cannot be proven', async () => {
     const calls: string[] = [];
     const close = vi.fn(async () => undefined);

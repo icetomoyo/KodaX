@@ -5298,7 +5298,11 @@ function firstRequiredDaemonUpgrade(
   requireCurrentVersion: boolean,
 ): { readonly name: string; readonly version: number } | undefined {
   const currentVersion = replApi.KODAX_VERSION;
+  // A daemon that reports the "0.0.0" development sentinel has no provable
+  // version ordering against this client. Like a non-SemVer owner, it is
+  // never replaced or rejected by the version boundary alone.
   const versionOrder = !requireCurrentVersion || currentVersion === "0.0.0"
+  || identity.version === "0.0.0"
     ? 0
     : compareSemanticVersions(identity.version, currentVersion);
   if (versionOrder === undefined) {
