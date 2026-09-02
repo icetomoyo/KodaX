@@ -650,8 +650,9 @@ $env:ZHIPU_API_KEY="your_api_key"
 ### 2.1 激活可选 sandbox
 
 `kodax setup` 与首次安装 setup 会检查 sandbox。Windows 裸交互 CLI 启动（包括
-`kodax -r`）也会在创建 REPL Runtime 前自愈缺失或过期的 setup generation。也可以
-显式检查或激活：
+`kodax -r`）也会在创建 REPL Runtime 前自愈缺失或过期的 setup generation。当前
+generation 只读取 marker 并立即通过；确需迁移时，启动界面会持续显示已等待时间，
+不会再把最后一帧 session picker 冻在屏幕上。也可以显式检查或激活：
 
 ```bash
 kodax sandbox doctor

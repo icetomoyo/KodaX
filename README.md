@@ -203,8 +203,10 @@ $env:ZHIPU_API_KEY="your_api_key"
 
 `kodax setup` and first-run setup check sandbox readiness. A bare interactive
 Windows CLI startup (including `kodax -r`) also self-heals an absent or stale
-setup generation before creating the REPL Runtime. You can inspect or activate
-it explicitly:
+setup generation before creating the REPL Runtime. A current generation uses a
+marker-only fast path. If migration is needed, startup keeps a live elapsed-time
+indicator visible while the existing setup operation runs. You can inspect or
+activate it explicitly:
 
 ```bash
 kodax sandbox doctor

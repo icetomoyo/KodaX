@@ -410,6 +410,7 @@ async function importMainWithMocks(options: {
     }));
   }
   vi.doMock('./sandbox-runtime.js', () => ({
+    isWindowsSandboxV2SetupCurrent: vi.fn(() => true),
     prepareSandboxRuntimeForSetup: vi.fn(async () => ({
       status: 'ready' as const,
       attempted: false,

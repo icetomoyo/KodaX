@@ -37,6 +37,7 @@ if (
  */
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
+import { execFile } from 'node:child_process';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'node:os';
@@ -75,6 +76,7 @@ import {
   detachRuntimeDaemonBootstrapOutput,
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
   RuntimeDaemonStartupError,
+  daemonServeExecArgv,
   spawnRuntimeDaemonServeProcess,
   waitForHealthyDaemonStartup,
   waitForReadyRuntimeDaemonOwner,
@@ -173,6 +175,7 @@ import {
   readProcessStartIdentity,
   shutdownTracing,
   applyProcessHardening,
+  prepareInternalNodeLaunch,
 } from '@kodax-ai/agent';
 import {
   getGitRoot,
@@ -3651,14 +3654,20 @@ function printProviderSetupCompletion(selection: {
   }
 }
 
-async function prepareSetupSandboxReport(): Promise<{
+const INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG = '__sandbox-startup-recovery';
+const INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV = 'KODAX_INTERNAL_SANDBOX_STARTUP_RECOVERY';
+const INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX = 'KODAX_SANDBOX_STARTUP_REPORT:';
+
+async function prepareSetupSandboxReport(
+  allowElevation = process.stdin.isTTY === true && process.stdout.isTTY === true,
+): Promise<{
   readonly status: 'ready' | 'cancelled' | 'unavailable';
   readonly attempted: boolean;
   readonly lines: readonly string[];
 }> {
   const { prepareSandboxRuntimeForSetup } = await loadSandboxRuntimeModule();
   const outcome = await prepareSandboxRuntimeForSetup({
-    allowElevation: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    allowElevation,
   });
   const details = [
     ...outcome.guidance,
@@ -3687,16 +3696,144 @@ interface InteractiveSandboxStartupReport {
   readonly lines: readonly string[];
 }
 
+function isInteractiveSandboxStartupReport(
+  value: unknown,
+): value is InteractiveSandboxStartupReport {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const report = value as Readonly<Record<string, unknown>>;
+  return (
+    (report.status === 'ready' || report.status === 'cancelled' || report.status === 'unavailable')
+    && typeof report.attempted === 'boolean'
+    && Array.isArray(report.lines)
+    && report.lines.every((line: unknown) => typeof line === 'string')
+  );
+}
+
+function parseInteractiveSandboxStartupReport(
+  output: string,
+): InteractiveSandboxStartupReport | undefined {
+  const lines = output.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line?.startsWith(INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX)) continue;
+    try {
+      const parsed: unknown = JSON.parse(line.slice(INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX.length));
+      return isInteractiveSandboxStartupReport(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function interactiveSandboxStartupRecoveryLaunch(): {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: NodeJS.ProcessEnv;
+} {
+  const bundled = process.env.KODAX_BUNDLED === 'true';
+  const entry = bundled ? undefined : process.argv[1];
+  if (!bundled && entry === undefined) {
+    throw new Error('KodaX CLI entry path is unavailable for sandbox startup recovery.');
+  }
+  const args = [
+    ...(entry === undefined
+      ? []
+      : daemonServeExecArgv(process.execArgv, entry.endsWith('.ts'))),
+    ...(entry === undefined ? [] : [entry]),
+    INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG,
+  ];
+  const launch = prepareInternalNodeLaunch({
+    args,
+    env: {
+      ...process.env,
+      [INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV]: '1',
+    },
+    isElectron: process.versions.electron !== undefined,
+  });
+  return { command: process.execPath, ...launch };
+}
+
+async function prepareInteractiveSandboxStartupInChild(
+): Promise<InteractiveSandboxStartupReport> {
+  let launch: ReturnType<typeof interactiveSandboxStartupRecoveryLaunch>;
+  try {
+    launch = interactiveSandboxStartupRecoveryLaunch();
+  } catch (error: unknown) {
+    return {
+      status: 'unavailable',
+      attempted: false,
+      lines: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+  return await new Promise<InteractiveSandboxStartupReport>((resolve) => {
+    execFile(
+      launch.command,
+      [...launch.args],
+      {
+        cwd: process.cwd(),
+        env: launch.env,
+        encoding: 'utf8',
+        maxBuffer: 2 * 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const report = parseInteractiveSandboxStartupReport(stdout);
+        if (report !== undefined) {
+          resolve(report);
+          return;
+        }
+        const detail = stderr.trim()
+          || (error instanceof Error ? error.message : 'Sandbox startup recovery returned no report.');
+        resolve({
+          status: 'unavailable',
+          attempted: true,
+          lines: [
+            `Sandbox startup recovery could not complete: ${detail}`,
+            'KodaX will use the normal permission policy until the sandbox is activated.',
+          ],
+        });
+      },
+    );
+  });
+}
+
+async function withInteractiveSandboxStartupProgress<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+  const startedAt = Date.now();
+  let frame = 0;
+  const render = (): void => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1_000);
+    process.stderr.write(
+      `\r${frames[frame % frames.length]} Preparing Windows sandbox (${elapsedSeconds}s; first repair may take a few minutes)...`,
+    );
+    frame += 1;
+  };
+  render();
+  const timer = setInterval(render, 120);
+  timer.unref?.();
+  try {
+    return await operation();
+  } finally {
+    clearInterval(timer);
+    process.stderr.write('\r\u001B[2K');
+  }
+}
+
 export async function prepareInteractiveSandboxStartup(
   input: InteractiveSandboxStartupInput,
   prepare: () => Promise<InteractiveSandboxStartupReport>,
+  isSetupCurrent: () => boolean | Promise<boolean> = () => false,
 ): Promise<InteractiveSandboxStartupReport | undefined> {
   if (
     input.platform !== 'win32'
     || !input.stdinIsTTY
     || !input.stdoutIsTTY
   ) return undefined;
-  return prepare();
+  if (await isSetupCurrent()) return undefined;
+  return withInteractiveSandboxStartupProgress(prepare);
 }
 
 function reportInteractiveSandboxStartup(
@@ -3984,6 +4121,17 @@ async function main() {
   // addons. Opt-out: KODAX_DISABLE_HARDENING=1. Debug-preserving (no
   // PR_SET_DUMPABLE). No-op on Windows.
   applyProcessHardening();
+  if (argv[0] === INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG) {
+    if (process.env[INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV] !== '1') {
+      throw new Error('Internal sandbox startup recovery is not available directly.');
+    }
+    delete process.env[INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV];
+    const report = await prepareSetupSandboxReport(true);
+    process.stdout.write(
+      `${INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX}${JSON.stringify(report)}\n`,
+    );
+    return;
+  }
   if (argv[0] === '__skill-tool') {
     if (!consumeInternalSkillDispatchFlag()) {
       throw new Error('Internal skill tool entry is not available directly.');
@@ -5636,11 +5784,18 @@ complete -c kodax -l version -d 'Show version'`);
       const useClassicInteractiveMode = interactiveSurface === 'classic';
       // Pass FileSessionStorage for persisted sessions.
       try {
+        const sandboxRuntime = process.platform === 'win32'
+          && process.stdin.isTTY === true
+          && process.stdout.isTTY === true
+          ? await loadSandboxRuntimeModule()
+          : undefined;
         reportInteractiveSandboxStartup(await prepareInteractiveSandboxStartup({
           platform: process.platform,
           stdinIsTTY: process.stdin.isTTY === true,
           stdoutIsTTY: process.stdout.isTTY === true,
-        }, prepareSetupSandboxReport));
+        }, prepareInteractiveSandboxStartupInChild, () => (
+          sandboxRuntime?.isWindowsSandboxV2SetupCurrent() ?? true
+        )));
         if (useClassicInteractiveMode) {
           console.error(
             chalk.dim(

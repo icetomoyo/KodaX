@@ -15,7 +15,10 @@ All notable changes to this project will be documented in this file.
   converge on one setup operation; followers recheck the completed generation
   instead of installing again. Current state stays silent, and print-mode,
   daemon, SDK, and ordinary tool execution never elevate automatically or wait
-  on the setup lock.
+  on the setup lock. A current marker now takes the same coarse fast path as
+  Codex; when recovery is actually required, the unchanged setup operation runs
+  in a child process while `kodax -r` and new-session startup display a live
+  elapsed-time indicator instead of freezing the last picker frame.
 - Require the setup/onboarding boundary to complete one no-side-effect native
   target-start/exit probe before reporting Windows sandbox recovery as ready.
   The released setup-generation-9 marker migrates in place to generation 10,

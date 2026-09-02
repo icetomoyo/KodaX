@@ -1330,6 +1330,7 @@ import {
   createAsrtSkillScriptRunner,
   doctorSandboxExecution,
   doctorSandboxRuntime,
+  isWindowsSandboxV2SetupCurrent,
   clearPreviousBootWindowsSandboxAclMarkers,
   overrideWindowsSandboxV2CutoverDirectoryForTest,
   overrideWindowsSetupCapabilityInstallerForTest,
@@ -4399,6 +4400,31 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain(
       `"hostUserSid":"${windowsSandboxMock.hostUserSid}"`,
     );
+  });
+
+  it('uses the exact current cutover marker as the interactive startup fast path', async () => {
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(true);
+
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 9,
+      protocol: 9,
+      generationNonce: '00000000-0000-4000-8000-000000000001',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      setupReadRoots: [],
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(false);
+  });
+
+  it('treats a missing or malformed cutover marker as needing startup recovery', async () => {
+    await rm(cutoverMarkerFile(), { force: true });
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(false);
+
+    await writeFile(cutoverMarkerFile(), '{not-json', 'utf8');
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(false);
   });
 
   it('migrates a previous setup generation without rotating its healthy identity', async () => {

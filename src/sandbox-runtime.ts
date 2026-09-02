@@ -1256,6 +1256,20 @@ function readWindowsSandboxV2CutoverMarker(): WindowsSandboxV2CutoverMarker | un
   return parseWindowsSandboxV2CutoverMarker(readFileSync(file, 'utf8'));
 }
 
+/**
+ * Coarse interactive-startup check, matching Codex's marker fast path. This is
+ * only a hint for skipping setup work; command admission still performs the
+ * complete fail-closed sandbox verification.
+ */
+export function isWindowsSandboxV2SetupCurrent(): boolean {
+  if (process.platform !== 'win32') return true;
+  try {
+    return readWindowsSandboxV2CutoverMarker() !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 function readPreviousWindowsSandboxV2CutoverIdentity(
 ): PreviousWindowsSandboxV2CutoverIdentity | undefined {
   const file = windowsSandboxV2CutoverMarkerFile();

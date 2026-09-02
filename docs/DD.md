@@ -1447,6 +1447,14 @@ only for a selected-session handoff, and pauses/unreferences it on Esc. Session
 replay uses the persisted event timestamp for each message/tool record instead
 of one `Date.now()` value at render time.
 
+After the picker handoff, `src/kodax_cli.ts` performs only a coarse current-
+generation marker check on healthy Windows installations. If the marker is
+missing, malformed, or stale, the parent terminal renders an elapsed setup
+status while a child CLI process runs the existing setup/UAC boundary and its
+post-repair target-start proof. New sessions use the same path. This moves
+synchronous setup work off the rendering event loop; it does not alter sandbox
+policy, Bash routing, ACL ownership, setup locking, or command concurrency.
+
 `findMostRecentResumableSession()` is the shared REPL/CLI selector. It requests
 up to 1000 newest summaries and returns the first `msgCount > 0` record. The
 coding-layer CAP-043 middleware mirrors that rule without depending on REPL.

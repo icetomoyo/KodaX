@@ -741,6 +741,10 @@ requirements span both product and SDK:
 - searchable bare-resume selection that defers the full CLI load until a
   selection, returns Esc directly to the invoking terminal, and hands stdin to
   the resumed REPL only after selection;
+- interactive Windows startup uses a marker-only sandbox-generation fast path;
+  an actually stale generation reuses setup in a child process while the parent
+  terminal renders elapsed progress, without changing shell admission or adding
+  a command-path lock;
 - one shared continue-most-recent rule that scans a broad newest-first page,
   skips zero-message placeholders, preserves explicit IDs, and is used by Ink,
   classic, one-shot CLI, and coding-runtime auto-resume;

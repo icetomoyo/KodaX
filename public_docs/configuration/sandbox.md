@@ -14,11 +14,13 @@ kodax sandbox setup     # Activate
 
 `kodax setup` and first-run setup also check sandbox readiness once. A bare
 interactive Windows CLI startup (including `kodax -r`) checks the installed
-setup generation before creating the REPL Runtime. Current state remains
-silent; a missing or stale generation enters the existing setup boundary,
-where concurrent startups converge on one install and followers recheck the
-winner. After repair, one no-side-effect command must prove target start and
-exit before startup reports the sandbox ready.
+setup generation before creating the REPL Runtime. An exact current marker is a
+coarse, marker-only fast path; command admission still owns full fail-closed
+verification. A missing or stale generation enters the existing setup boundary
+in a child process, so `kodax -r` and new-session startup keep a live elapsed-time
+indicator while concurrent startups converge on one install and followers
+recheck the winner. After repair, one no-side-effect command must prove target
+start and exit before startup reports the sandbox ready.
 The explicit sandbox doctor may republish a missing protected-cache executable
 from the exact hash pinned in the running package. It does not run setup, open
 UAC, or repair ACL policy; those remain exclusive to `kodax sandbox setup`.
