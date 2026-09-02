@@ -8,6 +8,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Clarified the sandbox diagnostic boundary across the CLI, setup guide,
+  `kodax_manual`, and public documentation: run `kodax sandbox doctor` directly
+  in a host terminal or use `/sandbox` inside the REPL, rather than invoking the
+  host control-plane doctor through the sandbox-first Bash tool. This prevents a
+  healthy Windows sandbox from being misreported when its restricted account is
+  correctly denied access to host-owned ASRT state; shell routing and sandbox
+  permissions are unchanged.
+
 - Added cold-start self-healing for stale Windows sandbox setup generations.
   A bare interactive CLI startup, including `kodax -r`, now checks the
   installed generation before creating the REPL Runtime and reuses the existing

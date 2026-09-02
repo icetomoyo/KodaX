@@ -44,6 +44,9 @@ describe('renderSetupGuide', () => {
     expect(guide).toMatch(/actual API key.*value.*environment variable/is);
     expect(guide).toMatch(/KodaX does not set.*environment variable/is);
     expect(guide).toContain('kodax sandbox doctor');
+    expect(guide).toContain('directly in a host terminal');
+    expect(guide).toContain('use `/sandbox`');
+    expect(guide).toContain('not through the Bash tool');
     expect(guide).toContain('UAC');
     expect(guide).toContain('Interactive Windows CLI startup');
     expect(guide).toContain('Headless, print-mode, daemon, and SDK startup');

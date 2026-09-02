@@ -659,6 +659,10 @@ kodax sandbox doctor
 kodax sandbox setup
 ```
 
+这些宿主控制面命令应直接在用户终端中运行，不要通过 KodaX 的 Bash 工具调用。
+在 REPL 内请使用 `/sandbox` 做只读就绪诊断。Windows 上，通过 Bash 启动的 doctor
+自身也处于沙箱内，无法读取宿主持有的 ASRT 状态数据库；该嵌套结果不代表宿主就绪状态。
+
 - Windows 使用受限 sandbox 账户和网络策略。普通 Terminal 即可，按提示同意激活
   所需的 UAC 确认；不必先以管理员身份启动 Terminal。并发交互启动只共享既有 setup 锁：
   一个进程修复，其他进程复查结果，shell 命令仍彼此独立。无头、print、daemon 和 SDK

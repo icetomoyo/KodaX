@@ -151,6 +151,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
     expect(sandbox).toContain('Non-interactive Runtime/daemon startup readiness remains verify-only');
     expect(sandbox).toContain('Interactive Windows CLI startup performs one setup-generation check');
+    expect(sandbox).toContain('host control-plane command');
+    expect(sandbox).toContain('not through the Bash tool');
     expect(sandbox).toContain('Concurrent startup repairs converge through the setup-only lock');
     expect(sandbox).toContain('expired dead-PID request');
     expect(sandbox).toContain('windows-deny recovery records remain fail-closed');

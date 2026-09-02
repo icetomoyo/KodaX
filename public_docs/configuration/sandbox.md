@@ -12,6 +12,14 @@ kodax sandbox doctor    # Prove target start and check readiness
 kodax sandbox setup     # Activate
 ```
 
+These are host control-plane commands: run them directly in the user's terminal,
+not through KodaX's Bash tool. Inside the REPL, use `/sandbox` for read-only
+readiness diagnostics. A doctor launched through Bash is itself sandboxed; on
+Windows the restricted account cannot inspect the host-owned ASRT state database,
+so that nested result does not describe host readiness. This containment is
+expected and must not be repaired by granting the sandbox account access to host
+control state.
+
 `kodax setup` and first-run setup also check sandbox readiness once. A bare
 interactive Windows CLI startup (including `kodax -r`) checks the installed
 setup generation before creating the REPL Runtime. An exact current marker is a
