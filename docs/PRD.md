@@ -1,6 +1,6 @@
 # KodaX Product Requirements
 
-> Last updated: 2026-09-01
+> Last updated: 2026-09-02
 >
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.6`
 > (`v0.7.96-alpha.6` is the latest Git tag / GitHub pre-release;

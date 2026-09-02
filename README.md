@@ -743,7 +743,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-alpha.6 release:** Windows shell admission now follows the
+**v0.7.96-alpha.6 GitHub pre-release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -777,7 +777,8 @@ cannot swap a long-lived process onto a mismatched native evidence schema.
 Unlowerable nested shell bodies remain opaque for exact Exec Policy plus the
 normal Edits/Auto[LLM] host boundary, rather than becoming a parser-generated
 hard forbid. See the
-[v0.7.96-alpha.6 release checklist](docs/release.md#v0796-alpha6-release-preparation).
+[GitHub pre-release](https://github.com/icetomoyo/KodaX/releases/tag/v0.7.96-alpha.6)
+and [release checklist](docs/release.md#v0796-alpha6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

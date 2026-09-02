@@ -1,6 +1,6 @@
 # KodaX High-Level Design
 
-> Last updated: 2026-09-01
+> Last updated: 2026-09-02
 >
 > Current published baseline: `v0.7.96-alpha.6`
 > (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:11`,

@@ -136,9 +136,11 @@ Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
 ## v0.7.96-alpha.6 release preparation
 
-Release state: `v0.7.96-alpha.6` is prepared from the current branch but is not
-tagged or published by this checklist. npm publication remains a manual
-maintainer action.
+Release state: commit `a71d2b98` is tagged as `v0.7.96-alpha.6` and published
+as a GitHub pre-release. The exact commit passed the branch CI and tag-triggered
+Release workflows; the release contains the audited universal npm tarball,
+five platform archives, per-archive checksums, and `SHA256SUMS` (13 assets).
+npm publication remains a separate manual maintainer action.
 
 Release gates:
 
@@ -165,8 +167,10 @@ Release gates:
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
    tagging or publishing.
 
-Only after these gates pass may the exact commit be tagged
-`v0.7.96-alpha.6`.
+These gates passed on commit `a71d2b98`. The exact commit is tagged
+`v0.7.96-alpha.6`; the resulting
+[GitHub pre-release](https://github.com/icetomoyo/KodaX/releases/tag/v0.7.96-alpha.6)
+and its audited assets are published. npm publication remains manual.
 
 ## v0.7.96-alpha.5 release preparation
 

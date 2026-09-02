@@ -294,7 +294,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96-alpha.6 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-alpha.6 GitHub 预发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -323,7 +323,8 @@ shell 内容保留为 opaque 完整 argv，由精确 Exec Policy 与正常 Edits
 实际关闭；启动/控制阶段各自以 15 秒为界，不会缩短命令执行 deadline。多个 npm-link/`kodax -r`
 客户端同时遇到空闲旧 daemon 时，会以认证临时身份选出一个替换者，其余客户端脱离后等待或续跑
 同一精确 prepared ticket；忙碌或不可信的 daemon 仍保持不动并返回结构化边界。详见
-[v0.7.96-alpha.6 发布清单](docs/release.md#v0796-alpha6-release-preparation)。
+[GitHub 预发布](https://github.com/icetomoyo/KodaX/releases/tag/v0.7.96-alpha.6)
+与 [v0.7.96-alpha.6 发布清单](docs/release.md#v0796-alpha6-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

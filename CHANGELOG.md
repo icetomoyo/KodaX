@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Aligned the universal npm release audit with Windows native shell protocol
+  10. The release workflow now validates the same manifest contract emitted by
+  `build:native`, so a valid protocol-10 Windows artifact is not rejected as an
+  incompatible protocol-9 package during GitHub pre-release assembly.
 - Current native protocol 10 keeps isolated Skill Script execution POSIX-only
   on Windows because per-command denyRead remains unsupported.
 - Moved broad Windows profile-root ACL convergence fully into versioned setup.
