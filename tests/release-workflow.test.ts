@@ -219,8 +219,8 @@ describe('GitHub release workflow', () => {
       expect(source).toContain('asrtRunner.version');
     }
     expect(buildBinary).toContain('copied ASRT runner hash does not match its manifest');
-    expect(release).toContain("['shellSandbox', 9, 'kodax-windows-sandbox.exe']");
-    expect(release).not.toContain("['shellSandbox', 5, 'kodax-windows-sandbox.exe']");
+    expect(release).toContain("['shellSandbox', 10, 'kodax-windows-sandbox.exe']");
+    expect(release).not.toContain("['shellSandbox', 9, 'kodax-windows-sandbox.exe']");
     expect(release).toContain('ASRT runner hash does not match its manifest');
     expect(release).toContain('expectedLegalFiles');
   });
