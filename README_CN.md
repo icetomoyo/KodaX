@@ -518,8 +518,10 @@ CLI 也会在配置的 deadline 被终止。详见
 
 **v0.7.96 权限契约：**权限档位统一为 `Plan -> Edits -> Auto[LLM] -> Full Access`。
 Edits 与 Auto 先尝试 sandbox；成功即静默完成，只有启动前拒绝或 backend 不可用
-才在 Exec Policy 后进入用户/LLM 宿主边界。Full Access 不经过 sandbox 或 reviewer，
-但仍受管理员 forbidden 与窄 critical-effect fallback 约束。旧 `auto-in-project`
+才在 Exec Policy 后进入用户/LLM 宿主边界。每次 Bash 调用只在入口读取一次权限档位；
+Full Access 直接在宿主执行，不经过 sandbox、reviewer 或授权弹窗。显式 forbidden 规则
+与 Codex dangerous-command policy 仍可阻断，Exec Policy `prompt` 在 Never 语义下直接拒绝。
+旧 `auto-in-project`
 和 Auto[RULES] 状态只做读取兼容并归一到 Auto[LLM]；`/auto-engine` 已移除。
 Reviewer 首次 90 秒，只有 timeout/provider/无效输出会再试一次 180 秒；普通失败
 或具体高风险判断都不会自动弹授权框，而是拒绝本次操作并给 Agent 更安全绕行提示。

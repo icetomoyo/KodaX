@@ -5719,7 +5719,7 @@ engine.
 
 ```text
 Plan mutation ------------------------------------> deny
-Full Access -> Exec Policy -----------------------> one host attempt or deny/prompt
+Full Access -> Exec Policy -----------------------> one host attempt or deny; never prompt
 Edits / Auto -> sandbox
                   | completed --------------------> return silently
                   | started or uncertain --------> return; never replay
@@ -5739,11 +5739,11 @@ unavailable backend may create a host-boundary decision. The Runtime owns the
 single host retry; a tool implementation must never fall through and execute
 the command itself.
 
-Full Access skips both the sandbox and Auto reviewer. It still honors Exec
-Policy, including administrator `forbidden` rules and the narrow unmatched
-critical-effect fallback. Ordinary unmatched development commands run directly.
-An explicit `prompt` rule uses the normal Runtime permission event; ordinary
-uncertainty never manufactures a prompt.
+Full Access samples the current profile once when each Bash call starts, then
+skips both the sandbox and every approval path. Explicit `forbidden` rules and
+the Codex dangerous-command policy still block; ordinary unmatched commands and
+explicit `allow` rules run directly. An explicit `prompt` rule is rejected
+under Never approval semantics and creates no Runtime permission event.
 
 Auto review uses a fixed reviewer role/output schema. The optional
 `config.json#autoReview.policy` replaces only its security-policy body. The

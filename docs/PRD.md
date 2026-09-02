@@ -409,9 +409,10 @@ user file, an explicitly trusted project file, and host-supplied administrator
 rules. Exact token-prefix rules return `allow`, `prompt`, or `forbidden`; the
 strictest match wins and administrator forbids are absolute. `prompt` is used
 only when an explicit rule or the Edits product boundary requests it—ordinary
-uncertainty does not become a prompt. Full Access bypasses sandbox and Auto
-review, but it does not bypass administrator forbids or the narrow critical
-fallback; ordinary unmatched development commands execute directly.
+uncertainty does not become a prompt. Full Access samples the profile once at
+Bash entry and bypasses sandbox, Auto review, and approval prompts. Explicit
+forbidden rules and the Codex dangerous-command policy can still block; prompt
+rules are rejected and ordinary unmatched development commands execute directly.
 
 The Auto LLM request must contain only bounded permission-relevant evidence,
 not the Runner's raw accumulated session. The current tool action remains

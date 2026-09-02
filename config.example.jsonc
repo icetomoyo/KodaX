@@ -38,8 +38,9 @@
 
   // Agent harness: "ama" enables adaptive multi-agent use; "sa" forces one
   // agent. Permission profiles are "plan", "accept-edits", sandbox-first
-  // "auto", or direct-host "full-access". Full Access still honors
-  // administrator/critical policy. Exec Policy is separate:
+  // "auto", or direct-host "full-access". Full Access has no sandbox or
+  // approval prompts; explicit forbidden and Codex dangerous-command policy
+  // still block. Exec Policy is separate:
   // ~/.kodax/exec-policy.jsonc (and explicitly trusted project policy).
   // "agentMode": "ama",
   // "permissionMode": "accept-edits",

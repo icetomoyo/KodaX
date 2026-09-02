@@ -1062,8 +1062,9 @@ Runtime session, not by a UI hook. Edits and Auto try the sandbox first;
 sandbox completion is final, while only a proven pre-start host boundary reaches
 Exec Policy and the Edits user decision or Auto[LLM] reviewer. Auto review has
 fixed 90/180-second attempt bounds and never falls back to Rules, Edits, or an
-automatic user prompt. Full Access skips sandbox and review but retains
-administrator policy and critical-effect denial. Runtime permission prompts
+automatic user prompt. Full Access samples the profile once per Bash call and
+runs directly on the host without sandbox or approval prompts. Explicit
+forbidden rules and the Codex dangerous-command policy still block. Runtime permission prompts
 offer opaque, exact
 allow-once/session/persistent grant suggestions; persistent grants are
 daemon-owned and revisioned. Host plan exit is exposed only when the host
@@ -1574,14 +1575,14 @@ KodaX provides 4 permission profiles:
 | `plan` | Read-only planning mode | All modification tools blocked |
 | `accept-edits` | Sandbox-first edits; user decides an exact host boundary | Host-boundary operations |
 | `auto` | Sandbox-first execution; LLM reviews an exact host boundary | No automatic prompt; denied calls return a safer-route reason |
-| `full-access` | Direct host execution without sandbox or Auto review | Explicit Exec Policy `prompt` only |
+| `full-access` | Direct host execution without sandbox or approval prompts | Never prompts; explicit forbidden/dangerous policy can block |
 
 ```bash
 # In REPL, use /mode command
 /mode plan          # Switch to plan mode (read-only)
 /mode accept-edits  # Switch to accept-edits mode
 /mode auto             # Switch to Runtime-owned Auto Mode
-/mode full-access      # Direct host execution, still subject to Exec Policy
+/mode full-access      # Direct host execution without sandbox or approvals
 /auto                  # Alias for auto
 
 # Check current mode
@@ -1602,8 +1603,9 @@ KodaX provides 4 permission profiles:
 - Shift-Tab cycles `Plan -> Edits -> Auto[LLM] -> Full Access`; Shift+Enter
   inserts a newline. Legacy `auto-in-project` and Auto[RULES] state normalize
   to Auto[LLM] and are never persisted again.
-- Full Access skips sandbox and reviewer, but administrator forbids and the
-  narrow critical-effect fallback remain enforced. Use
+- Full Access skips sandbox and all approval paths. Explicit forbidden rules
+  and the Codex dangerous-command policy remain enforced; an Exec Policy
+  `prompt` rule is rejected under Never approval semantics. Use
   `kodax execpolicy check -- <command>` to inspect host policy without running it.
 - Runtime-backed prompts can offer exact `allow once`, `allow this session`,
   and `always allow` choices. Return the Runtime-issued opaque suggestion;

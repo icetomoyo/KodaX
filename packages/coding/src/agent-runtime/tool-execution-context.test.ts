@@ -298,16 +298,18 @@ describe('F270 actor principal wiring', () => {
 
   it('forwards the host-boundary shell authorizer to tool contexts', () => {
     const authorize = async () => true;
+    const resolveShellPermissionMode = () => 'full-access' as const;
     const ctx = buildToolExecutionContext({
       options: {
         provider: 'mock',
-        context: { authorizeShellHostExecution: authorize },
+        context: { authorizeShellHostExecution: authorize, resolveShellPermissionMode },
       },
       runtime: undefined,
       managedProtocolPayloadRef: { current: undefined },
     });
 
     expect(ctx.authorizeShellHostExecution).toBe(authorize);
+    expect(ctx.resolveShellPermissionMode).toBe(resolveShellPermissionMode);
   });
 
   it('binds SDK sandbox envPass to the current run and child snapshot', () => {

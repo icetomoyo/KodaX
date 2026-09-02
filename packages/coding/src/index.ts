@@ -176,6 +176,7 @@ export type {
   KodaXShellSandboxPrepareInput,
   KodaXShellHostExecutionRequest,
   KodaXShellHostExecutionAuthorizer,
+  KodaXShellPermissionMode,
   KodaXTrustedTextCommitInput,
   KodaXTrustedTextCommitOutcome,
   KodaXTrustedTextFileSnapshot,

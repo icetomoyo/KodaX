@@ -58,6 +58,7 @@ import type {
 import {
   CANCELLED_TOOL_RESULT_MESSAGE,
   resolveProviderModelDescriptors,
+  toolBash,
 } from "@kodax-ai/coding";
 import {
   getScopedProviderCredential,
@@ -18855,31 +18856,29 @@ describe("createKodaXRuntime", () => {
       permissionMode: "full-access",
       executionCwd: tempRoot,
     });
+    const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async () => undefined);
     const handle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "verify",
       permissionBroker: "client",
+      options: {
+        context: {
+          shellSandbox: { prepare: callerPrepare },
+        },
+      },
     });
     await flushMicrotasks();
     if (!runOptions) throw new Error("expected Runtime run options");
-    await expect(runOptions.context?.shellSandbox?.prepare({
+    const directCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      "process.stdout.write('full-access-direct')",
+    )}`;
+    const directResult = await toolBash({ command: directCommand }, {
+      backups: new Map(),
       toolCallId: "bash_full_direct",
-      toolInput: { command: "git status --short" },
-      command: "git status --short",
-      cwd: tempRoot,
-      env: process.env,
-      executable: "git",
-      args: ["status", "--short"],
-    })).resolves.toBeUndefined();
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
-      toolCallId: "bash_full_direct",
-      toolInput: { command: "git status --short" },
-      command: "git status --short",
-      cwd: tempRoot,
-      executable: "git",
-      args: ["status", "--short"],
-      reason: "sandbox_denied",
-    })).resolves.toBe(true);
+      ...runOptions.context,
+    });
+    expect(directResult).toContain("full-access-direct");
+    expect(callerPrepare).not.toHaveBeenCalled();
     expect(replMock.bootstrapAutoMode).not.toHaveBeenCalled();
     await expect(runOptions.events?.beforeToolExecute?.(
       "bash",
@@ -18898,7 +18897,7 @@ describe("createKodaXRuntime", () => {
       cwd: tempRoot,
       executable: "git",
       args: ["push", "--force", "origin", "main"],
-      reason: "sandbox_denied",
+      reason: "direct-host",
     })).resolves.toMatch(/Exec Policy forbids/i);
     await expect(runOptions.context?.authorizeShellHostExecution?.({
       toolCallId: "bash_full_qualified",
@@ -18907,7 +18906,7 @@ describe("createKodaXRuntime", () => {
       cwd: tempRoot,
       executable: "blocked-shell.exe",
       args: ["/c", "git status --short"],
-      reason: "sandbox_denied",
+      reason: "direct-host",
     })).resolves.toMatch(/Executable qualifier regression sentinel/i);
     await expect(runOptions.events?.beforeToolExecute?.(
       "bash",
@@ -18921,14 +18920,11 @@ describe("createKodaXRuntime", () => {
       cwd: tempRoot,
       executable: "git",
       args: ["push", "origin", "main"],
-      reason: "sandbox_denied",
+      reason: "direct-host",
     });
-    await flushMicrotasks();
-    const [pending] = await runtime.permissions.listPending({ runId: handle.runId });
-    expect(pending).toMatchObject({ toolName: "bash" });
-    if (!pending) throw new Error("expected Full Access Exec Policy prompt");
-    await runtime.permissions.respond(pending.id, { type: "allow_once" });
-    await expect(prompted).resolves.toBe(true);
+    await expect(prompted).resolves.toMatch(/cannot prompt under Full Access/i);
+    await expect(runtime.permissions.listPending({ runId: handle.runId }))
+      .resolves.toEqual([]);
 
     await runtime.runs.abort(handle.runId);
     await runtime.close();
@@ -18981,13 +18977,24 @@ describe("createKodaXRuntime", () => {
     });
     await flushMicrotasks();
     if (!runOptions) throw new Error("expected Runtime run options");
+    const observedPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async () => {
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      return undefined;
+    });
+    const executionContext = {
+      ...runOptions.context,
+      shellSandbox: { prepare: observedPrepare },
+    };
     expect(replMock.bootstrapAutoMode).not.toHaveBeenCalled();
 
     await runtime.sessions.updateSettings(session.id, { permissionMode: "auto" });
+    const autoCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      "process.stdout.write('auto-after-switch')",
+    )}`;
     const autoCall = {
       id: "bash_live_auto",
       name: "bash",
-      input: { command: "git config --global user.name KodaX" },
+      input: { command: autoCommand },
     };
     await authorizeRuntimeAutoCall(runOptions, autoCall);
     await expect(runOptions.events?.beforeToolExecute?.(
@@ -18995,34 +19002,23 @@ describe("createKodaXRuntime", () => {
       autoCall.input,
       { sessionId: session.id, toolId: autoCall.id },
     )).resolves.toBe(true);
-    const autoSandbox = await runOptions.context?.shellSandbox?.prepare({
+    const autoResult = await toolBash(autoCall.input, {
+      backups: new Map(),
       toolCallId: autoCall.id,
-      toolInput: autoCall.input,
-      command: autoCall.input.command,
-      cwd: projectRoot,
-      env: process.env,
-      executable: "git",
-      args: ["config", "--global", "user.name", "KodaX"],
+      ...executionContext,
     });
-    expect(autoSandbox).toBeUndefined();
-    expect(callerPrepare).toHaveBeenCalledOnce();
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
-      toolCallId: autoCall.id,
-      toolInput: autoCall.input,
-      command: autoCall.input.command,
-      cwd: projectRoot,
-      executable: "git",
-      args: ["config", "--global", "user.name", "KodaX"],
-      reason: "sandbox_denied",
-    })).resolves.toBe(true);
+    expect(autoResult).toContain("auto-after-switch");
+    expect(observedPrepare).toHaveBeenCalledOnce();
     expect(reviewer).toHaveBeenCalledOnce();
     expect(replMock.bootstrapAutoMode).toHaveBeenCalledOnce();
 
-    await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+    const fullCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      "process.stdout.write('full-after-switch')",
+    )}`;
     const fullCall = {
       id: "bash_live_full",
       name: "bash",
-      input: { command: "git status --short" },
+      input: { command: fullCommand },
     };
     await authorizeRuntimeAutoCall(runOptions, fullCall);
     await expect(runOptions.events?.beforeToolExecute?.(
@@ -19030,26 +19026,14 @@ describe("createKodaXRuntime", () => {
       fullCall.input,
       { sessionId: session.id, toolId: fullCall.id },
     )).resolves.toBe(true);
-    const fullSandbox = await runOptions.context?.shellSandbox?.prepare({
+    const fullResult = await toolBash(fullCall.input, {
+      backups: new Map(),
       toolCallId: fullCall.id,
-      toolInput: fullCall.input,
-      command: fullCall.input.command,
-      cwd: projectRoot,
-      env: process.env,
-      executable: "git",
-      args: ["status", "--short"],
+      ...executionContext,
     });
-    expect(fullSandbox).toBeUndefined();
-    expect(callerPrepare).toHaveBeenCalledOnce();
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
-      toolCallId: fullCall.id,
-      toolInput: fullCall.input,
-      command: fullCall.input.command,
-      cwd: projectRoot,
-      executable: "git",
-      args: ["status", "--short"],
-      reason: "sandbox_denied",
-    })).resolves.toBe(true);
+    expect(fullResult).toContain("full-after-switch");
+    expect(observedPrepare).toHaveBeenCalledOnce();
+    expect(callerPrepare).not.toHaveBeenCalled();
     expect(reviewer).toHaveBeenCalledOnce();
     expect(replMock.bootstrapAutoMode).toHaveBeenCalledOnce();
 

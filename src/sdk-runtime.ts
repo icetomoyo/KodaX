@@ -11929,22 +11929,8 @@ function buildRunOptions(input: {
       return undefined;
     },
   } satisfies KodaXShellSandbox;
-  const shellSandbox: KodaXShellSandbox = {
-    ...(restrictedModeShellSandbox.processTreeContainment === undefined
-      ? {}
-      : {
-          processTreeContainment:
-            restrictedModeShellSandbox.processTreeContainment,
-        }),
-    async prepare(request) {
-      if (
-        replApi.normalizePermissionMode(record.permissionMode) === "full-access"
-      ) {
-        return undefined;
-      }
-      return restrictedModeShellSandbox.prepare(request);
-    },
-  };
+  const resolveShellPermissionMode = () =>
+    replApi.normalizePermissionMode(record.permissionMode);
   const authorizeShellHostExecution = async (
     request: Parameters<
       NonNullable<KodaXContextOptions["authorizeShellHostExecution"]>
@@ -11995,7 +11981,8 @@ function buildRunOptions(input: {
     context: {
       ...ownerSafeContext,
       configHome: input.defaultConfigHome,
-      ...(shellSandbox !== undefined ? { shellSandbox } : {}),
+      shellSandbox: restrictedModeShellSandbox,
+      resolveShellPermissionMode,
       ...(authorizeShellHostExecution !== undefined
         ? { authorizeShellHostExecution }
         : {}),
@@ -21024,17 +21011,22 @@ async function authorizeRuntimeShellHostExecution(input: {
   );
   if (policy === true) return true;
   if (policy === "prompt") {
+    if (input.request.reason === "direct-host") {
+      return "[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access.";
+    }
     return requestRuntimeForcedPermission(input.events, input.record, call);
   }
   if (typeof policy === "string") return policy;
 
-  const mode = replApi.normalizePermissionMode(input.record.permissionMode);
+  if (input.request.reason === "direct-host") return true;
+  const mode = input.request.permissionMode
+    ?? replApi.normalizePermissionMode(input.record.permissionMode);
   if (mode === "full-access") return true;
   if (mode === "accept-edits") {
     return requestRuntimeForcedPermission(input.events, input.record, call);
   }
   if (mode === "auto") {
-    const verdict = await input.runtimeAutoGuardrail?.reviewHostCall(call);
+    const verdict = await input.runtimeAutoGuardrail?.reviewHostCall(call, mode);
     if (verdict?.action === "allow") return true;
     return `[Denied] ${verdict?.reason ?? "Auto[LLM] could not authorize this host-boundary operation. Use a safer route or ask the user for informed direction."}`;
   }
@@ -22773,7 +22765,10 @@ const MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION = 8;
 interface RuntimeOwnedAutoModeGuardrail extends ToolGuardrail {
   prepare?(): Promise<void>;
   consumeAllowedCall(call: RunnerToolCall): boolean;
-  reviewHostCall(call: RunnerToolCall): Promise<GuardrailVerdict>;
+  reviewHostCall(
+    call: RunnerToolCall,
+    permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
+  ): Promise<GuardrailVerdict>;
   clearAllowedCalls(): void;
 }
 
@@ -23041,7 +23036,9 @@ function createRuntimeSessionAutoModeGuardrail(input: {
   >();
   let currentGuardrail: RuntimeOwnedAutoModeGuardrail | undefined;
   let configurationError: RuntimeAutoModeConfigurationError | undefined;
-  const resolveGuardrail = async (): Promise<
+  const resolveGuardrail = async (
+    permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
+  ): Promise<
     RuntimeOwnedAutoModeGuardrail | undefined
   > => {
     const settings = (await input.settingsOwner.read(input.sessionId)).value;
@@ -23050,8 +23047,11 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       record.permissionMode = settings.permissionMode;
       record.autoModeClassifierModel = settings.autoModeClassifierModel;
     }
+    const reviewSettings = permissionMode === undefined
+      ? settings
+      : { ...settings, permissionMode };
     configurationError = runtimeAutoModeClassifierModelError(
-      settings,
+      reviewSettings,
       record?.model ?? input.model,
     );
     if (configurationError) {
@@ -23060,7 +23060,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     }
     const guardrail = await createRuntimeAutoModeGuardrail({
       ...input,
-      settings,
+      settings: reviewSettings,
     });
     currentGuardrail = guardrail;
     return guardrail;
@@ -23119,7 +23119,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       allowedCalls.delete(key);
       return true;
     },
-    async reviewHostCall(call) {
+    async reviewHostCall(call, permissionMode) {
       const key = runtimeAutoModeDecisionKey(call);
       const pending = key === undefined ? undefined : pendingHostReviews.get(key);
       if (key !== undefined) pendingHostReviews.delete(key);
@@ -23132,7 +23132,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       // Host-boundary review is a fresh authorization decision. Resolve from
       // live Session settings even when an earlier tool initialized a cached
       // reviewer with a now-stale classifier override.
-      const guardrail = await resolveGuardrail();
+      const guardrail = await resolveGuardrail(permissionMode);
       if (guardrail === undefined) {
         return {
           action: "block",
@@ -23280,9 +23280,8 @@ function resolveRuntimePermissionPolicy(
   const mode = replApi.normalizePermissionMode(record.permissionMode);
   if (mode === undefined) return undefined;
   if (mode === "full-access") {
-    // Bash policy is evaluated once at the resolved host boundary, where
-    // executable/network qualifiers can be proved. The live Full Access
-    // sandbox adapter reaches that boundary without starting a sandbox.
+    // Bash snapshots Full Access at call entry and routes directly to host
+    // policy without invoking the sandbox adapter.
     return true;
   }
   const rawProjectRoot =

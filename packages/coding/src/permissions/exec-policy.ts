@@ -5,11 +5,7 @@ import { parseBashCommand } from './bash-ast.js';
 
 export type ExecPolicyDecision = 'allow' | 'prompt' | 'forbidden';
 export type ExecPolicySource = 'admin' | 'user' | 'project' | 'bundled';
-export type ExecPolicyCriticalEffect =
-  | 'rm_rf_root'
-  | 'mkfs_or_format'
-  | 'dd_disk_write'
-  | 'fork_bomb';
+export type ExecPolicyCriticalEffect = 'forced_rm' | 'windows_dangerous_command';
 
 type NestedShellCommand =
   | { readonly kind: 'command'; readonly command: string; readonly hostExecutable: string }
@@ -190,12 +186,10 @@ function evaluateOperation(
   }
 
   if (critical !== undefined) {
-    const exactAllow = matched.find(
-      (rule) => rule.decision === 'allow' && rule.prefix.length === operation.tokens.length,
-    );
+    const explicitAllow = matched.find((rule) => rule.decision === 'allow');
     const stricter = matched.find((rule) => rule.decision !== 'allow');
     if (stricter !== undefined) return decisionResult(stricter, matched, true);
-    if (exactAllow !== undefined) return decisionResult(exactAllow, matched, false);
+    if (explicitAllow !== undefined) return decisionResult(explicitAllow, matched, false);
     const fallback = criticalFallbackRule(critical);
     return decisionResult(fallback, [fallback, ...matched], true);
   }
@@ -213,14 +207,6 @@ export function evaluateShellExecPolicy(
 ): ExecPolicyEvaluation {
   const tree = parseBashCommand(command);
   if (tree.unparseable) {
-    if (isForkBomb(command)) {
-      const tokenized = tokenizeShellCommand(command);
-      return evaluateOperation({
-        tokens: tokenized.tokens,
-        compound: true,
-        ...facts,
-      }, rules, 'fork_bomb');
-    }
     return evaluateUnparseableShellCommand(command, rules, facts);
   }
   const stages = tree.statements.flatMap((statement) => statement.stages);
@@ -739,41 +725,47 @@ function strictestEvaluation(
 function criticalEffect(
   tokens: readonly string[],
 ): ExecPolicyCriticalEffect | undefined {
-  const executable = executableName(tokens[0] ?? '');
+  const executable = dangerousExecutableName(tokens[0] ?? '');
   const args = tokens.slice(1);
-  const wrapped = wrappedCommandTokens(tokens);
+  if (executable === 'rm' && hasRmForceOption(args)) return 'forced_rm';
+  if (isWindowsDangerousCommand(executable, args)) return 'windows_dangerous_command';
+  if (executable === 'trap') {
+    const actionIndex = args[0] === '--' ? 1 : 0;
+    const action = args[actionIndex];
+    if (action !== undefined && !action.startsWith('-')) {
+      return criticalEffectInCommand(action, 'sh');
+    }
+  }
+  const wrapped = dangerousWrappedCommandTokens(executable, args);
   if (wrapped !== undefined) return criticalEffect(wrapped);
   const nested = nestedShellCommand(executable, args);
   if (nested.kind === 'command') {
     return criticalEffectInCommand(nested.command, nested.hostExecutable);
   }
-  if (nested.kind === 'invalid') return undefined;
-  if (executable === 'rm' && hasRecursiveAndForceFlags(args)) {
-    return args.some((token) => isRootRemovalTarget(token)) ? 'rm_rf_root' : undefined;
+  return undefined;
+}
+
+function dangerousWrappedCommandTokens(
+  executable: string,
+  args: readonly string[],
+): readonly string[] | undefined {
+  if (executable === 'sudo') return args;
+  if (executable !== 'env') return undefined;
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index]!;
+    if (arg === '--') return args.slice(index + 1);
+    if (
+      arg === '-i'
+      || arg === '--ignore-environment'
+      || (/^[^=-][^=]*=/u.test(arg) && !arg.startsWith('-'))
+    ) {
+      index += 1;
+      continue;
+    }
+    break;
   }
-  if (/^mkfs(?:\.[a-z0-9]+)?$/iu.test(executable) || executable === 'fdisk') {
-    return args.some((token) => isBlockDevice(token)) ? 'mkfs_or_format' : undefined;
-  }
-  if (executable === 'format' || executable === 'format.com') {
-    return args.some((token) => /^[a-z]:[\\/]?$/iu.test(token))
-      ? 'mkfs_or_format'
-      : undefined;
-  }
-  if (executable === 'dd') {
-    return args.some((token) => token.toLowerCase().startsWith('of=')
-      && isBlockDevice(token.slice(3)))
-      ? 'dd_disk_write'
-      : undefined;
-  }
-  if (executable === 'remove-item' || executable === 'ri') {
-    const recursive = args.some((token) => /^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$/iu.test(token));
-    return recursive && args.some((token) => isRootRemovalTarget(token))
-      ? 'rm_rf_root'
-      : undefined;
-  }
-  return executable === 'diskpart' && args.some((token) => token.toLowerCase() === 'clean')
-    ? 'mkfs_or_format'
-    : undefined;
+  return args.slice(index);
 }
 
 function nestedShellCommand(
@@ -892,7 +884,15 @@ function criticalEffectInCommand(
   command: string,
   hostExecutable: string,
 ): ExecPolicyCriticalEffect | undefined {
-  if (isForkBomb(command)) return 'fork_bomb';
+  if (
+    process.platform === 'win32'
+    && ['cmd', 'cmd.exe'].includes(executableName(hostExecutable))
+  ) {
+    for (const segment of command.split(/&&|\|\||[&|]/u)) {
+      const effect = criticalEffect(tokenizeShellCommand(segment).tokens);
+      if (effect !== undefined) return effect;
+    }
+  }
   const tree = parseBashCommand(command);
   if (tree.unparseable) return undefined;
   for (const statement of tree.statements) {
@@ -908,42 +908,87 @@ function executableName(value: string): string {
   return value.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
 }
 
-function hasRecursiveAndForceFlags(args: readonly string[]): boolean {
-  let recursive = false;
-  let force = false;
-  for (const arg of args) {
-    if (arg === '--recursive' || arg === '-R') recursive = true;
-    else if (arg === '--force') force = true;
-    else if (/^-[^-]/u.test(arg)) {
-      recursive ||= /r/iu.test(arg.slice(1));
-      force ||= /f/u.test(arg.slice(1));
-    }
+function dangerousExecutableName(value: string): string {
+  return executableName(value).replace(/\.(?:exe|cmd|bat|com)$/iu, '');
+}
+
+function hasRmForceOption(args: readonly string[]): boolean {
+  const end = args.indexOf('--');
+  return args
+    .slice(0, end < 0 ? args.length : end)
+    .some((arg) => arg === '--force' || /^-[^-]*f[^-]*$/u.test(arg));
+}
+
+function isWindowsDangerousCommand(
+  executable: string,
+  args: readonly string[],
+): boolean {
+  if (process.platform !== 'win32') return false;
+  const lowerArgs = args.map((arg) => arg.toLowerCase());
+  const tokens = [executable, ...lowerArgs];
+  if (isWindowsDangerousDelete(executable, lowerArgs)) return true;
+  if (!tokens.some(containsHttpUrl)) return false;
+  return isWindowsUrlLaunch(executable, tokens, lowerArgs);
+}
+
+function isWindowsDangerousDelete(
+  executable: string,
+  lowerArgs: readonly string[],
+): boolean {
+  const deleteCommands = ['remove-item', 'ri', 'rm', 'del', 'erase', 'rd', 'rmdir'];
+  if (
+    deleteCommands.includes(executable)
+    && lowerArgs.some((arg) => arg === '-force' || arg.startsWith('-force:'))
+  ) return true;
+  if (
+    ['del', 'erase'].includes(executable)
+    && lowerArgs.some((arg) => arg === '/f')
+  ) return true;
+  if (
+    ['rd', 'rmdir'].includes(executable)
+    && lowerArgs.some((arg) => arg === '/s')
+    && lowerArgs.some((arg) => arg === '/q')
+  ) return true;
+  return false;
+}
+
+function isWindowsUrlLaunch(
+  executable: string,
+  tokens: readonly string[],
+  lowerArgs: readonly string[],
+): boolean {
+  const shellLaunch = ['start', 'start-process', 'saps', 'invoke-item', 'ii'];
+  if (
+    shellLaunch.includes(executable)
+    || tokens.some((token) => (
+      token.includes('start-process') || token.includes('invoke-item')
+    ))
+  ) return true;
+  if (tokens.some((token) => (
+    token.includes('shellexecute') || token.includes('shell.application')
+  ))) return true;
+  if (['explorer', 'mshta', 'chrome', 'msedge', 'firefox', 'iexplore'].includes(executable)) {
+    return true;
   }
-  return recursive && force;
+  return executable === 'rundll32'
+    && lowerArgs.some((arg) => arg.includes('url.dll,fileprotocolhandler'));
 }
 
-function isRootRemovalTarget(value: string): boolean {
-  const normalized = value.replace(/\/+\*+$/u, '/').replace(/\/+$/u, '/');
-  return ['/', '~', '~/', '$HOME', '$HOME/', '${HOME}', '${HOME}/'].includes(value)
-    || ['/', '~/', '$HOME/', '${HOME}/'].includes(normalized)
-    || /^[a-z]:[\\/]?$/iu.test(value);
-}
-
-function isBlockDevice(value: string): boolean {
-  return /^\/dev\/(?:sd|nvme|hd|vd)[a-z0-9]*$/iu.test(value)
-    || /^\\\\\.\\PhysicalDrive[0-9]+$/iu.test(value);
-}
-
-function isForkBomb(command: string): boolean {
-  return /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:\s*&[^}]*\}\s*;\s*:/u.test(command);
+function containsHttpUrl(token: string): boolean {
+  const match = /https?:\/\/[^\s"'();]+/iu.exec(token);
+  if (match === null) return false;
+  try {
+    const url = new URL(match[0]);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule {
   const justification: Readonly<Record<ExecPolicyCriticalEffect, string>> = {
-    rm_rf_root: 'Unmatched command recursively and forcibly deletes a filesystem root.',
-    mkfs_or_format: 'Unmatched command formats or repartitions a block device.',
-    dd_disk_write: 'Unmatched command writes raw bytes directly to a block device.',
-    fork_bomb: 'Unmatched command can exhaust host process and CPU resources.',
+    forced_rm: 'rm -f style commands are not permitted. Use a safer approach.',
+    windows_dangerous_command: 'Unmatched command is blocked by the Windows dangerous-command policy.',
   };
   return {
     prefix: [],

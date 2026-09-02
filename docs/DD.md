@@ -820,8 +820,9 @@ Key concepts:
   denial/unavailability reaches host Exec Policy and the profile boundary;
 - Auto review returns allow/deny only at that exact host boundary and never
   manufactures a shared permission request; an allow produces one host attempt;
-- Full Access skips sandbox and Auto review but still applies administrator
-  forbids, explicit Exec Policy, and the narrow critical-effect fallback;
+- Full Access samples the profile once at Bash entry and skips sandbox, Auto
+  review, and approval prompts; explicit forbidden rules and Codex
+  dangerous-command policy can still block;
 - trusted-local workflow scripts require explicit confirmation;
 - verifier and stop-hook failures fail open where blocking would trap the user.
 
@@ -1151,8 +1152,8 @@ removes that coordinator from worktree lifecycle as well; old state and lease
 exports are migration-only inert data/API and cannot block current work.
 Recognized shell mutations of the Agent Home root, Runtime, credentials, and
 security configuration remain on the reviewable branch. Full Access skips this
-reviewer; only administrator `forbid` policy and the narrow critical-effect
-fallback remain non-bypassable.
+reviewer and every approval path; explicit forbidden rules and Codex
+dangerous-command policy remain effective.
 Shell authorization remains independent from containment. Windows v2 uses ASRT
 only for the network/account launch and the native host/runner path described in
 section 3 for per-command restricted token, private desktop, framed stdio, and

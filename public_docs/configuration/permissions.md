@@ -9,7 +9,7 @@ KodaX controls file-system and shell-command permissions through four profiles.
 | **Plan** | Read-only analysis. KodaX inspects code and proposes a plan but makes no edits. |
 | **Edits** | Trusted text edits apply directly; eligible shell commands try the sandbox first and ask only at a proven host boundary. |
 | **Auto[LLM]** | Uses the sandbox first; only a proven pre-start host boundary is reviewed by the LLM. |
-| **Full Access** | Runs directly on the host without a sandbox or Auto reviewer, while still honoring Exec Policy. |
+| **Full Access** | Runs directly on the host without a sandbox, Auto reviewer, or approval prompt. |
 
 In the REPL, **Shift-Tab** cycles Plan → Edits → Auto[LLM] → Full Access.
 Legacy Auto[RULES] settings normalize to Auto[LLM] and never migrate to Full
@@ -30,9 +30,10 @@ Reviewer infrastructure failures retry once (90 seconds, then 180 seconds).
 Explicit deny does not retry and Auto review never opens its own approval
 prompt.
 
-Full Access bypasses both sandbox and reviewer. Exec Policy still applies its
-explicit allow/prompt/forbidden rules, absolute administrator forbids, and the
-narrow critical-effect fallback.
+Full Access bypasses both sandbox and every approval path. Ordinary unmatched
+commands and explicit `allow` rules run directly. Explicit `forbidden` rules
+and the Codex dangerous-command policy block; an explicit `prompt` rule is
+rejected because Full Access uses Never approval semantics.
 
 Administrator forbids are also checked inside recognized nested shell entry
 forms: `cmd /C`/`/K`, PowerShell command selectors and abbreviations, and
@@ -40,8 +41,8 @@ strictly decoded UTF-16LE `EncodedCommand` payloads. If a nested body cannot be
 lowered reliably, KodaX keeps the complete outer argv opaque. Exact
 outer/interpreter policy still applies; otherwise Edits or Auto[LLM] performs
 the normal host-boundary decision. Parse uncertainty alone is not a critical
-effect, while explicit administrator forbids and concrete critical effects
-remain non-bypassable.
+effect. Explicit forbidden rules and the Codex dangerous-command policy remain
+effective.
 
 ## SDK permission control
 

@@ -1759,13 +1759,16 @@ export interface KodaXShellHostExecutionRequest {
   readonly cwd: string;
   readonly executable: string;
   readonly args: readonly string[];
-  readonly reason: 'sandbox_unavailable' | 'sandbox_denied';
+  readonly reason: 'direct-host' | 'sandbox_unavailable' | 'sandbox_denied';
+  readonly permissionMode?: KodaXShellPermissionMode;
   readonly diagnostic?: string;
 }
 
 export type KodaXShellHostExecutionAuthorizer = (
   request: KodaXShellHostExecutionRequest,
 ) => Promise<boolean | string>;
+
+export type KodaXShellPermissionMode = 'plan' | 'accept-edits' | 'auto' | 'full-access';
 
 /** Canonical snapshot produced by the trusted main-process text authority. */
 export interface KodaXTrustedTextFileSnapshot {
@@ -1895,6 +1898,8 @@ export interface KodaXContextOptions {
   shellExecution?: KodaXShellExecutionContract;
   /** Runtime-owned OS sandbox broker; never accepted from serialized model input. */
   shellSandbox?: KodaXShellSandbox;
+  /** Run-owned route sampled once when each shell call starts. */
+  resolveShellPermissionMode?: () => KodaXShellPermissionMode | undefined;
   /** Runtime-owned decision at the exact unsandboxed shell boundary. */
   authorizeShellHostExecution?: KodaXShellHostExecutionAuthorizer;
   /** Runtime-owned trusted host transaction authority for direct text tools. */
@@ -2749,6 +2754,8 @@ export interface KodaXToolExecutionContext {
   sandbox?: KodaXSandboxOptions;
   /** Runtime-owned OS sandbox broker for selected concrete shell calls. */
   shellSandbox?: KodaXShellSandbox;
+  /** Run-owned route sampled once when each shell call starts. */
+  resolveShellPermissionMode?: () => KodaXShellPermissionMode | undefined;
   /** Runtime-owned decision at the exact unsandboxed shell boundary. */
   authorizeShellHostExecution?: KodaXShellHostExecutionAuthorizer;
   /** Runtime-owned trusted host transaction authority for direct text tools. */

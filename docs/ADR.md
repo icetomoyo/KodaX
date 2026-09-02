@@ -5973,8 +5973,9 @@ sandbox first; completion is silently authorized. Only a proven pre-target
 denial or sandbox unavailability may reach the host boundary, where explicit
 Exec Policy applies and Edits asks the user while Auto[LLM] asks the independent
 reviewer. A target-started or uncertain attempt is never replayed. Full Access
-skips the sandbox and reviewer and executes on the host, but cannot bypass an
-administrator forbidden policy or the narrow critical-effect fallback.
+is sampled once at Bash entry, skips the sandbox and every approval path, and
+executes on the host. Explicit forbidden rules and the Codex dangerous-command
+policy can still block; prompt rules are rejected under Never approval semantics.
 
 Exec Policy is a separate JSONC file with Codex-shaped token-prefix
 `allow`/`prompt`/`forbidden` decisions; KodaX does not embed Starlark. It is

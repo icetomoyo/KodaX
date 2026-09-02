@@ -42,7 +42,7 @@ const MODE_ARGS: ArgumentDefinition[] = [
   },
   {
     name: 'full-access',
-    description: 'Direct host execution; Exec Policy still applies',
+    description: 'Direct host execution without sandbox or approval prompts',
     type: 'enum',
   },
 ];

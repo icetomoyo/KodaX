@@ -651,6 +651,60 @@ describe('toolBash', () => {
     expect(completedCommandBody(result)).toContain('authorized fallback completed');
   });
 
+  it('samples direct host routing once and never enters the sandbox lifecycle', async () => {
+    const prepare = vi.fn(async () => undefined);
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const reportToolSandboxObservation = vi.fn();
+    let routeReads = 0;
+
+    const result = await toolBash({
+      command: nodeOutputCommand('full access direct execution completed'),
+    }, {
+      backups: new Map(),
+      toolCallId: 'bash-full-access-direct',
+      resolveShellPermissionMode: () => {
+        routeReads += 1;
+        return routeReads === 1 ? 'full-access' : 'auto';
+      },
+      shellSandbox: { prepare },
+      authorizeShellHostExecution,
+      reportToolSandboxObservation,
+    });
+
+    expect(completedCommandBody(result)).toContain('full access direct execution completed');
+    expect(routeReads).toBe(1);
+    expect(authorizeShellHostExecution).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'direct-host',
+      permissionMode: 'full-access',
+    }));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(reportToolSandboxObservation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the permission mode sampled at Bash entry through a sandbox boundary', async () => {
+    let mode = 'auto' as const | 'full-access';
+    const authorizeShellHostExecution = vi.fn(async () => false);
+
+    const result = await toolBash({ command: nodeOutputCommand('must not execute') }, {
+      backups: new Map(),
+      toolCallId: 'bash-permission-mode-snapshot',
+      resolveShellPermissionMode: () => mode,
+      shellSandbox: {
+        prepare: async () => {
+          mode = 'full-access';
+          return undefined;
+        },
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(result).toContain('[Denied]');
+    expect(authorizeShellHostExecution).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'sandbox_denied',
+      permissionMode: 'auto',
+    }));
+  });
+
   it('gives an authorized host attempt a fresh command deadline after review', async () => {
     const realNow = Date.now();
     let elapsed = 0;

@@ -134,42 +134,21 @@ describe('FEATURE_297 Exec Policy', () => {
     expect(result.criticalFallback).toBe(true);
   });
 
-  it('applies a narrow critical fallback unless an exact explicit allow matches', () => {
-    const operation = { tokens: ['rm', '-rf', '/'] } as const;
+  it('applies the dangerous-command fallback unless an explicit allow matches', () => {
+    const operation = { tokens: ['rm', '-f', './generated.txt'] } as const;
     expect(evaluateExecPolicy(operation, []).decision).toBe('forbidden');
-    expect(evaluateExecPolicy(operation, [rule(['rm', '-rf'], 'allow')]).decision)
-      .toBe('forbidden');
-    expect(evaluateExecPolicy(operation, [rule(['rm', '-rf', '/'], 'allow')]).decision)
+    expect(evaluateExecPolicy(operation, [rule(['rm'], 'allow')]).decision)
       .toBe('allow');
   });
 
   it.each([
-    ['rm -fr "$HOME"', 'rm_rf_root'],
-    ['rm -rf /*', 'rm_rf_root'],
-    ['bash -c "rm -rf /"', 'rm_rf_root'],
-    ['mkfs.ext4 /dev/sda1', 'mkfs_or_format'],
-    ['fdisk /dev/nvme0n1', 'mkfs_or_format'],
-    ['format C:', 'mkfs_or_format'],
-    ['cmd /c "fo^rmat C:"', 'mkfs_or_format'],
-    ['dd if=image.bin of=/dev/sdb', 'dd_disk_write'],
-    [':(){ :|:& };:', 'fork_bomb'],
-    ['sudo rm -rf /', 'rm_rf_root'],
-    ['sudo -u root rm -rf /', 'rm_rf_root'],
-    ['doas -u root rm -rf /', 'rm_rf_root'],
-    ['command -- rm -rf /', 'rm_rf_root'],
-    ['FOO=x rm -rf /', 'rm_rf_root'],
-    ['env FOO=x rm -rf /', 'rm_rf_root'],
-    ['env -i -- rm -rf /', 'rm_rf_root'],
-    ['env -S "rm -rf /"', 'rm_rf_root'],
-    ['nice -n 5 rm -rf /', 'rm_rf_root'],
-    ['nohup rm -rf /', 'rm_rf_root'],
-    ['time -p rm -rf /', 'rm_rf_root'],
-    ['setsid -f rm -rf /', 'rm_rf_root'],
-    ['stdbuf -oL rm -rf /', 'rm_rf_root'],
-    ['timeout --signal=KILL 5s rm -rf /', 'rm_rf_root'],
-    ['busybox env rm -rf /', 'rm_rf_root'],
-    ['sudo sudo sudo sudo sudo rm -rf /', 'rm_rf_root'],
-    ['echo $(rm -rf /)', 'rm_rf_root'],
+    ['rm -f ./generated.txt', 'forced_rm'],
+    ['rm --force ./generated.txt', 'forced_rm'],
+    ['bash -c "rm -rf /tmp/example"', 'forced_rm'],
+    ['sudo rm -rf /tmp/example', 'forced_rm'],
+    ['env FOO=x rm -rf /tmp/example', 'forced_rm'],
+    ['trap "rm -rf /tmp/example" EXIT', 'forced_rm'],
+    ['echo $(rm -rf /tmp/example)', 'forced_rm'],
   ])('applies the critical fallback to %s (%s)', (command, pattern) => {
     const result = evaluateShellExecPolicy(command, []);
 
@@ -177,6 +156,53 @@ describe('FEATURE_297 Exec Policy', () => {
     expect(result.criticalFallback).toBe(true);
     expect(result.matched[0]?.sourcePath).toBe(`builtin:critical-effects/${pattern}`);
   });
+
+  it.each([
+    'mkfs.ext4 /dev/sda1',
+    'fdisk /dev/nvme0n1',
+    'format C:',
+    'dd if=image.bin of=/dev/sdb',
+    ':(){ :|:& };:',
+    'rm -- -f',
+    'trap "echo rm -rf /tmp/example" EXIT',
+  ])('does not invent an additional dangerous-command restriction for %s', (command) => {
+    expect(evaluateShellExecPolicy(command, [])).toMatchObject({
+      decision: 'unmatched',
+      criticalFallback: false,
+    });
+  });
+
+  it.runIf(process.platform === 'win32').each([
+    'cmd /c del /f generated.txt',
+    'cmd /c rmdir /s /q generated',
+    'cmd /c "echo ready&del /f generated.txt"',
+    'powershell -Command "Remove-Item generated.txt -Force"',
+    'powershell -Command "Start-Process(\'https://example.com\');"',
+    'powershell -Command "$shell = New-Object -ComObject Shell.Application; $shell.ShellExecute(\'https://example.com\')"',
+    'cmd /c start https://example.com',
+  ])('matches the Codex Windows dangerous-command cases for %s', (command) => {
+    expect(evaluateShellExecPolicy(command, [])).toMatchObject({
+      decision: 'forbidden',
+      criticalFallback: true,
+    });
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'keeps PowerShell force flags scoped to the same command segment',
+    () => {
+      expect(evaluateShellExecPolicy(
+        'powershell -Command "Get-ChildItem -Force; Remove-Item generated.txt"',
+        [],
+      )).toMatchObject({
+        decision: 'unmatched',
+        criticalFallback: false,
+      });
+      expect(evaluateShellExecPolicy('cmd /c start https://', [])).toMatchObject({
+        decision: 'unmatched',
+        criticalFallback: false,
+      });
+    },
+  );
 
   it('does not let unsupported syntax hide an administrator forbidden prefix', () => {
     const adminForbid = {
@@ -284,17 +310,23 @@ describe('FEATURE_297 Exec Policy', () => {
     },
   );
 
-  it('applies critical-effect fallback inside an encoded PowerShell command', () => {
-    const encoded = Buffer.from('format C:', 'utf16le').toString('base64');
+  it.runIf(process.platform === 'win32')(
+    'applies Windows dangerous-command fallback inside encoded PowerShell',
+    () => {
+      const encoded = Buffer.from(
+        'Remove-Item C:\\temp\\generated.txt -Force',
+        'utf16le',
+      ).toString('base64');
 
-    expect(evaluateShellExecPolicy(`powershell -enc ${encoded}`, [])).toMatchObject({
-      decision: 'forbidden',
-      criticalFallback: true,
-      matched: [expect.objectContaining({
-        sourcePath: 'builtin:critical-effects/mkfs_or_format',
-      })],
-    });
-  });
+      expect(evaluateShellExecPolicy(`powershell -enc ${encoded}`, [])).toMatchObject({
+        decision: 'forbidden',
+        criticalFallback: true,
+        matched: [expect.objectContaining({
+          sourcePath: 'builtin:critical-effects/windows_dangerous_command',
+        })],
+      });
+    },
+  );
 
   it.each([
     'cmd /c',
@@ -385,9 +417,11 @@ describe('FEATURE_297 Exec Policy', () => {
       .toBe('unmatched');
   });
 
-  it('normalizes cmd.exe caret escapes before policy and critical-effect evaluation', () => {
+  it.runIf(process.platform === 'win32')(
+    'normalizes cmd.exe caret escapes before policy and dangerous-command evaluation',
+    () => {
     const result = evaluateShellExecPolicy(
-      'fo^rmat C:',
+      'd^el /f generated.txt',
       [],
       { hostExecutable: 'C:\\Windows\\System32\\cmd.exe' },
     );
@@ -396,11 +430,11 @@ describe('FEATURE_297 Exec Policy', () => {
       decision: 'forbidden',
       criticalFallback: true,
       matched: [expect.objectContaining({
-        sourcePath: 'builtin:critical-effects/mkfs_or_format',
+        sourcePath: 'builtin:critical-effects/windows_dangerous_command',
       })],
     });
     expect(evaluateShellExecPolicy(
-      'fo^rmat C:',
+      'd^el /f generated.txt',
       [],
       { hostExecutable: '/bin/bash' },
     ).decision).toBe('unmatched');
@@ -415,16 +449,17 @@ describe('FEATURE_297 Exec Policy', () => {
       { hostExecutable: 'cmd.exe' },
     ).matched[0]?.source).toBe('admin');
     expect(evaluateShellExecPolicy(
-      'call fo^rmat C:',
+      'call d^el /f generated.txt',
       [],
       { hostExecutable: 'cmd.exe' },
-    )).toMatchObject({ decision: 'forbidden', criticalFallback: true });
+    )).toMatchObject({ decision: 'unmatched', criticalFallback: false });
     expect(evaluateShellExecPolicy(
-      'start "" /wait fo^rmat C:',
+      'start "" /wait d^el /f generated.txt',
       [],
       { hostExecutable: 'cmd.exe' },
-    )).toMatchObject({ decision: 'forbidden', criticalFallback: true });
-  });
+    )).toMatchObject({ decision: 'unmatched', criticalFallback: false });
+    },
+  );
 
   it('reports a wrapped administrator forbid ahead of the critical fallback', () => {
     const adminForbid = {

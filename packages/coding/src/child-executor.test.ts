@@ -217,21 +217,30 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     async (_kind, readOnly) => {
       mockRunKodaX.mockResolvedValue(okResult('inspected'));
       const shellSandbox = { prepare: vi.fn() };
+      const resolveShellPermissionMode = () => 'full-access' as const;
       const authorizeShellHostExecution = vi.fn(async () => true);
 
       await executeChildAgents(
         [createBundle({ readOnly })],
-        { ...createCtx(), shellSandbox, authorizeShellHostExecution },
+        {
+          ...createCtx(),
+          shellSandbox,
+          resolveShellPermissionMode,
+          authorizeShellHostExecution,
+        },
         createOptions(),
       );
 
       const childOptions = mockRunKodaX.mock.calls[0]?.[0] as {
         readonly context?: {
           readonly shellSandbox?: unknown;
+          readonly resolveShellPermissionMode?: unknown;
           readonly authorizeShellHostExecution?: unknown;
         };
       };
       expect(childOptions.context?.shellSandbox).toBe(shellSandbox);
+      expect(childOptions.context?.resolveShellPermissionMode)
+        .toBe(resolveShellPermissionMode);
       expect(childOptions.context?.authorizeShellHostExecution)
         .toBe(authorizeShellHostExecution);
     },

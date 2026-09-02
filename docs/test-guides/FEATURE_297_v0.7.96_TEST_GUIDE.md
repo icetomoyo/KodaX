@@ -34,18 +34,23 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
 ## Full Access
 
 1. Select Full Access and run a normal workspace command.
-2. Confirm no OS sandbox and no Auto reviewer are used.
+2. Confirm the mode is read once at Bash entry and no OS sandbox, Auto reviewer,
+   sandbox event, or approval prompt is used.
 3. Confirm a normal outside-workspace read/write is not blocked by legacy Agent Home or protected-path gates.
-4. Confirm an administrator-forbidden Exec Policy rule still blocks.
-5. Confirm a built-in critical-effect command blocks when unmatched.
-6. Add an exact user allow for that concrete command and confirm it overrides only the built-in critical fallback, not an administrator forbid.
+4. Confirm an explicit forbidden Exec Policy rule still blocks.
+5. Confirm an explicit prompt rule is rejected without creating permission work.
+6. Confirm the Codex dangerous-command cases block when unmatched, while the
+   retired KodaX-only format/raw-disk/fork-bomb fallback does not.
+7. Add an explicit allow prefix for a dangerous command and confirm it overrides
+   the fallback, not an administrator forbid.
 
 ## Exec Policy
 
 1. With no policy files, run `kodax execpolicy check -- <safe command>` and confirm the result is unmatched/allow-by-profile and nothing executes.
 2. Add user `allow`, `prompt`, and `forbidden` rules to `~/.kodax/exec-policy.jsonc` using comments, trailing commas, token unions, and qualifiers.
 3. Confirm the strictest matching decision wins and output identifies source, rule, and justification.
-4. Confirm a partial allow does not override a critical compound command.
+4. Confirm an explicit allow prefix overrides only the dangerous-command
+   fallback, while stricter prompt/forbidden matches still win.
 5. Confirm every statement and pipeline stage of a compound command is evaluated.
 6. Confirm project policy is ignored until that exact canonical project root is trusted by the host.
 7. Add an administrator `forbidden ["git", "push"]` rule and confirm it also

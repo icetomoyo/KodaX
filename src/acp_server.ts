@@ -129,7 +129,7 @@ const ACP_PERMISSION_MODE_DEFINITIONS: SessionMode[] = [
   {
     id: 'full-access',
     name: 'Full Access',
-    description: 'Executes directly on the host, subject to Exec Policy and critical-effect denial.',
+    description: 'Executes directly on the host without sandbox or approval prompts.',
   },
 ];
 

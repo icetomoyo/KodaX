@@ -51,9 +51,10 @@ coding-owned forced-tool selector with
 Auto[LLM] is sandbox-first: a sandbox-completing call is silent, and only a
 proven pre-start denial or unavailable sandbox reaches the Runtime-owned LLM
 reviewer. Reviewer allow authorizes one host attempt; concern blocks the attempt
-without opening an approval prompt. Full Access skips sandbox and reviewer but
-still applies Exec Policy. Legacy Rules settings normalize to Auto[LLM] and the
-old rules files are inert.
+without opening an approval prompt. Full Access samples the profile once at
+Bash entry, skips sandbox and every approval path, and runs directly unless an
+explicit forbidden rule or Codex dangerous-command policy blocks. Legacy Rules
+settings normalize to Auto[LLM] and the old rules files are inert.
 
 When `session.autoResume` or `session.resume` is set without an explicit ID,
 the coding-runtime middleware requests a broad newest-first list and selects the

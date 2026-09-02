@@ -288,8 +288,8 @@ not a reason to deny. Ordinary Agent definitions, Sessions, tool results, and
 intermediate artifacts remain working data. These concrete home-root and
 Runtime-control-plane effects are evidence for Auto[LLM], not an Agent-Home
 special hard boundary: Full Access skips that reviewer exactly as documented.
-Only explicit administrator `forbid` policy and the narrow critical-effect
-fallback remain non-bypassable. Upgrade cleanup still quarantines legacy
+Explicit forbidden rules and the Codex dangerous-command policy remain
+effective. Upgrade cleanup still quarantines legacy
 unauthenticated `processes/children` records without signaling a process.
 The v0.7.85 containment path used ASRT workspace sessions, a per-effect Job,
 policy-owner fallback, and a cross-process filesystem-effect lease. FEATURE_295
@@ -460,8 +460,9 @@ Edits, Auto[LLM], and Full Access. Edits and Auto first run eligible shell calls
 inside the OS sandbox. A completed invocation is authoritative and creates no
 review. Only a proven pre-start denial/unavailability reaches Exec Policy and
 then the user or LLM reviewer; a target-started/uncertain call is never replayed.
-Full Access skips sandbox and reviewer while retaining administrator forbids
-and the narrow critical-effect fallback. Auto reviewer state is per turn;
+Full Access samples the profile once per Bash call, then skips sandbox and every
+approval path. Explicit forbidden rules and Codex dangerous-command policy can
+still block. Auto reviewer state is per turn;
 infrastructure failure retries once (90s then 180s) and then blocks with a safer
 route rather than widening authority.
 

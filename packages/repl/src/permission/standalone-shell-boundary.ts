@@ -15,6 +15,7 @@ import {
   type KodaXPreparedShellSandboxInvocation,
   type KodaXShellHostExecutionAuthorizer,
   type KodaXShellHostExecutionRequest,
+  type KodaXShellPermissionMode,
   type KodaXShellSandbox,
   type KodaXTrustedTextMutationHost,
 } from '@kodax-ai/coding';
@@ -47,6 +48,7 @@ export interface StandaloneShellPermissionBoundaryOptions {
 export interface StandaloneShellPermissionBoundary {
   readonly autoGuardrail: ToolGuardrail;
   readonly shellSandbox: KodaXShellSandbox;
+  readonly resolveShellPermissionMode: () => KodaXShellPermissionMode;
   readonly authorizeShellHostExecution: KodaXShellHostExecutionAuthorizer;
   readonly trustedTextMutationHost?: KodaXTrustedTextMutationHost;
 }
@@ -94,7 +96,6 @@ export function createStandaloneShellPermissionBoundary(
       ? {}
       : { processTreeContainment: options.shellSandbox.processTreeContainment }),
     async prepare(input) {
-      if (options.getPermissionMode() === 'full-access') return undefined;
       if (options.shellSandbox === undefined) {
         throw new Error('Standalone REPL has no OS sandbox provider.');
       }
@@ -109,6 +110,10 @@ export function createStandaloneShellPermissionBoundary(
         : cleanupCompletedAutoReview(invocation, input.toolCallId, input.toolInput, autoContexts);
     },
   };
+  const resolveShellPermissionMode = (): KodaXShellPermissionMode => {
+    const mode = options.getPermissionMode();
+    return mode === 'auto-in-project' ? 'auto' : mode;
+  };
   const authorizeShellHostExecution: KodaXShellHostExecutionAuthorizer = async (request) => {
     const policy = await policySnapshot;
     const invalid = policy.errors[0];
@@ -120,14 +125,17 @@ export function createStandaloneShellPermissionBoundary(
     });
     if (evaluation.decision === 'allow') return true;
     if (evaluation.decision === 'prompt') {
+      if (request.reason === 'direct-host') {
+        return '[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access.';
+      }
       return options.requestUserPermission(request, 'exec_policy_prompt');
     }
     if (evaluation.decision === 'forbidden') {
       return `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? 'no justification supplied'}`;
     }
 
-    const mode = options.getPermissionMode();
-    if (mode === 'full-access') return true;
+    if (request.reason === 'direct-host') return true;
+    const mode = request.permissionMode ?? options.getPermissionMode();
     if (mode === 'accept-edits') {
       return options.requestUserPermission(request, 'mode_boundary');
     }
@@ -144,6 +152,7 @@ export function createStandaloneShellPermissionBoundary(
   return {
     autoGuardrail,
     shellSandbox,
+    resolveShellPermissionMode,
     authorizeShellHostExecution,
     ...(trustedTextMutationHost === undefined ? {} : { trustedTextMutationHost }),
   };

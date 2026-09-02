@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDefaultCodingAgent } from '@kodax-ai/coding';
+import { createDefaultCodingAgent, toolBash } from '@kodax-ai/coding';
 import { describe, expect, it, vi } from 'vitest';
 import { createStandaloneShellPermissionBoundary } from './standalone-shell-boundary.js';
 
@@ -71,7 +71,7 @@ describe('standalone REPL shell permission boundary', () => {
     expect(reviewHostBoundary).toHaveBeenCalledOnce();
   });
 
-  it('keeps Full Access off the sandbox and reviewer while enforcing critical policy', async () => {
+  it('keeps Full Access off sandbox and approval paths while enforcing dangerous policy', async () => {
     const configHome = await mkdtemp(join(tmpdir(), 'kodax-repl-shell-'));
     const prepare = vi.fn();
     const getAutoGuardrail = vi.fn(() => {
@@ -85,34 +85,51 @@ describe('standalone REPL shell permission boundary', () => {
       requestUserPermission,
       userConfigDir: configHome,
       execPolicy: {
-        adminRules: [{
-          prefix: ['git', 'push'],
-          decision: 'forbidden',
-          justification: 'administrator blocks publishing',
-          source: 'admin',
-          sourcePath: 'host:test',
-        }],
+        adminRules: [
+          {
+            prefix: ['git', 'push'],
+            decision: 'forbidden',
+            justification: 'administrator blocks publishing',
+          },
+          {
+            prefix: ['git', 'fetch'],
+            decision: 'prompt',
+            justification: 'fetch requires approval',
+          },
+        ],
       },
     });
 
-    await expect(boundary.shellSandbox.prepare({
-      toolInput: request.toolInput,
-      command: request.command,
-      cwd: request.cwd,
-      env: process.env,
-    })).resolves.toBeUndefined();
+    const directCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      "process.stdout.write('standalone-full-access')",
+    )}`;
+    const result = await toolBash({ command: directCommand }, {
+      backups: new Map(),
+      toolCallId: 'standalone-full-access',
+      shellSandbox: boundary.shellSandbox,
+      resolveShellPermissionMode: boundary.resolveShellPermissionMode,
+      authorizeShellHostExecution: boundary.authorizeShellHostExecution,
+    });
+    expect(result).toContain('standalone-full-access');
     expect(prepare).not.toHaveBeenCalled();
-    await expect(boundary.authorizeShellHostExecution(request)).resolves.toBe(true);
     await expect(boundary.authorizeShellHostExecution({
       ...request,
       command: 'rm -rf /',
       toolInput: { command: 'rm -rf /' },
+      reason: 'direct-host',
     })).resolves.toContain('[Blocked] Exec Policy forbids');
     await expect(boundary.authorizeShellHostExecution({
       ...request,
       command: 'git push',
       toolInput: { command: 'git push' },
+      reason: 'direct-host',
     })).resolves.toContain('administrator blocks publishing');
+    await expect(boundary.authorizeShellHostExecution({
+      ...request,
+      command: 'git fetch',
+      toolInput: { command: 'git fetch' },
+      reason: 'direct-host',
+    })).resolves.toContain('cannot prompt under Full Access');
     expect(getAutoGuardrail).not.toHaveBeenCalled();
     expect(requestUserPermission).not.toHaveBeenCalled();
   });

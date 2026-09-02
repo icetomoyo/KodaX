@@ -17,7 +17,7 @@ import {
  * - plan: Read-only planning, all modifications blocked unless explicitly whitelisted
  * - accept-edits: Sandbox first; user confirmation only at a proven host boundary
  * - auto: Sandboxed execution with LLM review at the host boundary
- * - full-access: Direct host execution without sandbox or Auto review; Exec Policy still applies
+ * - full-access: Direct host execution without sandbox or approval prompts
  *
  * `auto-in-project` remains accepted only as a persisted/CLI compatibility
  * input and is immediately normalized to `auto`.

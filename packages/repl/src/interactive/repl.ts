@@ -1382,6 +1382,7 @@ Keyboard Shortcuts:
             ? {}
             : {
                 shellSandbox: standaloneShellBoundary.shellSandbox,
+                resolveShellPermissionMode: standaloneShellBoundary.resolveShellPermissionMode,
                 authorizeShellHostExecution: standaloneShellBoundary.authorizeShellHostExecution,
                 ...(standaloneShellBoundary.trustedTextMutationHost === undefined
                   ? {}

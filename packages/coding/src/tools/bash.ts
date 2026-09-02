@@ -453,6 +453,8 @@ async function executeToolBash(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
+  const permissionMode = ctx.resolveShellPermissionMode?.();
+  const directHostExecution = permissionMode === 'full-access';
   const command = input.command as string;
   const userTimeout = input.timeout as number | undefined;
   const timeout = userTimeout ? Math.min(KODAX_HARD_TIMEOUT, userTimeout) : KODAX_DEFAULT_TIMEOUT;
@@ -515,7 +517,7 @@ async function executeToolBash(
     | Awaited<ReturnType<NonNullable<typeof ctx.shellSandbox>['prepare']>>
     | undefined;
   let sandboxPreparationDiagnostic: string | undefined;
-  if (ctx.shellSandbox) {
+  if (!directHostExecution && ctx.shellSandbox) {
     try {
       sandboxInvocation = await ctx.shellSandbox.prepare({
         toolCallId: ctx.toolCallId,
@@ -653,6 +655,7 @@ async function executeToolBash(
         executable: ordinaryInvocation.executable,
         args: ordinaryInvocation.args,
         reason,
+        ...(permissionMode === undefined ? {} : { permissionMode }),
         ...(diagnostic === undefined ? {} : { diagnostic }),
       });
       if (decision !== true) {
@@ -671,12 +674,38 @@ async function executeToolBash(
       return toolBash(input, {
         ...ctx,
         shellSandbox: undefined,
+        resolveShellPermissionMode: undefined,
         authorizeShellHostExecution: undefined,
       });
     })();
     return hostBoundaryResult;
   };
-  if (ctx.shellSandbox !== undefined && sandboxInvocation === undefined) {
+  if (directHostExecution) {
+    const authorize = ctx.authorizeShellHostExecution;
+    if (authorize === undefined) {
+      return '[Blocked] Direct host execution requires a host policy decision.';
+    }
+    const decision = await authorize({
+      toolCallId: ctx.toolCallId,
+      toolInput: input,
+      command,
+      cwd,
+      executable: ordinaryInvocation.executable,
+      args: ordinaryInvocation.args,
+      reason: 'direct-host',
+      permissionMode,
+    });
+    if (decision !== true) {
+      return typeof decision === 'string'
+        ? decision
+        : '[Blocked] Direct host execution was not authorized.';
+    }
+  }
+  if (
+    !directHostExecution
+    && ctx.shellSandbox !== undefined
+    && sandboxInvocation === undefined
+  ) {
     return executeAtHostBoundary(
       sandboxPreparationDiagnostic === undefined
         ? 'sandbox_denied'
