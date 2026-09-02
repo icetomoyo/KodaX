@@ -757,7 +757,7 @@ No command-lifetime or machine-global filesystem coordinator is shared
 by Bash, trusted text, worktrees, Sessions, or Runtime processes. Every native
 command has an independent request, token, control channel, and Job; matching
 network authorities share a bounded broker pool without serializing command
-lifetime. Protocol 9/setup generation 9 holds the protected setup marker until
+lifetime. Protocol 10/setup generation 10 holds the protected setup marker until
 durable target `Started`, reuses a healthy fixed sandbox account across setup
 versions, and upgrades generation-8 installations in place without replaying
 legacy ACL cleanup. Generation 8 remains the proof boundary for the one-time
@@ -766,9 +766,10 @@ marker; the elevated parent synchronously installs NUL compatibility and profile
 read capabilities, and only then does the caller atomically publish the ready
 marker. No helper or migration overlaps ordinary admission, and the shared
 system TMP root is not prewarmed or rewritten during command admission. Each
-command instead receives an empty private Temp child. Every canonical root
-converges the same stable capability ACE set, while the command token activates
-only its authorized capabilities. This release advertises `sandboxRuntime:10`, so a
+command instead receives an empty private Temp child. Setup converges broad
+profile capabilities once; ordinary admission only verifies those roots and
+converges command-specific small roots additively. The command token activates
+only its authorized capabilities. This release advertises `sandboxRuntime:11`, so a
 linked CLI cannot silently reuse a daemon that predates this admission and recovery contract.
 Each loaded embedded native manifest also keeps its exact content-addressed
 protected-cache generation across later `npm link` rebuilds; another build
@@ -1314,7 +1315,7 @@ Agent, Skill, Extension-tool authority, workspace, tool-policy, or task-store
 changes require an explicit server restart. Managed
 A2A contexts default to `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/`.
 Exact Skill scripts require the opt-in isolated policy and a passing
-`kodax sandbox doctor`. On current native protocol 9 this isolated Skill Script
+`kodax sandbox doctor`. On current native protocol 10 this isolated Skill Script
 route is POSIX-only. Windows is unavailable because the route requires
 per-command `denyRead`, which the Windows `WRITE_RESTRICTED` backend rejects as
 `unsupported_policy`; `kodax sandbox setup` cannot enable it.

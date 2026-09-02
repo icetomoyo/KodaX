@@ -184,7 +184,7 @@ Release gates:
    alpha.5 client replaces an idle older daemon, refuses to kill a busy older
    daemon, does not downgrade a newer daemon, and does not mutate an unknown
    version.
-2. Native protocol/setup remain generation 9. Independent sessions overlap;
+2. Native protocol/setup are generation 10. Independent sessions overlap;
    cancellation, timeout, controller loss, and target/runner/host termination
    produce durable per-command Job-drain evidence without a global queue. Warm
    admission changes no shared Temp/AppData ACL: each command receives an empty
@@ -219,7 +219,7 @@ and normal global Git behavior.
 
 Release gates:
 
-1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:10`,
+1. Root/Worker/daemon capability metadata must advertise `sandboxRuntime:11`,
    `runtimeAutoModeGuardrail:5`, and `sharedSessionSettings:2`; an auto-starting
    alpha.4 client must safely replace an idle sandbox-v9-or-older, guardrail-v4, or shared-settings-v1 daemon,
    while attach-only clients fail closed.
@@ -232,7 +232,7 @@ Release gates:
 4. README/README_CN, PRD/HLD/DD/ADR-070, Issue 326, feature tracker/design, public
    configuration and SDK guides, config templates, changelog, test guide, and
    `kodax_manual` must describe the same sandbox-first route.
-5. Protocol 9/setup generation 9, the generation-8 one-time migration proof,
+5. Protocol 10/setup generation 10, the generation-8 one-time migration proof,
    protected two-phase synchronous setup with no admission-overlapping helper,
    the native sidecar/hash manifest, receipt
    convergence, bounded-idle broker release, and the real opt-in Windows

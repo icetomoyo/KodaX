@@ -110,10 +110,10 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
    preserve its account SID/group and filesystem nonce, and not wait for that
    command lifetime. In a separate damaged-identity fixture, confirm destructive
    repair still refuses to rotate a live SID.
-3. Confirm exactly one legacy removal runs at generation 8. Generation 9 first
+3. Confirm exactly one legacy removal runs at generation 8. Generation 10 first
    publishes a protected non-ready `installing` marker, synchronously converges
    setup capabilities, and atomically rewrites it as the ready setup generation
-   9/protocol 9 marker only after success.
+   10/protocol 10 marker only after success.
    A healthy generation-8 installation upgrades in place without replaying
    legacy removal, including while its sandbox SID is active. Protocol-8 and older
    markers must be retired without a fixed hard-timeout drain. The ambiguous

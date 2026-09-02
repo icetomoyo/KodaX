@@ -9,8 +9,8 @@ recreate the observed 60/75/240-second stalls.
 Use a disposable Windows sandbox account/workspace. Build the current native
 artifact first. The first current client must publish a missing content hash
 automatically; run `kodax sandbox setup` once only when the account/setup
-generation itself is absent or stale. Protocol 9/setup generation 9 and
-`sandboxRuntime:10` is required; do not test a protocol-9 TypeScript bundle
+generation itself is absent or stale. Protocol 10/setup generation 10 and
+`sandboxRuntime:11` is required; do not test a protocol-10 TypeScript bundle
 against an older native sidecar.
 
 ## Automated gates
@@ -28,7 +28,10 @@ npx vitest run tests/feature-295-windows-v2-policy.test.ts
 
 Expected:
 
-- native protocol is 9 and the setup marker is generation 9;
+- native protocol is 10 and the setup marker is generation 10;
+- `kodax sandbox doctor` runs one no-side-effect command with host fallback
+  disabled and reports ready only after target-start/exit proof; internal Runtime
+  readiness checks remain verify-only;
 - an idle older daemon is replaced, a busy older daemon is not force-killed,
   a newer daemon is not downgraded, and an unknown/non-SemVer owner is not
   mutated;
@@ -41,21 +44,22 @@ Expected:
 - pre-Resume cancellation terminates the exact host tree without the extra
   12-second terminal wait, while post-Resume termination still requires durable
   Job-drain evidence;
-- the generation-9 marker retains the existing valid random filesystem-capability
+- the generation-10 marker retains the existing valid random filesystem-capability
   nonce; generation 8 remains the one-time legacy ACL migration proof;
   setup first publishes a protected non-ready `installing` marker; one setup-only
   elevated parent receives an explicit base64 envelope, verifies that exact
   marker, and synchronously converges NUL compatibility plus profile top-level
-  read capabilities. The caller publishes ready only after success, no helper
-  overlaps ordinary admission, and the shared system Temp root is never an
-  ordinary-admission ACL target;
+  read capabilities. Ordinary admission only verifies those setup-owned broad
+  roots; 100 consecutive commands do not grow their DACL. The caller publishes
+  ready only after success, no helper overlaps ordinary admission, and the shared
+  system Temp root is never an ordinary-admission ACL target;
 - the native/unit suites have no global-ACL-mutex assertion or timeout;
 - two independent Runtime processes pass both cold cases on roots containing at
   least 24,000 entries: the exact same write root, and ancestor-read/child-write.
   The second starts and completes in less than 15 seconds while the first
   remains alive, and the first capability remains installed;
-- four same-policy commands succeed while three consecutive fixed proxy ports
-  are occupied;
+- 32 exact network authorities fit the configured 64-port range, without a
+  process-local capacity gate or unrelated idle-broker eviction;
 - an independent Runtime cannot exit with Node's unsettled-top-level-await code
   while its shared broker is starting or leased;
 - timeout/cancel returns only after Job-drain proof;
@@ -67,9 +71,8 @@ Expected:
   healthy fixed identity; old prepared requests fail before target start;
 - a short caller timeout does not poison another caller sharing the same broker,
   including when the patient caller starts only after the short caller returns;
-- five distinct active broker leases remain live while a sixth fails promptly
-  before target start, and idle brokers release fixed proxy ports after the
-  bounded reuse grace;
+- a sixth distinct active broker lease is admitted independently, while idle
+  brokers still release their own proxy ports after the bounded reuse grace;
 - setup can retire a pre-cutover immutable denyRead receipt without making
   ordinary admission scan or wait on that migration state;
 - foreground Bash and the public SDK release prepared requests after a
@@ -85,8 +88,7 @@ Expected:
   producing a path-not-found footer;
 - after controller loss, cleanup detaches the failed broker generation even
   while another lease remains live; the holder is not stopped and an immediate
-  same-authority command starts on a fresh generation without waiting; detached
-  processes remain counted against the five-broker live capacity until exit;
+  same-authority command starts on a fresh generation without waiting;
 - a broker spawn error followed by `close` but no `exit` does not consume live
   capacity, while an unconfirmed termination remains counted until its actual
   process closes;
@@ -134,7 +136,7 @@ Pass conditions:
   below system Temp, and no command rewrites the shared Temp/AppData DACL;
 - A reaches `done` at its requested time;
 - no output contains `ACL transaction mutex timed out`, `ACL authorization
-  deadline expired`, or `protocol 9 failed`;
+  deadline expired`, or `protocol 10 failed`;
 - no `model-filesystem-effects.*` file is created or consulted by the current
   processes.
 - a normal persistent capability grant never reports or waits on an `AclRoot`
@@ -156,13 +158,13 @@ Pass conditions:
 
 ## Setup/admission cutover
 
-1. Start a protocol-9 command and pause it after admission but before target
+1. Start a protocol-10 command and pause it after admission but before target
    `Started` using the test hook.
 2. Start setup. Marker replacement must wait because the host owns a
    non-delete-sharing marker handle.
 3. Release target start. Confirm the resume and started records become durable,
    then setup may replace the marker.
-4. Supply a protocol-9 request without marker path/digest. Native decode or
+4. Supply a protocol-10 request without marker path/digest. Native decode or
    validation must reject it before ACL mutation/target start.
 5. For a protocol-8-or-older migration fixture, create both the legacy cutover marker
    and an obsolete drain marker. Setup must remove both without a 301-second

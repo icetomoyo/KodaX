@@ -3679,11 +3679,11 @@ async function inspectSandboxReport(): Promise<{
   readonly guidance: readonly string[];
 }> {
   const {
-    doctorSandboxRuntime,
+    doctorSandboxExecution,
     sandboxRuntimeCapability,
     sandboxSetupGuidance,
   } = await loadSandboxRuntimeModule();
-  const doctor = await doctorSandboxRuntime({ refresh: true });
+  const doctor = await doctorSandboxExecution();
   return {
     ready: doctor.ready,
     platform: doctor.platform,

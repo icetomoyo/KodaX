@@ -3,7 +3,7 @@
 > Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.6`
-> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:10`,
+> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -233,7 +233,7 @@ compatibility SIDs. Real nested Node/cmd/PowerShell probes require the account
 SID, matching current Codex; Issue 309 records that an ambient-trustee child
 DACL can therefore bypass a later root capability. The token default DACL still
 excludes the account. Pre-alpha.4 exact sensitive-root denies are removed only
-by the generation-8 legacy migration proof. Setup generation 9 preserves a
+by the generation-8 legacy migration proof. Setup generation 10 preserves a
 healthy fixed account identity and upgrades generation 8 in place without
 replaying that destructive cleanup. Setup writes a protected non-ready
 `installing` marker, its elevated parent synchronously converges NUL compatibility
@@ -252,7 +252,7 @@ fail-closed and cannot authorize host replay. Linux and
 macOS prepare one
 ASRT bubblewrap or Seatbelt/`sandbox-exec` command per invocation and keep no
 KodaX workspace-session owner or filesystem-effect lease across its lifetime.
-Protocol 9 requires a marker path and SHA-256 on every request. The native host
+Protocol 10 requires a marker path and SHA-256 on every request. The native host
 holds that marker without delete sharing until its resume/started proof is
 durable. Warm ACL verification is read-only; effective inherited normal-token
 access is accepted, while a missing exact restricted capability uses
@@ -1160,7 +1160,7 @@ section 3 for per-command restricted token, private desktop, framed stdio, and
 creation-time Job containment. Different policies, Sessions, and Runtime
 processes do not share a command-lifetime filesystem-effect lease. The
 generation-8 migration proof records removal of exact obsolete KodaX
-sandbox-account read-deny ACEs. Setup generation 9/protocol 9 reuses a healthy
+sandbox-account read-deny ACEs. Setup generation 10/protocol 10 reuses a healthy
 fixed SID and filesystem nonce, upgrades generation 8 without replaying cleanup,
 and publishes a protected marker whose handle gates target start. Ordinary
 admission performs zero legacy cleanup or setup provisioning. The elevated
@@ -1188,7 +1188,7 @@ boundary keeps the process alive until Job-drain evidence is durable. Node treat
 an absent nonce-bound Resume record only after confirmed host-tree death as
 proof that the target never ran; once Resume exists, terminal Job-drain evidence
 remains mandatory.
-The public/daemon capability is `sandboxRuntime:10`; SemVer is also part of the
+The public/daemon capability is `sandboxRuntime:11`; SemVer is also part of the
 execution contract. An idle older daemon is replaced, a busy older daemon is
 rejected before sandbox execution, a newer daemon is never downgraded, and an
 unknown/non-SemVer owner is never mutated.

@@ -79,7 +79,7 @@ import {
   resolveRuntimeDaemonPathsFromConfigHome,
 } from "./runtime-daemon/state.js";
 import {
-  doctorSandboxRuntime,
+  doctorSandboxExecution,
   prepareSandboxRuntimeForSetup,
   sandboxRuntimeCapability,
   sandboxSetupGuidance,
@@ -1350,7 +1350,7 @@ function configureSandboxCommands(program: Command): void {
   sandbox
     .command("doctor")
     .action(async () => {
-      const doctor = await doctorSandboxRuntime({ refresh: true });
+      const doctor = await doctorSandboxExecution();
       json({
         ...doctor,
         capability: sandboxRuntimeCapability(),
@@ -1361,13 +1361,13 @@ function configureSandboxCommands(program: Command): void {
     .command("setup")
     .description("Activate or diagnose the platform ASRT backend (Windows may show UAC)")
     .action(async () => {
-      const doctor = await doctorSandboxRuntime({ refresh: true });
+      const doctor = await doctorSandboxExecution();
       if (doctor.platform === "win32" && !doctor.ready) {
         stderr(
           "KodaX sandbox setup will request one-time UAC approval; the terminal itself does not need Administrator mode.",
         );
       }
-      json(await prepareSandboxRuntimeForSetup());
+      json(await prepareSandboxRuntimeForSetup({ initialDoctor: doctor }));
     });
 }
 

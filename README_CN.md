@@ -303,7 +303,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 无法把 restricting SID 用于读权限；该字段继续保留跨平台 API 兼容。Bash、可信文本、worktree、
 Session 与 Runtime 进程之间不再共享命令生命周期或机器级 filesystem coordinator。
 每条 native 命令拥有独立 request、token、控制通道和 Job；相同网络权威使用有界
-broker pool，但不串行命令生命周期。protocol 9/setup generation 9 会把受保护 setup
+broker pool，但不串行命令生命周期。protocol 10/setup generation 10 会把受保护 setup
 marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康的固定沙箱账户与 SID，
 已有 generation 8 安装会原地升级且不会重放 legacy ACL 清理；generation 8 继续仅作为
 一次性 legacy 迁移的证明边界。setup 先发布受保护且不可执行的 `installing` marker；高权限
@@ -312,8 +312,9 @@ marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康�
 每条命令会在系统临时目录下获得一个空的私有 Temp 子目录，`TEMP`/`TMP`/`TMPDIR` 均指向它；
 每个 canonical root 收敛相同的稳定 capability ACE 集合，由命令 token 只激活本次授权能力，
 且不会降级其他命令已有授权。
-该路径不增加锁、ACL 清场或命令生命周期协调。本版本广告
-`sandboxRuntime:10`，因此 npm link 后的新 CLI 不会静默复用缺少本次准入与自愈契约的旧 daemon。
+setup 一次性收敛宽泛 profile 根权限，普通命令只验证这些 setup-owned 根，并仅对命令特有的
+小根做幂等增量授权。该路径不增加锁、ACL 清场或命令生命周期协调。本版本广告
+`sandboxRuntime:11`，因此 npm link 后的新 CLI 不会静默复用缺少本次准入与自愈契约的旧 daemon。
 已加载的 embedded native manifest 还会持续使用其精确内容哈希对应的受保护缓存代际；后续
 `npm link` 重建不能让长生命周期进程切换到不匹配的 native 证据格式。无法可靠降低的嵌套
 shell 内容保留为 opaque 完整 argv，由精确 Exec Policy 与正常 Edits/Auto[LLM] 宿主边界处理，
@@ -1217,7 +1218,7 @@ A2A 配置迁移与历史任务 owner 迁移是两件事。如果升级 realm-aw
 
 托管 A2A 上下文默认位于 `~/kodax_a2a_server_workspace/<runtime-profile>/contexts/`。
 精确授权的 Skill 脚本必须使用隔离策略，并通过 `kodax sandbox doctor`。
-当前 native protocol 9 下，该隔离 Skill Script 路径仅支持 POSIX；Windows 不可用，
+当前 native protocol 10 下，该隔离 Skill Script 路径仅支持 POSIX；Windows 不可用，
 因为它必须使用每命令 `denyRead`，而 Windows `WRITE_RESTRICTED` 后端会以
 `unsupported_policy` 拒绝该策略；`kodax sandbox setup` 不能启用此路径。
 

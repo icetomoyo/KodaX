@@ -4,7 +4,7 @@
 >
 > **v0.7.96-alpha.6 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
-> protocol 9/setup generation 9 uses a required protected marker start gate,
+> protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with
 > effective-access checks and DACL readback, setup-only provisioning/full recovery, reusable
 > exact-authority brokers, and independent request/token/pipe/Job lifecycles.
@@ -6007,11 +6007,11 @@ ownership.
 Legacy sensitive-root ACL removal is a versioned setup operation, never a
 normal command-admission operation. Setup generation 8 is the durable proof for
 that one-time cleanup: it removes only provably owned legacy guards against the
-exact installed group SID after proving that SID idle. Setup generation 9
+exact installed group SID after proving that SID idle. Setup generation 10
 upgrades a healthy generation-8 account in place, preserving its SID/group and
 filesystem nonce without replaying cleanup even when that SID is active. Only a
 missing, damaged, or identity-mismatched account rotates. Protocol-7 binaries
-never read the protected marker; protocol 9 and `sandboxRuntime:10` fence old
+never read the protected marker; protocol 10 and `sandboxRuntime:11` fence old
 native and daemon actors. An older setup path can still downgrade state, so
 operators must rerun current setup after using an older KodaX.
 
@@ -6056,7 +6056,7 @@ critical safeguard. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
-On Windows, upgrading from any pre-8 setup generation or pre-9 native protocol
+On Windows, upgrading from any pre-8 setup generation or pre-10 native protocol
 requires one explicit `kodax sandbox setup`. A healthy fixed account is updated in place even while
 an existing sandbox process uses that SID; destructive account repair still
 requires the old SID to be idle. Normal commands never wait on the setup lock
@@ -6115,7 +6115,7 @@ lock.
    policy-capability deny ACE cannot enforce this contract. The API field stays
    for cross-platform compatibility. Explicit setup alone may read and retire
    pre-cutover receipts/ACEs as a one-time migration.
-4. Native protocol 9 requires a protected setup-marker path, random generation
+4. Native protocol 10 requires a protected setup-marker path, random generation
    nonce, and SHA-256. The
    host opens it without delete sharing and retains the handle until its
    nonce-bound `Started` record is durable. Setup invalidation therefore waits
@@ -6171,7 +6171,7 @@ named mutex. Remaining concrete ordering is the same
 trusted text namespace slot, the same exact worktree path inside one process,
 or Git's own repository locks. A setup-version upgrade reuses the healthy
 fixed identity and must not recursively propagate redundant profile ACLs.
-Protocol 9 is intentionally incompatible with protocol 8 and older actors so a
+Protocol 10 is intentionally incompatible with protocol 9 and older actors so a
 pre-correction Runtime cannot silently re-enter the removed ACL-mutex path.
 
 **Rejected alternatives**: a serial shell queue or “disable concurrency”

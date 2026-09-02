@@ -5,7 +5,7 @@
 > Current implementation baseline: `@kodax-ai/kodax@0.7.96-alpha.6`
 > (`v0.7.96-alpha.6` is the latest Git tag / GitHub pre-release;
 > npm publication remains manual)
-> This baseline advertises Windows `sandboxRuntime:10`;
+> This baseline advertises Windows `sandboxRuntime:11`;
 > `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
 >
 > This document describes the current product. Historical pre-v0.7.43
@@ -212,7 +212,7 @@ restricted capability is converged using `SET_ACCESS` and DACL readback,
 without a cross-process target mutex. Each command retains
 an independent token, pipe, Job, and terminal proof. Shared network brokers are
 kept referenced while starting or leased and detached only while idle. The
-setup generation 9 / protocol 9 transition reuses a healthy fixed sandbox
+setup generation 10 / protocol 10 transition reuses a healthy fixed sandbox
 account across setup versions, upgrades generation 8 without replaying its
 completed legacy ACL cleanup, and gates every new target start with an open
 handle to the protected generation marker. Setup publishes a protected

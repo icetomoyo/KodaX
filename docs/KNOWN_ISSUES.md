@@ -14,23 +14,24 @@ pre-release. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a
-cross-process filesystem-effect coordinator. Protocol 9/setup generation 9
-keeps one stable read/write/deny capability ACE set on each canonical root and
-uses each command token to select authority. Missing ACEs converge additively
-with `SET_ACCESS`/DACL readback without a cross-process target mutex; setup uses
+cross-process filesystem-effect coordinator. Protocol 10/setup generation 10
+keeps stable read/write/deny capabilities and uses each command token to select
+authority. Setup owns broad profile-root convergence; ordinary admission verifies
+those roots read-only, while command-specific small roots converge additively
+with `SET_ACCESS`/DACL readback without a cross-process target mutex. Setup uses
 a protected non-ready `installing` marker and synchronously converges NUL
 compatibility plus profile read capabilities before publishing ready. No helper
 overlaps ordinary admission. Generation 8 remains only the completed
 legacy ACL migration proof. Windows
 per-command `denyRead` now fails closed as `unsupported_policy` before setup,
 DACL mutation, or target start because `WRITE_RESTRICTED` cannot enforce its
-restricting SID for reads. Protocol 9 also requires a
+restricting SID for reads. Protocol 10 also requires a
 hash-bound marker held through target `Started`, retires failed broker
 readiness, keeps active brokers referenced, retires legacy drain markers without waiting,
 retires pre-cutover deny receipts only during explicit setup, and
 reads legacy receipts with read/delete sharing so one scan cannot block
 exact cleanup. A caller-local deadline before broker acquisition does not retire
-a healthy shared startup, active-pool saturation fails before start without lifecycle waiting,
+a healthy shared startup, and OS port binding arbitrates distinct broker authorities,
 prepared Bash/SDK requests are released on synchronous spawn failure, and an
 uncertain Git Job-binding cleanup retains managed-child recovery. This removes
 the Bash/write/worktree command-lifetime fence. Generation 8 keeps a persistent

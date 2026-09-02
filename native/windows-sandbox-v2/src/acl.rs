@@ -1483,6 +1483,8 @@ fn canonicalize_policy_paths(values: &[String]) -> Result<Vec<String>> {
 fn canonical_policy_request(request: &RunRequest) -> Result<RunRequest> {
     let mut canonical = request.clone();
     canonical.allow_read = canonicalize_policy_paths(&request.allow_read)?;
+    canonical.preinstalled_read_roots =
+        canonicalize_policy_paths(&request.preinstalled_read_roots)?;
     canonical.allow_write = canonicalize_policy_paths(&request.allow_write)?;
     canonical.deny_read = canonicalize_policy_paths(&request.deny_read)?;
     canonical.deny_write = canonicalize_policy_paths(&request.deny_write)?;
@@ -1888,30 +1890,59 @@ pub fn ensure_policy_aces_until(
     validate_explicit_allows_do_not_override_inherited_denies(&canonical_request)?;
     let host = current_token()?;
     let host_sid = token_user_sid(host.raw())?;
-    let operations = policy_operations(&canonical_request, runner_directory, &host_sid);
-    // Capability ACEs are append-only for one installed sandbox account. Once
-    // the exact canonical set is present, admission is read-only and must not
-    // queue behind an unrelated machine-wide ACL mutation.
     let capability_generation = filesystem_capability_generation(&canonical_request);
-    if let Some(mut capability_sids) = satisfied_policy_capability_sids(
-        operations,
-        &capability_generation,
-        &canonical_request.sandbox_user_sid,
-    )? {
-        capability_sids
-            .retain(|sid| !sid.eq_ignore_ascii_case(&canonical_request.policy_capability_sid));
-        return Ok(capability_sids);
+    let setup_owned_roots = canonical_request
+        .preinstalled_read_roots
+        .iter()
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        setup_owned_roots.iter().all(|path| canonical_request
+            .allow_read
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(path))),
+        "Windows sandbox preinstalledReadRoots must also be allowRead roots",
+    );
+    let (setup_owned_operations, mutable_operations): (Vec<_>, Vec<_>) =
+        policy_operations(&canonical_request, runner_directory, &host_sid)
+            .into_iter()
+            .partition(|operation| {
+                setup_owned_roots.contains(&operation.path.to_string_lossy().to_ascii_lowercase())
+            });
+    let mut capability_sids = BTreeSet::new();
+
+    if !setup_owned_operations.is_empty() {
+        let installed = satisfied_policy_capability_sids(
+            setup_owned_operations,
+            &capability_generation,
+            &canonical_request.sandbox_user_sid,
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "[windows_v2_setup_required] A setup-owned Windows sandbox read capability is missing; run \"kodax sandbox setup\""
+            )
+        })?;
+        capability_sids.extend(installed);
     }
-    // Persistent filesystem capabilities belong to the installed sandbox
-    // account. Missing ACEs converge through additive, read-back-verified
-    // updates. Ordinary admission never waits on a machine-global mutex:
-    // concurrent updates either observe the new ACEs or retry their exact set.
-    let mut capability_sids = apply_operations(
-        policy_operations(&canonical_request, runner_directory, &host_sid),
-        &capability_generation,
-        &canonical_request.sandbox_user_sid,
-        operation_deadline_unix_ms,
-    )?;
+
+    if !mutable_operations.is_empty() {
+        let mutable_capability_sids = match satisfied_policy_capability_sids(
+            mutable_operations.clone(),
+            &capability_generation,
+            &canonical_request.sandbox_user_sid,
+        )? {
+            Some(sids) => sids,
+            None => apply_operations(
+                mutable_operations,
+                &capability_generation,
+                &canonical_request.sandbox_user_sid,
+                operation_deadline_unix_ms,
+            )?,
+        };
+        capability_sids.extend(mutable_capability_sids);
+    }
+
+    let mut capability_sids = capability_sids.into_iter().collect::<Vec<_>>();
     capability_sids
         .retain(|sid| !sid.eq_ignore_ascii_case(&canonical_request.policy_capability_sid));
     Ok(capability_sids)
@@ -2036,6 +2067,7 @@ mod tests {
             policy_fingerprint: fingerprint.clone(),
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             allow_read: vec![root.to_string_lossy().into_owned()],
+            preinstalled_read_roots: vec![],
             allow_write: vec![root.to_string_lossy().into_owned()],
             deny_read: vec![],
             deny_write: vec![root.to_string_lossy().into_owned()],
@@ -2506,6 +2538,43 @@ mod tests {
         );
         fs::remove_dir(readable).unwrap();
         fs::remove_dir(writable).unwrap();
+    }
+
+    #[test]
+    fn setup_owned_read_root_is_verify_only_during_admission() {
+        let root = temporary_directory("setup-owned-read-root");
+        let root_text = root.to_string_lossy().into_owned();
+        let mut request = request(&root);
+        request.allow_read = vec![root_text.clone()];
+        request.preinstalled_read_roots = vec![root_text.clone()];
+        request.allow_write.clear();
+        request.deny_read.clear();
+        request.deny_write.clear();
+
+        let before = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+        let missing = ensure_policy_aces(&request, &root);
+        let after_missing = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+        if missing.is_err() && before == after_missing {
+            ensure_setup_acl_roots(
+                &request.allow_read,
+                &[],
+                &request.sandbox_group_sid,
+                &request.filesystem_capability_nonce,
+            )
+            .unwrap();
+            let installed = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+            for _ in 0..100 {
+                let capabilities = ensure_policy_aces(&request, &root).unwrap();
+                assert_eq!(capabilities.len(), 2);
+            }
+            let after_admission = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+            assert_eq!(after_admission, installed);
+        }
+        fs::remove_dir_all(&root).unwrap();
+
+        let diagnostic = format!("{:#}", missing.unwrap_err());
+        assert!(diagnostic.contains("[windows_v2_setup_required]"));
+        assert_eq!(after_missing, before);
     }
 
     #[test]

@@ -8,11 +8,32 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Current native protocol 10 keeps isolated Skill Script execution POSIX-only
+  on Windows because per-command denyRead remains unsupported.
+- Moved broad Windows profile-root ACL convergence fully into versioned setup.
+  Protocol/setup generation 10 marks those roots as setup-owned; ordinary
+  admission only verifies their stable capability ACEs and returns a typed
+  setup-required error when one is missing. Command-specific small roots retain
+  additive convergence. This removes recursive `AppData` DACL propagation from
+  target start without adding a lock, queue, per-root timeout, or command retry.
+- Expanded the existing ASRT Windows proxy range to 64 ports and removed KodaX's
+  process-local broker-capacity/idle-eviction gate. Up to 32 exact network
+  authorities now rely on OS bind arbitration across Runtime processes; broker
+  pooling, reference ownership, and bounded idle cleanup remain unchanged.
+- Made explicit CLI and public SDK sandbox doctor execute one no-side-effect
+  identity probe with host fallback disabled. `ready: true` now proves a real
+  target start and successful exit, while internal startup/admission readiness
+  remains verify-only. The explicit probe can republish a missing exact-hash
+  native cache object from its pinned packaged bytes, but never runs setup or
+  repairs ACL policy. Native request diagnostics retain protocol, setup/broker
+  generation, artifact hashes, failure phase, and final sandbox failure evidence.
 - Kept unlowerable nested shell commands opaque, matching Codex's host-policy
   boundary. Recognized `cmd` and PowerShell forms are still recursively checked,
   explicit outer/interpreter rules still apply, and concrete critical effects
-  remain fail-closed; parser uncertainty now reaches the normal Edits or
-  Auto[LLM] decision instead of becoming a synthetic non-overridable forbid.
+  remain fail-closed. Command complexity never changes sandbox selection: these
+  calls remain sandbox-first, and parser uncertainty is considered by Edits or
+  Auto[LLM] only after a genuine sandbox pre-start failure reaches the host
+  boundary instead of becoming a synthetic non-overridable forbid.
 - Pinned every loaded embedded Windows native manifest to its exact immutable
   protected-cache generation. A long-lived npm-linked CLI or SDK process now
   reuses the already verified executable for its embedded hash before consulting
@@ -27,10 +48,10 @@ All notable changes to this project will be documented in this file.
   under concurrent packaged Electron smoke without adding a lock, queue, or
   command replay.
 - Removed the two remaining Codex-alignment gaps that could make Bash unusable.
-  Every canonical Windows root now converges the same stable read/write/deny
-  capability ACE set, while each command token activates only its authorized
-  capabilities. Admission accepts already-effective grants before mutation and
-  never downgrades or clears a capability installed for another command. Windows
+  Windows roots use stable read/write/deny capability ACEs, while each command
+  token activates only its authorized capabilities. Setup owns broad profile
+  grants; admission accepts already-effective setup grants read-only and never
+  downgrades or clears a capability installed for another command. Windows
   shell `%TEMP%`/`%TMP%`/`%TMPDIR%` now point to one empty private directory per
   command under the system temporary directory, so ordinary admission never
   recursively rewrites the shared system Temp/AppData tree. No lock, queue, or
@@ -40,7 +61,7 @@ All notable changes to this project will be documented in this file.
   cleanup-proven pre-start sandbox failure can therefore reach the existing
   Auto[LLM]/Exec Policy decision instead of stopping at the misleading
   "requires a new permission decision" message.
-- Advanced the Windows SDK/daemon sandbox contract to `sandboxRuntime:10`.
+- Advanced the Windows SDK/daemon sandbox contract to `sandboxRuntime:11`.
   An idle same-version daemon from an earlier npm-link build is now replaced
   through the existing authenticated upgrade path instead of silently reusing
   its older admission behavior; busy daemons remain fail-closed and untouched.

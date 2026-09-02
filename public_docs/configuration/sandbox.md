@@ -8,11 +8,14 @@ backends directly.
 ## Activate the sandbox
 
 ```bash
-kodax sandbox doctor    # Check readiness
+kodax sandbox doctor    # Prove target start and check readiness
 kodax sandbox setup     # Activate
 ```
 
 `kodax setup` and first-run setup also check sandbox readiness once.
+The explicit sandbox doctor may republish a missing protected-cache executable
+from the exact hash pinned in the running package. It does not run setup, open
+UAC, or repair ACL policy; those remain exclusive to `kodax sandbox setup`.
 
 Trusted text tools have a separate native diagnostic because they do not use
 the shell sandbox. Run `kodax doctor --native-text` to explicitly load and
@@ -190,17 +193,17 @@ from the Node event loop only while idle. A readiness, target-start, or
 terminal-proof failure, or trusted terminal proof of runner/controller loss,
 immediately detaches that broker generation from reuse;
 existing holders are not stopped, and a later caller uses a new generation.
-Detached processes remain in fixed-port capacity accounting until `close`.
 Each startup/control phase has a 15-second bound without replacing the command
 deadline. A caller-local timeout releases only its own reference and does not
 cancel a healthy shared startup; a sequential caller may still join it. If
-all five distinct broker slots are actively leased, a sixth policy fails before
-target start rather than waiting for another command lifecycle. Different
-network policies never share that authority. ASRT
-0.0.65 still consumes two fixed-range ports for each distinct broker and has no
-authenticated connection identity for routing unlike policies through one
-ingress. Issue 308 tracks this capacity difference from Codex; KodaX does not
-widen a policy or serialize shell lifetimes to conceal it.
+an OS bind fails, that broker returns a structured startup error rather than
+waiting for another command lifecycle. Different network policies never share
+that authority. ASRT 0.0.65 consumes two ports for each distinct broker and has
+no authenticated connection identity for routing unlike policies through one
+ingress. KodaX supplies a 64-port range for up to 32 exact authorities and lets
+the OS arbitrate binds across Runtime processes; it does not add a process-local
+capacity gate, evict another idle authority, widen a policy, or serialize shell
+lifetimes.
 The broker also owns a verified native liveness controller. Its named pipe is
 created with a protected Host/SYSTEM-only DACL, rejects remote clients, and
 keeps multiple pending instances for concurrent host launches. Restricted
@@ -209,7 +212,7 @@ closes the affected controller handles and drains their Jobs. A broker-attribute
 command failure only detaches that generation from future reuse; it does not close
 unrelated active holders.
 This authority split and its private-Temp/recovery contract are advertised as
-`sandboxRuntime:10`; auto-started clients
+`sandboxRuntime:11`; auto-started clients
 replace an idle older daemon and fail closed instead of joining a busy one.
 Each loaded embedded Windows native manifest first resolves the exact verified
 protected-cache executable for its content hash. Only a missing exact generation
@@ -217,12 +220,12 @@ consults mutable package or npm-link source and publishes atomically. This keeps
 overlapping old/new processes on their own native evidence schemas without a
 shell lock, queue, or command retry.
 Upgrading an existing Windows installation requires one `kodax sandbox setup`
-cutover. Setup generation 9 upgrades generation 8 in place, reuses a healthy
-fixed account SID/group and filesystem nonce, and records protocol 9 in
+cutover. Setup generation 10 upgrades generation 8 in place, reuses a healthy
+fixed account SID/group and filesystem nonce, and records protocol 10 in
 protected machine state without replaying completed legacy ACL cleanup.
 Generation 8 remains the proof boundary for that one-time migration. Only
 missing or damaged account identity rotates.
-Every protocol-9 request includes
+Every protocol-10 request includes
 the marker path/digest; the native host holds the marker without delete sharing
 through durable target `Started`, so setup and command start cannot cross.
 Doctor and native shell admission remain

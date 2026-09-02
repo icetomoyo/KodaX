@@ -81,6 +81,7 @@ import {
   createWindowsSandboxV2RunRequest,
   encodeWindowsSandboxV2Bootstrap,
   encodeWindowsSandboxV2ControlFrame,
+  KODAX_WINDOWS_PROXY_PORT_RANGE,
   resolveWindowsSandboxV2Executable,
   splitAsrtWindowsInvocation,
   WINDOWS_SANDBOX_V2_PROTOCOL,
@@ -119,7 +120,6 @@ function rejectWindowsLegacyAsrtFilesystemBackend(): void {
 // behind that module boundary while preserving ordinary static bindings once
 // the sandbox runtime itself is initialized.
 const {
-  DEFAULT_WINDOWS_PROXY_PORT_RANGE,
   SandboxManager,
   getSrtWinPath,
   getWindowsSandboxUserStatus,
@@ -405,7 +405,7 @@ export interface SandboxSetupOutcome {
 }
 
 export interface KodaXSandboxCapability {
-  readonly version: 10;
+  readonly version: 11;
   readonly asrtVersion: string;
   readonly platform: NodeJS.Platform;
   readonly backend: 'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
@@ -438,7 +438,7 @@ export function sandboxRuntimeCapability(): KodaXSandboxCapability {
         ? 'linux-bubblewrap'
         : 'unsupported';
   return {
-    version: 10,
+    version: 11,
     asrtVersion: KODAX_ASRT_VERSION,
     platform: process.platform,
     backend,
@@ -463,16 +463,6 @@ const WINDOWS_V2_LAUNCH_TIMEOUT_MS = 30_000;
 const WINDOWS_V2_LAUNCH_PHASE_TIMEOUT_MS = 15_000;
 const windowsNetworkBrokers = new Map<string, WindowsNetworkBrokerState>();
 const windowsNetworkBrokerLiveStates = new Set<WindowsNetworkBrokerState>();
-const WINDOWS_NETWORK_PORTS_PER_BROKER = 2;
-const [WINDOWS_NETWORK_PROXY_PORT_LOW, WINDOWS_NETWORK_PROXY_PORT_HIGH]
-  = DEFAULT_WINDOWS_PROXY_PORT_RANGE;
-const WINDOWS_NETWORK_BROKER_CAPACITY = Math.max(
-  1,
-  Math.floor(
-    (WINDOWS_NETWORK_PROXY_PORT_HIGH - WINDOWS_NETWORK_PROXY_PORT_LOW + 1)
-      / WINDOWS_NETWORK_PORTS_PER_BROKER,
-  ),
-);
 const WINDOWS_NETWORK_BROKER_IDLE_GRACE_MS = 1_000;
 let windowsNetworkBrokerUseSequence = 0;
 
@@ -1129,8 +1119,8 @@ function windowsSandboxV2SetupLockFile(): string {
 
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
-const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 4_096;
-const WINDOWS_SANDBOX_V2_SETUP_VERSION = 9 as const;
+const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 1024 * 1024;
+const WINDOWS_SANDBOX_V2_SETUP_VERSION = 10 as const;
 const WINDOWS_LEGACY_ACL_MIGRATION_VERSION = 8 as const;
 
 interface WindowsSandboxV2CutoverMarker {
@@ -1141,6 +1131,7 @@ interface WindowsSandboxV2CutoverMarker {
   readonly hostUserSid: string;
   readonly sandboxUserSid: string;
   readonly sandboxGroupSid: string;
+  readonly setupReadRoots: readonly string[];
 }
 
 interface WindowsSandboxV2InstallingMarker extends WindowsSandboxV2CutoverMarker {
@@ -1214,7 +1205,7 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
   const marker = parsed as Readonly<Record<string, unknown>>;
   const keys = Object.keys(marker).sort();
   if (
-    keys.join(',') !== 'filesystemCapabilityNonce,generationNonce,hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,version'
+    keys.join(',') !== 'filesystemCapabilityNonce,generationNonce,hostUserSid,protocol,sandboxGroupSid,sandboxUserSid,setupReadRoots,version'
     || marker.version !== WINDOWS_SANDBOX_V2_SETUP_VERSION
     || marker.protocol !== WINDOWS_SANDBOX_V2_PROTOCOL
     || typeof marker.generationNonce !== 'string'
@@ -1224,6 +1215,14 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
     || typeof marker.hostUserSid !== 'string'
     || typeof marker.sandboxUserSid !== 'string'
     || typeof marker.sandboxGroupSid !== 'string'
+    || !Array.isArray(marker.setupReadRoots)
+    || marker.setupReadRoots.length > 1_024
+    || !marker.setupReadRoots.every((root: unknown) => (
+      typeof root === 'string'
+      && path.isAbsolute(root)
+      && !root.includes('\0')
+      && root.length <= 32_767
+    ))
     || !/^S-\d+(?:-\d+)+$/i.test(marker.hostUserSid)
     || !/^S-\d+(?:-\d+)+$/i.test(marker.sandboxUserSid)
     || !/^S-\d+(?:-\d+)+$/i.test(marker.sandboxGroupSid)
@@ -1238,6 +1237,7 @@ function parseWindowsSandboxV2CutoverMarker(text: string): WindowsSandboxV2Cutov
     hostUserSid: marker.hostUserSid,
     sandboxUserSid: marker.sandboxUserSid,
     sandboxGroupSid: marker.sandboxGroupSid,
+    setupReadRoots: marker.setupReadRoots as readonly string[],
   };
 }
 
@@ -1942,7 +1942,7 @@ async function bindWindowsWfpProbe(): Promise<{
   readonly server: ReturnType<typeof createServer>;
   readonly target: string;
 }> {
-  const [low, high] = DEFAULT_WINDOWS_PROXY_PORT_RANGE;
+  const [low, high] = KODAX_WINDOWS_PROXY_PORT_RANGE;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const server = createServer();
     server.listen(0, '127.0.0.1');
@@ -2392,7 +2392,7 @@ function installWindowsV2AccountCapabilities(
       setupMarkerSha256: createHash('sha256')
         .update(JSON.stringify(marker), 'utf8')
         .digest('hex'),
-      readRoots: windowsSandboxSetupReadRoots(),
+      readRoots: marker.setupReadRoots,
       writeRoots: [],
     },
   );
@@ -2423,8 +2423,7 @@ function verifyWindowsV2AccountCompatibility(
 
 async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDoctorResult> {
   const initial = await doctorSandboxRuntime({ refresh: true });
-  if (initial.ready) return initial;
-  if (!initial.setupRequired) return initial;
+  if (!initial.ready && !initial.setupRequired) return initial;
   // Migration state lives in the protected native cache. Provision that cache
   // before publishing a legacy drain marker; a normal mkdir would inherit a
   // weaker parent DACL and make later artifact verification fail closed.
@@ -2509,7 +2508,11 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       }
       migrateWindowsLegacyAclGuardsForSetup(oldUser.sid!, oldUser.groupSid!);
     }
-    const result = installWindowsSandbox({ srtWin: runner.srtWin });
+    const result = installWindowsSandbox({
+      srtWin: runner.srtWin,
+      proxyPortRange: KODAX_WINDOWS_PROXY_PORT_RANGE,
+      force: true,
+    });
     if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
     const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
     if (installedUser.sid === undefined || installedUser.groupSid === undefined) {
@@ -2530,6 +2533,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
       hostUserSid: windowsSandboxV2HostUserSid(),
       sandboxUserSid: installedUser.sid,
       sandboxGroupSid: installedUser.groupSid,
+      setupReadRoots: windowsSandboxSetupReadRoots(),
     };
     const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
     installWindowsV2AccountCapabilities(
@@ -2564,7 +2568,11 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     if (uninstalled.cancelled) throw new Error('Sandbox account rotation was cancelled.');
   }
 
-  const result = installWindowsSandbox({ srtWin: runner.srtWin });
+  const result = installWindowsSandbox({
+    srtWin: runner.srtWin,
+    proxyPortRange: KODAX_WINDOWS_PROXY_PORT_RANGE,
+    force: true,
+  });
   if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
   const installedUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   const installedDiagnostics = windowsSandboxAccountDiagnostics(installedUser);
@@ -2586,6 +2594,7 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     hostUserSid: windowsSandboxV2HostUserSid(),
     sandboxUserSid: installedUser.sid,
     sandboxGroupSid: installedUser.groupSid,
+    setupReadRoots: windowsSandboxSetupReadRoots(),
   };
   const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
   installWindowsV2AccountCapabilities(
@@ -2653,9 +2662,12 @@ export function sandboxSetupGuidance(
  * invokes a macOS/Linux package manager or silently widens execution.
  */
 export async function prepareSandboxRuntimeForSetup(
-  options: { readonly allowElevation?: boolean } = {},
+  options: {
+    readonly allowElevation?: boolean;
+    readonly initialDoctor?: SandboxRuntimeDoctorResult;
+  } = {},
 ): Promise<SandboxSetupOutcome> {
-  const initial = await doctorSandboxRuntime({ refresh: true });
+  const initial = options.initialDoctor ?? await doctorSandboxRuntime({ refresh: true });
   if (initial.ready) {
     return {
       status: 'ready',
@@ -4167,6 +4179,15 @@ async function removeWorkspaceShellTempDirectory(tempDirectory: string): Promise
   });
 }
 
+function windowsSandboxPreinstalledReadRoots(
+  allowRead: readonly string[],
+  setupRoots: readonly string[],
+): string[] {
+  return allowRead.filter((candidate) => (
+    setupRoots.some((root) => sameWindowsPath(root, candidate))
+  ));
+}
+
 function workspaceShellTempWriteRoots(shellTempDirectory?: string): string[] {
   return process.platform === 'win32'
     ? shellTempDirectory === undefined ? [] : [shellTempDirectory]
@@ -4773,6 +4794,16 @@ async function runWindowsV2Sandboxed(
     return collected;
   } catch (error: unknown) {
     executionFailure = error;
+    emitKodaXDiagnostic({
+      source: 'sandbox:windows-v2',
+      level: 'warn',
+      message: 'Windows native sandbox command failed.',
+      detail: {
+        phase: cleanupExecution === 'not_started' ? 'target-start' : 'target-execution',
+        protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+        error,
+      },
+    });
     if (child !== undefined && prepared.processControl !== undefined) {
       try {
         await prepared.processControl.terminate(child);
@@ -5008,6 +5039,63 @@ export async function runKodaXSandboxed(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+/** Explicit diagnostic probe. Ordinary startup and command admission use the verify-only doctor. */
+export async function doctorSandboxExecution(
+  _options: { readonly refresh?: boolean } = {},
+): Promise<SandboxRuntimeDoctorResult> {
+  const doctor = await doctorSandboxRuntime({ refresh: true });
+  if (!doctor.ready && process.platform !== 'win32') return doctor;
+  const cwd = process.cwd();
+  const command = workspaceShellExecutable();
+  const args = process.platform === 'win32'
+    ? ['/d', '/s', '/c', 'whoami']
+    : ['-c', 'id -u'];
+  const config = workspaceShellCommandSandboxConfig(
+    cwd,
+    undefined,
+    undefined,
+    undefined,
+    workspaceShellRuntimeReadScopes(process.env, command),
+  );
+  try {
+    const result = await runKodaXSandboxed({
+      command,
+      args,
+      cwd,
+      filesystem: {
+        allowRead: config.filesystem.allowRead,
+        allowWrite: [],
+        denyRead: config.filesystem.denyRead,
+        denyWrite: [],
+      },
+      network: { mode: 'deny' },
+      timeoutMs: WINDOWS_V2_LAUNCH_TIMEOUT_MS,
+      maxOutputBytes: 64 * 1024,
+    });
+    if (result.status === 'completed' && result.exitCode === 0) {
+      return doctorSandboxRuntime({ refresh: true });
+    }
+    const resultDoctor = result.status === 'completed' ? doctor : result.doctor;
+    const diagnostic = result.status === 'completed'
+      ? `Sandbox identity probe exited with code ${String(result.exitCode)}.`
+      : result.diagnostic
+        ?? (result.doctor.diagnostics.join(' ') || 'Sandbox target start was not proven.');
+    return {
+      ...resultDoctor,
+      ready: false,
+      setupRequired: true,
+      diagnostics: [...resultDoctor.diagnostics, `Sandbox launch probe failed: ${diagnostic}`],
+    };
+  } catch (error: unknown) {
+    return {
+      ...doctor,
+      ready: false,
+      setupRequired: true,
+      diagnostics: [...doctor.diagnostics, `Sandbox launch probe failed: ${errorText(error)}`],
+    };
+  }
 }
 
 function sandboxRunnerPreparationTimeoutError(): Error {
@@ -5430,36 +5518,6 @@ async function releaseWindowsNetworkBrokerState(
   state.idleTimer.unref();
 }
 
-async function evictIdleWindowsNetworkBroker(
-  signal?: AbortSignal,
-  deadlineAt?: number,
-): Promise<void> {
-  if (windowsNetworkBrokerLiveStates.size < WINDOWS_NETWORK_BROKER_CAPACITY) return;
-  const idle = [...windowsNetworkBrokerLiveStates]
-    .filter((state) => state.references === 0 && state.stopping === undefined)
-    .sort((left, right) => left.lastUsed - right.lastUsed)[0];
-  if (idle === undefined) {
-    const stopping = [...windowsNetworkBrokerLiveStates]
-      .flatMap((state) => state.stopping === undefined ? [] : [state.stopping]);
-    if (stopping.length > 0) {
-      await waitForSandboxRunnerPreparation(
-        Promise.race(stopping),
-        signal,
-        deadlineAt,
-      );
-      return;
-    }
-    throw new Error(
-      'Windows network broker capacity is fully active; no command was started.',
-    );
-  }
-  await waitForSandboxRunnerPreparation(
-    stopSharedWindowsNetworkBroker(idle),
-    signal,
-    deadlineAt,
-  );
-}
-
 async function acquireWindowsNetworkBroker(
   request: WindowsNetworkBrokerRequest,
   controlDirectory: string,
@@ -5488,10 +5546,6 @@ async function acquireWindowsNetworkBroker(
       continue;
     }
     if (state === undefined) {
-      if (windowsNetworkBrokerLiveStates.size >= WINDOWS_NETWORK_BROKER_CAPACITY) {
-        await evictIdleWindowsNetworkBroker(signal, deadlineAt);
-        continue;
-      }
       state = createWindowsNetworkBrokerState(key, normalized, controlDirectory);
       windowsNetworkBrokers.set(key, state);
     }
@@ -5735,6 +5789,10 @@ async function prepareWindowsV2Invocation(input: {
         shellPolicy.filesystem.allowRead,
       ),
     );
+    const preinstalledReadRoots = windowsSandboxPreinstalledReadRoots(
+      shellPolicy.filesystem.allowRead,
+      cutover.setupReadRoots,
+    );
     const nativeRequest = createWindowsSandboxV2RunRequest({
       generation,
       filesystemCapabilityNonce: cutover.filesystemCapabilityNonce,
@@ -5748,6 +5806,7 @@ async function prepareWindowsV2Invocation(input: {
       },
       targetArgv: [input.executable, ...input.args],
       cwd: input.cwd,
+      preinstalledReadRoots,
       allowRead: shellPolicy.filesystem.allowRead,
       allowWrite: shellPolicy.filesystem.allowWrite,
       denyRead: shellPolicy.filesystem.denyRead,
@@ -5762,6 +5821,19 @@ async function prepareWindowsV2Invocation(input: {
         .digest('hex'),
     });
     await writeFile(nativeRequestFile, JSON.stringify(nativeRequest), { flag: 'wx', mode: 0o600 });
+    emitKodaXDiagnostic({
+      source: 'sandbox:windows-v2',
+      level: 'debug',
+      message: 'Windows native sandbox request prepared.',
+      detail: {
+        protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
+        setupGeneration: cutover.generationNonce,
+        brokerGeneration: generation,
+        runnerSha256: runner.sha256,
+        controllerSha256: shellArtifact.sha256,
+        preinstalledReadRootCount: preinstalledReadRoots.length,
+      },
+    });
     throwIfSandboxRunnerPreparationStopped(input.signal, operationDeadlineUnixMs);
     let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
     const ownedBrokerLease = brokerLease;

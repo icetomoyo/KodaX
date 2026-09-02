@@ -9,7 +9,7 @@
 
 export {
   KODAX_ASRT_VERSION,
-  doctorSandboxRuntime as doctorKodaXSandbox,
+  doctorSandboxExecution as doctorKodaXSandbox,
   prepareSandboxRuntimeForSetup as activateKodaXSandbox,
   runKodaXSandboxed,
   sandboxRuntimeCapability as getKodaXSandboxCapability,

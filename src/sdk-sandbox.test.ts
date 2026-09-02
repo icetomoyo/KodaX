@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   KODAX_ASRT_VERSION,
+  doctorKodaXSandbox,
   getKodaXSandboxCapability,
   getKodaXSandboxSetupGuidance,
   runKodaXSandboxed,
@@ -11,7 +12,7 @@ describe('@kodax-ai/kodax/sandbox public surface', () => {
   it('exposes generic containment independently from Auto[LLM]', () => {
     const capability = getKodaXSandboxCapability();
     expect(capability).toMatchObject({
-      version: 10,
+      version: 11,
       asrtVersion: KODAX_ASRT_VERSION,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
@@ -31,6 +32,10 @@ describe('@kodax-ai/kodax/sandbox public surface', () => {
       'output',
     ]);
     expect(runKodaXSandboxed).toBeTypeOf('function');
+    const doctorWithRefresh: (
+      options?: { readonly refresh?: boolean },
+    ) => ReturnType<typeof doctorKodaXSandbox> = doctorKodaXSandbox;
+    expect(doctorWithRefresh).toBeTypeOf('function');
     expect(getKodaXSandboxSetupGuidance).toBeTypeOf('function');
   });
 });

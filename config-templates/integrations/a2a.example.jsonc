@@ -16,7 +16,7 @@
   // Arbitrary shell is never exposed. Skill instructions/assets need no
   // process authority. An exact checked-in scripts/... entry requires
   // process="isolated", skillScripts admission, and `kodax sandbox doctor`.
-  // On native protocol 9, isolated Skill Script is POSIX-only. Windows is
+  // On native protocol 10, isolated Skill Script is POSIX-only. Windows is
   // unavailable because its required per-command denyRead is unsupported.
   // ASRT receives no KodaX credentials or ambient ~/.srt-settings.json and its
   // script quota is observed; hostile tenants also require an outer container/VM.

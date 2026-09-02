@@ -3,7 +3,7 @@
 > Last updated: 2026-09-01
 >
 > Current published baseline: `v0.7.96-alpha.6`
-> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:10`,
+> (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
 > npm publication remains manual)
@@ -141,7 +141,7 @@ authorized clauses. The restricted target's enabled traverse privilege reaches e
 allowed roots without persistent private-ancestor ACEs or profile-DACL
 propagation. Because `WRITE_RESTRICTED` does not enforce restricting SIDs for
 reads, Windows per-command `denyRead` fails closed as `unsupported_policy`
-before setup, DACL mutation, or target start. Windows setup generation 9
+before setup, DACL mutation, or target start. Windows setup generation 10
 upgrades a healthy generation-8 identity in place without replaying the
 generation-8 legacy ACL migration proof. One setup-only elevated native parent
 receives a small explicit base64 envelope, validates its versioned digest-bound
@@ -157,8 +157,8 @@ under system TMP, so command admission never rewrites the shared Temp/AppData ro
  so upgrades neither grow those historical residues nor conflict with the
  control verifier. Existing cache denies remain unchanged: owner/protection,
  masks, flags, and SID shapes cannot prove individual ACE provenance.
-This setup-9/stable-ACL plus private-Temp/recovery boundary advances
-`sandboxRuntime` to 10 so a newly linked client replaces an idle v9 daemon and
+This setup-10/setup-owned-root plus private-Temp/recovery boundary advances
+`sandboxRuntime` to 11 so a newly linked client replaces an idle older daemon and
 refuses to mix with a busy one.
 If the resolved Agent Home is itself below an actual requested write root, the
 Runtime creates the five fixed host-owned internal directories before adding
@@ -191,7 +191,7 @@ Neither platform treats an on-disk file as persistent lock ownership.
 Windows v2 shell invocations do not own a command-lifetime filesystem-effect
 lease. Arbitrary shell writes remain normal OS races and are not serialized by
 the text CAS.
-Protocol 9 binds every request to the protected setup marker's path and digest.
+Protocol 10 binds every request to the protected setup marker's path and digest.
 The native host holds a non-delete-sharing marker handle through durable target
 `Started`, so setup rotation and command start are linearized without a global
 admission lock. A warm exact ACL policy is read-only; effective inherited

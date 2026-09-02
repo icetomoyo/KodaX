@@ -203,7 +203,7 @@ describe('Runtime daemon capability upgrade', () => {
       managedRunDurability: { version: 1 },
       runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
-      sandboxRuntime: { version: 10 },
+      sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
       sharedSessionSettings: { version: 2 },
       ...(process.platform === 'win32'
@@ -370,7 +370,7 @@ describe('Runtime daemon capability upgrade', () => {
       managedRunDurability: { version: 1 },
       runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
-      sandboxRuntime: { version: 10 },
+      sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
       sharedSessionSettings: { version: 2 },
       ...(process.platform === 'win32'
@@ -611,7 +611,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -669,7 +669,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -713,7 +713,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -751,7 +751,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -790,7 +790,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -828,7 +828,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 1, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         ...(process.platform === 'win32'
@@ -861,7 +861,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
     });
@@ -905,7 +905,7 @@ describe('Runtime daemon capability upgrade', () => {
       liveOutputSegments: { version: 1 },
       runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
-      sandboxRuntime: { version: 10 },
+      sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
       ...(process.platform === 'win32'
         ? { daemonShutdownVerification: { version: 1 } }
@@ -966,7 +966,7 @@ describe('Runtime daemon capability upgrade', () => {
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         runtimeAutoModeGuardrail: {
@@ -1023,7 +1023,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 1 },
       },
@@ -1073,7 +1073,7 @@ describe('Runtime daemon capability upgrade', () => {
         managedRunDurability: { version: 1 },
         runtimeAutoModeGuardrail: { version: 4, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
       },
@@ -1102,8 +1102,8 @@ describe('Runtime daemon capability upgrade', () => {
     expect(newClose).toHaveBeenCalled();
   });
 
-  it.skipIf(process.platform !== 'win32').each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
-    'replaces an idle sandbox v%i daemon before exposing sandbox execution v10',
+  it.skipIf(process.platform !== 'win32').each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    'replaces an idle sandbox v%i daemon before exposing sandbox execution v11',
     async (sandboxVersion) => {
       const calls: string[] = [];
       const oldTransport = createLegacyTransport({
@@ -1233,8 +1233,8 @@ describe('Runtime daemon capability upgrade', () => {
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
   });
 
-  it.skipIf(process.platform !== 'win32').each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
-    'keeps a busy sandbox v%i daemon fenced behind the sandbox v10 upgrade requirement',
+  it.skipIf(process.platform !== 'win32').each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    'keeps a busy sandbox v%i daemon fenced behind the sandbox v11 upgrade requirement',
     async (sandboxVersion) => {
       const calls: string[] = [];
       const oldTransport = createLegacyTransport({
@@ -1504,7 +1504,7 @@ describe('Runtime daemon capability upgrade', () => {
       managedRunDurability: 1,
       runtimeExitSettlement: 2,
       runtimeAutoModeGuardrail: 5,
-      sandboxRuntime: 10,
+      sandboxRuntime: 11,
       sharedSessionSettings: 2,
       runtimeEventCoalescing: 1,
       sessionEventJournal: 1,
@@ -1530,7 +1530,7 @@ describe('Runtime daemon capability upgrade', () => {
           managedRunDurability: { version: 1 },
           runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
-          sandboxRuntime: { version: 9 },
+          sandboxRuntime: { version: 10 },
           sessionEventJournal: { version: 1 },
           sharedSessionSettings: { version: 2 },
         },
@@ -1620,7 +1620,7 @@ describe('Runtime daemon capability upgrade', () => {
       managedRunDurability: { version: 1 },
       runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
-      sandboxRuntime: { version: 10 },
+      sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
       ...(process.platform === 'win32'
         ? { daemonShutdownVerification: { version: 1 } }
@@ -1694,7 +1694,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: undefined,
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
       },
     });
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(oldTransport));
@@ -1726,7 +1726,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonShutdownVerification: undefined,
           runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
-          sandboxRuntime: { version: 10 },
+          sandboxRuntime: { version: 11 },
         },
       });
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(oldTransport));
@@ -1769,7 +1769,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
       },
     });
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(oldTransport));
@@ -2044,7 +2044,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
       },
     });
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(oldTransport));
@@ -2317,7 +2317,7 @@ function createCurrentTransport(
         daemonManagement: { version: 1 },
         managedRunDurability: { version: 1 },
         liveOutputSegments: { version: 1 },
-        sandboxRuntime: { version: 10 },
+        sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
         runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },

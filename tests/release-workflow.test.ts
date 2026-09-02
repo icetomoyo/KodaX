@@ -204,7 +204,7 @@ describe('GitHub release workflow', () => {
     const release = readFileSync(resolve('scripts/release.mjs'), 'utf8');
 
     expect(buildNative).toContain('manifest.asrtRunner = {');
-    expect(buildNative).toContain('protocol: 9');
+    expect(buildNative).toContain('protocol: 10');
     expect(buildNative).toContain("'LICENSE-APACHE.txt'");
     expect(buildNative).toContain("'NOTICE-windows-sandbox.txt'");
     expect(buildNative).toContain("file: 'srt-win.exe'");

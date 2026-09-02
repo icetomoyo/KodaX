@@ -35,6 +35,7 @@ pub struct RunRequest {
     pub policy_fingerprint: String,
     pub policy_capability_sid: String,
     pub allow_read: Vec<String>,
+    pub preinstalled_read_roots: Vec<String>,
     pub allow_write: Vec<String>,
     pub deny_read: Vec<String>,
     pub deny_write: Vec<String>,
@@ -130,6 +131,7 @@ impl RunRequest {
         for candidate in self
             .allow_read
             .iter()
+            .chain(&self.preinstalled_read_roots)
             .chain(&self.allow_write)
             .chain(&self.deny_read)
             .chain(&self.deny_write)
@@ -137,6 +139,21 @@ impl RunRequest {
             if candidate.is_empty() || candidate.contains('\0') {
                 bail!("Windows sandbox policy contains an empty or invalid path");
             }
+        }
+        let path_key = |value: &str| {
+            value
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_ascii_lowercase()
+        };
+        if self.preinstalled_read_roots.iter().any(|candidate| {
+            let candidate = path_key(candidate);
+            !self
+                .allow_read
+                .iter()
+                .any(|allowed| path_key(allowed) == candidate)
+        }) {
+            bail!("Windows sandbox preinstalledReadRoots must also be allowRead roots");
         }
         if !self.deny_read.is_empty() {
             bail!("Per-command Windows denyRead is unsupported by the WRITE_RESTRICTED backend");
@@ -401,6 +418,7 @@ mod tests {
             policy_fingerprint: "0".repeat(64),
             policy_capability_sid: "S-1-5-21-1-2-3-4".into(),
             allow_read: vec![],
+            preinstalled_read_roots: vec![],
             allow_write: vec![],
             deny_read: vec![],
             deny_write: vec![],
@@ -430,6 +448,7 @@ mod tests {
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
             allow_read: vec![],
+            preinstalled_read_roots: vec![],
             allow_write: vec![],
             deny_read: vec![],
             deny_write: vec![],
@@ -441,6 +460,15 @@ mod tests {
             setup_marker_sha256: "0".repeat(64),
         };
         request.validate().unwrap();
+        request.preinstalled_read_roots = vec![r"C:\profile".into()];
+        assert!(
+            request
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("preinstalledReadRoots must also be allowRead roots")
+        );
+        request.preinstalled_read_roots.clear();
         request.deny_read = vec![r"C:\secret".into()];
         assert!(
             request
@@ -468,6 +496,7 @@ mod tests {
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
             allow_read: vec![],
+            preinstalled_read_roots: vec![],
             allow_write: vec![],
             deny_read: vec![],
             deny_write: vec![],
@@ -504,6 +533,7 @@ mod tests {
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
             allow_read: vec![],
+            preinstalled_read_roots: vec![],
             allow_write: vec![],
             deny_read: vec![],
             deny_write: vec![],

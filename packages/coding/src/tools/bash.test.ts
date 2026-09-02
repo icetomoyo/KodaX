@@ -616,6 +616,27 @@ describe('toolBash', () => {
     }
   }, WINDOWS_PROCESS_TREE_TEST_TIMEOUT_MS);
 
+  it('keeps a nested shell command on the sandbox-first route', async () => {
+    const prepare = vi.fn(async () => ({
+      executable: process.execPath,
+      args: ['-e', "process.stdout.write('nested-command-sandboxed')"],
+      env: process.env,
+      cleanup: async () => undefined,
+    }));
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+
+    const result = await toolBash({ command: 'cmd /d /s /c "echo one && echo two"' }, {
+      backups: new Map(),
+      toolCallId: 'nested-command-sandbox-first',
+      shellSandbox: { prepare },
+      authorizeShellHostExecution,
+    });
+
+    expect(completedCommandBody(result)).toContain('nested-command-sandboxed');
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(authorizeShellHostExecution).not.toHaveBeenCalled();
+  });
+
   it('does not fall through to host execution when sandbox preparation unexpectedly fails', async () => {
     const reportToolSandboxObservation = vi.fn();
     const prepare = vi.fn(async () => {

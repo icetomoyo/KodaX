@@ -196,13 +196,13 @@ A2A responses cannot publish an empty successful answer (Issue 302).
 The v0.7.96 Windows shell path removes the old command-lifetime filesystem-
 effect coordinator. Bash commands, trusted text tools, and different worktree
 paths no longer share a KodaX global lock; same-file text CAS and same-path
-worktree ordering remain narrow. Native protocol 9 gives every command its own
+worktree ordering remain narrow. Native protocol 10 gives every command its own
 request, token, pipes, Job, start records, and terminal proof. Warm ACL
 admission accepts effective inherited normal-token access; only a missing exact
 restricted capability uses `SET_ACCESS` and DACL readback without waiting on a
 cross-process target mutex.
 Artifact, control-state, legacy-ACL, and stale-deny recovery belongs only to
-explicit setup generation 9; generation 8 remains only the one-time legacy ACL
+explicit setup generation 10; generation 8 remains only the one-time legacy ACL
 migration proof. Windows `denyRead` returns structured
 `unsupported_policy` before target start and creates no execution receipt.
 Matching network authority reuses a healthy broker and

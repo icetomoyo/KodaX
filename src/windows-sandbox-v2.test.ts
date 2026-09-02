@@ -38,6 +38,9 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
 
     expect(networkOnly).toEqual({
       ...original,
+      windows: {
+        proxyPortRange: [60_080, 60_143],
+      },
       filesystem: {
         ...original.filesystem,
         disabled: true,
@@ -198,6 +201,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       },
       targetArgv: ['cmd.exe', '/d', '/s', '/c', 'echo hello'],
       cwd: 'C:\\work',
+      preinstalledReadRoots: ['C:\\work'],
       allowRead: ['C:\\work'],
       allowWrite: ['C:\\work'],
       denyRead: [],
@@ -211,13 +215,14 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     });
 
     expect(request).toMatchObject({
-      protocol: 9,
+      protocol: 10,
       generation,
       sandboxUserSid: 'S-1-5-21-1-2-3-1001',
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
       asrtExecutable: 'C:\\runner\\srt-win.exe',
       asrtPrefixArgs: ['exec', '--quiet', '--'],
       targetArgv: ['cmd.exe', '/d', '/s', '/c', 'echo hello'],
+      preinstalledReadRoots: ['C:\\work'],
       controllerPipe: '\\\\.\\pipe\\kodax-v2-1234-12345678-1234-1234-1234-123456789abc',
       operationDeadlineUnixMs: 123_456,
     });
@@ -241,6 +246,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       },
       targetArgv: ['cmd.exe'],
       cwd: 'C:\\work',
+      preinstalledReadRoots: [],
       allowRead: ['C:\\work'],
       allowWrite: [],
       denyRead: ['C:\\secret'],
@@ -262,6 +268,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
       sandboxGroupSid: 'S-1-5-21-1-2-3-1000',
       targetArgv: ['cmd.exe'],
       cwd: 'C:\\work',
+      preinstalledReadRoots: [],
       allowRead: [],
       allowWrite: ['C:\\work'],
       denyRead: [],
@@ -315,7 +322,7 @@ describe('Windows sandbox v2 policy and ASRT boundary', () => {
     };
     expect(length).toBe(frame.byteLength - 4);
     expect(message).toEqual({
-      protocol: 9,
+      protocol: 10,
       targetEnvironment: [
         { name: 'Path', value: 'C:\\bin' },
         { name: 'SECRET', value: 'sentinel' },

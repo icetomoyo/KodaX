@@ -523,8 +523,8 @@ each command token selects its exact authority; every Windows shell receives a
 private Temp child; a failed runner/controller broker generation is detached
 from reuse; and SDK/daemon Bash forwards the existing host-boundary authorization
 callback. Portable Bash cleanup/output settlement and bare `kodax -r`
-Bun/Windows raw-mode handoff are also corrected. Windows `sandboxRuntime:10`,
-native protocol/setup generation 9, `runtimeAutoModeGuardrail:5`, and
+Bun/Windows raw-mode handoff are also corrected. Windows `sandboxRuntime:11`,
+native protocol/setup generation 10, `runtimeAutoModeGuardrail:5`, and
 `sharedSessionSettings:2` remain the published contract. npm publication
 remains a manual maintainer step. Embedded native manifests retain their exact
 protected-cache hash generation across later npm-link rebuilds, and opaque
@@ -539,15 +539,15 @@ Auto[LLM], Full Access) replace the legacy Plan/Edits/Auto[RULES]/Auto[LLM]
 shape, shell containment is sandbox-first with Exec Policy and Auto review
 only at a proven host boundary, and the Windows sandbox drops every
 machine-global admission mutex, command-lifetime coordinator, and queue.
-Native shell protocol 9/setup generation 9 keeps stable root/clause capability
-SIDs, converges the same stable ACE set for every canonical root after
-effective-access checks, lets the command token select its authority, uses a
+Native shell protocol 10/setup generation 10 keeps stable root/clause capability
+SIDs, makes broad setup-owned roots verify-only during ordinary admission,
+lets the command token select its authority, uses a
 private per-command Temp child, and retains protected two-phase setup plus
 independent per-command token/pipe/Job lifecycles; missing current-hash
 native artifacts self-heal through atomic publication; and Runtime daemon
 upgrades become SemVer-bounded (idle older daemon replaced, busy one left
 running with a recoverable boundary, newer one never downgraded). Windows
-`sandboxRuntime:10`, `runtimeAutoModeGuardrail:5`, and
+`sandboxRuntime:11`, `runtimeAutoModeGuardrail:5`, and
 `sharedSessionSettings:2` are unchanged from the alpha.4 design. npm
 publication remains a manual maintainer step.
 
@@ -1603,7 +1603,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
-| `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 9 + setup generation 9 (with generation 8 retained only as the legacy-migration proof), one stable read/write/deny capability ACL set per root, protected two-phase synchronous setup with no overlapping helper, DACL-readback convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, bounded-idle exact-authority brokers, and a real dual-Runtime overlap gate. |
+| `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 10 + setup generation 10 (with generation 8 retained only as the legacy-migration proof), stable capability SIDs, setup-owned broad roots that are verify-only during ordinary admission, protected two-phase synchronous setup with no overlapping helper, additive command-root convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, OS-arbitrated exact-authority brokers, and a real dual-Runtime overlap gate. |
 | `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | `v0.7.96-alpha.1` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) | Replaces the local tool-result capacity hard gate with capacity-debt admission, a bounded recovery ladder, floor-bounded output reserve, paged oversized-input degradation, and `context_capacity` terminal classification (ADR-067). |
 | `294` | Host Tools First-Class Visibility | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_294--host-tools-first-class-visibility-2026-08-16) | Materializes leased Host Tools as run-scoped model tools, adds cache-stable host capability context, conservative plan-mode metadata, registry-first dispatch, revoke/collision hardening, and exact A2A `host:` authorization. |
 | `293` | Resilient Zero-Service Web Search Fallback | `v0.7.89` | [v0.7.89](features/v0.7.89.md#feature_293-resilient-zero-service-web-search-fallback) | Adds the bounded DuckDuckGo HTML → Bing RSS → Bing HTML zero-service fallback, truthful failure diagnostics and freshness metadata, normalized deduplicated locators, isolated custom endpoints, and removal of the invalid `provider_id` contract. |

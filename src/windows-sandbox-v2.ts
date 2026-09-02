@@ -8,7 +8,8 @@ import {
   type ResolveWindowsNativeArtifactOptions,
 } from './windows-native-artifacts.js';
 
-export const WINDOWS_SANDBOX_V2_PROTOCOL = 9;
+export const WINDOWS_SANDBOX_V2_PROTOCOL = 10;
+export const KODAX_WINDOWS_PROXY_PORT_RANGE = [60_080, 60_143] as const;
 
 export interface AsrtWindowsInvocation {
   readonly executable: string;
@@ -24,6 +25,7 @@ export interface SplitAsrtWindowsInvocation {
 
 export interface WindowsSandboxV2PolicyInput {
   readonly generation: string;
+  readonly preinstalledReadRoots?: readonly string[];
   readonly allowRead: readonly string[];
   readonly allowWrite: readonly string[];
   readonly denyRead: readonly string[];
@@ -42,6 +44,7 @@ export interface WindowsSandboxV2RunRequest {
   readonly cwd: string;
   readonly policyFingerprint: string;
   readonly policyCapabilitySid: string;
+  readonly preinstalledReadRoots: readonly string[];
   readonly allowRead: readonly string[];
   readonly allowWrite: readonly string[];
   readonly denyRead: readonly string[];
@@ -62,6 +65,7 @@ export interface WindowsSandboxV2RunRequestInput {
   readonly asrtInvocation: SplitAsrtWindowsInvocation;
   readonly targetArgv: readonly string[];
   readonly cwd: string;
+  readonly preinstalledReadRoots: readonly string[];
   readonly allowRead: readonly string[];
   readonly allowWrite: readonly string[];
   readonly denyRead: readonly string[];
@@ -83,6 +87,10 @@ export function asrtWindowsNetworkOnlyConfig(
 ): SandboxRuntimeConfig {
   return {
     ...config,
+    windows: {
+      ...config.windows,
+      proxyPortRange: [...KODAX_WINDOWS_PROXY_PORT_RANGE],
+    },
     filesystem: {
       ...config.filesystem,
       disabled: true,
@@ -169,8 +177,9 @@ export function windowsSandboxV2PolicyFingerprint(
     throw new Error('Windows sandbox v2 generation is empty.');
   }
   const canonical = JSON.stringify({
-    version: 2,
+    version: 3,
     generation: input.generation,
+    preinstalledReadRoots: normalizedPolicyPaths(input.preinstalledReadRoots ?? []),
     allowRead: normalizedPolicyPaths(input.allowRead),
     allowWrite: normalizedPolicyPaths(input.allowWrite),
     denyRead: normalizedPolicyPaths(input.denyRead),
@@ -338,8 +347,13 @@ export function createWindowsSandboxV2RunRequest(
   if (!/^S-1-(?:\d+-)+\d+$/.test(input.sandboxGroupSid)) {
     throw new Error('Windows sandbox v2 group SID is invalid.');
   }
+  const allowRead = new Set(normalizedPolicyPaths(input.allowRead));
+  if (normalizedPolicyPaths(input.preinstalledReadRoots).some((root) => !allowRead.has(root))) {
+    throw new Error('Windows sandbox v2 preinstalled read root is not an allowRead root.');
+  }
   const policyFingerprint = windowsSandboxV2PolicyFingerprint({
     generation: input.generation,
+    preinstalledReadRoots: input.preinstalledReadRoots,
     allowRead: input.allowRead,
     allowWrite: input.allowWrite,
     denyRead: input.denyRead,
@@ -364,6 +378,7 @@ export function createWindowsSandboxV2RunRequest(
     cwd: input.cwd,
     policyFingerprint,
     policyCapabilitySid,
+    preinstalledReadRoots: input.preinstalledReadRoots,
     allowRead: input.allowRead,
     allowWrite: input.allowWrite,
     denyRead: input.denyRead,

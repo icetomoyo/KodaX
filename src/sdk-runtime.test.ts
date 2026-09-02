@@ -107,7 +107,7 @@ const SESSION_EVENT_JOURNAL_CAPABILITY = {
   liveOutputSegments: { version: 1 },
   runtimeAutoModeGuardrail: { version: 5, owner: "session-runtime" },
   sharedSessionSettings: { version: 2 },
-  ...(process.platform === "win32" ? { sandboxRuntime: { version: 10 } } : {}),
+  ...(process.platform === "win32" ? { sandboxRuntime: { version: 11 } } : {}),
 } as const;
 
 const replMock = vi.hoisted(() => ({
@@ -314,7 +314,7 @@ describe("createKodaXRuntime", () => {
       rollback: true,
     });
     expect(runtime.capabilities.sandboxRuntime).toMatchObject({
-      version: 10,
+      version: 11,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
       unavailableBehavior: "structured-no-execution",

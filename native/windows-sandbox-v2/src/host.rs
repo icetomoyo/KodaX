@@ -460,8 +460,18 @@ struct SetupMarkerCapability {
     host_user_sid: String,
     sandbox_user_sid: String,
     sandbox_group_sid: String,
+    setup_read_roots: Vec<String>,
     #[serde(default)]
     state: Option<String>,
+}
+
+fn setup_read_roots_are_bounded(roots: &[String]) -> bool {
+    roots.len() <= 1_024
+        && roots.iter().all(|root| {
+            !root.contains('\0')
+                && Path::new(root).is_absolute()
+                && root.encode_utf16().count() <= 32_767
+        })
 }
 
 fn setup_marker_matches(
@@ -476,7 +486,7 @@ fn setup_marker_matches(
         .context("decode Windows sandbox setup generation nonce")?;
     let capability_nonce = uuid::Uuid::parse_str(&marker.filesystem_capability_nonce)
         .context("decode Windows sandbox filesystem capability nonce")?;
-    Ok(marker.version == 9
+    Ok(marker.version == 10
         && marker.protocol == PROTOCOL_VERSION
         && generation_nonce.get_version_num() == 4
         && capability_nonce.get_version_num() == 4
@@ -490,6 +500,7 @@ fn setup_marker_matches(
         && marker
             .sandbox_group_sid
             .eq_ignore_ascii_case(expected_sandbox_group_sid)
+        && setup_read_roots_are_bounded(&marker.setup_read_roots)
         && marker.state.as_deref() == expected_state)
 }
 
@@ -540,7 +551,7 @@ fn try_open_setup_marker(
         .context("inspect Windows sandbox setup marker launch gate")?;
     if !metadata.is_file()
         || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
-        || metadata.len() > 4_096
+        || metadata.len() > 1024 * 1024
     {
         bail!("Windows sandbox setup marker launch gate is not a bounded regular file");
     }
@@ -956,7 +967,7 @@ fn finalize_relay(
     match relay {
         Ok(settlement) => finalize_drained_run(settlement, cleanup, write_terminal, terminal_nonce),
         // A relay error is not Job-drain proof, so it cannot publish a successful
-        // terminal record. Protocol 9 performs no command-scoped ACL cleanup.
+        // terminal record. Protocol 10 performs no command-scoped ACL cleanup.
         Err(relay_error) => Err(relay_error),
     }
 }
@@ -1134,7 +1145,7 @@ mod tests {
     #[test]
     fn setup_marker_requires_the_exact_generation_identity_and_phase() {
         let ready: SetupMarkerCapability = serde_json::from_str(
-            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3"}"#,
+            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#,
         )
         .unwrap();
         assert!(
@@ -1161,7 +1172,7 @@ mod tests {
         );
 
         let installing: SetupMarkerCapability = serde_json::from_str(
-            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","state":"installing"}"#,
+            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#,
         )
         .unwrap();
         assert!(
@@ -1176,9 +1187,24 @@ mod tests {
             .unwrap()
         );
         assert!(serde_json::from_str::<SetupMarkerCapability>(
-            r#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","unexpected":true}"#,
+            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"unexpected":true}"#,
         )
         .is_err());
+        let relative_root: SetupMarkerCapability = serde_json::from_str(
+            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["relative"]}"#,
+        )
+        .unwrap();
+        assert!(
+            !setup_marker_matches(
+                &relative_root,
+                "00000000-0000-4000-8000-000000000002",
+                "S-1-5-21-1",
+                "S-1-5-21-2",
+                "S-1-5-21-3",
+                None,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -1275,7 +1301,7 @@ mod tests {
             uuid::Uuid::new_v4(),
         ));
         let capability_nonce = "00000000-0000-4000-8000-000000000003";
-        let payload = br#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3"}"#;
+        let payload = br#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#;
         std::fs::write(&path, payload).unwrap();
         let digest = format!("{:x}", Sha256::digest(payload));
 
@@ -1295,6 +1321,46 @@ mod tests {
     }
 
     #[test]
+    fn setup_marker_accepts_a_bounded_profile_snapshot_larger_than_four_kibibytes() {
+        let path = std::env::temp_dir().join(format!(
+            "kodax-large-setup-marker-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4(),
+        ));
+        let capability_nonce = "00000000-0000-4000-8000-000000000003";
+        let roots = (0..300)
+            .map(|index| format!(r"C:\Users\admin\profile-root-{index:03}"))
+            .collect::<Vec<_>>();
+        let payload = serde_json::json!({
+            "version": 10,
+            "protocol": 10,
+            "generationNonce": "00000000-0000-4000-8000-000000000001",
+            "filesystemCapabilityNonce": capability_nonce,
+            "hostUserSid": "S-1-5-21-1",
+            "sandboxUserSid": "S-1-5-21-2",
+            "sandboxGroupSid": "S-1-5-21-3",
+            "setupReadRoots": roots,
+        })
+        .to_string();
+        assert!(payload.len() > 4_096);
+        std::fs::write(&path, payload.as_bytes()).unwrap();
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+
+        let marker = open_setup_marker(
+            path.to_str().unwrap(),
+            &digest,
+            capability_nonce,
+            "S-1-5-21-1",
+            "S-1-5-21-2",
+            "S-1-5-21-3",
+            None,
+        )
+        .unwrap();
+        drop(marker);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn setup_marker_probe_waits_for_the_exact_generation() {
         let path = std::env::temp_dir().join(format!(
             "kodax-setup-marker-probe-{}-{}.json",
@@ -1302,7 +1368,7 @@ mod tests {
             uuid::Uuid::new_v4(),
         ));
         let capability_nonce = "00000000-0000-4000-8000-000000000003";
-        let payload = br#"{"version":9,"protocol":9,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","state":"installing"}"#;
+        let payload = br#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#;
         let digest = format!("{:x}", Sha256::digest(payload));
 
         assert!(
