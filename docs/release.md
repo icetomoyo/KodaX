@@ -136,11 +136,24 @@ Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
 ## v0.7.96-alpha.6 release preparation
 
-Release state: commit `a71d2b98` is tagged as `v0.7.96-alpha.6` and published
-as a GitHub pre-release. The exact commit passed the branch CI and tag-triggered
-Release workflows; the release contains the audited universal npm tarball,
-five platform archives, per-archive checksums, and `SHA256SUMS` (13 assets).
-npm publication remains a separate manual maintainer action.
+Release state: refreshed source candidate on the `KodaX` branch. The existing
+`v0.7.96-alpha.6` tag and GitHub pre-release still point to the earlier
+`a71d2b98` candidate and do not contain the post-tag startup recovery and
+diagnostic-boundary corrections. This preparation does not move or create a
+tag, modify the GitHub Release, or publish npm. Those remain separate later
+maintainer actions after the exact refreshed candidate passes CI.
+
+The refreshed candidate additionally includes:
+
+- cold interactive Windows startup self-healing for a stale setup generation,
+  using the existing setup-only boundary and one real no-side-effect target
+  proof without adding a Bash lock, queue, retry, or automatic elevation to
+  print-mode, daemon, SDK, or ordinary tool execution;
+- a marker-only fast path for current setup state and a live elapsed-time status
+  while an actual `kodax -r` or new-session repair runs in a child process;
+- explicit host-control-plane guidance for sandbox doctor: use `/sandbox` in
+  the REPL or run `kodax sandbox doctor` directly in a user terminal, never
+  through the sandbox-first Bash tool.
 
 Release gates:
 
@@ -167,10 +180,9 @@ Release gates:
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
    tagging or publishing.
 
-These gates passed on commit `a71d2b98`. The exact commit is tagged
-`v0.7.96-alpha.6`; the resulting
-[GitHub pre-release](https://github.com/icetomoyo/KodaX/releases/tag/v0.7.96-alpha.6)
-and its audited assets are published. npm publication remains manual.
+After these gates pass on the exact refreshed candidate, it is ready for a
+later maintainer-controlled tag/Release refresh. This preparation intentionally
+stops before tag, GitHub Release, or npm publication.
 
 ## v0.7.96-alpha.5 release preparation
 

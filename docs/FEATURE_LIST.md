@@ -11,8 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-alpha.6` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-alpha.6` pre-release (npm publication remains manual) |
+| Current released version | `v0.7.96-alpha.6` |
+| Existing tag / Release commit | `a71d2b98` (predates the refreshed source candidate) |
+| Current source candidate | `v0.7.96-alpha.6` on `KodaX` (tag/Release refresh pending) |
+| Current package version | `@kodax-ai/kodax@0.7.96-alpha.6` source candidate (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Total tracked features | `81` |
 | InProgress | `1` |
@@ -26,7 +28,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized in the v0.7.96-alpha.6 pre-release; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized in the refreshed v0.7.96-alpha.6 source candidate; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -516,7 +518,7 @@
 
 ## v0.7.96-alpha.6 Release Record
 
-`v0.7.96-alpha.6` is a GitHub pre-release that completes the post-alpha.5
+The refreshed `v0.7.96-alpha.6` source candidate completes the post-alpha.5
 Windows/Bash recovery line without adding a command lock, queue, or broader
 permission restriction. Canonical roots converge stable capability ACEs while
 each command token selects its exact authority; every Windows shell receives a
@@ -525,8 +527,12 @@ from reuse; and SDK/daemon Bash forwards the existing host-boundary authorizatio
 callback. Portable Bash cleanup/output settlement and bare `kodax -r`
 Bun/Windows raw-mode handoff are also corrected. Windows `sandboxRuntime:11`,
 native protocol/setup generation 10, `runtimeAutoModeGuardrail:5`, and
-`sharedSessionSettings:2` remain the published contract. npm publication
-remains a manual maintainer step. Embedded native manifests retain their exact
+`sharedSessionSettings:2` remain the candidate contract. Interactive Windows
+startup also self-heals stale setup state through the setup-only boundary,
+current markers take a fast path, and doctor is explicitly invoked from the
+host terminal or `/sandbox`, not through Bash. The existing tag/Release points
+to the earlier `a71d2b98` candidate; its refresh and npm publication remain
+manual maintainer steps. Embedded native manifests retain their exact
 protected-cache hash generation across later npm-link rebuilds, and opaque
 nested shell syntax reaches exact Exec Policy plus the normal host-boundary
 decision instead of a parser-generated hard forbid.

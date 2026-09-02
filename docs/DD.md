@@ -1,12 +1,13 @@
 # KodaX Detailed Design
 
-> Last updated: 2026-09-02
+> Last updated: 2026-09-03
 >
-> Current published baseline: `v0.7.96-alpha.6`
+> Current source candidate: `v0.7.96-alpha.6`
 > (`@kodax-ai/kodax@0.7.96-alpha.6`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`;
-> npm publication remains manual)
+> the existing tag/Release predates the refreshed startup/diagnostic
+> corrections; tag/Release refresh and npm publication remain manual)
 >
 > This DD describes current implementation structure. Retired V1 chain details
 > were deleted from this active document; use git history and historical feature
@@ -23,7 +24,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The published package is `@kodax-ai/kodax@0.7.96-alpha.6`, which includes the v2
+The package source candidate is `@kodax-ai/kodax@0.7.96-alpha.6`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1

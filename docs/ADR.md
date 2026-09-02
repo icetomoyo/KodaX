@@ -1,13 +1,18 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-09-01
+> Last updated: 2026-09-03
 >
-> **v0.7.96-alpha.6 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-alpha.6 refreshed-candidate addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with
 > effective-access checks and DACL readback, setup-only provisioning/full recovery, reusable
 > exact-authority brokers, and independent request/token/pipe/Job lifecycles.
+> Interactive Windows startup additionally repairs a stale setup generation
+> through the existing setup-only boundary and keeps current-marker startup on
+> a fast path; sandbox doctor remains a host control-plane operation. Neither
+> correction adds a shell lock, queue, retry, or permission restriction. The
+> existing tag/Release predates these post-tag corrections.
 >
 > **v0.7.96-alpha.3 release addendum:** Provider credentials are lazy,
 > scoped, revocable capabilities (ADR-068). The v2 credential broker keeps

@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('tagged v0.7.96-alpha.6 GitHub pre-release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('refreshed v0.7.96-alpha.6 source candidate uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,7 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The tagged v0.7.96-alpha.6 GitHub pre-release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The refreshed v0.7.96-alpha.6 source candidate advertises Windows `sandboxRuntime:11`');
     expect(sdk).toContain('npm publication remains a separate manual maintainer action');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
     expect(sdk).toContain('bounded `capacityDebt`');

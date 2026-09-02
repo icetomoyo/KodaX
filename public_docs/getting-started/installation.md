@@ -28,7 +28,9 @@ commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox
 once. A bare interactive Windows CLI startup checks the installed generation
 before the REPL and uses the existing UAC setup boundary to self-heal stale
 state; healthy upgrades preserve the sandbox SID and concurrent startups
-converge on one setup. Current state is silent. Print-mode, daemon, SDK, and
+converge on one setup. A current marker takes the fast path; when migration is
+actually required, startup shows live elapsed time while the setup child runs.
+Current state is otherwise silent. Print-mode, daemon, SDK, and
 ordinary tool execution never activate setup automatically. macOS/Linux report
 any required Seatbelt/bubblewrap dependencies. Declining or missing a dependency
 does not break ordinary permission handling. Linux shell containment also requires a host policy that permits

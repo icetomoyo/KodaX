@@ -759,7 +759,7 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-alpha.6 GitHub pre-release:** Windows shell admission now follows the
+**v0.7.96-alpha.6 refreshed source candidate:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -793,9 +793,14 @@ protected-cache generation across later `npm link` rebuilds; another build
 cannot swap a long-lived process onto a mismatched native evidence schema.
 Unlowerable nested shell bodies remain opaque for exact Exec Policy plus the
 normal Edits/Auto[LLM] host boundary, rather than becoming a parser-generated
-hard forbid. See the
-[GitHub pre-release](https://github.com/icetomoyo/KodaX/releases/tag/v0.7.96-alpha.6)
-and [release checklist](docs/release.md#v0796-alpha6-release-preparation).
+hard forbid. The refreshed candidate also self-heals a stale Windows setup
+generation before an interactive REPL starts, keeps current-marker startup on a
+fast path, shows live elapsed time only while real recovery runs, and documents
+that sandbox doctor is a host control-plane operation (`/sandbox` in the REPL or
+`kodax sandbox doctor` directly in a user terminal). The existing
+`v0.7.96-alpha.6` tag/GitHub pre-release points to the earlier `a71d2b98`
+candidate; this source preparation does not update it or publish npm. See the
+[release checklist](docs/release.md#v0796-alpha6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

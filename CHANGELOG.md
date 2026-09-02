@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.96-alpha.6] - 2026-09-03
+
+> Refreshed source candidate. The existing `v0.7.96-alpha.6` tag and GitHub
+> pre-release point to the earlier `a71d2b98` candidate and are intentionally
+> unchanged by this preparation. Tag/Release refresh and npm publication remain
+> separate maintainer actions.
+
 ### Fixed
 
 - Clarified the sandbox diagnostic boundary across the CLI, setup guide,
@@ -15,7 +22,6 @@ All notable changes to this project will be documented in this file.
   healthy Windows sandbox from being misreported when its restricted account is
   correctly denied access to host-owned ASRT state; shell routing and sandbox
   permissions are unchanged.
-
 - Added cold-start self-healing for stale Windows sandbox setup generations.
   A bare interactive CLI startup, including `kodax -r`, now checks the
   installed generation before creating the REPL Runtime and reuses the existing
@@ -33,10 +39,6 @@ All notable changes to this project will be documented in this file.
   retaining a healthy account SID and filesystem capability nonce. This closes
   the state where verify-only metadata looked ready while real Bash still fell
   back to host execution, without adding a command-path lock, queue, or retry.
-
-## [0.7.96-alpha.6] - 2026-09-02
-
-### Fixed
 
 - Aligned the universal npm release audit with Windows native shell protocol
   10. The release workflow now validates the same manifest contract emitted by

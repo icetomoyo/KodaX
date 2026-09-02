@@ -39,6 +39,10 @@ Expected:
 - `kodax sandbox doctor` runs one no-side-effect command with host fallback
   disabled and reports ready only after target-start/exit proof; internal Runtime
   readiness checks remain verify-only;
+- invoke that explicit doctor directly from a user terminal, or use `/sandbox`
+  inside the REPL. Do not invoke the host control-plane doctor through Bash: a
+  healthy restricted target cannot read host-owned ASRT `state.db`, and that
+  nested context must not be mistaken for host readiness;
 - an idle older daemon is replaced, a busy older daemon is not force-killed,
   a newer daemon is not downgraded, and an unknown/non-SemVer owner is not
   mutated;

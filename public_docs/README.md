@@ -2,9 +2,10 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The latest Git tag and GitHub pre-release is `v0.7.96-alpha.6`; all branch and
-tag-triggered release gates passed on its exact release commit. npm publication
-remains a separate manual maintainer action. Alpha.6 carries
+The current source candidate is `v0.7.96-alpha.6`. The existing Git tag and
+GitHub pre-release point to the earlier `a71d2b98` candidate and predate the
+refreshed startup/diagnostic corrections; tag/Release refresh and npm
+publication remain separate manual maintainer actions. Alpha.6 carries
 the alpha.4 permission profiles, sandbox-first routing, JSONC Exec Policy,
 Auto[LLM] host-boundary review, and Full Access, and completes Windows sandbox
 concurrency/self-healing without adding a command lock, queue, or permission restriction.
