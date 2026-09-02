@@ -12,10 +12,18 @@ kodax sandbox doctor    # Prove target start and check readiness
 kodax sandbox setup     # Activate
 ```
 
-`kodax setup` and first-run setup also check sandbox readiness once.
+`kodax setup` and first-run setup also check sandbox readiness once. A bare
+interactive Windows CLI startup (including `kodax -r`) checks the installed
+setup generation before creating the REPL Runtime. Current state remains
+silent; a missing or stale generation enters the existing setup boundary,
+where concurrent startups converge on one install and followers recheck the
+winner. After repair, one no-side-effect command must prove target start and
+exit before startup reports the sandbox ready.
 The explicit sandbox doctor may republish a missing protected-cache executable
 from the exact hash pinned in the running package. It does not run setup, open
 UAC, or repair ACL policy; those remain exclusive to `kodax sandbox setup`.
+Print-mode, daemon, and SDK startup never activate setup automatically, and
+ordinary tool calls never run setup or wait on its lock.
 
 Trusted text tools have a separate native diagnostic because they do not use
 the shell sandbox. Run `kodax doctor --native-text` to explicitly load and
@@ -26,7 +34,7 @@ verify the packaged trusted-text addon. This check does not require
 
 | Platform | Backend | Dependencies |
 |---|---|---|
-| **Windows** | Restricted sandbox account + network policy | None (UAC during activation; an upgrade SID rotation may require a second confirmation) |
+| **Windows** | Restricted sandbox account + network policy | None (UAC during activation; healthy generation upgrades preserve the existing SID) |
 | **macOS** | Seatbelt (`sandbox-exec`) | ripgrep (`brew install ripgrep`) |
 | **Linux** | bubblewrap | `bubblewrap`, `socat`, `ripgrep` |
 
@@ -219,9 +227,10 @@ protected-cache executable for its content hash. Only a missing exact generation
 consults mutable package or npm-link source and publishes atomically. This keeps
 overlapping old/new processes on their own native evidence schemas without a
 shell lock, queue, or command retry.
-Upgrading an existing Windows installation requires one `kodax sandbox setup`
-cutover. Setup generation 10 upgrades generation 8 in place, reuses a healthy
-fixed account SID/group and filesystem nonce, and records protocol 10 in
+Upgrading an existing Windows installation enters the versioned setup boundary
+once, either from explicit `kodax sandbox setup` or bare interactive CLI startup.
+Setup generation 10 upgrades healthy generation 8 or released generation 9 in
+place, reuses a healthy fixed account SID/group and filesystem nonce, and records protocol 10 in
 protected machine state without replaying completed legacy ACL cleanup.
 Generation 8 remains the proof boundary for that one-time migration. Only
 missing or damaged account identity rotates.

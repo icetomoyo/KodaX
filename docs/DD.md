@@ -234,7 +234,8 @@ SID, matching current Codex; Issue 309 records that an ambient-trustee child
 DACL can therefore bypass a later root capability. The token default DACL still
 excludes the account. Pre-alpha.4 exact sensitive-root denies are removed only
 by the generation-8 legacy migration proof. Setup generation 10 preserves a
-healthy fixed account identity and upgrades generation 8 in place without
+healthy fixed account identity and upgrades healthy generation 8 or released
+generation 9 in place without
 replaying that destructive cleanup. Setup writes a protected non-ready
 `installing` marker, its elevated parent synchronously converges NUL compatibility
 and profile read capabilities, and the caller then publishes the ready marker;
@@ -257,7 +258,13 @@ holds that marker without delete sharing until its resume/started proof is
 durable. Warm ACL verification is read-only; effective inherited normal-token
 access is accepted, while a missing exact restricted capability uses
 `SET_ACCESS` and DACL readback without a cross-process target mutex.
-Control-directory provisioning and migration are setup-only. A missing
+Control-directory provisioning and migration are setup-only. Bare interactive
+Windows CLI startup calls that existing boundary once when its pre-Runtime
+generation check is stale. Concurrent callers share only the setup lock; after
+the winner publishes generation 10, each follower rechecks and returns without
+a second install. The caller then runs one host-fallback-disabled identity
+command and reports ready only after target-start and exit proof. Print-mode,
+daemon, SDK, and ordinary command admission never activate setup. A missing
 content-addressed executable image may be atomically published by the first
 execution; an existing image is never repaired by admission. Ordinary admission
 performs local path/identity/hash verification and starts an independent
@@ -271,7 +278,7 @@ write root contains them. Merely placing `KODAX_HOME` below the system Temp path
 does not widen that write policy because the shell receives a separate private
 Temp child. This avoids both an `ENOENT` denial-root failure and a broad shared
 Temp grant without introducing a mutex/queue.
-Generation-9 setup invokes one elevated native parent with a versioned,
+Setup generation 10 invokes one elevated native parent with a versioned,
 digest-bound, single-use request below the protected control directory. It
 synchronously converges NUL compatibility and profile top-level read
 capabilities before publishing ready; no detached prewarm helper overlaps
@@ -1161,7 +1168,8 @@ creation-time Job containment. Different policies, Sessions, and Runtime
 processes do not share a command-lifetime filesystem-effect lease. The
 generation-8 migration proof records removal of exact obsolete KodaX
 sandbox-account read-deny ACEs. Setup generation 10/protocol 10 reuses a healthy
-fixed SID and filesystem nonce, upgrades generation 8 without replaying cleanup,
+fixed SID and filesystem nonce, upgrades healthy generation 8 or released
+generation 9 without replaying cleanup,
 and publishes a protected marker whose handle gates target start. Ordinary
 admission performs zero legacy cleanup or setup provisioning. The elevated
 setup parent receives only an explicit base64 envelope naming a digest-bound

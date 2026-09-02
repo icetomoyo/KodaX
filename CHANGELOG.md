@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 > Full history for versions prior to v0.7.0: [CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)
 
+## [Unreleased]
+
+### Fixed
+
+- Added cold-start self-healing for stale Windows sandbox setup generations.
+  A bare interactive CLI startup, including `kodax -r`, now checks the
+  installed generation before creating the REPL Runtime and reuses the existing
+  setup-only UAC boundary when migration is required. Concurrent startups
+  converge on one setup operation; followers recheck the completed generation
+  instead of installing again. Current state stays silent, and print-mode,
+  daemon, SDK, and ordinary tool execution never elevate automatically or wait
+  on the setup lock.
+- Require the setup/onboarding boundary to complete one no-side-effect native
+  target-start/exit probe before reporting Windows sandbox recovery as ready.
+  The released setup-generation-9 marker migrates in place to generation 10,
+  retaining a healthy account SID and filesystem capability nonce. This closes
+  the state where verify-only metadata looked ready while real Bash still fell
+  back to host execution, without adding a command-path lock, queue, or retry.
+
 ## [0.7.96-alpha.6] - 2026-09-02
 
 ### Fixed

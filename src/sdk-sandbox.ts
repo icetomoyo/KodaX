@@ -4,7 +4,9 @@
  * Sandbox is a standalone containment capability. Auto[LLM] uses it for
  * selected shell calls, while SDK embedders can independently run their own
  * commands or scripts with explicit filesystem, network, environment, output,
- * and timeout controls.
+ * and timeout controls. Doctor never runs setup. Embedders may call activation
+ * from their own interactive onboarding surface; ordinary Runtime/daemon calls
+ * never elevate automatically.
  */
 
 export {

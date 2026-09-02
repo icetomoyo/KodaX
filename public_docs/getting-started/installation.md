@@ -24,12 +24,14 @@ After setting the variable, close the current terminal, open a new one, and run
 KodaX opens the provider/model metadata setup. Use `kodax setup` to rerun the
 flow, `kodax setup --custom` for a guided custom provider, and
 `kodax setup --help` (or REPL `/setup --help`) for paths, provider variables,
-commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox once:
-Windows requests UAC during activation (an existing v2 account rotation may
-require a second confirmation); macOS/Linux report any required
-Seatbelt/bubblewrap dependencies. Declining or missing a dependency does not
-break ordinary permission handling, and normal startup will not keep reminding
-you. Linux shell containment also requires a host policy that permits
+commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox
+once. A bare interactive Windows CLI startup checks the installed generation
+before the REPL and uses the existing UAC setup boundary to self-heal stale
+state; healthy upgrades preserve the sandbox SID and concurrent startups
+converge on one setup. Current state is silent. Print-mode, daemon, SDK, and
+ordinary tool execution never activate setup automatically. macOS/Linux report
+any required Seatbelt/bubblewrap dependencies. Declining or missing a dependency
+does not break ordinary permission handling. Linux shell containment also requires a host policy that permits
 unprivileged user namespaces; KodaX diagnoses but does not modify that policy.
 
 ## Single binary (no Node.js required)

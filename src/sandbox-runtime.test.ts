@@ -2231,6 +2231,20 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
   });
 
+  it('reapplies current setup after an explicit execution probe fails', async () => {
+    processTreeKillMock.synchronousNativeHostSpawnFailure = true;
+    const doctor = await doctorSandboxExecution();
+    expect(doctor).toMatchObject({ ready: false, setupRequired: true });
+
+    await expect(prepareSandboxRuntimeForSetup({ initialDoctor: doctor })).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
+    });
+
+    expect(windowsSandboxMock.installCalls).toBe(1);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+  });
+
   it('fails doctor and shell admission before broker launch when the cutover marker is absent', async () => {
     await rm(cutoverMarkerFile(), { force: true });
 
@@ -4528,6 +4542,61 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(0);
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":10');
+  });
+
+  it('self-heals the released setup-9 marker and proves a real target start before reporting ready', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 9,
+      protocol: 9,
+      generationNonce: '00000000-0000-4000-8000-000000000002',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = true;
+    const hostSpawnsBefore = capturedSpawnArgv.filter((argv) => argv[1] === '__host').length;
+
+    await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({
+      status: 'ready',
+      attempted: true,
+    });
+
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    expect(capturedSpawnArgv.filter((argv) => argv[1] === '__host')).toHaveLength(
+      hostSpawnsBefore + 1,
+    );
+    const marker = JSON.parse(await readFile(cutoverMarkerFile(), 'utf8')) as {
+      readonly version: number;
+      readonly protocol: number;
+      readonly setupReadRoots: readonly string[];
+    };
+    expect(marker).toMatchObject({ version: 10, protocol: 10 });
+    expect(marker.setupReadRoots.length).toBeGreaterThan(0);
+  });
+
+  it('converges concurrent startup recovery through one setup operation', async () => {
+    await writeFile(cutoverMarkerFile(), JSON.stringify({
+      version: 9,
+      protocol: 9,
+      generationNonce: '00000000-0000-4000-8000-000000000002',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
+      hostUserSid: windowsSandboxMock.hostUserSid,
+      sandboxUserSid: windowsSandboxMock.user.sid,
+      sandboxGroupSid: windowsSandboxMock.user.groupSid,
+    }), 'utf8');
+    windowsSandboxMock.sidProcessesActive = true;
+
+    await expect(Promise.all([
+      prepareSandboxRuntimeForSetup(),
+      prepareSandboxRuntimeForSetup(),
+    ])).resolves.toEqual([
+      expect.objectContaining({ status: 'ready', attempted: true }),
+      expect.objectContaining({ status: 'ready', attempted: true }),
+    ]);
+
+    expect(windowsSandboxMock.installCalls).toBe(1);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
   });
 
   it('fails Windows isolated Skill scripts before doctor or snapshot staging', async () => {

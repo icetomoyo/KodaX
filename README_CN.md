@@ -58,10 +58,12 @@ kodax
 provider/model 元数据设置。使用 `kodax setup` 重新运行设置，
 使用 `kodax setup --custom` 配置自定义 provider；使用 `kodax setup --help` 或
 REPL `/setup --help` 查看完整路径、环境变量、命令和快捷键。交互式 setup 还会检查
-一次可选 ASRT sandbox：Windows 激活时会请求 UAC（已有安装进行 v2 账户 SID
-轮换时可能需要第二次确认）；
+一次可选 ASRT sandbox。Windows 裸交互 CLI 启动会在进入 REPL 前检查已安装 setup
+generation；缺失或过期时复用同一条 setup 边界并按需请求 UAC，健康升级保留现有
+sandbox SID。当前状态保持静默，并发启动只收敛到一次 setup，普通工具调用不执行
+setup、也不等待 setup 锁；print 模式、daemon 与 SDK 启动绝不会自动弹 UAC。
 macOS/Linux 会报告 Seatbelt/bubblewrap 所需依赖。拒绝 UAC 或缺少依赖不会破坏普通
-权限管理，日常启动也不会反复提醒。
+权限管理。
 
 > **不装 Node 的目标机器**：从 [GitHub Releases](https://github.com/icetomoyo/KodaX/releases) 拿 Bun 编译的单文件二进制（Win / macOS / Linux × x64 + arm64）。详见 [docs/release.md](docs/release.md)。
 
@@ -305,7 +307,7 @@ Session 与 Runtime 进程之间不再共享命令生命周期或机器级 files
 每条 native 命令拥有独立 request、token、控制通道和 Job；相同网络权威使用有界
 broker pool，但不串行命令生命周期。protocol 10/setup generation 10 会把受保护 setup
 marker 持有到目标 `Started` 已持久化；setup 版本升级复用健康的固定沙箱账户与 SID，
-已有 generation 8 安装会原地升级且不会重放 legacy ACL 清理；generation 8 继续仅作为
+健康的 generation 8 或已发布 generation 9 安装会原地升级且不会重放 legacy ACL 清理；generation 8 继续仅作为
 一次性 legacy 迁移的证明边界。setup 先发布受保护且不可执行的 `installing` marker；高权限
 父进程同步完成 NUL 兼容性与 profile 读 capability，调用方随后才原子发布 ready marker。
 不存在与普通命令准入重叠的 helper 或迁移，也不会在命令准入中预热或改写共享系统 TMP。
@@ -647,7 +649,9 @@ $env:ZHIPU_API_KEY="your_api_key"
 
 ### 2.1 激活可选 sandbox
 
-`kodax setup` 与首次安装 setup 会检查 sandbox。也可以显式检查或激活：
+`kodax setup` 与首次安装 setup 会检查 sandbox。Windows 裸交互 CLI 启动（包括
+`kodax -r`）也会在创建 REPL Runtime 前自愈缺失或过期的 setup generation。也可以
+显式检查或激活：
 
 ```bash
 kodax sandbox doctor
@@ -655,7 +659,9 @@ kodax sandbox setup
 ```
 
 - Windows 使用受限 sandbox 账户和网络策略。普通 Terminal 即可，按提示同意激活
-  所需的 UAC 确认；不必先以管理员身份启动 Terminal。
+  所需的 UAC 确认；不必先以管理员身份启动 Terminal。并发交互启动只共享既有 setup 锁：
+  一个进程修复，其他进程复查结果，shell 命令仍彼此独立。无头、print、daemon 和 SDK
+  启动不会自动弹 UAC。
 - macOS 使用 Seatbelt/`sandbox-exec`，需要 ripgrep：
   `brew install ripgrep`。
 - Linux 使用 bubblewrap，需要 `bubblewrap`、`socat` 和 `ripgrep`，请根据发行版用

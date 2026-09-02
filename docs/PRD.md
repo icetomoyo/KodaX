@@ -213,7 +213,8 @@ without a cross-process target mutex. Each command retains
 an independent token, pipe, Job, and terminal proof. Shared network brokers are
 kept referenced while starting or leased and detached only while idle. The
 setup generation 10 / protocol 10 transition reuses a healthy fixed sandbox
-account across setup versions, upgrades generation 8 without replaying its
+account across setup versions, upgrades healthy generation 8 or released
+generation 9 without replaying its
 completed legacy ACL cleanup, and gates every new target start with an open
 handle to the protected generation marker. Setup publishes a protected
 non-ready `installing` marker, the elevated parent synchronously converges NUL
@@ -360,9 +361,15 @@ environment must be inherited by profile code and command targets; fixed
 KodaX/Electron execution-control variables must be removed. A configured interpreter failure is visible
 and fail-closed; an absent contract preserves established behavior.
 
-ASRT is the first execution authority for Edits and Auto[LLM], while ordinary
-Runtime startup must not depend on setup readiness or silently run
-installers/elevation. Sandbox completion is silently authoritative. A proven
+ASRT is the first execution authority for Edits and Auto[LLM]. Non-interactive
+Runtime/daemon startup must not depend on setup readiness or silently run
+installers/elevation. The bare interactive Windows CLI owns one cold startup
+check before it creates the REPL Runtime: a current generation is silent, while
+a missing or stale generation enters the existing setup-only UAC boundary and
+must pass one real no-side-effect target-start/exit probe before reporting
+ready. Concurrent interactive starters converge on one setup and followers
+recheck its result. Ordinary tool calls never enter setup or wait on its lock.
+Sandbox completion is silently authoritative. A proven
 pre-start refusal or unavailable backend reaches a separate host-boundary
 decision; target-started or uncertain calls are never replayed. `/sandbox` is the explicit diagnostic
 surface. SDK hosts may use `@kodax-ai/kodax/sandbox` for their own commands

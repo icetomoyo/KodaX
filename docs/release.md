@@ -237,6 +237,8 @@ Release gates:
    configuration and SDK guides, config templates, changelog, test guide, and
    `kodax_manual` must describe the same sandbox-first route.
 5. Protocol 10/setup generation 10, the generation-8 one-time migration proof,
+   released-generation-9 in-place startup recovery, one-install convergence for
+   concurrent interactive clients, post-setup real target-start/exit proof,
    protected two-phase synchronous setup with no admission-overlapping helper,
    the native sidecar/hash manifest, receipt
    convergence, bounded-idle broker release, and the real opt-in Windows

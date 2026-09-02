@@ -8,8 +8,10 @@ recreate the observed 60/75/240-second stalls.
 
 Use a disposable Windows sandbox account/workspace. Build the current native
 artifact first. The first current client must publish a missing content hash
-automatically; run `kodax sandbox setup` once only when the account/setup
-generation itself is absent or stale. Protocol 10/setup generation 10 and
+automatically. Leave an absent or released generation-9 setup marker in place
+when testing startup self-healing: the first bare interactive current client
+must enter the existing setup boundary automatically, while explicit
+`kodax sandbox setup` remains the manual repair path. Protocol 10/setup generation 10 and
 `sandboxRuntime:11` is required; do not test a protocol-10 TypeScript bundle
 against an older native sidecar.
 
@@ -29,6 +31,11 @@ npx vitest run tests/feature-295-windows-v2-policy.test.ts
 Expected:
 
 - native protocol is 10 and the setup marker is generation 10;
+- a released generation-9 marker migrates to generation 10 in place, preserving
+  the healthy account SID/group and filesystem capability nonce;
+- two concurrent bare interactive Windows clients perform one setup operation;
+  the follower rechecks the winner and neither command path gains a setup lock;
+- print-mode, daemon, and SDK startup do not request UAC automatically;
 - `kodax sandbox doctor` runs one no-side-effect command with host fallback
   disabled and reports ready only after target-start/exit proof; internal Runtime
   readiness checks remain verify-only;
@@ -158,18 +165,25 @@ Pass conditions:
 
 ## Setup/admission cutover
 
-1. Start a protocol-10 command and pause it after admission but before target
+1. With a released generation-9 marker and healthy active sandbox SID, start
+   two bare interactive current clients together. Approve the setup UAC prompt(s).
+   Confirm one install, no SID rotation, both clients proceed, and each sees a
+   real target-start/exit proof before ready. Cancel once and confirm the CLI
+   continues under the normal permission policy without mutating the marker.
+2. Repeat through print-mode, daemon, and the SDK without explicitly calling
+   activation. Confirm none opens UAC or enters setup.
+3. Start a protocol-10 command and pause it after admission but before target
    `Started` using the test hook.
-2. Start setup. Marker replacement must wait because the host owns a
+4. Start setup. Marker replacement must wait because the host owns a
    non-delete-sharing marker handle.
-3. Release target start. Confirm the resume and started records become durable,
+5. Release target start. Confirm the resume and started records become durable,
    then setup may replace the marker.
-4. Supply a protocol-10 request without marker path/digest. Native decode or
+6. Supply a protocol-10 request without marker path/digest. Native decode or
    validation must reject it before ACL mutation/target start.
-5. For a protocol-8-or-older migration fixture, create both the legacy cutover marker
+7. For a protocol-8-or-older migration fixture, create both the legacy cutover marker
    and an obsolete drain marker. Setup must remove both without a 301-second
    wait and preserve a healthy account SID/group.
-6. Corrupt or remove the account identity and confirm only this destructive
+8. Corrupt or remove the account identity and confirm only this destructive
    repair path waits for the old SID to become idle before rotation.
 
 ## Failure interpretation

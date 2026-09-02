@@ -6008,7 +6008,7 @@ Legacy sensitive-root ACL removal is a versioned setup operation, never a
 normal command-admission operation. Setup generation 8 is the durable proof for
 that one-time cleanup: it removes only provably owned legacy guards against the
 exact installed group SID after proving that SID idle. Setup generation 10
-upgrades a healthy generation-8 account in place, preserving its SID/group and
+upgrades a healthy generation-8 or released generation-9 account in place, preserving its SID/group and
 filesystem nonce without replaying cleanup even when that SID is active. Only a
 missing, damaged, or identity-mismatched account rotates. Protocol-7 binaries
 never read the protected marker; protocol 10 and `sandboxRuntime:11` fence old
@@ -6056,10 +6056,16 @@ critical safeguard. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
-On Windows, upgrading from any pre-8 setup generation or pre-10 native protocol
-requires one explicit `kodax sandbox setup`. A healthy fixed account is updated in place even while
-an existing sandbox process uses that SID; destructive account repair still
-requires the old SID to be idle. Normal commands never wait on the setup lock
+On Windows, upgrading from any pre-10 native protocol or stale setup generation
+enters the same setup boundary once. The user may invoke `kodax sandbox setup`
+explicitly, or a bare interactive Windows CLI startup may invoke it before
+creating the REPL Runtime and request the normal UAC confirmation. A healthy
+fixed account is updated in place even while an existing sandbox process uses
+that SID; destructive account repair still requires the old SID to be idle.
+Concurrent startup repair callers converge through the setup-only lock and
+followers recheck the winner. Setup readiness is accepted only after one real
+host-fallback-disabled target-start/exit probe. Non-interactive Runtime/daemon/
+SDK startup remains verify-only. Normal commands never wait on the setup lock
 or the legacy ACL cleanup path, so independent Sessions retain true overlap.
 
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
@@ -6093,9 +6099,12 @@ lock.
 
 **Decision**:
 
-1. Machine-wide changes belong to explicit versioned setup. Artifact/control
+1. Machine-wide changes belong to the versioned setup boundary. Artifact/control
    provisioning, legacy guard removal, and full stale-deny recovery never run
-   in ordinary command admission. The setup lock only excludes another setup.
+   in ordinary command admission. It is entered by an explicit setup action or
+   by the bare interactive Windows CLI's pre-Runtime stale-generation recovery;
+   the setup lock only excludes another setup. Non-interactive Runtime/daemon/
+   SDK startup never enters it automatically.
 2. Warm ACL admission is read-only. Normal-token grants accept effective
    inherited access from the sandbox group/account, Builtin Users,
    Authenticated Users, or Everyone. A missing exact restricted capability ACE

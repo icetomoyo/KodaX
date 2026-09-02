@@ -60,12 +60,15 @@ After setting the variable, close the current terminal, open a new one, and run
 KodaX opens the provider/model metadata setup. Use `kodax setup` to rerun the
 flow, `kodax setup --custom` for a guided custom provider, and
 `kodax setup --help` (or REPL `/setup --help`) for paths, provider variables,
-commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox once:
-Windows requests UAC during activation (an existing v2 account rotation may
-require a second confirmation); macOS/Linux report any required
-Seatbelt/bubblewrap dependencies. Declining or missing a dependency does not
-break ordinary permission handling, and normal startup will not keep reminding
-you.
+commands, and shortcuts. Interactive setup also checks the optional ASRT sandbox
+once. On Windows, a bare interactive CLI startup checks the installed setup
+generation before the REPL and uses the same UAC setup boundary to repair a
+missing or stale generation; a healthy upgrade preserves the existing sandbox
+SID. Current state stays silent, concurrent startups converge on one setup, and
+ordinary tool calls never run setup or wait on its lock. Print-mode, daemon,
+and SDK startup never trigger UAC automatically. macOS/Linux report any
+required Seatbelt/bubblewrap dependencies. Declining or missing a dependency
+does not break ordinary permission handling.
 
 > **No-Node target machines:** download a Bun-compiled single binary for Windows / macOS / Linux × x64 + arm64 from the [GitHub Releases](https://github.com/icetomoyo/KodaX/releases) page. See [docs/release.md](docs/release.md) for the build pipeline.
 
@@ -198,8 +201,10 @@ $env:ZHIPU_API_KEY="your_api_key"
 
 ### 2.1 Activate the optional sandbox
 
-`kodax setup` and first-run setup check sandbox readiness. You can inspect or
-activate it explicitly:
+`kodax setup` and first-run setup check sandbox readiness. A bare interactive
+Windows CLI startup (including `kodax -r`) also self-heals an absent or stale
+setup generation before creating the REPL Runtime. You can inspect or activate
+it explicitly:
 
 ```bash
 kodax sandbox doctor
@@ -208,6 +213,9 @@ kodax sandbox setup
 
 - Windows uses a restricted sandbox account and network policy. A normal
   terminal is sufficient; approve the activation UAC confirmation(s).
+  Concurrent interactive startups share only the existing setup lock: one
+  performs the repair, followers recheck its result, and shell commands remain
+  independent. Headless, print-mode, daemon, and SDK startup never open UAC.
 - macOS uses Seatbelt/`sandbox-exec` and requires ripgrep
   (`brew install ripgrep`).
 - Linux uses bubblewrap and requires `bubblewrap`, `socat`, and `ripgrep`
@@ -759,8 +767,9 @@ command has an independent request, token, control channel, and Job; matching
 network authorities share a bounded broker pool without serializing command
 lifetime. Protocol 10/setup generation 10 holds the protected setup marker until
 durable target `Started`, reuses a healthy fixed sandbox account across setup
-versions, and upgrades generation-8 installations in place without replaying
-legacy ACL cleanup. Generation 8 remains the proof boundary for the one-time
+versions, and upgrades healthy generation-8 or released generation-9
+installations in place without replaying legacy ACL cleanup. Generation 8
+remains the proof boundary for the one-time
 legacy migration. Setup first publishes a protected non-ready `installing`
 marker; the elevated parent synchronously installs NUL compatibility and profile
 read capabilities, and only then does the caller atomically publish the ready

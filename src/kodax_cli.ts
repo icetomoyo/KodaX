@@ -3653,6 +3653,7 @@ function printProviderSetupCompletion(selection: {
 
 async function prepareSetupSandboxReport(): Promise<{
   readonly status: 'ready' | 'cancelled' | 'unavailable';
+  readonly attempted: boolean;
   readonly lines: readonly string[];
 }> {
   const { prepareSandboxRuntimeForSetup } = await loadSandboxRuntimeModule();
@@ -3667,7 +3668,49 @@ async function prepareSetupSandboxReport(): Promise<{
       ? ['KodaX will use the normal permission policy; sandbox containment remains off until activated.']
       : []),
   ];
-  return { status: outcome.status, lines: [...new Set(details)] };
+  return {
+    status: outcome.status,
+    attempted: outcome.attempted,
+    lines: [...new Set(details)],
+  };
+}
+
+interface InteractiveSandboxStartupInput {
+  readonly platform: NodeJS.Platform;
+  readonly stdinIsTTY: boolean;
+  readonly stdoutIsTTY: boolean;
+}
+
+interface InteractiveSandboxStartupReport {
+  readonly status: 'ready' | 'cancelled' | 'unavailable';
+  readonly attempted: boolean;
+  readonly lines: readonly string[];
+}
+
+export async function prepareInteractiveSandboxStartup(
+  input: InteractiveSandboxStartupInput,
+  prepare: () => Promise<InteractiveSandboxStartupReport>,
+): Promise<InteractiveSandboxStartupReport | undefined> {
+  if (
+    input.platform !== 'win32'
+    || !input.stdinIsTTY
+    || !input.stdoutIsTTY
+  ) return undefined;
+  return prepare();
+}
+
+function reportInteractiveSandboxStartup(
+  report: InteractiveSandboxStartupReport | undefined,
+): void {
+  if (report === undefined || (!report.attempted && report.status === 'ready')) return;
+  const label = report.status === 'ready'
+    ? chalk.green('ready')
+    : report.status === 'cancelled'
+      ? chalk.yellow('cancelled')
+      : chalk.yellow('unavailable');
+  process.stderr.write(`\nWindows sandbox startup recovery: [${label}]\n`);
+  for (const line of report.lines) process.stderr.write(`  ${line}\n`);
+  process.stderr.write('\n');
 }
 
 async function inspectSandboxReport(): Promise<{
@@ -5593,6 +5636,11 @@ complete -c kodax -l version -d 'Show version'`);
       const useClassicInteractiveMode = interactiveSurface === 'classic';
       // Pass FileSessionStorage for persisted sessions.
       try {
+        reportInteractiveSandboxStartup(await prepareInteractiveSandboxStartup({
+          platform: process.platform,
+          stdinIsTTY: process.stdin.isTTY === true,
+          stdoutIsTTY: process.stdout.isTTY === true,
+        }, prepareSetupSandboxReport));
         if (useClassicInteractiveMode) {
           console.error(
             chalk.dim(

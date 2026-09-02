@@ -6306,8 +6306,8 @@ const doctor = await doctorKodaXSandbox({ refresh: true });
 
 if (!doctor.ready) {
   showSandboxInfo(getKodaXSandboxSetupGuidance(doctor));
-  // Call only from an explicit setup/onboarding action. On Windows this may
-  // display UAC; ordinary SDK calls never invoke it automatically.
+  // Call only from an explicit interactive setup/onboarding action. On Windows
+  // this may display UAC; ordinary SDK calls never invoke it.
   const activation = await activateKodaXSandbox();
   if (activation.status !== 'ready') {
     showSandboxInfo(activation.guidance);
@@ -6318,8 +6318,9 @@ if (!doctor.ready) {
 Platform behavior:
 
 - Windows uses the pinned ASRT restricted-user/WFP setup. The parent terminal
-  does not need to be elevated; activation requests UAC itself, and a v2
-  upgrade account-SID rotation may require a second confirmation.
+  does not need to be elevated; activation requests UAC confirmation, and
+  a healthy generation upgrade preserves the existing account SID. Activation
+  proves one real no-side-effect target start before returning `ready`.
 - macOS uses Seatbelt through `sandbox-exec` and requires ripgrep. Guide users
   to `brew install ripgrep` when doctor reports it missing.
 - Linux uses bubblewrap and requires `bubblewrap`, `socat`, and `ripgrep`.
@@ -6327,10 +6328,14 @@ Platform behavior:
   package manager silently. The host must also permit unprivileged user
   namespaces. Do not change sysctls or AppArmor policy silently.
 
-Do not call `activateKodaXSandbox()` during ordinary Runtime startup, tool
-execution, or a background permission check. KodaX's own first-run/setup UI
-checks once; a declined UAC prompt or missing dependency is reported there and
-is not repeatedly surfaced until the user runs setup again.
+Do not call `activateKodaXSandbox()` during ordinary Runtime/daemon startup,
+tool execution, or a background permission check. An SDK application that
+wants CLI-equivalent self-healing should call doctor and, only from its own
+interactive setup/onboarding surface, call activation before creating its
+Runtime. KodaX's bare interactive Windows CLI does exactly that; print-mode and
+daemon startup remain verify-only. Multiple activation callers converge through
+the setup-only lock, and a follower rechecks the completed setup instead of
+installing again.
 
 ### Run a host-owned command with an explicit policy
 

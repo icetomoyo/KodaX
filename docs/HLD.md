@@ -142,16 +142,21 @@ allowed roots without persistent private-ancestor ACEs or profile-DACL
 propagation. Because `WRITE_RESTRICTED` does not enforce restricting SIDs for
 reads, Windows per-command `denyRead` fails closed as `unsupported_policy`
 before setup, DACL mutation, or target start. Windows setup generation 10
-upgrades a healthy generation-8 identity in place without replaying the
+upgrades a healthy generation-8 or released generation-9 identity in place without replaying the
 generation-8 legacy ACL migration proof. One setup-only elevated native parent
 receives a small explicit base64 envelope, validates its versioned digest-bound
 `installing` marker inside the protected control directory, and synchronously
 converges NUL compatibility plus profile read capabilities. The setup caller
 atomically publishes the ready marker only after that parent succeeds; no helper
-overlaps ordinary admission. Shell Temp variables use an empty per-command child
+overlaps ordinary admission. The bare interactive Windows CLI verifies this
+generation before creating its REPL Runtime. A stale generation reuses that
+setup-only boundary; concurrent starters serialize only the repair and followers
+recheck the completed state. One no-side-effect target start and exit proves the
+new generation before startup reports ready. Non-interactive Runtime/daemon/SDK
+startup remains verify-only. Shell Temp variables use an empty per-command child
 under system TMP, so command admission never rewrites the shared Temp/AppData root;
- ordinary command admission never invokes UAC, that migration, or
- revokes shared ACL state. New sandbox policy grants broad
+ordinary command admission never invokes UAC, that migration, or
+revokes shared ACL state. New sandbox policy grants broad
  host reads instead. Native requests no
  longer add the protected artifact-cache root as a redundant `denyWrite` root,
  so upgrades neither grow those historical residues nor conflict with the

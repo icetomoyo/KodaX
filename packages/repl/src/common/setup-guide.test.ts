@@ -45,6 +45,8 @@ describe('renderSetupGuide', () => {
     expect(guide).toMatch(/KodaX does not set.*environment variable/is);
     expect(guide).toContain('kodax sandbox doctor');
     expect(guide).toContain('UAC');
+    expect(guide).toContain('Interactive Windows CLI startup');
+    expect(guide).toContain('Headless, print-mode, daemon, and SDK startup');
     expect(guide).toContain('brew install ripgrep');
     expect(guide).toContain('bubblewrap, socat, and ripgrep');
     expect(guide).toContain('@kodax-ai/kodax/sandbox');

@@ -66,6 +66,7 @@ afterEach(async () => {
   vi.doUnmock('@kodax-ai/coding');
   vi.doUnmock('@kodax-ai/repl');
   vi.doUnmock('./sdk-runtime.js');
+  vi.doUnmock('./sandbox-runtime.js');
   vi.doUnmock('./a2a/runtime-config.js');
   vi.doUnmock('./runtime-daemon/manager.js');
   process.argv = originalArgv;
@@ -408,6 +409,16 @@ async function importMainWithMocks(options: {
       createKodaXRuntime,
     }));
   }
+  vi.doMock('./sandbox-runtime.js', () => ({
+    prepareSandboxRuntimeForSetup: vi.fn(async () => ({
+      status: 'ready' as const,
+      attempted: false,
+      doctor: {
+        diagnostics: [] as readonly string[],
+      },
+      guidance: [] as readonly string[],
+    })),
+  }));
   vi.doMock('./a2a/runtime-config.js', () => ({
     createConfiguredA2ARuntimeIntegration: vi.fn(() => ({
       runtimeOptions: { factories: [], policy: vi.fn(() => ({ allowed: true })) },

@@ -149,7 +149,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
-    expect(sandbox).toContain('Internal startup readiness remains verify-only');
+    expect(sandbox).toContain('Non-interactive Runtime/daemon startup readiness remains verify-only');
+    expect(sandbox).toContain('Interactive Windows CLI startup performs one setup-generation check');
+    expect(sandbox).toContain('Concurrent startup repairs converge through the setup-only lock');
     expect(sandbox).toContain('expired dead-PID request');
     expect(sandbox).toContain('windows-deny recovery records remain fail-closed');
     expect(sandbox).toContain('sandboxRuntime:11');

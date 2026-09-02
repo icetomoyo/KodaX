@@ -2421,9 +2421,13 @@ function verifyWindowsV2AccountCompatibility(
   }
 }
 
-async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDoctorResult> {
+async function setupWindowsSandboxRuntimeWithLock(
+  forceCurrentGeneration: boolean,
+): Promise<SandboxRuntimeDoctorResult> {
   const initial = await doctorSandboxRuntime({ refresh: true });
-  if (!initial.ready && !initial.setupRequired) return initial;
+  if ((!forceCurrentGeneration && initial.ready) || (!initial.ready && !initial.setupRequired)) {
+    return initial;
+  }
   // Migration state lives in the protected native cache. Provision that cache
   // before publishing a legacy drain marker; a normal mkdir would inherit a
   // weaker parent DACL and make later artifact verification fail closed.
@@ -2608,14 +2612,20 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
   return doctorSandboxRuntime({ refresh: true });
 }
 
-export async function setupSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
-  if (process.platform !== 'win32') return doctorSandboxRuntime({ refresh: true });
+async function runWindowsSandboxSetup(
+  forceCurrentGeneration: boolean,
+): Promise<SandboxRuntimeDoctorResult> {
   await mkdir(path.dirname(windowsSandboxV2SetupLockFile()), { recursive: true, mode: 0o700 });
   return withKodaXFileLock(
     windowsSandboxV2SetupLockFile(),
-    setupWindowsSandboxRuntimeWithLock,
+    () => setupWindowsSandboxRuntimeWithLock(forceCurrentGeneration),
     WINDOWS_SANDBOX_ACL_RECOVERY_LOCK_TIMEOUT_MS,
   );
+}
+
+export async function setupSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
+  if (process.platform !== 'win32') return doctorSandboxRuntime({ refresh: true });
+  return runWindowsSandboxSetup(true);
 }
 
 export function sandboxSetupGuidance(
@@ -2701,7 +2711,11 @@ export async function prepareSandboxRuntimeForSetup(
     };
   }
   try {
-    const doctor = await setupSandboxRuntime();
+    const forceCurrentGeneration = initial.diagnostics.some((diagnostic) => (
+      diagnostic.startsWith('Sandbox launch probe failed:')
+    ));
+    await runWindowsSandboxSetup(forceCurrentGeneration);
+    const doctor = await doctorSandboxExecution({ refresh: true });
     return {
       status: doctor.ready ? 'ready' : 'unavailable',
       attempted: true,
@@ -5041,7 +5055,7 @@ export async function runKodaXSandboxed(
   };
 }
 
-/** Explicit diagnostic probe. Ordinary startup and command admission use the verify-only doctor. */
+/** Explicit/post-setup execution proof. Ordinary command admission stays verify-only. */
 export async function doctorSandboxExecution(
   _options: { readonly refresh?: boolean } = {},
 ): Promise<SandboxRuntimeDoctorResult> {

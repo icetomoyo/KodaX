@@ -9,6 +9,19 @@ _Last Updated: 2026-09-02_
 
 ## v0.7.96-alpha.6 Release Corrections
 
+The post-alpha.6 startup correction closes the remaining stale-machine-state
+gap. A released setup-generation-9 marker could be internally consistent yet
+fail the protocol-10/generation-10 admission contract, leaving every Bash call
+to pay target-start failure and host fallback until the user guessed that setup
+must be rerun. A bare interactive Windows CLI startup now checks that generation
+before creating the REPL Runtime and reuses the existing setup-only UAC boundary
+to migrate a healthy account in place. Two concurrent startups perform one
+install: after the setup lock is released, the follower rechecks the winner and
+returns. Setup recovery is accepted only after a no-side-effect command proves
+target start and exit. Print-mode, daemon, SDK, and ordinary tool execution stay
+verify-only and never elevate automatically or wait on setup. This is cold-path
+self-healing, not a new Bash lock, queue, retry, or permission mechanism.
+
 Issue 326's remaining release regressions are resolved in the v0.7.96-alpha.6
 pre-release. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
