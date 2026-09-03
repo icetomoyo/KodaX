@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.96-beta.1] - 2026-09-03
+
+The first beta pre-release of the v0.7.96 line: it retains the full alpha.7
+sandbox-first, trusted-text, and permission-profile feature set and adds the
+Linux native compatibility fix below. npm publication remains a separate
+manual maintainer action.
+
+### Fixed
+
+- Restored Linux glibc 2.28 compatibility for the FEATURE_295 native text
+  authority (Issue 328). Linux x64/arm64 addons now compile with Rust 1.98.0
+  inside architecture-matched, digest-pinned `manylinux_2_28` builders, and the
+  normal staging path hashes and packages those prebuilt bytes without
+  recompiling on the Ubuntu host. CI and release lanes scan every staged Linux
+  addon and fail if any required symbol exceeds `GLIBC_2.28`, so private
+  Kylin V10 / glibc 2.28 deployments can load the trusted text authority
+  again. No text-transaction, CAS, lock, atomic-replace, receipt, or fail-closed
+  runtime path changed.
+
 ## [0.7.96-alpha.7] - 2026-09-03
 
 ### Fixed

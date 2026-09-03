@@ -137,31 +137,30 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-alpha.7 release preparation
+## v0.7.96-beta.1 release preparation
 
-Release state: `v0.7.96-alpha.7` is the GitHub pre-release for the exact tagged
+Release state: `v0.7.96-beta.1` is the GitHub pre-release for the exact tagged
 commit. The tag-triggered Release workflow builds every platform archive and
 the universal npm tarball, publishes checksums, and creates the GitHub Release.
 npm registry publication remains a separate manual maintainer action.
 
-Compared with alpha.6, alpha.7 additionally includes:
+This is the first beta pre-release of the v0.7.96 line. Compared with alpha.7,
+beta.1 additionally includes:
 
-- cold interactive Windows startup self-healing for a stale setup generation,
-  using the existing setup-only boundary and one real no-side-effect target
-  proof without adding a Bash lock, queue, retry, or automatic elevation to
-  print-mode, daemon, SDK, or ordinary tool execution;
-- a marker-only fast path for current setup state and a live elapsed-time status
-  while an actual `kodax -r` or new-session repair runs in a child process;
-- explicit host-control-plane guidance for sandbox doctor: use `/sandbox` in
-  the REPL or run `kodax sandbox doctor` directly in a user terminal, never
-  through the sandbox-first Bash tool.
+- Issue 328: Linux x64/arm64 FEATURE_295 native text authorities compile with
+  Rust 1.98.0 inside architecture-matched, digest-pinned `manylinux_2_28`
+  builders; the normal staging path hashes and packages those prebuilt bytes
+  without recompiling on the Ubuntu host. CI and release lanes scan every
+  staged Linux addon and fail if any required symbol exceeds `GLIBC_2.28`,
+  restoring private Kylin V10 / glibc 2.28 deployments. No text-transaction,
+  CAS, lock, atomic-replace, receipt, or fail-closed runtime path changed.
 
 Release gates:
 
-1. Every root/workspace package and lockfile entry is `0.7.96-alpha.7`; public
+1. Every root/workspace package and lockfile entry is `0.7.96-beta.1`; public
    declarations, README/README_CN, PRD/HLD/DD/ADR, feature/release records,
-   SDK/configuration guides, regression guides, changelog, and `kodax_manual`
-   describe the same sandbox-first contract.
+   SDK/configuration guides, regression guides, changelog, known-issue records,
+   and `kodax_manual` describe the same sandbox-first contract.
 2. Recognized nested shell forms remain recursively inspectable; unlowerable
    bodies stay opaque for exact outer Exec Policy and the normal Edits/Auto[LLM]
    host-boundary decision. Only explicit matched forbids and concrete critical
@@ -169,13 +168,12 @@ Release gates:
 3. A loaded embedded Windows native manifest resolves its exact verified
    protected-cache hash before mutable package/link source. A missing exact hash
    publishes atomically. Neither path adds a command lock, serial queue, or retry.
-4. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
+4. Linux release lanes build the native text authority in `manylinux_2_28`
+   builders and pass the ELF glibc 2.28 ABI gate; Windows and macOS native
+   lanes are unchanged.
+5. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
    start, target-start, terminal-proof, and host-fallback gates overlap without
    a machine-global admission boundary.
-5. Injecting `EPERM` into post-proof private-Temp leaf removal must preserve the
-   proven command result and emit a warning. Per-command cleanup must never
-   remove the shared hashed parent or delay an independent shell; native
-   lifecycle/Job-drain failure remains fail-closed.
 6. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
    declaration generation, package-independence checks, documentation links,
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
@@ -185,6 +183,16 @@ The release commit is tagged only after these gates and branch CI pass. Pushing
 the tag starts the Release workflow; that workflow must finish green and create
 the GitHub pre-release before handoff. npm publication is intentionally left to
 the maintainer.
+
+## v0.7.96-alpha.7 release preparation
+
+Release state: `v0.7.96-alpha.7` is the GitHub pre-release at `702866db`.
+It completes the post-alpha.5 Windows/Bash recovery line: cold interactive
+stale-setup self-healing, a marker-only fast path with live recovery status,
+and explicit host-control-plane doctor guidance, on top of the alpha.6
+protocol-10/setup-generation-10 admission and concurrency correction. It
+predates beta.1's Linux glibc 2.28 native build fix. npm publication remained
+a manual maintainer action.
 
 ## v0.7.96-alpha.6 release preparation
 

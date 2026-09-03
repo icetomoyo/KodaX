@@ -2,8 +2,8 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-alpha.7`; npm publication remains a separate
-manual maintainer action. Alpha.7 carries
+The current release is `v0.7.96-beta.1`; npm publication remains a separate
+manual maintainer action. Beta.1 carries
 the alpha.4 permission profiles, sandbox-first routing, JSONC Exec Policy,
 Auto[LLM] host-boundary review, and Full Access, and completes Windows sandbox
 concurrency/self-healing without adding a command lock, queue, or permission restriction.
@@ -16,7 +16,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-   restricted-token runner (alpha.7 native shell protocol version 10/setup
+   restricted-token runner (beta.1 native shell protocol version 10/setup
    generation 10, Windows `sandboxRuntime:11`, interactive startup recovery
    through the setup-only boundary, and no command-lifetime global admission
 lock). It replaces the

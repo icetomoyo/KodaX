@@ -7,7 +7,19 @@ _Last Updated: 2026-09-03_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
-## v0.7.96-alpha.7 Release Corrections
+## v0.7.96-beta.1 Release Corrections
+
+The beta.1 Linux correction (Issue 328) restores the FEATURE_295 native text
+authority on the supported private-deployment floor. The alpha.1-through-
+alpha.7 Linux release builds compiled the Rust `cdylib` directly on Ubuntu
+24.04, so its newer glibc symbol versions became part of the ELF ABI and every
+production `write`/`edit` failed to load on a glibc 2.28 host such as private
+Kylin V10 arm64. Linux x64/arm64 addons now compile with Rust 1.98.0 inside
+architecture-matched, digest-pinned `manylinux_2_28` builders, the normal
+staging path hashes and packages those prebuilt bytes without recompiling on
+the Ubuntu host, and CI/release lanes scan every staged Linux addon and fail if
+any required symbol exceeds `GLIBC_2.28`. No text-transaction, CAS, lock,
+atomic-replace, receipt, or fail-closed runtime path changed.
 
 The alpha.7 startup correction closes the remaining stale-machine-state
 gap. A released setup-generation-9 marker could be internally consistent yet
@@ -31,7 +43,7 @@ sandboxed commands are healthy; no host control-state access is granted to the
 sandbox account.
 
 Issue 326's remaining release regressions were resolved in the
-v0.7.96-alpha.6 GitHub pre-release and are retained by alpha.7. The failure was not an
+v0.7.96-alpha.6 GitHub pre-release and are retained by beta.1. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a
@@ -303,7 +315,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96 development after alpha.7 | 2026-09-03 | 2026-09-03 |
+| 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96-beta.1 | 2026-09-03 | 2026-09-03 |
 | 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96-alpha.6 | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.6 | 2026-08-30 | 2026-09-01 |
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
@@ -525,7 +537,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.96-alpha.1 Linux native release build
-- **Fixed**: v0.7.96 development after alpha.7
+- **Fixed**: v0.7.96-beta.1
 - **Created**: 2026-09-03
 - **Resolved**: 2026-09-03
 

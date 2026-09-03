@@ -2,7 +2,7 @@
 
 > Last updated: 2026-09-03
 >
-> **v0.7.96-alpha.7 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-beta.1 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with

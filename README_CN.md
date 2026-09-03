@@ -296,7 +296,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.96-alpha.7 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-beta.1 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -324,11 +324,13 @@ shell 内容保留为 opaque 完整 argv，由精确 Exec Policy 与正常 Edits
 失败的 broker 代际会立即脱离复用但不会停止仍在运行的 holder，并继续计入固定端口容量直到进程
 实际关闭；启动/控制阶段各自以 15 秒为界，不会缩短命令执行 deadline。多个 npm-link/`kodax -r`
 客户端同时遇到空闲旧 daemon 时，会以认证临时身份选出一个替换者，其余客户端脱离后等待或续跑
-同一精确 prepared ticket；忙碌或不可信的 daemon 仍保持不动并返回结构化边界。alpha.7 还会在
+同一精确 prepared ticket；忙碌或不可信的 daemon 仍保持不动并返回结构化边界。本版本还会在
 交互式 REPL 启动前自愈陈旧的 Windows setup generation；当前 marker 走快速路径，只有实际恢复
 才显示持续更新的等待时间。sandbox doctor 明确属于宿主控制面：REPL 内使用 `/sandbox`，或直接
-在用户终端运行 `kodax sandbox doctor`，不能通过 sandbox-first Bash 工具调用。npm 发布仍由
-维护者手动执行。详见 [v0.7.96-alpha.7 发布清单](docs/release.md#v0796-alpha7-release-preparation)。
+在用户终端运行 `kodax sandbox doctor`，不能通过 sandbox-first Bash 工具调用。Linux x64/arm64
+native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，并要求所需 `GLIBC_*` 符号不超过
+2.28，恢复了受支持的私有化部署下限（Issue 328）。npm 发布仍由
+维护者手动执行。详见 [v0.7.96-beta.1 发布清单](docs/release.md#v0796-beta1-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

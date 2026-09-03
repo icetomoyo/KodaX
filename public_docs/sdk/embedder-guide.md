@@ -5,7 +5,7 @@
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the `v0.7.96-alpha.7` release; npm publication remains a
+This guide tracks the `v0.7.96-beta.1` release; npm publication remains a
 separate manual maintainer step. The SDK
 advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
@@ -4796,7 +4796,7 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-alpha.7
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-beta.1
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
 `sandboxRuntime:11`, so an idle v10-or-older daemon is replaced. Concurrent
 authenticated upgrade clients converge on one fenced replacement, including
