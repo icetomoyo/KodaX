@@ -134,16 +134,14 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-alpha.6 release preparation
+## v0.7.96-alpha.7 release preparation
 
-Release state: refreshed source candidate on the `KodaX` branch. The existing
-`v0.7.96-alpha.6` tag and GitHub pre-release still point to the earlier
-`a71d2b98` candidate and do not contain the post-tag startup recovery and
-diagnostic-boundary corrections. This preparation does not move or create a
-tag, modify the GitHub Release, or publish npm. Those remain separate later
-maintainer actions after the exact refreshed candidate passes CI.
+Release state: `v0.7.96-alpha.7` is the GitHub pre-release for the exact tagged
+commit. The tag-triggered Release workflow builds every platform archive and
+the universal npm tarball, publishes checksums, and creates the GitHub Release.
+npm registry publication remains a separate manual maintainer action.
 
-The refreshed candidate additionally includes:
+Compared with alpha.6, alpha.7 additionally includes:
 
 - cold interactive Windows startup self-healing for a stale setup generation,
   using the existing setup-only boundary and one real no-side-effect target
@@ -157,7 +155,7 @@ The refreshed candidate additionally includes:
 
 Release gates:
 
-1. Every root/workspace package and lockfile entry is `0.7.96-alpha.6`; public
+1. Every root/workspace package and lockfile entry is `0.7.96-alpha.7`; public
    declarations, README/README_CN, PRD/HLD/DD/ADR, feature/release records,
    SDK/configuration guides, regression guides, changelog, and `kodax_manual`
    describe the same sandbox-first contract.
@@ -180,9 +178,20 @@ Release gates:
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
    tagging or publishing.
 
-After these gates pass on the exact refreshed candidate, it is ready for a
-later maintainer-controlled tag/Release refresh. This preparation intentionally
-stops before tag, GitHub Release, or npm publication.
+The release commit is tagged only after these gates and branch CI pass. Pushing
+the tag starts the Release workflow; that workflow must finish green and create
+the GitHub pre-release before handoff. npm publication is intentionally left to
+the maintainer.
+
+## v0.7.96-alpha.6 release preparation
+
+Release state: `v0.7.96-alpha.6` is the GitHub pre-release at `a71d2b98`.
+It contains the protocol-10/setup-generation-10 Windows sandbox admission and
+concurrency correction, exact native-generation pinning, explicit execution-
+proving doctor, host-boundary authorization forwarding, and the bare
+`kodax -r` terminal-input handoff fix. It predates alpha.7's interactive
+stale-setup self-healing, responsive recovery status, and host-control-plane
+doctor guidance. npm publication remained a manual maintainer action.
 
 ## v0.7.96-alpha.5 release preparation
 

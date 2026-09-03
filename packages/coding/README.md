@@ -193,7 +193,7 @@ hook crashes or returns malformed JSON. The coding runtime finalizes its
 authoritative `KodaXResult` before emitting the public completion signal, so
 A2A responses cannot publish an empty successful answer (Issue 302).
 
-The v0.7.96-alpha.6 Windows shell path removes the old command-lifetime filesystem-
+The v0.7.96-alpha.7 Windows shell path removes the old command-lifetime filesystem-
 effect coordinator. Bash commands, trusted text tools, and different worktree
 paths no longer share a KodaX global lock; same-file text CAS and same-path
 worktree ordering remain narrow. Native protocol 10 gives every command its own

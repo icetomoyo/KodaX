@@ -7,13 +7,9 @@ _Last Updated: 2026-09-03_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
-## v0.7.96-alpha.6 Release Corrections
+## v0.7.96-alpha.7 Release Corrections
 
-This section describes the refreshed source candidate. The existing
-`v0.7.96-alpha.6` tag/GitHub pre-release points to the earlier `a71d2b98`
-candidate and has not been updated by this preparation.
-
-The post-alpha.6 startup correction closes the remaining stale-machine-state
+The alpha.7 startup correction closes the remaining stale-machine-state
 gap. A released setup-generation-9 marker could be internally consistent yet
 fail the protocol-10/generation-10 admission contract, leaving every Bash call
 to pay target-start failure and host fallback until the user guessed that setup
@@ -34,8 +30,8 @@ account and can report a context-local `state.db` access denial even while
 sandboxed commands are healthy; no host control-state access is granted to the
 sandbox account.
 
-Issue 326's remaining release regressions are resolved in the refreshed
-v0.7.96-alpha.6 source candidate. The failure was not an
+Issue 326's remaining release regressions were resolved in the
+v0.7.96-alpha.6 GitHub pre-release and are retained by alpha.7. The failure was not an
 inherent Windows sandbox single-command limit: ordinary admission ran legacy
 ACL reconciliation behind a machine-global mutex, applied a separate five-
 second wait to each root (producing the observed 75 seconds), and retained a
