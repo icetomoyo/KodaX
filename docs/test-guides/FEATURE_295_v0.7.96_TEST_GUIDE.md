@@ -224,6 +224,9 @@ shell lifetime.
 - Native release matrices contain the text artifact for Windows x64, Linux
   x64/arm64, and macOS x64/arm64; the Windows shell artifact remains Windows-
   only.
+- Linux x64/arm64 text artifacts are compiled in digest-pinned
+  `manylinux_2_28` builders. CI scans each staged ELF and rejects any required
+  `GLIBC_*` symbol version newer than 2.28 before packaging.
 - CI executes the native transaction smoke on matching GitHub-hosted
   architectures (`windows-latest`, `ubuntu-24.04`, `ubuntu-24.04-arm`,
   `macos-15-intel`, and `macos-15`). Linux and macOS lanes also run

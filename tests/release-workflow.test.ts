@@ -306,4 +306,47 @@ describe('GitHub release workflow', () => {
     });
   });
 
+  it('builds and gates Linux native authorities at the glibc 2.28 ABI floor', () => {
+    const builder = readFileSync(resolve('scripts/build-linux-native.mjs'), 'utf8');
+    const stage = readFileSync(resolve('scripts/build-native.mjs'), 'utf8');
+    expect(builder).toContain('manylinux_2_28_x86_64@sha256:');
+    expect(builder).toContain('manylinux_2_28_aarch64@sha256:');
+    expect(builder).toContain("const rustToolchain = '1.98.0'");
+    expect(builder).toContain('CARGO_TARGET_DIR=/work/native/windows-text-transaction/target-manylinux-2.28');
+    expect(stage).toContain("process.env.KODAX_NATIVE_PREBUILT === '1'");
+    expect(stage).toContain("'target-manylinux-2.28'");
+
+    const release = parse(
+      readFileSync(resolve('.github/workflows/release.yml'), 'utf8'),
+    ) as ReleaseWorkflow;
+    const releaseSteps = release.jobs?.build?.steps ?? [];
+    expect(releaseSteps.find(
+      (step) => step.name === 'Compile Linux native authority for glibc 2.28',
+    )).toMatchObject({
+      if: expect.stringContaining("runner.os == 'Linux'"),
+      run: 'node scripts/build-linux-native.mjs',
+    });
+    expect(releaseSteps.find(
+      (step) => step.name === 'Install macOS Rust native target',
+    )?.if).toContain("runner.os == 'macOS'");
+    expect(releaseSteps.find((step) => step.name === 'Build')?.env)
+      .toMatchObject({ KODAX_NATIVE_PREBUILT: expect.stringContaining("runner.os == 'Linux'") });
+    expect(releaseSteps.find(
+      (step) => step.name === 'Enforce Linux glibc 2.28 ABI',
+    )?.run).toContain('node scripts/check-native-glibc.mjs --max 2.28');
+
+    const ci = parse(
+      readFileSync(resolve('.github/workflows/ci.yml'), 'utf8'),
+    ) as ReleaseWorkflow;
+    for (const job of [ci.jobs?.test, ci.jobs?.['trusted-text-native-platforms']]) {
+      const steps = job?.steps ?? [];
+      expect(steps.some(
+        (step) => step.name === 'Compile Linux native authority for glibc 2.28',
+      )).toBe(true);
+      expect(steps.find(
+        (step) => step.name === 'Enforce Linux glibc 2.28 ABI',
+      )?.run).toContain('node scripts/check-native-glibc.mjs --max 2.28');
+    }
+  });
+
 });

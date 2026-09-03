@@ -119,13 +119,11 @@ jobs:
         if: steps.filter.outputs.skip == 'false' && runner.os == 'macOS'
         run: brew install ripgrep socat
 
-      - name: Install Rust native target
-        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
+      - name: Install macOS Rust native target
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'macOS'
         shell: bash
         run: |
           case "${{ matrix.target }}" in
-            linux-x64) triple=x86_64-unknown-linux-gnu ;;
-            linux-arm64) triple=aarch64-unknown-linux-gnu ;;
             darwin-x64) triple=x86_64-apple-darwin ;;
             darwin-arm64) triple=aarch64-apple-darwin ;;
           esac
@@ -147,11 +145,22 @@ jobs:
         if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
         run: node .electron-smoke/node_modules/electron/install.js
 
+      - name: Compile Linux native authority for glibc 2.28
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        env:
+          KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
+        run: node scripts/build-linux-native.mjs
+
       - name: Build
         if: steps.filter.outputs.skip == 'false'
         env:
           KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
+          KODAX_NATIVE_PREBUILT: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm run build
+
+      - name: Enforce Linux glibc 2.28 ABI
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node
 
       - name: Native trusted text transaction tests
         if: steps.filter.outputs.skip == 'false' && matrix.smoke

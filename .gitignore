@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 native/**/target/
+native/**/target-manylinux-2.28/
 *.tsbuildinfo
 
 # npm pack tarballs (produced by `node scripts/release.mjs --pack-only`).

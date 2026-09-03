@@ -303,6 +303,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96 development after alpha.7 | 2026-09-03 | 2026-09-03 |
 | 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96-alpha.6 | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.6 | 2026-08-30 | 2026-09-01 |
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
@@ -518,6 +519,55 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 328: Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.96-alpha.1 Linux native release build
+- **Fixed**: v0.7.96 development after alpha.7
+- **Created**: 2026-09-03
+- **Resolved**: 2026-09-03
+
+#### Original Problem
+
+On a private Kylin V10 arm64 deployment with glibc 2.28, every production
+`write` and `edit` reaches the FEATURE_295 native text authority and fails to
+load it. The shipped addon requests symbols through `GLIBC_2.34`, so Node
+reports that the host `/usr/lib64/libc.so.6` does not provide the required
+version. The expected behavior is to preserve the complete trusted transaction
+contract while supporting Linux glibc 2.28 and newer.
+
+#### Context
+
+The failure is present in the checksum-verified v0.7.96-alpha.7 Linux arm64
+npm artifact. The native source itself needs no API newer than glibc 2.28; the
+higher symbol floor comes from the release build host, not from the transaction
+design.
+
+#### Root Cause
+
+Both Linux release lanes compiled the Rust `cdylib` directly on Ubuntu 24.04,
+whose newer glibc symbol versions became part of the ELF ABI. CI exercised the
+addon only on the same new runners and had no gate on required `GLIBC_*`
+versions, so functional tests stayed green while older customer hosts failed
+at dynamic load time.
+
+#### Resolution
+
+Linux x64 and arm64 addons now compile with Rust 1.98.0 inside architecture-
+matched, digest-pinned `manylinux_2_28` builders. The normal staging path then
+hashes and packages those prebuilt bytes without recompiling them on the Ubuntu
+host. CI and release lanes scan every staged Linux addon and fail if any
+required symbol exceeds `GLIBC_2.28`. No text-transaction, CAS, lock, atomic
+replace, receipt, or fail-closed runtime path changed.
+
+- **Files Changed**: `scripts/build-linux-native.mjs`,
+  `scripts/build-native.mjs`, `scripts/check-native-glibc.mjs`,
+  `.github/workflows/ci.yml`, `.github/workflows/release.yml`, compatibility
+  and FEATURE_295 documentation
+- **Tests Added**: `tests/native-glibc-compatibility.test.ts` and the glibc 2.28
+  release/CI contract in `tests/release-workflow.test.ts`
 
 ### 327: Windows Bun release loses terminal input after selecting a session with bare `kodax -r`
 
@@ -14087,11 +14137,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 206 (34 Open, 172 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 207 (34 Open, 173 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-03: Issue 328 resolved (Linux glibc 2.28 native ABI)
+
+- Linux x64/arm64 FEATURE_295 native text authorities now build in
+  digest-pinned `manylinux_2_28` images with Rust 1.98.0. CI and release jobs
+  reject staged addons that require any `GLIBC_*` version newer than 2.28;
+  trusted transaction semantics remain unchanged.
 
 ### 2026-09-01: Issue 327 resolved (bare resume Bun/Windows input handoff)
 

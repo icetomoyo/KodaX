@@ -15,6 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const shellCrate = path.join(root, 'native', 'windows-sandbox-v2');
 const textCrate = path.join(root, 'native', 'windows-text-transaction');
 const targetArch = process.env.KODAX_NATIVE_TARGET_ARCH ?? process.arch;
+const usePrebuiltLinuxText = process.env.KODAX_NATIVE_PREBUILT === '1';
 const rustTarget = process.platform === 'linux'
   ? targetArch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu'
   : process.platform === 'darwin'
@@ -22,6 +23,9 @@ const rustTarget = process.platform === 'linux'
     : targetArch === process.arch ? undefined : null;
 if (rustTarget === null) {
   throw new Error(`Unsupported Windows native target architecture: ${targetArch}`);
+}
+if (usePrebuiltLinuxText && process.platform !== 'linux') {
+  throw new Error('KODAX_NATIVE_PREBUILT is only valid for Linux native builds.');
 }
 
 function runCargo(crate, args) {
@@ -64,7 +68,9 @@ function pinnedAsrtRunner(arch) {
 }
 
 const targetArgs = rustTarget === undefined ? [] : ['--target', rustTarget];
-runCargo(textCrate, ['build', '--release', '--locked', ...targetArgs]);
+if (!usePrebuiltLinuxText) {
+  runCargo(textCrate, ['build', '--release', '--locked', ...targetArgs]);
+}
 if (process.platform === 'win32') {
   if (targetArch !== process.arch) {
     throw new Error('Windows shell sandbox artifacts must be built on their target architecture.');
@@ -87,10 +93,11 @@ const textLibrary = process.platform === 'win32'
   : process.platform === 'darwin'
     ? 'libkodax_windows_text_transaction.dylib'
     : 'libkodax_windows_text_transaction.so';
+const textTargetDirectory = usePrebuiltLinuxText ? 'target-manylinux-2.28' : 'target';
 copyFileSync(
   path.join(
     textCrate,
-    'target',
+    textTargetDirectory,
     ...(rustTarget === undefined ? [] : [rustTarget]),
     'release',
     textLibrary,
