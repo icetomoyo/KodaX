@@ -7,6 +7,7 @@
 import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
+  KodaXExecutionFailure,
   KodaXEvents,
   KodaXJsonValue,
   KodaXManagedProtocolPayload,
@@ -521,6 +522,171 @@ function withCompletionEventOnce(events: KodaXEvents): KodaXEvents {
  * `Runner.run(createDefaultCodingAgent(), …)`.
  */
 const MAX_INTERRUPT_CONTINUATION_ITERATIONS = 8;
+
+function safeFailureIdentifier(value: string | undefined): string | undefined {
+  if (value === undefined || value.includes('://') || /^[A-Za-z]:\//.test(value)) return undefined;
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value) ? value : undefined;
+}
+
+function safeFailureErrorName(value: string): string | undefined {
+  return value === 'Error' || /^[A-Za-z][A-Za-z0-9_.-]{0,63}Error$/.test(value)
+    ? value
+    : undefined;
+}
+
+function providerFailureMetadata(error: Error): Readonly<Record<string, unknown>> | undefined {
+  const metadata = (error as Error & { readonly metadata?: unknown }).metadata;
+  return typeof metadata === 'object' && metadata !== null
+    ? metadata as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+function boundedFailureMs(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000
+    ? value
+    : undefined;
+}
+
+function terminalProviderFailureMessage(
+  errorClass: KodaXExecutionFailure['errorClass'],
+  failureCode: KodaXExecutionFailure['failureCode'],
+  httpStatus: number | undefined,
+): string {
+  if (failureCode === 'provider_not_registered') return 'Provider is not registered.';
+  if (failureCode === 'request_build_failed') return 'Provider request could not be built.';
+  if (failureCode === 'protocol_mismatch' || errorClass === 'reasoning_content_required') {
+    return 'Provider protocol is incompatible.';
+  }
+  if (failureCode === 'response_stream_error' || errorClass === 'incomplete_stream') {
+    return 'Provider returned an invalid response stream.';
+  }
+  if (httpStatus === 401 || httpStatus === 403) return 'Provider authentication failed.';
+  if (httpStatus === 404) return 'Configured Provider resource was not found.';
+  if (httpStatus !== undefined && httpStatus >= 500) {
+    return 'Provider service failed to process the request.';
+  }
+  if (httpStatus !== undefined && httpStatus >= 400) return 'Provider rejected the request.';
+  if (errorClass === 'rate_limit') return 'Provider rate limit exceeded.';
+  if (errorClass === 'provider_overloaded') return 'Provider service is temporarily unavailable.';
+  if (errorClass === 'request_timeout'
+    || errorClass === 'stream_idle_timeout'
+    || errorClass === 'chunk_timeout') return 'Provider request timed out.';
+  if (errorClass === 'connection_failure') return 'Provider network request failed.';
+  if (errorClass === 'user_abort') return 'Provider request was aborted.';
+  return 'Provider request failed.';
+}
+
+type TerminalProviderMetadata = Pick<
+  KodaXExecutionFailure,
+  | 'failureCode'
+  | 'providerStage'
+  | 'httpStatus'
+  | 'upstreamCode'
+  | 'requestId'
+  | 'retryAfterMs'
+>;
+
+function readTerminalProviderMetadata(error: Error): TerminalProviderMetadata {
+  const metadata = providerFailureMetadata(error);
+  const failureCode = metadata?.failureCode === 'provider_not_registered'
+    || metadata?.failureCode === 'request_build_failed'
+    || metadata?.failureCode === 'protocol_mismatch'
+    || metadata?.failureCode === 'response_stream_error'
+    ? metadata.failureCode
+    : undefined;
+  const providerStage = metadata?.stage === 'catalog'
+    || metadata?.stage === 'request_build'
+    || metadata?.stage === 'transport'
+    || metadata?.stage === 'response_stream'
+    ? metadata.stage
+    : undefined;
+  const httpStatus = typeof metadata?.httpStatus === 'number'
+    && Number.isInteger(metadata.httpStatus)
+    && metadata.httpStatus >= 100
+    && metadata.httpStatus <= 599
+    ? metadata.httpStatus
+    : undefined;
+  const retryAfterMs = typeof metadata?.retryAfterMs === 'number'
+    ? boundedFailureMs(metadata.retryAfterMs)
+    : undefined;
+  return {
+    failureCode,
+    providerStage,
+    httpStatus,
+    upstreamCode: typeof metadata?.upstreamCode === 'string'
+      ? safeFailureIdentifier(metadata.upstreamCode)
+      : undefined,
+    requestId: typeof metadata?.requestId === 'string'
+      ? safeFailureIdentifier(metadata.requestId)
+      : undefined,
+    retryAfterMs,
+  };
+}
+
+function formatTerminalProviderFailureMessage(
+  baseMessage: string,
+  facts: readonly (string | undefined)[],
+): string {
+  const present = facts.filter((fact): fact is string => fact !== undefined);
+  return present.length === 0 ? baseMessage : `${baseMessage} (${present.join('; ')})`;
+}
+
+function terminalTurnError(
+  error: Error,
+  failure: KodaXExecutionFailure | undefined,
+): Error {
+  if (failure === undefined) return error;
+  const safeError = new Error(failure.message);
+  safeError.name = failure.errorName ?? 'KodaXProviderError';
+  safeError.stack = undefined;
+  return safeError;
+}
+
+function buildTerminalProviderFailure(input: {
+  readonly error: Error;
+  readonly errorClass: KodaXExecutionFailure['errorClass'];
+  readonly requestPhase: KodaXExecutionFailure['requestPhase'];
+  readonly provider: string;
+  readonly model: string;
+  readonly startedAt: number;
+  readonly serverRetryAfterMs?: number;
+}): KodaXExecutionFailure {
+  const metadata = readTerminalProviderMetadata(input.error);
+  const provider = safeFailureIdentifier(input.provider);
+  const model = safeFailureIdentifier(input.model);
+  const errorName = safeFailureErrorName(input.error.name);
+  const code = metadata.upstreamCode ?? metadata.failureCode;
+  const retryAfterMs = boundedFailureMs(input.serverRetryAfterMs) ?? metadata.retryAfterMs;
+  const elapsedMs = boundedFailureMs(Math.max(0, Date.now() - input.startedAt));
+  const safeMessage = terminalProviderFailureMessage(
+    input.errorClass,
+    metadata.failureCode,
+    metadata.httpStatus,
+  );
+  const message = formatTerminalProviderFailureMessage(safeMessage, [
+    errorName,
+    metadata.httpStatus === undefined ? undefined : `HTTP ${metadata.httpStatus}`,
+    metadata.upstreamCode,
+    metadata.failureCode,
+  ]);
+  return {
+    message,
+    safeMessage,
+    ...(errorName === undefined ? {} : { errorName }),
+    errorClass: input.errorClass,
+    ...(code === undefined ? {} : { code }),
+    requestPhase: input.requestPhase,
+    ...(metadata.failureCode === undefined ? {} : { failureCode: metadata.failureCode }),
+    ...(provider === undefined ? {} : { provider }),
+    ...(model === undefined ? {} : { model }),
+    ...(metadata.providerStage === undefined ? {} : { providerStage: metadata.providerStage }),
+    ...(metadata.httpStatus === undefined ? {} : { httpStatus: metadata.httpStatus }),
+    ...(metadata.upstreamCode === undefined ? {} : { upstreamCode: metadata.upstreamCode }),
+    ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    ...(elapsedMs === undefined ? {} : { elapsedMs }),
+  };
+}
 
 function attributeProviderRequest(events: KodaXEvents, providerRequestId: string): KodaXEvents {
   return {
@@ -1254,6 +1420,7 @@ export async function runSubstrate(
   }
 
   let incompleteRetryCount = 0;
+  let terminalExecutionFailure: KodaXExecutionFailure | undefined;
   // CAP-085: `limitReached` flag — was a `let` toggled `true` only at
   // the iteration-limit terminal site. Folded into the literal `true`
   // at that single call site since FEATURE_100 P3.5c (substrate
@@ -1281,6 +1448,8 @@ export async function runSubstrate(
     const error = cause instanceof Error ? cause : new Error(String(cause));
     const cleanup = await runCatchCleanup({
       error,
+      ...(terminalExecutionFailure === undefined
+        ? {} : { safeErrorMessage: terminalExecutionFailure.message }),
       messages,
       errorMetadata,
       options,
@@ -1309,7 +1478,13 @@ export async function runSubstrate(
       });
     }
 
-    emitLiveTurnFailedOnce(error);
+    if (terminalExecutionFailure !== undefined && Object.isExtensible(error)) {
+      Object.defineProperty(error, 'executionFailure', {
+        value: terminalExecutionFailure,
+        enumerable: false,
+      });
+    }
+    emitLiveTurnFailedOnce(terminalTurnError(error, terminalExecutionFailure));
     await applyGenericErrorTerminal({ error, events, emitActiveExtensionEvent });
     return finalizeManagedProtocolResult({
       success: false,
@@ -1319,6 +1494,8 @@ export async function runSubstrate(
       routingDecision: currentRoutingDecision(),
       contextTokenSnapshot,
       errorMetadata: updatedErrorMetadata,
+      ...(terminalExecutionFailure === undefined
+        ? {} : { failure: terminalExecutionFailure }),
     });
   };
     emitSessionStart(events, { provider: initialProvider.name, sessionId });
@@ -1989,6 +2166,17 @@ export async function runSubstrate(
 
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
             messages = providerMessages;
+            const boundary = boundarySession.snapshot();
+            terminalExecutionFailure = buildTerminalProviderFailure({
+              error,
+              errorClass: decision.reasonCode,
+              requestPhase: decision.failureStage,
+              provider: turnState.currentProviderName,
+              model: turnState.currentModelOverride ?? streamProvider.getModel(),
+              startedAt: boundary.startedAt,
+              ...(decision.serverRetryAfterMs === undefined
+                ? {} : { serverRetryAfterMs: decision.serverRetryAfterMs }),
+            });
             throw error;
           }
 

@@ -14,6 +14,12 @@ import type {
 } from './types.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
+function safeErrorName(error: Error): string {
+  return error.name === 'Error' || /^[A-Za-z][A-Za-z0-9_.-]{0,63}Error$/.test(error.name)
+    ? error.name
+    : 'Error';
+}
+
 // ============== Debug Check ==============
 
 const DEBUG_ENABLED =
@@ -36,7 +42,7 @@ export function telemetryClassify(
     level: 'debug',
     message: 'classify',
     detail: {
-      rawError: error.message,
+      errorName: safeErrorName(error),
       errorClass: classified.errorClass,
       failureStage: classified.failureStage,
       retryable: classified.retryable,

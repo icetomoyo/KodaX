@@ -79,6 +79,7 @@ import type {
   KodaXOutputSegmentStarted,
   KodaXLiveEventMeta,
   KodaXEvents,
+  KodaXExecutionFailure,
   KodaXFileInputArtifact,
   KodaXImageInputArtifact,
   KodaXInputArtifact,
@@ -2220,6 +2221,12 @@ export interface RuntimeFailureDetail {
   readonly upstreamErrorCode?: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
+  /** Actual Provider/model used by the failed child request, when safely representable. */
+  readonly provider?: string;
+  readonly model?: string;
+  /** Fine-grained Provider request lifecycle phase from the coding executor. */
+  readonly requestPhase?: KodaXExecutionFailure["requestPhase"];
+  readonly elapsedMs?: number;
   /** Local context-capacity accounting (FEATURE_296); absent for non-capacity failures. */
   readonly contextTokens?: {
     readonly required: number;
@@ -9364,6 +9371,17 @@ function createRuntimeRunService(deps: {
         ...(value.signalReason !== undefined ? { message: value.signalReason } : {}),
       };
     }
+    if (!value.success && !value.interrupted && value.failure !== undefined) {
+      const detail = captureRuntimeFailureDetail(value.failure, record);
+      record.failureDetail = detail;
+      record.error = detail.safeMessage;
+      return {
+        code: "run_failed",
+        effectOutcome: "known",
+        message: detail.safeMessage,
+        failureKind: detail.failureKind,
+      };
+    }
     return undefined;
   };
 
@@ -9552,6 +9570,9 @@ function createRuntimeRunService(deps: {
         sessionId: record.sessionId,
         phase: record.phase,
         result: value,
+        ...(record.error !== undefined
+          ? { error: createRuntimePublicError(record.error) }
+          : {}),
         ...(record.failureDetail !== undefined
           ? { failureDetail: record.failureDetail }
           : {}),
@@ -9847,6 +9868,9 @@ function createRuntimeRunService(deps: {
             sessionId: record.sessionId,
             phase: record.phase,
             result: value,
+            ...(record.error !== undefined
+              ? { error: createRuntimePublicError(record.error) }
+              : {}),
             ...(record.terminal !== undefined
               ? { terminal: record.terminal }
               : {}),
@@ -9951,8 +9975,14 @@ function createRuntimeRunService(deps: {
           sessionId: record.sessionId,
           phase: record.phase,
           result: value,
+          ...(record.error !== undefined
+            ? { error: createRuntimePublicError(record.error) }
+            : {}),
           ...(record.failureDetail !== undefined
             ? { failureDetail: record.failureDetail }
+            : {}),
+          ...(record.terminal !== undefined
+            ? { terminal: record.terminal }
             : {}),
           ...(record.stop !== undefined ? { stop: record.stop } : {}),
         };
@@ -17220,10 +17250,38 @@ function parseRuntimeFailureDetail(
     ...(isRetryAfterMs(value.retryAfterMs)
       ? { retryAfterMs: value.retryAfterMs }
       : {}),
+    ...(isSafeRuntimeFailureIdentity(value.provider)
+      ? { provider: value.provider }
+      : {}),
+    ...(isSafeRuntimeFailureIdentity(value.model)
+      ? { model: value.model }
+      : {}),
+    ...(isRuntimeRequestPhase(value.requestPhase)
+      ? { requestPhase: value.requestPhase }
+      : {}),
+    ...(isRuntimeElapsedMs(value.elapsedMs) ? { elapsedMs: value.elapsedMs } : {}),
     ...(isRuntimeContextTokens(value.contextTokens)
       ? { contextTokens: value.contextTokens }
       : {}),
   };
+}
+
+function isSafeRuntimeFailureIdentity(value: unknown): value is string {
+  return typeof value === "string"
+    && !value.includes("://")
+    && !/^[A-Za-z]:\//.test(value)
+    && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value);
+}
+
+function isRuntimeRequestPhase(
+  value: unknown,
+): value is KodaXExecutionFailure["requestPhase"] {
+  return value === "before_request_accepted"
+    || value === "before_first_delta"
+    || value === "mid_stream_text"
+    || value === "mid_stream_thinking"
+    || value === "mid_stream_tool_input"
+    || value === "post_tool_execution_pre_assistant_close";
 }
 
 function isRuntimeContextTokens(
@@ -22296,19 +22354,30 @@ function buildRuntimeFailureDetail(
   error: unknown,
   run: RuntimeRunRecord,
 ): RuntimeFailureDetail {
-  const classification = classifyRuntimeFailureDetail(error);
-  const httpStatus = readRuntimeHttpStatus(error);
+  const source = readRuntimeExecutionFailure(error) ?? error;
+  const classification = classifyRuntimeFailureDetail(source);
+  const httpStatus = readRuntimeHttpStatus(source);
   const upstreamErrorCode = filterRuntimeDiagnosticIdentifier(
-    readRuntimeUpstreamCode(error),
+    readRuntimeUpstreamCode(source),
     run,
   );
   const requestId = filterRuntimeDiagnosticIdentifier(
-    readRuntimeRequestId(error),
+    readRuntimeRequestId(source),
     run,
   );
-  const retryAfterMs = readRuntimeRetryAfterMs(error);
+  const retryAfterMs = readRuntimeRetryAfterMs(source);
+  const provider = filterRuntimeFailureIdentifier(
+    readStringErrorField(source, "provider"),
+    run,
+  );
+  const model = filterRuntimeFailureIdentifier(
+    readStringErrorField(source, "model"),
+    run,
+  );
+  const requestPhase = readRuntimeRequestPhase(source);
+  const elapsedMs = readNumericErrorField(source, "elapsedMs");
   const contextTokens = classification.failureKind === "context_capacity"
-    ? readRuntimeContextTokens(error)
+    ? readRuntimeContextTokens(source)
     : undefined;
   return {
     ...classification,
@@ -22317,8 +22386,18 @@ function buildRuntimeFailureDetail(
     ...(upstreamErrorCode !== undefined ? { upstreamErrorCode } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    ...(provider !== undefined ? { provider } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(requestPhase !== undefined ? { requestPhase } : {}),
+    ...(isRuntimeElapsedMs(elapsedMs) ? { elapsedMs } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
   };
+}
+
+function readRuntimeExecutionFailure(error: unknown): unknown {
+  return isRecord(error) && isRecord(error.executionFailure)
+    ? error.executionFailure
+    : undefined;
 }
 
 function readRuntimeContextTokens(
@@ -22368,8 +22447,10 @@ function classifyRuntimeFailureDetail(
     status: readRuntimeHttpStatus(error),
     code: readRuntimeUpstreamCode(error)?.toLowerCase(),
     stableHint: readStringErrorField(error, "failureCode")?.toLowerCase(),
-    metadataStage: readStringErrorField(error, "stage"),
-    errorClass: classifyResilienceError(normalized).errorClass,
+    metadataStage: readStringErrorField(error, "providerStage")
+      ?? readStringErrorField(error, "stage"),
+    errorClass: readRuntimeResilienceErrorClass(error)
+      ?? classifyResilienceError(normalized).errorClass,
   };
   return classifyRuntimeKnownFailure(facts)
     ?? classifyRuntimeConnectionFailure(facts)
@@ -22609,6 +22690,58 @@ function isRetryAfterMs(value: unknown): value is number {
 
 function isSafeDiagnosticIdentifier(value: unknown): value is string {
   return typeof value === "string" && /^[\w.:-]{1,200}$/.test(value);
+}
+
+function filterRuntimeFailureIdentifier(
+  value: string | undefined,
+  run: RuntimeRunRecord,
+): string | undefined {
+  if (
+    value === undefined
+    || value.includes("://")
+    || /^[A-Za-z]:\//.test(value)
+    || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value)
+  ) return undefined;
+  return filterRuntimeDiagnosticIdentifier(value, run);
+}
+
+function readRuntimeRequestPhase(
+  error: unknown,
+): KodaXExecutionFailure["requestPhase"] | undefined {
+  const value = readStringErrorField(error, "requestPhase");
+  return value === "before_request_accepted"
+    || value === "before_first_delta"
+    || value === "mid_stream_text"
+    || value === "mid_stream_thinking"
+    || value === "mid_stream_tool_input"
+    || value === "post_tool_execution_pre_assistant_close"
+    ? value
+    : undefined;
+}
+
+function readRuntimeResilienceErrorClass(
+  error: unknown,
+): RuntimeFailureFacts["errorClass"] | undefined {
+  const value = readStringErrorField(error, "errorClass");
+  return value === "rate_limit"
+    || value === "provider_overloaded"
+    || value === "request_timeout"
+    || value === "stream_idle_timeout"
+    || value === "chunk_timeout"
+    || value === "connection_failure"
+    || value === "incomplete_stream"
+    || value === "user_abort"
+    || value === "non_retryable_provider_error"
+    || value === "reasoning_content_required"
+    ? value
+    : undefined;
+}
+
+function isRuntimeElapsedMs(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= 86_400_000;
 }
 
 function filterRuntimeDiagnosticIdentifier(

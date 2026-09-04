@@ -17777,6 +17777,121 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it.each(["coding", "managed_task"] as const)(
+    "projects a resolved structured Provider failure through the %s path",
+    async (mode) => {
+      const {
+        captureRuntimeSessionDiagnostics,
+        createKodaXRuntime,
+      } = await import("@kodax-ai/kodax/runtime");
+      const secret = `RESOLVED_FAILURE_SECRET_${mode}`;
+      const runtime = await createKodaXRuntime({
+        homeDir: tempRoot,
+        sessionsDir: path.join(tempRoot, `${mode}-resolved-failure-sessions`),
+        defaultProvider: "mock-provider",
+      });
+      const session = await runtime.sessions.create({
+        title: `Resolved Failure ${mode}`,
+      });
+      const executionFailure: NonNullable<KodaXResult["failure"]> = {
+        message: "Provider rejected the request. (KodaXProviderError; HTTP 400)",
+        safeMessage: "Provider rejected the request.",
+        errorClass: "non_retryable_provider_error",
+        code: "invalid_request_error",
+        provider: "custom-openai",
+        model: "qwen38-flash-next",
+        requestPhase: "before_first_delta",
+        providerStage: "transport",
+        httpStatus: 400,
+        upstreamCode: "invalid_request_error",
+        requestId: "req-safe-123",
+        elapsedMs: 115,
+      };
+      const failureResult: KodaXResult = {
+        success: false,
+        lastText: "",
+        messages: [],
+        sessionId: session.id,
+        failure: executionFailure,
+      };
+      if (mode === "managed_task") {
+        codingMock.runManagedTask.mockImplementation(async (options: KodaXOptions) => {
+          await Promise.resolve();
+          options.events?.onError?.(Object.assign(new Error(`raw upstream ${secret}`), {
+            executionFailure,
+          }));
+          return failureResult;
+        });
+      } else {
+        codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+          const result = Promise.resolve().then(() => {
+            options.events?.onError?.(Object.assign(new Error(`raw upstream ${secret}`), {
+              executionFailure,
+            }));
+            return failureResult;
+          });
+          return fakeRunningSession(options, result);
+        });
+      }
+
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "fail after a tool result",
+        mode,
+      });
+      const result = await handle.result;
+      const status = await runtime.runs.get(handle.runId);
+      const [failedEvent] = await runtime.events.replay({
+        runId: handle.runId,
+        type: "run.failed",
+      });
+      const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+        sessionId: session.id,
+        runId: handle.runId,
+      });
+      const expectedDetail = {
+        failureKind: "upstream",
+        stage: "transport",
+        providerErrorCode: "upstream_client_error",
+        safeMessage: "Provider rejected the request.",
+        httpStatus: 400,
+        upstreamErrorCode: "invalid_request_error",
+        requestId: "req-safe-123",
+        provider: "custom-openai",
+        model: "qwen38-flash-next",
+        requestPhase: "before_first_delta",
+        elapsedMs: 115,
+      };
+
+      expect(result).toMatchObject({
+        phase: "failed",
+        result: failureResult,
+        error: { message: "Provider rejected the request." },
+        failureDetail: expectedDetail,
+        terminal: { failureKind: "upstream" },
+      });
+      expect(status.failureDetail).toEqual(result.failureDetail);
+      expect(status.error).toBe("Provider rejected the request.");
+      expect(failedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
+      expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
+      expect(JSON.stringify({ result, status, failedEvent, diagnostics })).not.toContain(secret);
+
+      const runId = handle.runId;
+      await runtime.close();
+      const restoredRuntime = await createKodaXRuntime({
+        homeDir: tempRoot,
+        sessionsDir: path.join(tempRoot, `${mode}-resolved-failure-sessions`),
+        defaultProvider: "mock-provider",
+      });
+      await expect(restoredRuntime.runs.await(runId)).resolves.toMatchObject({
+        phase: "failed",
+        failureDetail: expectedDetail,
+      });
+      await restoredRuntime.close();
+    },
+    60_000,
+  );
+
   it("preserves a managed-task blocked reason as a structured terminal fact", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({

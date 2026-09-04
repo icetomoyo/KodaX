@@ -120,6 +120,38 @@ describe('anthropic message serialization', () => {
     }
   });
 
+  it('omits empty tools from streaming and non-streaming wire requests', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(createCompletedAnthropicStream())
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'done' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 2, output_tokens: 1 },
+      });
+    const provider = new TestAnthropicProvider({ messages: { create } });
+
+    await provider.stream(
+      [{ role: 'user', content: 'stream' }],
+      [],
+      'system',
+      undefined,
+      { forcedToolName: 'missing-tool' },
+    );
+    await provider.complete(
+      [{ role: 'user', content: 'complete' }],
+      [],
+      'system',
+      undefined,
+      { forcedToolName: 'missing-tool' },
+    );
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('tools');
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('tool_choice');
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('tools');
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('tool_choice');
+  });
+
   it('lowers a provider cache affinity key to metadata.user_id for stream and complete', async () => {
     const create = vi.fn()
       .mockResolvedValueOnce(createCompletedAnthropicStream())

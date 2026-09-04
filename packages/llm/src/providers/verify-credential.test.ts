@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { VerifyPrimitiveRunner } from './verify-credential.js';
 import { classifyVerifyError, runVerifyCredential } from './verify-credential.js';
+import { runWithProviderCredential } from '../provider-credential-context.js';
 
 function fakeSdkError(opts: {
   status?: number;
@@ -340,6 +341,19 @@ describe('FEATURE_216 classifyVerifyError — direct classifier coverage', () =>
     });
     expect(r.message).not.toContain('sk-abc123');
     expect(r.message).toContain('sk-***');
+  });
+
+  it('redacts the exact scoped credential even when it has no known prefix', () => {
+    const credential = 'opaque.custom.jwt.value';
+    const result = runWithProviderCredential('custom-provider', credential, () =>
+      classifyVerifyError(new Error(`upstream echoed ${credential}`), {
+        strategy: 'minimal-message',
+        durationMs: 0,
+        approxTokensSpent: 0,
+      }));
+
+    expect(result.message).not.toContain(credential);
+    expect(result.message).toContain('[REDACTED_CREDENTIAL]');
   });
 
   it('preserves non-sk- text in message intact (redaction is targeted)', () => {

@@ -1459,6 +1459,54 @@ describe('executeChildAgents', () => {
     expect(failure?.summary).toContain('Provider timeout');
   });
 
+  it('preserves a structured failure when a child resolves without output', async () => {
+    mockRunKodaX.mockResolvedValueOnce({
+      success: false,
+      lastText: '',
+      messages: [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'read-once', name: 'read', input: {} }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'read-once', content: 'done' }],
+        },
+      ],
+      sessionId: 'failed-child-session',
+      failure: {
+        message: 'Provider request timed out.',
+        safeMessage: 'Provider request timed out.',
+        errorClass: 'request_timeout',
+        provider: 'custom-provider',
+        model: 'custom-model',
+        requestPhase: 'before_first_delta',
+        elapsedMs: 240_000,
+      },
+    });
+
+    const result = await executeChildAgents(
+      [createBundle({ id: 'cb-provider-failure' })],
+      createCtx(),
+      createOptions(),
+    );
+
+    expect(mockRunKodaX).toHaveBeenCalledTimes(1);
+    expect(result.results[0]).toMatchObject({
+      status: 'failed',
+      summary: '',
+      failure: {
+        message: 'Provider request timed out.',
+        safeMessage: 'Provider request timed out.',
+        errorClass: 'request_timeout',
+        provider: 'custom-provider',
+        model: 'custom-model',
+        requestPhase: 'before_first_delta',
+        elapsedMs: 240_000,
+      },
+    });
+  });
+
   it('respects maxParallel concurrency limit', async () => {
     let concurrentCount = 0;
     let maxConcurrent = 0;

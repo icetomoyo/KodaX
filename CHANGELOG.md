@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Omit empty `tools` arrays from OpenAI- and Anthropic-compatible streaming and
+  non-streaming wire requests, so tool-free side queries such as Auto[LLM]
+  classification remain compatible with strict vLLM gateways (Issue 329).
+- Preserve a bounded, credential-safe structured Provider failure from Child
+  Agent execution through Actor settlement and SDK Runtime diagnostics instead
+  of replacing failures after tool execution with `failed without output`; the
+  existing no-replay child fallback boundary is unchanged (Issue 330).
+- Make custom Provider credential verification honor exact and lazy run-scoped
+  credential authority, include credential acquisition in the timeout, fail
+  closed for denied scopes, and redact opaque scoped credentials from returned
+  diagnostics (Issue 331).
+
 ## [0.7.96-beta.1] - 2026-09-03
 
 The first beta pre-release of the v0.7.96 line: it retains the full alpha.7

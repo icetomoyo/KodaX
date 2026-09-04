@@ -4,6 +4,7 @@ export {
   AgentActorStoreConflictError,
   AgentBudgetExhaustedError,
   AgentControlError,
+  AgentExecutionError,
   AgentLimitReachedError,
   AgentOwnerConflictError,
   AgentOwnerUnknownError,

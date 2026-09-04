@@ -573,6 +573,52 @@ describe('F270 coding Actor runtime adapter', () => {
     });
   });
 
+  it('persists a safe child Provider failure instead of failed without output', async () => {
+    const child = completedChild('');
+    child.results[0]!.status = 'failed';
+    child.results[0]!.disposition = 'needs-more-evidence';
+    child.results[0]!.provider = 'requested-provider';
+    child.results[0]!.model = 'requested-model';
+    child.results[0]!.failure = {
+      message: 'Provider rejected the request. (HTTP 400)',
+      safeMessage: 'Provider rejected the request.',
+      errorClass: 'non_retryable_provider_error',
+      provider: 'fallback-provider',
+      model: 'fallback-model',
+      requestPhase: 'before_first_delta',
+      providerStage: 'transport',
+      httpStatus: 400,
+      elapsedMs: 321,
+    };
+    executeChildAgentsMock.mockResolvedValue(child);
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+
+    const turn = await root.spawn({
+      taskName: 'failed-worker',
+      objective: 'Fail after one tool result.',
+    });
+
+    await vi.waitFor(() => expect(root.output(turn.actorPath, turn.turnId)).toMatchObject({
+      state: 'failed',
+      error: 'Provider rejected the request. (HTTP 400)',
+    }));
+    expect(root.get(turn.actorPath).turns[0]?.metadata).toMatchObject({
+      effectiveProvider: 'fallback-provider',
+      effectiveModel: 'fallback-model',
+      executionFailure: {
+        message: 'Provider rejected the request. (HTTP 400)',
+        safeMessage: 'Provider rejected the request.',
+        errorClass: 'non_retryable_provider_error',
+        providerStage: 'transport',
+        httpStatus: 400,
+      },
+    });
+    expect(JSON.stringify(root.get(turn.actorPath))).not.toContain('failed without output');
+    await session.close();
+  });
+
   it('accepts a root-validated sibling target delivered to the executing challenger', async () => {
     executeChildAgentsMock.mockResolvedValueOnce(completedChild('candidate result'));
     const session = new CodingActorSession({ sessionId: 'session-1' });

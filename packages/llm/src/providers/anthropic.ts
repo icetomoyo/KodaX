@@ -43,7 +43,10 @@ import {
   resolveImageMediaType,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
-import { hasProviderCredentialContext } from '../provider-credential-context.js';
+import {
+  hasProviderCredentialContext,
+  withProviderRequestCredential,
+} from '../provider-credential-context.js';
 
 const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
 const KODAX_ANTHROPIC_EFFORT_BETA_HEADER = 'effort-2025-11-24';
@@ -467,38 +470,55 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     signal?: AbortSignal;
   }): Promise<KodaXVerifyCredentialResult> {
     const model = this.config.model;
-    const client = await this.getClient();
     const runners: VerifyPrimitiveRunner[] = [
       {
         strategy: 'count-tokens',
         approxTokensSpent: 0,
-        run: async (signal) => {
-          await client.messages.countTokens(
-            { model, messages: [{ role: 'user', content: 'hi' }] },
-            { signal },
-          );
-        },
+        run: (signal) => withProviderRequestCredential(
+          this.name,
+          'utility',
+          signal,
+          async (requestSignal) => {
+            const client = await this.getClient();
+            await client.messages.countTokens(
+              { model, messages: [{ role: 'user', content: 'hi' }] },
+              { signal: requestSignal },
+            );
+          },
+        ),
       },
       {
         strategy: 'models-list',
         approxTokensSpent: 0,
-        run: async (signal) => {
-          await client.models.list({}, { signal });
-        },
+        run: (signal) => withProviderRequestCredential(
+          this.name,
+          'utility',
+          signal,
+          async (requestSignal) => {
+            const client = await this.getClient();
+            await client.models.list({}, { signal: requestSignal });
+          },
+        ),
       },
       {
         strategy: 'minimal-message',
         approxTokensSpent: 7,
-        run: async (signal) => {
-          await client.messages.create(
-            {
-              model,
-              max_tokens: 1,
-              messages: [{ role: 'user', content: 'hi' }],
-            },
-            { signal },
-          );
-        },
+        run: (signal) => withProviderRequestCredential(
+          this.name,
+          'utility',
+          signal,
+          async (requestSignal) => {
+            const client = await this.getClient();
+            await client.messages.create(
+              {
+                model,
+                max_tokens: 1,
+                messages: [{ role: 'user', content: 'hi' }],
+              },
+              { signal: requestSignal },
+            );
+          },
+        ),
       },
     ];
     return runVerifyCredential({
@@ -687,7 +707,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = Boolean(streamOptions?.forcedToolName);
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',
@@ -697,7 +717,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           max_tokens: maxOutputTokens,
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
           messages: convertedMessages,
-          tools: this.applyCacheControlToTools(tools),
+          ...(tools.length > 0
+            ? { tools: this.applyCacheControlToTools(tools) }
+            : {}),
           stream: true,
           ...(this.config.promptCacheAffinity === true
             && streamOptions?.promptCacheKey
@@ -705,7 +727,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             ? { metadata: { user_id: streamOptions.promptCacheKey } }
             : {}),
         };
-        if (streamOptions?.forcedToolName && shouldForceToolChoice) {
+        if (tools.length > 0 && streamOptions?.forcedToolName && shouldForceToolChoice) {
           kwargs.tool_choice = {
             type: 'tool',
             name: streamOptions.forcedToolName,
@@ -1141,7 +1163,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = Boolean(streamOptions?.forcedToolName);
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',
@@ -1151,14 +1173,16 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           max_tokens: maxOutputTokens,
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
           messages: convertedMessages,
-          tools: this.applyCacheControlToTools(tools),
+          ...(tools.length > 0
+            ? { tools: this.applyCacheControlToTools(tools) }
+            : {}),
           ...(this.config.promptCacheAffinity === true
             && streamOptions?.promptCacheKey
             && !resolvePromptCacheDisabled()
             ? { metadata: { user_id: streamOptions.promptCacheKey } }
             : {}),
         };
-        if (streamOptions?.forcedToolName && shouldForceToolChoice) {
+        if (tools.length > 0 && streamOptions?.forcedToolName && shouldForceToolChoice) {
           kwargs.tool_choice = {
             type: 'tool',
             name: streamOptions.forcedToolName,

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   AgentActorController,
+  AgentExecutionError,
   emitKodaXDiagnostic,
   getMessageQueue,
   type AgentActorClient,
@@ -585,7 +586,20 @@ async function executeCodingActorTurn(
   }
   const child = result.results[0];
   if (!child || child.status !== 'completed') {
-    throw new Error(child?.summary || `Agent turn ${input.turn.turnId} failed without output.`);
+    const effectiveProvider = child?.failure?.provider ?? child?.provider;
+    const effectiveModel = child?.failure?.model ?? child?.model;
+    const turnMetadata: Record<string, AgentMetadataValue> = {
+      ...(effectiveProvider === undefined ? {} : { effectiveProvider }),
+      ...(effectiveModel === undefined ? {} : { effectiveModel }),
+      ...(child?.failure === undefined
+        ? {}
+        : { executionFailure: toAgentMetadataValue(child.failure) ?? null }),
+    };
+    const message = child?.failure?.message
+      || child?.failure?.safeMessage
+      || child?.summary
+      || `Agent turn ${input.turn.turnId} failed without output.`;
+    throw new AgentExecutionError(message, turnMetadata);
   }
   const strategy = readStoredActorStrategy(input.turn.metadata?.qualityStrategy);
   const validated = strategy === undefined

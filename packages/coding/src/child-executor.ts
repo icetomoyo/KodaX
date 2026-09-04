@@ -1509,6 +1509,7 @@ async function runReadChildBody(
         ...(actualProvider === provider && model ? { model } : {}),
         routeFacts,
         structured,
+        failure: result.failure,
       },
     );
   } catch (error) {
@@ -1808,6 +1809,7 @@ async function runWriteChildBody(
         ...(actualProvider === provider && model ? { model } : {}),
         routeFacts,
         structured,
+        failure: result.failure,
       },
     );
   } catch (error) {
@@ -2542,6 +2544,7 @@ interface ExtractChildResultMeta {
   readonly model?: string;
   readonly routeFacts?: KodaXChildRouteFacts;
   readonly structured?: unknown;
+  readonly failure?: KodaXResult['failure'];
 }
 
 function extractMutationArtifactPaths(result: KodaXResult): readonly string[] {
@@ -2589,6 +2592,7 @@ function extractChildResult(
     ...(meta.model ? { model: meta.model } : {}),
     ...(meta.routeFacts ? { routeFacts: meta.routeFacts } : {}),
     ...(meta.structured !== undefined ? { structured: meta.structured } : {}),
+    ...(meta.failure !== undefined ? { failure: meta.failure } : {}),
     interrupted: meta.interrupted,
     ...(meta.limitReached ? { limitReached: true } : {}),
   };

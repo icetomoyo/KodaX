@@ -1,4 +1,19 @@
-import type { AgentBudgetExhausted, AgentLimitReached } from './types.js';
+import type {
+  AgentBudgetExhausted,
+  AgentLimitReached,
+  AgentMetadataValue,
+} from './types.js';
+
+/** Executor failure carrying bounded metadata that belongs on the failed turn. */
+export class AgentExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly turnMetadata: Readonly<Record<string, AgentMetadataValue>>,
+  ) {
+    super(message);
+    this.name = 'AgentExecutionError';
+  }
+}
 
 export class AgentLimitReachedError extends Error implements AgentLimitReached {
   readonly code = 'agent_limit_reached' as const;

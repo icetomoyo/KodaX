@@ -37,6 +37,7 @@ import {
   getRuntimeModelProviderNames,
   isRuntimeModelProviderName,
 } from './runtime-registry.js';
+import { hasScopedProviderCredentialAuthority } from '../provider-credential-context.js';
 
 /**
  * Resolve a provider by name. Built-in providers take precedence over custom.
@@ -230,7 +231,19 @@ export async function verifyProviderCredential(
     };
   }
 
-  if (meta && !process.env[meta.apiKeyEnv]) {
+  const scopedCredentialAuthority = hasScopedProviderCredentialAuthority(name);
+  if (scopedCredentialAuthority === false) {
+    return {
+      ok: false,
+      error: 'unconfigured',
+      strategy: meta?.verifyStrategy ?? 'unsupported',
+      durationMs: 0,
+      approxTokensSpent: 0,
+      message: `Active credential scope does not authorize provider "${name}"`,
+    };
+  }
+
+  if (meta && scopedCredentialAuthority !== true && !process.env[meta.apiKeyEnv]) {
     return {
       ok: false,
       error: 'unconfigured',

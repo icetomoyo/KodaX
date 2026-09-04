@@ -1,6 +1,7 @@
 import {
   AgentBudgetExhaustedError,
   AgentControlError,
+  AgentExecutionError,
   AgentOwnerConflictError,
   AgentOwnerUnknownError,
   AgentRevisionConflictError,
@@ -1103,7 +1104,12 @@ export class AgentActorController {
     await this.commitExecutionSettlement({
       turnId,
       state: 'failed',
-      result: { error: error instanceof Error ? error.message : String(error) },
+      result: {
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof AgentExecutionError
+          ? { turnMetadata: error.turnMetadata }
+          : {}),
+      },
     });
   }
 

@@ -65,6 +65,8 @@ import { emitError, emitStreamEnd } from './event-emitter.js';
 
 export interface CatchCleanupInput {
   readonly error: Error;
+  /** Safe substitute for persisted diagnostics when the upstream message is sensitive. */
+  readonly safeErrorMessage?: string;
   readonly messages: KodaXMessage[];
   readonly errorMetadata: SessionErrorMetadata | undefined;
   readonly options: KodaXOptions;
@@ -99,7 +101,7 @@ export async function runCatchCleanup(
   cleanedMessages = validateAndFixToolHistory(cleanedMessages);
 
   const updatedErrorMetadata: SessionErrorMetadata = {
-    lastError: input.error.message,
+    lastError: input.safeErrorMessage ?? input.error.message,
     lastErrorTime: Date.now(),
     consecutiveErrors: (input.errorMetadata?.consecutiveErrors ?? 0) + 1,
   };

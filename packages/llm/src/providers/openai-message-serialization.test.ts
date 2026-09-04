@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { createCustomProvider } from './custom-provider.js';
 import { KODAX_PROVIDERS } from './registry.js';
+import { sideQuery } from '../side-query.js';
 import type {
   KodaXMessage,
   KodaXProviderConfig,
@@ -64,6 +65,57 @@ class TestOpenAIProvider extends KodaXOpenAICompatProvider {
 }
 
 describe('openai message serialization', () => {
+  it('omits empty tools from streaming and non-streaming wire requests', async () => {
+    async function* streamChunks() {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+    }
+    const create = vi.fn().mockImplementation((params: { stream?: boolean }) => (
+      params.stream
+        ? Promise.resolve(streamChunks())
+        : Promise.resolve({
+            choices: [
+              {
+                message: { role: 'assistant', content: 'ok', tool_calls: [] },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+    ));
+    const provider = new TestOpenAIProvider({ chat: { completions: { create } } });
+
+    const sideResult = await sideQuery({
+      provider,
+      model: 'test-model',
+      system: 'system',
+      messages: [{ role: 'user', content: 'classify' }],
+      querySource: 'auto_mode',
+    });
+    await provider.stream(
+      [{ role: 'user', content: 'stream' }],
+      [],
+      'system',
+      undefined,
+      { forcedToolName: 'missing-tool' },
+    );
+    await provider.complete(
+      [{ role: 'user', content: 'complete' }],
+      [],
+      'system',
+      undefined,
+      { forcedToolName: 'missing-tool' },
+    );
+
+    expect(sideResult.stopReason).toBe('end_turn');
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('tools');
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('tool_choice');
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('tools');
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty('tool_choice');
+    expect(create.mock.calls[2]?.[0]).not.toHaveProperty('tools');
+    expect(create.mock.calls[2]?.[0]).not.toHaveProperty('tool_choice');
+  });
+
   it('merges an ephemeral suffix into the final wire user turn', async () => {
     async function* streamChunks() {
       yield { choices: [{ delta: {}, finish_reason: 'stop' }] };

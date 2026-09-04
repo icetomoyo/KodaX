@@ -315,6 +315,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96 development | 2026-09-04 | 2026-09-04 |
+| 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
+| 329 | High | Resolved | Provider adapters serialize empty tool arrays for tool-free requests | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
 | 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96-beta.1 | 2026-09-03 | 2026-09-03 |
 | 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96-alpha.6 | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.6 | 2026-08-30 | 2026-09-01 |
@@ -531,6 +534,127 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 331: Scoped custom Provider credential verification ignores active credential authority
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: run-scoped credential verification path (confirmed v0.7.95)
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-09-04
+- **Resolved**: 2026-09-04
+
+#### Original Problem
+
+`verifyProviderCredential()` checked only the configured environment variable
+before invoking a Provider. Space supplies custom Provider credentials through
+an exact or lazy run-scoped authority, so a valid scoped credential was reported
+as unconfigured when the ambient environment was deliberately empty. Credential
+broker acquisition also happened outside the verification timeout boundary.
+
+#### Resolution
+
+Verification now honors exact and lazy scoped authority, fails closed for deny
+or mismatched scopes, and acquires the credential inside each timed wire probe
+with the `utility` purpose. Exact scoped credentials are redacted from returned
+verification errors. Ambient-environment behavior without a scope is unchanged.
+
+#### Tests Added
+
+- Exact scoped custom Provider verification with no ambient API key
+- Lazy credential acquisition, purpose attribution, and timeout coverage
+- Deny-scope fail-closed behavior without Provider construction or wire I/O
+- Opaque exact credential redaction from verification results
+
+### 330: Child Agent provider failures after tool execution collapse to `failed without output`
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.95 and earlier
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-09-04
+- **Resolved**: 2026-09-04
+
+#### Original Problem
+
+When a Child Agent successfully executes a tool and the following Provider
+request fails, `runSubstrate()` returns `success: false` with Provider error
+metadata, but the child executor copies only `lastText`. Tool-call assistant
+messages normally have no text, so Actor Runtime replaces the real failure with
+`Agent turn <turnId> failed without output.` Provider, model, failure phase,
+HTTP status, and elapsed time are lost.
+
+#### Expected Behavior
+
+The final Child Agent result, Actor Turn, and SDK Runtime failure surface must
+reuse one bounded, credential-safe structured failure. The original Provider
+response body and credentials must never enter persisted diagnostics. A failure
+after a tool result must not restart the child or replay the tool.
+
+#### Root Cause
+
+`KodaXResult.errorMetadata` is not projected into `KodaXChildAgentResult`, which
+has no structured failure field. Actor Runtime therefore depends on `summary`
+for both successful output and failures. The existing whole-child fallback
+boundary intentionally ignores resolved execution failures to preserve tool
+exactly-once semantics.
+
+#### Resolution
+
+Add an optional safe execution-failure projection to `KodaXResult` and
+`KodaXChildAgentResult`, carry it through read/write child execution and Actor
+settlement, and let SDK Runtime consume it as the canonical terminal failure.
+Keep whole-child fallback behavior unchanged and add a regression in which the
+tool executes exactly once before the second Provider request fails.
+
+#### Tests Added
+
+- Provider failure after a successful tool result, with exactly one tool run
+- Child result propagation when assistant text is empty
+- Actor failure metadata settlement and Runtime persistence round-trip
+- Credential and Provider-response redaction across every public failure surface
+
+### 329: Provider adapters serialize empty tool arrays for tool-free requests
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.95 and earlier
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-09-04
+- **Resolved**: 2026-09-04
+
+#### Original Problem
+
+Tool-free internal requests such as Auto[LLM] classification pass an empty tool
+list through the Provider abstraction. OpenAI-compatible request assembly
+serializes that value as `tools: []`; vLLM-compatible gateways reject the
+request with HTTP 400 and Runtime falls back to manual authorization. The same
+wire-shape defect exists in both streaming and non-streaming OpenAI and
+Anthropic-compatible adapter paths.
+
+#### Expected Behavior
+
+Provider wire requests must omit the `tools` property when the normalized tool
+list is empty. Non-empty tools, forced tool-choice fallback, reasoning fields,
+usage streaming, and token-limit compatibility must remain unchanged.
+
+#### Root Cause
+
+Provider request objects assign the mapped tools array unconditionally. Existing
+serialization tests use empty tool fixtures but do not assert that the property
+is absent from the wire request.
+
+#### Resolution
+
+Conditionally spread `tools` into the four Provider request objects and add
+wire-level stream/complete absence assertions plus non-empty-tool regression
+coverage. Preserve `sideQuery()`'s provider-neutral empty-array input contract.
+
+#### Tests Added
+
+- OpenAI-compatible streaming and non-streaming wire requests omit empty tools
+- Anthropic-compatible streaming and non-streaming wire requests omit empty tools
+- Existing non-empty tools, tool-choice, reasoning, and side-query behavior retained
 
 ### 328: Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor
 
@@ -14149,7 +14273,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 207 (34 Open, 173 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 210 (34 Open, 176 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

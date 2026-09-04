@@ -1221,6 +1221,34 @@ export interface KodaXChildRouteFacts {
   readonly durationMs?: number;
 }
 
+/**
+ * Bounded, redaction-safe terminal Provider failure facts.
+ * Raw upstream messages, bodies, URLs, stacks, and credentials never belong here.
+ */
+export interface KodaXExecutionFailure {
+  /** Bounded diagnostic assembled only from safe structured facts. */
+  readonly message: string;
+  readonly safeMessage: string;
+  readonly errorName?: string;
+  readonly errorClass: ResilienceErrorClass;
+  /** Most specific safe upstream or KodaX failure code available. */
+  readonly code?: string;
+  readonly failureCode?:
+    | 'provider_not_registered'
+    | 'request_build_failed'
+    | 'protocol_mismatch'
+    | 'response_stream_error';
+  readonly provider?: string;
+  readonly model?: string;
+  readonly requestPhase: FailureStage;
+  readonly providerStage?: 'catalog' | 'request_build' | 'transport' | 'response_stream';
+  readonly httpStatus?: number;
+  readonly upstreamCode?: string;
+  readonly requestId?: string;
+  readonly retryAfterMs?: number;
+  readonly elapsedMs?: number;
+}
+
 export interface KodaXChildAgentResult {
   childId: string;
   fanoutClass: KodaXChildFanoutClass;
@@ -1240,6 +1268,8 @@ export interface KodaXChildAgentResult {
   /** Actual provider/model selected for this child run, when known. */
   provider?: string;
   model?: string;
+  /** Redaction-safe terminal Provider failure, independent of assistant text. */
+  failure?: KodaXExecutionFailure;
   /** Actual iterations consumed by this child agent. */
   actualIterations?: number;
   /** Best-known token usage for this child run. Used by workflow budget accounting. */
@@ -2565,6 +2595,8 @@ export interface KodaXResult {
   limitReached?: boolean;
   /** Error metadata for recovery - 错误元数据用于恢复 */
   errorMetadata?: SessionErrorMetadata;
+  /** Redaction-safe terminal Provider failure, independent of assistant text. */
+  failure?: KodaXExecutionFailure;
 }
 
 // ============== 工具执行上下文 ==============

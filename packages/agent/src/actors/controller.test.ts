@@ -4,6 +4,7 @@ import {
   AgentActorController,
   AgentBudgetExhaustedError,
   AgentControlError,
+  AgentExecutionError,
   AgentLimitReachedError,
   createAgentActorController,
   type AgentBudgetPort,
@@ -1773,6 +1774,44 @@ describe('F270 actor tree and scheduler', () => {
       requestedProvider: 'primary',
       effectiveProvider: 'fallback',
       effectiveModel: 'fallback-model',
+    });
+  });
+
+  it('merges executor-observed facts into durable turn metadata on failure', async () => {
+    const executor = new DeferredExecutor();
+    const controller = await createAgentActorController({ executor });
+    const turn = await controller.spawn('/root', {
+      taskName: 'failed-route',
+      objective: 'Observe a failed effective route.',
+      metadata: { requestedProvider: 'primary' },
+    });
+
+    executor.pending[0]?.reject(new AgentExecutionError('Provider rejected the request.', {
+      effectiveProvider: 'fallback',
+      effectiveModel: 'fallback-model',
+      executionFailure: {
+        message: 'Provider rejected the request. (HTTP 400)',
+        safeMessage: 'Provider rejected the request.',
+        errorClass: 'non_retryable_provider_error',
+        requestPhase: 'before_first_delta',
+        httpStatus: 400,
+      },
+    }));
+    await settle();
+
+    expect(controller.output('/root', turn.actorPath, turn.turnId)).toMatchObject({
+      state: 'failed',
+      error: 'Provider rejected the request.',
+    });
+    expect(controller.get('/root', turn.actorPath).turns[0]?.metadata).toMatchObject({
+      requestedProvider: 'primary',
+      effectiveProvider: 'fallback',
+      effectiveModel: 'fallback-model',
+      executionFailure: {
+        message: 'Provider rejected the request. (HTTP 400)',
+        safeMessage: 'Provider rejected the request.',
+        httpStatus: 400,
+      },
     });
   });
 

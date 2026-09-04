@@ -9,7 +9,7 @@
  * (skipped when KODAX_INTEGRATION_TEST != '1').
  */
 
-import { describe, expect, it, afterEach, beforeEach } from 'vitest';
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 import {
   listProviderModels,
   verifyProviderCredential,
@@ -20,6 +20,28 @@ import {
   registerModelProvider,
 } from './runtime-registry.js';
 import { KodaXBaseProvider } from './base.js';
+import {
+  createProviderCredentialLeaseScope,
+  runWithProviderCredential,
+  runWithProviderCredentialLeaseScope,
+  runWithoutProviderCredentialScope,
+} from '../provider-credential-context.js';
+
+const openAISdkMock = vi.hoisted(() => ({
+  constructorOptions: [] as unknown[],
+  modelsList: vi.fn(async () => ({ data: [] })),
+}));
+
+vi.mock('openai', () => ({
+  default: class MockOpenAI {
+    readonly models = { list: openAISdkMock.modelsList };
+    readonly chat = { completions: { create: vi.fn() } };
+
+    constructor(options: unknown) {
+      openAISdkMock.constructorOptions.push(options);
+    }
+  },
+}));
 
 describe('FEATURE_216 verifyProviderCredential — short-circuit paths', () => {
   it('unknown provider name → unsupported (no instantiation)', async () => {
@@ -110,6 +132,108 @@ describe('FEATURE_216 verifyProviderCredential — short-circuit paths', () => {
       registerCustomProviders([]);
       if (previous !== undefined) process.env[apiKeyEnv] = previous;
     }
+  });
+});
+
+describe('FEATURE_216 verifyProviderCredential — scoped credential authority', () => {
+  const providerName = 'custom-scoped-verify';
+  const apiKeyEnv = 'KODAX_TEST_SCOPED_VERIFY_KEY';
+
+  beforeEach(() => {
+    delete process.env[apiKeyEnv];
+    openAISdkMock.constructorOptions.length = 0;
+    openAISdkMock.modelsList.mockClear();
+    registerCustomProviders([{
+      name: providerName,
+      protocol: 'openai',
+      apiKeyEnv,
+      baseUrl: 'https://api.example.test/v1',
+      model: 'test-model',
+    }]);
+  });
+
+  afterEach(() => {
+    delete process.env[apiKeyEnv];
+    registerCustomProviders([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('verifies with an exact scoped credential when the ambient env is empty', async () => {
+    const result = await runWithProviderCredential(
+      providerName,
+      'opaque-exact-credential',
+      () => verifyProviderCredential(providerName),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(openAISdkMock.modelsList).toHaveBeenCalledOnce();
+    expect(openAISdkMock.constructorOptions).toContainEqual(expect.objectContaining({
+      apiKey: 'opaque-exact-credential',
+    }));
+  });
+
+  it('acquires one lazy utility credential inside the verification timeout', async () => {
+    const acquire = vi.fn(async () => 'opaque-lazy-credential');
+    const scope = createProviderCredentialLeaseScope({
+      allowedProviders: [providerName],
+      acquire,
+    });
+    try {
+      const result = await runWithProviderCredentialLeaseScope(
+        scope,
+        () => verifyProviderCredential(providerName),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(acquire).toHaveBeenCalledWith(
+        providerName,
+        'utility',
+        expect.any(AbortSignal),
+        undefined,
+      );
+      expect(openAISdkMock.modelsList).toHaveBeenCalledOnce();
+    } finally {
+      scope.close();
+    }
+  });
+
+  it('applies the verification timeout to lazy credential acquisition', async () => {
+    const acquire = vi.fn((_provider: string, _purpose: string, signal: AbortSignal) =>
+      new Promise<string>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('acquisition aborted')), {
+          once: true,
+        });
+      }));
+    const scope = createProviderCredentialLeaseScope({
+      allowedProviders: [providerName],
+      acquire,
+    });
+    try {
+      const result = await runWithProviderCredentialLeaseScope(
+        scope,
+        () => verifyProviderCredential(providerName, { timeoutMs: 20 }),
+      );
+
+      expect(result).toMatchObject({ ok: false, error: 'timeout' });
+      expect(result.durationMs).toBeLessThan(1_000);
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(openAISdkMock.modelsList).not.toHaveBeenCalled();
+    } finally {
+      scope.close();
+    }
+  });
+
+  it('does not fall back to an ambient credential inside a deny scope', async () => {
+    vi.stubEnv(apiKeyEnv, 'ambient-credential-must-not-be-used');
+
+    const result = await runWithoutProviderCredentialScope(
+      () => verifyProviderCredential(providerName),
+    );
+
+    expect(result).toMatchObject({ ok: false, error: 'unconfigured' });
+    expect(openAISdkMock.modelsList).not.toHaveBeenCalled();
+    expect(openAISdkMock.constructorOptions).toHaveLength(0);
   });
 });
 

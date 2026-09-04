@@ -37,7 +37,10 @@ import {
   resolveThinkingBudget,
 } from '../reasoning.js';
 import { stripCacheBoundaries } from '../cache-control.js';
-import { hasProviderCredentialContext } from '../provider-credential-context.js';
+import {
+  hasProviderCredentialContext,
+  withProviderRequestCredential,
+} from '../provider-credential-context.js';
 import {
   buildImageDataUrlIfAvailable,
   isImageFileMissing,
@@ -402,31 +405,42 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   }): Promise<KodaXVerifyCredentialResult> {
     const model = this.config.model;
     const wireModel = this.getWireModelId(model);
-    const client = await this.getClient();
     const runners: VerifyPrimitiveRunner[] = [
       {
         strategy: 'models-list',
         approxTokensSpent: 0,
-        run: async (signal) => {
-          await client.models.list({ signal });
-        },
+        run: (signal) => withProviderRequestCredential(
+          this.name,
+          'utility',
+          signal,
+          async (requestSignal) => {
+            const client = await this.getClient();
+            await client.models.list({ signal: requestSignal });
+          },
+        ),
       },
       {
         strategy: 'minimal-message',
         approxTokensSpent: 6,
-        run: async (signal) => {
-          await client.chat.completions.create(
-            {
-              model: wireModel,
-              ...serializeOpenAICompatMaxOutputTokens(
-                this.getEffectiveMaxOutputTokensField(model),
-                1,
-              ),
-              messages: [{ role: 'user', content: 'hi' }],
-            },
-            { signal },
-          );
-        },
+        run: (signal) => withProviderRequestCredential(
+          this.name,
+          'utility',
+          signal,
+          async (requestSignal) => {
+            const client = await this.getClient();
+            await client.chat.completions.create(
+              {
+                model: wireModel,
+                ...serializeOpenAICompatMaxOutputTokens(
+                  this.getEffectiveMaxOutputTokensField(model),
+                  1,
+                ),
+                messages: [{ role: 'user', content: 'hi' }],
+              },
+              { signal: requestSignal },
+            );
+          },
+        ),
       },
       // No 'count-tokens' runner: OpenAI protocol has no equivalent of
       // Anthropic's messages.countTokens(). Config-level validator
@@ -842,7 +856,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       ], streamOptions?.ephemeralSuffix?.content);
       const openaiTools = tools.map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
       const forcedToolName = streamOptions?.forcedToolName;
-      let shouldForceToolChoice = Boolean(forcedToolName);
+      let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
       // 检查是否已被取消
       if (signal?.aborted) {
@@ -881,7 +895,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
         model: wireModel,
         messages: fullMessages,
-        tools: openaiTools,
+        ...(openaiTools.length > 0 ? { tools: openaiTools } : {}),
         ...serializeOpenAICompatMaxOutputTokens(
           this.getEffectiveMaxOutputTokensField(model),
           maxOutputTokens,
@@ -893,7 +907,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           ? { prompt_cache_key: streamOptions.promptCacheKey }
           : {}),
       };
-      if (forcedToolName && shouldForceToolChoice) {
+      if (openaiTools.length > 0 && forcedToolName && shouldForceToolChoice) {
         createParams.tool_choice = {
           type: 'function',
           function: { name: forcedToolName },
@@ -1155,7 +1169,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         },
       }));
       const forcedToolName = streamOptions?.forcedToolName;
-      let shouldForceToolChoice = Boolean(forcedToolName);
+      let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
@@ -1177,7 +1191,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
         model: wireModel,
         messages: fullMessages,
-        tools: openaiTools,
+        ...(openaiTools.length > 0 ? { tools: openaiTools } : {}),
         ...serializeOpenAICompatMaxOutputTokens(
           this.getEffectiveMaxOutputTokensField(model),
           maxOutputTokens,
@@ -1188,7 +1202,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           ? { prompt_cache_key: streamOptions.promptCacheKey }
           : {}),
       };
-      if (forcedToolName && shouldForceToolChoice) {
+      if (openaiTools.length > 0 && forcedToolName && shouldForceToolChoice) {
         createParams.tool_choice = {
           type: 'function',
           function: { name: forcedToolName },

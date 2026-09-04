@@ -23,6 +23,7 @@ import type {
   KodaXVerifyCredentialResult,
   KodaXVerifyStrategy,
 } from '../types.js';
+import { redactScopedProviderCredential } from '../provider-credential-context.js';
 
 export interface VerifyPrimitiveRunner {
   /** Strategy this runner implements. Orchestrator dispatches by name match. */
@@ -178,7 +179,8 @@ export function classifyVerifyError(
   err: unknown,
   ctx: ClassifyContext,
 ): KodaXVerifyCredentialResult {
-  const errObj = err as {
+  const safeError = redactScopedProviderCredential(err);
+  const errObj = safeError as {
     status?: number;
     statusCode?: number;
     response?: { status?: number };
@@ -191,7 +193,7 @@ export function classifyVerifyError(
     errObj.status ??
     errObj.statusCode ??
     errObj.response?.status;
-  const message = redactKeyMaterial(String(errObj.message ?? err)).slice(0, 240);
+  const message = redactKeyMaterial(String(errObj.message ?? safeError)).slice(0, 240);
   const errCode = errObj.cause?.code ?? errObj.code;
   const className = errObj.constructor?.name ?? '';
 
