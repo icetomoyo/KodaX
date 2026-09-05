@@ -222,6 +222,7 @@ import {
   resolveLearningProposalStore,
 } from "@kodax-ai/agent";
 import {
+  buildRecoverySeed,
   searchSessionHistoryCooperatively,
   validateSessionHistorySearchQuery,
 } from "@kodax-ai/agent/session-lineage";
@@ -1543,6 +1544,12 @@ export interface RuntimeForkSessionInput {
   readonly historyBoundary?: RuntimeConversationHistoryBoundary;
 }
 
+export interface RuntimeRecoverSessionInput {
+  readonly sessionId: string;
+  readonly title?: string;
+  readonly reason?: string;
+}
+
 export interface RuntimeConversationHistoryBoundary {
   readonly entryId: string;
   readonly sourceRevision: string;
@@ -1803,6 +1810,7 @@ export interface RuntimeSessionService {
     input: RuntimeSessionDiagnosticsInput,
   ): Promise<RuntimeSessionDiagnostics>;
   fork(input: RuntimeForkSessionInput): Promise<RuntimeSession | null>;
+  recover(input: RuntimeRecoverSessionInput): Promise<RuntimeSession>;
   getSettings(sessionId: string): Promise<RuntimeSessionSettings>;
   getSettingsVersioned(
     sessionId: string,
@@ -7446,7 +7454,31 @@ function createRuntimeSessionService(
     };
   }
 
-  function goalCommandError<T extends "conflict" | "invalid_params">(
+  /**
+   * FEATURE_298 T10: the shared derivation seam for both strategies (fork and
+   * recovery seed) — the derived Session carries the source's effective
+   * settings under its own id and records its provenance as a Host notice.
+   */
+  async function finalizeDerivedSession(
+    sessionId: string,
+    sourceSessionId: string,
+    verb: "Forked" | "Recovered",
+  ): Promise<void> {
+    const settings = await settingsOwner.read(sourceSessionId);
+    persistence.saveSessionSettingsVersioned(sessionId, settings);
+    const notice = await manager.appendClientNotice(sessionId, {
+      content: `${verb} from session ${sourceSessionId}.`,
+      source: "session-derivation",
+    });
+    if (notice === null) {
+      throw sessionCommandError(
+        "conflict",
+        `Failed to record the derivation notice for ${sessionId}.`,
+      );
+    }
+  }
+
+  function sessionCommandError<T extends "conflict" | "invalid_params">(
     code: T,
     message: string,
   ): Error & { readonly code: T } {
@@ -7467,7 +7499,7 @@ function createRuntimeSessionService(
   ): Promise<T> =>
     mutateActiveSession(sessionId, async (data) => {
       if (data.lineage === undefined) {
-        throw goalCommandError(
+        throw sessionCommandError(
           "conflict",
           "Session lineage is unavailable for goal commands.",
         );
@@ -7476,7 +7508,7 @@ function createRuntimeSessionService(
       // entries yet has no branch to anchor to, and the domain hides such
       // goals. Refuse explicitly instead of persisting an invisible goal.
       if (data.lineage.activeEntryId === null) {
-        throw goalCommandError(
+        throw sessionCommandError(
           "conflict",
           "Session has no conversation entries yet; send an input before setting a goal.",
         );
@@ -7493,7 +7525,7 @@ function createRuntimeSessionService(
   ): Promise<KodaXGoalState> =>
     mutateGoal(sessionId, (lineage) => {
       const plan = planGoalTransition(lineage, event);
-      if (!plan.ok) throw goalCommandError("conflict", plan.message);
+      if (!plan.ok) throw sessionCommandError("conflict", plan.message);
       return { goal: plan.goal, lineage: plan.lineage };
     });
 
@@ -8280,6 +8312,9 @@ function createRuntimeSessionService(
 
     async fork(input) {
       ensureOpen();
+      // FEATURE_298 T10: derivation reads the source while it is idle, so an
+      // active run is an explicit conflict instead of a torn history copy.
+      assertSessionMutationAllowed(input.sessionId, activeRunOwner);
       if (input.selector !== undefined && input.historyBoundary !== undefined) {
         throw new Error("fork accepts either selector or historyBoundary, not both");
       }
@@ -8311,6 +8346,12 @@ function createRuntimeSessionService(
         throw normalizeConversationBoundaryMutationError(error);
       }
       if (!forked && input.historyBoundary !== undefined) return null;
+      if (!forked && input.selector !== undefined) {
+        throw sessionCommandError(
+          "conflict",
+          `No lineage entry matches '${input.selector}'.`,
+        );
+      }
       if (!forked) {
         const sessionId = input.newSessionId ?? (await generateSessionId());
         const data: KodaXSessionData = {
@@ -8322,6 +8363,7 @@ function createRuntimeSessionService(
         await manager.storage.save(sessionId, data);
         const session = toRuntimeSession(sessionId, data);
         bus.emit("session.created", session, { sessionId, runId: sessionId });
+        await finalizeDerivedSession(sessionId, input.sessionId, "Forked");
         return session;
       }
       const session = toRuntimeSession(forked.sessionId, forked.data);
@@ -8329,6 +8371,49 @@ function createRuntimeSessionService(
         sessionId: forked.sessionId,
         runId: forked.sessionId,
       });
+      await finalizeDerivedSession(forked.sessionId, input.sessionId, "Forked");
+      return session;
+    },
+
+    async recover(input) {
+      ensureOpen();
+      assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+      const source = await admission.loadRequired(input.sessionId);
+      if (source.messages.length === 0) {
+        throw sessionCommandError(
+          "conflict",
+          "Session has no conversation to recover from.",
+        );
+      }
+      // Deterministic seed (no LLM call): prior summaries plus bounded recent
+      // user/assistant/tool facts, as one synthetic system memory.
+      const seed = buildRecoverySeed({
+        sourceSessionId: input.sessionId,
+        messages: source.messages,
+        ...(source.lineage !== undefined ? { lineage: source.lineage } : {}),
+        ...(source.artifactLedger !== undefined
+          ? { artifactLedger: source.artifactLedger }
+          : {}),
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
+      });
+      const sessionId = await generateSessionId();
+      const data: KodaXSessionData = {
+        ...source,
+        title: input.title ?? seed.title,
+        messages: seed.messages,
+        lineage: createSessionLineage(seed.messages),
+        // The recovered session starts clean: no actor snapshot, UI log, or
+        // extension/error state carried over from the source.
+        actorSnapshot: undefined,
+        uiHistory: undefined,
+        extensionState: undefined,
+        extensionRecords: undefined,
+        errorMetadata: undefined,
+      };
+      await manager.storage.save(sessionId, data);
+      const session = toRuntimeSession(sessionId, data);
+      bus.emit("session.created", session, { sessionId, runId: sessionId });
+      await finalizeDerivedSession(sessionId, input.sessionId, "Recovered");
       return session;
     },
 
@@ -8392,14 +8477,14 @@ function createRuntimeSessionService(
     async createGoal(input) {
       const objective = input.objective.trim();
       if (objective.length === 0) {
-        throw goalCommandError("invalid_params", "Goal objective must be a non-empty string.");
+        throw sessionCommandError("invalid_params", "Goal objective must be a non-empty string.");
       }
       if (input.tokenBudget !== undefined && !isValidTokenBudget(input.tokenBudget)) {
-        throw goalCommandError("invalid_params", "Goal token budget must be a positive integer.");
+        throw sessionCommandError("invalid_params", "Goal token budget must be a positive integer.");
       }
       return mutateGoal(input.sessionId, (lineage) => {
         const plan = planGoalCreate(lineage, objective, input.tokenBudget ?? null);
-        if (!plan.ok) throw goalCommandError("conflict", plan.message);
+        if (!plan.ok) throw sessionCommandError("conflict", plan.message);
         return { goal: plan.goal, lineage: plan.lineage };
       });
     },
@@ -8415,7 +8500,7 @@ function createRuntimeSessionService(
     async clearGoal(sessionId) {
       await mutateGoal(sessionId, (lineage) => {
         if (readLatestGoalState(lineage) === null) {
-          throw goalCommandError("conflict", "No goal to clear.");
+          throw sessionCommandError("conflict", "No goal to clear.");
         }
         return { goal: null, lineage: appendGoalEntry(lineage, null, "cleared") };
       });
@@ -8432,12 +8517,12 @@ function createRuntimeSessionService(
       const summary = await mutateActiveSession(input.sessionId, async (data) => {
         assertSessionMutationAllowed(input.sessionId, activeRunOwner);
         if (data.lineage === undefined) {
-          throw goalCommandError("conflict", "Session lineage is unavailable for label commands.");
+          throw sessionCommandError("conflict", "Session lineage is unavailable for label commands.");
         }
         // The domain treats an empty label as "remove"; on the client surface
         // removal must be explicit (omit the field) so typos cannot unlabel.
         if (input.label !== undefined && input.label.trim() === "") {
-          throw goalCommandError(
+          throw sessionCommandError(
             "invalid_params",
             "Label must be a non-empty string; omit it to remove the target's label.",
           );
@@ -8448,7 +8533,7 @@ function createRuntimeSessionService(
           input.label,
         );
         if (next === null) {
-          throw goalCommandError("conflict", `No lineage entry matches '${input.selector}'.`);
+          throw sessionCommandError("conflict", `No lineage entry matches '${input.selector}'.`);
         }
         data.lineage = next;
         await manager.storage.save(input.sessionId, data);
@@ -8524,7 +8609,7 @@ function createRuntimeSessionService(
           input.entryId,
         );
         if (!data) {
-          throw goalCommandError("conflict", `No lineage entry matches '${input.entryId}'.`);
+          throw sessionCommandError("conflict", `No lineage entry matches '${input.entryId}'.`);
         }
         const session = toRuntimeSession(input.sessionId, data);
         bus.emit(

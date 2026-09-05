@@ -76,6 +76,10 @@ export interface KodaXProductClient {
     selectBranch(sessionId: string, selector: string): Promise<ClientSession>;
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
     rewindSession(sessionId: string, selector?: string): Promise<ClientSession>;
+    /** Derive a new Session from this idle session's history; the source stays unchanged. */
+    forkSession(sessionId: string, input?: ClientSessionForkInput): Promise<ClientSession>;
+    /** Derive a new Session from a deterministic recovery seed (no LLM call); continue with a normal input submit. */
+    recoverSession(sessionId: string, input?: ClientSessionRecoverInput): Promise<ClientSession>;
   };
   readonly inputs: {
     submit(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
@@ -242,6 +246,23 @@ export interface ClientLineageLabelInput {
   readonly selector: string;
   /** Omit to remove the target's label. */
   readonly label?: string;
+}
+
+export interface ClientSessionForkInput {
+  /** Entry id or label naming the boundary; defaults to the active head. */
+  readonly selector?: string;
+  /** Explicit conversation-history boundary; stale revisions surface as resync_required. */
+  readonly historyBoundary?: {
+    readonly entryId: string;
+    readonly sourceRevision: string;
+  };
+  readonly title?: string;
+}
+
+export interface ClientSessionRecoverInput {
+  readonly title?: string;
+  /** Free-form reason recorded in the seed header. */
+  readonly reason?: string;
 }
 
 export interface ClientHistorySearchResult {

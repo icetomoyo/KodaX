@@ -592,6 +592,9 @@ export function createRuntimeDaemonClient(
       fork(input) {
         return request('session.fork', input) as Promise<RuntimeSession | null>;
       },
+      recover(input) {
+        return request('session.recover', input) as Promise<RuntimeSession>;
+      },
       getSettings(sessionId) {
         return request('session.settings.get', { sessionId }) as Promise<RuntimeSessionSettings>;
       },

@@ -36,6 +36,7 @@ import type {
   RuntimeEventReplayFilter,
   RuntimeEventType,
   RuntimeForkSessionInput,
+  RuntimeRecoverSessionInput,
   RuntimeGrantedScope,
   RuntimeHostToolDescriptor,
   RuntimeAgentFollowupOptions,
@@ -252,6 +253,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
   ...scopeEntries("session:write", [
     "session.create",
     "session.fork",
+    "session.recover",
     "session.notice.append",
     "session.rewind",
     "session.active_entry.set",
@@ -1602,10 +1604,24 @@ async function dispatchRuntimeDaemonRequest(
           request.params,
         ) as unknown as RuntimeSessionDiagnosticsInput,
       );
-    case "session.fork":
-      return runtime.sessions.fork(
-        requireRecord(request.params) as unknown as RuntimeForkSessionInput,
+    case "session.fork": {
+      const params = requireRecord(request.params);
+      await assertAdmittedSessionId(
+        runtime,
+        requireStringField(params, "sessionId"),
       );
+      return runtime.sessions.fork(params as unknown as RuntimeForkSessionInput);
+    }
+    case "session.recover": {
+      const params = requireRecord(request.params);
+      await assertAdmittedSessionId(
+        runtime,
+        requireStringField(params, "sessionId"),
+      );
+      return runtime.sessions.recover(
+        params as unknown as RuntimeRecoverSessionInput,
+      );
+    }
     case "session.notice.append":
       return runtime.sessions.appendNotice(
         requireRecord(request.params) as unknown as RuntimeAppendNoticeInput,

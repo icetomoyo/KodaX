@@ -33,6 +33,7 @@ export type RuntimeDaemonMethod =
   | 'session.view.item'
   | 'session.diagnostics'
   | 'session.fork'
+  | 'session.recover'
   | 'session.notice.append'
   | 'session.goal.get'
   | 'session.lineage.get'
@@ -180,6 +181,7 @@ export type RuntimeDaemonMutationMethod =
   | 'daemon.rollbackToInline'
   | 'session.create'
   | 'session.fork'
+  | 'session.recover'
   | 'session.notice.append'
   | 'session.goal.create'
   | 'session.goal.pause'
@@ -362,6 +364,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.view.item',
   'session.diagnostics',
   'session.fork',
+  'session.recover',
   'session.notice.append',
   'session.goal.get',
   'session.lineage.get',
@@ -492,6 +495,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'daemon.rollbackToInline',
   'session.create',
   'session.fork',
+  'session.recover',
   'session.notice.append',
   'session.rewind',
   'session.active_entry.set',

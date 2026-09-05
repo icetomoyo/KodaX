@@ -34,6 +34,8 @@ export type {
   ClientLineageSummary,
   ClientLineageEntry,
   ClientLineageLabelInput,
+  ClientSessionForkInput,
+  ClientSessionRecoverInput,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -97,6 +99,12 @@ export async function connectKodaXClient(
           if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
           return session;
         }),
+      forkSession: (sessionId, input) => runtime.sessions.fork({ sessionId, ...(input ?? {}) })
+        .then((session) => {
+          if (session === null) throw Object.assign(new Error('Fork boundary no longer resolves.'), { code: 'conflict' as const });
+          return session;
+        }),
+      recoverSession: (sessionId, input) => runtime.sessions.recover({ sessionId, ...(input ?? {}) }),
     },
     inputs: {
       submit: (input) => runtime.runs.acceptInput(input),

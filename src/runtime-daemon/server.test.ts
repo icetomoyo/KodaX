@@ -3358,6 +3358,7 @@ const METHOD_SMOKE_PARAMS = {
   'session.view.item': { sessionId: 'session-1', itemId: 'item-1' },
   'session.diagnostics': { sessionId: 'session-1' },
   'session.fork': { sessionId: 'session-1' },
+  'session.recover': { sessionId: 'session-1' },
   'session.notice.append': { sessionId: 'session-1', content: 'smoke' },
   'session.goal.get': { sessionId: 'session-1' },
   'session.goal.create': { sessionId: 'session-1', objective: 'smoke goal' },
@@ -3723,6 +3724,9 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
       async fork() {
         return { id: 'fork-1', title: 'Forked Session' };
+      },
+      async recover() {
+        return { id: 'recover-1', title: 'Recovered Session' };
       },
       async getSettings() {
         return {};
