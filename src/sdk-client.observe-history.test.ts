@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
+  type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
@@ -13,36 +13,30 @@ import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
+const REPLY_TEXT = 'A sufficiently detailed recorded summary of the exchange that carries usable semantic content for later turns.';
+
 class HistoryProvider extends KodaXBaseProvider {
   readonly name = 'product-history-test';
   readonly supportsThinking = false;
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_PRODUCT_HISTORY_TEST_KEY', model: 'product-history-test', supportsThinking: false,
   };
-  constructor(private readonly request: (messages: KodaXMessage[]) => Promise<void>) { super(); }
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
-    await this.request(messages);
+  async stream(): Promise<KodaXStreamResult> {
     return {
-      textBlocks: [{ type: 'text', text: 'A sufficiently detailed recorded summary of the exchange that carries usable semantic content for later turns.' }],
+      textBlocks: [{ type: 'text', text: REPLY_TEXT }],
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
     };
   }
 }
 
 let homeDir: string;
-let requests: KodaXMessage[][] = [];
-let onRequest: () => Promise<void> = async () => undefined;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
 let client: Awaited<ReturnType<typeof connectKodaXClient>>;
 
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-history-'));
-  requests = [];
-  registerModelProvider('product-history-test', () => new HistoryProvider(async (messages) => {
-    requests.push(structuredClone(messages));
-    await onRequest();
-  }));
+  registerModelProvider('product-history-test', () => new HistoryProvider());
   vi.stubEnv('KODAX_PRODUCT_HISTORY_TEST_KEY', 'test-only');
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-history-test' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
@@ -103,5 +97,31 @@ it('shows pre-compaction conversation history in the current view after compacti
     try {
       expect(second[0]!.items.some((item) => item.id === ancientItem.id)).toBe(true);
     } finally { reopened.close(); }
+  } finally { observation.close(); }
+}, 60_000);
+
+it('keeps settled output single between live items and conversation history', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const views: ClientSessionView[] = [];
+  const observation = await client.sessions.observe(session.id, (view) => views.push(view));
+  try {
+    const active = await client.inputs.submit({
+      sessionId: session.id, inputId: 'settling', text: 'Produce one settled answer.',
+    });
+    // Capture the live streaming item's id before settlement.
+    await expect.poll(() => views.at(-1)!.items
+      .find((item) => item.type === 'assistant' && item.text === REPLY_TEXT)?.id, { timeout: 15_000 })
+      .toEqual(expect.any(String));
+    const liveId = views.at(-1)!.items
+      .find((item) => item.type === 'assistant' && item.text === REPLY_TEXT)!.id;
+    await runtime.runs.await(active.runId!);
+    // After settlement the answer exists as a live run item AND in the
+    // canonical conversation; the view must show it exactly once, under the
+    // same id it had while streaming.
+    await expect.poll(() => views.at(-1)!.items
+      .filter((item) => item.type === 'assistant' && item.text === REPLY_TEXT).length, { timeout: 10_000 })
+      .toBe(1);
+    expect(views.at(-1)!.items.find((item) => item.text === REPLY_TEXT)?.id).toBe(liveId);
   } finally { observation.close(); }
 }, 60_000);

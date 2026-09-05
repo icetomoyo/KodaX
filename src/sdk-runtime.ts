@@ -4015,6 +4015,14 @@ export async function createKodaXRuntime(
   }
 }
 
+// The conversation page cache reads under a strict quiescent boundary; these
+// codes mark a transient boundary miss that an immediately idle session
+// resolves on a retry (T09's public paging still resyncs callers instead).
+function isTransientConversationBoundaryError(error: unknown): boolean {
+  return isRecord(error)
+    && (error.code === "data_changed" || error.code === "resync_required");
+}
+
 async function createKodaXRuntimeInternal(
   options: CreateKodaXRuntimeOptions,
 ): Promise<KodaXRuntime> {
@@ -4313,41 +4321,54 @@ async function createKodaXRuntimeInternal(
     throw error;
   }
 
-// The conversation page cache reads under a strict quiescent boundary; these
-// codes mark a transient boundary miss that an immediately idle session
-// resolves on a retry (T09's public paging still resyncs callers instead).
-function isTransientConversationBoundaryError(error: unknown): boolean {
-  return isRecord(error)
-    && (error.code === "data_changed" || error.code === "resync_required");
-}
 
   // The view's history source is the canonical conversation (lineage-resolved,
   // so pre-compaction entries survive); the recent storage tail is only the
   // fallback when the conversation page cannot be served.
+  const conversationHistoryFallbacks = new Set<string>();
   const readConversationHistory = async (
     sessionId: string,
   ): Promise<readonly KodaXMessage[] | null> => {
     const readOnce = (): Promise<readonly KodaXMessage[] | null> =>
       sessionService.conversationPage({ sessionId, limit: 80 }).then((page) => {
         if (!page) return null;
+        // Oversized entries carry no inline body; the storage tail keeps
+        // their full text for display and readItem, so fall back wholesale
+        // rather than dropping them from the view.
+        if (page.entries.some((entry) => entry.oversized)) return null;
         const messages = page.entries.flatMap((entry) => (
-          entry.entry !== undefined && !entry.oversized ? [entry.entry.message] : []
+          entry.entry !== undefined ? [entry.entry.message] : []
         ));
         return messages.length > 0 ? messages : null;
       });
+    // One re-armed history reload per session so an idle view eventually
+    // picks the conversation back up after a transient boundary miss;
+    // repeated misses stay on the tail instead of looping refreshes.
+    const armOneHistoryRetry = (): void => {
+      if (conversationHistoryFallbacks.has(sessionId)) return;
+      conversationHistoryFallbacks.add(sessionId);
+      sessionViews.changed(sessionId, true);
+    };
     try {
-      // The page cache reads under a strict quiescent boundary; a session
-      // lock released mid-read right after activity is a transient miss.
-      return await readOnce().catch((error: unknown) => {
+      let result: readonly KodaXMessage[] | null;
+      try {
+        // The page cache reads under a strict quiescent boundary; a session
+        // lock released mid-read right after activity is a transient miss.
+        result = await readOnce();
+      } catch (error: unknown) {
         if (!isTransientConversationBoundaryError(error)) throw error;
-        return new Promise<readonly KodaXMessage[] | null>((resolve) => {
-          const timer = setTimeout(() => {
-            timer.unref?.();
-            resolve(readOnce().catch(() => null));
-          }, 50);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 50);
           timer.unref?.();
         });
-      });
+        result = await readOnce();
+      }
+      if (result !== null) {
+        conversationHistoryFallbacks.delete(sessionId);
+        return result;
+      }
+      armOneHistoryRetry();
+      return null;
     } catch (error: unknown) {
       emitKodaXDiagnostic({
         source: "session.view",
@@ -4355,6 +4376,7 @@ function isTransientConversationBoundaryError(error: unknown): boolean {
         message: `Conversation history was unavailable for the Session view: ${sessionId}`,
         detail: normalizeError(error),
       });
+      armOneHistoryRetry();
       return null;
     }
   };
