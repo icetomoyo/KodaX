@@ -8921,7 +8921,9 @@ function createRuntimeRunService(deps: {
       record.capturedExecutorResult !== undefined
       || record.capturedExecutorFailure !== undefined;
     record.interruptInputOpen = false;
-    terminalizeQueuedInterruptInputs(record);
+    terminalizeQueuedInterruptInputs(record, (inputId) =>
+      productQueue.markDropped(record.sessionId, inputId),
+    );
     releaseAbortSignalSubscription(record);
     record.running?.abort(error);
     record.abortController?.abort(error);
@@ -9483,7 +9485,9 @@ function createRuntimeRunService(deps: {
       ?.clearAllowedCalls();
     if (!wasQueued) {
       record.interruptInputOpen = false;
-      terminalizeQueuedInterruptInputs(record);
+      terminalizeQueuedInterruptInputs(record, (inputId) =>
+      productQueue.markDropped(record.sessionId, inputId),
+    );
       record.phase = "unknown";
       record.stage = "unknown";
       record.stageChangedAt = requestedAt;
@@ -10863,6 +10867,18 @@ function createRuntimeRunService(deps: {
       && !run.terminalEmitted
       && canApplyExecutorTerminalSignal(run)
     ) {
+      if (options?.redirect === true) {
+        // The executor already latched its terminal callback, so this branch
+        // settles without requestRunStop. Persist the redirect reason anyway:
+        // the retained follow-up input must continue once the Run settles,
+        // whatever terminal phase the executor reports.
+        const redirectStop = deps.persistence.requestRunStop(
+          runId,
+          reason,
+          run.ownedByRuntime === true ? deps.runOwner.ownerId : undefined,
+        );
+        applyAuthoritativeRunStatus(run, redirectStop.status);
+      }
       cancelRun(run, reason, false);
       const terminal = deps.persistence.loadRunStatus(runId);
       return runtimeRunStopReceipt({
@@ -10910,7 +10926,9 @@ function createRuntimeRunService(deps: {
         ?.find(isRuntimeAutoModeGuardrail)
         ?.clearAllowedCalls();
       run.interruptInputOpen = false;
-      terminalizeQueuedInterruptInputs(run);
+      terminalizeQueuedInterruptInputs(run, (inputId) =>
+      productQueue.markDropped(run.sessionId, inputId),
+    );
       if (stop.accepted && wasQueued) {
         deps.bus.emit("run.cancelled", stop.status, {
           sessionId: run.sessionId,
@@ -11217,7 +11235,16 @@ function createRuntimeRunService(deps: {
     },
 
     async abort(runId) {
-      return abortRun(runId);
+      deps.ensureOpen();
+      // Serialize with input admission and queue drains on the same Session
+      // gate so a plain stop cannot race a redirect's durable Stop write.
+      const run = deps.runs.get(runId);
+      const sessionId = run?.sessionId
+        ?? deps.persistence.loadRunStatus(runId)?.status.sessionId;
+      if (sessionId === undefined) {
+        throw new Error(`Runtime run not found: ${runId}`);
+      }
+      return deps.sessionOperations.run(sessionId, () => abortRun(runId));
     },
 
 
@@ -22446,7 +22473,10 @@ function markRunTerminal(
   }
 }
 
-function terminalizeQueuedInterruptInputs(run: RuntimeRunRecord): void {
+function terminalizeQueuedInterruptInputs(
+  run: RuntimeRunRecord,
+  onDropped?: (inputId: string) => void,
+): void {
   for (const input of run.interruptInputs) {
     if (input.state !== "queued") continue;
     if (input.queueMessageId !== undefined) {
@@ -22459,6 +22489,7 @@ function terminalizeQueuedInterruptInputs(run: RuntimeRunRecord): void {
       delete input.queueMessageId;
     }
     input.state = "terminal";
+    onDropped?.(input.inputId);
   }
 }
 

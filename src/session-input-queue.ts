@@ -107,6 +107,14 @@ export class SessionInputQueue {
     this.changed(sessionId);
   }
 
+  /** A steer fact whose target Run settled before safe-point delivery. */
+  markDropped(sessionId: string, inputId: string): void {
+    const fact = this.facts.get(this.key(sessionId, inputId));
+    if (!fact || fact.state !== 'queued' || fact.messageId !== undefined) return;
+    fact.state = 'dropped';
+    this.changed(sessionId);
+  }
+
   list(sessionId: string): readonly ClientQueuedInput[] {
     return this.ordered(sessionId).map(({ input, enqueuedAt }) => ({
       inputId: input.inputId, text: queuePreview(input.text), enqueuedAt,

@@ -150,6 +150,7 @@ it('does not transparently resubmit an old connection after the Host changes', a
   await runtime.runs.await(accepted.runId!);
   const oldClient = client;
   await host.close();
+  await runtime.close();
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-input-test' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {

@@ -239,8 +239,13 @@ export interface ClientSubmitInput {
 
 /** Identity of an accepted input in the current Host, not a completion receipt. */
 export interface ClientInputAcceptance {
-  /** Saved in the conversation context; does not prove the Provider received it. */
-  readonly state: 'submitted' | 'queued' | 'withdrawn';
+  /**
+   * 'submitted' is saved in the conversation context (does not prove the
+   * Provider received it); 'queued' waits for its slot; 'withdrawn' was
+   * taken back by the user; 'dropped' means the target Run settled before
+   * delivery — the text never entered the context, so resubmit with a new ID.
+   */
+  readonly state: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
   readonly sessionId: string;
   readonly inputId: string;
   readonly runId?: string;

@@ -30,6 +30,7 @@ class SteerProvider extends KodaXBaseProvider {
 
 let homeDir: string;
 let release: () => void = () => undefined;
+let interruptFirstRequest: () => void = () => undefined;
 let requests: KodaXMessage[][] = [];
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
@@ -39,10 +40,16 @@ let second: Awaited<ReturnType<typeof connectKodaXClient>>;
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-steer-'));
   const firstRequest = new Promise<void>((resolve) => { release = resolve; });
+  const cancellation = new Promise<void>((resolve) => { interruptFirstRequest = resolve; });
   requests = [];
   registerModelProvider('product-steer-test', () => new SteerProvider(async (messages) => {
     requests.push(structuredClone(messages));
-    if (requests.length === 1) await firstRequest;
+    if (requests.length === 1) {
+      await Promise.race([
+        firstRequest,
+        cancellation.then(() => Promise.reject(new Error('This provider observes the redirect cancellation.'))),
+      ]);
+    }
   }));
   vi.stubEnv('KODAX_PRODUCT_STEER_TEST_KEY', 'test-only');
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-steer-test' });
@@ -120,4 +127,27 @@ it('redirect accepts the new input first, cancels the old Run, and keeps the req
   await runtime.runs.await(consumed!.runId!);
   // A redirect toward the already-settled Run is an explicit conflict.
   await expect(second.inputs.submit({ sessionId: session.id, inputId: 'redirect-2', text: 'Again.', delivery: 'redirect', targetRunId: active.runId! })).rejects.toMatchObject({ code: 'conflict' });
+});
+
+it('continues the redirect follow-up when cancellation actually interrupts the old Run', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const accepted = await second.inputs.submit({
+    sessionId: session.id, inputId: 'redirect-honored', text: 'Replacement direction.',
+    delivery: 'redirect', targetRunId: active.runId!,
+  });
+  expect(accepted).toMatchObject({ state: 'queued' });
+  // The Provider observes the redirect cancellation and settles the old Run
+  // with a failure, not a completion.
+  interruptFirstRequest();
+  const stopped = await runtime.runs.await(active.runId!);
+  expect(stopped.stop?.reason).toBe(RUNTIME_REDIRECT_STOP_REASON);
+  expect(stopped.phase).not.toBe('completed');
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(2);
+  expect(requests[1]!.filter((message) => message.role === 'user').at(-1)?.content).toBe('Replacement direction.');
+  const consumed = await first.inputs.read(session.id, 'redirect-honored');
+  expect(consumed).toMatchObject({ state: 'submitted' });
+  await runtime.runs.await(consumed!.runId!);
 });
