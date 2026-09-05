@@ -277,3 +277,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **验证基线（本轮结束）**：build gate 通过；lineage 2 + goal 4 双绿；daemon 20 文件 343 绿（1 skip 存量）；product-client 9 文件 20 绿（client/settings/capabilities/mcp/goal/lineage/observe/queue/history）；tsc 478=478。
 
 **下一步（DAG 前沿）**：T10（T03+T09 已解）、T33（T08+T09 已解）、T14（T05+T13 已解）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）；T34 前置还差 T10/T23/T31/T33/T36/T37（T11 已解）。
+
+---
+
+## 2026-09-06 会话补记：T10 完成（按完整历史或安全摘要派生新 Session）
+
+**提交**：代码 `2d60735b`（9 文件 +363/-15）、子模块 `977c5c4`（T10→Done，14/35）+ 指针。
+
+**实现面**：契约 `ClientSessionForkInput/RecoverInput` + `sessions.forkSession/recoverSession`；RPC `session.recover` 四处入册（method 联合/数组 + mutation 联合/数组→信封+journal）、`session.fork` dispatch 补 `assertAdmittedSessionId`。共享接缝 `finalizeDerivedSession`：settingsOwner 读源 versioned 设置→`persistence.saveSessionSettingsVersioned` 写新 id（**关键：设置按 session id 持久化，不拷贝则派生会话拿到默认设置**）+ `session-derivation` 来源 notice（写失败显式冲突，领域函数吞错返 null 必须挡）。fork 复用 `forkSession`/`storage.fork`；recover 复用 `buildRecoverySeed`（深路径 `@kodax-ai/agent/session-lineage`，注意 root barrel 不再导出 session-lineage 符号但 `createSessionLineage` 例外在 root——同符号两处 import 会 TS2300）。
+
+**领域事实**：`forkSessionLineage` 重新生成 entry id（断言比结构不比 id）且丢弃不可 fork 元数据（memory_outcome_digest）；背景 learning-review 会写 digest 条目；recover 的 seed 是单条 `_synthetic` system 消息，view/history 投影不显示——seed 只能靠续聊请求内容断言。
+
+**评审（双轴 0 C/H）修复**：notice null 检查（M）；`goalCommandError`→`sessionCommandError` 更名（13 处，goal/lineage/derive 共用）；recover 丢弃 extensionState/Records/errorMetadata 对齐既有 UI 行为；不可解析 selector 显式 conflict（原为静默全量拷贝，存量行为但 T10 面上必须显式）；S1 补 unknown-selector/active-source-recover/recover 来源 notice。
+
+**基线**：sdk-runtime.test.ts 10 败为 HEAD 既有（stash 对照逐一一致，extension inventory 等域），与本票无关；本轮结束 tsc 478=478、daemon+fork 触面 400 绿、product-client 28 绿。
+
+**下一步（DAG 前沿）**：T33（T08+T09 已解）、T14（T05+T13 已解）、T12 剩余；T34 前置还差 T23/T31/T33/T36/T37（T10/T11 已解）。
