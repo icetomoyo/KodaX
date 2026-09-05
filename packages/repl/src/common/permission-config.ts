@@ -80,17 +80,11 @@ export interface AutoReviewSettings {
  * `permissionMode`'s scope) plus the classifier-model environment override.
  */
 export interface AutoModeSettings {
-  /** @deprecated Legacy input accepted and ignored at the read boundary. */
-  engine?: 'llm' | 'rules';
   /**
    * Classifier model spec — `"provider:model"` or `"model"` (provider then
    * inherits from the main session). Feeds layer 4 of `resolveClassifierModel`.
    */
   classifierModel?: string;
-  /** @deprecated Accepted as inert migration input. Reviewer deadlines are fixed. */
-  timeoutMs?: number;
-  /** @deprecated Accepted as inert migration input. Sandbox-first routing has no speculative window. */
-  speculativeWindowMs?: number;
 }
 
 export interface ResolvedAutoModeSettings {
@@ -113,7 +107,6 @@ export interface ResolveAutoModeSettingsInput {
  * Env priority (highest first):
  *   - KODAX_AUTO_MODE_CLASSIFIER_MODEL: model spec — surfaced as `classifierModelEnv`
  *     so it reaches `AutoModeGuardrailConfig.envVar` (the resolver's layer 2)
- * Legacy timeout/window inputs and environment variables are ignored.
  */
 export function loadAutoModeSettings(env: NodeJS.ProcessEnv = process.env): ResolvedAutoModeSettings {
   const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;

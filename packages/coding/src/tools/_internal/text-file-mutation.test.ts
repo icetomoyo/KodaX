@@ -12,7 +12,6 @@ import {
   withTextFileMutation,
   writeTextFileForMutation,
 } from './text-file-mutation.js';
-import { acquireFileSystemMutationLease } from './file-mutation-queue.js';
 
 describe('trusted text file mutation boundary', () => {
   let root = '';
@@ -38,25 +37,6 @@ describe('trusted text file mutation boundary', () => {
 
     await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('after');
     expect(ctx.backups.get(filePath)).toBe('before');
-  });
-
-  it('does not wait for a live shell filesystem-effect lease', async () => {
-    const filePath = path.join(root, 'parallel.txt');
-    const releaseShell = await acquireFileSystemMutationLease();
-    const ctx: KodaXToolExecutionContext = { backups: new Map() };
-    try {
-      await expect(withTextFileMutation(
-        filePath,
-        'write',
-        { path: filePath },
-        ctx,
-        async (snapshot) => writeTextFileForMutation(snapshot, 'hello', true, ctx),
-      )).resolves.toBeUndefined();
-    } finally {
-      await releaseShell();
-    }
-
-    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('hello');
   });
 
   it('rejects a commit after another writer changed the snapshot', async () => {

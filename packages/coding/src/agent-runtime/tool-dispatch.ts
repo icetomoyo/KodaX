@@ -689,10 +689,19 @@ async function executePreparedToolCall(
   input: RunToolDispatchInput,
   call: RunnerToolCall,
 ): Promise<string> {
+  const authorize = input.ctx.authorizeShellHostExecution;
+  const ctx = authorize !== undefined && input.guardrailContext !== undefined
+    ? {
+        ...input.ctx,
+        authorizeShellHostExecution: (request: Parameters<typeof authorize>[0]) => (
+          authorize(request, input.guardrailContext)
+        ),
+      }
+    : input.ctx;
   let content = await executeToolCall(
     input.events,
     call,
-    input.ctx,
+    ctx,
     input.runtimeSessionState,
     input.activeToolNames,
     input.abortSignal,

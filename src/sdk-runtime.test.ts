@@ -2038,8 +2038,6 @@ describe("createKodaXRuntime", () => {
       executionCwd: path.resolve(tempRoot),
       shellExecution,
       autoModeClassifierModel: "mock-provider:classifier-model",
-      autoModeTimeoutMs: 20_000,
-      autoModeSpeculativeWindowMs: 0,
       compactionTriggerPercent: 110,
       compactionTriggerTokens: 120_000,
     });
@@ -2056,8 +2054,6 @@ describe("createKodaXRuntime", () => {
       compactionTriggerPercent: 90,
       compactionTriggerTokens: 120_000,
     });
-    expect(settings).not.toHaveProperty("autoModeTimeoutMs");
-    expect(settings).not.toHaveProperty("autoModeSpeculativeWindowMs");
     await expect(
       runtime.sessions.updateSettings(session.id, {
         compactionTriggerTokens: -1,

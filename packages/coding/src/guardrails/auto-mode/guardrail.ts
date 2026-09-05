@@ -367,8 +367,6 @@ export interface AutoModeGuardrailConfig {
    */
   readonly extraAbsoluteDenyChecks?: readonly AbsoluteDenyCheck[];
 
-  /** @deprecated Retained as inert source-compatibility input. */
-  readonly speculativeWindowMs?: number;
 }
 
 /**

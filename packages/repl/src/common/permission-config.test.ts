@@ -42,50 +42,11 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
     expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('ignores a legacy Rules engine in settings without exposing engine state', () => {
-    writeFakeConfig({
-      engine: 'rules',
-      classifierModel: 'kimi-code:kimi-for-coding',
-      timeoutMs: 5000,
-    });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('engine');
-    expect(r.classifierModel).toBe('kimi-code:kimi-for-coding');
-    expect(r).not.toHaveProperty('timeoutMs');
-  });
-
-  it('ignores legacy KODAX_AUTO_MODE_ENGINE=rules without exposing engine state', () => {
-    writeFakeConfig({ engine: 'llm' });
-    const r = loadAutoModeSettings({ KODAX_AUTO_MODE_ENGINE: 'rules' });
-    expect(r).not.toHaveProperty('engine');
-  });
-
   it('KODAX_AUTO_MODE_CLASSIFIER_MODEL env is surfaced separately so the resolver can see env-vs-settings layer ordering', () => {
     writeFakeConfig({ classifierModel: 'from-settings' });
     const r = loadAutoModeSettings({ KODAX_AUTO_MODE_CLASSIFIER_MODEL: 'from-env' });
     expect(r.classifierModel).toBe('from-settings');
     expect(r.classifierModelEnv).toBe('from-env');
-  });
-
-  it('ignores legacy timeout config and environment inputs', () => {
-    writeFakeConfig({ timeoutMs: 1000 });
-    const r = loadAutoModeSettings({ KODAX_AUTO_MODE_TIMEOUT_MS: '7500' });
-    expect(r).not.toHaveProperty('timeoutMs');
-  });
-
-  it('invalid env engine remains an inert legacy input', () => {
-    writeFakeConfig({ engine: 'rules' });
-    const r = loadAutoModeSettings({ KODAX_AUTO_MODE_ENGINE: 'YOLO' });
-    expect(r).not.toHaveProperty('engine');
-  });
-
-  it('keeps legacy timeout inputs inert regardless of their value', () => {
-    writeFakeConfig({ timeoutMs: 1000 });
-    const cases = ['NaN', '-1', '0', 'fast', ''];
-    for (const v of cases) {
-      const r = loadAutoModeSettings({ KODAX_AUTO_MODE_TIMEOUT_MS: v });
-      expect(r).not.toHaveProperty('timeoutMs');
-    }
   });
 
   it('whitespace-only / empty classifierModel string is treated as unset', () => {
@@ -102,62 +63,6 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
     expect(r).not.toHaveProperty('timeoutMs');
   });
 
-  it('does not normalize or expose legacy timeout settings', () => {
-    writeFakeConfig({ timeoutMs: 3000.7 });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('timeoutMs');
-  });
-
-  // Legacy speculative-window inputs remain readable but inert.
-
-  it('omits speculativeWindowMs by default', () => {
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('ignores speculativeWindowMs from the settings file', () => {
-    writeFakeConfig({ speculativeWindowMs: 1500 });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('keeps zero speculativeWindowMs inert', () => {
-    writeFakeConfig({ speculativeWindowMs: 0 });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('ignores the legacy speculative-window environment variable', () => {
-    writeFakeConfig({ speculativeWindowMs: 500 });
-    const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: '2000' });
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('does not revive speculative routing for a zero environment value', () => {
-    writeFakeConfig({ speculativeWindowMs: 500 });
-    const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: '0' });
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('does not normalize negative legacy speculative-window settings', () => {
-    writeFakeConfig({ speculativeWindowMs: -100 });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
-
-  it('keeps all legacy speculative-window environment forms inert', () => {
-    writeFakeConfig({ speculativeWindowMs: 750 });
-    for (const v of ['fast', '', 'NaN']) {
-      const r = loadAutoModeSettings({ KODAX_AUTO_SPECULATIVE_WINDOW_MS: v });
-      expect(r).not.toHaveProperty('speculativeWindowMs');
-    }
-  });
-
-  it('does not normalize float legacy speculative-window settings', () => {
-    writeFakeConfig({ speculativeWindowMs: 480.9 });
-    const r = loadAutoModeSettings({});
-    expect(r).not.toHaveProperty('speculativeWindowMs');
-  });
 });
 
 describe('permission mode compatibility boundary — FEATURE_297', () => {
@@ -203,10 +108,10 @@ describe('permission mode compatibility boundary — FEATURE_297', () => {
 
 describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
   it('does not read process.env when the caller omits env', () => {
-    vi.stubEnv('KODAX_AUTO_MODE_ENGINE', 'rules');
+    vi.stubEnv('KODAX_AUTO_MODE_CLASSIFIER_MODEL', 'from-process');
 
-    expect(resolveAutoModeSettings({ settings: { engine: 'rules' } }))
-      .not.toHaveProperty('engine');
+    expect(resolveAutoModeSettings({ settings: { classifierModel: 'from-settings' } }))
+      .toMatchObject({ classifierModel: 'from-settings', classifierModelEnv: undefined });
   });
 
   it('resolves caller-supplied settings without reading the filesystem', () => {
@@ -214,10 +119,7 @@ describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
 
     const resolved = resolveAutoModeSettings({
       settings: {
-        engine: 'rules',
         classifierModel: 'zai-coding:glm-5.2',
-        timeoutMs: 20_000.9,
-        speculativeWindowMs: 0,
       },
       env: {},
     });
@@ -233,16 +135,10 @@ describe('resolveAutoModeSettings — FEATURE_271 SDK contract', () => {
   it('applies the same environment precedence as the file-loading wrapper', () => {
     const resolved = resolveAutoModeSettings({
       settings: {
-        engine: 'rules',
         classifierModel: 'from-settings',
-        timeoutMs: 8_000,
-        speculativeWindowMs: 500,
       },
       env: {
-        KODAX_AUTO_MODE_ENGINE: 'llm',
         KODAX_AUTO_MODE_CLASSIFIER_MODEL: 'from-env',
-        KODAX_AUTO_MODE_TIMEOUT_MS: '20000',
-        KODAX_AUTO_SPECULATIVE_WINDOW_MS: '1200',
       },
     });
 

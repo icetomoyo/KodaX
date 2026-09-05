@@ -20,6 +20,7 @@ import type {
 import type { MemoryRecallRunner } from '@kodax-ai/agent/experimental-memory';
 
 import type {
+  GuardrailContext,
   KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
@@ -1796,6 +1797,8 @@ export interface KodaXShellHostExecutionRequest {
 
 export type KodaXShellHostExecutionAuthorizer = (
   request: KodaXShellHostExecutionRequest,
+  /** Trusted in-process dispatch context; absent for direct tool callers. */
+  context?: GuardrailContext,
 ) => Promise<boolean | string>;
 
 export type KodaXShellPermissionMode = 'plan' | 'accept-edits' | 'auto' | 'full-access';

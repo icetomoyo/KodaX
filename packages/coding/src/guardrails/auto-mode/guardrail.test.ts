@@ -1,5 +1,7 @@
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   createAutoModeToolGuardrail,
 } from './guardrail.js';
@@ -17,6 +19,12 @@ import type {
 import type { GuardrailContext, RunnerToolCall } from '@kodax-ai/agent';
 
 const emptyRules = { allow: [], soft_deny: [], environment: [] };
+
+// Ordinary workspace cases must not inherit a checkout under ~/.codex.
+const ordinaryWorkspace = mkdtempSync(path.join(os.tmpdir(), 'kodax-auto-workspace-'));
+mkdirSync(path.join(ordinaryWorkspace, 'src'));
+writeFileSync(path.join(ordinaryWorkspace, 'src', 'sdk-runtime.ts'), 'export {};\n');
+afterAll(() => rmSync(ordinaryWorkspace, { recursive: true, force: true }));
 
 class StubProvider extends KodaXBaseProvider {
   readonly name = 'stub';
@@ -166,8 +174,8 @@ describe('AutoModeToolGuardrail — Tier 1', () => {
     });
     const g = createAutoModeToolGuardrail({
       ...baseConfig('<decision>allow</decision><hazard>none</hazard><reason>x</reason>'),
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
+      projectRoot: ordinaryWorkspace,
+      executionCwd: ordinaryWorkspace,
       resolveProvider: () => provider,
       analyzeCall: undefined,
     });
@@ -231,8 +239,8 @@ describe('AutoModeToolGuardrail — Tier 1', () => {
     const stream = vi.spyOn(provider, 'stream');
     const guardrail = createAutoModeToolGuardrail({
       ...baseConfig(''),
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
+      projectRoot: ordinaryWorkspace,
+      executionCwd: ordinaryWorkspace,
       resolveProvider: () => provider,
       analyzeCall: undefined,
     });
@@ -265,8 +273,8 @@ describe('AutoModeToolGuardrail — Tier 1', () => {
     const stream = vi.spyOn(provider, 'stream');
     const guardrail = createAutoModeToolGuardrail({
       ...baseConfig(''),
-      projectRoot: process.cwd(),
-      executionCwd: process.cwd(),
+      projectRoot: ordinaryWorkspace,
+      executionCwd: ordinaryWorkspace,
       resolveProvider: () => provider,
       analyzeCall: undefined,
     });
@@ -4103,13 +4111,12 @@ describe('AutoModeToolGuardrail — compact permission review', () => {
   });
 });
 
-describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158)', () => {
-  it('uses verdict directly when classifier resolves within window', async () => {
+describe('AutoModeToolGuardrail — review completion and cancellation', () => {
+  it('uses a completed classifier verdict', async () => {
     const provider = new StubProvider(async () => okResult('<decision>allow</decision><hazard>none</hazard><reason>fast</reason>'));
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 500,
     });
     const verdict = await g.beforeTool!(callBash('ls'), ctx());
     expect(verdict.action).toBe('allow');
@@ -4128,7 +4135,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 10,
       askUser,
     });
     const verdict = await g.beforeTool!(callBash('ls'), ctx());
@@ -4149,7 +4155,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 10,
       askUser,
     });
     const verdict = await g.beforeTool!(callBash('rm important.txt'), ctx());
@@ -4171,7 +4176,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 5,
       askUser,
     });
     const verdict = await g.beforeTool!(callBash('ls'), ctx());
@@ -4188,7 +4192,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 5,
       askUser,
     });
     await g.beforeTool!(callBash('git push --force origin main'), ctx());
@@ -4206,7 +4209,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 10,
     });
     const verdict = await g.beforeTool!(callBash('ls'), ctx());
     expect(verdict.action).toBe('allow');
@@ -4220,7 +4222,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 10,
     });
     const verdict = await g.beforeTool!(callBash('rm important.txt'), ctx());
     expect(verdict.action).toBe('block');
@@ -4244,7 +4245,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
-      speculativeWindowMs: 1,
       askUser: async () => 'allow',
     });
     const promise = g.beforeTool!(
@@ -4258,26 +4258,6 @@ describe('AutoModeToolGuardrail — inert legacy speculative inputs (FEATURE_158
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
   });
 
-  it('windowMs=0 disables speculative race (waits for classifier)', async () => {
-    let askUserCalled = false;
-    const askUser: AutoModeAskUser = async () => {
-      askUserCalled = true;
-      return 'allow';
-    };
-    const provider = new StubProvider(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return okResult('<decision>allow</decision><hazard>none</hazard><reason>slow</reason>');
-    });
-    const g = createAutoModeToolGuardrail({
-      ...baseConfig(''),
-      resolveProvider: () => provider,
-      speculativeWindowMs: 0, // disabled — sync wait
-      askUser,
-    });
-    const verdict = await g.beforeTool!(callBash('ls'), ctx());
-    expect(verdict.action).toBe('allow');
-    expect(askUserCalled).toBe(false);
-  });
 });
 
 // ============== FEATURE_158 Step 9 — release-gate regression suites ==============

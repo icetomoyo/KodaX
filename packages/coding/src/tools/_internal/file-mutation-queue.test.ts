@@ -8,13 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   _peekFileMutationQueueSizeForTests,
   _resetFileMutationQueueForTests,
-  acquireExclusiveFileSystemEffectLease,
-  acquireFileSystemMutationLease,
-  finishAndReleaseFileSystemEffectLease,
   normalizePathForKey,
   withFileMutation,
-  withHostFileSystemMutation,
-  withHostFileSystemNamespaceMutation,
 } from './file-mutation-queue.js';
 
 afterEach(() => {
@@ -81,37 +76,5 @@ describe('withFileMutation', () => {
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
-  });
-});
-
-describe('filesystem effect compatibility APIs', () => {
-  it('does not make a host mutation wait for an active shell compatibility lease', async () => {
-    const releaseShell = await acquireFileSystemMutationLease('policy-a');
-    const mutation = withFileMutation('/tmp/unrelated-host-write.txt', async () => 'written');
-    try {
-      await expect(Promise.race([
-        mutation,
-        new Promise<string>((resolve) => setTimeout(() => resolve('blocked'), 100)),
-      ])).resolves.toBe('written');
-    } finally {
-      await releaseShell();
-    }
-  });
-
-  it('keeps old lease calls non-blocking and idempotent', async () => {
-    const lease = await acquireExclusiveFileSystemEffectLease('policy-a');
-    await lease.bindEffectProcess(process.pid, false);
-    await finishAndReleaseFileSystemEffectLease(lease);
-    await expect(lease()).resolves.toBeUndefined();
-    await expect(lease.released).resolves.toBeUndefined();
-  });
-
-  it('runs host and namespace operations without cross-process coordination', async () => {
-    await expect(withHostFileSystemMutation(async () => 'host')).resolves.toBe('host');
-    await expect(withHostFileSystemNamespaceMutation(async (bind, finish) => {
-      await bind(process.pid, false);
-      await finish();
-      return 'namespace';
-    })).resolves.toBe('namespace');
   });
 });

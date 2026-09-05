@@ -1545,13 +1545,7 @@ export interface RuntimeSessionSettingsPatch {
   readonly executionCwd?: string | null;
   readonly shellExecution?: KodaXShellExecutionContract | null;
   readonly agentMode?: KodaXOptions["agentMode"] | null;
-  /** @deprecated Accepted as inert migration input. Auto always uses the LLM reviewer. */
-  readonly autoModeEngine?: "llm" | "rules" | null;
   readonly autoModeClassifierModel?: string | null;
-  /** @deprecated Accepted as inert migration input. Reviewer deadlines are fixed. */
-  readonly autoModeTimeoutMs?: number | null;
-  /** @deprecated Accepted as inert migration input. Sandbox-first routing has no speculative window. */
-  readonly autoModeSpeculativeWindowMs?: number | null;
   readonly compactionTriggerPercent?: number | null;
   readonly compactionTriggerTokens?: number | null;
 }
@@ -20684,29 +20678,23 @@ function applySessionSettingsPatch(
 function canonicalizeRuntimeSessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettingsPatch {
-  const {
-    autoModeEngine: _ignoredLegacyEngine,
-    autoModeTimeoutMs: _ignoredLegacyTimeout,
-    autoModeSpeculativeWindowMs: _ignoredLegacyWindow,
-    ...canonical
-  } = patch;
   if (
-    canonical.permissionMode === undefined
-    || canonical.permissionMode === null
+    patch.permissionMode === undefined
+    || patch.permissionMode === null
   ) {
-    return canonical;
+    return patch;
   }
   const permissionMode = replApi.normalizePermissionMode(
-    canonical.permissionMode,
+    patch.permissionMode,
   );
   if (permissionMode === undefined) {
     throw new Error(
       "permissionMode must be one of: plan, accept-edits, auto, full-access",
     );
   }
-  return permissionMode === canonical.permissionMode
-    ? canonical
-    : { ...canonical, permissionMode };
+  return permissionMode === patch.permissionMode
+    ? patch
+    : { ...patch, permissionMode };
 }
 
 function applyNullableCompactionPercentPatch(

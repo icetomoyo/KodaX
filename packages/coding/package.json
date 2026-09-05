@@ -26,10 +26,6 @@
     "./media": {
       "types": "./dist/media/index.d.ts",
       "import": "./dist/media/index.js"
-    },
-    "./internal/file-system-effects": {
-      "types": "./dist/internal/file-system-effects.d.ts",
-      "import": "./dist/internal/file-system-effects.js"
     }
   },
   "scripts": {

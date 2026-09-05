@@ -20,8 +20,6 @@ import {
   toolWorktreeRemove,
 } from './worktree.js';
 import {
-  _resetFileSystemEffectLeasesForTests,
-  acquireFileSystemMutationLease,
   withFileMutation,
 } from './_internal/file-mutation-queue.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -136,7 +134,6 @@ afterEach(async () => {
   }));
   vi.mocked(killChildProcessTree).mockResolvedValue({ status: 'already-exited' });
   vi.mocked(terminateWindowsEffectJob).mockResolvedValue(undefined);
-  await _resetFileSystemEffectLeasesForTests();
   setAgentConfigHome(undefined);
 });
 
@@ -322,18 +319,6 @@ describe('toolWorktreeCreate', () => {
       { branch_name: 'model-runtime-base' },
       { ...mockContext, executionCwd: path.join(agentHome, 'runtime', 'repo') },
     )).rejects.toThrow('protected KodaX state');
-  });
-
-  it('does not wait for a model-started shell compatibility lease', async () => {
-    const releaseShell = await acquireFileSystemMutationLease();
-    try {
-      await expect(toolWorktreeCreate(
-        { branch_name: 'lease-conflict' },
-        mockContext,
-      )).resolves.toContain('lease-conflict');
-    } finally {
-      await releaseShell();
-    }
   });
 
   it('does not wait for an unrelated direct file mutation', async () => {
@@ -651,18 +636,6 @@ describe('toolWorktreeRemove', () => {
     expect(parsed.restored).toBe(true);
   });
 
-  it('does not wait for a model-started shell compatibility lease', async () => {
-    const releaseShell = await acquireFileSystemMutationLease();
-    try {
-      await expect(toolWorktreeRemove({
-        action: 'remove',
-        worktree_path: '/test/worktree',
-        discard_changes: true,
-      }, mockContext)).resolves.toContain('removed');
-    } finally {
-      await releaseShell();
-    }
-  });
 });
 
 describe('toolWorktreeRemove with changes detection', () => {

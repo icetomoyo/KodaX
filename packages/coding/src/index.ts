@@ -274,11 +274,6 @@ export type {
   KodaXTrustedTextMutationErrorCode,
 } from './trusted-text-mutation.js';
 
-export {
-  acquireFileSystemMutationLease,
-  acquireExclusiveFileSystemEffectLease,
-} from './tools/_internal/file-mutation-queue.js';
-
 export { normalizeKodaXAgentMode } from './types.js';
 /** @deprecated Sandbox environment pass lists are inert since 0.7.96. */
 export { parseSandboxEnvironmentPass } from './shell-execution/environment.js';
@@ -1364,13 +1359,6 @@ export {
   type AbsoluteDenyMiss,
   type TierZeroPatternId,
 } from './guardrails/auto-mode/absolute-denylist.js';
-export {
-  speculativeRace,
-  readWindowFromEnv as readSpeculativeWindowFromEnv,
-  DEFAULT_WINDOW_MS as DEFAULT_SPECULATIVE_WINDOW_MS,
-  type SpeculativeResult,
-} from './guardrails/auto-mode/speculative.js';
-
 // ============== FEATURE_153 (v0.7.38): Bash Command Prefix Extractor ==============
 //
 // LLM-backed prefix extraction for bash allowlist matching, replacing the

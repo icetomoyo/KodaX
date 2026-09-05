@@ -12,7 +12,6 @@ import {
   loadExecPolicy,
   type AutoModeToolGuardrail,
   type ExecPolicyRuleInput,
-  type KodaXPreparedShellSandboxInvocation,
   type KodaXShellHostExecutionAuthorizer,
   type KodaXShellHostExecutionRequest,
   type KodaXShellPermissionMode,
@@ -53,16 +52,10 @@ export interface StandaloneShellPermissionBoundary {
   readonly trustedTextMutationHost?: KodaXTrustedTextMutationHost;
 }
 
-interface PendingAutoReview {
-  readonly call: RunnerToolCall;
-  readonly context: GuardrailContext;
-}
-
 /** Fail-closed Runtime-equivalent routing for public REPLs without a Runtime owner. */
 export function createStandaloneShellPermissionBoundary(
   options: StandaloneShellPermissionBoundaryOptions,
 ): StandaloneShellPermissionBoundary {
-  const autoContexts = new Map<string, PendingAutoReview>();
   const projectPolicyPath = trustedProjectPolicyPath(options);
   const projectPolicySnapshotPath = projectPolicyPath !== undefined
     && existsSync(projectPolicyPath)
@@ -82,12 +75,6 @@ export function createStandaloneShellPermissionBoundary(
         return options.getAutoGuardrail().beforeTool?.(call, context)
           ?? { action: 'block', reason: 'Auto reviewer has no beforeTool hook.' };
       }
-      autoContexts.set(call.id, { call, context });
-      while (autoContexts.size > 64) {
-        const oldest = autoContexts.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        autoContexts.delete(oldest);
-      }
       return { action: 'allow' };
     },
   };
@@ -99,22 +86,19 @@ export function createStandaloneShellPermissionBoundary(
       if (options.shellSandbox === undefined) {
         throw new Error('Standalone REPL has no OS sandbox provider.');
       }
-      const invocation = await options.shellSandbox.prepare({
+      return options.shellSandbox.prepare({
         ...input,
         ...(projectPolicySnapshotPath === undefined
           ? {}
           : { trustedProjectExecPolicyPath: projectPolicySnapshotPath }),
       });
-      return invocation === undefined
-        ? undefined
-        : cleanupCompletedAutoReview(invocation, input.toolCallId, input.toolInput, autoContexts);
     },
   };
   const resolveShellPermissionMode = (): KodaXShellPermissionMode => {
     const mode = options.getPermissionMode();
     return mode === 'auto-in-project' ? 'auto' : mode;
   };
-  const authorizeShellHostExecution: KodaXShellHostExecutionAuthorizer = async (request) => {
+  const authorizeShellHostExecution: KodaXShellHostExecutionAuthorizer = async (request, context) => {
     const policy = await policySnapshot;
     const invalid = policy.errors[0];
     if (invalid !== undefined) {
@@ -143,7 +127,7 @@ export function createStandaloneShellPermissionBoundary(
       return options.resolvePlanHostExecution?.(request)
         ?? '[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.';
     }
-    return reviewAutoHostBoundary(request, options.getAutoGuardrail(), autoContexts);
+    return reviewAutoHostBoundary(request, options.getAutoGuardrail(), context);
   };
   const trustedTextMutationHost = protectTrustedProjectPolicy(
     options.trustedTextMutationHost,
@@ -206,96 +190,19 @@ function sameHostPath(left: string, right: string): boolean {
 async function reviewAutoHostBoundary(
   request: KodaXShellHostExecutionRequest,
   guardrail: AutoModeToolGuardrail,
-  contexts: Map<string, PendingAutoReview>,
+  context: GuardrailContext | undefined,
 ): Promise<boolean | string> {
   const id = request.toolCallId;
-  const pending = id === undefined ? undefined : contexts.get(id);
-  if (id !== undefined) contexts.delete(id);
-  const requestCall: RunnerToolCall | undefined = id === undefined
-    ? undefined
-    : { id, name: 'bash', input: { ...request.toolInput } };
-  if (pending === undefined || requestCall === undefined || !sameToolCall(pending.call, requestCall)) {
-    return '[Denied] Auto[LLM] host review did not match the exact sandboxed call.';
+  if (context === undefined || id === undefined) {
+    return '[Denied] Auto[LLM] host review requires the current tool dispatch context.';
   }
-  const verdict = await guardrail.reviewHostBoundary(pending.call, pending.context);
+  const call: RunnerToolCall = {
+    id,
+    name: 'bash',
+    input: { ...request.toolInput, command: request.command },
+  };
+  const verdict = await guardrail.reviewHostBoundary(call, context);
   return verdict.action === 'allow'
     ? true
     : `[Denied] ${'reason' in verdict ? verdict.reason ?? 'Auto[LLM] denied host execution.' : 'Auto[LLM] denied host execution.'}`;
-}
-
-function cleanupCompletedAutoReview(
-  invocation: KodaXPreparedShellSandboxInvocation,
-  id: string | undefined,
-  input: Readonly<Record<string, unknown>>,
-  contexts: Map<string, PendingAutoReview>,
-): KodaXPreparedShellSandboxInvocation {
-  return {
-    ...invocation,
-    async cleanup(cleanupInput) {
-      try {
-        return await invocation.cleanup(cleanupInput);
-      } finally {
-        if (cleanupInput?.execution === 'started_or_unknown' && id !== undefined) {
-          const pending = contexts.get(id);
-          if (pending !== undefined && sameToolInput(pending.call.input, input)) contexts.delete(id);
-        }
-      }
-    },
-  };
-}
-
-function sameToolCall(left: RunnerToolCall, right: RunnerToolCall): boolean {
-  return left.id === right.id
-    && left.name === right.name
-    && sameToolInput(left.input, right.input);
-}
-
-function sameToolInput(
-  left: Readonly<Record<string, unknown>>,
-  right: Readonly<Record<string, unknown>>,
-): boolean {
-  try {
-    return stableJson(left) === stableJson(right);
-  } catch {
-    return false;
-  }
-}
-
-function stableJson(value: unknown, ancestors = new Set<object>()): string {
-  if (value === null) return 'null';
-  if (typeof value !== 'object') {
-    if (
-      !['string', 'number', 'boolean'].includes(typeof value)
-      || (typeof value === 'number' && !Number.isFinite(value))
-    ) throw new Error('unsafe value');
-    return JSON.stringify(value);
-  }
-  if (ancestors.has(value)) throw new Error('cyclic value');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      const ownKeys = Reflect.ownKeys(value);
-      if (
-        ownKeys.length !== value.length + 1
-        || ownKeys.some((key) => (
-          key !== 'length'
-          && (typeof key !== 'string' || !/^\d+$/u.test(key))
-        ))
-      ) throw new Error('unsafe array');
-      return `[${value.map((item) => stableJson(item, ancestors)).join(',')}]`;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) throw new Error('non-plain object');
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key === 'symbol')) throw new Error('symbol property');
-    return `{${(keys as string[]).sort().map((key) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor?.enumerable !== true || !('value' in descriptor)) {
-        throw new Error('unsafe property');
-      }
-      return `${JSON.stringify(key)}:${stableJson(descriptor.value, ancestors)}`;
-    }).join(',')}}`;
-  } finally {
-    ancestors.delete(value);
-  }
 }

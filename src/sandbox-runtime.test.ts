@@ -22,12 +22,6 @@ import { readProcessStartIdentity, SkillRegistry } from '@kodax-ai/agent';
 import { build } from 'esbuild';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  _resetFileSystemEffectLeasesForTests,
-  acquireExclusiveFileSystemEffectLease,
-  acquireFileSystemMutationLease,
-  acquireHostFileSystemMutationLease,
-} from '../packages/coding/src/tools/_internal/file-mutation-queue.js';
-import {
   ensureWindowsSandboxControlDirectory,
   resolveWindowsAsrtRunnerArtifact,
   trustedTextNativeArtifactStateRoots,
@@ -144,7 +138,6 @@ const standaloneBrokerDetachMock = vi.hoisted(() => ({
   controlRefCalls: 0,
   controlUnrefCalls: 0,
 }));
-const standaloneFenceReleaseMock = vi.hoisted(() => ({ failures: 0 }));
 const processIdentityMock = vi.hoisted(() => ({
   windowsBootIdentity: 'windows-boot-100' as string | undefined,
   pid4StartIdentity: '13370000000000' as string | undefined,
@@ -1214,24 +1207,6 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
   };
 });
 
-vi.mock('@kodax-ai/coding/internal/file-system-effects', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('@kodax-ai/coding/internal/file-system-effects')
-  >();
-  return {
-    ...actual,
-    finishAndReleaseFileSystemEffectLease: async (
-      lease: Parameters<typeof actual.finishAndReleaseFileSystemEffectLease>[0],
-    ) => {
-      if (standaloneFenceReleaseMock.failures > 0) {
-        standaloneFenceReleaseMock.failures -= 1;
-        throw new Error('injected standalone fence release failure');
-      }
-      await actual.finishAndReleaseFileSystemEffectLease(lease);
-    },
-  };
-});
-
 vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@anthropic-ai/sandbox-runtime')>();
   return {
@@ -1513,7 +1488,6 @@ afterEach(async () => {
   standaloneBrokerDetachMock.stderrUnrefCalls = 0;
   standaloneBrokerDetachMock.controlRefCalls = 0;
   standaloneBrokerDetachMock.controlUnrefCalls = 0;
-  standaloneFenceReleaseMock.failures = 0;
   processIdentityMock.windowsBootIdentity = 'windows-boot-100';
   processIdentityMock.pid4StartIdentity = '13370000000000';
   workspaceSessionControl.releaseReady?.();
@@ -1543,7 +1517,6 @@ afterEach(async () => {
   await resetSandboxRuntimeForTest();
   restoreCutoverDirectory?.();
   restoreCutoverDirectory = undefined;
-  await _resetFileSystemEffectLeasesForTests();
   capturedBrokerRequests.length = 0;
   capturedSpawnEnvironments.length = 0;
   capturedSpawnArgv.length = 0;

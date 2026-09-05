@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { cleanupRegisteredManagedChildren, setAgentConfigHome } from '@kodax-ai/agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { KodaXShellSandbox } from '../types.js';
+import type { KodaXShellSandbox, KodaXToolExecutionContext } from '../types.js';
 import { toolBash } from './bash.js';
 import { toolEdit } from './edit.js';
 import { toolWrite } from './write.js';
@@ -268,18 +268,7 @@ describe('toolBash', () => {
     });
   });
 
-  it('starts a native-Job sandbox directly with immediate stdin EOF and no effect lease', async () => {
-    const forbiddenLease = {
-      bindEffectProcess: vi.fn(async () => {
-        throw new Error('filesystem-effect bind must not run');
-      }),
-      finishEffectProcess: vi.fn(async () => {
-        throw new Error('filesystem-effect finish must not run');
-      }),
-      release: vi.fn(async () => {
-        throw new Error('filesystem-effect release must not run');
-      }),
-    };
+  it('starts a native-Job sandbox directly with immediate stdin EOF', async () => {
     const script = [
       'const chunks=[]',
       "process.stdin.on('data',(chunk)=>chunks.push(chunk))",
@@ -295,7 +284,6 @@ describe('toolBash', () => {
           args: ['-e', script],
           env: process.env,
           processTreeContainment: 'native-job' as const,
-          fileSystemEffectLease: forbiddenLease,
           cleanup: async () => undefined,
         }),
       },
@@ -304,9 +292,6 @@ describe('toolBash', () => {
     expect(completedCommandBody(result)).toContain(
       JSON.stringify({ bytes: 0, parent: process.pid }),
     );
-    expect(forbiddenLease.bindEffectProcess).not.toHaveBeenCalled();
-    expect(forbiddenLease.finishEffectProcess).not.toHaveBeenCalled();
-    expect(forbiddenLease.release).not.toHaveBeenCalled();
     expect(windowsEffectJobMock.containCalls).toBe(0);
   });
 
@@ -672,6 +657,36 @@ describe('toolBash', () => {
     expect(completedCommandBody(result)).toContain('authorized fallback completed');
   });
 
+  it('executes only the exact command and cwd that received host authorization', async () => {
+    const approvedCwd = path.join(tempDir, 'approved');
+    const laterCwd = path.join(tempDir, 'later');
+    await fs.mkdir(approvedCwd);
+    await fs.mkdir(laterCwd);
+    const input = {
+      command: 'node -e "require(\'fs\').appendFileSync(\'effect.txt\',\'approved\')"',
+    };
+    const context: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: approvedCwd,
+      shellSandbox: { prepare: async () => undefined },
+      authorizeShellHostExecution: async (request) => {
+        expect(request.command).toBe(input.command);
+        expect(request.cwd).toBe(approvedCwd);
+        // The UI or caller can change its current input while review is open.
+        input.command = 'node -e "require(\'fs\').appendFileSync(\'effect.txt\',\'changed\')"';
+        context.executionCwd = laterCwd;
+        expect(request.toolInput.command).toBe(request.command);
+        return true;
+      },
+    };
+
+    const result = await toolBash(input, context);
+
+    expect(result).toContain('Exit: 0');
+    expect(await fs.readFile(path.join(approvedCwd, 'effect.txt'), 'utf8')).toBe('approved');
+    await expect(fs.stat(path.join(laterCwd, 'effect.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('samples direct host routing once and never enters the sandbox lifecycle', async () => {
     const prepare = vi.fn(async () => undefined);
     const authorizeShellHostExecution = vi.fn(async () => true as const);
@@ -950,6 +965,42 @@ describe('toolBash', () => {
 
     expect(result).toContain('[Safety] The command was not retried');
     expect(result).not.toContain('must not be replayed');
+    expect(authorizeShellHostExecution).not.toHaveBeenCalled();
+  });
+
+  it('never repeats an attested target even when cleanup contradicts its start', async () => {
+    const effectPath = path.join(tempDir, 'attested-effect.txt');
+    const script = "require('fs').appendFileSync('attested-effect.txt','effect');process.exit(1)";
+    const authorizeShellHostExecution = vi.fn(async () => true as const);
+    const result = await toolBash({ command: `node -e "${script}"` }, {
+      backups: new Map(),
+      executionCwd: tempDir,
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', script],
+          env: process.env,
+          processTreeContainment: 'native-job',
+          processControl: {
+            closeInput: async (child) => { child.stdin?.end(); },
+            attestStart: async () => {
+              await waitForOutputMatch(effectPath, /effect/);
+              return { state: 'started' };
+            },
+            terminate: async (child) => { child.kill('SIGKILL'); },
+          },
+          cleanup: async () => ({
+            version: 1,
+            state: 'pre_start_unavailable',
+            diagnostic: 'contradictory cleanup report',
+          }),
+        }),
+      },
+      authorizeShellHostExecution,
+    });
+
+    expect(await fs.readFile(effectPath, 'utf8')).toBe('effect');
+    expect(result).toContain('[Safety] The command was not retried');
     expect(authorizeShellHostExecution).not.toHaveBeenCalled();
   });
 

@@ -165,7 +165,7 @@ describe('bootstrapAutoMode', () => {
     expect(getCurrentProviderName()).toBe('glm-coding');
   });
 
-  it('does not forward legacy timeout or speculative-window inputs', async () => {
+  it('uses the default reviewer deadline without a UI callback', async () => {
     const result = await bootstrapAutoMode({
       ...baseDeps(),
       autoModeSettings: {
@@ -175,7 +175,6 @@ describe('bootstrapAutoMode', () => {
     });
     result.getGuardrail(); // trigger lazy construction
     const cfg = vi.mocked(createAutoModeToolGuardrail).mock.calls.at(-1)?.[0];
-    expect(cfg?.speculativeWindowMs).toBeUndefined();
     expect(cfg?.timeoutMs).toBeUndefined();
     expect(cfg?.askUser).toBeUndefined();
   });
