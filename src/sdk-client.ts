@@ -25,6 +25,10 @@ export type {
   ClientInteractionResponse,
   ClientInteractionResult,
   ClientPermissionDecision,
+  ClientHistoryPage,
+  ClientHistoryReadOptions,
+  ClientHistorySearchInput,
+  ClientHistorySearchResult,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -63,6 +67,9 @@ export async function connectKodaXClient(
       updateSettings: async (sessionId, patch) => toClientSessionSettings(await runtime.sessions.updateSettings(sessionId, patch)),
       observe: (sessionId, onView) => runtime.sessions.observeView(sessionId, onView),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
+      readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
+      readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
+      searchHistory: (sessionId, input) => runtime.sessions.searchHistory(sessionId, input),
     },
     inputs: {
       submit: (input) => runtime.runs.acceptInput(input),

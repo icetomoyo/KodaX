@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
+import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
   KodaXDaemonRuntime,
@@ -86,6 +86,7 @@ import type {
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
 import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
+import { projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from '../client-history.js';
 import type {
   AskUserAnswer,
   LearningEvent,
@@ -521,6 +522,55 @@ export function createRuntimeDaemonClient(
       },
       readViewItem(sessionId, itemId, options) {
         return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
+      },
+      async readHistory(sessionId, options) {
+        const page = await readHistoryPageWithBoundaryRetry(
+          () => readRequest(
+            'session.conversation.page',
+            {
+              sessionId,
+              ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
+              ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+            },
+          ) as Promise<RuntimeConversationHistorySlice | null>,
+          { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}) },
+        );
+        if (page === null) {
+          throw new Error('Runtime daemon returned no conversation history page.');
+        }
+        return projectConversationHistoryPage(sessionId, page);
+      },
+      readHistoryEntry(sessionId, itemId, options) {
+        return readConversationHistoryEntry(
+          sessionId,
+          itemId,
+          async (input) => readRequest(
+            'session.conversation.entryChunk',
+            input as unknown as Readonly<Record<string, unknown>>,
+          ) as Promise<RuntimeConversationHistoryEntryChunk | null>,
+          options,
+        );
+      },
+      async searchHistory(sessionId, input) {
+        const result = await readRequest('session.transcript.search', {
+          sessionId,
+          query: input.query,
+          scope: input.scope ?? 'all',
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          ...(input.role !== undefined ? { role: input.role } : {}),
+        }) as RuntimeTranscriptSearchResult | null;
+        if (result === null) {
+          throw new Error('Runtime daemon returned no transcript search result.');
+        }
+        return {
+          revision: result.revision,
+          hits: result.hits.map((hit) => ({
+            entryIndex: hit.entryIndex,
+            role: hit.role === 'user' ? ('user' as const) : ('assistant' as const),
+            ...(hit.timestamp !== undefined ? { timestamp: hit.timestamp } : {}),
+            snippet: hit.snippet,
+          })),
+        };
       },
       diagnostics(input) {
         return readRequest(

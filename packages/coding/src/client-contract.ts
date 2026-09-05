@@ -50,6 +50,12 @@ export interface KodaXProductClient {
     observe(sessionId: string, onView: (view: ClientSessionView) => void): Promise<ClientObservation>;
     /** Read the original content behind a bounded display item. Offsets are UTF-16 characters. */
     readItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
+    /** Newest page of the canonical conversation first; older pages via nextCursor. */
+    readHistory(sessionId: string, options?: ClientHistoryReadOptions): Promise<ClientHistoryPage>;
+    /** Full body behind one oversized history entry, chunked like readItem. */
+    readHistoryEntry(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
+    /** Search the whole Session history; entryIndex values are stable within the returned revision. */
+    searchHistory(sessionId: string, input: ClientHistorySearchInput): Promise<ClientHistorySearchResult>;
   };
   readonly inputs: {
     submit(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
@@ -152,6 +158,46 @@ export interface ClientCapabilityProbeResult {
 export interface ClientItemReadOptions {
   readonly offset?: number;
   readonly part?: 'text' | 'input';
+}
+
+/** Paging over a Session's canonical conversation history. */
+export interface ClientHistoryReadOptions {
+  /** Cursor from a previous page's nextCursor; omit to read the newest page. */
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface ClientHistoryPage {
+  /** This page's entries projected like view items, oldest first. */
+  readonly items: readonly ClientViewItem[];
+  /** Conversation revision this page was read at. */
+  readonly revision: string;
+  /** Cursor of the next older page; absent when this is the oldest page. */
+  readonly nextCursor?: string;
+  /**
+   * Entries too large to inline as items. Read the full body by itemId with
+   * readHistoryEntry; the page never substitutes a truncated preview.
+   */
+  readonly oversized: readonly { readonly itemId: string; readonly byteLength: number }[];
+}
+
+export interface ClientHistorySearchInput {
+  readonly query: string;
+  readonly limit?: number;
+  readonly role?: 'user' | 'assistant';
+  /** 'all' (default) searches active and compacted history; 'compacted' only the compacted tail. */
+  readonly scope?: 'all' | 'compacted';
+}
+
+export interface ClientHistorySearchResult {
+  readonly revision: string;
+  readonly hits: readonly {
+    /** Stable within this revision; indexes the transcript at that revision. */
+    readonly entryIndex: number;
+    readonly role: 'user' | 'assistant';
+    readonly timestamp?: string;
+    readonly snippet: string;
+  }[];
 }
 
 export interface ClientItemContent {

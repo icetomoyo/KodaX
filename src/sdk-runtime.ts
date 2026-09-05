@@ -24,10 +24,15 @@ import type {
   ClientInteraction,
   ClientInteractionResponse,
   ClientInteractionResult,
+  ClientHistoryReadOptions,
+  ClientHistoryPage,
+  ClientHistorySearchInput,
+  ClientHistorySearchResult,
 } from "@kodax-ai/coding/client-contract";
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
+import { projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from "./client-history.js";
 import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
@@ -1711,6 +1716,19 @@ export interface RuntimeObservationInvalidation {
 export interface RuntimeSessionService {
   observeView(sessionId: string, listener: (view: ClientSessionView) => void): Promise<ClientObservation>;
   readViewItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
+  readHistory(
+    sessionId: string,
+    options?: ClientHistoryReadOptions,
+  ): Promise<ClientHistoryPage>;
+  readHistoryEntry(
+    sessionId: string,
+    itemId: string,
+    options?: ClientItemReadOptions,
+  ): Promise<ClientItemContent | null>;
+  searchHistory(
+    sessionId: string,
+    input: ClientHistorySearchInput,
+  ): Promise<ClientHistorySearchResult>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -7442,7 +7460,8 @@ function createRuntimeSessionService(
     });
   };
 
-  return {
+  const service: RuntimeSessionService
+    & { deleteTemporary(sessionId: string): Promise<void> } = {
     async create(input = {}) {
       ensureOpen();
       admission.assertCreate(input);
@@ -7958,6 +7977,55 @@ function createRuntimeSessionService(
       ensureOpen();
       return sessionViews.readItem(sessionId, itemId, options);
     },
+    async readHistory(sessionId, options) {
+      ensureOpen();
+      // Transient boundary misses retry once for fresh reads; stale cursors
+      // reject with resync_required for the caller to restart (see helper).
+      const page = await readHistoryPageWithBoundaryRetry(
+        () => service.conversationPage({
+          sessionId,
+          ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
+          ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        }),
+        { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}) },
+      );
+      if (page === null) {
+        throw Object.assign(
+          new Error(`Conversation history is unavailable for Session ${sessionId}.`),
+          { code: "not_found" as const },
+        );
+      }
+      return projectConversationHistoryPage(sessionId, page);
+    },
+    readHistoryEntry(sessionId, itemId, options) {
+      ensureOpen();
+      return readConversationHistoryEntry(
+        sessionId,
+        itemId,
+        (input) => service.conversationEntryChunk(input),
+        options,
+      );
+    },
+    async searchHistory(sessionId, input) {
+      ensureOpen();
+      const result = await service.transcriptSearch({
+        sessionId,
+        query: input.query,
+        scope: input.scope ?? 'all',
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.role !== undefined ? { role: input.role } : {}),
+      });
+      if (result === null) throw createRuntimeResyncError('Transcript search boundary is no longer retained; retry.');
+      return {
+        revision: result.revision,
+        hits: result.hits.map((hit) => ({
+          entryIndex: hit.entryIndex,
+          role: hit.role === 'user' ? ('user' as const) : ('assistant' as const),
+          ...(hit.timestamp !== undefined ? { timestamp: hit.timestamp } : {}),
+          snippet: hit.snippet,
+        })),
+      };
+    },
     async observe(sessionId, listener, options) {
       ensureOpen();
       const pending: RuntimeEvent[] = [];
@@ -8472,6 +8540,7 @@ function createRuntimeSessionService(
     delete: (sessionId) => deleteSession(sessionId, false),
     deleteTemporary: (sessionId) => deleteSession(sessionId, true),
   };
+  return service;
 }
 
 function createRuntimeRunService(deps: {
