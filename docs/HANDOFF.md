@@ -293,3 +293,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **基线**：sdk-runtime.test.ts 10 败为 HEAD 既有（stash 对照逐一一致，extension inventory 等域），与本票无关；本轮结束 tsc 478=478、daemon+fork 触面 400 绿、product-client 28 绿。
 
 **下一步（DAG 前沿）**：T33（T08+T09 已解）、T14（T05+T13 已解）、T12 剩余；T34 前置还差 T23/T31/T33/T36/T37（T10/T11 已解）。
+
+---
+
+## 2026-09-06 会话补记：T33 完成（旧 Run 保守可读，终止旧恢复引擎）
+
+**提交**：代码 `1c511123`（3 文件 +204/-166）、子模块 `3f7a2d5`（T33→Done，15/35）+ 指针 `4af0a54e`。
+
+**实现面**：删除 `recoverPersistedDurableTerminal`/`reconcilePersistedInterruptDeliveries`/`terminalPhaseFromEvent` 与启动回路调用块——读路径不再从 Runtime event 推导 status/delivery；`interruptPersistedNonTerminalRun` 成唯一保守格式入口（两处调用：启动回路 + 死 owner 迟检）。既有 terminal status 经 `saveRunStatus` 守卫拒绝降级（terminal+queued 输入的存量组合不回写）。T08 的 status 文件权威模型保持。
+
+**关键排查**：全量跑 sdk-runtime.test.ts 出现第 11 败 "keeps parallel active tools"（隔离跑过、HEAD 全量过）——根因是两个旧引擎契约测试先失败泄漏 runtime/定时器改变后续时序；把两测试重写为保守契约后该败自愈。教训：**删引擎类改动先重写防御旧契约的测试，再判断其它失败是否真回归**。ClientRunStatus 无 terminal 字段——queued/running 区分用 `error` 码（runtime_restarted=未执行 / daemon_crashed=中断未知）。
+
+**评审（双轴 0 C/H）修复**：`let normalizedStatus`→const；`reconciledStatus=status` 别名删除；legacy 测试 teardown 按 runs.test 硬化（allSettled+可选链）；corrupt 拒绝消息 pin 到 /Runtime run not found/；test 1 历史改字节等值。Spec 评审实证：terminal+queued 存量组合不被降级（saveRunStatus 守卫）。
+
+**基线**：tsc 477=478-1（被删 reconcile 调用上的一条基线 TS2322 随之消失——删除类改动可以合理减少基线错误）；sdk-runtime.test.ts 10 败=HEAD 既有；daemon+产品面 30 文件 373 绿。
+
+**下一步（DAG 前沿）**：T14（T05+T13 已解）、T12 剩余；T34 前置还差 T23/T31/T36/T37（T10/T11/T33 已解）。
