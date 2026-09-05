@@ -3480,7 +3480,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("restores a durable terminal event instead of emitting a conflicting restart terminal", async () => {
+  it("does not restore a terminal from Runtime events and reads the legacy Run conservatively", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runId = "run-terminal-event-won";
     const sessionId = "session-terminal-event-won";
@@ -3535,17 +3535,24 @@ describe("createKodaXRuntime", () => {
 
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
 
+    // FEATURE_298 T33: the intact terminal Runtime event never restores a
+    // terminal — the ownerless legacy Run reads as metadata-unknown and the
+    // original status file is not rewritten.
+    const statusBefore = await fs.readFile(path.join(runDir, "status.json"));
     await expect(runtime.runs.get(runId)).resolves.toMatchObject({
-      phase: "completed",
-      terminal: { kind: "completed", code: "completed" },
+      phase: "unknown",
+      error: "owner_liveness_unconfirmed",
     });
     await expect(runtime.events.replay({ runId })).resolves.toEqual([
       expect.objectContaining({ type: "run.completed" }),
     ]);
+    expect(await fs.readFile(path.join(runDir, "status.json"))).toEqual(
+      statusBefore,
+    );
     await runtime.close();
   });
 
-  it("recovers durable input delivery without terminalizing an ownerless legacy Run", async () => {
+  it("does not fabricate legacy input deliveries from Runtime events", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runId = "run-durable-interrupt-event";
     const sessionId = "session-durable-interrupt-event";
@@ -3627,24 +3634,18 @@ describe("createKodaXRuntime", () => {
 
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
 
+    // FEATURE_298 T33: queued legacy inputs stay queued — delivery facts are
+    // never fabricated from Runtime events — and the status file is untouched.
     const recovered = await runtime.runs.get(runId);
     expect(recovered).toMatchObject({
       phase: "unknown",
       error: "owner_liveness_unconfirmed",
       interruptInputs: [
-        expect.objectContaining({
-          inputId: "input-durable",
-          state: "delivered",
-          deliveredAt,
-          entryId: canonicalEntryId,
-        }),
-        expect.objectContaining({
-          inputId: "input-legacy",
-          state: "delivered",
-          deliveredAt,
-        }),
+        expect.objectContaining({ inputId: "input-durable", state: "queued" }),
+        expect.objectContaining({ inputId: "input-legacy", state: "queued" }),
       ],
     });
+    expect(recovered?.interruptInputs?.[0]).not.toHaveProperty("deliveredAt");
     expect(recovered?.interruptInputs?.[1]).not.toHaveProperty("entryId");
     expect(await fs.readFile(statusFile)).toEqual(originalStatus);
     await runtime.close();

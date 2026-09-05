@@ -4683,7 +4683,7 @@ async function createKodaXRuntimeInternal(
       status.sessionId,
       Math.max(recoveredSessionOrders.get(status.sessionId) ?? 0, sessionOrder),
     );
-    let normalizedStatus = {
+    const normalizedStatus = {
       ...status,
       acceptedAt: status.acceptedAt ?? status.startedAt,
       sessionOrder,
@@ -4701,28 +4701,6 @@ async function createKodaXRuntimeInternal(
         ),
       );
       continue;
-    }
-    if (!isTerminalRunPhase(status.phase)) {
-      const durableTerminal = recoverPersistedDurableTerminal(
-        normalizedStatus,
-        bus,
-        persistence,
-      );
-      if (durableTerminal !== undefined) {
-        runs.set(
-          durableTerminal.runId,
-          recordFromPersistedStatus(
-            durableTerminal,
-            false,
-            persisted.owner,
-          ),
-        );
-        continue;
-      }
-      normalizedStatus = reconcilePersistedInterruptDeliveries(
-        normalizedStatus,
-        persistence.replay({ runId: status.runId }),
-      );
     }
     statusesToRecover.push({ persisted, normalizedStatus });
   }
@@ -18177,57 +18155,44 @@ function recordFromPersistedStatus(
   };
 }
 
+/**
+ * FEATURE_298 T33: the single conservative read-side formatter for legacy
+ * Run records. It never consults Runtime events — a durable terminal is not
+ * inferred from terminal events, interrupt deliveries are not fabricated,
+ * and queued work is reported as not executed. Only the interrupted
+ * projection itself is persisted (the status file stays authoritative).
+ */
 function interruptPersistedNonTerminalRun(
   status: RuntimeRunStatus,
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
 ): RuntimeRunStatus {
-  const durableTerminal = recoverPersistedDurableTerminal(
-    status,
-    bus,
-    persistence,
-  );
-  if (durableTerminal !== undefined) return durableTerminal;
-  const durableEvents = [...persistence.replay({
-    sessionId: status.sessionId,
-    runId: status.runId,
-  })];
-  const reconciledStatus = reconcilePersistedInterruptDeliveries(
-    status,
-    durableEvents,
-  );
-  if (isTerminalRunPhase(reconciledStatus.phase)) {
-    if (reconciledStatus !== status) {
-      saveRunStatusSafely(bus, persistence, undefined, reconciledStatus);
-    }
-    return reconciledStatus;
-  }
   const reason: RuntimeTerminalCode =
-    reconciledStatus.phase === "queued"
+    status.phase === "queued"
       ? "runtime_restarted"
       : "daemon_crashed";
   const endedAt = new Date().toISOString();
   const recovered: RuntimeRunStatus = {
-    ...reconciledStatus,
+    ...status,
     phase: "interrupted",
     stage: "terminal",
     stageChangedAt: endedAt,
     activeSubtaskCount: 0,
     endedAt,
     error: reason,
-    ...(reconciledStatus.stop !== undefined
+    ...(status.stop !== undefined
       ? {
           stop: {
-            ...reconciledStatus.stop,
+            ...status.stop,
             state: "confirmed",
             outcome: "interrupted",
             resolvedAt: endedAt,
           },
         }
       : {}),
-    ...(reconciledStatus.interruptInputs !== undefined
+    ...(status.interruptInputs !== undefined
       ? {
-          interruptInputs: reconciledStatus.interruptInputs.map((input) =>
+          interruptInputs: status.interruptInputs.map((input) =>
             input.state === "queued"
               ? { ...input, state: "terminal" as const }
               : input,
@@ -18238,7 +18203,7 @@ function interruptPersistedNonTerminalRun(
       revision: 1,
       kind: "interrupted",
       code: reason,
-      effectOutcome: reconciledStatus.phase === "queued" ? "none" : "unknown",
+      effectOutcome: status.phase === "queued" ? "none" : "unknown",
       message:
         "Runtime process restarted before this run reached a durable terminal state.",
     },
@@ -18251,7 +18216,7 @@ function interruptPersistedNonTerminalRun(
   );
   if (authoritative === undefined) {
     return {
-      ...reconciledStatus,
+      ...status,
       phase: "unknown",
       stage: "unknown",
       error: "terminal_recovery_not_persisted",
@@ -18268,106 +18233,6 @@ function interruptPersistedNonTerminalRun(
       : {}),
   });
   return authoritative;
-}
-
-function recoverPersistedDurableTerminal(
-  status: RuntimeRunStatus,
-  bus: RuntimeEventBus,
-  persistence: RuntimePersistence,
-): RuntimeRunStatus | undefined {
-  const durableEvents = [...persistence.replay({
-    sessionId: status.sessionId,
-    runId: status.runId,
-  })];
-  const durableTerminal = [...durableEvents].reverse().find((event) => {
-    if (!isTerminalRuntimeEvent(event.type)) return false;
-    const eventStatus = parseRuntimeRunStatus(event.payload);
-    return (
-      eventStatus?.runId === status.runId &&
-      eventStatus.sessionId === status.sessionId &&
-      eventStatus.phase === terminalPhaseFromEvent(event.type)
-    );
-  });
-  if (durableTerminal === undefined) return undefined;
-  const recovered = parseRuntimeRunStatus(durableTerminal.payload);
-  if (recovered === undefined) return undefined;
-  const reconciled = reconcilePersistedInterruptDeliveries(
-    recovered,
-    durableEvents,
-  );
-  saveRunStatusSafely(bus, persistence, undefined, reconciled);
-  return reconciled;
-}
-
-function reconcilePersistedInterruptDeliveries(
-  status: RuntimeRunStatus,
-  events: readonly RuntimeEvent[],
-): RuntimeRunStatus {
-  if (status.interruptInputs === undefined) return status;
-  const deliveryByInputId = new Map<
-    string,
-    { readonly deliveredAt: string; readonly entryId?: string }
-  >();
-  for (const event of events) {
-    if (
-      event.type !== "run.input.delivered" ||
-      event.runId !== status.runId ||
-      event.sessionId !== status.sessionId ||
-      !isRecord(event.payload)
-    )
-      continue;
-    const inputs = event.payload.inputs;
-    if (!Array.isArray(inputs)) continue;
-    for (const input of inputs) {
-      if (!isRecord(input)) continue;
-      if (
-        typeof input.inputId !== "string" ||
-        input.afterRunId !== status.runId ||
-        typeof input.deliveredAt !== "string" ||
-        (input.entryId !== undefined &&
-          (typeof input.entryId !== "string" || input.entryId.length === 0))
-      )
-        continue;
-      deliveryByInputId.set(input.inputId, {
-        deliveredAt: input.deliveredAt,
-        ...(typeof input.entryId === "string" ? { entryId: input.entryId } : {}),
-      });
-    }
-  }
-  let changed = false;
-  const interruptInputs = status.interruptInputs.map((input) => {
-    const delivery = deliveryByInputId.get(input.inputId);
-    if (delivery === undefined) return input;
-    if (input.state === "queued") {
-      changed = true;
-      return {
-        ...input,
-        state: "delivered" as const,
-        deliveredAt: delivery.deliveredAt,
-        ...(delivery.entryId !== undefined ? { entryId: delivery.entryId } : {}),
-      };
-    }
-    if (
-      input.state === "delivered" &&
-      delivery.entryId !== undefined &&
-      input.entryId !== delivery.entryId
-    ) {
-      changed = true;
-      return { ...input, entryId: delivery.entryId };
-    }
-    return input;
-  });
-  return changed ? { ...status, interruptInputs } : status;
-}
-
-function terminalPhaseFromEvent(
-  type: RuntimeEventType,
-): RuntimeRunPhase | undefined {
-  if (type === "run.completed") return "completed";
-  if (type === "run.failed") return "failed";
-  if (type === "run.cancelled") return "cancelled";
-  if (type === "run.interrupted") return "interrupted";
-  return undefined;
 }
 
 function resolvePermissionTimeoutMs(
