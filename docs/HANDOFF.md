@@ -248,3 +248,15 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **验证基线（本轮结束）**：tsc 478=478（fresh log）；build gate 通过；history 2 + daemon client/server/host/schema 135 + observe×2 + interactions 5 全绿。
 
 **下一步（DAG 前沿）**：T10/T11（T09 已解：按历史派生新 Session、旧会话打开续用 canonical 写权）、T33（会话写权收归 Host）；T14（T03+T05 已解：权限请求退役客户端任意创建）、T32（goal/notice Host 写入）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）。
+
+### 2026-09-06：T32 Session goal/notice Host 写入完成并提交
+
+**提交记录**：`ebaf01ce`（T32 实现）、`4e8ad11`（submodule 票据）+ 主仓指针。票据现况：**Done 12 张**（T01–T05、T06–T09、T13、T24、T32），In Progress 2（T12、T15），Todo 21。T34 仍需 T10/T11/T23/T31/T33/T36/T37。
+
+**T32 要点**：`sessions.readGoal/createGoal/pauseGoal/resumeGoal/clearGoal/appendNotice`；Host 命令在 `mutateActiveSession`（per-session gate）内改 lineage + `manager.storage.save`；领域策略抽到 `packages/coding/src/goal/policy.ts`（planGoalCreate/planGoalTransition，同时从 goal barrel 和包根 index 导出——**包根 index.ts 是显式再导出清单，新导出必须同时加两处**）；Wire 五个 `session.goal.*` RPC（get 结果 nullOrObjectSchema——readGoal 可返 null，objectAnySchema 会拒；读 scope=session:observe）。**关键领域事实**：goal 条目 parentId 锚到 activeEntryId，`readLatestGoalFromBranch` 跳过 parentId===null → 空会话（无任何对话条目）上的 goal 永远不可见（REPL 全新会话 /goal 是静默丢失的存量缺陷）；Host 端以显式 conflict 拒绝空会话建 goal。verifier 门（complete）不暴露。测试坑：Windows named pipe 路径在测试里必须用 `'\\.\pipe\name' + uuid` 单引号拼接（模板字符串里 `\.\pipe\` 的 `\p` 会被吃掉）；coding 包 dist 过期时 root tsc 假绿——契约/导出改动后先 `tsc -b tsconfig.build.json` 再跑测试。
+
+**评审（双轴 0 C/H）修复**：补并发 create 竞争 S1（Promise.allSettled 恰一成功）与同存储根 Host 重启 S1（goal 可读、零 Run 复活、requests 计数不增）；共享 planner 抽取（第三真实调用方）；notice 后断言零 Provider 调用；ReturnType 形态/重复字段提取等 polish。
+
+**验证基线（本轮结束）**：tsc 478=478；build gate 通过；goal 4 + daemon client/server/host/schema 165 + observe/queue/history/interactions 回归全绿。
+
+**下一步（DAG 前沿）**：T10/T11（T09 已解）、T33（T08+T09 已解）、T14（T05+T13 已解）；T12 剩余；T34 前置还差 T10/T11/T23/T31/T33/T36/T37。
