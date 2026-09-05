@@ -406,7 +406,7 @@ describe('standalone REPL shell permission boundary', () => {
     const configHome = await mkdtemp(join(tmpdir(), 'kodax-repl-shell-'));
     const boundary = createStandaloneShellPermissionBoundary({
       getPermissionMode: () => 'auto',
-      getAutoGuardrail: () => allowingAutoGuardrail(vi.fn(async () => ({ action: 'allow' }))),
+      getAutoGuardrail: () => allowingAutoGuardrail(vi.fn(async () => ({ action: 'allow' as const }))),
       shellSandbox: {
         prepare: async () => ({
           executable: process.execPath,
