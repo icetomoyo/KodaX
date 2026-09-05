@@ -309,3 +309,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **基线**：tsc 477=478-1（被删 reconcile 调用上的一条基线 TS2322 随之消失——删除类改动可以合理减少基线错误）；sdk-runtime.test.ts 10 败=HEAD 既有；daemon+产品面 30 文件 373 绿。
 
 **下一步（DAG 前沿）**：T14（T05+T13 已解）、T12 剩余；T34 前置还差 T23/T31/T36/T37（T10/T11/T33 已解）。
+
+---
+
+## 2026-09-06 会话补记：T14 调研地图（未实施，工作树干净）
+
+**现状**：Done 15/35（T05/T09/T32/T11/T10/T33 等已提交）。本轮完成 T11（09552b5d）、T10（2d60735b）、T33（1c511123），均含双轴评审与全部修复。
+
+**T14 — 产品 Runtime 只安装一个权限 authority 调研结论**：
+
+1. **批准竞争（删除目标）**：`src/sdk-runtime.ts` beforeToolExecute 内 20026-20049 —— 同时存在 in-process host hook（`original.beforeToolExecute`）与 runtime 权限请求（`permissions.trackAndWait`）时 `Promise.race` 双路裁决，先答者赢并回写另一侧。T14 要求单一 authority：有 hook 时 hook 权威、无 hook 时权限请求权威。
+2. **三组键注册结构（删除目标）**：`allowedCalls`/`pendingHostReviews` 两份（`createRuntimeOwnedAutoModeGuardrail` ~23700、`createRuntimeSessionAutoModeGuardrail` ~23792）；`record.forcedPermissionCalls`（类型 3638、初始化 10961、消费 19910、注册 21772 `requestRuntimeForcedPermission`）。流向：guardrail.beforeTool 对 bash 预注册 key → beforeToolExecute `consumeAllowedCall` 消费；沙箱边界升级先 `forcedPermissionCalls.add(key)` 再以 hook 重建准入（accept-edits/auto 的 OS sandbox 预试失败路径，19927/19958-19963 的 forced receipt 注释）。替代方案（票面"直接传当前 call/context"）：每个裁决点把当前 call/context 直接送一个 authority，不做 key 预注册+消费。
+3. **保留面**：`permissions.isGranted` 短路（19974，正常已允许不进 reviewer 已有）；显式政策查询/精确撤销走 `permission.grants.revoke`（T05 领域身份，不要求 operation receipt）；独立 coding embedder 仍可提供 Host 端口；不新增 Permission Engine。
+4. **实施前必须先追踪**：`original.beforeToolExecute` 在产品 daemon Host 路径是否真的存在（plugin/extension host hook——S1/S2 有"插件拒绝"场景；T12 提到 extension 反向桥）。若产品面无 hook，race 为死代码可安全删；若有（extension runtime），需保留 hook 权威序贯化并验证取消后晚答不重启动作。
+5. **S1/S2 清单（票面）**：确切动作绑定、插件拒绝、取消后晚答不重启动作、既有显式政策查询/精确撤销（领域身份）。
+
+**下一步**：从 `original.beforeToolExecute` 的接线处入手（run substrate / coding start options events / extension runtime host hook），确认产品面 hook 存在性后写 T14 RED（src/sdk-client.permissions.test.ts 或扩展既有 T05 套件），再按 1→2→4 顺序实施。
