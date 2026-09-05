@@ -220,3 +220,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **T04 恢复入口（调研已完成）**：剩余=canonical conversation 接线（SessionViewOwner 的 read 回调 `sdk-runtime.ts:4309` 现用 `storage.load` 的 messages.slice(-30)，压缩后早期历史丢失；接缝=既有 `conversationPage`（`sdk-runtime.ts:7601`，repl 层 `readConversationPageCache` 提供 revision/缓存页/容量错误/快照游标）+条目→ClientViewItem 投影）、流式结算去重及 ID 对齐、workflow/诊断显示清单、长会话/渲染基线。T12 剩余同上节。
 
 **验证基线（本轮结束）**：tsc 基线对平 478=478（fresh10 log）；`tsc -b tsconfig.build.json` 通过；crash 3 + runs 1 + steer 3 + queue/inputs/daemon 回归全绿。
+
+### 2026-09-05（续三）：T04 canonical 接线完成、T05 typed Interaction 完成并提交
+
+用户要求继续连续 implement。全部本地提交，工作树停止时干净。
+
+**提交记录**：`445da2f3`+`f5ad32d3`（T04 canonical conversation + 评审修复）、`718a3d7e`（T04 指针）、`73c9ef9`（submodule，T05 票据）、`b2f0ea90`（T05 实现 + 指针）。票据现况：**Done 10 张**（T01–T04、T06–T08、T13、T24、T05），In Progress 2 张（T12、T15——后者等 T17/T18/T25），Todo 23 张。
+
+**T05（b2f0ea90）要点**：契约 `ClientInteraction` 判别联合（question/question_multi/question_input/permission；question 系 expiresAt 必填——RuntimeUserInputRequest.expiresAt 是必需字段）+ `ClientInteractionResponse`（含 cancel）+ `ClientInteractionResult` + `client.interactions.list/respond` + `ClientSessionView.interactions`。Host：`RuntimeInteractionService` 挂 `KodaXRuntime`（`sdk-runtime.ts` 工厂由 userInputs/permissions 注册表构成），视图 read 回调并入 pending interactions（bus 对 user_input.*/permission.* 事件本就无条件 `sessionViews.changed(sessionId, false)`，无需新增订阅）。Wire：`interaction.list`/`interaction.respond` 新 RPC（schema 验证 list 结果 base+kind、respond 的 kind 判别 + `permissionDecisionSchema` + result 形状；决策另有 `toRuntimePermissionDecision` Runtime 级 guard 双保险）；六个别名 RPC 进 retired 列表且错误消息按家族区分；scope 归 `interaction:respond`，`permission:respond` 旧 token 经 kind 检查保留"仅可答权限类交互"的向后兼容（`requireRuntimeMethodScope` 第三参 request）。daemon client 的 registry 形 facade（permissions.listPending/respond、userInputs.*）改为 interaction RPC 兼容层：runId/expectedRevision(恒 0) 绑定在 facade 强制、跨 registry id 显式无效（permissions.respond 对 question id 返 false、userInputs.dismiss 不碰 permission）、listPending 的 runId/toolName 过滤在客户端做（interaction.list params 只收 sessionId）。注意：`KodaXDaemonRuntime` 保持完整 KodaXRuntime 形状（曾试 Omit 造成 5 处 facade/测试破裂，回退为兼容层方案）。S1 测试技巧：ask_user_question 多题模式仍需顶层 `question` 字段（tool schema required，questions 才是执行优先）；accept-edits 下 bash 走沙箱自动放行，权限 S1 要用 write 工具打 `.kodax/` always-confirm 路径；`[Cancelled]` 前缀大写 C；服务端 runtime `invalid_input` 需在 interaction.respond handler 映射为 daemon `invalid_params`。
+
+**评审（双轴 0 Critical/High）修复**：dismiss 跨 registry 泄漏、userInputs options 绑定丢失（a2a resume 传 expectedRevision/runId）、permission:respond scope 孤儿、retired 消息误导、interaction.list 结果/decision 无验证、cancel-on-permission 状态统一 dismissed、适配器去重（listInteractions/questionResponseFor/matchesUserInputBindings）、sdk-client 缩进、死 schema helper 删除、测试格式；新增并发双 Client 同时应答 S1（恰好一个 accepted）。
+
+**残留（票内已记录）**：MCP form/url elicitation 未单独端到端 S1（复用 mcp-reverse 既有映射，随 T12/T19 验证）；exit_plan_mode UI-callback 审批在消费者路径（T17）；`src/sdk-runtime.test.ts` 10 项失败为分支预存（stash 对照确认，extension active 标记/诊断形状类，与本票无关，勿误判为回归）。
+
+**验证基线（本轮结束）**：tsc 基线对平 478=478（fresh log 于 %TEMP%/kodax-type-baseline-536166af8ff74fdab7a3dcf1c3153c14/，注意 compare-tsc.mjs 只读预生成 log，需先跑 tsc 重写 current-tsc.log）；`tsc -b tsconfig.build.json` 通过（契约改动后必须先 build 再 root tsc，否则 dist 声明过期造成假错误）；interactions 5 + 产品 Client 各套件 + daemon 136 + transport 81 + crash 3 + a2a/upgrade 全绿。
+
+**下一步（DAG 前沿，按阻塞关系现成可做）**：T09（公共分页读取，T04 已解）、T14（权限请求退役客户端任意创建，T03+T05 已解）、T32（goal/notice Host 写入，T04 已解）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）。T05 完成同时解锁 T14→T16 链。
