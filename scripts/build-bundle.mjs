@@ -443,7 +443,7 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 // — Node's ESM resolver follows chunk imports transparently, so splitting
 // does not affect the helper-depth contract verified below.
 
-const sdkEntryNames = ['index', 'sdk-agent', 'sdk-llm', 'sdk-coding', 'sdk-media', 'sdk-repl', 'sdk-skills', 'sdk-mcp', 'sdk-session', 'sdk-runtime', 'sdk-sandbox', 'sdk-a2a', 'sdk-experimental-memory'];
+const sdkEntryNames = ['index', 'sdk-agent', 'sdk-llm', 'sdk-coding', 'sdk-media', 'sdk-repl', 'sdk-skills', 'sdk-mcp', 'sdk-session', 'sdk-runtime', 'sdk-client', 'sdk-sandbox', 'sdk-a2a', 'sdk-experimental-memory'];
 const sdkEntryPoints = sdkEntryNames.map((name) => {
   // index.ts lives directly under src/, the others as src/sdk-<name>.ts.
   const filename = name === 'index' ? 'index.ts' : `${name}.ts`;

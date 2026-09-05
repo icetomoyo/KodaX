@@ -1,16 +1,14 @@
 import React, { useMemo, useRef, useState } from 'react';
+import type { ClientSessionSummary } from '@kodax-ai/coding/client-contract';
 import { Box, Text, render, useApp, useInput } from '../tui/renderer-runtime.js';
 import { resolveInteractiveSurfacePreference } from '../tui/runtime.js';
 
 const SELECTION_TRANSITION_PAINT_MS = 40;
 
-export interface SessionPickerItem {
-  readonly id: string;
-  readonly title: string;
-  readonly msgCount: number;
-  readonly createdAt?: string;
-  readonly surface?: string;
-}
+export type SessionPickerItem = Pick<
+  ClientSessionSummary,
+  'id' | 'title' | 'msgCount' | 'createdAt' | 'surface'
+>;
 
 export interface SessionPickerPage {
   readonly items: readonly SessionPickerItem[];

@@ -7,6 +7,11 @@
  */
 
 import { createHash, createHmac, randomUUID } from "node:crypto";
+import type {
+  ClientSession,
+  ClientSessionSummary,
+  ClientSessionFilter,
+} from "@kodax-ai/coding/client-contract";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import os from "node:os";
@@ -1298,15 +1303,7 @@ export interface RuntimeCreateSessionInput {
   readonly operation?: RuntimeOperationOptions;
 }
 
-export interface RuntimeSession {
-  readonly id: string;
-  readonly title: string;
-  readonly gitRoot?: string;
-  readonly workspaceRoot?: string;
-  readonly surface?: string;
-  readonly profileId?: string;
-  readonly createdAt?: string;
-}
+export type RuntimeSession = ClientSession;
 
 /** Payload emitted when an executing run binds its provider session. */
 export interface RuntimeRunSessionLoadedEventPayload {
@@ -1320,14 +1317,7 @@ export interface RuntimeRunSessionLoadedEventPayload {
 export type RuntimeSessionLoadedEventPayload =
   RuntimeSession | RuntimeRunSessionLoadedEventPayload;
 
-export interface RuntimeSessionSummary extends RuntimeSession {
-  /** Opaque continuation token accepted by RuntimeSessionFilter.cursor. */
-  readonly cursor?: string;
-  readonly msgCount: number;
-  readonly tag?: string;
-  readonly projectKey?: string;
-  readonly archived?: boolean;
-}
+export type RuntimeSessionSummary = ClientSessionSummary;
 
 export type RuntimeTranscript = FullTranscriptSessionData;
 
@@ -1503,16 +1493,7 @@ export interface RuntimeTranscriptSearchResult {
   readonly hits: readonly RuntimeTranscriptSearchHit[];
 }
 
-export interface RuntimeSessionFilter {
-  readonly projectRoot?: string;
-  readonly scope?: "user" | "managed-task-worker" | "all";
-  readonly includeArchived?: boolean;
-  readonly limit?: number;
-  readonly before?: string;
-  readonly tag?: string;
-  readonly surface?: string;
-  readonly cursor?: string;
-}
+export type RuntimeSessionFilter = ClientSessionFilter;
 
 export interface RuntimeForkSessionInput {
   readonly sessionId: string;

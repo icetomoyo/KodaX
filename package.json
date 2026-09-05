@@ -65,6 +65,10 @@
       "types": "./dist/sdk-session.d.ts",
       "import": "./dist/sdk-session.js"
     },
+    "./client": {
+      "types": "./dist/sdk-client.d.ts",
+      "import": "./dist/sdk-client.js"
+    },
     "./runtime": {
       "types": "./dist/sdk-runtime.d.ts",
       "import": "./dist/sdk-runtime.js"

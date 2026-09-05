@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./client-contract": {
+      "types": "./dist/client-contract.d.ts",
+      "import": "./dist/client-contract.js"
+    },
     "./repo-intelligence-bridge": {
       "types": "./dist/repo-intelligence/public-bridge.d.ts",
       "import": "./dist/repo-intelligence/public-bridge.js"
