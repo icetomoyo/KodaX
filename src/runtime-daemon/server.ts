@@ -9,7 +9,7 @@ import type {
   CodingActorCredentialAccessFactory,
   ExtensionRuntimeContract,
 } from "@kodax-ai/coding";
-import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
+import type { ClientInteractionResponse, ClientSessionView } from "@kodax-ai/coding/client-contract";
 import {
   emitKodaXDiagnostic,
   ExternalAgentRegistrationConflictError,
@@ -40,8 +40,6 @@ import type {
   RuntimeHostToolDescriptor,
   RuntimeAgentFollowupOptions,
   RuntimeAgentOperationOptions,
-  RuntimePermissionDecision,
-  RuntimePermissionFilter,
   RuntimePermissionRequestInput,
   RuntimeReadOptions,
   RuntimeRewindSessionInput,
@@ -80,6 +78,7 @@ import {
   isRuntimeDaemonDrainingSensitiveMethod,
   isRuntimeDaemonMutationMethod,
   isRuntimeDaemonRetiredMethod,
+  isRetiredInteractionAliasMethod,
   type RuntimeDaemonWireMethod,
 } from "./protocol.js";
 import type { RuntimeControlJournal } from "./control-journal.js";
@@ -223,10 +222,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "event.subscribe",
     "event.unsubscribe",
     "event.replay",
-    "permission.list",
-    "permission.listPending",
     "permission.grants.list",
-    "user_input.listPending",
+    "interaction.list",
     "workflow.list",
     "workflow.get",
     "workflow.subscribe",
@@ -278,12 +275,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "run.setReasoning",
     "permission.request",
   ]),
-  ...scopeEntries("permission:respond", ["permission.respond"]),
   ...scopeEntries("permission:grant-admin", ["permission.grants.revoke"]),
-  ...scopeEntries("interaction:respond", [
-    "user_input.respond",
-    "user_input.dismiss",
-  ]),
+  ...scopeEntries("interaction:respond", ["interaction.respond"]),
   ...scopeEntries("credential:register", [
     "credential.register",
     "credential.get",
@@ -535,7 +528,9 @@ export function createRuntimeDaemonDispatcher(
       if (isRuntimeDaemonRetiredMethod(wireRequest.method)) {
         throw daemonError(
           "client_upgrade_required",
-          "The legacy agentTasks control plane was retired. Upgrade the KodaX SDK; if this daemon does not advertise actorControlPlane v1, restart it with the upgraded KodaX installation.",
+          isRetiredInteractionAliasMethod(wireRequest.method)
+            ? "The permission.*/user_input.* interaction aliases were retired. Use interaction.list and interaction.respond."
+            : "The legacy agentTasks control plane was retired. Upgrade the KodaX SDK; if this daemon does not advertise actorControlPlane v1, restart it with the upgraded KodaX installation.",
         );
       }
       const request = wireRequest as RuntimeDaemonRequest;
@@ -603,7 +598,7 @@ export function createRuntimeDaemonDispatcher(
         clientVersion = parseRuntimeClientVersion(initializeParams?.clientInfo);
       }
       if (!isInitializeMethod(request.method)) {
-        requireRuntimeMethodScope(request.method, grantedScopes);
+        requireRuntimeMethodScope(request.method, grantedScopes, request);
         requirePersistentGrantScope(request, grantedScopes);
       }
       if (inFlightRequests.has(request.id)) {
@@ -903,6 +898,7 @@ function isManagedRuntimeMutation(method: RuntimeDaemonMethod): boolean {
 function requireRuntimeMethodScope(
   method: RuntimeDaemonMethod,
   grantedScopes: ReadonlySet<RuntimeGrantedScope>,
+  request?: RuntimeDaemonRequest,
 ): void {
   const required = RUNTIME_METHOD_SCOPES.get(method);
   if (required === undefined) {
@@ -912,6 +908,18 @@ function requireRuntimeMethodScope(
     );
   }
   if (grantedScopes.has(required)) return;
+  // Back-compat for the retired permission.respond alias: tokens granted only
+  // permission:respond keep their exact old power — answering permission-kind
+  // interactions, never questions (FEATURE_298 T05).
+  if (
+    method === "interaction.respond" &&
+    grantedScopes.has("permission:respond") &&
+    isRecord(request?.params) &&
+    isRecord(request.params.response) &&
+    request.params.response.kind === "permission"
+  ) {
+    return;
+  }
   throw daemonError(
     "unauthorized",
     `Runtime daemon method requires scope ${required}.`,
@@ -922,11 +930,14 @@ function requirePersistentGrantScope(
   request: RuntimeDaemonRequest,
   grantedScopes: ReadonlySet<RuntimeGrantedScope>,
 ): void {
-  if (request.method !== "permission.respond") return;
+  if (request.method !== "interaction.respond") return;
   const params = isRecord(request.params) ? request.params : undefined;
+  const response =
+    params && isRecord(params.response) ? params.response : undefined;
   const decision =
-    params && isRecord(params.decision) ? params.decision : undefined;
+    response && isRecord(response.decision) ? response.decision : undefined;
   if (
+    response?.kind !== "permission" ||
     decision?.type !== "allow_always" ||
     grantedScopes.has("permission:grant-admin")
   )
@@ -1902,28 +1913,12 @@ async function dispatchRuntimeDaemonRequest(
       );
     }
 
-    case "permission.list":
-    case "permission.listPending": {
-      const filter = optionalRecord(request.params) as
-        RuntimePermissionFilter | undefined;
-      await assertAdmittedSessionId(runtime, filter?.sessionId);
-      return runtime.permissions.listPending(filter);
-    }
     case "permission.request": {
       const input = requireRecord(
         request.params,
       ) as unknown as RuntimePermissionRequestInput;
       await assertAdmittedSessionId(runtime, input.sessionId);
       return runtime.permissions.request(input);
-    }
-    case "permission.respond": {
-      const params = requireRecord(request.params);
-      const runId = optionalStringField(params, "runId");
-      return runtime.permissions.respond(
-        requireStringField(params, "requestId"),
-        requireRecord(params.decision) as unknown as RuntimePermissionDecision,
-        runId !== undefined ? { runId } : undefined,
-      );
     }
     case "permission.grants.list":
       return runtime.permissions.listGrants();
@@ -1934,44 +1929,31 @@ async function dispatchRuntimeDaemonRequest(
         requireIntegerField(params, "expectedRevision"),
       );
     }
-    case "user_input.listPending": {
+    case "interaction.list": {
       const filter = optionalRecord(request.params) as
-        | {
-            readonly sessionId?: string;
-            readonly runId?: string;
-          }
+        | { readonly sessionId?: string }
         | undefined;
       await assertAdmittedSessionId(runtime, filter?.sessionId);
-      return runtime.userInputs.listPending(filter);
+      return runtime.interactions.list(filter);
     }
-    case "user_input.respond": {
+    case "interaction.respond": {
       const params = requireRecord(request.params);
-      const expectedRevision = optionalIntegerField(params, "expectedRevision");
-      const runId = optionalStringField(params, "runId");
-      return runtime.userInputs.respond(
-        requireStringField(params, "requestId"),
-        params.answer,
-        expectedRevision !== undefined || runId !== undefined
-          ? {
-              ...(expectedRevision !== undefined ? { expectedRevision } : {}),
-              ...(runId !== undefined ? { runId } : {}),
-            }
-          : undefined,
-      );
-    }
-    case "user_input.dismiss": {
-      const params = requireRecord(request.params);
-      const expectedRevision = optionalIntegerField(params, "expectedRevision");
-      const runId = optionalStringField(params, "runId");
-      return runtime.userInputs.dismiss(
-        requireStringField(params, "requestId"),
-        expectedRevision !== undefined || runId !== undefined
-          ? {
-              ...(expectedRevision !== undefined ? { expectedRevision } : {}),
-              ...(runId !== undefined ? { runId } : {}),
-            }
-          : undefined,
-      );
+      try {
+        return await runtime.interactions.respond(
+          requireStringField(params, "requestId"),
+          requireRecord(params.response) as unknown as ClientInteractionResponse,
+        );
+      } catch (error: unknown) {
+        // Runtime input validation uses the runtime code; the wire contract
+        // reports malformed or mismatched responses as invalid params.
+        if (isRecord(error) && error.code === "invalid_input") {
+          throw daemonError(
+            "invalid_params",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        throw error;
+      }
     }
     case "credential.register": {
       const params = requireRecord(request.params);

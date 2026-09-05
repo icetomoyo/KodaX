@@ -26,11 +26,16 @@ import type {
   RuntimeEventReplayFilter,
   RuntimeObservationInvalidation,
   RuntimePermissionDecision,
-  RuntimePermissionRespondOptions,
   RuntimeRunResult,
   RuntimeSessionObservation,
   RuntimeStartRunInput,
 } from '../sdk-runtime.js';
+import {
+  listClientInteractions,
+  respondToClientInteraction,
+  type ClientInteractionRegistries,
+} from '../client-interactions.js';
+import type { ClientInteractionResponse } from '@kodax-ai/coding/client-contract';
 import {
   RUNTIME_DAEMON_METHODS,
   createRuntimeDaemonRequest,
@@ -218,16 +223,13 @@ describe('runtime daemon dispatcher', () => {
       createRuntimeDaemonRequest('req-event-replay', 'event.replay', {
         sessionId: 'partner-session',
       }),
-      createRuntimeDaemonRequest('req-permission-list', 'permission.list', {
+      createRuntimeDaemonRequest('req-interaction-list', 'interaction.list', {
         sessionId: 'partner-session',
       }),
       createRuntimeDaemonRequest('req-permission-request', 'permission.request', {
         sessionId: 'partner-session',
         runId: 'partner-run',
         toolName: 'read',
-      }),
-      createRuntimeDaemonRequest('req-user-input-list', 'user_input.listPending', {
-        sessionId: 'partner-session',
       }),
       createRuntimeDaemonRequest('req-diagnostic', 'context.budget.get', {
         sessionId: 'partner-session',
@@ -2132,8 +2134,8 @@ describe('runtime daemon dispatcher', () => {
       entryId: 'entry-1',
     }));
     const pendingPermissions = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-permissions',
-      'permission.listPending',
+      'req-interactions',
+      'interaction.list',
     ));
     const skill = await dispatcher.handle(createRuntimeDaemonRequest('req-skill-read', 'skill.read', {
       name: 'review',
@@ -3192,44 +3194,41 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
-  it('passes permission response run bindings to the hosted runtime', async () => {
+  it('passes typed permission decisions to the hosted interaction service', async () => {
     const baseRuntime = makeRuntime();
     let captured: {
       readonly requestId: string;
-      readonly decision: RuntimePermissionDecision;
-      readonly options?: RuntimePermissionRespondOptions;
+      readonly response: ClientInteractionResponse;
     } | undefined;
     const runtime: KodaXRuntime & { emit(event: RuntimeEvent): void } = {
       ...baseRuntime,
-      permissions: {
-        ...baseRuntime.permissions,
-        async respond(requestId, decision, options) {
-          captured = {
-            requestId,
-            decision,
-            ...(options !== undefined ? { options } : {}),
-          };
-          return false;
+      interactions: {
+        ...baseRuntime.interactions,
+        async respond(requestId, response) {
+          captured = { requestId, response };
+          return { requestId, accepted: false, status: 'already_resolved' };
         },
       },
     };
     const dispatcher = createRuntimeDaemonDispatcher({ runtime });
     await initializeDispatcher(dispatcher);
 
-    const response = await dispatcher.handle(createRuntimeDaemonRequest('req-permission', 'permission.respond', {
+    const response = await dispatcher.handle(createRuntimeDaemonRequest('req-interaction', 'interaction.respond', {
       requestId: 'perm-1',
-      decision: { type: 'allow_once' },
-      runId: 'run-1',
+      response: { kind: 'permission', decision: { type: 'allow_once' } },
     }));
 
     expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
     if (isRuntimeDaemonSuccessResponse(response)) {
-      expect(response.result).toBe(false);
+      expect(response.result).toEqual({
+        requestId: 'perm-1',
+        accepted: false,
+        status: 'already_resolved',
+      });
     }
     expect(captured).toEqual({
       requestId: 'perm-1',
-      decision: { type: 'allow_once' },
-      options: { runId: 'run-1' },
+      response: { kind: 'permission', decision: { type: 'allow_once' } },
     });
   });
 
@@ -3401,15 +3400,14 @@ const METHOD_SMOKE_PARAMS = {
   'event.subscribe': { filter: { sessionId: 'session-1' } },
   'event.unsubscribe': { subscriptionId: 'sub-missing' },
   'event.replay': { sessionId: 'session-1', limit: 5 },
-  'permission.list': { runId: 'run-1' },
-  'permission.listPending': { runId: 'run-1' },
   'permission.request': { sessionId: 'session-1', runId: 'run-1', toolName: 'read' },
-  'permission.respond': { requestId: 'perm-1', runId: 'run-1', decision: { type: 'allow_once' } },
   'permission.grants.list': {},
   'permission.grants.revoke': { grantId: 'grant-1', expectedRevision: 0 },
-  'user_input.listPending': { sessionId: 'session-1' },
-  'user_input.respond': { requestId: 'input-1', answer: 'yes', expectedRevision: 0 },
-  'user_input.dismiss': { requestId: 'input-1', expectedRevision: 0 },
+  'interaction.list': { sessionId: 'session-1' },
+  'interaction.respond': {
+    requestId: 'perm-1',
+    response: { kind: 'permission', decision: { type: 'allow_once' } },
+  },
   'credential.register': { leaseId: 'credential-1', providers: ['mock'] },
   'credential.get': { leaseId: 'credential-1' },
   'credential.revoke': { leaseId: 'credential-1' },
@@ -3636,7 +3634,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return createTestObservation(sessionId);
       },
       async observeView(sessionId, listener) {
-        listener({ session: { id: sessionId, title: 'Test' }, items: [], settings: {}, runs: [], queue: [] });
+        listener({ session: { id: sessionId, title: 'Test' }, items: [], settings: {}, runs: [], queue: [], interactions: [] });
         return { close() {} };
       },
       async readViewItem() { return null; },
@@ -3824,6 +3822,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async revokeGrant() { return false; },
     },
     userInputs: createTestUserInputs(),
+    interactions: createTestInteractions(),
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
     operations: {
@@ -4223,6 +4222,22 @@ function createTestUserInputs(): KodaXRuntime['userInputs'] {
     async dismiss(requestId) {
       return { requestId, accepted: false, status: 'already_resolved' };
     },
+  };
+}
+
+function createTestInteractions(
+  registries: ClientInteractionRegistries = {
+    userInputs: createTestUserInputs(),
+    permissions: {
+      async listPending() { return []; },
+      async respond() { return true; },
+    },
+  },
+): KodaXRuntime['interactions'] {
+  return {
+    list: (filter) => listClientInteractions(registries, filter),
+    respond: (requestId, response) =>
+      respondToClientInteraction(registries, requestId, response),
   };
 }
 

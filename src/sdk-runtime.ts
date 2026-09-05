@@ -21,9 +21,13 @@ import type {
   ClientModelSelection,
   ClientCapabilityProbeResult,
   ClientProviderInfo,
+  ClientInteraction,
+  ClientInteractionResponse,
+  ClientInteractionResult,
 } from "@kodax-ai/coding/client-contract";
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
+import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
 import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
@@ -1026,6 +1030,8 @@ export interface KodaXRuntime {
   readonly events: RuntimeEventService;
   readonly permissions: RuntimePermissionService;
   readonly userInputs: RuntimeUserInputService;
+  /** Typed Interaction surface: precise request ids, first valid answer wins. */
+  readonly interactions: RuntimeInteractionService;
   readonly credentials: RuntimeCredentialService;
   readonly hostTools: RuntimeHostToolService;
   readonly operations: RuntimeOperationService;
@@ -3090,6 +3096,19 @@ export interface RuntimeUserInputService {
   ): Promise<RuntimeUserInputResolution>;
 }
 
+/**
+ * Typed Interaction surface over the user-input and permission registries
+ * (FEATURE_298 T05). The client path works with precise request ids only; no
+ * interaction revision or lease is required.
+ */
+export interface RuntimeInteractionService {
+  list(filter?: { readonly sessionId?: string }): Promise<readonly ClientInteraction[]>;
+  respond(
+    requestId: string,
+    response: ClientInteractionResponse,
+  ): Promise<ClientInteractionResult>;
+}
+
 export interface RuntimeCredentialRequest {
   readonly leaseId: string;
   readonly provider: string;
@@ -4392,6 +4411,7 @@ async function createKodaXRuntimeInternal(
       !last || run.startedAt > last.startedAt ? run : last, undefined);
     return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data, conversation),
       queue: runService.queuedInputs(sessionId),
+      interactions: await interactions.list({ sessionId }),
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
         .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
   }, async (sessionId, runIds, items) => {
@@ -4419,6 +4439,15 @@ async function createKodaXRuntimeInternal(
     bus,
     options.userInputTimeoutMs ?? DEFAULT_USER_INPUT_TIMEOUT_MS,
   );
+  const interactionRegistries = {
+    userInputs: userInputs.service,
+    permissions: permissions.service,
+  };
+  const interactions: RuntimeInteractionService = {
+    list: (filter) => listClientInteractions(interactionRegistries, filter),
+    respond: (requestId, response) =>
+      respondToClientInteraction(interactionRegistries, requestId, response),
+  };
   const artifacts = createRuntimeArtifactStore();
   const workflows = createRuntimeWorkflowService();
   const runs = new Map<string, RuntimeRunRecord>();
@@ -4850,6 +4879,7 @@ async function createKodaXRuntimeInternal(
     events: bus.scopedService,
     permissions: permissions.service,
     userInputs: userInputs.service,
+    interactions,
     credentials: createUnsupportedCredentialService(),
     hostTools: createUnsupportedHostToolService(),
     operations: {

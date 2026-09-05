@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
+import type { ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
   KodaXDaemonRuntime,
@@ -75,6 +75,7 @@ import type {
   RuntimeConversationHistory,
   RuntimeConversationHistoryEntryChunk,
   RuntimeConversationHistorySlice,
+  RuntimeUserInputFilter,
   RuntimeUserInputRequest,
   RuntimeUserInputResolution,
   RuntimeWorkflowFilter,
@@ -84,7 +85,9 @@ import type {
 } from '../sdk-runtime.js';
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
+import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
 import type {
+  AskUserAnswer,
   LearningEvent,
   McpServerConfig,
   McpServerToolList,
@@ -404,11 +407,60 @@ export function createRuntimeDaemonClient(
       transportClosed = true;
     })();
     closeAttempt = attempt;
+    // The reset must not surface a second rejection: close() already returns
+    // `attempt`, so its failure is reported to the caller exactly once.
     void attempt.finally(() => {
       if (closeAttempt === attempt) closeAttempt = undefined;
     }).catch(() => undefined);
     return attempt;
   };
+
+  const listInteractions = (
+    filter?: { readonly sessionId?: string },
+  ): Promise<readonly ClientInteraction[]> =>
+    request('interaction.list', filter) as Promise<readonly ClientInteraction[]>;
+
+  const findInteraction = async (
+    requestId: string,
+  ): Promise<ClientInteraction | undefined> =>
+    (await listInteractions()).find((item) => item.requestId === requestId);
+
+  const permissionInteractions = async (
+    filter?: RuntimePermissionFilter,
+  ): Promise<readonly RuntimePermissionRequest[]> => {
+    const interactions = await listInteractions(
+      filter?.sessionId !== undefined ? { sessionId: filter.sessionId } : undefined,
+    );
+    return interactions
+      .map((interaction) => toRuntimePermissionRequest(interaction))
+      .filter((mapped): mapped is RuntimePermissionRequest => mapped !== null);
+  };
+
+  const questionResponseFor = (
+    pending: ClientInteraction,
+    answer: unknown,
+  ): ClientInteractionResponse | undefined => {
+    if (pending.kind === 'question_input') {
+      return { kind: 'question_input', text: answer as string };
+    }
+    if (pending.kind === 'question_multi') {
+      return { kind: 'question_multi', answers: answer as Readonly<Record<string, AskUserAnswer>> };
+    }
+    if (pending.kind === 'question') {
+      return { kind: 'question', answer: answer as AskUserAnswer };
+    }
+    return undefined;
+  };
+
+  // Registry bindings the interaction wire no longer carries explicitly: the
+  // run target and the registry's always-zero revision are enforced here so
+  // facade callers keep the in-process registry's semantics.
+  const matchesUserInputBindings = (
+    pending: ClientInteraction,
+    options?: { readonly expectedRevision?: number; readonly runId?: string },
+  ): boolean =>
+    (options?.runId === undefined || pending.runId === options.runId)
+    && (options?.expectedRevision === undefined || options.expectedRevision === 0);
 
   return {
     identity: options.identity,
@@ -608,6 +660,17 @@ export function createRuntimeDaemonClient(
         });
       },
     },
+    // The typed Interaction RPCs are the wire surface; the registry-shaped
+    // members below are compatibility adapters over them (the old
+    // permission/user_input aliases are retired from the wire).
+    interactions: {
+      list(filter?: { readonly sessionId?: string }) {
+        return listInteractions(filter);
+      },
+      respond(requestId: string, response: ClientInteractionResponse) {
+        return request('interaction.respond', { requestId, response }) as Promise<ClientInteractionResult>;
+      },
+    },
     permissions: {
       request(input: RuntimePermissionRequestInput) {
         if (input.toolInput !== undefined) {
@@ -616,15 +679,25 @@ export function createRuntimeDaemonClient(
         }
         return request('permission.request', input) as Promise<RuntimePermissionDecision>;
       },
-      listPending(filter?: RuntimePermissionFilter) {
-        return request('permission.list', filter) as Promise<readonly RuntimePermissionRequest[]>;
+      async listPending(filter?: RuntimePermissionFilter) {
+        const pending = await permissionInteractions(filter);
+        return pending.filter((request) =>
+          (filter?.runId === undefined || request.runId === filter.runId)
+          && (filter?.toolName === undefined || request.toolName === filter.toolName));
       },
-      respond(requestId: string, decision: RuntimePermissionDecision, options?: RuntimePermissionRespondOptions) {
-        return request('permission.respond', {
+      async respond(requestId: string, decision: RuntimePermissionDecision, options?: RuntimePermissionRespondOptions) {
+        const pending = await findInteraction(requestId);
+        // A registry-shaped respond may only act on its own registry's ids.
+        if (pending !== undefined
+          && (pending.kind !== 'permission'
+            || (options?.runId !== undefined && pending.runId !== options.runId))) {
+          return false;
+        }
+        const result = await request('interaction.respond', {
           requestId,
-          decision,
-          ...(options?.runId !== undefined ? { runId: options.runId } : {}),
-        }) as Promise<boolean>;
+          response: { kind: 'permission' as const, decision },
+        }) as ClientInteractionResult;
+        return result.accepted;
       },
       listGrants() {
         return request('permission.grants.list') as ReturnType<KodaXRuntime['permissions']['listGrants']>;
@@ -634,26 +707,42 @@ export function createRuntimeDaemonClient(
       },
     },
     userInputs: {
-      listPending(filter) {
-        return request('user_input.listPending', filter) as Promise<readonly RuntimeUserInputRequest[]>;
+      async listPending(filter?: RuntimeUserInputFilter) {
+        const interactions = await listInteractions(
+          filter?.sessionId !== undefined ? { sessionId: filter.sessionId } : undefined,
+        );
+        return interactions
+          .map((interaction) => toRuntimeUserInputRequest(interaction))
+          .filter((mapped): mapped is RuntimeUserInputRequest => mapped !== null)
+          .filter((mapped) => filter?.runId === undefined || mapped.runId === filter.runId);
       },
-      respond(requestId, answer, options) {
-        return request('user_input.respond', {
-          requestId,
-          answer,
-          ...(options?.expectedRevision !== undefined
-            ? { expectedRevision: options.expectedRevision }
-            : {}),
-          ...(options?.runId !== undefined ? { runId: options.runId } : {}),
-        }) as Promise<RuntimeUserInputResolution>;
+      async respond(
+        requestId: string,
+        answer: unknown,
+        options?: { readonly expectedRevision?: number; readonly runId?: string },
+      ) {
+        const pending = await findInteraction(requestId);
+        const response = pending === undefined ? undefined : questionResponseFor(pending, answer);
+        if (response === undefined || !matchesUserInputBindings(pending!, options)) {
+          return { requestId, accepted: false, status: 'already_resolved' as const };
+        }
+        return request('interaction.respond', { requestId, response }) as Promise<RuntimeUserInputResolution>;
       },
-      dismiss(requestId, options) {
-        return request('user_input.dismiss', {
+      async dismiss(
+        requestId: string,
+        options?: { readonly expectedRevision?: number; readonly runId?: string },
+      ) {
+        const pending = await findInteraction(requestId);
+        // Dismiss may only cancel its own registry's questions, never a
+        // pending permission approval.
+        if (pending === undefined
+          || pending.kind === 'permission'
+          || !matchesUserInputBindings(pending, options)) {
+          return { requestId, accepted: false, status: 'already_resolved' as const };
+        }
+        return request('interaction.respond', {
           requestId,
-          ...(options?.expectedRevision !== undefined
-            ? { expectedRevision: options.expectedRevision }
-            : {}),
-          ...(options?.runId !== undefined ? { runId: options.runId } : {}),
+          response: { kind: 'cancel' as const },
         }) as Promise<RuntimeUserInputResolution>;
       },
     },

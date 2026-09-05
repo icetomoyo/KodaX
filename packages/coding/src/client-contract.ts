@@ -1,4 +1,6 @@
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
+import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions } from '@kodax-ai/agent';
+
 export interface ClientSession {
   readonly id: string;
   readonly title: string;
@@ -59,6 +61,12 @@ export interface KodaXProductClient {
     read(runId: string): Promise<ClientRunStatus>;
     /** Request a stop; accepted only means the durable Stop request was created. */
     stop(runId: string): Promise<ClientRunStopReceipt>;
+  };
+  readonly interactions: {
+    /** Answers the Host is currently waiting for. */
+    list(filter?: { readonly sessionId?: string }): Promise<readonly ClientInteraction[]>;
+    /** Precise request ID + typed response; only the first valid answer counts. */
+    respond(requestId: string, response: ClientInteractionResponse): Promise<ClientInteractionResult>;
   };
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */
@@ -160,6 +168,8 @@ export interface ClientSessionView {
   readonly session: ClientSession;
   readonly items: readonly ClientViewItem[];
   readonly settings: ClientSessionSettings;
+  /** Pending answers in this Session; all observers see the same identities. */
+  readonly interactions: readonly ClientInteraction[];
   readonly runs: readonly {
     readonly runId: string;
     readonly phase: string;
@@ -289,6 +299,61 @@ export interface ClientRunStopReceipt {
   readonly state: string;
   readonly outcome: string;
   readonly phase: string;
+}
+
+/** Facts of one concrete operation awaiting an approval decision. */
+export interface ClientPermissionInteractionOptions {
+  readonly toolName: string;
+  readonly toolCallId?: string;
+  readonly reason?: string;
+  readonly risk?: 'low' | 'medium' | 'high';
+  readonly inputPreview?: string;
+  readonly executionCwd?: string;
+  /** Opaque pending-request-local ids; return one unchanged to widen a decision. */
+  readonly grantSuggestions?: readonly {
+    readonly id: string;
+    readonly kind: 'session' | 'persistent';
+    readonly label: string;
+  }[];
+}
+
+/**
+ * One pending answer the Host is waiting for. `kind` selects both the typed
+ * payload and the typed response this request accepts.
+ */
+export type ClientInteraction =
+  | ClientInteractionBase & { readonly kind: 'question'; readonly options: AskUserQuestionOptions; readonly expiresAt: string }
+  | ClientInteractionBase & { readonly kind: 'question_multi'; readonly options: AskUserMultiOptions; readonly expiresAt: string }
+  | ClientInteractionBase & { readonly kind: 'question_input'; readonly options: { readonly question: string; readonly default?: string }; readonly expiresAt: string }
+  | ClientInteractionBase & { readonly kind: 'permission'; readonly options: ClientPermissionInteractionOptions; readonly expiresAt?: string };
+
+interface ClientInteractionBase {
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly createdAt: string;
+}
+
+/** Typed answer for one pending interaction; kinds must match the request. */
+export type ClientInteractionResponse =
+  | { readonly kind: 'question'; readonly answer: AskUserAnswer }
+  | { readonly kind: 'question_multi'; readonly answers: Readonly<Record<string, AskUserAnswer>> }
+  | { readonly kind: 'question_input'; readonly text: string }
+  | { readonly kind: 'permission'; readonly decision: ClientPermissionDecision }
+  | { readonly kind: 'cancel'; readonly reason?: string };
+
+export type ClientPermissionDecision =
+  | { readonly type: 'allow_once' }
+  | { readonly type: 'allow_session'; readonly suggestionId: string }
+  | { readonly type: 'allow_always'; readonly suggestionId: string }
+  | { readonly type: 'reject'; readonly reason?: string };
+
+/** First valid answer wins; every other case is explicitly not accepted. */
+export interface ClientInteractionResult {
+  readonly requestId: string;
+  readonly accepted: boolean;
+  /** 'already_resolved' covers late, duplicate, cancelled, expired and unknown targets. */
+  readonly status: 'answered' | 'dismissed' | 'already_resolved';
 }
 
 export interface ClientSessionSettings {

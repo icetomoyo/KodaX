@@ -19,6 +19,11 @@ import type {
   RuntimeRunResult,
   RuntimeStartRunInput,
 } from "../sdk-runtime.js";
+import {
+  listClientInteractions,
+  respondToClientInteraction,
+  type ClientInteractionRegistries,
+} from "../client-interactions.js";
 import { startRuntimeDaemonHost } from "./host.js";
 import {
   readRuntimeDaemonLockOwner,
@@ -954,34 +959,39 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
         createdAt: "2026-07-09T00:00:00.000Z",
       },
     ];
+    const permissionService: KodaXRuntime["permissions"] = {
+      ...baseRuntime.permissions,
+      async request() {
+        return { type: "allow_once" };
+      },
+      async listPending(filter) {
+        return pending.filter(
+          (request) =>
+            (filter?.sessionId === undefined ||
+              request.sessionId === filter.sessionId) &&
+            (filter?.runId === undefined || request.runId === filter.runId) &&
+            (filter?.toolName === undefined ||
+              request.toolName === filter.toolName),
+        );
+      },
+      async respond(requestId, _decision, options) {
+        const index = pending.findIndex(
+          (request) =>
+            request.id === requestId &&
+            (options?.runId === undefined || request.runId === options.runId),
+        );
+        if (index < 0) return false;
+        pending.splice(index, 1);
+        return true;
+      },
+    };
     const runtime: KodaXRuntime & { closed: boolean } = {
       ...baseRuntime,
-      permissions: {
-        ...baseRuntime.permissions,
-        async request() {
-          return { type: "allow_once" };
-        },
-        async listPending(filter) {
-          return pending.filter(
-            (request) =>
-              (filter?.sessionId === undefined ||
-                request.sessionId === filter.sessionId) &&
-              (filter?.runId === undefined || request.runId === filter.runId) &&
-              (filter?.toolName === undefined ||
-                request.toolName === filter.toolName),
-          );
-        },
-        async respond(requestId, _decision, options) {
-          const index = pending.findIndex(
-            (request) =>
-              request.id === requestId &&
-              (options?.runId === undefined || request.runId === options.runId),
-          );
-          if (index < 0) return false;
-          pending.splice(index, 1);
-          return true;
-        },
-      },
+      permissions: permissionService,
+      interactions: createTestInteractions({
+        userInputs: baseRuntime.userInputs,
+        permissions: permissionService,
+      }),
     };
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId,
@@ -1013,9 +1023,13 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
       identity: { runtimeId: runtime.identity.runtimeId },
     });
     await expect(
-      firstClient.request("permission.list", { runId: "run-1" }),
+      firstClient.request("interaction.list", { sessionId: "session-1" }),
     ).resolves.toEqual([
-      expect.objectContaining({ id: "perm-1", toolName: "bash" }),
+      expect.objectContaining({
+        requestId: "perm-1",
+        kind: "permission",
+        options: expect.objectContaining({ toolName: "bash" }),
+      }),
     ]);
     await firstClient.close?.();
 
@@ -1031,19 +1045,25 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
       identity: { runtimeId: runtime.identity.runtimeId },
     });
     await expect(
-      secondClient.request("permission.respond", {
+      secondClient.request("interaction.respond", {
         requestId: "perm-1",
-        decision: { type: "allow_once" },
-        runId: "run-1",
+        response: { kind: "permission", decision: { type: "allow_once" } },
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({
+      requestId: "perm-1",
+      accepted: true,
+      status: "answered",
+    });
     await expect(
-      secondClient.request("permission.respond", {
+      secondClient.request("interaction.respond", {
         requestId: "perm-1",
-        decision: { type: "allow_once" },
-        runId: "run-1",
+        response: { kind: "permission", decision: { type: "allow_once" } },
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      requestId: "perm-1",
+      accepted: false,
+      status: "already_resolved",
+    });
     expect(pending).toEqual([]);
   });
 });
@@ -1304,6 +1324,7 @@ function makeRuntime(
       },
     },
     userInputs: createTestUserInputs(),
+    interactions: createTestInteractions(),
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
     operations: {
@@ -1554,6 +1575,26 @@ function createTestUserInputs(): KodaXRuntime["userInputs"] {
     async dismiss(requestId) {
       return { requestId, accepted: false, status: "already_resolved" };
     },
+  };
+}
+
+function createTestInteractions(
+  registries: ClientInteractionRegistries = {
+    userInputs: createTestUserInputs(),
+    permissions: {
+      async listPending() {
+        return [];
+      },
+      async respond() {
+        return true;
+      },
+    },
+  },
+): KodaXRuntime["interactions"] {
+  return {
+    list: (filter) => listClientInteractions(registries, filter),
+    respond: (requestId, response) =>
+      respondToClientInteraction(registries, requestId, response),
   };
 }
 

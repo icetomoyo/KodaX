@@ -581,10 +581,17 @@ describe('runtime daemon protocol schema', () => {
       toolName: 'bash',
       projectRoot: 'C:\\untrusted',
     })).toContain('$.projectRoot is not allowed.');
-    expect(RUNTIME_DAEMON_METHOD_SCHEMAS['permission.list'].result.items?.properties)
-      .not.toHaveProperty('toolInput');
-    expect(RUNTIME_DAEMON_METHOD_SCHEMAS['permission.list'].result.items?.properties)
-      .toHaveProperty('autoModeDiagnostics');
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params,
+      {
+        requestId: 'perm-1',
+        response: { kind: 'permission', decision: { type: 'allow_once' } },
+      },
+    )).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(
+      RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params,
+      { requestId: 'perm-1', response: { kind: 'rethink' } },
+    )).toEqual([expect.stringContaining('$.response.kind must be one of')]);
   });
 
   it('carries lifecycle stages and unconfirmed Stop outcomes across the daemon facade', () => {
@@ -629,23 +636,26 @@ describe('runtime daemon protocol schema', () => {
   });
 
   it('keeps deprecated scope decisions transport-compatible without trusting them', () => {
-    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['permission.respond'].params;
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params;
     const fingerprint = 'a'.repeat(64);
     expect(validateRuntimeDaemonJsonSchema(schema, {
       requestId: 'permission-1',
-      decision: {
-        type: 'allow_always',
-        scope: {
-          toolName: 'bash',
-          matcher: {
-            version: 1,
-            kind: 'exact-command',
+      response: {
+        kind: 'permission',
+        decision: {
+          type: 'allow_always',
+          scope: {
             toolName: 'bash',
-            fingerprint,
-            shell: 'posix',
-            commandFingerprint: fingerprint,
-            cwd: '/workspace',
-            background: false,
+            matcher: {
+              version: 1,
+              kind: 'exact-command',
+              toolName: 'bash',
+              fingerprint,
+              shell: 'posix',
+              commandFingerprint: fingerprint,
+              cwd: '/workspace',
+              background: false,
+            },
           },
         },
       },

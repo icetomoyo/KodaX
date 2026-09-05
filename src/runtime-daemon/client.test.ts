@@ -1521,8 +1521,7 @@ describe('runtime daemon client proxy', () => {
       'session.diagnostics',
       'session.fork',
       'session.settings.get',
-      'session.settings.getVersioned',
-      'session.settings.updateVersioned',
+      'session.settings.update',
       'session.notice.append',
       'session.rewind',
       'session.active_entry.set',
@@ -1539,12 +1538,14 @@ describe('runtime daemon client proxy', () => {
       'run.reasoning.set',
       'event.replay',
       'permission.request',
-      'permission.list',
+      'interaction.list',
       'permission.grants.list',
       'permission.grants.revoke',
-      'user_input.listPending',
-      'user_input.respond',
-      'user_input.dismiss',
+      'interaction.list',
+      'interaction.list',
+      'interaction.respond',
+      'interaction.list',
+      'interaction.respond',
       'workflow.list',
       'workflow.pause',
       'workflow.resume',
@@ -1562,8 +1563,7 @@ describe('runtime daemon client proxy', () => {
       'daemon.status',
     ]);
     expect(
-      calls.find((call) => call.method === 'session.settings.updateVersioned')
-        ?.params,
+      calls.find((call) => call.method === 'session.settings.update')?.params,
     ).toMatchObject({
       sessionId: 'session-1',
       patch: { model: 'm1', shellExecution },
@@ -1591,14 +1591,41 @@ describe('runtime daemon client proxy', () => {
     );
 
     expect(accepted).toBe(true);
-    expect(calls).toEqual([{
-      method: 'permission.respond',
-      params: {
-        requestId: 'perm-1',
-        decision: { type: 'allow_once' },
-        runId: 'run-1',
+    expect(calls).toEqual([
+      { method: 'interaction.list', params: undefined },
+      {
+        method: 'interaction.respond',
+        params: {
+          requestId: 'perm-1',
+          response: { kind: 'permission', decision: { type: 'allow_once' } },
+        },
       },
-    }]);
+    ]);
+  });
+
+  it('keeps a registry respond bound to its target run over the interaction wire', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const transport = fakeTransport(calls);
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-client',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-07-09T00:00:00.000Z',
+        version: '0.7.66',
+      },
+      transport,
+    });
+
+    // perm-1 belongs to run-1; an answer bound to another run must not resolve it.
+    const accepted = await client.permissions.respond(
+      'perm-1',
+      { type: 'allow_once' },
+      { runId: 'run-other' },
+    );
+
+    expect(accepted).toBe(false);
+    expect(calls).toEqual([{ method: 'interaction.list', params: undefined }]);
   });
 
   it('answers credential and host-tool reverse calls without replaying a handler', async () => {
@@ -1995,6 +2022,16 @@ function fakeTransport(
   } = {
     async request(method, params) {
       calls.push({ method, params });
+      if (method === 'interaction.list') {
+        return [
+          { requestId: 'input-1', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-07-09T00:00:00.000Z', expiresAt: '2026-07-09T00:05:00.000Z', kind: 'question', options: { question: 'Proceed?' } },
+          { requestId: 'input-2', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-07-09T00:00:00.000Z', expiresAt: '2026-07-09T00:05:00.000Z', kind: 'question_input', options: { question: 'Name?' } },
+          { requestId: 'perm-1', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-07-09T00:00:00.000Z', kind: 'permission', options: { toolName: 'bash' } },
+        ];
+      }
+      if (method === 'interaction.respond') {
+        return { requestId: 'input-1', accepted: true, status: 'answered' };
+      }
       if (method === 'session.create') {
         const title = params && typeof params === 'object' && 'title' in params
           && typeof params.title === 'string'
@@ -2187,9 +2224,6 @@ function fakeTransport(
       }
       if (method === 'workflow.get') {
         return null;
-      }
-      if (method === 'permission.respond') {
-        return true;
       }
       if (method === 'command.resolve') {
         return { name: 'help', description: 'Show help', source: 'builtin' };

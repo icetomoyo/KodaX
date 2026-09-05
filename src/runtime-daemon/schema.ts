@@ -348,39 +348,16 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'event.replay': { params: eventReplayFilterSchema(), result: arraySchema(runtimeEventSchema()) },
 
-  'permission.list': { params: permissionFilterSchema(), result: arraySchema(permissionRequestSchema()) },
-  'permission.listPending': { params: permissionFilterSchema(), result: arraySchema(permissionRequestSchema()) },
   'permission.request': { params: permissionRequestInputSchema(), result: permissionDecisionSchema() },
-  'permission.respond': {
-    params: objectSchema({
-      requestId: stringSchema,
-      runId: stringSchema,
-      decision: permissionDecisionSchema(),
-    }, ['requestId', 'decision']),
-    result: booleanSchema,
-  },
   'permission.grants.list': { params: noParamsSchema, result: objectAnySchema },
   'permission.grants.revoke': {
     params: objectSchema({ grantId: stringSchema, expectedRevision: integerSchema }, ['grantId', 'expectedRevision']),
     result: booleanSchema,
   },
-  'user_input.listPending': { params: permissionFilterSchema(), result: arraySchema(objectAnySchema) },
-  'user_input.respond': {
-    params: objectSchema({
-      requestId: stringSchema,
-      answer: anyValueSchema,
-      runId: stringSchema,
-      expectedRevision: integerSchema,
-    }, ['requestId', 'answer'], true),
-    result: objectAnySchema,
-  },
-  'user_input.dismiss': {
-    params: objectSchema({
-      requestId: stringSchema,
-      runId: stringSchema,
-      expectedRevision: integerSchema,
-    }, ['requestId'], true),
-    result: objectAnySchema,
+  'interaction.list': { params: objectSchema({ sessionId: stringSchema }), result: arraySchema(interactionSchema()) },
+  'interaction.respond': {
+    params: objectSchema({ requestId: stringSchema, response: interactionResponseSchema() }, ['requestId', 'response']),
+    result: interactionResultSchema(),
   },
   'credential.register': {
     params: objectSchema({
@@ -1692,12 +1669,40 @@ function runtimeSessionCursorSchema(): RuntimeDaemonJsonSchema {
   }, ['sessionId', 'journalEpoch', 'seq']);
 }
 
-function permissionFilterSchema(): RuntimeDaemonJsonSchema {
+/** Typed Interaction response; answer payloads are validated by the Runtime. */
+function interactionResponseSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission', 'cancel'] },
+    answer: anyValueSchema,
+    answers: objectAnySchema,
+    text: stringSchema,
+    decision: permissionDecisionSchema(),
+    reason: stringSchema,
+  }, ['kind'], true);
+}
+
+function interactionResultSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({
+    requestId: stringSchema,
+    accepted: booleanSchema,
+    status: { type: 'string', enum: ['answered', 'dismissed', 'already_resolved'] },
+  }, ['requestId', 'accepted', 'status']);
+}
+
+/**
+ * Base shape of one pending interaction. Question/permission payloads stay
+ * objects: they are Host-authored and versioned with the contract.
+ */
+function interactionSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({
+    requestId: stringSchema,
     sessionId: stringSchema,
     runId: stringSchema,
-    toolName: stringSchema,
-  });
+    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission'] },
+    options: objectAnySchema,
+    createdAt: stringSchema,
+    expiresAt: stringSchema,
+  }, ['requestId', 'sessionId', 'runId', 'kind', 'options', 'createdAt']);
 }
 
 function permissionRequestInputSchema(): RuntimeDaemonJsonSchema {
@@ -1721,24 +1726,6 @@ function permissionRequestInputSchema(): RuntimeDaemonJsonSchema {
     expiresAt: stringSchema,
     timeoutMs: integerSchema,
   }, ['sessionId', 'runId', 'toolName']);
-}
-
-function permissionRequestSchema(): RuntimeDaemonJsonSchema {
-  const {
-    toolInput: _toolInput,
-    ...observableRequestProperties
-  } = permissionRequestInputSchema().properties ?? {};
-  return objectSchema({
-    ...observableRequestProperties,
-    inputPreview: { type: 'string', maxLength: 8_192 },
-    grantSuggestions: arraySchema(objectSchema({
-      id: stringSchema,
-      kind: { enum: ['session', 'persistent'] },
-      label: { type: 'string', maxLength: 512 },
-    }, ['id', 'kind', 'label'])),
-    id: stringSchema,
-    createdAt: stringSchema,
-  }, ['id', 'sessionId', 'runId', 'toolName', 'createdAt'], true);
 }
 
 function permissionDecisionSchema(): RuntimeDaemonJsonSchema {

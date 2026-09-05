@@ -21,6 +21,10 @@ export type {
   ClientCapabilityProbeResult,
   ClientProviderInfo,
   ClientModelCatalog,
+  ClientInteraction,
+  ClientInteractionResponse,
+  ClientInteractionResult,
+  ClientPermissionDecision,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -68,6 +72,10 @@ export async function connectKodaXClient(
     runs: {
       read: (runId) => runtime.runs.get(runId),
       stop: (runId) => runtime.runs.abort(runId),
+    },
+    interactions: {
+      list: (filter) => runtime.interactions.list(filter),
+      respond: (requestId, response) => runtime.interactions.respond(requestId, response),
     },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),

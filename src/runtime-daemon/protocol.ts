@@ -66,15 +66,11 @@ export type RuntimeDaemonMethod =
   | 'event.subscribe'
   | 'event.unsubscribe'
   | 'event.replay'
-  | 'permission.list'
-  | 'permission.listPending'
   | 'permission.request'
-  | 'permission.respond'
   | 'permission.grants.list'
   | 'permission.grants.revoke'
-  | 'user_input.listPending'
-  | 'user_input.respond'
-  | 'user_input.dismiss'
+  | 'interaction.list'
+  | 'interaction.respond'
   | 'credential.register'
   | 'credential.get'
   | 'credential.revoke'
@@ -154,6 +150,12 @@ export type RuntimeDaemonMethod =
   | 'provider.cache.diagnostics.get';
 
 export type RuntimeDaemonRetiredMethod =
+  | 'permission.list'
+  | 'permission.listPending'
+  | 'permission.respond'
+  | 'user_input.listPending'
+  | 'user_input.respond'
+  | 'user_input.dismiss'
   | 'agentTasks.list'
   | 'agentTasks.start'
   | 'agentTasks.get'
@@ -193,10 +195,8 @@ export type RuntimeDaemonMutationMethod =
   | 'run.setProvider'
   | 'run.setReasoning'
   | 'permission.request'
-  | 'permission.respond'
   | 'permission.grants.revoke'
-  | 'user_input.respond'
-  | 'user_input.dismiss'
+  | 'interaction.respond'
   | 'workflow.pause'
   | 'workflow.resume'
   | 'workflow.stop'
@@ -383,15 +383,11 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'event.subscribe',
   'event.unsubscribe',
   'event.replay',
-  'permission.list',
-  'permission.listPending',
   'permission.request',
-  'permission.respond',
   'permission.grants.list',
   'permission.grants.revoke',
-  'user_input.listPending',
-  'user_input.respond',
-  'user_input.dismiss',
+  'interaction.list',
+  'interaction.respond',
   'credential.register',
   'credential.get',
   'credential.revoke',
@@ -499,10 +495,8 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'run.setProvider',
   'run.setReasoning',
   'permission.request',
-  'permission.respond',
   'permission.grants.revoke',
-  'user_input.respond',
-  'user_input.dismiss',
+  'interaction.respond',
   'workflow.pause',
   'workflow.resume',
   'workflow.stop',
@@ -535,6 +529,12 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
 ];
 
 const RETIRED_METHODS: readonly RuntimeDaemonRetiredMethod[] = [
+  'permission.list',
+  'permission.listPending',
+  'permission.respond',
+  'user_input.listPending',
+  'user_input.respond',
+  'user_input.dismiss',
   'agentTasks.list',
   'agentTasks.start',
   'agentTasks.get',
@@ -640,6 +640,18 @@ export function isRuntimeDaemonRetiredMethod(
   method: RuntimeDaemonWireMethod,
 ): method is RuntimeDaemonRetiredMethod {
   return (RETIRED_METHODS as readonly RuntimeDaemonWireMethod[]).includes(method);
+}
+
+/** The retired interaction aliases merged into interaction.list/respond (T05). */
+export function isRetiredInteractionAliasMethod(
+  method: RuntimeDaemonWireMethod,
+): boolean {
+  return method === 'permission.list'
+    || method === 'permission.listPending'
+    || method === 'permission.respond'
+    || method === 'user_input.listPending'
+    || method === 'user_input.respond'
+    || method === 'user_input.dismiss';
 }
 
 export function createRuntimeDaemonSuccessResponse(
