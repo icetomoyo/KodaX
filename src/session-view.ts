@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
-import type { KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
+import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
@@ -331,11 +331,21 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
   });
 }
 
-export function restoreSessionViewItems(sessionId: string, data: KodaXSessionData | null | undefined): ClientViewItem[] {
+/**
+ * The conversation messages are the canonical history source (they include
+ * pre-compaction entries resolved from lineage); the storage tail is the
+ * fallback when the conversation page is unavailable.
+ */
+export function restoreSessionViewItems(
+  sessionId: string,
+  data: KodaXSessionData | null | undefined,
+  conversation?: readonly KodaXMessage[] | null,
+): ClientViewItem[] {
   if (!data) return [];
   const persisted = restorePersistedViewItems(data.uiHistory);
   const occurrences = new Map<string, number>();
-  const restored = restoreHistoryItemsFromSession({ messages: data.messages.slice(-30), uiHistory: data.uiHistory });
+  const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
+  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory: data.uiHistory });
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);

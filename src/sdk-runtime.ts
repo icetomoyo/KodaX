@@ -4312,16 +4312,63 @@ async function createKodaXRuntimeInternal(
     await ownerLiveness.close();
     throw error;
   }
+
+// The conversation page cache reads under a strict quiescent boundary; these
+// codes mark a transient boundary miss that an immediately idle session
+// resolves on a retry (T09's public paging still resyncs callers instead).
+function isTransientConversationBoundaryError(error: unknown): boolean {
+  return isRecord(error)
+    && (error.code === "data_changed" || error.code === "resync_required");
+}
+
+  // The view's history source is the canonical conversation (lineage-resolved,
+  // so pre-compaction entries survive); the recent storage tail is only the
+  // fallback when the conversation page cannot be served.
+  const readConversationHistory = async (
+    sessionId: string,
+  ): Promise<readonly KodaXMessage[] | null> => {
+    const readOnce = (): Promise<readonly KodaXMessage[] | null> =>
+      sessionService.conversationPage({ sessionId, limit: 80 }).then((page) => {
+        if (!page) return null;
+        const messages = page.entries.flatMap((entry) => (
+          entry.entry !== undefined && !entry.oversized ? [entry.entry.message] : []
+        ));
+        return messages.length > 0 ? messages : null;
+      });
+    try {
+      // The page cache reads under a strict quiescent boundary; a session
+      // lock released mid-read right after activity is a transient miss.
+      return await readOnce().catch((error: unknown) => {
+        if (!isTransientConversationBoundaryError(error)) throw error;
+        return new Promise<readonly KodaXMessage[] | null>((resolve) => {
+          const timer = setTimeout(() => {
+            timer.unref?.();
+            resolve(readOnce().catch(() => null));
+          }, 50);
+          timer.unref?.();
+        });
+      });
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: "session.view",
+        level: "warn",
+        message: `Conversation history was unavailable for the Session view: ${sessionId}`,
+        detail: normalizeError(error),
+      });
+      return null;
+    }
+  };
   const sessionViews = new SessionViewOwner(async (sessionId, includeHistory, previous) => {
-    const [session, data] = await Promise.all([
+    const [session, data, conversation] = await Promise.all([
       includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
       includeHistory ? sessionManager.storage.load(sessionId) : undefined,
+      includeHistory ? readConversationHistory(sessionId) : undefined,
     ]);
     const settings = (settingsOwner.peek(sessionId) ?? await settingsOwner.read(sessionId)).value;
     const currentRuns = [...runs.values()].filter((run) => run.sessionId === sessionId).map(statusFromRecord);
     const latest = currentRuns.reduce<RuntimeRunStatus | undefined>((last, run) =>
       !last || run.startedAt > last.startedAt ? run : last, undefined);
-    return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data),
+    return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data, conversation),
       queue: runService.queuedInputs(sessionId),
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
         .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
