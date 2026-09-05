@@ -31,6 +31,9 @@ export type {
   ClientHistorySearchResult,
   ClientSessionGoal,
   ClientGoalCreateInput,
+  ClientLineageSummary,
+  ClientLineageEntry,
+  ClientLineageLabelInput,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -80,6 +83,20 @@ export async function connectKodaXClient(
       appendNotice: async (sessionId, input) => {
         await runtime.sessions.appendNotice({ sessionId, ...input });
       },
+      readLineage: (sessionId) => runtime.sessions.readLineage(sessionId),
+      labelEntry: (sessionId, input) => runtime.sessions.labelEntry({ sessionId, ...input }),
+      selectBranch: (sessionId, selector) => runtime.sessions.setActiveEntry({ sessionId, entryId: selector })
+        .then((session) => {
+          // Same-version Hosts throw conflict themselves; null only survives
+          // from an older Host that predates the explicit-conflict contract.
+          if (session === null) throw Object.assign(new Error('No lineage entry matches the selector.'), { code: 'conflict' as const });
+          return session;
+        }),
+      rewindSession: (sessionId, selector) => runtime.sessions.rewind({ sessionId, ...(selector !== undefined ? { selector } : {}) })
+        .then((session) => {
+          if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
+          return session;
+        }),
     },
     inputs: {
       submit: (input) => runtime.runs.acceptInput(input),

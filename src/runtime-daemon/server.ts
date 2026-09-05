@@ -225,6 +225,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "permission.grants.list",
     "interaction.list",
     "session.goal.get",
+    "session.lineage.get",
     "workflow.list",
     "workflow.get",
     "workflow.subscribe",
@@ -265,6 +266,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.goal.pause",
     "session.goal.resume",
     "session.goal.clear",
+    "session.lineage.label",
   ]),
   ...scopeEntries("run:control", [
     "input.submit",
@@ -1643,6 +1645,23 @@ async function dispatchRuntimeDaemonRequest(
       await assertAdmittedSessionId(runtime, sessionId);
       await runtime.sessions.clearGoal(sessionId);
       return { ok: true };
+    }
+    case "session.lineage.get": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      return runtime.sessions.readLineage(sessionId);
+    }
+    case "session.lineage.label": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      const label = optionalStringField(params, "label");
+      return runtime.sessions.labelEntry({
+        sessionId,
+        selector: requireStringField(params, "selector"),
+        ...(label !== undefined ? { label } : {}),
+      });
     }
     case "session.rewind":
       return runtime.sessions.rewind(

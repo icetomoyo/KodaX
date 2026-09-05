@@ -25,6 +25,21 @@ class GoalProvider extends KodaXBaseProvider {
 }
 
 let requests: KodaXMessage[][] = [];
+// Background learning-review frames reach the provider as JSON judge prompts;
+// only rounds carrying the warm-up user text are conversational.
+function conversationalRequests(): number {
+  return requests.filter((messages) =>
+    messages.some((message) => typeof message.content === 'string' && message.content.startsWith('Warm up')),
+  ).length;
+}
+// Judge frames are a single user message of serialized JSON; anything else
+// reaching the provider means a conversational run started.
+function nonJudgeRequests(): number {
+  return requests.filter((messages) =>
+    !(messages.length === 1 && messages[0]!.role === 'user'
+      && typeof messages[0]!.content === 'string' && messages[0]!.content.startsWith('{')),
+  ).length;
+}
 let homeDir: string;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
@@ -82,7 +97,7 @@ it('hosts one goal state both clients read, with explicit lifecycle conflicts', 
   // The other client sees the same goal and budget, without any run started.
   const mirrored = await second.sessions.readGoal(session.id);
   expect(mirrored).toMatchObject({ id: created.id, objective: created.objective, status: 'active', tokenBudget: 50_000 });
-  expect(requests.length).toBe(1);
+  expect(conversationalRequests()).toBe(1);
 
   // Budget rules stay the domain's: non-positive budgets are rejected.
   await expect(first.sessions.createGoal(session.id, { objective: 'bad', tokenBudget: 0 }))
@@ -107,8 +122,9 @@ it('hosts one goal state both clients read, with explicit lifecycle conflicts', 
   // After clearing, a new goal can be created and no run ever started.
   const recreated = await first.sessions.createGoal(session.id, { objective: 'Fresh start' });
   expect(recreated.tokenBudget).toBeNull();
-  // Goal commands never started or resurrected a Run.
-  expect(requests.length).toBe(1);
+  // Goal commands never started or resurrected a Run (background
+  // learning-review frames are excluded from the count).
+  expect(conversationalRequests()).toBe(1);
 }, 60_000);
 
 it('appends notices through the Host so both clients see them in the view', async () => {
@@ -116,8 +132,9 @@ it('appends notices through the Host so both clients see them in the view', asyn
   await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
 
   await first.sessions.appendNotice(session.id, { content: 'Migrated to Host-owned notices.' });
-  // Notices stay display-only: nothing reached the Provider.
-  expect(requests.length).toBe(0);
+  // Notices stay display-only: nothing but learning-review judge frames
+  // (if any) reached the Provider.
+  expect(nonJudgeRequests()).toBe(0);
 
   const views: Parameters<Parameters<typeof second.sessions.observe>[1]>[0][] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
@@ -146,7 +163,7 @@ it('keeps an explicit order when both clients create a goal concurrently', async
   expect(loser.reason).toMatchObject({ code: 'conflict' });
   const goal = await second.sessions.readGoal(session.id);
   expect(goal?.id).toBe(winner.value.id);
-  expect(requests.length).toBe(1);
+  expect(conversationalRequests()).toBe(1);
 }, 60_000);
 
 it('does not resurrect runs from an active goal after a Host restart', async () => {
@@ -179,8 +196,8 @@ it('does not resurrect runs from an active goal after a Host restart', async () 
 
   const goal = await first.sessions.readGoal(session.id);
   expect(goal).toMatchObject({ objective: 'Survives restarts without running', status: 'active' });
-  expect(requests.length).toBe(1);
+  expect(conversationalRequests()).toBe(1);
   const fresh = await second.sessions.readGoal(session.id);
   expect(fresh?.id).toBe(goal?.id);
-  expect(requests.length).toBe(1);
+  expect(conversationalRequests()).toBe(1);
 }, 60_000);

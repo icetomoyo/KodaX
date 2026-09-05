@@ -3364,6 +3364,8 @@ const METHOD_SMOKE_PARAMS = {
   'session.goal.pause': { sessionId: 'session-1' },
   'session.goal.resume': { sessionId: 'session-1' },
   'session.goal.clear': { sessionId: 'session-1' },
+  'session.lineage.get': { sessionId: 'session-1' },
+  'session.lineage.label': { sessionId: 'session-1', selector: 'entry-1', label: 'v1' },
   'session.rewind': { sessionId: 'session-1', selector: 'entry-1' },
   'session.active_entry.set': { sessionId: 'session-1', entryId: 'entry-1' },
   'session.activeEntry.set': { sessionId: 'session-1', entryId: 'entry-1' },
@@ -3673,6 +3675,18 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return { version: 1 as const, id: 'goal-smoke', objective: 'smoke goal', status: 'active' as const, tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, blockerTurnCount: 0, lastBlockerKind: null, createdAt: 0, updatedAt: 0 };
       },
       async clearGoal() {},
+      async readLineage() {
+        return { activeEntryId: 'entry-1', entries: [{ id: 'entry-1', parentId: null, type: 'message', timestamp: '2026-09-06T00:00:00.000Z' }] };
+      },
+      async labelEntry(input) {
+        return {
+          activeEntryId: 'entry-1',
+          entries: [
+            { id: 'entry-1', parentId: null, type: 'message', timestamp: '2026-09-06T00:00:00.000Z' },
+            { id: 'label-1', parentId: 'entry-1', type: 'label', timestamp: '2026-09-06T00:00:01.000Z', targetId: input.selector, ...(input.label !== undefined ? { label: input.label } : {}) },
+          ],
+        };
+      },
       async diagnostics(input) {
         return {
           schemaVersion: 1,

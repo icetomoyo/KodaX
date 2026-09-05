@@ -28,6 +28,7 @@ import type {
   ClientHistoryPage,
   ClientHistorySearchInput,
   ClientHistorySearchResult,
+  ClientLineageSummary,
 } from "@kodax-ai/coding/client-contract";
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
@@ -90,7 +91,7 @@ import {
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
-import { appendGoalEntry, clearCapabilityCache, readLatestGoalState } from "@kodax-ai/agent";
+import { appendGoalEntry, appendSessionLineageLabel, clearCapabilityCache, readLatestGoalState } from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
   ProviderCredentialLeaseScope,
@@ -1746,6 +1747,12 @@ export interface RuntimeSessionService {
   pauseGoal(sessionId: string): Promise<KodaXGoalState>;
   resumeGoal(sessionId: string): Promise<KodaXGoalState>;
   clearGoal(sessionId: string): Promise<void>;
+  readLineage(sessionId: string): Promise<ClientLineageSummary | null>;
+  labelEntry(input: {
+    readonly sessionId: string;
+    readonly selector: string;
+    readonly label?: string;
+  }): Promise<ClientLineageSummary>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -7413,6 +7420,32 @@ function createRuntimeSessionService(
       }
     });
 
+  function toClientLineageSummary(
+    lineage: KodaXSessionLineage,
+  ): ClientLineageSummary {
+    return {
+      activeEntryId: lineage.activeEntryId,
+      entries: lineage.entries.map((entry) => ({
+        id: entry.id,
+        parentId: entry.parentId,
+        type: entry.type,
+        timestamp: entry.timestamp,
+        ...(entry.type === "label"
+          ? {
+              ...(entry.targetId !== undefined ? { targetId: entry.targetId } : {}),
+              ...(entry.label !== undefined ? { label: entry.label } : {}),
+            }
+          : {}),
+        ...(entry.type === "rewind_marker"
+          ? {
+              ...(entry.targetId !== undefined ? { targetId: entry.targetId } : {}),
+              ...(entry.truncatedCount !== undefined ? { truncatedCount: entry.truncatedCount } : {}),
+            }
+          : {}),
+      })),
+    };
+  }
+
   function goalCommandError<T extends "conflict" | "invalid_params">(
     code: T,
     message: string,
@@ -8388,6 +8421,42 @@ function createRuntimeSessionService(
       });
     },
 
+    async readLineage(sessionId) {
+      ensureOpen();
+      const data = await admission.loadRequired(sessionId);
+      if (data.lineage === undefined) return null;
+      return toClientLineageSummary(data.lineage);
+    },
+
+    async labelEntry(input) {
+      const summary = await mutateActiveSession(input.sessionId, async (data) => {
+        assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+        if (data.lineage === undefined) {
+          throw goalCommandError("conflict", "Session lineage is unavailable for label commands.");
+        }
+        // The domain treats an empty label as "remove"; on the client surface
+        // removal must be explicit (omit the field) so typos cannot unlabel.
+        if (input.label !== undefined && input.label.trim() === "") {
+          throw goalCommandError(
+            "invalid_params",
+            "Label must be a non-empty string; omit it to remove the target's label.",
+          );
+        }
+        const next = appendSessionLineageLabel(
+          data.lineage,
+          input.selector,
+          input.label,
+        );
+        if (next === null) {
+          throw goalCommandError("conflict", `No lineage entry matches '${input.selector}'.`);
+        }
+        data.lineage = next;
+        await manager.storage.save(input.sessionId, data);
+        return toClientLineageSummary(next);
+      });
+      return summary;
+    },
+
     async appendNotice(input) {
       return mutateActiveSession(input.sessionId, async () => {
         const entry = await manager.appendClientNotice(input.sessionId, {
@@ -8454,7 +8523,9 @@ function createRuntimeSessionService(
           input.sessionId,
           input.entryId,
         );
-        if (!data) return null;
+        if (!data) {
+          throw goalCommandError("conflict", `No lineage entry matches '${input.entryId}'.`);
+        }
         const session = toRuntimeSession(input.sessionId, data);
         bus.emit(
           "session.active_entry.updated",

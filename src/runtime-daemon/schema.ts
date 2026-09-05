@@ -228,6 +228,11 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'session.fork': { params: forkSessionParamsSchema(), result: nullableSchema(sessionSchema()) },
   'session.goal.get': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: nullOrObjectSchema },
+  'session.lineage.get': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: nullOrObjectSchema },
+  'session.lineage.label': {
+    params: objectSchema({ sessionId: stringSchema, selector: stringSchema, label: stringSchema }, ['sessionId', 'selector']),
+    result: objectAnySchema,
+  },
   'session.goal.create': {
     params: objectSchema({ sessionId: stringSchema, objective: stringSchema, tokenBudget: integerSchema }, ['sessionId', 'objective']),
     result: objectAnySchema,

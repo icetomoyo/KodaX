@@ -1,5 +1,5 @@
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
-import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions, KodaXGoalState } from '@kodax-ai/agent';
+import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions, KodaXGoalState, KodaXSessionEntry } from '@kodax-ai/agent';
 
 export interface ClientSession {
   readonly id: string;
@@ -68,6 +68,14 @@ export interface KodaXProductClient {
     clearGoal(sessionId: string): Promise<void>;
     /** Host-owned notice append; UIs never write lineage or session files directly. */
     appendNotice(sessionId: string, input: { readonly content: string; readonly source?: string }): Promise<void>;
+    /** Branch structure owned by the Host; both clients see the same head. Null when the session predates lineage. */
+    readLineage(sessionId: string): Promise<ClientLineageSummary | null>;
+    /** Label (or unlabel when `label` is omitted) one entry by id or existing label; unknown selectors conflict. */
+    labelEntry(sessionId: string, input: ClientLineageLabelInput): Promise<ClientLineageSummary>;
+    /** Move the active head to an entry by id or label; stale selectors conflict, never silently no-op. */
+    selectBranch(sessionId: string, selector: string): Promise<ClientSession>;
+    /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
+    rewindSession(sessionId: string, selector?: string): Promise<ClientSession>;
   };
   readonly inputs: {
     submit(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
@@ -208,6 +216,32 @@ export interface ClientGoalCreateInput {
   readonly objective: string;
   /** Optional hard token ceiling; the domain validates positive integers. */
   readonly tokenBudget?: number;
+}
+
+/** Metadata view of one lineage entry; message content stays out of shape. */
+export interface ClientLineageEntry {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly type: KodaXSessionEntry['type'];
+  readonly timestamp: string;
+  /** Present on label entries: the labeled target entry. */
+  readonly targetId?: string;
+  /** Present on label entries; absent means the label was removed. */
+  readonly label?: string;
+  /** Present on rewind markers: how many entries left the active branch. */
+  readonly truncatedCount?: number;
+}
+
+export interface ClientLineageSummary {
+  readonly activeEntryId: string | null;
+  readonly entries: readonly ClientLineageEntry[];
+}
+
+export interface ClientLineageLabelInput {
+  /** Entry id or an existing label name. */
+  readonly selector: string;
+  /** Omit to remove the target's label. */
+  readonly label?: string;
 }
 
 export interface ClientHistorySearchResult {

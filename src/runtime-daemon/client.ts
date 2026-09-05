@@ -629,6 +629,12 @@ export function createRuntimeDaemonClient(
       clearGoal(sessionId) {
         return request('session.goal.clear', { sessionId }).then(() => undefined);
       },
+      readLineage(sessionId) {
+        return request('session.lineage.get', { sessionId }) as ReturnType<KodaXRuntime['sessions']['readLineage']>;
+      },
+      labelEntry(input) {
+        return request('session.lineage.label', input) as ReturnType<KodaXRuntime['sessions']['labelEntry']>;
+      },
       rewind(input) {
         return request('session.rewind', input) as Promise<RuntimeSession | null>;
       },
