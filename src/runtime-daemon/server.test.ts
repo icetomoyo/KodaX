@@ -466,7 +466,7 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('rejects non-versioned session setting writes on a shared daemon', async () => {
+  it('accepts a Session settings patch without a revision or operation envelope on a shared Host', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-settings-'));
     try {
       const runtime = makeRuntime();
@@ -483,17 +483,10 @@ describe('runtime daemon dispatcher', () => {
         'req-legacy-settings',
         'session.settings.update',
         { sessionId: 'session-1', patch: { model: 'racing-model' } },
-        {
-          operationId: 'op-legacy-settings',
-          journalEpoch: controlJournal.journalEpoch,
-        },
       ));
 
-      expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
-      if (!isRuntimeDaemonSuccessResponse(response)) {
-        expect(response.error.code).toBe('client_upgrade_required');
-      }
-      expect(update).not.toHaveBeenCalled();
+      expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+      expect(update).toHaveBeenCalledWith('session-1', { model: 'racing-model' });
       dispatcher.close();
     } finally {
       fs.rmSync(rootDir, { force: true, recursive: true });
@@ -3361,6 +3354,9 @@ const METHOD_SMOKE_PARAMS = {
     entryIndex: 0,
   },
   'session.observe': { sessionId: 'session-1' },
+  'session.view.observe': { sessionId: 'session-1', subscriptionId: 'view-smoke' },
+  'session.view.close': { subscriptionId: 'view-smoke' },
+  'session.view.item': { sessionId: 'session-1', itemId: 'item-1' },
   'session.diagnostics': { sessionId: 'session-1' },
   'session.fork': { sessionId: 'session-1' },
   'session.notice.append': { sessionId: 'session-1', content: 'smoke' },
@@ -3381,6 +3377,9 @@ const METHOD_SMOKE_PARAMS = {
     expectedRevision: 0,
   },
   'run.start': { sessionId: 'session-1', prompt: 'hello daemon' },
+  'input.submit': { sessionId: 'session-1', inputId: 'input-1', text: 'hello daemon' },
+  'input.read': { sessionId: 'session-1', inputId: 'input-1' },
+  'input.withdraw': { sessionId: 'session-1', inputId: 'input-1' },
   'run.input.submit': {
     sessionId: 'session-1',
     afterRunId: 'run-1',
@@ -3453,6 +3452,9 @@ const METHOD_SMOKE_PARAMS = {
   'config.reload': undefined,
   'model.list': { provider: 'mock' },
   'provider.list': undefined,
+  'provider.reasoning.efforts': { provider: 'mock', model: 'mock-model' },
+  'provider.reasoning.probe': { provider: 'mock', model: 'mock-model', efforts: ['high'] },
+  'provider.capabilities.forget': { provider: 'mock', model: 'mock-model' },
   'provider.custom.list': undefined,
   'provider.custom.upsert': {
     config: {
@@ -3633,6 +3635,11 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async observe(sessionId) {
         return createTestObservation(sessionId);
       },
+      async observeView(sessionId, listener) {
+        listener({ session: { id: sessionId, title: 'Test' }, items: [], settings: {}, runs: [], queue: [] });
+        return { close() {} };
+      },
+      async readViewItem() { return null; },
       async diagnostics(input) {
         return {
           schemaVersion: 1,
@@ -3718,6 +3725,15 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async delete() {},
     },
     runs: {
+      async acceptInput(input) {
+        return { sessionId: input.sessionId, inputId: input.inputId, runId: 'run-1', state: 'submitted' };
+      },
+      async getInput(sessionId, inputId) {
+        return { sessionId, inputId, runId: 'run-1', state: 'submitted' };
+      },
+      async withdrawInput(sessionId, inputId) {
+        return { sessionId, inputId, text: 'hello daemon', delivery: 'after_turn' };
+      },
       async start(input: RuntimeStartRunInput) {
         const result: RuntimeRunResult = {
           runId: 'run-1',
@@ -3905,8 +3921,23 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     catalog: {
+      async reasoningEfforts() { return ['auto', 'high']; },
+      async probeReasoningEfforts(input) { return input.efforts.map((effort) => ({ effort, status: 'accepted' as const })); },
+      async forgetCapabilities() {},
       async providers() {
-        return [{ name: 'mock', models: ['mock-model'] }];
+        return [{
+          name: 'mock',
+          model: 'mock-model',
+          models: ['mock-model'],
+          configured: true,
+          source: 'runtime' as const,
+          reasoningCapability: 'native',
+          capabilityProfile: {
+            transport: 'native-api' as const,
+            conversationSemantics: 'full-history' as const,
+            mcpSupport: 'native' as const,
+          },
+        }];
       },
       async models(filter) {
         return filter?.provider

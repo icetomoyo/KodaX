@@ -509,6 +509,8 @@ export abstract class KodaXBaseProvider {
     error: unknown,
     ...terms: string[]
   ): boolean {
+    // Let the outer effort-rejection path report and heal a named rejected value.
+    if (classifyReasoningEffortRejection(error, undefined)) return false;
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
     const normalizedTerms = terms.map(term => term.toLowerCase());
     const matchesSpecificTerm = normalizedTerms.some((term) => message.includes(term));

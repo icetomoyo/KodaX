@@ -12,15 +12,15 @@ import { getAgentConfigPath } from './agent-home.js';
 
 export const CAPABILITY_CACHE_FILENAME = 'capability-cache.json';
 
-export function getCapabilityCacheFile(): string {
-  return getAgentConfigPath(CAPABILITY_CACHE_FILENAME);
+export function getCapabilityCacheFile(configHome?: string): string {
+  return configHome === undefined ? getAgentConfigPath(CAPABILITY_CACHE_FILENAME) : path.join(configHome, CAPABILITY_CACHE_FILENAME);
 }
 
 let memo: CapabilityCache | null = null;
 let memoPath: string | null = null;
 
-export function loadCapabilityCache(): CapabilityCache {
-  const cacheFile = getCapabilityCacheFile();
+export function loadCapabilityCache(configHome?: string): CapabilityCache {
+  const cacheFile = getCapabilityCacheFile(configHome);
   if (memo && memoPath === cacheFile) {
     return memo;
   }
@@ -37,8 +37,8 @@ export function loadCapabilityCache(): CapabilityCache {
   return memo;
 }
 
-function persistCapabilityCache(cache: CapabilityCache): void {
-  const cacheFile = getCapabilityCacheFile();
+function persistCapabilityCache(cache: CapabilityCache, configHome?: string): void {
+  const cacheFile = getCapabilityCacheFile(configHome);
   memo = cache;
   memoPath = cacheFile;
   fsSync.mkdirSync(path.dirname(cacheFile), { recursive: true });
@@ -48,8 +48,9 @@ function persistCapabilityCache(cache: CapabilityCache): void {
 export function getCachedRejectedEfforts(
   provider: string,
   model: string | undefined,
+  configHome?: string,
 ): readonly string[] {
-  return getRejectedEfforts(loadCapabilityCache(), provider, model);
+  return getRejectedEfforts(loadCapabilityCache(configHome), provider, model);
 }
 
 export function recordRejectedEffort(
@@ -58,14 +59,16 @@ export function recordRejectedEffort(
   effort: string,
   source: CapabilityCacheSource,
   updatedAt: string,
+  configHome?: string,
 ): void {
   persistCapabilityCache(
-    addRejectedEffort(loadCapabilityCache(), provider, model, effort, source, updatedAt),
+    addRejectedEffort(loadCapabilityCache(configHome), provider, model, effort, source, updatedAt),
+    configHome,
   );
 }
 
-export function clearCapabilityCache(provider?: string, model?: string): void {
-  persistCapabilityCache(removeCacheEntry(loadCapabilityCache(), provider, model));
+export function clearCapabilityCache(provider?: string, model?: string, configHome?: string): void {
+  persistCapabilityCache(removeCacheEntry(loadCapabilityCache(configHome), provider, model), configHome);
 }
 
 export function resetCapabilityCacheMemoForTesting(): void {

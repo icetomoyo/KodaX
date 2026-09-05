@@ -53,6 +53,7 @@ export type ExtensionEventEmitter = <TEvent extends keyof ExtensionEventMap>(
 ) => Promise<void>;
 
 export interface StreamHandlerWiringInput {
+  readonly configHome?: string;
   readonly events: KodaXEvents;
   readonly boundaryTracker: StableBoundaryTracker;
   readonly streamTimers: StreamTimers;
@@ -136,7 +137,7 @@ export function buildStreamHandlers(input: StreamHandlerWiringInput): StreamHand
       // does NOT wire onReasoningEffortRejected. The provider instance is rebuilt
       // each turn (its in-instance suppression is lost), so without this the same
       // rejected effort is re-sent every turn. Idempotent (dedupes).
-      recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString());
+      recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
       events.onReasoningEffortRejected?.(event);
     },
     onHeartbeat: (pause) => {

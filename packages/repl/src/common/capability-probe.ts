@@ -35,8 +35,10 @@ export async function probeProviderReasoningEfforts(input: {
   resolve: (provider: string) => KodaXBaseProvider;
   now: () => string;
   signal?: AbortSignal;
+  configHome?: string;
 }): Promise<ProbeResult[]> {
   const provider = input.resolve(input.provider);
+  const model = input.model ?? provider.getModel();
   const results: ProbeResult[] = [];
 
   for (const effort of input.efforts) {
@@ -51,7 +53,7 @@ export async function probeProviderReasoningEfforts(input: {
         '',
         { effort },
         {
-          modelOverride: input.model,
+          modelOverride: model,
           maxOutputTokensOverride: 1,
           onReasoningEffortRejected: () => {
             rejected = true;
@@ -69,7 +71,7 @@ export async function probeProviderReasoningEfforts(input: {
       continue;
     }
     if (rejected) {
-      recordRejectedEffort(input.provider, input.model, effort, 'probed', input.now());
+      recordRejectedEffort(input.provider, model, effort, 'probed', input.now(), input.configHome);
       results.push({ effort, status: 'rejected' });
     } else {
       results.push({ effort, status: 'accepted' });

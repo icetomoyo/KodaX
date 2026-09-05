@@ -7,6 +7,12 @@
  */
 
 // === 主入口：Ink UI ===
+export { createRetryHistoryItem, createRecoveryHistoryItem } from './ui/utils/retry-history.js';
+export { childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction, toolActivityDetail } from './ui/view-models/child-activity.js';
+export { formatManagedTaskBreadcrumb } from './ui/utils/live-streaming.js';
+export { formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from './commands/workflow-command-results.js';
+export { buildManagedLiveEventDrafts } from './ui/InkREPL-live-event-drafts.js';
+export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot } from './ui/utils/restore-history.js';
 export { runInkInteractiveMode } from "./ui/index.js";
 export type {
   InkREPLOptions,
@@ -365,3 +371,5 @@ export {
   createSessionManager,
   compactSession,
 } from "./session/public-api.js";
+export { getProviderReasoningEffortOptions } from './common/utils.js';
+export { probeProviderReasoningEfforts, type ProbeResult } from './common/capability-probe.js';

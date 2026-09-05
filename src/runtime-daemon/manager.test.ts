@@ -596,6 +596,13 @@ function makeRuntime(
       },
     },
     catalog: {
+      async reasoningEfforts() {
+        return [];
+      },
+      async probeReasoningEfforts() {
+        return [];
+      },
+      async forgetCapabilities() {},
       async providers() {
         return [];
       },

@@ -28,6 +28,9 @@ export type RuntimeDaemonMethod =
   | 'session.conversation.page'
   | 'session.conversation.entryChunk'
   | 'session.observe'
+  | 'session.view.observe'
+  | 'session.view.close'
+  | 'session.view.item'
   | 'session.diagnostics'
   | 'session.fork'
   | 'session.notice.append'
@@ -43,8 +46,11 @@ export type RuntimeDaemonMethod =
   | 'session.autoMode.getStats'
   | 'session.settings.update'
   | 'session.settings.updateVersioned'
+  | 'input.submit'
+  | 'input.withdraw'
   | 'run.start'
   | 'run.input.submit'
+  | 'input.read'
   | 'run.get'
   | 'run.list'
   | 'run.await'
@@ -103,6 +109,9 @@ export type RuntimeDaemonMethod =
   | 'config.reload'
   | 'model.list'
   | 'provider.list'
+  | 'provider.reasoning.efforts'
+  | 'provider.reasoning.probe'
+  | 'provider.capabilities.forget'
   | 'provider.custom.list'
   | 'provider.custom.upsert'
   | 'provider.custom.remove'
@@ -172,6 +181,8 @@ export type RuntimeDaemonMutationMethod =
   | 'session.delete'
   | 'session.settings.update'
   | 'session.settings.updateVersioned'
+  | 'input.submit'
+  | 'input.withdraw'
   | 'run.start'
   | 'run.input.submit'
   | 'run.abort'
@@ -217,6 +228,7 @@ export type RuntimeDaemonMutationMethod =
   | 'agents.interrupt';
 
 export type RuntimeDaemonNotificationMethod =
+  | 'session.view'
   | 'event'
   | 'observation.invalidated'
   | 'credential.request'
@@ -333,6 +345,9 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.conversation.page',
   'session.conversation.entryChunk',
   'session.observe',
+  'session.view.observe',
+  'session.view.close',
+  'session.view.item',
   'session.diagnostics',
   'session.fork',
   'session.notice.append',
@@ -348,8 +363,11 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.autoMode.getStats',
   'session.settings.update',
   'session.settings.updateVersioned',
+  'input.submit',
+  'input.withdraw',
   'run.start',
   'run.input.submit',
+  'input.read',
   'run.get',
   'run.list',
   'run.await',
@@ -408,6 +426,9 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'config.reload',
   'model.list',
   'provider.list',
+  'provider.reasoning.efforts',
+  'provider.reasoning.probe',
+  'provider.capabilities.forget',
   'provider.custom.list',
   'provider.custom.upsert',
   'provider.custom.remove',
@@ -466,6 +487,8 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.delete',
   'session.settings.update',
   'session.settings.updateVersioned',
+  'input.submit',
+  'input.withdraw',
   'run.start',
   'run.input.submit',
   'run.abort',
@@ -542,6 +565,7 @@ const REVERSE_BRIDGE_STATE_METHODS: ReadonlySet<RuntimeDaemonMethod> = new Set([
 ]);
 
 const NOTIFICATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonNotificationMethod>([
+  'session.view',
   'event',
   'observation.invalidated',
   'credential.request',

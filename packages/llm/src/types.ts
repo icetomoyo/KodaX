@@ -182,6 +182,10 @@ export interface KodaXMessage {
    * sessions and provider-internal synthetic messages.
    */
   turnId?: string;
+  /** Accepted user input identity; absent on older and system-generated messages. */
+  inputId?: string;
+  /** User inputs merged into this canonical message by the Host queue. */
+  inputIds?: readonly string[];
   /**
    * ISO-8601 timestamp of when this message was finalized (assistant: when the
    * LLM stream completed; user: when submitted/injected). Optional and

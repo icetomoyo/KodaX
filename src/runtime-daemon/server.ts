@@ -9,6 +9,7 @@ import type {
   CodingActorCredentialAccessFactory,
   ExtensionRuntimeContract,
 } from "@kodax-ai/coding";
+import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
 import {
   emitKodaXDiagnostic,
   ExternalAgentRegistrationConflictError,
@@ -202,6 +203,9 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.transcript.page",
     "session.transcript.entryChunk",
     "session.observe",
+    "session.view.observe",
+    "session.view.close",
+    "session.view.item",
     "session.diagnostics",
     "session.settings.get",
     "session.transcript.search",
@@ -211,6 +215,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.settings.getVersioned",
     "session.autoMode.getStats",
     "run.get",
+    "input.read",
     "run.list",
     "run.await",
     "request.cancel",
@@ -232,6 +237,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "config.read",
     "model.list",
     "provider.list",
+    "provider.reasoning.efforts",
     "provider.custom.list",
     "mcp.server.list",
     "mcp.server.get",
@@ -259,6 +265,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.settings.updateVersioned",
   ]),
   ...scopeEntries("run:control", [
+    "input.submit",
+    "input.withdraw",
     "run.start",
     "run.input.submit",
     "run.abort",
@@ -293,6 +301,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "config.effective",
     "config.patch",
     "config.reload",
+    "provider.reasoning.probe",
+    "provider.capabilities.forget",
     "provider.custom.upsert",
     "provider.custom.remove",
     "mcp.server.validate",
@@ -836,6 +846,9 @@ async function dispatchWithOperation(
       : dispatch();
   if (
     !isRuntimeDaemonMutationMethod(request.method) ||
+    request.method === "input.submit" ||
+    request.method === "input.withdraw" ||
+    request.method === "session.settings.update" ||
     options.requireOperationEnvelope !== true
   ) {
     return execute();
@@ -1106,6 +1119,25 @@ async function dispatchRuntimeDaemonRequest(
       return options.providerList
         ? options.providerList()
         : runtime.catalog.providers();
+    case "provider.reasoning.efforts":
+      return runtime.catalog.reasoningEfforts({
+        provider: requireStringParam(request.params, "provider"),
+        model: optionalStringField(requireRecord(request.params), "model"),
+      });
+    case "provider.reasoning.probe": {
+      const params = requireRecord(request.params);
+      return runtime.catalog.probeReasoningEfforts({
+        provider: requireStringField(params, "provider"),
+        model: optionalStringField(params, "model"),
+        efforts: requireStringArrayField(params, "efforts"),
+      });
+    }
+    case "provider.capabilities.forget":
+      await runtime.catalog.forgetCapabilities({
+        provider: optionalStringField(requireRecord(request.params), "provider"),
+        model: optionalStringField(requireRecord(request.params), "model"),
+      });
+      return { ok: true };
     case "model.list":
       return options.providerList
         ? listRuntimeModels(
@@ -1474,6 +1506,27 @@ async function dispatchRuntimeDaemonRequest(
         requireRecord(request.params) as unknown as RuntimeConversationHistoryEntryChunkInput,
         runtimeReadOptions(request.params, requestSignal),
       );
+    case "session.view.observe": {
+      const subscriptionId = requireStringParam(request.params, "subscriptionId");
+      const sessionId = requireStringParam(request.params, "sessionId");
+      let first: ClientSessionView | undefined;
+      const observation = await runtime.sessions.observeView(sessionId, (view) => {
+        if (first === undefined) first = view;
+        else options.notify?.(createRuntimeDaemonNotification('session.view', { subscriptionId, view }));
+      });
+      if (requestSignal.aborted) {
+        observation.close();
+        throw daemonError('read_cancelled', 'Session observation was cancelled.');
+      }
+      closeSubscription(subscriptionId);
+      rememberSubscription(subscriptionId, observation);
+      return { view: first };
+    }
+    case "session.view.close":
+      return { ok: closeSubscription(requireStringParam(request.params, 'subscriptionId')) };
+    case "session.view.item":
+      return runtime.sessions.readViewItem(requireStringParam(request.params, 'sessionId'),
+        requireStringParam(request.params, 'itemId'), requireRecord(request.params));
     case "session.observe": {
       const subscriptionId = createSubscriptionId();
       const sessionId = requireStringParam(request.params, "sessionId");
@@ -1621,12 +1674,6 @@ async function dispatchRuntimeDaemonRequest(
         requireStringParam(request.params, "sessionId"),
       );
     case "session.settings.update": {
-      if (options.requireOperationEnvelope === true) {
-        throw daemonError(
-          "client_upgrade_required",
-          "Shared daemon session settings require session.settings.updateVersioned.",
-        );
-      }
       const params = requireRecord(request.params);
       return runtime.sessions.updateSettings(
         requireStringField(params, "sessionId"),
@@ -1642,6 +1689,26 @@ async function dispatchRuntimeDaemonRequest(
       );
     }
 
+    case "input.submit": {
+      const params = requireRecord(request.params);
+      return runtime.runs.acceptInput({
+        sessionId: requireStringField(params, "sessionId"),
+        inputId: requireStringField(params, "inputId"),
+        text: requireStringField(params, "text"),
+        ...(params.delivery === "after_turn" ? { delivery: "after_turn" as const } : {}),
+      });
+    }
+    case "input.withdraw": {
+      const params = requireRecord(request.params);
+      return runtime.runs.withdrawInput(requireStringField(params, "sessionId"), requireStringField(params, "inputId"));
+    }
+    case "input.read": {
+      const params = requireRecord(request.params);
+      return runtime.runs.getInput(
+        requireStringField(params, "sessionId"),
+        requireStringField(params, "inputId"),
+      );
+    }
     case "run.start": {
       const params = requireRecord(request.params);
       const sessionId = requireStringField(params, "sessionId");

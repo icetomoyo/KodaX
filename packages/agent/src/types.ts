@@ -396,6 +396,8 @@ export type KodaXSessionUiHistoryItemType =
   | 'tool_group';
 
 export interface KodaXSessionUiTextHistoryItem {
+  /** Stable display identity, retained when a live item becomes history. */
+  id?: string;
   type: KodaXSessionUiTextHistoryItemType;
   text: string;
   /** Original UI event time in epoch milliseconds. Absent on older sessions. */
@@ -425,6 +427,7 @@ export interface KodaXSessionUiToolCall {
 }
 
 export interface KodaXSessionUiToolGroupHistoryItem {
+  id?: string;
   type: 'tool_group';
   /** Original UI event time in epoch milliseconds. Absent on older sessions. */
   timestamp?: number;
@@ -438,6 +441,8 @@ export type KodaXSessionUiHistoryItem =
 export type KodaXSessionWorkspaceKind = 'detected' | 'managed';
 
 export interface KodaXSessionRuntimeInfo {
+  /** Host-owned task lifetime; delete this Session after its task settles. */
+  temporary?: boolean;
   canonicalRepoRoot?: string;
   workspaceRoot?: string;
   executionCwd?: string;

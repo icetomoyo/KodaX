@@ -4109,6 +4109,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
         ? existing?.data.runtimeInfo
         : {
             ...data.runtimeInfo,
+            // Execution snapshots cannot change the Host-owned Session lifetime.
+            ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
             ...(!acceptSandboxWorktreeRoots
               && existing?.data.runtimeInfo?.sandboxWorktreeRoots !== undefined
               ? {
@@ -4469,6 +4471,22 @@ export class FileSessionStorage implements KodaXSessionStorage {
       }
       await this.syncAppendStateFromFile(id, data, targetPath);
     });
+  }
+
+  /** Update display metadata under the same writer lock as canonical Session saves. */
+  async mutateUiHistory(
+    id: string,
+    mutation: (history: readonly KodaXSessionUiHistoryItem[]) => KodaXSessionUiHistoryItem[],
+  ): Promise<boolean> {
+    let found = false;
+    await this.serializedWrite(id, async () => {
+      const existing = await this.readSession(id);
+      if (existing === null) return;
+      found = true;
+      const uiHistory = mutation(existing.data.uiHistory ?? []);
+      await this.mergeAndWriteInternal(id, { ...existing.data, uiHistory });
+    });
+    return found;
   }
 
   async mutateLineage(

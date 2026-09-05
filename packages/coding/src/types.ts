@@ -2310,7 +2310,10 @@ export interface KodaXSandboxOptions {
 export interface KodaXSessionMutators {
   setProvider(name: string): void;
   setModel(model: string | undefined): void;
-  setReasoning(mode: KodaXReasoningMode | undefined): void;
+  setReasoning(
+    mode: KodaXReasoningMode | undefined,
+    options?: Pick<KodaXOptions, 'effort' | 'thinking'>,
+  ): void;
 }
 
 /**

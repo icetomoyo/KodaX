@@ -123,10 +123,10 @@ describe('runtime config patch validation', () => {
         provider: 'openai',
         model: 'home-model',
         customProviders: [expect.objectContaining({ name: 'home-custom' })],
-        mcpServers: {
-          'home-mcp': { type: 'stdio', command: 'echo' },
-        },
       });
+      expect(runtimeConfig.mcpServers).toBeUndefined();
+      const mcpConfig = JSON.parse(await fs.readFile(path.join(runtimeHome, '.kodax', 'integrations', 'mcp.json'), 'utf8')) as Record<string, unknown>;
+      expect(mcpConfig).toMatchObject({ servers: { 'home-mcp': { type: 'stdio', command: 'echo' } } });
       await expect(fs.access(path.join(envHome, 'config.json'))).rejects.toThrow();
     } finally {
       await runtime.close();

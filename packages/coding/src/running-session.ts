@@ -57,8 +57,11 @@ export interface RunningSession {
   setProvider(name: string): void;
   /** Switch model mid-run. Pass undefined to clear an override. */
   setModel(model: string | undefined): void;
-  /** Switch reasoning mode mid-run. */
-  setReasoning(mode: KodaXReasoningMode | undefined): void;
+  /** Switch reasoning on the next turn; optional effort/thinking replaces their current selection. */
+  setReasoning(
+    mode: KodaXReasoningMode | undefined,
+    options?: Pick<KodaXOptions, 'effort' | 'thinking'>,
+  ): void;
   /** Cooperatively abort. The underlying provider stream sees an AbortError. */
   abort(reason?: unknown): void;
   /** Resolves to the same shape `runKodaX` returns. */
@@ -157,7 +160,7 @@ export function startKodaX(
     },
     setProvider: (name) => control.setProvider(name),
     setModel: (model) => control.setModel(model),
-    setReasoning: (mode) => control.setReasoning(mode),
+    setReasoning: (mode, reasoning) => control.setReasoning(mode, reasoning),
     abort: (reason) => markAborted(reason),
     result,
   };
@@ -180,6 +183,7 @@ class SessionControlImpl implements KodaXSessionControl, KodaXSessionMutators {
   private providerValue: string | undefined;
   private modelValue: string | undefined;
   private reasoningValue: KodaXReasoningMode | undefined;
+  private reasoningOptions: Pick<KodaXOptions, 'effort' | 'thinking'> | undefined;
 
   // Set-vs-not-yet-set flags — needed so an explicit `setModel(undefined)`
   // (clear override) can be distinguished from a never-touched field.
@@ -221,10 +225,14 @@ class SessionControlImpl implements KodaXSessionControl, KodaXSessionMutators {
     }
   }
 
-  setReasoning(mode: KodaXReasoningMode | undefined): void {
+  setReasoning(
+    mode: KodaXReasoningMode | undefined,
+    options?: Pick<KodaXOptions, 'effort' | 'thinking'>,
+  ): void {
     this.reasoningValue = mode;
+    this.reasoningOptions = options === undefined ? undefined : { ...options };
     if (this.mutators) {
-      this.mutators.setReasoning(mode);
+      this.mutators.setReasoning(mode, this.reasoningOptions);
     } else {
       this.hasPendingReasoning = true;
     }
@@ -259,7 +267,7 @@ class SessionControlImpl implements KodaXSessionControl, KodaXSessionMutators {
       mutators.setModel(this.modelValue);
     }
     if (this.hasPendingReasoning) {
-      mutators.setReasoning(this.reasoningValue);
+      mutators.setReasoning(this.reasoningValue, this.reasoningOptions);
     }
     this.hasPendingProvider = false;
     this.hasPendingModel = false;

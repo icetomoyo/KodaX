@@ -20,24 +20,25 @@ import {
   writeIntegrationDocument,
 } from './integration-config.js';
 
-export function listMcpServers(): KodaXMcpServersConfig {
-  return structuredClone(readMcpIntegration(getAgentConfigHome()).document.servers);
+export function listMcpServers(configHome = getAgentConfigHome()): KodaXMcpServersConfig {
+  return structuredClone(readMcpIntegration(configHome).document.servers);
 }
 
 export function getMcpServerConfig(
   name: string,
+  configHome = getAgentConfigHome(),
 ): KodaXMcpServerConfig | undefined {
   if (typeof name !== 'string' || name.length === 0) return undefined;
-  const config = readMcpIntegration(getAgentConfigHome()).document.servers[name];
+  const config = readMcpIntegration(configHome).document.servers[name];
   return config === undefined ? undefined : structuredClone(config);
 }
 
 export function upsertMcpServer(
   name: string,
   config: KodaXMcpServerConfig,
+  configHome = getAgentConfigHome(),
 ): KodaXMcpServerConfig {
   validateMcpServerConfig(name, config);
-  const configHome = getAgentConfigHome();
   const current = readMcpIntegration(configHome);
   const stored = structuredClone(config);
   writeIntegrationDocument({
@@ -53,9 +54,8 @@ export function upsertMcpServer(
   return structuredClone(stored);
 }
 
-export function removeMcpServer(name: string): boolean {
+export function removeMcpServer(name: string, configHome = getAgentConfigHome()): boolean {
   if (typeof name !== 'string' || name.length === 0) return false;
-  const configHome = getAgentConfigHome();
   const current = readMcpIntegration(configHome);
   if (!(name in current.document.servers)) return false;
   const servers = structuredClone(current.document.servers);

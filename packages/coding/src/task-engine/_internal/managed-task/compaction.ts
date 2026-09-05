@@ -935,13 +935,13 @@ export async function buildManagedTaskCompactionHook(
   options: KodaXOptions,
   hookOptions: BuildManagedTaskCompactionHookOptions = {},
 ): Promise<RunnerCompactionHook | undefined> {
+  const initialProvider = options.provider;
+  const initialModel = options.modelOverride ?? options.model;
   const resolved = hookOptions.resolvedContextCapacity
     ?? await resolveManagedTaskContextCapacity(options);
-  const { provider, activeModel, compactionConfig, contextWindow } = resolved;
 
   const events = options.events;
   const snapshotRef = hookOptions.contextTokenSnapshotRef;
-  const reservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel);
   const diagnosticSessionId = options.context?.contextIdentitySessionId
     ?? options.session?.id;
   const diagnosticAgentId = options.context?.currentAgentId;
@@ -972,17 +972,23 @@ export async function buildManagedTaskCompactionHook(
         logicalSessionId: diagnosticSessionId,
         ...(diagnosticAgentId !== undefined ? { agentId: diagnosticAgentId } : {}),
       });
-  const effectiveTriggerTokens = resolveCompactionPolicy(
-    compactionConfig,
-    contextWindow,
-    calculateMaxContextInputTokens(contextWindow, reservedResponseTokens),
-  ).triggerTokens;
   const state: ManagedCompactionState = {
     breaker: createSummaryCircuitBreaker(),
     antiThrash: createCompactionAntiThrashState(),
   };
 
   return async (transcript) => {
+    const current = options.provider === initialProvider
+      && (options.modelOverride ?? options.model) === initialModel
+      ? resolved
+      : await resolveManagedTaskContextCapacity(options);
+    const { provider, activeModel, compactionConfig, contextWindow } = current;
+    const reservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel);
+    const effectiveTriggerTokens = resolveCompactionPolicy(
+      compactionConfig,
+      contextWindow,
+      calculateMaxContextInputTokens(contextWindow, reservedResponseTokens),
+    ).triggerTokens;
     const messages = transcript as unknown as KodaXMessage[];
     const snapshot = initializeEnvelopeEstimate(
       snapshotRef,

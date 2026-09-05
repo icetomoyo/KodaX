@@ -180,6 +180,18 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     }, ['sessionId']),
     result: objectAnySchema,
   },
+  'session.view.observe': {
+    params: objectSchema({ sessionId: stringSchema, subscriptionId: stringSchema }, ['sessionId', 'subscriptionId']),
+    result: objectAnySchema,
+  },
+  'session.view.close': {
+    params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
+    result: objectAnySchema,
+  },
+  'session.view.item': {
+    params: objectSchema({ sessionId: stringSchema, itemId: stringSchema, offset: integerSchema, part: { type: 'string', enum: ['text', 'input'] } }, ['sessionId', 'itemId']),
+    result: nullOrObjectSchema,
+  },
   'session.conversation': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -268,6 +280,18 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     result: objectAnySchema,
   },
 
+  'input.submit': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn'] } }, ['sessionId', 'inputId', 'text']),
+    result: objectSchema({ sessionId: stringSchema, inputId: stringSchema, runId: stringSchema, state: { type: 'string', enum: ['submitted', 'queued', 'withdrawn'] } }, ['sessionId', 'inputId', 'state']),
+  },
+  'input.withdraw': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema }, ['sessionId', 'inputId']),
+    result: objectAnySchema,
+  },
+  'input.read': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema }, ['sessionId', 'inputId']),
+    result: nullOrObjectSchema,
+  },
   'run.start': { params: startRunParamsSchema(), result: runStartedSchema() },
   'run.input.submit': {
     params: objectSchema({
@@ -476,6 +500,9 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     result: { oneOf: [objectAnySchema, arrayAnySchema] },
   },
   'provider.list': { params: noParamsSchema, result: arrayAnySchema },
+  'provider.reasoning.efforts': { params: objectSchema({ provider: stringSchema, model: stringSchema }, ['provider']), result: { type: 'array', items: stringSchema } },
+  'provider.reasoning.probe': { params: objectSchema({ provider: stringSchema, model: stringSchema, efforts: { type: 'array', items: stringSchema } }, ['provider', 'efforts']), result: arrayAnySchema },
+  'provider.capabilities.forget': { params: objectSchema({ provider: stringSchema, model: stringSchema }), result: okSchema },
   'provider.custom.list': { params: noParamsSchema, result: arrayAnySchema },
   'provider.custom.upsert': {
     params: objectSchema({ config: objectAnySchema }, ['config']),
@@ -649,6 +676,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
 } satisfies Record<RuntimeDaemonMethod, RuntimeDaemonMethodSchema>;
 
 export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS = {
+  'session.view': objectSchema({ subscriptionId: stringSchema, view: objectAnySchema }, ['subscriptionId', 'view']),
   event: objectSchema({ subscriptionId: stringSchema, event: objectAnySchema }, ['subscriptionId', 'event']),
   'observation.invalidated': objectSchema({
     subscriptionId: stringSchema,
@@ -904,6 +932,8 @@ function transcriptSearchResultSchema(): RuntimeDaemonJsonSchema {
 
 function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    mcpServers: objectAnySchema,
+    temporary: booleanSchema,
     sessionId: stringSchema,
     title: stringSchema,
     projectPath: stringSchema,

@@ -11,7 +11,21 @@ import type {
   ClientSession,
   ClientSessionSummary,
   ClientSessionFilter,
+  ClientCreateSessionInput,
+  ClientSubmitInput,
+  ClientInputAcceptance,
+  ClientSessionView,
+  ClientObservation,
+  ClientItemReadOptions,
+  ClientItemContent,
+  ClientModelSelection,
+  ClientCapabilityProbeResult,
+  ClientProviderInfo,
 } from "@kodax-ai/coding/client-contract";
+import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from "./session-view.js";
+import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
+import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
+import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import os from "node:os";
@@ -20,10 +34,13 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   getActiveExtensionRuntime,
+  replaceConfiguredMcpCapabilityProvider,
+  buildMcpReverseCapabilities,
   CodingActorSession,
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
   createAutoModeDenialTracker,
   createCircuitBreaker,
+  createSessionControl,
   breakerShouldFallback,
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
@@ -57,11 +74,14 @@ import {
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
+  resolveProvider,
+  getRuntimeModelProviderNames,
   getProviderCredentialEnvironmentNames,
   redactScopedProviderCredential,
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
+import { clearCapabilityCache } from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
   ProviderCredentialLeaseScope,
@@ -74,6 +94,7 @@ import type {
   ExtensionCommandDefinition,
   ExtensionRuntimeDiagnostics,
   LoadedExtensionDiagnostic,
+  KodaXExtensionRuntime,
   KodaXCustomProviderConfig,
   KodaXContextCompactionFinishedEvent,
   KodaXCompactionEndResult,
@@ -98,6 +119,7 @@ import type {
   KodaXReasoningMode,
   KodaXResult,
   KodaXSessionData,
+  KodaXSessionMutators,
   KodaXSessionRuntimeInfo,
   KodaXShellSandbox,
   KodaXWorkspaceSandboxRootRegistry,
@@ -167,7 +189,7 @@ import type {
   SessionTranscriptEntry,
 } from "@kodax-ai/repl";
 import {
-  createMcpManager,
+  McpCapabilityProvider,
   createAgentExecutorPlane,
   createSessionLineage,
   emitKodaXDiagnostic,
@@ -1207,7 +1229,10 @@ export interface RuntimeExtensionListResult {
 }
 
 export interface RuntimeCatalogService {
-  providers(): Promise<unknown>;
+  reasoningEfforts(input: ClientModelSelection): Promise<readonly string[]>;
+  probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[] }): Promise<readonly ClientCapabilityProbeResult[]>;
+  forgetCapabilities(input?: { readonly provider?: string; readonly model?: string }): Promise<void>;
+  providers(): Promise<readonly ClientProviderInfo[]>;
   models(filter?: RuntimeModelListFilter): Promise<unknown>;
   commands(projectRoot?: string): Promise<readonly RuntimeCommandInfo[]>;
   resolveCommand(
@@ -1294,14 +1319,7 @@ export interface RuntimeArtifactService {
   delete(artifactId: string): Promise<boolean>;
 }
 
-export interface RuntimeCreateSessionInput {
-  readonly sessionId?: string;
-  readonly title?: string;
-  readonly projectPath?: string;
-  readonly gitRoot?: string;
-  readonly surface?: string;
-  readonly profileId?: string;
-  readonly tag?: string;
+export interface RuntimeCreateSessionInput extends ClientCreateSessionInput {
   readonly operation?: RuntimeOperationOptions;
 }
 
@@ -1685,6 +1703,8 @@ export interface RuntimeObservationInvalidation {
 }
 
 export interface RuntimeSessionService {
+  observeView(sessionId: string, listener: (view: ClientSessionView) => void): Promise<ClientObservation>;
+  readViewItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -1868,6 +1888,8 @@ export interface RuntimeStartRunInput {
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
+  readonly productInput?: ClientSubmitInput;
+  readonly productBatch?: readonly string[];
   readonly providerCredential?: string;
   readonly providerCredentialProvider?: string;
   readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
@@ -2019,6 +2041,7 @@ export type KodaXDaemonRuntime = Omit<KodaXRuntime, "runs"> & {
 };
 
 export interface RuntimeRunStatus {
+  readonly productInput?: { readonly inputId: string; readonly digest: string };
   readonly runId: string;
   readonly sessionId: string;
   readonly turnId?: string;
@@ -2245,6 +2268,9 @@ export interface RuntimeRunFilter {
 }
 
 export interface RuntimeRunService {
+  acceptInput(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
+  getInput(sessionId: string, inputId: string): Promise<ClientInputAcceptance | null>;
+  withdrawInput(sessionId: string, inputId: string): Promise<ClientSubmitInput>;
   start(input: RuntimeStartRunInput): Promise<RuntimeRunHandle>;
   submitInput(input: RuntimeSubmitInput): Promise<RuntimeSubmitInputResult>;
   await(runId: string): Promise<RuntimeRunResult>;
@@ -3340,6 +3366,7 @@ export interface RuntimeDaemonRollbackResult {
 }
 
 export interface RuntimeDaemonManagementService {
+  shutdown(): Promise<{ readonly accepted: true }>;
   inspect(): Promise<RuntimeDaemonManagementState>;
   stopForInline(
     input: RuntimeDaemonRollbackInput,
@@ -3517,6 +3544,7 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  readonly productInput?: { readonly inputId: string; readonly digest: string };
   readonly runId: string;
   readonly sessionId: string;
   turnId?: string;
@@ -3546,6 +3574,7 @@ interface RuntimeRunRecord {
   terminal?: RuntimeTerminalFact;
   readonly result: Promise<RuntimeRunResult>;
   running?: RunningSession;
+  sessionControl?: KodaXSessionMutators;
   abortController?: AbortController;
   actorFinalizationAbortController?: AbortController;
   actorTurnBaseline?: ReadonlySet<string>;
@@ -3651,6 +3680,7 @@ type RuntimeUserInputRegistry = ReturnType<
 type RuntimeArtifactStore = ReturnType<typeof createRuntimeArtifactStore>;
 
 interface RuntimeRunServiceInternal extends RuntimeRunService {
+  queuedInputs(sessionId: string): ClientSessionView['queue'];
   inspect(
     filter?: RuntimeRunFilter,
   ): Promise<readonly RuntimeRunStatus[]>;
@@ -3664,7 +3694,7 @@ interface PendingRunStart {
   readonly prompt: string;
   readonly inputArtifacts: readonly KodaXInputArtifact[];
   readonly options: RuntimeKodaXOptions;
-  readonly resolve: (result: RuntimeRunResult) => void;
+  readonly resolve: (result: RuntimeRunResult | PromiseLike<RuntimeRunResult>) => void;
 }
 
 interface PersistedRuntimeRunStatus {
@@ -4276,7 +4306,34 @@ async function createKodaXRuntimeInternal(
     await ownerLiveness.close();
     throw error;
   }
-  const bus = createRuntimeEventBus(persistence);
+  const sessionViews = new SessionViewOwner(async (sessionId, includeHistory, previous) => {
+    const [session, data] = await Promise.all([
+      includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
+      includeHistory ? sessionManager.storage.load(sessionId) : undefined,
+    ]);
+    const settings = (settingsOwner.peek(sessionId) ?? await settingsOwner.read(sessionId)).value;
+    const currentRuns = [...runs.values()].filter((run) => run.sessionId === sessionId).map(statusFromRecord);
+    const latest = currentRuns.reduce<RuntimeRunStatus | undefined>((last, run) =>
+      !last || run.startedAt > last.startedAt ? run : last, undefined);
+    return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data),
+      queue: runService.queuedInputs(sessionId),
+      runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
+        .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
+  }, async (sessionId, runIds, items) => {
+    const found = await sessionManager.storage.mutateUiHistory(sessionId, (history) => {
+      const older = history.filter((item) => !runIds.some((runId) => item.id?.startsWith(`${runId}:`)));
+      return [...older, ...persistSessionViewItems(items)].slice(-150);
+    });
+    if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
+  });
+  const bus = createRuntimeEventBus(persistence, (sessionId, type) => {
+    // The second argument is the history-reload flag, not a refresh gate:
+    // every listed event refreshes the view; only settings updates skip the
+    // history reload because they cannot change display items.
+    sessionViews.changed(sessionId, (type.startsWith('session.') && type !== 'session.settings.updated')
+      || type === 'run.started' || type === 'turn.started' || type === 'run.input.delivered' || isTerminalRuntimeEvent(type));
+    if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
+  });
   const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus);
   const permissions = createRuntimePermissionRegistry(
     bus,
@@ -4563,7 +4620,11 @@ async function createKodaXRuntimeInternal(
     }
   };
 
+  const integrations = await createHostIntegrations(configHome, readRuntimeConfig(path.join(configHome, "config.json")));
   const runService = createRuntimeRunService({
+    extensionRuntime: (sessionId) => integrations.forSession(sessionId),
+    deleteTemporarySession: (sessionId) => sessionService.deleteTemporary(sessionId),
+    sessionViews,
     bus,
     defaultModel: options.defaultModel,
     defaultProvider: options.defaultProvider,
@@ -4613,6 +4674,7 @@ async function createKodaXRuntimeInternal(
     (sessionId, operation, mutation) =>
       actorRegistry.mutateSessionFile(sessionId, operation, mutation),
     (sessionId) => {
+      sessionViews.release(sessionId);
       runService.releaseSession(sessionId);
       permissions.releaseSession(sessionId);
     },
@@ -4621,6 +4683,8 @@ async function createKodaXRuntimeInternal(
       beginCloseTranscriptSnapshots = beginClose;
       closeTranscriptSnapshots = cleanup;
     },
+    sessionViews,
+    integrations,
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -4677,6 +4741,7 @@ async function createKodaXRuntimeInternal(
         await agentPlane!.close();
         agentPlaneClosed = true;
       }
+      await integrations.close();
       // Keep the liveness endpoint reachable until every executor has stopped
       // and the Actor owner has been durably released. A failed close can then
       // be retried without allowing another Runtime to take over prematurely.
@@ -4685,6 +4750,7 @@ async function createKodaXRuntimeInternal(
         ownerLivenessClosed = true;
       }
       if (!busClosed) {
+        await sessionViews.close();
         bus.close();
         busClosed = true;
       }
@@ -4725,8 +4791,8 @@ async function createKodaXRuntimeInternal(
       defaultProvider: options.defaultProvider,
       defaultModel: options.defaultModel,
     }),
-    catalog: createRuntimeCatalogService(ensureOpen, configFile),
-    mcp: createRuntimeMcpService(ensureOpen, configFile),
+    catalog: createRuntimeCatalogService(ensureOpen, configFile, integrations.global),
+    mcp: createRuntimeMcpService(ensureOpen, configFile, integrations.global),
     artifacts: artifacts.service,
     status: createRuntimeStatusService({
       identity,
@@ -6086,7 +6152,9 @@ function createRuntimeSessionService(
     beginClose: () => void,
     cleanup: () => Promise<void>,
   ) => void,
-): RuntimeSessionService {
+  sessionViews: SessionViewOwner,
+  integrations: Awaited<ReturnType<typeof createHostIntegrations>>,
+): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
   const toRuntimeSession = (
     id: string,
@@ -7205,6 +7273,70 @@ function createRuntimeSessionService(
       }
     });
 
+  const deleteSession = async (sessionId: string, temporaryOnly: boolean): Promise<void> => {
+    await sessionOperations.run(sessionId, async () => {
+      if (!temporaryOnly) ensureOpen();
+      const session = await admission.loadRequired(sessionId);
+      if (temporaryOnly && session.runtimeInfo?.temporary !== true) return;
+      assertSessionMutationAllowed(sessionId, activeRunOwner);
+      await sessionViews.flush(sessionId);
+      await withActorSessionFileMutation(sessionId, "delete", async (ownerId) => {
+        if (!ownerId) {
+          throw new Error(`Actor owner is unavailable for Session deletion: ${sessionId}`);
+        }
+        const running = (await manager.listRunningSessions()).find(
+          (instance) => instance.sessionId === sessionId,
+        );
+        if (running) {
+          assertDeleteSucceeded(sessionId, {
+            error: {
+              code: "session_running",
+              runningProcess: {
+                pid: running.pid,
+                startedAt: running.startedAt,
+              },
+            },
+          });
+        }
+        await integrations.releaseSession(sessionId);
+        bus.retireSessionJournal(sessionId);
+        try {
+          await manager.storage.deleteOwned(sessionId, ownerId);
+        } catch (error: unknown) {
+          try {
+            bus.restoreSessionJournal(sessionId);
+          } catch (restoreError: unknown) {
+            throw new AggregateError(
+              [error, restoreError],
+              `Session deletion failed and its event journal could not be restored: ${sessionId}`,
+            );
+          }
+          if (
+            isRecord(error)
+            && (
+              error.code === "actor_owner_conflict"
+              || error.code === "actor_owner_unknown"
+            )
+          ) {
+            throw error;
+          }
+          emitKodaXDiagnostic({
+            source: "runtime.sessions",
+            level: "error",
+            message: "Owned Session deletion failed.",
+            detail: { sessionId, error },
+          });
+          assertDeleteSucceeded(sessionId, {
+            error: { code: "delete_failed" },
+          });
+        }
+      });
+      invalidateMaterializedSessionCapture(sessionId);
+      settingsOwner.release(sessionId);
+      onSessionDeleted(sessionId);
+    });
+  };
+
   return {
     async create(input = {}) {
       ensureOpen();
@@ -7216,6 +7348,7 @@ function createRuntimeSessionService(
         });
       }
       creatingSessionIds.add(sessionId);
+      let ownsSessionResources = false;
       try {
         if (input.sessionId !== undefined && (await manager.loadSession(sessionId)) !== null) {
           throw Object.assign(
@@ -7244,6 +7377,8 @@ function createRuntimeSessionService(
           ...(runtimeInfo !== undefined ? { runtimeInfo } : {}),
           scope: "user",
         };
+        await integrations.createSession(sessionId, projectPath ?? gitRoot ?? process.cwd(), input.mcpServers);
+        ownsSessionResources = true;
         bus.prepareSessionJournal(sessionId);
         if (input.sessionId === undefined) {
           await manager.storage.createGenerated(sessionId, data);
@@ -7257,6 +7392,9 @@ function createRuntimeSessionService(
         );
         bus.emit("session.created", session, { sessionId, runId: sessionId });
         return session;
+      } catch (error: unknown) {
+        if (ownsSessionResources) await integrations.releaseSession(sessionId);
+        throw error;
       } finally {
         creatingSessionIds.delete(sessionId);
       }
@@ -7707,6 +7845,14 @@ function createRuntimeSessionService(
       );
     },
 
+    observeView(sessionId, listener) {
+      ensureOpen();
+      return sessionViews.observe(sessionId, listener);
+    },
+    readViewItem(sessionId, itemId, options) {
+      ensureOpen();
+      return sessionViews.readItem(sessionId, itemId, options);
+    },
     async observe(sessionId, listener, options) {
       ensureOpen();
       const pending: RuntimeEvent[] = [];
@@ -8218,70 +8364,14 @@ function createRuntimeSessionService(
       });
     },
 
-    async delete(sessionId) {
-      await sessionOperations.run(sessionId, async () => {
-        ensureOpen();
-        await admission.loadRequired(sessionId);
-        assertSessionMutationAllowed(sessionId, activeRunOwner);
-        await withActorSessionFileMutation(sessionId, "delete", async (ownerId) => {
-          if (!ownerId) {
-            throw new Error(`Actor owner is unavailable for Session deletion: ${sessionId}`);
-          }
-          const running = (await manager.listRunningSessions()).find(
-            (instance) => instance.sessionId === sessionId,
-          );
-          if (running) {
-            assertDeleteSucceeded(sessionId, {
-              error: {
-                code: "session_running",
-                runningProcess: {
-                  pid: running.pid,
-                  startedAt: running.startedAt,
-                },
-              },
-            });
-          }
-          bus.retireSessionJournal(sessionId);
-          try {
-            await manager.storage.deleteOwned(sessionId, ownerId);
-          } catch (error: unknown) {
-            try {
-              bus.restoreSessionJournal(sessionId);
-            } catch (restoreError: unknown) {
-              throw new AggregateError(
-                [error, restoreError],
-                `Session deletion failed and its event journal could not be restored: ${sessionId}`,
-              );
-            }
-            if (
-              isRecord(error)
-              && (
-                error.code === "actor_owner_conflict"
-                || error.code === "actor_owner_unknown"
-              )
-            ) {
-              throw error;
-            }
-            emitKodaXDiagnostic({
-              source: "runtime.sessions",
-              level: "error",
-              message: "Owned Session deletion failed.",
-              detail: { sessionId, error },
-            });
-            assertDeleteSucceeded(sessionId, {
-              error: { code: "delete_failed" },
-            });
-          }
-        });
-        invalidateMaterializedSessionCapture(sessionId);
-        settingsOwner.release(sessionId);
-        onSessionDeleted(sessionId);
-      });
-    },
+    delete: (sessionId) => deleteSession(sessionId, false),
+    deleteTemporary: (sessionId) => deleteSession(sessionId, true),
   };
 }
 
 function createRuntimeRunService(deps: {
+  readonly deleteTemporarySession: (sessionId: string) => Promise<void>;
+  readonly sessionViews: SessionViewOwner;
   readonly actorRegistry: RuntimeAgentActorRegistry;
   readonly setActorSettlementFenceHandler: (
     handler: (record: RuntimeRunRecord, health: AgentControllerHealth) => void,
@@ -8310,6 +8400,7 @@ function createRuntimeRunService(deps: {
   readonly permissions: RuntimePermissionRegistry;
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
+  readonly extensionRuntime: (sessionId: string) => KodaXOptions["extensionRuntime"];
   readonly persistence: RuntimePersistence;
   readonly runOwner: AgentActorOwner;
   readonly runs: Map<string, RuntimeRunRecord>;
@@ -8319,6 +8410,7 @@ function createRuntimeRunService(deps: {
   readonly settingsOwner: RuntimeSessionSettingsOwner;
 }): RuntimeRunServiceInternal {
   const activeRunBySession = new Map<string, string>();
+  const productQueue = new SessionInputQueue((sessionId) => deps.sessionViews.changed(sessionId));
   const activeQueueRouteReleaseByRun = new Map<string, () => void>();
   const autoModeGuardrails = new Map<
     string,
@@ -8450,7 +8542,7 @@ function createRuntimeRunService(deps: {
 
   const resolveRunStart = (
     record: RuntimeRunRecord,
-    result: RuntimeRunResult,
+    result: RuntimeRunResult | PromiseLike<RuntimeRunResult>,
   ): void => {
     record.providerCredentialScope?.close("Runtime Run settled");
     record.start?.resolve(result);
@@ -8458,14 +8550,45 @@ function createRuntimeRunService(deps: {
     delete record.providerCredential;
   };
 
+  // Any completed Run frees the Session, so queued product inputs continue
+  // even when the finished Run was started through a legacy entry. An
+  // accepted stop is an explicit user intent: never auto-continue the queue,
+  // even when the executor still reports a completed phase. Redirect-style
+  // continuation is T07 and stays out of this drain. The executor Promise
+  // fact must also exist: the terminal-callback fallback can settle a Run
+  // whose Promise was lost, and starting the next batch then would race the
+  // unconfirmed old execution.
+  const maybeDrainProductQueue = (record: RuntimeRunRecord): void => {
+    if (
+      record.admittedSessionContext?.runtimeInfo?.temporary !== true
+      && record.stop === undefined
+      && executorPromiseSettled(record)
+      && record.phase === "completed"
+      && !deps.isClosed()
+    ) {
+      void drainProductInputs(record.sessionId).catch((error: unknown) => emitKodaXDiagnostic({
+        source: "runtime.input-queue", level: "error",
+        message: `Queued input could not be submitted: ${record.sessionId}`, detail: normalizeError(error),
+      }));
+    }
+  };
+
   const finishRun = (
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
+    const temporary = record.admittedSessionContext?.runtimeInfo?.temporary === true;
+    if (temporary && !executorPromiseSettled(record)) return result;
     if (
       record.settlementFinished === true
       && record.unconfirmedResult === undefined
-    ) return result;
+    ) {
+      // The terminal-callback fallback may have settled this Run before the
+      // executor Promise produced its authoritative fact; the late fact can
+      // now confirm the queue drain that was correctly blocked back then.
+      maybeDrainProductQueue(record);
+      return result;
+    }
     record.settlementFinished = true;
     delete record.unconfirmedResult;
     delete record.unconfirmedFailure;
@@ -8481,19 +8604,33 @@ function createRuntimeRunService(deps: {
         ?.find(isRuntimeAutoModeGuardrail)
         ?.clearAllowedCalls();
     });
-    resolveRunStart(record, result);
     runSettlementCleanupStep(record, "queue-route cleanup", () => {
       releaseActiveQueueRoute(record);
     });
     runSettlementCleanupStep(record, "active-run cleanup", () => {
       releaseActiveRun(record);
     });
+    if (temporary) {
+      const completion = deps.deleteTemporarySession(record.sessionId).then(() => result);
+      // Keep a failed deletion visible even when the submitting client detached.
+      const observed = record.start === undefined ? completion : record.result;
+      void observed.catch((error: unknown) => emitKodaXDiagnostic({
+        source: "runtime.temporary-session",
+        level: "error",
+        message: `Temporary Session cleanup failed: ${record.sessionId}`,
+        detail: normalizeError(error),
+      }));
+      resolveRunStart(record, completion);
+    } else {
+      resolveRunStart(record, result);
+    }
     runSettlementCleanupStep(record, "terminal-record pruning", () => {
       pruneTerminalRuns(deps.runs);
     });
     runSettlementCleanupStep(record, "queued-Run admission", () => {
       drainNext(record.sessionId);
     });
+    if (!temporary) maybeDrainProductQueue(record);
     return result;
   };
 
@@ -9506,6 +9643,7 @@ function createRuntimeRunService(deps: {
     });
 
     const events = wrapKodaXEvents({
+      display: deps.sessionViews.events(record.sessionId, record.runId, record.start.options.events?.getCostReport),
       bus: deps.bus,
       original: record.start.options.events,
       permissions: deps.permissions,
@@ -9648,6 +9786,8 @@ function createRuntimeRunService(deps: {
       },
     );
     if (record.mode === "managed_task") {
+      const sessionControl = createSessionControl();
+      record.sessionControl = sessionControl;
       const abortController = new AbortController();
       record.abortController = abortController;
       const upstreamSignal = runOptions.abortSignal;
@@ -9672,6 +9812,7 @@ function createRuntimeRunService(deps: {
         runManagedTask(
           {
             ...runOptions,
+            sessionControl,
             abortSignal: abortController.signal,
           },
           record.start!.prompt,
@@ -9781,6 +9922,7 @@ function createRuntimeRunService(deps: {
       running = codingOperation();
     }
     record.running = running;
+    record.sessionControl = running;
     const upstreamSignal = runOptions.abortSignal;
     const handleUpstreamAbort = (): void => {
       record.releaseAbortSignalSubscription = undefined;
@@ -10039,13 +10181,36 @@ function createRuntimeRunService(deps: {
   };
 
   const settingsSubscription = deps.settingsOwner.subscribe(
-    (sessionId, current) => {
+    (sessionId, current, patch) => {
+      const settings = {
+        ...parseRuntimeSessionSettings(readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json"))),
+        ...current.value,
+      };
       for (const record of deps.runs.values()) {
         if (
           record.sessionId !== sessionId ||
           (record.phase !== "queued" && !isActiveRunPhase(record.phase))
         )
           continue;
+        if ("provider" in patch) {
+          record.provider = settings.provider ?? deps.defaultProvider ?? record.provider;
+          record.sessionControl?.setProvider(record.provider);
+          if (record.start) record.start = { ...record.start, options: { ...record.start.options, provider: record.provider } };
+        }
+        if ("model" in patch) {
+          record.model = settings.model;
+          record.sessionControl?.setModel(record.model);
+          if (record.start) {
+            record.start.options.model = record.model;
+            record.start.options.modelOverride = record.model;
+          }
+        }
+        if ("reasoningMode" in patch || "effort" in patch || "thinking" in patch) {
+          record.reasoning = settings.reasoningMode;
+          const reasoning = { effort: settings.effort, thinking: settings.thinking };
+          record.sessionControl?.setReasoning(record.reasoning, reasoning);
+          if (record.start) Object.assign(record.start.options, reasoning, { reasoningMode: record.reasoning });
+        }
         record.permissionMode = current.value.permissionMode;
         record.autoModeClassifierModel = current.value.autoModeClassifierModel;
         publishRunUpdate(record);
@@ -10094,12 +10259,51 @@ function createRuntimeRunService(deps: {
     }
   };
 
+  const immediateInputRunId = (sessionId: string, inputId: string): string => {
+    // A boot-scoped address into the existing Run store, not an input ledger.
+    const key = JSON.stringify([deps.runOwner.ownerId, sessionId, inputId]);
+    return `run_${createHash("sha256").update(key).digest("hex")}`;
+  };
+  const findAcceptedInput = (sessionId: string, inputId: string): RuntimeRunStatus | undefined => {
+    const runId = immediateInputRunId(sessionId, inputId);
+    const record = deps.runs.get(runId);
+    const status = record === undefined
+      ? deps.persistence.loadRunStatus(runId)?.status
+      : statusFromRecord(record);
+    return status?.sessionId === sessionId && status.productInput?.inputId === inputId ? status : undefined;
+  };
+
   const startRun = async (
     input: RuntimeStartRunInput,
     operation: RuntimeRunInputOperation,
   ): Promise<RuntimeRunHandle> => {
     deps.ensureOpen();
     const trustedInput = input as RuntimeTrustedStartRunInput;
+    const productInput = trustedInput.productInput;
+    const inputDigest = productInput === undefined
+      ? undefined
+      : inputIntentDigest(productInput);
+    if (productInput !== undefined) {
+      const accepted = findAcceptedInput(input.sessionId, productInput.inputId);
+      if (accepted !== undefined) {
+        if (accepted.productInput?.digest !== inputDigest) {
+          throw createRuntimeConflictError("Input ID already belongs to a different intent.", 0);
+        }
+        return {
+          sessionId: accepted.sessionId,
+          runId: accepted.runId,
+          result: deps.runs.get(accepted.runId)?.result ?? Promise.resolve(resultFromStatus(accepted)),
+        };
+      }
+      if (activeRunBySession.has(input.sessionId)) {
+        // Reached from a direct immediate submit and from the queue drain;
+        // the wording must hold for both.
+        throw createRuntimeConflictError(
+          "Session is busy; the input was not accepted for immediate execution.",
+          0,
+        );
+      }
+    }
     const requiredAfterRunId = trustedInput.requiredAfterRunId;
     const requiredAfterRun =
       requiredAfterRunId === undefined
@@ -10134,10 +10338,13 @@ function createRuntimeRunService(deps: {
           : {}),
       };
     }
-    const settings = (await deps.settingsOwner.read(input.sessionId)).value;
+    const settings = {
+      ...parseRuntimeSessionSettings(readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json"))),
+      ...((await deps.settingsOwner.read(input.sessionId)).value),
+    };
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     const options = buildEffectiveRuntimeOptions(
-      input.options ?? {},
+      { extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
       settings,
       normalizedInput.inputArtifacts,
       admittedSessionContext,
@@ -10230,7 +10437,9 @@ function createRuntimeRunService(deps: {
       adminRules: deps.execPolicy?.adminRules,
     });
     const runId =
-      (input as RuntimeTrustedStartRunInput).trustedRunId ?? createRunId();
+      productInput === undefined
+        ? trustedInput.trustedRunId ?? createRunId()
+        : immediateInputRunId(input.sessionId, productInput.inputId);
     if (deps.runs.has(runId))
       throw createRuntimeConflictError(
         `Runtime run already exists: ${runId}`,
@@ -10283,7 +10492,7 @@ function createRuntimeRunService(deps: {
       guardrails: [...(options.guardrails ?? []), autoModeGuardrail],
     };
     const startedAt = new Date().toISOString();
-    let resolveResult: (result: RuntimeRunResult) => void = () => undefined;
+    let resolveResult: (result: RuntimeRunResult | PromiseLike<RuntimeRunResult>) => void = () => undefined;
     const result = new Promise<RuntimeRunResult>((resolve) => {
       resolveResult = resolve;
     });
@@ -10296,6 +10505,9 @@ function createRuntimeRunService(deps: {
     const record: RuntimeRunRecord = {
       runId,
       sessionId: input.sessionId,
+      ...(productInput !== undefined && inputDigest !== undefined
+        ? { productInput: { inputId: productInput.inputId, digest: inputDigest } }
+        : {}),
       phase: isQueued ? "queued" : "running",
       stage: isQueued ? "queued" : "executing",
       stageChangedAt: startedAt,
@@ -10327,6 +10539,7 @@ function createRuntimeRunService(deps: {
         : {}),
       mode: input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
+        ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
         ?? "coding",
       ...(requiredAfterRun !== undefined && input.mode === undefined
         ? { inheritModeAfterDurabilityRepair: true }
@@ -10374,6 +10587,22 @@ function createRuntimeRunService(deps: {
       terminalEmitted: false,
       ownedByRuntime: true,
     };
+    if (productInput !== undefined) {
+      const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
+      const messages: KodaXMessage[] = [...session.messages, {
+        role: "user",
+        content: normalizedInput.prompt,
+        inputId: productInput.inputId,
+        ...(trustedInput.productBatch ? { inputIds: trustedInput.productBatch } : {}),
+        timestamp: startedAt,
+      }];
+      await deps.sessionManager.storage.save(input.sessionId, {
+        ...session,
+        messages,
+        lineage: createSessionLineage(messages, session.lineage),
+      });
+    }
+    if (trustedInput.productBatch) productQueue.submitBatch(input.sessionId, trustedInput.productBatch, runId);
     deps.runs.set(runId, record);
     if (isQueued) {
       enqueue(record);
@@ -10402,8 +10631,69 @@ function createRuntimeRunService(deps: {
     );
   };
 
+  const drainProductInputs = (sessionId: string): Promise<void> => deps.sessionOperations.run(sessionId, async () => {
+    if (deps.isClosed() || activeRunBySession.has(sessionId)) return;
+    const batch = productQueue.batch(sessionId);
+    const first = batch[0];
+    if (!first) return;
+    await startRun({
+      sessionId, prompt: batch.map(({ input }) => input.text.trim()).join("\n\n---\n\n"),
+      productInput: first.input, productBatch: batch.map(({ input }) => input.inputId), permissionBroker: "runtime",
+    } as RuntimeTrustedStartRunInput, "runtime.runs.start");
+  });
+
   return {
     start,
+    queuedInputs: (sessionId) => productQueue.list(sessionId),
+
+    async acceptInput(input) {
+      deps.ensureOpen();
+      if (
+        typeof input.sessionId !== "string" || !input.sessionId.trim()
+        || typeof input.inputId !== "string" || !input.inputId.trim()
+        || typeof input.text !== "string" || !input.text.trim()
+        || (input.delivery !== undefined && input.delivery !== "immediate" && input.delivery !== "after_turn")
+      ) {
+        throw createRuntimeConflictError(
+          "Input requires a session ID, input ID and non-empty text.",
+          0,
+        );
+      }
+      const productInput: ClientSubmitInput = {
+        sessionId: input.sessionId, inputId: input.inputId, text: input.text,
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+      };
+      return deps.sessionOperations.run(input.sessionId, async () => {
+        deps.ensureOpen();
+        const duplicate = productQueue.find(productInput);
+        if (duplicate) return duplicate;
+        const accepted = findAcceptedInput(productInput.sessionId, productInput.inputId);
+        if (accepted === undefined && productInput.delivery === "after_turn" && activeRunBySession.has(input.sessionId)) {
+          await deps.sessionAdmission.loadExecutable(input.sessionId);
+          return productQueue.enqueue(productInput);
+        }
+        const handle = await startRun({
+          sessionId: productInput.sessionId, prompt: productInput.text, productInput, permissionBroker: "runtime",
+        } as RuntimeTrustedStartRunInput, "runtime.runs.start");
+        return { sessionId: handle.sessionId, inputId: productInput.inputId, runId: handle.runId, state: "submitted" as const };
+      });
+    },
+
+    async getInput(sessionId, inputId) {
+      deps.ensureOpen();
+      const queued = productQueue.read(sessionId, inputId);
+      if (queued) return queued;
+      const record = findAcceptedInput(sessionId, inputId);
+      return record === undefined ? null : { sessionId, inputId, runId: record.runId, state: "submitted" };
+    },
+
+    async withdrawInput(sessionId, inputId) {
+      deps.ensureOpen();
+      return deps.sessionOperations.run(sessionId, async () => {
+        await deps.sessionAdmission.assertRunAccess(sessionId);
+        return productQueue.withdraw(sessionId, inputId);
+      });
+    },
 
     async submitInput(input) {
       deps.ensureOpen();
@@ -10847,6 +11137,7 @@ function createRuntimeRunService(deps: {
 
     closeAll(reason) {
       settingsSubscription.close();
+      productQueue.close();
       for (const run of deps.runs.values()) {
         if (
           run.ownedByRuntime
@@ -10865,6 +11156,7 @@ function createRuntimeRunService(deps: {
       queueBySession.clear();
     },
     releaseSession(sessionId) {
+      productQueue.releaseSession(sessionId);
       for (const entry of autoModeGuardrails.get(sessionId)?.values() ?? []) {
         entry.guardrail.clearAllowedCalls();
       }
@@ -10982,11 +11274,37 @@ function createRuntimeConfigService(
 function createRuntimeCatalogService(
   ensureOpen: () => void,
   configFile: string | undefined,
+  runtime: KodaXExtensionRuntime,
 ): RuntimeCatalogService {
   return {
+    async reasoningEfforts(input) {
+      ensureOpen();
+      return replApi.getProviderReasoningEffortOptions(input.provider, input.model, configFile === undefined ? undefined : path.dirname(configFile));
+    },
+
+    async probeReasoningEfforts(input) {
+      ensureOpen();
+      return replApi.probeProviderReasoningEfforts({
+        ...input, configHome: configFile === undefined ? undefined : path.dirname(configFile),
+        resolve: resolveProvider, now: () => new Date().toISOString(),
+      });
+    },
+
+    async forgetCapabilities(input) {
+      ensureOpen();
+      clearCapabilityCache(input?.provider, input?.model, configFile === undefined ? undefined : path.dirname(configFile));
+    },
+
     async providers() {
       ensureOpen();
-      return getProviderList();
+      const providers: ClientProviderInfo[] = getProviderList(toClientConfig(readRuntimeConfig(configFile)).providerModels ?? {})
+        .map((provider) => ({ ...provider, source: provider.custom ? "config" as const : "builtin" as const }));
+      for (const name of getRuntimeModelProviderNames()) {
+        const provider = resolveProvider(name);
+        providers.push({ name, model: provider.getModel(), models: [provider.getModel()], configured: provider.isConfigured(), source: "runtime",
+          reasoningCapability: provider.getReasoningCapability(), capabilityProfile: provider.getCapabilityProfile() });
+      }
+      return providers;
     },
 
     async models(filter) {
@@ -11047,7 +11365,6 @@ function createRuntimeCatalogService(
 
     async extensions() {
       ensureOpen();
-      const runtime = getActiveExtensionRuntime();
       if (!runtime) {
         return { active: false, extensions: [] };
       }
@@ -11061,7 +11378,6 @@ function createRuntimeCatalogService(
 
     async reloadExtensions() {
       ensureOpen();
-      const runtime = getActiveExtensionRuntime();
       if (!runtime) {
         return { ok: true, active: false };
       }
@@ -11078,6 +11394,7 @@ function createRuntimeCatalogService(
 function createRuntimeMcpService(
   ensureOpen: () => void,
   configFile: string | undefined,
+  runtime: KodaXExtensionRuntime,
 ): RuntimeMcpService {
   return {
     async listServers() {
@@ -11118,15 +11435,12 @@ function createRuntimeMcpService(
 
     async reloadServers() {
       ensureOpen();
-      const manager = createMcpManager(listRuntimeMcpServers(configFile));
-      try {
-        return {
-          ok: true,
-          servers: manager.listServers(),
-        };
-      } finally {
-        await manager.dispose();
-      }
+      const servers = listRuntimeMcpServers(configFile);
+      const provider = await replaceConfiguredMcpCapabilityProvider(runtime, servers, {
+        cacheDir: path.join(configFile === undefined ? replApi.KODAX_DIR : path.dirname(configFile), "mcp-cache"),
+        reverse: buildMcpReverseCapabilities({ cwd: process.cwd(), enableElicitation: true }),
+      });
+      return { ok: true, servers: runtimeMcpServerStatuses(provider, servers) };
     },
 
     async listTools(filter) {
@@ -11134,22 +11448,29 @@ function createRuntimeMcpService(
       const servers = listRuntimeMcpServers(configFile);
       const names =
         filter?.server !== undefined ? [filter.server] : Object.keys(servers);
-      const manager = createMcpManager(servers);
-      try {
-        const result: McpServerToolList[] = [];
-        for (const name of names) {
-          result.push(
-            await manager.listTools(name, {
-              forceRefresh: filter?.forceRefresh === true,
-            }),
-          );
-        }
-        return result;
-      } finally {
-        await manager.dispose();
+      const provider = runtime.getCapabilityProvider("mcp");
+      const result: McpServerToolList[] = [];
+      for (const name of names) {
+        const server = provider instanceof McpCapabilityProvider ? provider.getRuntime(name) : undefined;
+        if (!server) throw new Error(`MCP server is not active in this Host: ${name}`);
+        const catalog = await server.getCatalog(filter?.forceRefresh === true);
+        result.push({ serverId: name, tools: catalog.descriptors.filter((item) => item.kind === "tool"), cachedAt: catalog.updatedAt });
       }
+      return result;
     },
   };
+}
+
+function runtimeMcpServerStatuses(
+  provider: McpCapabilityProvider | undefined,
+  servers: Readonly<Record<string, McpServerConfig>>,
+): readonly McpServerStatus[] {
+  return Object.entries(servers).map(([serverId, config]) => ({
+    serverId, config: structuredClone(config), connect: config.connect ?? "lazy",
+    status: config.connect === "disabled" ? "disabled" as const : "idle" as const,
+    tools: 0, resources: 0, prompts: 0, dirty: false,
+    ...provider?.getRuntime(serverId)?.getDiagnostics(),
+  }));
 }
 
 function createRuntimeArtifactStore() {
@@ -12781,7 +13102,7 @@ function mergeRuntimeEventEmissions(
   return next;
 }
 
-function createRuntimeEventBus(persistence: RuntimePersistence) {
+function createRuntimeEventBus(persistence: RuntimePersistence, onSessionChanged?: (sessionId: string, type: RuntimeEventType) => void) {
   let closed = false;
   const events: RuntimeEvent[] = [];
   const liveBySession = new Map<string, RuntimeSessionLiveProjectionState>();
@@ -13477,6 +13798,7 @@ function createRuntimeEventBus(persistence: RuntimePersistence) {
       payload: unknown,
       scope: RuntimeEventEmissionScope,
     ): void {
+      onSessionChanged?.(scope.sessionId, type);
       enqueue(type, payload, scope);
     },
     emitDurable(
@@ -16742,6 +17064,11 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
     return undefined;
   }
   return {
+    ...(isRecord(value.productInput)
+      && typeof value.productInput.inputId === "string"
+      && typeof value.productInput.digest === "string"
+      ? { productInput: { inputId: value.productInput.inputId, digest: value.productInput.digest } }
+      : {}),
     runId: value.runId,
     sessionId: value.sessionId,
     ...(typeof value.turnId === "string" ? { turnId: value.turnId } : {}),
@@ -18556,6 +18883,7 @@ async function waitForRuntimeUserInput<T>(
 }
 
 function wrapKodaXEvents(input: {
+  readonly display: KodaXEvents;
   readonly bus: RuntimeEventBus;
   readonly original?: KodaXEvents;
   readonly permissions: RuntimePermissionRegistry;
@@ -18662,6 +18990,7 @@ function wrapKodaXEvents(input: {
         implicitOutputSegments.set(scopeKey, providerRequestId);
       }
       const outputMeta = { ...meta, providerRequestId };
+      input.display.onOutputSegmentStart?.({ responseId: turnId ?? `response_${record.runId}`, providerRequestId, mode: 'append' }, outputMeta);
       emit("output.segment.started", {
         responseId: turnId ?? `response_${record.runId}`,
         providerRequestId,
@@ -18706,6 +19035,7 @@ function wrapKodaXEvents(input: {
 
   return {
     ...original,
+    getCostReport: input.display.getCostReport,
     onOutputSegmentStart(segment, meta) {
       if (actorDurabilityFenced()) return;
       const outputMeta = {
@@ -18713,6 +19043,7 @@ function wrapKodaXEvents(input: {
         providerRequestId: segment.providerRequestId,
       };
       knownOutputSegments.add(segment.providerRequestId);
+      input.display.onOutputSegmentStart?.(segment, outputMeta);
       emit("output.segment.started", { ...segment, meta: outputMeta }, outputMeta);
       externalCallbacks()?.onOutputSegmentStart?.(segment, outputMeta);
     },
@@ -18720,6 +19051,7 @@ function wrapKodaXEvents(input: {
       if (actorDurabilityFenced()) return;
       resumeFromTransientPhase();
       const outputMeta = ensureOutputSegment(meta);
+      input.display.onTextDelta?.(text, outputMeta);
       emit("assistant.delta", {
         text,
         providerRequestId: outputMeta.providerRequestId,
@@ -18731,6 +19063,7 @@ function wrapKodaXEvents(input: {
       if (actorDurabilityFenced()) return;
       resumeFromTransientPhase();
       const outputMeta = ensureOutputSegment(meta);
+      input.display.onThinkingDelta?.(text, outputMeta);
       emit("thinking.delta", {
         text,
         providerRequestId: outputMeta.providerRequestId,
@@ -18739,16 +19072,21 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onThinkingDelta?.(text, outputMeta);
     },
     onThinkingEnd(thinking, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onThinkingEnd?.(thinking, meta);
       emit("thinking.finished", { thinking, meta }, meta);
       externalCallbacks()?.onThinkingEnd?.(thinking, meta);
     },
     onToolUseStart(tool, meta) {
       if (actorDurabilityFenced()) return;
+      input.display.onToolUseStart?.(tool, meta);
       onPhase(tool.name === "wait_agent" ? "waiting_agent" : "running");
       emit("tool.started", { tool, meta }, meta);
       externalCallbacks()?.onToolUseStart?.(tool, meta);
     },
     onToolProgress(update, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onToolProgress?.(update, meta);
       emit("tool.progress", { update, meta }, meta);
       externalCallbacks()?.onToolProgress?.(update, meta);
     },
@@ -18762,6 +19100,7 @@ function wrapKodaXEvents(input: {
     },
     onToolResult(result, meta) {
       if (actorDurabilityFenced()) return;
+      input.display.onToolResult?.(result, meta);
       if (result.name === "wait_agent") onPhase("running");
       emit("tool.finished", { result, meta }, meta);
       externalCallbacks()?.onToolResult?.(result, meta);
@@ -18791,6 +19130,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onStreamEnd?.(meta);
     },
     onChildActivityEnd(meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onChildActivityEnd?.(meta);
       emit("child_activity.finished", { meta }, meta);
       externalCallbacks()?.onChildActivityEnd?.(meta);
     },
@@ -18817,6 +19158,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onTurnFailed?.(event);
     },
     onIterationStart(iter, maxIter, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onIterationStart?.(iter, maxIter, meta);
       emit(
         "run.progress",
         { kind: "iteration_start", iter, maxIter, meta },
@@ -18825,17 +19168,25 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onIterationStart?.(iter, maxIter, meta);
     },
     onIterationEnd(info) {
+      if (actorDurabilityFenced()) return;
+      input.display.onIterationEnd?.(info);
       emit("run.progress", { kind: "iteration_end", info }, info);
       externalCallbacks()?.onIterationEnd?.(info);
     },
     onCompactStart(meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onCompactStart?.(meta);
       emit("context.compaction.started", { meta }, meta);
       externalCallbacks()?.onCompactStart?.(meta);
     },
     onCompact(estimatedTokens, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onCompact?.(estimatedTokens, meta);
       externalCallbacks()?.onCompact?.(estimatedTokens, meta);
     },
     onCompactStats(info) {
+      if (actorDurabilityFenced()) return;
+      input.display.onCompactStats?.(info);
       emit("context.compaction.stats", info, info);
       externalCallbacks()?.onCompactStats?.(info);
     },
@@ -18891,6 +19242,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onContextCompactionFinished?.(event);
     },
     onCompactEnd(meta, result) {
+      if (actorDurabilityFenced()) return;
+      input.display.onCompactEnd?.(meta, result);
       emit("context.compaction.ended", {
         meta,
         ...(result ?? {}),
@@ -18911,10 +19264,14 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onMidTurnUserMessages?.(contents, meta);
     },
     onRetry(reason, attempt, maxAttempts, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onRetry?.(reason, attempt, maxAttempts, meta);
       emit("provider.retry", { reason, attempt, maxAttempts, meta }, meta);
       externalCallbacks()?.onRetry?.(reason, attempt, maxAttempts, meta);
     },
     onProviderRateLimit(attempt, maxRetries, delayMs, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onProviderRateLimit?.(attempt, maxRetries, delayMs, meta);
       emit(
         "provider.retry",
         {
@@ -18929,6 +19286,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onProviderRateLimit?.(attempt, maxRetries, delayMs, meta);
     },
     onRetryAfter(payload, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onRetryAfter?.(payload, meta);
       emit("provider.retry", { retryAfter: payload, meta }, meta);
       externalCallbacks()?.onRetryAfter?.(payload, meta);
     },
@@ -18965,10 +19324,14 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onContextCompactionSkipped?.(attributed);
     },
     onSidecarMessage(event) {
+      if (actorDurabilityFenced()) return;
+      input.display.onSidecarMessage?.(event);
       emit("sidecar.message", event, event);
       externalCallbacks()?.onSidecarMessage?.(event);
     },
     onTodoUpdate(items, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onTodoUpdate?.(items, meta);
       emit("todo.updated", { items, meta }, meta);
       externalCallbacks()?.onTodoUpdate?.(items, meta);
     },
@@ -18978,6 +19341,7 @@ function wrapKodaXEvents(input: {
     },
     onProviderRecovery(event, meta) {
       if (actorDurabilityFenced()) return;
+      input.display.onProviderRecovery?.(event, meta);
       onPhase("recovering");
       emit("provider.recovery", { event, meta }, meta);
       externalCallbacks()?.onProviderRecovery?.(event, meta);
@@ -19017,13 +19381,11 @@ function wrapKodaXEvents(input: {
             externalCallbacks()?.onMemoryReview?.(...args);
           },
         }),
-    ...(original?.onMemoryNotice === undefined
-      ? {}
-      : {
-          onMemoryNotice: (...args: Parameters<NonNullable<KodaXEvents["onMemoryNotice"]>>) => {
-            externalCallbacks()?.onMemoryNotice?.(...args);
-          },
-        }),
+    onMemoryNotice(notice) {
+      if (actorDurabilityFenced()) return;
+      input.display.onMemoryNotice?.(notice);
+      externalCallbacks()?.onMemoryNotice?.(notice);
+    },
     ...(original?.onMemoryOutcomeDigest === undefined
       ? {}
       : {
@@ -19074,6 +19436,7 @@ function wrapKodaXEvents(input: {
     },
     onManagedTaskStatus(status) {
       if (actorDurabilityFenced()) return;
+      input.display.onManagedTaskStatus?.(status);
       if (record.mode === "managed_task" && status.phase === "completed") {
         record.interruptInputOpen = false;
         onPhase("running");
@@ -19323,6 +19686,7 @@ function buildSessionRuntimeInfo(
   gitRoot: string | undefined,
 ): KodaXSessionRuntimeInfo | undefined {
   const info: KodaXSessionRuntimeInfo = {
+    ...(input.temporary === true ? { temporary: true } : {}),
     ...(gitRoot !== undefined ? { canonicalRepoRoot: gitRoot } : {}),
     ...(projectPath !== undefined
       ? { workspaceRoot: projectPath, executionCwd: projectPath }
@@ -21248,19 +21612,14 @@ function cloneCustomProviders(
 function listRuntimeMcpServers(
   configFile: string | undefined,
 ): Record<string, McpServerConfig> {
-  if (configFile === undefined) return listMcpServers();
-  return cloneMcpServers(
-    extractRuntimeMcpServers(readRuntimeConfig(configFile)),
-  );
+  return listMcpServers(configFile === undefined ? undefined : path.dirname(configFile));
 }
 
 function getRuntimeMcpServer(
   configFile: string | undefined,
   name: string,
 ): McpServerConfig | undefined {
-  if (configFile === undefined) return getMcpServerConfig(name);
-  const config = extractRuntimeMcpServers(readRuntimeConfig(configFile))[name];
-  return config === undefined ? undefined : structuredClone(config);
+  return getMcpServerConfig(name, configFile === undefined ? undefined : path.dirname(configFile));
 }
 
 function upsertRuntimeMcpServer(
@@ -21268,44 +21627,14 @@ function upsertRuntimeMcpServer(
   name: string,
   config: McpServerConfig,
 ): McpServerConfig {
-  if (configFile === undefined) return upsertMcpServer(name, config);
-  validateMcpServerConfig(name, config);
-  mutateRuntimeConfig(configFile, (whole) => {
-    const servers = {
-      ...extractRuntimeMcpServers(whole),
-      [name]: structuredClone(config),
-    };
-    return { config: { ...whole, mcpServers: servers }, result: undefined };
-  });
-  return structuredClone(config);
+  return upsertMcpServer(name, config, configFile === undefined ? undefined : path.dirname(configFile));
 }
 
 function removeRuntimeMcpServer(
   configFile: string | undefined,
   name: string,
 ): boolean {
-  if (configFile === undefined) return removeMcpServer(name);
-  return mutateRuntimeConfig(configFile, (whole) => {
-    const servers = extractRuntimeMcpServers(whole);
-    if (!(name in servers)) return { result: false };
-    const next = { ...servers };
-    delete next[name];
-    return { config: { ...whole, mcpServers: next }, result: true };
-  });
-}
-
-function extractRuntimeMcpServers(
-  config: Record<string, unknown>,
-): Record<string, McpServerConfig> {
-  return isRecord(config.mcpServers)
-    ? structuredClone(config.mcpServers as Record<string, McpServerConfig>)
-    : {};
-}
-
-function cloneMcpServers(
-  servers: Record<string, McpServerConfig>,
-): Record<string, McpServerConfig> {
-  return structuredClone(servers);
+  return removeMcpServer(name, configFile === undefined ? undefined : path.dirname(configFile));
 }
 
 function upsertConfigEntry<T>(
@@ -21619,6 +21948,7 @@ function runtimeInterruptInputStatus(
 
 function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
   return {
+    ...(run.productInput !== undefined ? { productInput: run.productInput } : {}),
     runId: run.runId,
     sessionId: run.sessionId,
     ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),

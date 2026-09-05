@@ -88,6 +88,7 @@ import {
 } from './middleware/auto-resume.js';
 import {
   createReasoningPlan,
+  resolveReasoningMode,
   type ReasoningPlan,
 } from '../reasoning.js';
 import { effortToLegacyReasoningMode } from '@kodax-ai/llm';
@@ -1237,9 +1238,15 @@ export async function runSubstrate(
     },
     setModel: (model) => {
       runtimeSessionState.modelSelection.model = model;
+      options.model = model;
+      options.modelOverride = model;
     },
-    setReasoning: (mode) => {
-      runtimeSessionState.thinkingLevel = legacyReasoningModeToRuntimeEffort(mode);
+    setReasoning: (mode, reasoning) => {
+      runtimeSessionState.thinkingLevel = reasoning === undefined
+        ? legacyReasoningModeToRuntimeEffort(mode)
+        : reasoning.effort ?? mapLegacyReasoningModeToEffortIntent(
+            resolveReasoningMode({ ...options, ...reasoning, reasoningMode: mode }),
+          );
     },
   });
   const releaseRuntimeBindingCandidate = runtime?.bindController?.(
@@ -1586,7 +1593,7 @@ export async function runSubstrate(
       // (`modelOverride ?? provider.getModel()`) — including runtime-registered
       // providers, which resolveProvider (unlike a static descriptor lookup) resolves.
       const rejectionModel = turnState.currentModelOverride ?? streamProvider.getModel();
-      const rejectedEfforts = getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel);
+      const rejectedEfforts = getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome);
       if (effectiveProviderEffort !== undefined && rejectedEfforts.length > 0) {
         // Check the value that would actually reach the wire (the provider applies
         // effortAliases / ceilings), not the pre-alias effort — a rejected rung can be
@@ -1976,6 +1983,7 @@ export async function runSubstrate(
           // streamTimers.resetIdleTimer() + boundaryTracker + extension
           // events + consumer events in load-bearing order.
           const streamCallbacks = buildStreamHandlers({
+            configHome: options.context?.configHome,
             events: attributeProviderRequest(events, providerRequestId),
             boundaryTracker,
             streamTimers,

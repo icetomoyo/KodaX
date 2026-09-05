@@ -25,6 +25,7 @@ import type {
   KodaXEphemeralSuffix,
   KodaXMessage,
   KodaXReasoningRequest,
+  KodaXProviderStreamOptions,
   KodaXRedactedThinkingBlock,
   KodaXRetryAfterEvent,
   KodaXThinkingBlock,
@@ -36,10 +37,13 @@ import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
   resolvePromptCacheDisabled,
+  resolveWireEffort,
   withProviderRequestCredential,
 } from '@kodax-ai/llm';
 import {
   attachRunnerRecoveryTranscript,
+  getCachedRejectedEfforts,
+  recordRejectedEffort,
   buildAssistantMessageFromLlmResult,
   type Agent,
   type RunnerLlmResult,
@@ -381,9 +385,8 @@ export function buildRunnerLlmAdapter(
     options.events.getCostReport.current = () =>
       formatCostReport(getCostSummary(costTracker));
   }
-  const activeModel = options.modelOverride ?? options.model;
-
   return async (messages, agent) => {
+    const activeModel = options.modelOverride ?? options.model;
     // Strip every leading contiguous system message and concatenate their
     // content. v0.7.22-style flows pushed a single agent-instructions system
     // prompt and nothing else, so taking only `messages[0]` was enough. The
@@ -492,7 +495,7 @@ export function buildRunnerLlmAdapter(
     //   L2 (agent default) ← agent.reasoning.default + .max (mapped to effort)
     // FEATURE_193 (v0.7.43): V1 chain retired — the Worker is the sole agent,
     // so the per-role split and the Scout hint (L3) are gone.
-    const providerReasoning = resolveManagedProviderReasoning(options, agent);
+    let providerReasoning = resolveManagedProviderReasoning(options, agent);
 
     iterationState.current += 1;
     options.events?.onIterationStart?.(iterationState.current, MAX_ITER_HINT);
@@ -536,6 +539,15 @@ export function buildRunnerLlmAdapter(
     } else {
       const provider = resolveProvider(options.provider ?? 'anthropic');
       const providerName = options.provider ?? provider.name ?? 'anthropic';
+      const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
+      if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
+        const resolved = resolveWireEffort({ provider: providerName, model: activeModel ?? provider.getModel(), desiredEffort: providerReasoning.effort, rejectedEfforts });
+        providerReasoning = { ...providerReasoning, effort: resolved.effort ?? 'none' };
+      }
+      const onReasoningEffortRejected: KodaXProviderStreamOptions['onReasoningEffortRejected'] = (event) => {
+        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome);
+        options.events?.onReasoningEffortRejected?.(event);
+      };
       const supportsNativeEphemeralSuffix =
         typeof provider.supportsEphemeralSuffix === 'function'
         && provider.supportsEphemeralSuffix();
@@ -879,7 +891,7 @@ export function buildRunnerLlmAdapter(
               [...wireTools],
               system,
               providerReasoning,
-              { ...streamOptions, signal: credentialSignal },
+              { ...streamOptions, onReasoningEffortRejected, signal: credentialSignal },
               credentialSignal,
             ),
           );
@@ -1267,6 +1279,7 @@ export function buildRunnerLlmAdapter(
               providerReasoning,
               {
                 promptCacheKey,
+                onReasoningEffortRejected,
                 modelOverride: activeModel,
                 maxOutputTokensOverride: requestMaxOutputTokens,
                 ephemeralSuffix: nativeEphemeralSuffix,

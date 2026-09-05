@@ -555,9 +555,16 @@ export async function createRuntimeDaemonSocketServer(
     }
     sockets.add(socket);
     let rejectedFrame = false;
+    let backpressured = false;
+    const pendingViews = new Map<string, RuntimeDaemonFrame>();
 
     const send = (frame: RuntimeDaemonFrame): void => {
       if (socket.destroyed) return;
+      if (backpressured && frame.kind === 'notification' && frame.method === 'session.view') {
+        const params = frame.params as { subscriptionId: string };
+        pendingViews.set(params.subscriptionId, frame);
+        return;
+      }
       let encoded: string;
       try {
         encoded = JSON.stringify(frame);
@@ -568,8 +575,16 @@ export async function createRuntimeDaemonSocketServer(
         }, frame.kind === 'response' || frame.kind === 'error' ? frame.id : undefined);
         encoded = JSON.stringify(fallback);
       }
-      socket.write(`${encoded}\n`);
+      if (!socket.write(`${encoded}\n`)) backpressured = true;
     };
+    socket.on('drain', () => {
+      backpressured = false;
+      for (const [id, view] of pendingViews) {
+        pendingViews.delete(id);
+        send(view);
+        if (backpressured) break;
+      }
+    });
     const dispatcher = options.createDispatcher((notification) => send(notification));
     dispatchers.add(dispatcher);
     const parser = createRuntimeDaemonFrameParser((frame) => {
@@ -621,6 +636,7 @@ export async function createRuntimeDaemonSocketServer(
       }
     });
     socket.on('close', () => {
+      pendingViews.clear();
       sockets.delete(socket);
       dispatchers.delete(dispatcher);
       dispatcher.close();

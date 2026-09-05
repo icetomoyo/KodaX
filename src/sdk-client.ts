@@ -1,12 +1,26 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { connectKodaXRuntime } from './sdk-runtime.js';
+import { toClientConfig, toClientSessionSettings } from './client-settings.js';
 
 export type {
   KodaXProductClient,
   ClientSession,
   ClientSessionSummary,
   ClientSessionFilter,
+  ClientCreateSessionInput,
+  ClientSubmitInput,
+  ClientInputAcceptance,
+  ClientSessionSettings,
+  ClientSessionSettingsPatch,
+  ClientConfig,
+  ClientMcpServerConfig,
+  ClientMcpServerStatus,
+  ClientMcpTool,
+  ClientModelSelection,
+  ClientCapabilityProbeResult,
+  ClientProviderInfo,
+  ClientModelCatalog,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -31,9 +45,48 @@ export async function connectKodaXClient(
     autoStart: false,
   });
   return {
+    host: {
+      shutdown: () => runtime.daemon.shutdown(),
+    },
     sessions: {
+      create: (input) => runtime.sessions.create(input),
       list: (filter) => runtime.sessions.list(filter),
       read: (sessionId) => runtime.sessions.load(sessionId),
+      delete: (sessionId) => runtime.sessions.delete(sessionId),
+      archive: (sessionId) => runtime.sessions.archive(sessionId),
+      unarchive: (sessionId) => runtime.sessions.unarchive(sessionId),
+      getSettings: async (sessionId) => toClientSessionSettings(await runtime.sessions.getSettings(sessionId)),
+      updateSettings: async (sessionId, patch) => toClientSessionSettings(await runtime.sessions.updateSettings(sessionId, patch)),
+      observe: (sessionId, onView) => runtime.sessions.observeView(sessionId, onView),
+      readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
+    },
+    inputs: {
+      submit: (input) => runtime.runs.acceptInput(input),
+      read: (sessionId, inputId) => runtime.runs.getInput(sessionId, inputId),
+      withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId),
+    },
+    config: {
+      read: async () => toClientConfig(await runtime.config.read()),
+      patch: async (patch) => toClientConfig(await runtime.config.patch(patch)),
+      reload: async () => ({ ok: true, config: toClientConfig((await runtime.config.reload()).config) }),
+    },
+    mcp: {
+      listServers: () => runtime.mcp.listServers(),
+      getServer: (name) => runtime.mcp.getServer(name),
+      validateServer: (name, config) => runtime.mcp.validateServer(name, config),
+      upsertServer: (name, config) => runtime.mcp.upsertServer(name, config),
+      deleteServer: (name) => runtime.mcp.deleteServer(name),
+      reloadServers: () => runtime.mcp.reloadServers(),
+      listTools: (filter) => runtime.mcp.listTools(filter),
+    },
+    catalog: {
+      providers: () => runtime.catalog.providers(),
+      models: async (filter) => (await runtime.catalog.providers())
+        .filter((provider) => filter?.provider === undefined || provider.name === filter.provider)
+        .map((provider) => ({ provider: provider.name, models: provider.models })),
+      reasoningEfforts: (input) => runtime.catalog.reasoningEfforts(input),
+      probeReasoningEfforts: (input) => runtime.catalog.probeReasoningEfforts(input),
+      forgetCapabilities: (input) => runtime.catalog.forgetCapabilities(input),
     },
     disconnect: () => runtime.close(),
   };

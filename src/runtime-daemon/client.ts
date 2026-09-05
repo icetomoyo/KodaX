@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import type { ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
   KodaXDaemonRuntime,
@@ -241,7 +243,7 @@ export function createRuntimeDaemonClient(
   ): Promise<unknown> => options.transport.request(
     method,
     params,
-    isRuntimeDaemonMutationMethod(method)
+    isRuntimeDaemonMutationMethod(method) && method !== 'session.settings.update'
       ? createOperationEnvelope(options.journalEpoch, operation)
       : undefined,
     control,
@@ -462,6 +464,12 @@ export function createRuntimeDaemonClient(
       observe(sessionId, listener, readOptions) {
         return observeDaemonSession(options.transport, readRequest, sessionId, listener, readOptions);
       },
+      observeView(sessionId, listener) {
+        return observeDaemonSessionView(options.transport, sessionId, listener);
+      },
+      readViewItem(sessionId, itemId, options) {
+        return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
+      },
       diagnostics(input) {
         return readRequest(
           'session.diagnostics',
@@ -491,13 +499,8 @@ export function createRuntimeDaemonClient(
       getAutoModeStats(sessionId) {
         return request('session.autoMode.getStats', { sessionId }) as ReturnType<KodaXRuntime['sessions']['getAutoModeStats']>;
       },
-      async updateSettings(sessionId, patch) {
-        const current = await this.getSettingsVersioned(sessionId);
-        return (await this.updateSettingsVersioned(
-          sessionId,
-          patch,
-          { expectedRevision: current.revision },
-        )).value;
+      updateSettings(sessionId, patch) {
+        return request('session.settings.update', { sessionId, patch }) as Promise<RuntimeSessionSettings>;
       },
       updateSettingsVersioned(sessionId, patch, operation) {
         return request(
@@ -534,6 +537,15 @@ export function createRuntimeDaemonClient(
       },
     },
     runs: {
+      acceptInput(input) {
+        return options.transport.request('input.submit', input) as ReturnType<KodaXRuntime['runs']['acceptInput']>;
+      },
+      getInput(sessionId, inputId) {
+        return request('input.read', { sessionId, inputId }) as ReturnType<KodaXRuntime['runs']['getInput']>;
+      },
+      withdrawInput(sessionId, inputId) {
+        return options.transport.request('input.withdraw', { sessionId, inputId }) as ReturnType<KodaXRuntime['runs']['withdrawInput']>;
+      },
       async start(input: RuntimeDaemonStartRunInput): Promise<RuntimeRunHandle> {
         const { operation, ...transportInput } = input;
         assertRuntimeTransportSafe(transportInput, 'run.start');
@@ -859,8 +871,17 @@ export function createRuntimeDaemonClient(
       },
     },
     catalog: {
+      reasoningEfforts(input) {
+        return request('provider.reasoning.efforts', input) as ReturnType<KodaXRuntime['catalog']['reasoningEfforts']>;
+      },
+      probeReasoningEfforts(input) {
+        return request('provider.reasoning.probe', input) as ReturnType<KodaXRuntime['catalog']['probeReasoningEfforts']>;
+      },
+      async forgetCapabilities(input) {
+        await request('provider.capabilities.forget', input ?? {});
+      },
       providers() {
-        return request('provider.list');
+        return request('provider.list') as Promise<readonly ClientProviderInfo[]>;
       },
       models(filter?: RuntimeModelListFilter) {
         return request('model.list', filter);
@@ -1084,6 +1105,17 @@ export function createRuntimeDaemonClient(
       },
     },
     daemon: {
+      async shutdown() {
+        try {
+          await request('runtime.shutdown');
+        } catch (error: unknown) {
+          if (error instanceof Error && 'code' in error && error.code === 'conflict') {
+            throw Object.assign(new Error(error.message, { cause: error }), { code: 'busy' as const });
+          }
+          throw error;
+        }
+        return { accepted: true };
+      },
       inspect() {
         return request('daemon.management.get').then((value) => {
           const state = value as RuntimeDaemonManagementStateWire;
@@ -1303,6 +1335,78 @@ function subscribeToDaemonEvents(
   }, (event) => {
     deliverRuntimeEvent(event, listener);
   });
+}
+
+async function observeDaemonSessionView(
+  transport: RuntimeDaemonClientTransport,
+  sessionId: string,
+  listener: (view: ClientSessionView) => void,
+): Promise<ClientObservation> {
+  const subscriptionId = `view_${randomUUID()}`;
+  let closed = false;
+  let ready = false;
+  let latest: ClientSessionView | undefined;
+  let previous: ClientSessionView | undefined;
+  let connectionId: string | undefined;
+  let lifecycle: RuntimeSubscription | undefined;
+  const deliver = (view: ClientSessionView): void => {
+    const previousItems = new Map(previous?.items.map((item) => [item.id, item]));
+    const items = view.items.map((item) => {
+      const unchanged = previousItems.get(item.id);
+      return unchanged && isDeepStrictEqual(unchanged, item) ? unchanged : item;
+    });
+    const sameItems = previous?.items.length === items.length && items.every((item, index) => item === previous?.items[index]);
+    previous = { ...view, items: sameItems ? previous!.items : items };
+    listener(previous);
+  };
+  const local = transport.subscribe((notification) => {
+    if (closed || notification.method !== 'session.view') return;
+    const payload = requireRecord(notification.params);
+    if (payload.subscriptionId !== subscriptionId) return;
+    const view = requireRecord(payload.view) as unknown as ClientSessionView;
+    if (view.session.id !== sessionId) throw new Error('Session view identity did not match its subscription.');
+    if (ready) {
+      try { deliver(view); }
+      catch (error: unknown) {
+        close();
+        emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Session observer failed and was detached.', detail: error });
+      }
+    }
+    else latest = view;
+  });
+  lifecycle = transport.subscribeLifecycle?.((state) => {
+    if (state.state === 'connected' && (connectionId === undefined || connectionId === state.connectionId)) {
+      connectionId = state.connectionId;
+      return;
+    }
+    closed = true;
+    local.close();
+    lifecycle?.close();
+    latest = undefined;
+    previous = undefined;
+  });
+  const close = (): void => {
+    if (closed) { lifecycle?.close(); return; }
+    closed = true;
+    local.close();
+    lifecycle?.close();
+    latest = undefined;
+    previous = undefined;
+    void transport.request('session.view.close', { subscriptionId }).catch((error: unknown) => {
+      emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Unable to release the remote Session observation.', detail: error });
+    });
+  };
+  try {
+    const response = requireRecord(await transport.request('session.view.observe', { sessionId, subscriptionId }));
+    if (closed) throw new Error('Connection closed while opening the Session view.');
+    deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
+    latest = undefined;
+    ready = true;
+    return { close };
+  } catch (error: unknown) {
+    close();
+    throw error;
+  }
 }
 
 async function observeDaemonSession(

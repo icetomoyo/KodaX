@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
 
 // ── Runtime environment defaults ──
 // NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
@@ -2029,81 +2030,13 @@ async function createDaemonOwnedExtensionRuntime(configHome: string): Promise<{
   readonly runtime: ReturnType<typeof createExtensionRuntime>;
   readonly hotReload: IntegrationHotReloadHandle;
 }> {
-  const config = prepareRuntimeConfig();
-  let configuredPaths: readonly string[] = [];
-  let configuredMcpServers: Parameters<
-    typeof registerConfiguredMcpCapabilityProvider
-  >[1] = {};
-  try {
-    configuredPaths = readExtensionsIntegration(configHome).document.paths;
-  } catch {
-    // Invalid optional integration config is represented by the controller's
-    // cold-start diagnostic and must not make the daemon unavailable.
-  }
-  try {
-    configuredMcpServers = readMcpIntegration(configHome).document.servers;
-  } catch {
-    // See the Extension-domain note above.
-  }
-  const configured = Array.isArray(configuredPaths)
-    ? configuredPaths
-        .filter(
-          (value): value is string =>
-            typeof value === 'string' && value.trim().length > 0,
-        )
-        .map((value) =>
-          path.isAbsolute(value) ? value : path.resolve(configHome, value),
-        )
-    : [];
-  const discovered = await discoverDefaultExtensions();
-  const active = await excludeExtensionPathsByEntrypoint(
-    await dedupeExtensionPathsByEntrypoint(discovered),
-    await dedupeExtensionPathsByEntrypoint(configured),
-  );
-  const configuredOnly = await dedupeExtensionPathsByEntrypoint(configured);
-  const runtime = createExtensionRuntime({
-    config: {
-      ...config,
-      extensions: configured,
-      mcpServers: configuredMcpServers,
-    },
-  });
-  await registerConfiguredMcpCapabilityProvider(runtime, configuredMcpServers, {
-    reverse: buildMcpReverseCapabilities({
-      cwd: process.cwd(),
-      enableElicitation: false,
-    }),
-  });
-  const loader = runtime as typeof runtime & {
-    loadExtensions(
-      paths: string[],
-      options?: {
-        continueOnError?: boolean;
-        loadSource?: 'discovery' | 'config';
-      },
-    ): Promise<void>;
-  };
-  await loader.loadExtensions(active, {
-    continueOnError: true,
-    loadSource: 'discovery',
-  });
-  await loader.loadExtensions(configuredOnly, {
-    continueOnError: true,
-    loadSource: 'config',
-  });
-  runtime.activate();
-  const hotReload = await startIntegrationHotReload({
-    runtime,
+  const owned = await createHostOwnedExtensionRuntime(
     configHome,
-    mcpOptions: {
-      reverse: buildMcpReverseCapabilities({
-        cwd: process.cwd(),
-        enableElicitation: false,
-      }),
-    },
-    onEvent: (message) => console.error(chalk.dim(`[integrations] ${message}`)),
-  });
-  return { runtime, hotReload };
+    prepareRuntimeConfig(),
+    (message) => console.error(chalk.dim(`[integrations] ${message}`)),
+  );
+  owned.runtime.activate();
+  return owned;
 }
 
 async function stopDaemonCommand(input: {

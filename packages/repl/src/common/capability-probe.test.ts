@@ -19,6 +19,7 @@ import { probeProviderReasoningEfforts } from './capability-probe.js';
 // efforts listed in `rejects`, and throws for the efforts in `errors`.
 function fakeProvider(rejects: string[], errors: string[] = []): KodaXBaseProvider {
   return {
+    getModel: () => 'm',
     stream: vi.fn(async (_messages, _tools, _system, reasoning, streamOptions) => {
       const effort = (reasoning as { effort?: string })?.effort ?? '';
       if (errors.includes(effort)) {
@@ -53,8 +54,8 @@ describe('probeProviderReasoningEfforts', () => {
       { effort: 'xhigh', status: 'rejected' },
       { effort: 'max', status: 'rejected' },
     ]);
-    expect(recordRejectedEffortMock).toHaveBeenCalledWith('zhipu-coding', 'glm-5.2', 'xhigh', 'probed', 'T0');
-    expect(recordRejectedEffortMock).toHaveBeenCalledWith('zhipu-coding', 'glm-5.2', 'max', 'probed', 'T0');
+    expect(recordRejectedEffortMock).toHaveBeenCalledWith('zhipu-coding', 'glm-5.2', 'xhigh', 'probed', 'T0', undefined);
+    expect(recordRejectedEffortMock).toHaveBeenCalledWith('zhipu-coding', 'glm-5.2', 'max', 'probed', 'T0', undefined);
     expect(recordRejectedEffortMock).toHaveBeenCalledTimes(2);
   });
 

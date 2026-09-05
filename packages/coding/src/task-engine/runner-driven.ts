@@ -117,6 +117,7 @@ import type {
 import type { ReasoningPlan } from '../reasoning.js';
 import {
   applyFollowupEscalationToOptions,
+  resolveReasoningMode,
 } from '../reasoning.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
@@ -2087,6 +2088,24 @@ async function runManagedTaskViaRunnerInner(
     },
     thinkingLevel: resolveInitialRuntimeThinkingLevel(options),
   });
+  options.sessionControl?._attach({
+    setProvider: (provider) => {
+      options.provider = provider;
+      runtimeSessionState.modelSelection.provider = provider;
+    },
+    setModel: (model) => {
+      options.model = model;
+      options.modelOverride = model;
+      runtimeSessionState.modelSelection.model = model;
+    },
+    setReasoning: (mode, reasoning) => {
+      options.reasoningMode = mode;
+      options.effort = reasoning?.effort;
+      if (reasoning !== undefined) options.thinking = reasoning.thinking;
+      runtimeSessionState.thinkingLevel = options.effort
+        ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
+    },
+  });
   const userMessageContent = buildPromptMessageContent(
     promptWithOverlay,
     options.context?.inputArtifacts,
@@ -2144,7 +2163,7 @@ async function runManagedTaskViaRunnerInner(
     resolvedContextCapacity,
     contextTokenSnapshotRef,
     activeToolDefinitions: entryAgent.tools,
-    reasoning: resolveManagedProviderReasoning(options, entryAgent),
+    get reasoning() { return resolveManagedProviderReasoning(options, entryAgent); },
     canonicalManagedContext: () => {
       const snapshot = captureManagedRunContext();
       pendingCompactedRuntimeContext = snapshot.runtimeFingerprint;

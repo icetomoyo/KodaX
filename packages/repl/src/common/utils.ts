@@ -595,9 +595,10 @@ function pushUniqueEffortDisplay(
 export function getProviderReasoningEffortOptions(
   provider: string,
   model?: string,
+  configHome?: string,
 ): string[] {
   const values = ['auto'];
-  const capability = resolveReasoningProfileForDisplay(provider, model);
+  const capability = resolveReasoningProfileForDisplay(provider, model, configHome);
   const presets = capability?.supportedEfforts?.filter(
     (preset) => preset.isUserVisible !== false,
   );
@@ -705,6 +706,7 @@ function legacyReasoningModeToEffortDisplay(
 function resolveReasoningProfileForDisplay(
   provider: string,
   model: string | undefined,
+  configHome?: string,
 ): KodaXReasoningProfile | undefined {
   const modelId = model ?? getProviderModel(provider);
   if (!modelId) {
@@ -718,7 +720,7 @@ function resolveReasoningProfileForDisplay(
   // by this provider/model are removed so the cycle, /effort options, and the
   // status label all stop offering them (single funnel for every display
   // consumer).
-  return narrowReasoningProfile(profile, getCachedRejectedEfforts(provider, modelId));
+  return narrowReasoningProfile(profile, getCachedRejectedEfforts(provider, modelId, configHome));
 }
 
 export function formatReasoningEffortStatusLabel(input: {
