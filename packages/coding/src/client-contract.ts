@@ -54,6 +54,12 @@ export interface KodaXProductClient {
     read(sessionId: string, inputId: string): Promise<ClientInputAcceptance | null>;
     withdraw(sessionId: string, inputId: string): Promise<ClientSubmitInput>;
   };
+  readonly runs: {
+    /** Current lifecycle facts of one Run; internal stages stay internal. */
+    read(runId: string): Promise<ClientRunStatus>;
+    /** Request a stop; accepted only means the durable Stop request was created. */
+    stop(runId: string): Promise<ClientRunStopReceipt>;
+  };
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */
     read(): Promise<ClientConfig>;
@@ -256,6 +262,33 @@ export interface ClientQueuedInput {
   /** Bounded display preview; withdraw returns the complete original text. */
   readonly text: string;
   readonly enqueuedAt: number;
+}
+
+/** User-explainable lifecycle facts; accepting a Stop never implies them. */
+export interface ClientRunStatus {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly phase: string;
+  readonly startedAt?: string;
+  readonly error?: string;
+  readonly stop?: {
+    readonly requestedAt: string;
+    readonly state: string;
+    readonly outcome: string;
+    readonly reason: string;
+    readonly resolvedAt?: string;
+  };
+}
+
+/** Stop acceptance is distinct from the Run's real terminal outcome. */
+export interface ClientRunStopReceipt {
+  readonly runId: string;
+  readonly sessionId: string;
+  /** True only when this call durably created the Stop request. */
+  readonly accepted: boolean;
+  readonly state: string;
+  readonly outcome: string;
+  readonly phase: string;
 }
 
 export interface ClientSessionSettings {

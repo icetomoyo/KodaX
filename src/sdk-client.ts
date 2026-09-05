@@ -65,6 +65,10 @@ export async function connectKodaXClient(
       read: (sessionId, inputId) => runtime.runs.getInput(sessionId, inputId),
       withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId),
     },
+    runs: {
+      read: (runId) => runtime.runs.get(runId),
+      stop: (runId) => runtime.runs.abort(runId),
+    },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),
       patch: async (patch) => toClientConfig(await runtime.config.patch(patch)),
