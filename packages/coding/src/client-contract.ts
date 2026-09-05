@@ -228,10 +228,13 @@ export interface ClientCreateSessionInput {
 }
 
 export interface ClientSubmitInput {
-  readonly delivery?: 'immediate' | 'after_turn';
+  /** 'steer' and 'redirect' additionally require targetRunId. */
+  readonly delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
   readonly sessionId: string;
   readonly inputId: string;
   readonly text: string;
+  /** The only Run a 'steer' or 'redirect' delivery may act on. */
+  readonly targetRunId?: string;
 }
 
 /** Identity of an accepted input in the current Host, not a completion receipt. */

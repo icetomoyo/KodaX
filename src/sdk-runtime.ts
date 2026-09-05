@@ -3914,6 +3914,12 @@ const RUNTIME_TRANSCRIPT_SNAPSHOT_DIR_PREFIX =
   "kodax-transcript-snapshots-";
 const RUNTIME_ACTOR_CANCELLATION_FINALIZATION_MS = 5_000;
 const RUNTIME_ACTOR_FINALIZATION_MS = 30_000;
+/**
+ * Durable Stop reason marking a user redirect: the old execution is cancelled
+ * but the explicitly requested follow-up input keeps its queue continuation.
+ * Distinct from a plain stop, which never auto-continues queued work.
+ */
+export const RUNTIME_REDIRECT_STOP_REASON = "runtime run redirected by user";
 const RUNTIME_ACTOR_REPAIR_INITIAL_RETRY_MS = 100;
 const RUNTIME_ACTOR_REPAIR_MAX_RETRY_MS = 30_000;
 const RUNTIME_SESSION_CAPTURE_RETRY_DELAYS_MS = [5, 15] as const;
@@ -8553,17 +8559,23 @@ function createRuntimeRunService(deps: {
   // Any completed Run frees the Session, so queued product inputs continue
   // even when the finished Run was started through a legacy entry. An
   // accepted stop is an explicit user intent: never auto-continue the queue,
-  // even when the executor still reports a completed phase. Redirect-style
-  // continuation is T07 and stays out of this drain. The executor Promise
-  // fact must also exist: the terminal-callback fallback can settle a Run
-  // whose Promise was lost, and starting the next batch then would race the
-  // unconfirmed old execution.
+  // even when the executor still reports a completed phase — except a stop
+  // whose durable reason records a user redirect, which explicitly asked to
+  // continue with the retained follow-up input once the old Run settles.
+  // Redirect-style steering is T07; plain-stop continuation never happens.
+  // The executor Promise fact must also exist: the terminal-callback
+  // fallback can settle a Run whose Promise was lost, and starting the
+  // next batch then would race the unconfirmed old execution.
   const maybeDrainProductQueue = (record: RuntimeRunRecord): void => {
+    const redirected = record.stop?.reason === RUNTIME_REDIRECT_STOP_REASON;
+    const stopAllowsQueue = record.stop === undefined || redirected;
+    const phaseContinuesQueue = record.phase === "completed"
+      || (redirected && isTerminalRunPhase(record.phase));
     if (
       record.admittedSessionContext?.runtimeInfo?.temporary !== true
-      && record.stop === undefined
+      && stopAllowsQueue
       && executorPromiseSettled(record)
-      && record.phase === "completed"
+      && phaseContinuesQueue
       && !deps.isClosed()
     ) {
       void drainProductInputs(record.sessionId).catch((error: unknown) => emitKodaXDiagnostic({
@@ -10162,6 +10174,7 @@ function createRuntimeRunService(deps: {
             delivery.record.deliveredAt = deliveredAt;
             delivery.record.entryId = delivery.entryId;
             delete delivery.record.queueMessageId;
+            productQueue.markSubmitted(record.sessionId, delivery.record.inputId);
           }
         },
       );
@@ -10642,33 +10655,338 @@ function createRuntimeRunService(deps: {
     } as RuntimeTrustedStartRunInput, "runtime.runs.start");
   });
 
+  const submitInterruptInput = (
+    input: RuntimeTrustedSubmitInput,
+    afterRun: RuntimeRunRecord,
+  ) => {
+    if (
+      afterRun.actorSession === undefined
+      && isActiveRunPhase(afterRun.phase)
+      && activeRunBySession.get(input.sessionId) === afterRun.runId
+    ) {
+      return Promise.resolve({
+        accepted: false,
+        delivery: input.delivery,
+        sessionId: input.sessionId,
+        afterRunId: input.afterRunId,
+        reason: "unsupported_capability",
+      } as const);
+    }
+    if (!afterRun.interruptInputOpen) {
+      return Promise.resolve({
+        accepted: false,
+        delivery: input.delivery,
+        sessionId: input.sessionId,
+        afterRunId: input.afterRunId,
+        reason: "interrupt_window_closed",
+      } as const);
+    }
+    if (
+      !isActiveRunPhase(afterRun.phase) ||
+      activeRunBySession.get(input.sessionId) !== afterRun.runId
+    ) {
+      return Promise.resolve({
+        accepted: false,
+        delivery: input.delivery,
+        sessionId: input.sessionId,
+        afterRunId: input.afterRunId,
+        reason: "stale_run",
+      } as const);
+    }
+    if (input.credential !== undefined || input.hostTools !== undefined) {
+      return Promise.reject(new Error(
+        "runtime.runs.submitInput interrupt delivery cannot replace active-run credential or host-tool bindings",
+      ));
+    }
+    return (async () => {
+      const normalized = normalizeRuntimeRunInput(
+        { sessionId: input.sessionId, input: input.input },
+        deps.artifacts,
+        "runtime.runs.submitInput",
+      );
+      const persistedInput = structuredClone(input.input);
+      const inputId = input.trustedInputId ?? createInputId();
+      if (
+        afterRun.interruptInputs.some(
+          (candidate) => candidate.inputId === inputId,
+        )
+      ) {
+        throw createRuntimeConflictError(
+          `Runtime interrupt input already exists: ${inputId}`,
+          0,
+        );
+      }
+      const queueMessageId = enqueueWithArtifacts({
+        sessionId: input.sessionId,
+        content: normalized.prompt,
+        inputArtifacts: normalized.inputArtifacts,
+        provider: afterRun.provider,
+        ...(afterRun.model !== undefined ? { model: afterRun.model } : {}),
+      });
+      const queuedAt = new Date().toISOString();
+      const interrupt: RuntimeInterruptInputRecord = {
+        inputId,
+        afterRunId: input.afterRunId,
+        delivery: "interrupt",
+        state: "queued",
+        contentPreview: previewQueuedInput(normalized.prompt),
+        queuedAt,
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
+        input: persistedInput,
+        queueMessageId,
+      };
+      afterRun.interruptInputs.push(interrupt);
+      publishRunUpdate(afterRun);
+      deps.bus.emit(
+        "run.input.queued",
+        {
+          input: runtimeInterruptInputStatus(interrupt),
+        },
+        {
+          sessionId: afterRun.sessionId,
+          runId: afterRun.runId,
+          ...(afterRun.turnId !== undefined
+            ? { turnId: afterRun.turnId }
+            : {}),
+        },
+      );
+      return {
+        accepted: true as const,
+        delivery: "interrupt" as const,
+        inputId,
+        runId: afterRun.runId,
+        sessionId: input.sessionId,
+        afterRunId: input.afterRunId,
+        sessionOrder: afterRun.sessionOrder,
+      };
+    })();
+  };
+
+  const requireActiveTargetRun = (input: ClientSubmitInput): RuntimeRunRecord => {
+    const target = input.targetRunId === undefined
+      ? undefined
+      : deps.runs.get(input.targetRunId);
+    if (target === undefined || target.sessionId !== input.sessionId) {
+      throw createRuntimeConflictError(
+        "Steer or redirect target does not belong to this Session.",
+        0,
+      );
+    }
+    if (
+      !isActiveRunPhase(target.phase)
+      || activeRunBySession.get(input.sessionId) !== target.runId
+    ) {
+      throw createRuntimeConflictError(
+        "Steer or redirect target is no longer the active Run of this Session.",
+        0,
+      );
+    }
+    return target;
+  };
+
+  const acceptSteerInput = async (
+    input: ClientSubmitInput,
+  ): Promise<ClientInputAcceptance> => {
+    const target = requireActiveTargetRun(input);
+    if (target.actorSession === undefined) {
+      throw createRuntimeConflictError(
+        "Steer is not supported by this Run.",
+        0,
+      );
+    }
+    if (!target.interruptInputOpen) {
+      throw createRuntimeConflictError(
+        "Steer window is closed for this Run.",
+        0,
+      );
+    }
+    const result = await submitInterruptInput({
+      sessionId: input.sessionId,
+      afterRunId: input.targetRunId!,
+      delivery: "interrupt",
+      input: { type: "text", text: input.text },
+      trustedInputId: input.inputId,
+    }, target);
+    if (!result.accepted) {
+      throw createRuntimeConflictError(
+        `Steer was not accepted (${result.reason}).`,
+        0,
+      );
+    }
+    return productQueue.recordAccepted(input, target.runId, "queued");
+  };
+
+  const acceptRedirectInput = async (
+    input: ClientSubmitInput,
+  ): Promise<ClientInputAcceptance> => {
+    const target = requireActiveTargetRun(input);
+    await deps.sessionAdmission.loadExecutable(input.sessionId);
+    // Receive the follow-up first, then cancel the old execution; the
+    // redirect Stop reason lets the settled Run continue this queue.
+    const queuedInput = productQueue.enqueue(input);
+    await abortRun(target.runId, { redirect: true });
+    return queuedInput;
+  };
+
+  const abortRun = async (
+    runId: string,
+    options?: { readonly redirect?: boolean },
+  ): Promise<RuntimeRunStopReceipt> => {
+    const reason = options?.redirect === true
+      ? RUNTIME_REDIRECT_STOP_REASON
+      : "runtime run aborted";
+    deps.ensureOpen();
+    const run = deps.runs.get(runId);
+    const persisted = deps.persistence.loadRunStatus(runId);
+    const sessionId = run?.sessionId ?? persisted?.status.sessionId;
+    if (sessionId === undefined) {
+      throw new Error(`Runtime run not found: ${runId}`);
+    }
+    await deps.sessionAdmission.assertRunAccess(sessionId);
+    if (run !== undefined) assertRuntimeOwnsRun(run, deps.runOwner);
+    if (
+      run?.terminalEmitted === true
+      && persisted?.owner?.ownerId === deps.runOwner.ownerId
+    ) {
+      // A best-effort terminal status write may fail after the local terminal
+      // fact and event were committed. Never let an older durable unknown
+      // Stop regress that stronger in-process fact or redeliver effects.
+      return runtimeRunStopReceipt({
+        accepted: false,
+        effectDeliveryAllowed: false,
+        status: statusFromRecord(run),
+        revision: persisted.revision,
+      });
+    }
+    if (
+      run?.executorTerminalSignal !== undefined
+      && !run.terminalEmitted
+      && canApplyExecutorTerminalSignal(run)
+    ) {
+      cancelRun(run, reason, false);
+      const terminal = deps.persistence.loadRunStatus(runId);
+      return runtimeRunStopReceipt({
+        accepted: false,
+        effectDeliveryAllowed: false,
+        status: terminal?.status ?? statusFromRecord(run),
+        revision: terminal?.revision ?? 0,
+      });
+    }
+    const stop = deps.persistence.requestRunStop(
+      runId,
+      reason,
+      run?.ownedByRuntime === true ? deps.runOwner.ownerId : undefined,
+    );
+    if (run === undefined) return runtimeRunStopReceipt(stop);
+    applyAuthoritativeRunStatus(run, stop.status);
+    if (stop.status.stop !== undefined) {
+      run.actorFinalizationAbortController?.abort(
+        new Error(reason),
+      );
+    }
+    if (stop.status.stop?.state === "unknown") {
+      delete run.actorHealthBaseState;
+    }
+    const deliverCancellationEffects =
+      stop.accepted || stop.effectDeliveryAllowed;
+    if (deliverCancellationEffects) {
+      const wasQueued = stop.status.phase === "cancelled";
+      if (wasQueued) {
+        removeQueuedRun(queueBySession, run);
+      }
+      releaseAbortSignalSubscription(run);
+      run.running?.abort(new Error(reason));
+      run.abortController?.abort(new Error(reason));
+      const actorCancellation = requestManagedActorCancellation(
+        run,
+        reason,
+      );
+      void actorCancellation.then((attempt) => {
+        if (attempt.error === undefined) finishRecoveredUnconfirmedRun(run);
+      });
+      deps.permissions.rejectForRun(run.runId, reason);
+      deps.userInputs.rejectForRun(run.runId, reason);
+      run.start?.options.guardrails
+        ?.find(isRuntimeAutoModeGuardrail)
+        ?.clearAllowedCalls();
+      run.interruptInputOpen = false;
+      terminalizeQueuedInterruptInputs(run);
+      if (stop.accepted && wasQueued) {
+        deps.bus.emit("run.cancelled", stop.status, {
+          sessionId: run.sessionId,
+          runId: run.runId,
+          ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
+        });
+        const result: RuntimeRunResult = {
+          runId: run.runId,
+          sessionId: run.sessionId,
+          phase: run.phase,
+          ...(run.failureDetail !== undefined
+            ? { failureDetail: run.failureDetail }
+            : {}),
+          ...(run.terminal !== undefined ? { terminal: run.terminal } : {}),
+          ...(run.stop !== undefined ? { stop: run.stop } : {}),
+        };
+        resolveRunStart(run, result);
+        releaseActiveQueueRoute(run);
+        releaseActiveRun(run);
+        if (!deps.isClosed()) drainNext(run.sessionId);
+      } else if (stop.accepted) {
+        deps.bus.emit("run.updated", stop.status, {
+          sessionId: run.sessionId,
+          runId: run.runId,
+          ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
+        });
+      }
+    }
+    return runtimeRunStopReceipt(stop);
+  };
+
   return {
     start,
     queuedInputs: (sessionId) => productQueue.list(sessionId),
 
     async acceptInput(input) {
       deps.ensureOpen();
+      const deliveries = ["immediate", "after_turn", "steer", "redirect"] as const;
       if (
         typeof input.sessionId !== "string" || !input.sessionId.trim()
         || typeof input.inputId !== "string" || !input.inputId.trim()
         || typeof input.text !== "string" || !input.text.trim()
-        || (input.delivery !== undefined && input.delivery !== "immediate" && input.delivery !== "after_turn")
+        || (input.delivery !== undefined && !deliveries.includes(input.delivery))
+        || ((input.delivery === "steer" || input.delivery === "redirect")
+          && (typeof input.targetRunId !== "string" || !input.targetRunId.trim()))
       ) {
-        throw createRuntimeConflictError(
-          "Input requires a session ID, input ID and non-empty text.",
+        const needsTarget = input.delivery === "steer" || input.delivery === "redirect";
+        throw createRuntimeConflictError(needsTarget
+          ? "Steer or redirect input requires a session ID, input ID, non-empty text and a target Run."
+          : "Input requires a session ID, input ID and non-empty text.",
           0,
         );
       }
       const productInput: ClientSubmitInput = {
         sessionId: input.sessionId, inputId: input.inputId, text: input.text,
         ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.targetRunId !== undefined ? { targetRunId: input.targetRunId } : {}),
       };
       return deps.sessionOperations.run(input.sessionId, async () => {
         deps.ensureOpen();
         const duplicate = productQueue.find(productInput);
         if (duplicate) return duplicate;
         const accepted = findAcceptedInput(productInput.sessionId, productInput.inputId);
-        if (accepted === undefined && productInput.delivery === "after_turn" && activeRunBySession.has(input.sessionId)) {
+        if (accepted !== undefined) {
+          if (accepted.productInput?.digest !== inputIntentDigest(productInput)) {
+            throw createRuntimeConflictError("Input ID already belongs to a different intent.", 0);
+          }
+          return { sessionId: accepted.sessionId, inputId: productInput.inputId, runId: accepted.runId, state: "submitted" as const };
+        }
+        if (productInput.delivery === "steer") {
+          return acceptSteerInput(productInput);
+        }
+        if (productInput.delivery === "redirect") {
+          return acceptRedirectInput(productInput);
+        }
+        if (productInput.delivery === "after_turn" && activeRunBySession.has(input.sessionId)) {
           await deps.sessionAdmission.loadExecutable(input.sessionId);
           return productQueue.enqueue(productInput);
         }
@@ -10705,106 +11023,7 @@ function createRuntimeRunService(deps: {
       }
       await assertRunRecordAccess(afterRun, true);
       if (input.delivery === "interrupt") {
-        if (
-          afterRun.actorSession === undefined
-          && isActiveRunPhase(afterRun.phase)
-          && activeRunBySession.get(input.sessionId) === afterRun.runId
-        ) {
-          return {
-            accepted: false,
-            delivery: input.delivery,
-            sessionId: input.sessionId,
-            afterRunId: input.afterRunId,
-            reason: "unsupported_capability",
-          };
-        }
-        if (!afterRun.interruptInputOpen) {
-          return {
-            accepted: false,
-            delivery: input.delivery,
-            sessionId: input.sessionId,
-            afterRunId: input.afterRunId,
-            reason: "interrupt_window_closed",
-          };
-        }
-        if (
-          !isActiveRunPhase(afterRun.phase) ||
-          activeRunBySession.get(input.sessionId) !== afterRun.runId
-        ) {
-          return {
-            accepted: false,
-            delivery: input.delivery,
-            sessionId: input.sessionId,
-            afterRunId: input.afterRunId,
-            reason: "stale_run",
-          };
-        }
-        if (input.credential !== undefined || input.hostTools !== undefined) {
-          throw new Error(
-            "runtime.runs.submitInput interrupt delivery cannot replace active-run credential or host-tool bindings",
-          );
-        }
-        const normalized = normalizeRuntimeRunInput(
-          { sessionId: input.sessionId, input: input.input },
-          deps.artifacts,
-          "runtime.runs.submitInput",
-        );
-        const persistedInput = structuredClone(input.input);
-        const trusted = input as RuntimeTrustedSubmitInput;
-        const inputId = trusted.trustedInputId ?? createInputId();
-        if (
-          afterRun.interruptInputs.some(
-            (candidate) => candidate.inputId === inputId,
-          )
-        ) {
-          throw createRuntimeConflictError(
-            `Runtime interrupt input already exists: ${inputId}`,
-            0,
-          );
-        }
-        const queueMessageId = enqueueWithArtifacts({
-          sessionId: input.sessionId,
-          content: normalized.prompt,
-          inputArtifacts: normalized.inputArtifacts,
-          provider: afterRun.provider,
-          ...(afterRun.model !== undefined ? { model: afterRun.model } : {}),
-        });
-        const queuedAt = new Date().toISOString();
-        const interrupt: RuntimeInterruptInputRecord = {
-          inputId,
-          afterRunId: input.afterRunId,
-          delivery: "interrupt",
-          state: "queued",
-          contentPreview: previewQueuedInput(normalized.prompt),
-          queuedAt,
-          ...(trusted.origin !== undefined ? { origin: trusted.origin } : {}),
-          input: persistedInput,
-          queueMessageId,
-        };
-        afterRun.interruptInputs.push(interrupt);
-        publishRunUpdate(afterRun);
-        deps.bus.emit(
-          "run.input.queued",
-          {
-            input: runtimeInterruptInputStatus(interrupt),
-          },
-          {
-            sessionId: afterRun.sessionId,
-            runId: afterRun.runId,
-            ...(afterRun.turnId !== undefined
-              ? { turnId: afterRun.turnId }
-              : {}),
-          },
-        );
-        return {
-          accepted: true,
-          delivery: "interrupt",
-          inputId,
-          runId: afterRun.runId,
-          sessionId: input.sessionId,
-          afterRunId: input.afterRunId,
-          sessionOrder: afterRun.sessionOrder,
-        };
+        return submitInterruptInput(input, afterRun);
       }
 
       const queuesBehindDurabilityRepair =
@@ -10998,112 +11217,9 @@ function createRuntimeRunService(deps: {
     },
 
     async abort(runId) {
-      deps.ensureOpen();
-      const run = deps.runs.get(runId);
-      const persisted = deps.persistence.loadRunStatus(runId);
-      const sessionId = run?.sessionId ?? persisted?.status.sessionId;
-      if (sessionId === undefined) {
-        throw new Error(`Runtime run not found: ${runId}`);
-      }
-      await deps.sessionAdmission.assertRunAccess(sessionId);
-      if (run !== undefined) assertRuntimeOwnsRun(run, deps.runOwner);
-      if (
-        run?.terminalEmitted === true
-        && persisted?.owner?.ownerId === deps.runOwner.ownerId
-      ) {
-        // A best-effort terminal status write may fail after the local terminal
-        // fact and event were committed. Never let an older durable unknown
-        // Stop regress that stronger in-process fact or redeliver effects.
-        return runtimeRunStopReceipt({
-          accepted: false,
-          effectDeliveryAllowed: false,
-          status: statusFromRecord(run),
-          revision: persisted.revision,
-        });
-      }
-      if (
-        run?.executorTerminalSignal !== undefined
-        && !run.terminalEmitted
-        && canApplyExecutorTerminalSignal(run)
-      ) {
-        cancelRun(run, "runtime run aborted", false);
-        const terminal = deps.persistence.loadRunStatus(runId);
-        return runtimeRunStopReceipt({
-          accepted: false,
-          effectDeliveryAllowed: false,
-          status: terminal?.status ?? statusFromRecord(run),
-          revision: terminal?.revision ?? 0,
-        });
-      }
-      const stop = deps.persistence.requestRunStop(
-        runId,
-        "runtime run aborted",
-        run?.ownedByRuntime === true ? deps.runOwner.ownerId : undefined,
-      );
-      if (run === undefined) return runtimeRunStopReceipt(stop);
-      applyAuthoritativeRunStatus(run, stop.status);
-      if (stop.status.stop !== undefined) {
-        run.actorFinalizationAbortController?.abort(
-          new Error("runtime run aborted"),
-        );
-      }
-      if (stop.status.stop?.state === "unknown") {
-        delete run.actorHealthBaseState;
-      }
-      const deliverCancellationEffects =
-        stop.accepted || stop.effectDeliveryAllowed;
-      if (deliverCancellationEffects) {
-        const wasQueued = stop.status.phase === "cancelled";
-        if (wasQueued) {
-          removeQueuedRun(queueBySession, run);
-        }
-        releaseAbortSignalSubscription(run);
-        run.running?.abort(new Error("runtime run aborted"));
-        run.abortController?.abort(new Error("runtime run aborted"));
-        const actorCancellation = requestManagedActorCancellation(
-          run,
-          "runtime run aborted",
-        );
-        void actorCancellation.then((attempt) => {
-          if (attempt.error === undefined) finishRecoveredUnconfirmedRun(run);
-        });
-        deps.permissions.rejectForRun(run.runId, "runtime run aborted");
-        deps.userInputs.rejectForRun(run.runId, "runtime run aborted");
-        run.start?.options.guardrails
-          ?.find(isRuntimeAutoModeGuardrail)
-          ?.clearAllowedCalls();
-        run.interruptInputOpen = false;
-        terminalizeQueuedInterruptInputs(run);
-        if (stop.accepted && wasQueued) {
-          deps.bus.emit("run.cancelled", stop.status, {
-            sessionId: run.sessionId,
-            runId: run.runId,
-            ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
-          });
-          const result: RuntimeRunResult = {
-            runId: run.runId,
-            sessionId: run.sessionId,
-            phase: run.phase,
-            ...(run.failureDetail !== undefined
-              ? { failureDetail: run.failureDetail }
-              : {}),
-            ...(run.terminal !== undefined ? { terminal: run.terminal } : {}),
-            ...(run.stop !== undefined ? { stop: run.stop } : {}),
-          };
-          resolveRunStart(run, result);
-          releaseActiveQueueRoute(run);
-          releaseActiveRun(run);
-          if (!deps.isClosed()) drainNext(run.sessionId);
-        } else if (stop.accepted) {
-          deps.bus.emit("run.updated", stop.status, {
-            sessionId: run.sessionId,
-            runId: run.runId,
-            ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
-          });
-        }
-      }
-      return runtimeRunStopReceipt(stop);
+      return abortRun(runId);
     },
+
 
     async setModel(runId, model) {
       deps.ensureOpen();

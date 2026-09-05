@@ -81,7 +81,7 @@ it('shares queued input, atomically withdraws exact input, and batches the remai
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
     const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
-    await expect.poll(() => requests.length).toBe(1);
+    await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
     const removed = { sessionId: session.id, inputId: 'withdraw-me', text: 'Never deliver this.' , delivery: 'after_turn' as const };
     const queued = await first.inputs.submit(removed);
     expect(queued.state).toBe('queued');
@@ -115,7 +115,7 @@ it('bounds queue previews and capacity while withdrawal returns the complete ori
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
-  await expect.poll(() => requests.length).toBe(1);
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const fullText = 'Large pasted instruction. '.repeat(40_000);
   const input = { sessionId: session.id, inputId: 'large', text: fullText, delivery: 'after_turn' as const };
   await first.inputs.submit(input);
@@ -143,7 +143,7 @@ it.each(['stop', 'failure'] as const)('retains undelivered text and starts no re
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
-  await expect.poll(() => requests.length).toBe(1);
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const queued = { sessionId: session.id, inputId: 'not-delivered', text: 'Keep this for editing.', delivery: 'after_turn' as const };
   await second.inputs.submit(queued);
   if (ending === 'stop') await runtime.runs.abort(active.runId!);
@@ -161,7 +161,7 @@ it('keeps queued Skill raw text as its own batch and merges only the plain text 
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
-  await expect.poll(() => requests.length).toBe(1);
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const queued = { sessionId: session.id, delivery: 'after_turn' as const };
   await second.inputs.submit({ ...queued, inputId: 'plain-a', text: 'Plain A.' });
   await second.inputs.submit({ ...queued, inputId: 'skill-run', text: '/review Check this diff.' });

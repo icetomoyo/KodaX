@@ -7,7 +7,7 @@ interface QueuedInputFact {
   readonly sessionId: string;
   readonly inputId: string;
   readonly digest: string;
-  readonly messageId: string;
+  readonly messageId?: string;
   /** Syntax-level only; trusted expansion happens at consumption (T37). */
   readonly skill: boolean;
   state: ClientInputAcceptance['state'];
@@ -26,7 +26,12 @@ function isSkillInvocationText(text: string): boolean {
 }
 
 export function inputIntentDigest(input: ClientSubmitInput): string {
-  return createHash('sha256').update(JSON.stringify([input.text, input.delivery ?? 'immediate'])).digest('hex');
+  // targetRunId is appended only when present so targetless inputs keep the
+  // digest formula that earlier Host builds persisted in Run statuses.
+  return createHash('sha256').update(JSON.stringify([
+    input.text, input.delivery ?? 'immediate',
+    ...(input.targetRunId !== undefined ? [input.targetRunId] : []),
+  ])).digest('hex');
 }
 
 /** Host admission bound; matches the REPL pending-input footer limit (packages/repl/src/ui/utils/pending-inputs.ts, a UI-internal constant not exported from that package). */
@@ -80,6 +85,28 @@ export class SessionInputQueue {
     return this.read(input.sessionId, input.inputId)!;
   }
 
+  /**
+   * Identity for an input accepted outside the body queue (a steer input
+   * lives in the target Run's interrupt record); keeps resubmission dedup.
+   */
+  recordAccepted(input: ClientSubmitInput, runId: string, state: ClientInputAcceptance['state']): ClientInputAcceptance {
+    const duplicate = this.find(input);
+    if (duplicate) return duplicate;
+    this.facts.set(this.key(input.sessionId, input.inputId), {
+      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input),
+      skill: false, state, runId,
+    });
+    this.changed(input.sessionId);
+    return this.read(input.sessionId, input.inputId)!;
+  }
+
+  markSubmitted(sessionId: string, inputId: string): void {
+    const fact = this.facts.get(this.key(sessionId, inputId));
+    if (!fact || fact.state !== 'queued') return;
+    fact.state = 'submitted';
+    this.changed(sessionId);
+  }
+
   list(sessionId: string): readonly ClientQueuedInput[] {
     return this.ordered(sessionId).map(({ input, enqueuedAt }) => ({
       inputId: input.inputId, text: queuePreview(input.text), enqueuedAt,
@@ -90,7 +117,9 @@ export class SessionInputQueue {
     const queued = this.queue.peek({ agentId: sessionId, mode: 'prompt', maxPriority: 'user' });
     const factByMessageId = new Map<string, QueuedInputFact>();
     for (const fact of this.facts.values()) {
-      if (fact.sessionId === sessionId && fact.state === 'queued') factByMessageId.set(fact.messageId, fact);
+      if (fact.sessionId === sessionId && fact.state === 'queued' && fact.messageId !== undefined) {
+        factByMessageId.set(fact.messageId, fact);
+      }
     }
     return queued.map((message) => {
       const fact = factByMessageId.get(message.id);
@@ -115,7 +144,7 @@ export class SessionInputQueue {
   submitBatch(sessionId: string, inputIds: readonly string[], runId: string): void {
     const facts = inputIds.map((inputId) => {
       const fact = this.facts.get(this.key(sessionId, inputId));
-      if (!fact || fact.state !== 'queued') throw conflict('Queued input is no longer available.');
+      if (!fact || fact.state !== 'queued' || fact.messageId === undefined) throw conflict('Queued input is no longer available.');
       return fact;
     });
     for (const fact of facts) {
@@ -128,7 +157,12 @@ export class SessionInputQueue {
 
   withdraw(sessionId: string, inputId: string): ClientSubmitInput {
     const fact = this.facts.get(this.key(sessionId, inputId));
-    if (!fact || fact.state !== 'queued') throw conflict('Input has already been submitted or withdrawn.');
+    if (fact?.messageId === undefined) {
+      throw conflict(fact
+        ? 'Input is bound to its target Run and cannot be withdrawn from the queue.'
+        : 'Input has already been submitted or withdrawn.');
+    }
+    if (fact.state !== 'queued') throw conflict('Input has already been submitted or withdrawn.');
     const [message] = this.queue.dequeue({ agentId: sessionId, mode: 'prompt', maxPriority: 'user', id: fact.messageId });
     if (!message) throw conflict('Input is already being submitted.');
     fact.state = 'withdrawn';

@@ -1691,11 +1691,19 @@ async function dispatchRuntimeDaemonRequest(
 
     case "input.submit": {
       const params = requireRecord(request.params);
+      const rawDelivery = params.delivery;
+      const delivery = rawDelivery === "immediate" || rawDelivery === "after_turn"
+        || rawDelivery === "steer" || rawDelivery === "redirect"
+        ? rawDelivery
+        : undefined;
       return runtime.runs.acceptInput({
         sessionId: requireStringField(params, "sessionId"),
         inputId: requireStringField(params, "inputId"),
         text: requireStringField(params, "text"),
-        ...(params.delivery === "after_turn" ? { delivery: "after_turn" as const } : {}),
+        ...(delivery !== undefined ? { delivery } : {}),
+        ...(params.targetRunId !== undefined
+          ? { targetRunId: requireStringField(params, "targetRunId") }
+          : {}),
       });
     }
     case "input.withdraw": {

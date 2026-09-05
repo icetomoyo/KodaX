@@ -281,7 +281,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 
   'input.submit': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn'] } }, ['sessionId', 'inputId', 'text']),
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] } }, ['sessionId', 'inputId', 'text']),
     result: objectSchema({ sessionId: stringSchema, inputId: stringSchema, runId: stringSchema, state: { type: 'string', enum: ['submitted', 'queued', 'withdrawn'] } }, ['sessionId', 'inputId', 'state']),
   },
   'input.withdraw': {
