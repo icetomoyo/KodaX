@@ -111,7 +111,7 @@ describe('F269 shared Runtime contracts', () => {
 
     const applied = await runtime.sessions.updateSettingsVersioned(
       session.id,
-      { model: 'model-a', agentMode: 'ama', autoModeEngine: 'rules' },
+      { model: 'model-a', agentMode: 'ama' },
       { expectedRevision: initial.revision },
     );
 

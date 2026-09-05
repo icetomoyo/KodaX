@@ -41,6 +41,7 @@ import {
   classifyRuntimeDaemonHealth,
   ensureRuntimeDaemonDirectories,
   readRuntimeDaemonLockOwner,
+  readRuntimeOwnerProcessStartIdentity,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
   type RuntimeDaemonHealthObservation,
@@ -321,6 +322,34 @@ type RuntimeDaemonHealthObserver = (
   paths: RuntimeDaemonPaths,
   options?: RuntimeDaemonHealthCheckOptions,
 ) => Promise<RuntimeDaemonHealthObservation>;
+
+/** A closed socket is not proof that the old Host has finished shutting down. */
+export async function waitForRuntimeDaemonOwnerExit(
+  owner: { readonly pid: number; readonly processStartIdentity?: string },
+  timeoutMs: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !owner.processStartIdentity) {
+    throw new Error('Cannot confirm Host exit without its exact process identity.');
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('Host exit timeout must be a positive integer.');
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      process.kill(owner.pid, 0);
+    } catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return;
+      throw new Error('Cannot verify whether the original Host exited.', { cause: error });
+    }
+    const identity = readRuntimeOwnerProcessStartIdentity(owner.pid);
+    if (identity !== undefined && identity !== owner.processStartIdentity) return;
+    if (Date.now() >= deadline) {
+      throw new Error(identity === undefined
+        ? 'Cannot verify the original Host process identity; retry startup after it exits.'
+        : 'The original Host is still running; retry startup after it exits.');
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
+  }
+}
 
 export async function acquireRuntimeDaemonProcessLease(
   options: RuntimeDaemonProcessLeaseOptions,

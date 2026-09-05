@@ -6,7 +6,7 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   ClientSession,
   ClientSessionSummary,
@@ -269,6 +269,7 @@ import {
 import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
+  waitForRuntimeDaemonOwnerExit,
   type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
 } from "./runtime-daemon/process.js";
@@ -299,6 +300,7 @@ import {
 } from "./runtime-daemon/transport.js";
 import {
   acquireRuntimeInlineOwner,
+  acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
@@ -816,7 +818,7 @@ function runtimeDaemonOwnerBootstrap(
 
 export interface ConnectKodaXRuntimeOptions {
   readonly profile?: string;
-  /** Attach-only by default; set true to start or reuse the local profile daemon. */
+  /** @deprecated Connect is passive. Use ensureKodaXRuntime for startup; true is rejected here. */
   readonly autoStart?: boolean;
   readonly endpoint?: string | RuntimeDaemonEndpoint;
   readonly transport?: RuntimeDaemonClientTransport;
@@ -3944,6 +3946,42 @@ export function createKodaXRuntime(
 export async function createKodaXRuntime(
   options: CreateKodaXRuntimeOptions = {},
 ): Promise<KodaXRuntime> {
+  if (options.sharedDaemonHost !== true || options.mode === "daemon") {
+    return createKodaXRuntimeInternal(options);
+  }
+  const runtimeId = options.daemonHostRuntimeId ?? `rt_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const sessionsDir = resolveRuntimeSessionsDir(options) ?? path.join(replApi.KODAX_DIR, "sessions");
+  const owner = acquireRuntimeSessionStorageOwner(sessionsDir, runtimeId);
+  let released = false;
+  const releaseOwner = (): void => {
+    if (released) return;
+    if (!releaseRuntimeDaemonLock(owner)) {
+      throw new Error("Unable to release the product Host Session storage owner; retry close.");
+    }
+    released = true;
+  };
+  try {
+    const runtime = await createKodaXRuntimeInternal({ ...options, daemonHostRuntimeId: runtimeId });
+    return {
+      ...runtime,
+      async close() {
+        await runtime.close();
+        releaseOwner();
+      },
+    };
+  } catch (error: unknown) {
+    try {
+      releaseOwner();
+    } catch (cleanupError: unknown) {
+      throw new AggregateError([error, cleanupError], "Product Host initialization and owner cleanup failed.");
+    }
+    throw error;
+  }
+}
+
+async function createKodaXRuntimeInternal(
+  options: CreateKodaXRuntimeOptions,
+): Promise<KodaXRuntime> {
   assertRuntimeTimeout(
     "permissionTimeoutMs",
     options.permissionTimeoutMs,
@@ -5090,7 +5128,17 @@ async function settleWithin(
 export async function connectKodaXRuntime(
   options: ConnectKodaXRuntimeOptions = {},
 ): Promise<KodaXDaemonRuntime> {
-  return connectKodaXRuntimeInternal(options, true);
+  if (options.autoStart === true) {
+    throw new Error("connectKodaXRuntime is passive; use ensureKodaXRuntime to start or update a Host.");
+  }
+  return connectKodaXRuntimeInternal(options, false);
+}
+
+/** Starts the product Host when absent and updates an idle older Host before attaching. */
+export async function ensureKodaXRuntime(
+  options: Omit<ConnectKodaXRuntimeOptions, "autoStart" | "transport"> = {},
+): Promise<KodaXDaemonRuntime> {
+  return connectKodaXRuntimeInternal({ ...options, autoStart: true }, true);
 }
 
 function hasVersionedRuntimeCapability(
@@ -5183,9 +5231,7 @@ interface CapabilityUpgradeInput {
   readonly journalEpoch?: string;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly requiredCapability: string;
-  readonly requiredVersion: number;
-  readonly upgradePrincipalId?: string;
-  readonly upgradeToken?: string;
+  readonly exitTimeoutMs: number;
 }
 
 function createCapabilityUpgradeRuntime(
@@ -5198,19 +5244,6 @@ function createCapabilityUpgradeRuntime(
     ...(input.journalEpoch !== undefined ? { journalEpoch: input.journalEpoch } : {}),
     ...(input.grantedScopes !== undefined ? { grantedScopes: input.grantedScopes } : {}),
   });
-}
-
-function capabilityUpgradeSettlementError(
-  settlement: Extract<RuntimeExitSettlement, { status: "blocked" }>,
-  capability: string,
-  preflight: RuntimeDaemonPreflight | undefined,
-): RuntimeDaemonCapabilityUpgradeError {
-  return new RuntimeDaemonCapabilityUpgradeError(
-    `The incompatible daemon could not be replaced safely: ${settlement.message}`,
-    preflight,
-    undefined,
-    capability,
-  );
 }
 
 function daemonCapabilityRequirements(
@@ -5363,213 +5396,56 @@ function parseProbedDaemon(
   };
 }
 
-const CAPABILITY_UPGRADE_CLIENT_NAME = "kodax-sdk-capability-upgrade";
-const CAPABILITY_UPGRADE_PEER_WAIT_MS = 15_000;
-
-function capabilityUpgradePrincipal(nonce: string, token: string): string {
-  const proof = createHmac("sha256", token).update(nonce).digest("hex").slice(0, 32);
-  return `sdk_upgrade_${nonce}_${proof}`;
-}
-
-function capabilityUpgradeClientInfo(token?: string): RuntimeClientInfo {
-  const nonce = randomUUID().replace(/-/g, "");
+function capabilityUpgradeClientInfo(): RuntimeClientInfo {
   return {
-    name: CAPABILITY_UPGRADE_CLIENT_NAME,
-    instanceId: token === undefined
-      ? `sdk_upgrade_${nonce}`
-      : capabilityUpgradePrincipal(nonce, token),
+    name: "kodax-host-launcher",
+    instanceId: `sdk_launcher_${randomUUID().replace(/-/g, "")}`,
     clientType: "automation",
   };
-}
-
-function capabilityUpgradePeerRole(
-  preflight: RuntimeDaemonPreflight,
-  input: CapabilityUpgradeInput,
-): "leader" | "follower" | undefined {
-  const clients = preflight.clients;
-  const ownPrincipal = input.upgradePrincipalId;
-  const token = input.upgradeToken;
-  if (
-    ownPrincipal === undefined
-    || token === undefined
-    || clients === undefined
-    || preflight.blockers.length !== 1
-    || preflight.blockers[0] !== "connected_clients"
-  ) return undefined;
-  const trusted = clients.filter((client) => {
-    const match = /^sdk_upgrade_([0-9a-f]{32})_([0-9a-f]{32})$/.exec(client.principalId);
-    return client.name === CAPABILITY_UPGRADE_CLIENT_NAME
-      && match !== null
-      && capabilityUpgradePrincipal(match[1]!, token) === client.principalId;
-  });
-  if (trusted.length !== clients.length) return undefined;
-  const own = trusted.find((client) => client.principalId === ownPrincipal);
-  const leader = [...trusted].sort((left, right) => (
-    left.daemonConnectionId.localeCompare(right.daemonConnectionId)
-  ))[0];
-  if (own === undefined || leader === undefined) return undefined;
-  return own.daemonConnectionId === leader.daemonConnectionId ? "leader" : "follower";
-}
-
-function waitForCapabilityUpgradeStep(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 25));
-}
-
-function capabilityUpgradeSettlementMayConverge(
-  settlement: Extract<RuntimeExitSettlement, { readonly status: "blocked" }>,
-): boolean {
-  return settlement.reason === "owner_changed" || (
-    settlement.reason === "active_work"
-    && settlement.nextAction === "keep-open"
-  ) || (
-    settlement.reason === "stop_not_accepted"
-    && settlement.nextAction === "relaunch-space"
-  );
-}
-
-async function waitForCapabilityUpgradeOwnerChange(
-  input: CapabilityUpgradeInput,
-  deadline: number,
-): Promise<boolean> {
-  while (Date.now() < deadline) {
-    const owner = readRuntimeDaemonLockOwner(input.lease.paths.lockFile);
-    if (owner === undefined || owner.runtimeId !== input.identity.runtimeId) return true;
-    await waitForCapabilityUpgradeStep();
-  }
-  return false;
 }
 
 async function replaceRuntimeDaemonForCapabilityUpgrade(
   input: CapabilityUpgradeInput,
 ): Promise<void> {
   const runtime = createCapabilityUpgradeRuntime(input);
-  let settlementOwnsClose = false;
   let preflight: RuntimeDaemonPreflight | undefined;
   try {
     if (!hasVersionedRuntimeCapability(input.capabilities, "daemonManagement", 1)) {
-      throw new RuntimeDaemonCapabilityUpgradeError(
-        "The running daemon is too old to perform a fenced in-place upgrade. Stop it manually after all runs and pending interactions finish, then retry.",
-        undefined,
-        undefined,
-        input.requiredCapability,
-      );
+      throw new Error("The older Host does not support normal managed shutdown; stop it and retry startup.");
     }
-    const peerDeadline = Date.now() + CAPABILITY_UPGRADE_PEER_WAIT_MS;
-    while (true) {
-      const management = await runtime.daemon.inspect();
-      preflight = management.preflight;
-      const peerRole = capabilityUpgradePeerRole(preflight, input);
-      if (peerRole === "follower") {
-        await closeRejectedCapabilityUpgrade(
-          runtime,
-          input.lease,
-          input.requiredCapability,
-        );
-        settlementOwnsClose = true;
-        const settlementInput = {
-          configHome: input.lease.paths.configHome,
-          profile: input.lease.paths.profile,
-        };
-        const intent = readRuntimeExitSettlementIntent(
-          settlementInput.configHome,
-          settlementInput.profile,
-        );
-        if (
-          intent?.phase === "prepared"
-          && preparedExitTicketStillExact(settlementInput, intent)
-        ) {
-          const resumed = await settleKodaXRuntimeExit(settlementInput);
-          if (resumed.status !== "blocked") return;
-          if (!capabilityUpgradeSettlementMayConverge(resumed)) {
-            throw capabilityUpgradeSettlementError(
-              resumed,
-              input.requiredCapability,
-              preflight,
-            );
-          }
-        }
-        if (await waitForCapabilityUpgradeOwnerChange(input, peerDeadline)) return;
-        throw new RuntimeDaemonCapabilityUpgradeError(
-          "A peer client was elected to replace the incompatible daemon but the owner did not change before the bounded retry deadline.",
-          preflight,
-          undefined,
-          input.requiredCapability,
-        );
-      }
-      if (!preflight.canStop) {
-        if (peerRole === "leader" && Date.now() < peerDeadline) {
-          await waitForCapabilityUpgradeStep();
-          continue;
-        }
-        throw new RuntimeDaemonCapabilityUpgradeError(
-          `The running daemon needs ${input.requiredCapability} v${input.requiredVersion} but cannot be replaced safely yet: ${preflight.blockers.join(", ")}. Finish or cancel that work and retry.`,
-          preflight,
-          undefined,
-          input.requiredCapability,
-        );
-      }
-      const settlement = await settleRuntimeDaemonExit({
-        configHome: input.lease.paths.configHome,
-        profile: input.lease.paths.profile,
-        runtime,
-      });
-      settlementOwnsClose = settlement.status !== "blocked" || settlement.nextAction !== "keep-open";
-      if (settlement.status !== "blocked") return;
-      if (
-        settlement.reason === "active_work"
-        && settlement.nextAction === "keep-open"
-        && Date.now() < peerDeadline
-      ) {
-        await waitForCapabilityUpgradeStep();
-        continue;
-      }
-      if (
-        settlement.reason === "stop_not_accepted"
-        && settlement.nextAction === "relaunch-space"
-      ) {
-        const settlementInput = {
-          configHome: input.lease.paths.configHome,
-          profile: input.lease.paths.profile,
-        };
-        const intent = readRuntimeExitSettlementIntent(
-          settlementInput.configHome,
-          settlementInput.profile,
-        );
-        if (
-          intent?.phase === "prepared"
-          && preparedExitTicketStillExact(settlementInput, intent)
-        ) {
-          if (await waitForCapabilityUpgradeOwnerChange(input, peerDeadline)) return;
-          throw new RuntimeDaemonCapabilityUpgradeError(
-            "The exact prepared incompatible-daemon replacement did not publish a new owner before the bounded retry deadline.",
-            preflight,
-            undefined,
-            input.requiredCapability,
-          );
-        }
-      }
-      throw capabilityUpgradeSettlementError(
-        settlement,
-        input.requiredCapability,
-        preflight,
-      );
+    if (compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
+      throw new Error("Only a provably older Host can be refreshed automatically; use a compatible installation.");
     }
+    const management = await runtime.daemon.inspect();
+    preflight = management.preflight;
+    if (!preflight.canStop) {
+      throw new Error(`The older Host is busy: ${preflight.blockers.join(", ")}. Finish or stop that work and retry.`);
+    }
+    const owner = management.owner;
+    const current = readRuntimeDaemonLockOwner(input.lease.paths.lockFile);
+    if (
+      management.runtimeId !== input.identity.runtimeId
+      || owner.runtimeId !== input.identity.runtimeId
+      || current?.runtimeId !== owner.runtimeId
+      || current.pid !== owner.pid
+      || current.createdAt !== owner.createdAt
+      || owner.kind !== "daemon"
+      || current.kind !== owner.kind
+      || !owner.processStartIdentity
+      || current.processStartIdentity !== owner.processStartIdentity
+    ) throw new Error("The original Host process identity cannot be confirmed; retry against the current owner.");
+    await input.transport.request("runtime.shutdown");
+    await runtime.close();
+    await waitForRuntimeDaemonOwnerExit(owner, input.exitTimeoutMs);
   } catch (error: unknown) {
-    if (error instanceof RuntimeDaemonCapabilityUpgradeError) throw error;
     throw new RuntimeDaemonCapabilityUpgradeError(
-      "The running daemon changed while preparing its safe capability upgrade. Retry after active and queued work has settled.",
+      error instanceof Error ? error.message : "The older Host could not be refreshed.",
       preflight,
       { cause: error },
       input.requiredCapability,
     );
   } finally {
-    if (!settlementOwnsClose) {
-      await closeRejectedCapabilityUpgrade(
-        runtime,
-        input.lease,
-        input.requiredCapability,
-      );
-    }
+    await closeRejectedCapabilityUpgrade(runtime, input.lease, input.requiredCapability);
   }
 }
 
@@ -5712,6 +5588,7 @@ async function connectKodaXRuntimeInternal(
   allowCapabilityUpgrade: boolean,
   contract: "execution" | "prepared-exit-settlement" = "execution",
   ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
+  startupRetries = 2,
 ): Promise<KodaXDaemonRuntime> {
   assertRuntimeTimeout(
     "permissionTimeoutMs",
@@ -5801,7 +5678,7 @@ async function connectKodaXRuntimeInternal(
           probedDaemon.identity,
           probedDaemon.capabilities,
           requirements,
-          contract === "execution",
+          contract === "execution" && allowCapabilityUpgrade && options.autoStart === true,
         );
     const requestedClientInfo: RuntimeClientInfo = {
       name: options.clientInfo?.name ?? "kodax-sdk",
@@ -5826,7 +5703,7 @@ async function connectKodaXRuntimeInternal(
     // before the read-only probe has passed the execution contract gate.
     const upgradeClientInfo = probedUpgrade === undefined
       ? undefined
-      : capabilityUpgradeClientInfo(token);
+      : capabilityUpgradeClientInfo();
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
     const initialized = requireRuntimeRecord(
       await transport.request("initialize", {
@@ -5843,6 +5720,12 @@ async function connectKodaXRuntimeInternal(
       }),
     );
     identity = parseRuntimeIdentity(initialized.identity);
+    const expectedProfile = options.profile ?? "default";
+    if (identity.profile !== expectedProfile) {
+      throw new Error(
+        `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
+      );
+    }
     daemonCapabilities =
       initialized.capabilities === undefined
         ? {}
@@ -5859,7 +5742,7 @@ async function connectKodaXRuntimeInternal(
       identity,
       daemonCapabilities,
       requirements,
-      contract === "execution",
+      contract === "execution" && allowCapabilityUpgrade && options.autoStart === true,
     );
     if (
       probedDaemon !== undefined
@@ -5906,12 +5789,21 @@ async function connectKodaXRuntimeInternal(
           ...(journalEpoch !== undefined ? { journalEpoch } : {}),
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
-          requiredVersion: requiredUpgrade.version,
-          ...(upgradeClientInfo?.instanceId === undefined
-            ? {}
-            : { upgradePrincipalId: upgradeClientInfo.instanceId }),
-          ...(token === undefined ? {} : { upgradeToken: token }),
+          exitTimeoutMs: options.daemonStartupTimeoutMs ?? 60_000,
         });
+      } catch (error: unknown) {
+        if (
+          startupRetries > 0
+          && error instanceof RuntimeDaemonCapabilityUpgradeError
+          && error.preflight?.blockers.length === 1
+          && error.preflight.blockers[0] === "connected_clients"
+        ) {
+          // Release temporary startup clients before retrying; the existing
+          // owner lock still decides which process may start the replacement.
+          await new Promise<void>((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+          return connectKodaXRuntimeInternal(options, true, contract, ownerBootstrap, startupRetries - 1);
+        }
+        throw error;
       } finally {
         // The upgrade helper owns the daemon facade and therefore closes the
         // lease's transport. Do not close the same transport again below.
@@ -5925,12 +5817,6 @@ async function connectKodaXRuntimeInternal(
       );
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
-    const expectedProfile = options.profile ?? "default";
-    if (identity.profile !== expectedProfile) {
-      throw new Error(
-        `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
-      );
-    }
   } catch (error: unknown) {
     if (!upgradeReleasedLease) {
       if (lease !== undefined) await lease.close();

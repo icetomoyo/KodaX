@@ -686,10 +686,10 @@ export function clearRuntimeDaemonShutdownOutcome(
 }
 
 export function tryAcquireRuntimeDaemonLock(
-  paths: RuntimeDaemonPaths,
+  paths: Pick<RuntimeDaemonPaths, 'rootDir' | 'lockFile'>,
   owner: RuntimeDaemonLockOwner,
 ): RuntimeDaemonLockHandle | undefined {
-  ensureRuntimeDaemonDirectories(paths);
+  fs.mkdirSync(paths.rootDir, { recursive: true });
   let fd: number | undefined;
   try {
     fd = fs.openSync(paths.lockFile, 'wx', 0o600);
@@ -705,6 +705,46 @@ export function tryAcquireRuntimeDaemonLock(
     if (fd !== undefined) {
       fs.closeSync(fd);
     }
+  }
+}
+
+/** Profiles are connection names; the actual Session directory has one product writer. */
+export function acquireRuntimeSessionStorageOwner(
+  sessionsDir: string,
+  runtimeId: string,
+): RuntimeDaemonLockHandle {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const rootDir = path.join(fs.realpathSync(sessionsDir), '.product-host');
+  fs.mkdirSync(rootDir, { recursive: true });
+  const paths = {
+    rootDir,
+    lockFile: path.join(rootDir, 'owner.lock'),
+    ownerPolicyLockFile: path.join(rootDir, 'owner-policy.lock'),
+  };
+  const conflict = (): Error => Object.assign(
+    new Error(`Session storage already has a product Host: ${sessionsDir}`),
+    { code: 'session_storage_owned' as const },
+  );
+  const coordination = tryAcquireRuntimeOwnerCoordination(paths);
+  if (!coordination) throw conflict();
+  try {
+    if (fs.existsSync(paths.lockFile)) {
+      const previous = readRuntimeDaemonLockOwner(paths.lockFile);
+      if (!previous || runtimeOwnerProcessState(previous) !== 'gone') throw conflict();
+      fs.unlinkSync(paths.lockFile);
+    }
+    const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId,
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+      kind: 'daemon',
+      ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+    });
+    if (!lock) throw conflict();
+    return lock;
+  } finally {
+    releaseRuntimeOwnerCoordination(paths, coordination);
   }
 }
 

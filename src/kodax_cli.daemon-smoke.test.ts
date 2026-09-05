@@ -17,6 +17,7 @@ import {
   acquireKodaXInlineOwner,
   connectKodaXRuntime,
   createKodaXRuntime,
+  ensureKodaXRuntime,
   enableKodaXDaemonOwner,
   getKodaXRuntimeOwnerState,
   type KodaXDaemonRuntime,
@@ -226,10 +227,9 @@ describe('daemon CLI smoke', () => {
         'start', '--home', homeDir, '--profile', profile,
         '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
       ]);
-      const runtimePromise = connectKodaXRuntime({
+      const runtimePromise = ensureKodaXRuntime({
         homeDir,
         profile,
-        autoStart: true,
         daemonStartupTimeoutMs: 30_000,
         requirements: { externalAgentAdmin: 1, a2aConfigReconciler: 1 },
       });
@@ -540,10 +540,9 @@ describe('daemon CLI smoke', () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-management-smoke-'));
     tempRoots.push(homeDir);
     const profile = `management-${process.pid}-${Date.now()}`;
-    const first = await connectKodaXRuntime({
+    const first = await ensureKodaXRuntime({
       homeDir,
       profile,
-      autoStart: true,
       clientInfo: { name: 'management-parent', instanceId: 'management-parent' },
       requirements: { daemonManagement: 1 },
     });
@@ -616,10 +615,9 @@ describe('daemon CLI smoke', () => {
     firstInline.close();
     expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 2 });
 
-    const second = await connectKodaXRuntime({
+    const second = await ensureKodaXRuntime({
       homeDir,
       profile,
-      autoStart: true,
       clientInfo: { name: 'management-second', instanceId: 'management-second' },
       requirements: { daemonManagement: 1 },
     }).catch((error: unknown) => {
@@ -650,10 +648,9 @@ describe('daemon CLI smoke', () => {
     secondInline.close();
     expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 4 });
 
-    const third = await connectKodaXRuntime({
+    const third = await ensureKodaXRuntime({
       homeDir,
       profile,
-      autoStart: true,
       clientInfo: { name: 'management-third', instanceId: 'management-third' },
       requirements: { daemonManagement: 1 },
     });
@@ -673,10 +670,9 @@ describe('daemon CLI smoke', () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-inventory-smoke-'));
     tempRoots.push(homeDir);
     const profile = `inventory-${process.pid}-${Date.now()}`;
-    const parent = await connectKodaXRuntime({
+    const parent = await ensureKodaXRuntime({
       homeDir,
       profile,
-      autoStart: true,
       clientInfo: {
         name: 'inventory-parent',
         instanceId: 'inventory-parent',
