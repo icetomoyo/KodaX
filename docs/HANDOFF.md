@@ -260,3 +260,20 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **验证基线（本轮结束）**：tsc 478=478；build gate 通过；goal 4 + daemon client/server/host/schema 165 + observe/queue/history/interactions 回归全绿。
 
 **下一步（DAG 前沿）**：T10/T11（T09 已解）、T33（T08+T09 已解）、T14（T05+T13 已解）；T12 剩余；T34 前置还差 T10/T11/T23/T31/T33/T36/T37。
+
+
+---
+
+## 2026-09-06 会话补记：T11 完成（Host 管理分支选择、标签与 rewind）
+
+**提交**：代码 `09552b5d`（10 文件 +365/-11）、子模块 `419918e`（T11→Done，13/35）、指针 `9ec18e91`。
+
+**实现面**：契约 `ClientLineageSummary/Entry/LabelInput`（entry.type 收紧为域判别联合 `KodaXSessionEntry['type']`；rewind marker 透出 `truncatedCount`）；sessions 增 `readLineage/labelEntry/selectBranch/rewindSession`；RPC `session.lineage.get/label`（nullOrObjectSchema/objectAnySchema、读 scope=session:observe、写 scope=session:write）。**关键决定**：`session.lineage.label` 同时进 `RuntimeDaemonMutationMethod` 联合与 `RUNTIME_DAEMON_MUTATION_METHODS` 数组——facade 自动带 operation envelope、Host journal 去重（与 rewind/active_entry.set 对齐，重连重试不会双写 label 事实）；goal.* 只在联合不在数组（T32 的既有豁免）保持不动。Host 复用 `appendSessionLineageLabel` + `mutateActiveSession` 门；selectBranch/rewind 未命中显式 conflict；空/空白 label `invalid_params`（域函数把 '' 规范成 unlabel 是静默坑，必须在 runtime 面挡住——去 label 只能省略字段）。
+
+**评审（双轴 0 C/H）修复**：protocol 重复联合成员删除；`lineageCommandError` 并入 `goalCommandError`；goal S1 通知断言从 `conversationalRequests()===0`（空转）改 `nonJudgeRequests()===0`（judge 帧=单条 user 消息且 content 以 '{' 开头——`invokeLlmJudge` 的 systemPrompt 走独立参数不进 messages）；lineage S1 补 label-by-label 名、空 label invalid_params、rewind 后归档 head 的 stale 选择冲突、rewind marker truncatedCount 与保留条目断言。
+
+**测试坑（新增）**：背景 learning-review 帧污染 provider requests 计数——过滤方式按帧形状（judge 帧）或按会话暖场文本前缀，不要用裸 `requests.length`；Edit 工具改 union 列表时相邻两个 union 含相同序列，必须带足够的后续行消歧。
+
+**验证基线（本轮结束）**：build gate 通过；lineage 2 + goal 4 双绿；daemon 20 文件 343 绿（1 skip 存量）；product-client 9 文件 20 绿（client/settings/capabilities/mcp/goal/lineage/observe/queue/history）；tsc 478=478。
+
+**下一步（DAG 前沿）**：T10（T03+T09 已解）、T33（T08+T09 已解）、T14（T05+T13 已解）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）；T34 前置还差 T10/T23/T31/T33/T36/T37（T11 已解）。
