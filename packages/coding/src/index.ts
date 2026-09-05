@@ -1399,7 +1399,10 @@ export {
   verifyGoalCompletion,
   withGoalBeforeNextTurn,
   withGoalStopHook,
+  planGoalCreate,
+  planGoalTransition,
 } from './goal/index.js';
+export type { GoalPlan } from './goal/index.js';
 export type {
   BlockerAttemptResult,
   GoalBlockedResult,

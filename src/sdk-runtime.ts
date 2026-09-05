@@ -90,7 +90,7 @@ import {
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
-import { clearCapabilityCache } from "@kodax-ai/agent";
+import { appendGoalEntry, clearCapabilityCache, readLatestGoalState } from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
   ProviderCredentialLeaseScope,
@@ -149,6 +149,11 @@ import type {
   ToolCallSignal,
   KodaXVideoInputArtifact,
   RunningSession,
+} from "@kodax-ai/coding";
+import {
+  isValidTokenBudget,
+  planGoalCreate,
+  planGoalTransition,
 } from "@kodax-ai/coding";
 import {
   createSessionManager,
@@ -258,6 +263,9 @@ import type {
   WorkflowProcessEvent,
   WorkflowProcessSnapshot,
   KodaXSessionHistoryHit,
+  KodaXGoalState,
+  KodaXGoalEventType,
+  KodaXSessionLineage,
 } from "@kodax-ai/agent";
 import { createRuntimeAgentExecutorPlaneStore } from "./runtime-agent-store.js";
 import { createRuntimeAgentBindingService } from "./runtime-agent-binding.js";
@@ -1729,6 +1737,15 @@ export interface RuntimeSessionService {
     sessionId: string,
     input: ClientHistorySearchInput,
   ): Promise<ClientHistorySearchResult>;
+  readGoal(sessionId: string): Promise<KodaXGoalState | null>;
+  createGoal(input: {
+    readonly sessionId: string;
+    readonly objective: string;
+    readonly tokenBudget?: number;
+  }): Promise<KodaXGoalState>;
+  pauseGoal(sessionId: string): Promise<KodaXGoalState>;
+  resumeGoal(sessionId: string): Promise<KodaXGoalState>;
+  clearGoal(sessionId: string): Promise<void>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -7396,6 +7413,57 @@ function createRuntimeSessionService(
       }
     });
 
+  function goalCommandError<T extends "conflict" | "invalid_params">(
+    code: T,
+    message: string,
+  ): Error & { readonly code: T } {
+    return Object.assign(new Error(message), { code });
+  }
+
+  /**
+   * Session goal commands (FEATURE_298 T32): the Host owns the lineage write,
+   * serialized under the session gate so concurrent modifications keep an
+   * explicit order. Goal commands never start or resurrect Runs.
+   */
+  const mutateGoal = <T extends KodaXGoalState | null>(
+    sessionId: string,
+    mutate: (lineage: KodaXSessionLineage) => {
+      readonly goal: T;
+      readonly lineage: KodaXSessionLineage;
+    },
+  ): Promise<T> =>
+    mutateActiveSession(sessionId, async (data) => {
+      if (data.lineage === undefined) {
+        throw goalCommandError(
+          "conflict",
+          "Session lineage is unavailable for goal commands.",
+        );
+      }
+      // Goal entries live on the active branch; a session with no conversation
+      // entries yet has no branch to anchor to, and the domain hides such
+      // goals. Refuse explicitly instead of persisting an invisible goal.
+      if (data.lineage.activeEntryId === null) {
+        throw goalCommandError(
+          "conflict",
+          "Session has no conversation entries yet; send an input before setting a goal.",
+        );
+      }
+      const result = mutate(data.lineage);
+      data.lineage = result.lineage;
+      await manager.storage.save(sessionId, data);
+      return result.goal;
+    });
+
+  const mutateGoalTransition = (
+    sessionId: string,
+    event: Extract<KodaXGoalEventType, "paused" | "resumed">,
+  ): Promise<KodaXGoalState> =>
+    mutateGoal(sessionId, (lineage) => {
+      const plan = planGoalTransition(lineage, event);
+      if (!plan.ok) throw goalCommandError("conflict", plan.message);
+      return { goal: plan.goal, lineage: plan.lineage };
+    });
+
   const deleteSession = async (sessionId: string, temporaryOnly: boolean): Promise<void> => {
     await sessionOperations.run(sessionId, async () => {
       if (!temporaryOnly) ensureOpen();
@@ -8280,6 +8348,44 @@ function createRuntimeSessionService(
           (settings) => assertSessionSettingsAllowed(sessionData, settings),
         ),
       );
+    },
+
+    async readGoal(sessionId) {
+      ensureOpen();
+      const data = await admission.loadRequired(sessionId);
+      return data.lineage === undefined ? null : readLatestGoalState(data.lineage);
+    },
+
+    async createGoal(input) {
+      const objective = input.objective.trim();
+      if (objective.length === 0) {
+        throw goalCommandError("invalid_params", "Goal objective must be a non-empty string.");
+      }
+      if (input.tokenBudget !== undefined && !isValidTokenBudget(input.tokenBudget)) {
+        throw goalCommandError("invalid_params", "Goal token budget must be a positive integer.");
+      }
+      return mutateGoal(input.sessionId, (lineage) => {
+        const plan = planGoalCreate(lineage, objective, input.tokenBudget ?? null);
+        if (!plan.ok) throw goalCommandError("conflict", plan.message);
+        return { goal: plan.goal, lineage: plan.lineage };
+      });
+    },
+
+    async pauseGoal(sessionId) {
+      return mutateGoalTransition(sessionId, "paused");
+    },
+
+    async resumeGoal(sessionId) {
+      return mutateGoalTransition(sessionId, "resumed");
+    },
+
+    async clearGoal(sessionId) {
+      await mutateGoal(sessionId, (lineage) => {
+        if (readLatestGoalState(lineage) === null) {
+          throw goalCommandError("conflict", "No goal to clear.");
+        }
+        return { goal: null, lineage: appendGoalEntry(lineage, null, "cleared") };
+      });
     },
 
     async appendNotice(input) {

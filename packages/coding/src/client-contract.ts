@@ -1,5 +1,5 @@
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
-import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions } from '@kodax-ai/agent';
+import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions, KodaXGoalState } from '@kodax-ai/agent';
 
 export interface ClientSession {
   readonly id: string;
@@ -56,6 +56,18 @@ export interface KodaXProductClient {
     readHistoryEntry(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Search the whole Session history; entryIndex values are stable within the returned revision. */
     searchHistory(sessionId: string, input: ClientHistorySearchInput): Promise<ClientHistorySearchResult>;
+    /** Persistent session goal owned by the Host; every client reads the same state. */
+    readGoal(sessionId: string): Promise<ClientSessionGoal | null>;
+    /** Create a goal; conflicts while a non-complete goal is active. Budget rules are the domain's. */
+    createGoal(sessionId: string, input: ClientGoalCreateInput): Promise<ClientSessionGoal>;
+    /** Pause an active goal; conflicts from any other status. */
+    pauseGoal(sessionId: string): Promise<ClientSessionGoal>;
+    /** Resume a paused goal; conflicts from any other status. */
+    resumeGoal(sessionId: string): Promise<ClientSessionGoal>;
+    /** Clear the current goal; conflicts when no goal exists. */
+    clearGoal(sessionId: string): Promise<void>;
+    /** Host-owned notice append; UIs never write lineage or session files directly. */
+    appendNotice(sessionId: string, input: { readonly content: string; readonly source?: string }): Promise<void>;
   };
   readonly inputs: {
     submit(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
@@ -187,6 +199,15 @@ export interface ClientHistorySearchInput {
   readonly role?: 'user' | 'assistant';
   /** 'all' (default) searches active and compacted history; 'compacted' only the compacted tail. */
   readonly scope?: 'all' | 'compacted';
+}
+
+/** The domain's persistent goal state, written only by Host commands. */
+export type ClientSessionGoal = KodaXGoalState;
+
+export interface ClientGoalCreateInput {
+  readonly objective: string;
+  /** Optional hard token ceiling; the domain validates positive integers. */
+  readonly tokenBudget?: number;
 }
 
 export interface ClientHistorySearchResult {

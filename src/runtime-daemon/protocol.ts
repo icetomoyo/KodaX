@@ -34,6 +34,11 @@ export type RuntimeDaemonMethod =
   | 'session.diagnostics'
   | 'session.fork'
   | 'session.notice.append'
+  | 'session.goal.get'
+  | 'session.goal.create'
+  | 'session.goal.pause'
+  | 'session.goal.resume'
+  | 'session.goal.clear'
   | 'session.rewind'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
@@ -174,6 +179,10 @@ export type RuntimeDaemonMutationMethod =
   | 'session.create'
   | 'session.fork'
   | 'session.notice.append'
+  | 'session.goal.create'
+  | 'session.goal.pause'
+  | 'session.goal.resume'
+  | 'session.goal.clear'
   | 'session.rewind'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
@@ -351,6 +360,11 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.diagnostics',
   'session.fork',
   'session.notice.append',
+  'session.goal.get',
+  'session.goal.create',
+  'session.goal.pause',
+  'session.goal.resume',
+  'session.goal.clear',
   'session.rewind',
   'session.active_entry.set',
   'session.activeEntry.set',

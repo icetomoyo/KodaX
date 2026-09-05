@@ -3359,6 +3359,11 @@ const METHOD_SMOKE_PARAMS = {
   'session.diagnostics': { sessionId: 'session-1' },
   'session.fork': { sessionId: 'session-1' },
   'session.notice.append': { sessionId: 'session-1', content: 'smoke' },
+  'session.goal.get': { sessionId: 'session-1' },
+  'session.goal.create': { sessionId: 'session-1', objective: 'smoke goal' },
+  'session.goal.pause': { sessionId: 'session-1' },
+  'session.goal.resume': { sessionId: 'session-1' },
+  'session.goal.clear': { sessionId: 'session-1' },
   'session.rewind': { sessionId: 'session-1', selector: 'entry-1' },
   'session.active_entry.set': { sessionId: 'session-1', entryId: 'entry-1' },
   'session.activeEntry.set': { sessionId: 'session-1', entryId: 'entry-1' },
@@ -3638,6 +3643,36 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return { close() {} };
       },
       async readViewItem() { return null; },
+      async readHistory() {
+        return { items: [], revision: 'sha256:' + '0'.repeat(64), oversized: [] };
+      },
+      async readHistoryEntry() { return null; },
+      async searchHistory() {
+        return { revision: 'sha256:' + '0'.repeat(64), hits: [] };
+      },
+      async readGoal() { return null; },
+      async createGoal(input) {
+        return {
+          version: 1 as const,
+          id: 'goal-smoke',
+          objective: input.objective,
+          status: 'active' as const,
+          tokenBudget: input.tokenBudget ?? null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          blockerTurnCount: 0,
+          lastBlockerKind: null,
+          createdAt: 0,
+          updatedAt: 0,
+        };
+      },
+      async pauseGoal() {
+        return { version: 1 as const, id: 'goal-smoke', objective: 'smoke goal', status: 'paused' as const, tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, blockerTurnCount: 0, lastBlockerKind: null, createdAt: 0, updatedAt: 0 };
+      },
+      async resumeGoal() {
+        return { version: 1 as const, id: 'goal-smoke', objective: 'smoke goal', status: 'active' as const, tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, blockerTurnCount: 0, lastBlockerKind: null, createdAt: 0, updatedAt: 0 };
+      },
+      async clearGoal() {},
       async diagnostics(input) {
         return {
           schemaVersion: 1,

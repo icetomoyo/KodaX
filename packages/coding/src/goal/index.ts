@@ -55,3 +55,5 @@ export type {
   GoalRuntimeBinding,
   GoalRuntimeBindingDeps,
 } from './runtime-wiring.js';
+export { planGoalCreate, planGoalTransition } from './policy.js';
+export type { GoalPlan } from './policy.js';

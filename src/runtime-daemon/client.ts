@@ -614,6 +614,21 @@ export function createRuntimeDaemonClient(
       appendNotice(input) {
         return request('session.notice.append', input) as ReturnType<KodaXRuntime['sessions']['appendNotice']>;
       },
+      readGoal(sessionId) {
+        return request('session.goal.get', { sessionId }) as ReturnType<KodaXRuntime['sessions']['readGoal']>;
+      },
+      createGoal(input) {
+        return request('session.goal.create', input) as ReturnType<KodaXRuntime['sessions']['createGoal']>;
+      },
+      pauseGoal(sessionId) {
+        return request('session.goal.pause', { sessionId }) as ReturnType<KodaXRuntime['sessions']['pauseGoal']>;
+      },
+      resumeGoal(sessionId) {
+        return request('session.goal.resume', { sessionId }) as ReturnType<KodaXRuntime['sessions']['resumeGoal']>;
+      },
+      clearGoal(sessionId) {
+        return request('session.goal.clear', { sessionId }).then(() => undefined);
+      },
       rewind(input) {
         return request('session.rewind', input) as Promise<RuntimeSession | null>;
       },

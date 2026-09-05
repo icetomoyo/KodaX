@@ -224,6 +224,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "event.replay",
     "permission.grants.list",
     "interaction.list",
+    "session.goal.get",
     "workflow.list",
     "workflow.get",
     "workflow.subscribe",
@@ -260,6 +261,10 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.delete",
     "session.settings.update",
     "session.settings.updateVersioned",
+    "session.goal.create",
+    "session.goal.pause",
+    "session.goal.resume",
+    "session.goal.clear",
   ]),
   ...scopeEntries("run:control", [
     "input.submit",
@@ -1603,6 +1608,42 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.sessions.appendNotice(
         requireRecord(request.params) as unknown as RuntimeAppendNoticeInput,
       );
+    case "session.goal.get": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      return runtime.sessions.readGoal(sessionId);
+    }
+    case "session.goal.create": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      const tokenBudget = optionalIntegerField(params, "tokenBudget");
+      return runtime.sessions.createGoal({
+        sessionId,
+        objective: requireStringField(params, "objective"),
+        ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+      });
+    }
+    case "session.goal.pause": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      return runtime.sessions.pauseGoal(sessionId);
+    }
+    case "session.goal.resume": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      return runtime.sessions.resumeGoal(sessionId);
+    }
+    case "session.goal.clear": {
+      const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, "sessionId");
+      await assertAdmittedSessionId(runtime, sessionId);
+      await runtime.sessions.clearGoal(sessionId);
+      return { ok: true };
+    }
     case "session.rewind":
       return runtime.sessions.rewind(
         requireRecord(request.params) as unknown as RuntimeRewindSessionInput,

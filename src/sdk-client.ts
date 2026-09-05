@@ -29,6 +29,8 @@ export type {
   ClientHistoryReadOptions,
   ClientHistorySearchInput,
   ClientHistorySearchResult,
+  ClientSessionGoal,
+  ClientGoalCreateInput,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -70,6 +72,14 @@ export async function connectKodaXClient(
       readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
       readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
       searchHistory: (sessionId, input) => runtime.sessions.searchHistory(sessionId, input),
+      readGoal: (sessionId) => runtime.sessions.readGoal(sessionId),
+      createGoal: (sessionId, input) => runtime.sessions.createGoal({ sessionId, ...input }),
+      pauseGoal: (sessionId) => runtime.sessions.pauseGoal(sessionId),
+      resumeGoal: (sessionId) => runtime.sessions.resumeGoal(sessionId),
+      clearGoal: (sessionId) => runtime.sessions.clearGoal(sessionId),
+      appendNotice: async (sessionId, input) => {
+        await runtime.sessions.appendNotice({ sessionId, ...input });
+      },
     },
     inputs: {
       submit: (input) => runtime.runs.acceptInput(input),
