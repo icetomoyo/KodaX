@@ -206,3 +206,17 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **验证基线（本轮结束时）**：root tsc 与记录基线对平 478=478（%TEMP%/kodax-type-baseline-536166af8ff74fdab7a3dcf1c3153c14/ 的 compare-tsc.mjs，fresh log 为 current-fresh7）；`tsc -b tsconfig.build.json` 通过；steer 2、queue 5、inputs 7、inputs-late-cleanup 1、observe 3、lifecycle 3、daemon server/host/manager/transport 94+58 分批全绿；capabilities/live-settings/mcp/settings 6 项绿。`.tmp-t12-typecheck.txt` 已删除。
 
 **下一步（DAG 前沿）**：T08（T07 已解锁；故障注入/进程终止 S1、工具身份先提交才派发）与 T04 canonical conversation（storage.load 最近上下文不能承接压缩前历史，与 T09 共享 conversationPage 接缝；完成后解锁 T05/T09/T10/T11/T32 大片）。T12 剩余：typed skill/command/extension/config-effective/diagnostics 实际效果、Session 私有 MCP 重启重建、共享 MCP reverse Session 归属。
+
+### 2026-09-05（续二）：复审修复、T03/T08 完成并提交
+
+用户要求：review 已完成部分并修复、确认剩余工作、连续 implement。全部本地提交，工作树停止时干净。
+
+**提交记录**：`d79955e0`（T06/T07 提交后复核修复）、submodule/指针 ×2（票据记录）、`346dca61`（T08）、`b3b38549`（指针）。票据现况：**Done 8 张**（T01/T02/T03/T06/T07/T08/T13/T24），In Progress 3 张（T04/T12/T15），Todo 24 张。
+
+**提交后复核（d79955e0）修复**：2 Medium——redirect 命中 executor 终态早退分支时先持久化 redirect Stop 理由（终态不再搁置保留输入）；steer 输入在目标 Run 未到安全点即结束时 acceptance 显式转 `dropped`（`ClientInputAcceptance` 新增该状态，schema 同步）。3 Low——`runs.abort` 纳入 Session gate；新增"取消真实生效"的 redirect S1（Provider 尊重中止、非 completed 终态仍续跑）；inputs 测试替换 Host 前先 close 旧 runtime。
+
+**T08（346dca61）**：产品 Client 新增 `runs.read/stop`（复用 run.get/run.abort，stop 接受与终态分离、重复 stop 不建工作）；3 项故障注入 S1（`src/sdk-client.crash.test.ts`）：真实子进程 Host（ensureKodaXRuntime 拉起、锁 owner PID SIGKILL）+ OpenAI 协议 SSE mock Provider（首请求可脚本 bash tool_call、后续挂起）+ tee 写 marker 文件，分别在接受后/工具派发后（marker 出现）/工具结果进入后续上下文后（请求 2 到达）杀掉并 stale-lock 接管重启：内容保留、Run interrupted/unknown、工具与 Provider 不重做（双采样）。测试基建注意：mock server 需跟踪并销毁 socket 否则 `close()` 挂起 hook；场景 paths 注册到模块级列表供 afterEach 兜底杀 detached daemon；`RuntimeDaemonPaths` 无 `homeDir` 字段（重启要显式传原 homeDir/profile）。评审 0 Critical/High（清理加固、计数收窄已修）。结项说明见票面（list/await 留待 T19/T20/T26；完整回答≠成功由点位 3 结构性覆盖）。
+
+**T04 恢复入口（调研已完成）**：剩余=canonical conversation 接线（SessionViewOwner 的 read 回调 `sdk-runtime.ts:4309` 现用 `storage.load` 的 messages.slice(-30)，压缩后早期历史丢失；接缝=既有 `conversationPage`（`sdk-runtime.ts:7601`，repl 层 `readConversationPageCache` 提供 revision/缓存页/容量错误/快照游标）+条目→ClientViewItem 投影）、流式结算去重及 ID 对齐、workflow/诊断显示清单、长会话/渲染基线。T12 剩余同上节。
+
+**验证基线（本轮结束）**：tsc 基线对平 478=478（fresh10 log）；`tsc -b tsconfig.build.json` 通过；crash 3 + runs 1 + steer 3 + queue/inputs/daemon 回归全绿。
