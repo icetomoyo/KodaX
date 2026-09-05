@@ -236,3 +236,15 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **验证基线（本轮结束）**：tsc 基线对平 478=478（fresh log 于 %TEMP%/kodax-type-baseline-536166af8ff74fdab7a3dcf1c3153c14/，注意 compare-tsc.mjs 只读预生成 log，需先跑 tsc 重写 current-tsc.log）；`tsc -b tsconfig.build.json` 通过（契约改动后必须先 build 再 root tsc，否则 dist 声明过期造成假错误）；interactions 5 + 产品 Client 各套件 + daemon 136 + transport 81 + crash 3 + a2a/upgrade 全绿。
 
 **下一步（DAG 前沿，按阻塞关系现成可做）**：T09（公共分页读取，T04 已解）、T14（权限请求退役客户端任意创建，T03+T05 已解）、T32（goal/notice Host 写入，T04 已解）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）。T05 完成同时解锁 T14→T16 链。
+
+### 2026-09-05（续四）：T09 公共分页读取完成并提交
+
+**提交记录**：`2a9bd114`（T09 实现）、`2d75ad1`（submodule 票据）+ 主仓指针。票据现况：**Done 11 张**（T01–T05、T06–T09、T13、T24），In Progress 2（T12、T15），Todo 22。T09 完成解锁 T10/T11/T33。
+
+**T09 要点**：`sessions.readHistory/readHistoryEntry/searchHistory` 骑既有 conversationPage/entryChunk/transcriptSearch 接缝（零新持久化、只读）；共享投影 `src/client-history.ts` —— 条目 id `<sid>:history:<rev>:<idx>[#ord]`（revision 含 `sha256:` 冒号，解析从右起）；**assistant tool_use 必须与其 user tool_result 后继配对投影**（repl 的 toolResults 从 messages[index+1] 取；后继仅在当前条目为 assistant 且后继为 user 时参与，否则 assistant 后继会被重复投影成 INCOMPLETE 假工具项）；正文/工具参数读原始块（回放投影有 2000 字符截断）；`readHistoryPageWithBoundaryRetry` 共享一次性瞬态边界重试（fresh-only；游标读直接 stale）；两 facade null 页抛错、解码失败/512 块上限发诊断并抛 internal_error。契约改动后先 `tsc -b` 再 root tsc。测试载体：oversized 用 >128KiB 助手正文（MAX_RUNTIME_TRANSCRIPT_INLINE_ENTRY_BYTES=128KiB、页 512KB、默认 50 条）；工具轮 full-access 下 bash 可直跑。
+
+**评审教训**：Spec 轴抓到真 Critical——单消息投影丢工具配对（tool_use 无 tool_result 时 repl 降级 60 字符 ⚡摘要、oversized 工具结果读回空）；Standards 轴抓到 ordinal*100 id 碰撞。投影类功能必须用真实工具轮 S1 验证。
+
+**验证基线（本轮结束）**：tsc 478=478（fresh log）；build gate 通过；history 2 + daemon client/server/host/schema 135 + observe×2 + interactions 5 全绿。
+
+**下一步（DAG 前沿）**：T10/T11（T09 已解：按历史派生新 Session、旧会话打开续用 canonical 写权）、T33（会话写权收归 Host）；T14（T03+T05 已解：权限请求退役客户端任意创建）、T32（goal/notice Host 写入）；T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）。
