@@ -187,3 +187,22 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 - `docs/HANDOFF.md`（本次停止后唯一新增交付文件）。
 
 后续交接在这里追加文件操作和时间，不删除本条历史。正式实现状态仍由规格/FEATURE_LIST/提交事实维护。
+
+### 2026-09-05（续）：T06、T07 完成并提交
+
+用户授权继续 implement。本段会话从上一交接的两个 T06 RED 恢复，完成两张核心票；工作树停止时干净，全部改动已提交（本地，未 push）。
+
+**提交记录**：
+
+- `9c5f9ffd` — T06（Host 持有排队/合批/撤回）+ 交错的 T03/T04/T12/T15 未提交基础 + 类型对平修复。
+- `ba6abc3`（submodule）/ `d55d6f48`（主仓指针）— 票据状态：T06 Done，T03/T04/T12/T15 状态行刷新（仍 In Progress，注明已验证部分与剩余项）。
+- `4d24a5f7` — T07（steer/redirect/stop 区分）。
+- `7247508f`（主仓指针，submodule 同批）— T07 Done。
+
+**T06 要点**（详见规格票状态）：队列预览限界（72 字符 + `...`，正文只在 MessageQueue，withdraw 取回全文）；明确 stop 后 finishRun 不自动续跑；executor 终态回调 fallback 早于 Promise 事实时不续跑、晚到事实重新评估；任意完成 Run 释放 Session 后续队列；Skill 原文独立批边界（leading `/` 或行内 `/skill:`，语法级，展开归 T37）；MAX_QUEUED_INPUTS 命名；batch 单遍反查。评审：Spec 2 Low（已修），Standards 1 High 为误读（session.settings.updated 仍刷新视图，仅跳过历史重载，已加注释）；Standards 采纳修复含 SDK Host extension runtime activate()、enableElicitation 注释、daemon stub 补齐、provider.list Client 类型转换、inputs 测试 runId 收窄。
+
+**T07 要点**：inputs.submit 新增 delivery `steer`/`redirect` + targetRunId；steer 走既有 interrupt 通道（AMA/managed Run 有窗口；SA 无 actorSession 显式 unsupported conflict，与现状一致）；redirect 先入队再以 `RUNTIME_REDIRECT_STOP_REASON`（"runtime run redirected by user"）abort 旧 Run，maybeDrainProductQueue 放行该 reason 的任意终态；digest 仅在含 targetRunId 时追加（保持旧摘要公式兼容）；abortRun/submitInterruptInput 逐字提取。评审双轴 0 Critical/High，Medium（steer 事实撤回文案）与 digest 兼容、cast、消息拆分、提取等已修。残留（票内已记录）：活跃中途窗口关闭分支与可取消工具中途 redirect 未单独 S1；产品 Client 无 Run 结果读取面（T08）。
+
+**验证基线（本轮结束时）**：root tsc 与记录基线对平 478=478（%TEMP%/kodax-type-baseline-536166af8ff74fdab7a3dcf1c3153c14/ 的 compare-tsc.mjs，fresh log 为 current-fresh7）；`tsc -b tsconfig.build.json` 通过；steer 2、queue 5、inputs 7、inputs-late-cleanup 1、observe 3、lifecycle 3、daemon server/host/manager/transport 94+58 分批全绿；capabilities/live-settings/mcp/settings 6 项绿。`.tmp-t12-typecheck.txt` 已删除。
+
+**下一步（DAG 前沿）**：T08（T07 已解锁；故障注入/进程终止 S1、工具身份先提交才派发）与 T04 canonical conversation（storage.load 最近上下文不能承接压缩前历史，与 T09 共享 conversationPage 接缝；完成后解锁 T05/T09/T10/T11/T32 大片）。T12 剩余：typed skill/command/extension/config-effective/diagnostics 实际效果、Session 私有 MCP 重启重建、共享 MCP reverse Session 归属。
