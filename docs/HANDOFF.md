@@ -400,3 +400,13 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **T23**：代码 `da600df5`（+596/-44 净删）、子模块 `71fb10e`、指针已提。/learn 无 binding 直接 proposal-store fallback（读+**写**）全删，统一报 unavailable；Ink openLearningCenter 静默返回改可见通知；领域函数留 agent 包；/skill|/workflow pending 只读列表保留（Spec 确认 defensible：从不写、同源 store、不在 T23 动词表内）。10 个 fallback 测试删除换 1 个 11-子命令循环断言。双轴双 PASS（修复：遗留 import/inbox 提示语/snapshot EOL 复原）。回归：repl 2614 绿、tsc 477。**坑**：Git Bash heredoc 里 `\n` 与行尾 `\` 会被改写——复杂补丁必须 Write 工具落 .py 再跑（本票又踩两次）。
 
 **DAG 前沿（19/35）**：actionable=T15(收尾)、T19/T20/T22/T30/T31/T35/T36/T28(opt)；T37 需 T22；T34 需 T23✓/T31/T36/T37；T26 需 T17/T18/T19/T21/T35。建议下一票：T22（解锁 T37→T34 链）或 T31/T36（直接喂 T34）。
+
+---
+
+## 2026-09-06 T22 refined 调研地图（未实施，工作树干净）
+
+**缺口本质**：daemon 模式下 `/workflow` 每次调用自建本地 manager+Lifecycle（workflow-command.ts:241-248 getDefaultWorkflowRunManager + createWorkflowLifecycleController；builder:185 同样 fallback；completer command-arguments.ts:477），只看得见本进程启动的 run；Host 侧 RuntimeWorkflowService（sdk-runtime.ts:3339, impl 11935-11977，也包同一个 coding 单例）只有 list/get/subscribe/pause/resume/stop——**无 start/结果读**。embedded 模式靠同进程巧合工作。
+
+**核心难点**：`RunWorkflowFromOptionsInput` 携带不可序列化 `module: WorkflowModule` + `options: KodaXOptions`（workflow-runner.ts:392）——daemon RPC 不能直传。Host 侧 start 必须自己做受信模块解析（builtin/saved 名或 sourceRunId rerun → Host 内 resolve），client 只发名称/参数——这正是 T37 的主题，T22 需先行一小步。解析助手（prepareSavedWorkflow/loadGeneratedWorkflowFromRun/discoverSavedWorkflows/getBuiltinWorkflow）目前在 repl 侧 import——需确认真身在哪包、能否 Host 复用。审批 confirm/live emitter/locale/eventSink 是 UI 关注点，留 client。
+
+**实施切片建议**：① Host 服务+RPC+schema 增 serializable start（名称/rerun 引用+args，Host 内解析 module+KodaXOptions，返回 runId）；结果读经 get(WorkflowProcessSnapshot 含 resultSummary/error)。② product client 契约 + sdk-client proxy 增 workflows 面（仿 catalog）。③ workflow-command 的 runs/show/pause/resume/stop 改走 callbacks binding（仿 T23 learning binding：repl-learning-binding.ts 先例）；builder/completer 同改；删除本地控制分支。④ S1=sdk-client.queue 模式双 client：A start→B list/get 可见、B pause→A 可见、B stop→双端 terminal+结果可读；US23 保真=workflow-command.test.ts save/rerun 与 waitForFinalAssistantMessage 路径保持绿。**不要删**：coding 的 WorkflowLifecycleController/run-manager 领域码（Host 消费）、workflow.started/updated/finished 独立事件 API（boundary 条款）、run.json 持久格式。
