@@ -12224,11 +12224,44 @@ function runtimeMcpServerStatuses(
 
 function createRuntimeArtifactStore() {
   const artifacts = new Map<string, RuntimeArtifact>();
+  // Registration-time (size, mtime) fingerprint per artifact. Resolve-time
+  // re-stat compares against it so run admission reports the reference's
+  // actual state — a missing or size/mtime-drifted file rejects instead of
+  // silently feeding drifted content (or a wire placeholder) into the Run.
+  // Detection is best-effort, not adversarial: a same-size rewrite inside
+  // one filesystem mtime tick, and drift after admission but before the
+  // provider wire read, still pass. Internal only; never crosses the DTO.
+  const fingerprints = new Map<string, { sizeBytes: number; mtimeMs: number }>();
 
   const resolve = (artifactId: string): RuntimeArtifact => {
     const artifact = artifacts.get(artifactId);
     if (!artifact) {
       throw new Error(`Runtime artifact not found: ${artifactId}`);
+    }
+    // create/delete maintain artifacts and fingerprints in lockstep, so a
+    // resolved artifact always carries a fingerprint.
+    const fingerprint = fingerprints.get(artifactId)!;
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(artifact.path);
+    } catch (error: unknown) {
+      throw new Error(
+        `Runtime artifact file is no longer readable: ${artifact.path}`,
+        { cause: error },
+      );
+    }
+    if (!stats.isFile()) {
+      throw new Error(
+        `Runtime artifact is no longer a regular file: ${artifact.path}`,
+      );
+    }
+    if (
+      stats.size !== fingerprint.sizeBytes
+      || stats.mtimeMs !== fingerprint.mtimeMs
+    ) {
+      throw new Error(
+        `Runtime artifact file changed since registration: ${artifact.path}`,
+      );
     }
     return artifact;
   };
@@ -12278,6 +12311,7 @@ function createRuntimeArtifactStore() {
         createdAt: new Date().toISOString(),
       };
       artifacts.set(id, artifact);
+      fingerprints.set(id, { sizeBytes: stats.size, mtimeMs: stats.mtimeMs });
       return artifact;
     },
 
@@ -12286,6 +12320,7 @@ function createRuntimeArtifactStore() {
     },
 
     async delete(artifactId) {
+      fingerprints.delete(artifactId);
       return artifacts.delete(artifactId);
     },
   };
