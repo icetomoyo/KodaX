@@ -1698,15 +1698,9 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("lets a Space-style daemon client subscribe to permission prompts and resolve another client run", async () => {
-    const { connectKodaXRuntime, createKodaXRuntime } =
-      await import("@kodax-ai/kodax/runtime");
+  it("retires client-minted permission requests on the daemon wire (T14)", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const profile = `space-permission-${randomUUID()}`;
-    const capabilities = {
-      richEvents: true,
-      permissionPrompts: true,
-      contextDiagnostics: true,
-    };
     const worker = await createKodaXRuntime({
       mode: "daemon",
       homeDir: tempRoot,
@@ -1715,110 +1709,39 @@ describe("createKodaXRuntime", () => {
       clientInfo: {
         name: "kodax-repl",
         title: "KodaX REPL",
-        version: "0.7.66",
+        version: "0.7.97",
       },
-      capabilities,
+      capabilities: {
+        richEvents: true,
+        permissionPrompts: true,
+        contextDiagnostics: true,
+      },
     });
-    let space: Awaited<ReturnType<typeof connectKodaXRuntime>> | undefined;
-    let approvalDone: Promise<unknown> | undefined;
-    let responseDone: Promise<boolean> | undefined;
-    const seen: string[] = [];
 
     try {
-      space = await connectKodaXRuntime({
-        homeDir: tempRoot,
-        profile,
-        clientInfo: {
-          name: "kodax-space",
-          title: "KodaX Space",
-          version: "0.1.29",
-        },
-        capabilities,
-      });
       const session = await worker.sessions.create({
-        title: "Space Permission Session",
+        title: "Retired Mint Session",
         projectPath: tempRoot,
-        surface: "space-desktop",
-        profileId: "space",
       });
-
-      const permissionSubscription = space.events.subscribe(
-        { sessionId: session.id },
-        (event) => {
-          seen.push(event.type);
-          if (event.type !== "permission.requested") return;
-          const payload = event.payload;
-          if (!isPermissionRequestPayload(payload)) return;
-          responseDone = space?.permissions.respond(
-            payload.id,
-            { type: "allow_once" },
-          );
-        },
-      );
-      expect(permissionSubscription.ready).toBeInstanceOf(Promise);
-      await permissionSubscription.ready;
-
-      approvalDone = worker.permissions.request({
+      // FEATURE_298 T14: only Host execution creates permission requests; a
+      // client-side mint is rejected before touching the wire.
+      const seen: string[] = [];
+      const subscription = worker.events.subscribe({ sessionId: session.id }, (event) => {
+        seen.push(event.type);
+      });
+      await subscription.ready;
+      await expect(worker.permissions.request({
         sessionId: session.id,
-        runId: "run-space-permission",
-        turnId: "turn-space-permission",
-        toolCallId: "tool-space-permission",
+        runId: "run-retired-mint",
         toolName: "bash",
-        inputPreview: '{"command":"echo from space permission"}',
-      });
-      await expect(
-        expectSettles(approvalDone, "space permission approval", 5_000),
-      ).resolves.toEqual({
-        type: "allow_once",
-      });
-      if (!responseDone)
-        throw new Error("Space permission response was not submitted.");
-      await expect(
-        expectSettles(responseDone, "space permission response", 5_000),
-      ).resolves.toBe(true);
+        inputPreview: '{"command":"echo retired"}',
+      })).rejects.toMatchObject({ code: "client_upgrade_required" });
       await flushMicrotasks();
-
-      expect(
-        await space.permissions.listPending({ runId: "run-space-permission" }),
-      ).toEqual([]);
-      expect(seen).toContain("permission.requested");
-      expect(seen).toContain("permission.resolved");
-      const replay = await space.events.replay({
-        sessionId: session.id,
-        type: ["permission.requested", "permission.resolved"],
-      });
-      expect(replay.map((event) => event.type)).toEqual([
-        "permission.requested",
-        "permission.resolved",
-      ]);
+      expect(seen).toEqual([]);
+      subscription.close();
     } finally {
-      await space?.close();
       await worker.close();
-      await shutdownRuntimeDaemon(tempRoot, profile);
     }
-  });
-
-  it("keeps daemon-mode SDK clients attach-only when autoStartDaemon is false", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const {
-      readRuntimeDaemonLockOwner,
-      readRuntimeDaemonState,
-      resolveRuntimeDaemonPaths,
-    } = await import("./runtime-daemon/state.js");
-    const profile = `sdk-no-auto-${randomUUID()}`;
-    const paths = resolveRuntimeDaemonPaths(tempRoot, profile);
-
-    await expect(
-      createKodaXRuntime({
-        mode: "daemon",
-        homeDir: tempRoot,
-        profile,
-        autoStartDaemon: false,
-      }),
-    ).rejects.toThrow();
-
-    expect(readRuntimeDaemonState(paths)).toBeUndefined();
-    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
   });
 
   it("rejects trusted owner policy on an ordinary daemon client transport", async () => {
@@ -19894,7 +19817,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("tracks pending permission requests from wrapped tool approval hooks", async () => {
+  it("keeps an embedder approval hook as the single authority with no tracked request", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -19940,14 +19863,15 @@ describe("createKodaXRuntime", () => {
     });
 
     await flushMicrotasks();
+    // FEATURE_298 T14: the hook owns the decision, so no runtime permission
+    // request exists for the same action while it is pending.
     const pending = await runtime.permissions.listPending({
       runId: handle.runId,
     });
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.toolName).toBe("bash");
+    expect(pending).toEqual([]);
 
     releaseApproval?.(true);
-    await approvalDone;
+    await expect(approvalDone).resolves.toBe(true);
 
     expect(
       await runtime.permissions.listPending({ runId: handle.runId }),
@@ -19956,16 +19880,13 @@ describe("createKodaXRuntime", () => {
       runId: handle.runId,
       type: ["permission.requested", "permission.resolved"],
     });
-    expect(permissionEvents.map((event) => event.type)).toEqual([
-      "permission.requested",
-      "permission.resolved",
-    ]);
+    expect(permissionEvents).toEqual([]);
 
     await runtime.runs.abort(handle.runId);
     await runtime.close();
   });
 
-  it("lets runtime permission responses resolve pending approval hooks", async () => {
+  it("does not let registry answers resolve a pending embedder hook", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -20014,21 +19935,20 @@ describe("createKodaXRuntime", () => {
       prompt: "needs runtime permission response",
       options: {
         events: {
-          beforeToolExecute: () => new Promise<boolean>(() => undefined),
+          // FEATURE_298 T14: the hook decides on its own; a registry answer
+          // can no longer race it, so this returns the embedder's decision.
+          beforeToolExecute: async () => false,
         },
       },
     });
 
     await flushMicrotasks();
 
-    expect(requestId).toMatch(/^perm_/);
-    await expect(approvalDone).resolves.toBe(true);
+    expect(requestId).toBe("");
+    await expect(approvalDone).resolves.toBe(false);
     expect(
       await runtime.permissions.listPending({ runId: handle.runId }),
     ).toEqual([]);
-    expect(
-      await runtime.permissions.respond(requestId, { type: "allow_once" }),
-    ).toBe(false);
     expect(
       await runtime.permissions.respond("missing-permission", {
         type: "allow_once",

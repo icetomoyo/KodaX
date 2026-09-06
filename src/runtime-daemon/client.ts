@@ -746,12 +746,13 @@ export function createRuntimeDaemonClient(
       },
     },
     permissions: {
-      request(input: RuntimePermissionRequestInput) {
-        if (input.toolInput !== undefined) {
-          const unavailable = concretePermissionScopeError();
-          if (unavailable) return Promise.reject(unavailable);
-        }
-        return request('permission.request', input) as Promise<RuntimePermissionDecision>;
+      request(_input: RuntimePermissionRequestInput) {
+        // FEATURE_298 T14: clients no longer mint permission requests; only
+        // Host execution creates them.
+        return Promise.reject(Object.assign(
+          new Error('Clients can no longer mint permission requests; only Host execution creates them.'),
+          { code: 'client_upgrade_required' as const },
+        ));
       },
       async listPending(filter?: RuntimePermissionFilter) {
         const pending = await permissionInteractions(filter);

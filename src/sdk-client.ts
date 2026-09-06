@@ -36,6 +36,8 @@ export type {
   ClientLineageLabelInput,
   ClientSessionForkInput,
   ClientSessionRecoverInput,
+  ClientPermissionGrant,
+  ClientPermissionGrants,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -118,6 +120,20 @@ export async function connectKodaXClient(
     interactions: {
       list: (filter) => runtime.interactions.list(filter),
       respond: (requestId, response) => runtime.interactions.respond(requestId, response),
+    },
+    permissions: {
+      listGrants: async () => {
+        const current = await runtime.permissions.listGrants();
+        return {
+          revision: current.revision,
+          grants: current.value.map((grant) => ({
+            id: grant.id,
+            ...(grant.label !== undefined ? { label: grant.label } : {}),
+            ...(grant.persistence !== undefined ? { persistence: grant.persistence } : {}),
+          })),
+        };
+      },
+      revokeGrant: (grantId, expectedRevision) => runtime.permissions.revokeGrant(grantId, expectedRevision),
     },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),

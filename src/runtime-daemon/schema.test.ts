@@ -538,61 +538,6 @@ describe('runtime daemon protocol schema', () => {
     })).toContain('$.permissionBroker must be one of: runtime, client.');
   });
 
-  it('carries the effective execution directory on permission requests', () => {
-    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['permission.request'].params;
-
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      executionCwd: 'C:\\work\\project',
-    })).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      executionCwd: 42,
-    })).toContain('$.executionCwd must be string.');
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      inputPreview: 'x'.repeat(8_193),
-    })).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      toolInput: { command: 'npm test', run_in_background: false },
-    })).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      autoModeDiagnostics: {
-        source: 'classifier_failure',
-        classifierFailureKind: 'timeout',
-        classifierAttempts: [{ attempt: 1, outcome: 'timeout' }],
-      },
-    })).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      projectRoot: 'C:\\untrusted',
-    })).toContain('$.projectRoot is not allowed.');
-    expect(validateRuntimeDaemonJsonSchema(
-      RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params,
-      {
-        requestId: 'perm-1',
-        response: { kind: 'permission', decision: { type: 'allow_once' } },
-      },
-    )).toEqual([]);
-    expect(validateRuntimeDaemonJsonSchema(
-      RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params,
-      { requestId: 'perm-1', response: { kind: 'rethink' } },
-    )).toEqual([expect.stringContaining('$.response.kind must be one of')]);
-  });
 
   it('carries lifecycle stages and unconfirmed Stop outcomes across the daemon facade', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['run.get'].result;
@@ -621,19 +566,6 @@ describe('runtime daemon protocol schema', () => {
     })).toEqual([]);
   });
 
-  it('carries typed approval timeout decisions across permission RPC', () => {
-    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['permission.request'].result;
-    expect(validateRuntimeDaemonJsonSchema(schema, {
-      type: 'reject',
-      reason: 'permission request timed out',
-      cause: 'approval_timeout',
-    })).toEqual([]);
-    const invalid = validateRuntimeDaemonJsonSchema(schema, {
-      type: 'reject',
-      cause: 'network_timeout',
-    });
-    expect(invalid).not.toEqual([]);
-  });
 
   it('keeps deprecated scope decisions transport-compatible without trusting them', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['interaction.respond'].params;

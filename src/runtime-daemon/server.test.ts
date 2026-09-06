@@ -226,11 +226,6 @@ describe('runtime daemon dispatcher', () => {
       createRuntimeDaemonRequest('req-interaction-list', 'interaction.list', {
         sessionId: 'partner-session',
       }),
-      createRuntimeDaemonRequest('req-permission-request', 'permission.request', {
-        sessionId: 'partner-session',
-        runId: 'partner-run',
-        toolName: 'read',
-      }),
       createRuntimeDaemonRequest('req-diagnostic', 'context.budget.get', {
         sessionId: 'partner-session',
       }),
@@ -3232,14 +3227,10 @@ describe('runtime daemon dispatcher', () => {
     });
   });
 
-  it('forwards concrete permission input without exposing owner-only safety context', async () => {
+  it('rejects client-minted permission requests as retired (T14)', async () => {
     const baseRuntime = makeRuntime();
-    const request = vi.fn(async (): Promise<RuntimePermissionDecision> => ({
-      type: 'reject',
-      reason: 'permission request timed out',
-      cause: 'approval_timeout',
-    }));
-    const runtime: KodaXRuntime & { emit(event: RuntimeEvent): void } = {
+    const request = vi.fn();
+    const runtime: KodaXRuntime = {
       ...baseRuntime,
       permissions: {
         ...baseRuntime.permissions,
@@ -3249,35 +3240,25 @@ describe('runtime daemon dispatcher', () => {
     const dispatcher = createRuntimeDaemonDispatcher({ runtime });
     await initializeDispatcher(dispatcher);
 
-    const response = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-concrete-permission',
-      'permission.request',
-      {
+    const response = await dispatcher.handle({
+      ...createRuntimeDaemonRequest('req-concrete-permission', 'ping'),
+      method: 'permission.request',
+      params: {
         sessionId: 'session-1',
         runId: 'run-1',
         toolCallId: 'tool-1',
         toolName: 'bash',
         toolInput: { command: 'npm test' },
-        executionCwd: 'C:\\work\\repo',
+        executionCwd: 'C:\work\repo',
       },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(response)) {
-      expect(response.result).toEqual({
-        type: 'reject',
-        reason: 'permission request timed out',
-        cause: 'approval_timeout',
-      });
-    }
-    expect(request).toHaveBeenCalledWith({
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      toolInput: { command: 'npm test' },
-      executionCwd: 'C:\\work\\repo',
     });
+
+    expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
+    if (!isRuntimeDaemonSuccessResponse(response)) {
+      expect(response.error.code).toBe('client_upgrade_required');
+      expect(response.error.message).toContain('only Host execution creates them');
+    }
+    expect(request).not.toHaveBeenCalled();
   });
 });
 
@@ -3408,7 +3389,6 @@ const METHOD_SMOKE_PARAMS = {
   'event.subscribe': { filter: { sessionId: 'session-1' } },
   'event.unsubscribe': { subscriptionId: 'sub-missing' },
   'event.replay': { sessionId: 'session-1', limit: 5 },
-  'permission.request': { sessionId: 'session-1', runId: 'run-1', toolName: 'read' },
   'permission.grants.list': {},
   'permission.grants.revoke': { grantId: 'grant-1', expectedRevision: 0 },
   'interaction.list': { sessionId: 'session-1' },

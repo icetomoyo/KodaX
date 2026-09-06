@@ -365,7 +365,6 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'event.replay': { params: eventReplayFilterSchema(), result: arraySchema(runtimeEventSchema()) },
 
-  'permission.request': { params: permissionRequestInputSchema(), result: permissionDecisionSchema() },
   'permission.grants.list': { params: noParamsSchema, result: objectAnySchema },
   'permission.grants.revoke': {
     params: objectSchema({ grantId: stringSchema, expectedRevision: integerSchema }, ['grantId', 'expectedRevision']),
@@ -1722,28 +1721,6 @@ function interactionSchema(): RuntimeDaemonJsonSchema {
   }, ['requestId', 'sessionId', 'runId', 'kind', 'options', 'createdAt']);
 }
 
-function permissionRequestInputSchema(): RuntimeDaemonJsonSchema {
-  return objectSchema({
-    sessionId: stringSchema,
-    runId: stringSchema,
-    turnId: stringSchema,
-    toolCallId: stringSchema,
-    toolName: stringSchema,
-    reason: stringSchema,
-    risk: { enum: ['low', 'medium', 'high'] },
-    // The Runtime replaces caller input with its own bounded/redacted JSON
-    // summary before the request becomes observable or is returned.
-    inputPreview: stringSchema,
-    // Public concrete-call input. The Runtime canonicalizes this value and
-    // issues opaque grant candidates; raw input is never copied to events or
-    // persisted grants.
-    toolInput: objectAnySchema,
-    executionCwd: { type: 'string', maxLength: 4_096 },
-    autoModeDiagnostics: objectAnySchema,
-    expiresAt: stringSchema,
-    timeoutMs: integerSchema,
-  }, ['sessionId', 'runId', 'toolName']);
-}
 
 function permissionDecisionSchema(): RuntimeDaemonJsonSchema {
   return {

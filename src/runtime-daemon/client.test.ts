@@ -330,69 +330,29 @@ describe('runtime daemon client proxy', () => {
     });
   });
 
-  it('requires concrete permission scope capability before sending raw tool input', async () => {
-    const oldCalls: Array<{ readonly method: string; readonly params: unknown }> = [];
-    const oldClient = createRuntimeDaemonClient({
+  it('rejects client-minted permission requests locally without touching the wire (T14)', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const client = createRuntimeDaemonClient({
       identity: {
-        runtimeId: 'runtime-old-permission-daemon',
+        runtimeId: 'runtime-retired-permission-daemon',
         mode: 'daemon',
         profile: 'default',
-        startedAt: '2026-07-10T00:00:00.000Z',
-        version: '0.7.72',
+        startedAt: '2026-07-20T00:00:00.000Z',
+        version: '0.7.97',
       },
-      transport: fakeTransport(oldCalls),
-      capabilities: {
-        runtimeAutoModeGuardrail: { version: 2, owner: 'session-runtime' },
-      },
+      transport: fakeTransport(calls),
+      capabilities: {},
     });
 
-    await expect(oldClient.permissions.request({
+    await expect(client.permissions.request({
       sessionId: 'session-1',
       runId: 'run-1',
       toolName: 'bash',
       toolInput: { command: 'npm test' },
     })).rejects.toMatchObject({
-      code: 'daemon_upgrade_required',
-      capability: 'runtimeAutoModeGuardrail',
-      requiredVersion: 3,
-      restartRequired: true,
+      code: 'client_upgrade_required',
     });
-    expect(oldCalls).toHaveLength(0);
-
-    const currentCalls: Array<{ readonly method: string; readonly params: unknown }> = [];
-    const currentClient = createRuntimeDaemonClient({
-      identity: {
-        runtimeId: 'runtime-current-permission-daemon',
-        mode: 'daemon',
-        profile: 'default',
-        startedAt: '2026-07-20T00:00:00.000Z',
-        version: '0.7.73',
-      },
-      transport: fakeTransport(currentCalls),
-      capabilities: {
-        runtimeAutoModeGuardrail: {
-          version: 3,
-          owner: 'session-runtime',
-          concretePermissionMatchers: true,
-          permissionGrantSuggestions: true,
-        },
-      },
-    });
-    await currentClient.permissions.request({
-      sessionId: 'session-1',
-      runId: 'run-1',
-      toolName: 'bash',
-      toolInput: { command: 'npm test' },
-    });
-    expect(currentCalls).toContainEqual({
-      method: 'permission.request',
-      params: {
-        sessionId: 'session-1',
-        runId: 'run-1',
-        toolName: 'bash',
-        toolInput: { command: 'npm test' },
-      },
-    });
+    expect(calls).toHaveLength(0);
   });
 
   it('rejects host-only run options instead of silently dropping them on the wire', async () => {
@@ -1479,12 +1439,12 @@ describe('runtime daemon client proxy', () => {
     await client.runs.setProvider('run-1', 'openai');
     await client.runs.setReasoning('run-1', 'balanced');
     await client.events.replay({ sessionId: 'session-1' });
-    await client.permissions.request({
+    await expect(client.permissions.request({
       sessionId: 'session-1',
       runId: 'run-1',
       toolName: 'bash',
       inputPreview: 'echo ok',
-    });
+    })).rejects.toMatchObject({ code: 'client_upgrade_required' });
     await client.permissions.listPending({ runId: 'run-1' });
     await client.permissions.listGrants();
     await client.permissions.revokeGrant('grant-1', 0);
@@ -1537,7 +1497,6 @@ describe('runtime daemon client proxy', () => {
       'run.provider.set',
       'run.reasoning.set',
       'event.replay',
-      'permission.request',
       'interaction.list',
       'permission.grants.list',
       'permission.grants.revoke',

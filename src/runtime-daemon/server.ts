@@ -41,7 +41,6 @@ import type {
   RuntimeHostToolDescriptor,
   RuntimeAgentFollowupOptions,
   RuntimeAgentOperationOptions,
-  RuntimePermissionRequestInput,
   RuntimeReadOptions,
   RuntimeRewindSessionInput,
   RuntimeRunFilter,
@@ -282,7 +281,6 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "run.setModel",
     "run.setProvider",
     "run.setReasoning",
-    "permission.request",
   ]),
   ...scopeEntries("permission:grant-admin", ["permission.grants.revoke"]),
   ...scopeEntries("interaction:respond", ["interaction.respond"]),
@@ -539,7 +537,9 @@ export function createRuntimeDaemonDispatcher(
           "client_upgrade_required",
           isRetiredInteractionAliasMethod(wireRequest.method)
             ? "The permission.*/user_input.* interaction aliases were retired. Use interaction.list and interaction.respond."
-            : "The legacy agentTasks control plane was retired. Upgrade the KodaX SDK; if this daemon does not advertise actorControlPlane v1, restart it with the upgraded KodaX installation.",
+            : wireRequest.method === "permission.request"
+              ? "Clients can no longer mint permission requests (FEATURE_298 T14); only Host execution creates them."
+              : "The legacy agentTasks control plane was retired. Upgrade the KodaX SDK; if this daemon does not advertise actorControlPlane v1, restart it with the upgraded KodaX installation.",
         );
       }
       const request = wireRequest as RuntimeDaemonRequest;
@@ -1989,13 +1989,6 @@ async function dispatchRuntimeDaemonRequest(
       );
     }
 
-    case "permission.request": {
-      const input = requireRecord(
-        request.params,
-      ) as unknown as RuntimePermissionRequestInput;
-      await assertAdmittedSessionId(runtime, input.sessionId);
-      return runtime.permissions.request(input);
-    }
     case "permission.grants.list":
       return runtime.permissions.listGrants();
     case "permission.grants.revoke": {

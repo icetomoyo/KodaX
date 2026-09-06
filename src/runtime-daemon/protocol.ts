@@ -74,7 +74,6 @@ export type RuntimeDaemonMethod =
   | 'event.subscribe'
   | 'event.unsubscribe'
   | 'event.replay'
-  | 'permission.request'
   | 'permission.grants.list'
   | 'permission.grants.revoke'
   | 'interaction.list'
@@ -158,6 +157,7 @@ export type RuntimeDaemonMethod =
   | 'provider.cache.diagnostics.get';
 
 export type RuntimeDaemonRetiredMethod =
+  | 'permission.request'
   | 'permission.list'
   | 'permission.listPending'
   | 'permission.respond'
@@ -208,7 +208,6 @@ export type RuntimeDaemonMutationMethod =
   | 'run.setModel'
   | 'run.setProvider'
   | 'run.setReasoning'
-  | 'permission.request'
   | 'permission.grants.revoke'
   | 'interaction.respond'
   | 'workflow.pause'
@@ -405,7 +404,6 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'event.subscribe',
   'event.unsubscribe',
   'event.replay',
-  'permission.request',
   'permission.grants.list',
   'permission.grants.revoke',
   'interaction.list',
@@ -518,7 +516,6 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'run.setModel',
   'run.setProvider',
   'run.setReasoning',
-  'permission.request',
   'permission.grants.revoke',
   'interaction.respond',
   'workflow.pause',
@@ -553,6 +550,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
 ];
 
 const RETIRED_METHODS: readonly RuntimeDaemonRetiredMethod[] = [
+  'permission.request',
   'permission.list',
   'permission.listPending',
   'permission.respond',

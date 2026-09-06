@@ -69,7 +69,6 @@ import {
   parseModelSpec,
   registerCustomProviders,
   resolveProviderModelDescriptors,
-  resolveToolBridgeTarget,
   reduceOutputSegmentProjection,
   runManagedTask,
   runScopedToolMap,
@@ -3635,7 +3634,6 @@ interface RuntimeRunRecord {
   execPolicyRules?: readonly ExecPolicyRule[];
   execPolicyErrors?: readonly { readonly path: string; readonly message: string }[];
   readonly trustedProjectExecPolicySnapshotPath?: string;
-  forcedPermissionCalls?: Set<string>;
   reasoning?: KodaXReasoningMode;
   error?: string;
   failureDetail?: RuntimeFailureDetail;
@@ -8919,7 +8917,6 @@ function createRuntimeRunService(deps: {
     if (sessionCache === undefined) return;
     for (const [key, entry] of sessionCache) {
       if (entry.runId !== record.runId) continue;
-      entry.guardrail.clearAllowedCalls();
       sessionCache.delete(key);
     }
     if (sessionCache.size === 0) autoModeGuardrails.delete(record.sessionId);
@@ -9019,11 +9016,7 @@ function createRuntimeRunService(deps: {
     runSettlementCleanupStep(record, "user-input cleanup", () => {
       deps.userInputs.rejectForRun(record.runId, "runtime run ended");
     });
-    runSettlementCleanupStep(record, "guardrail cleanup", () => {
-      record.start?.options.guardrails
-        ?.find(isRuntimeAutoModeGuardrail)
-        ?.clearAllowedCalls();
-    });
+
     runSettlementCleanupStep(record, "queue-route cleanup", () => {
       releaseActiveQueueRoute(record);
     });
@@ -9125,11 +9118,7 @@ function createRuntimeRunService(deps: {
     runSettlementCleanupStep(record, "unknown user-input cleanup", () => {
       deps.userInputs.rejectForRun(record.runId, "runtime run state is unknown");
     });
-    runSettlementCleanupStep(record, "unknown guardrail cleanup", () => {
-      record.start?.options.guardrails
-        ?.find(isRuntimeAutoModeGuardrail)
-        ?.clearAllowedCalls();
-    });
+
     resolveRunStart(record, result);
     runSettlementCleanupStep(record, "unknown queue-route cleanup", () => {
       releaseActiveQueueRoute(record);
@@ -9337,9 +9326,6 @@ function createRuntimeRunService(deps: {
     record.abortController?.abort(error);
     deps.permissions.rejectForRun(record.runId, message);
     deps.userInputs.rejectForRun(record.runId, message);
-    record.start?.options.guardrails
-      ?.find(isRuntimeAutoModeGuardrail)
-      ?.clearAllowedCalls();
     const recovery = recoverActorDurability(record, message);
     record.actorDurabilityRecovery = recovery;
     void recovery.then(() => {
@@ -9888,9 +9874,6 @@ function createRuntimeRunService(deps: {
     record.actorFinalizationAbortController?.abort(new Error(reason));
     deps.permissions.rejectForRun(record.runId, reason);
     deps.userInputs.rejectForRun(record.runId, reason);
-    record.start?.options.guardrails
-      ?.find(isRuntimeAutoModeGuardrail)
-      ?.clearAllowedCalls();
     if (!wasQueued) {
       record.interruptInputOpen = false;
       terminalizeQueuedInterruptInputs(record, (inputId) =>
@@ -10066,7 +10049,7 @@ function createRuntimeRunService(deps: {
       runId: record.runId,
     });
 
-    const events = wrapKodaXEvents({
+    const { events, authorizeForcedPermission } = wrapKodaXEvents({
       display: deps.sessionViews.events(record.sessionId, record.runId, record.start.options.events?.getCostReport),
       bus: deps.bus,
       original: record.start.options.events,
@@ -10152,6 +10135,7 @@ function createRuntimeRunService(deps: {
     });
     const runOptions = buildRunOptions({
       agentPlane: deps.agentPlane,
+      authorizeForcedPermission,
       defaultConfigHome: deps.defaultConfigHome,
       events,
       model: record.model,
@@ -10958,7 +10942,6 @@ function createRuntimeRunService(deps: {
       ...(trustedProjectExecPolicySnapshotPath === undefined
         ? {}
         : { trustedProjectExecPolicySnapshotPath }),
-      forcedPermissionCalls: new Set(),
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
@@ -11330,9 +11313,6 @@ function createRuntimeRunService(deps: {
       });
       deps.permissions.rejectForRun(run.runId, reason);
       deps.userInputs.rejectForRun(run.runId, reason);
-      run.start?.options.guardrails
-        ?.find(isRuntimeAutoModeGuardrail)
-        ?.clearAllowedCalls();
       run.interruptInputOpen = false;
       terminalizeQueuedInterruptInputs(run, (inputId) =>
       productQueue.markDropped(run.sessionId, inputId),
@@ -11708,9 +11688,6 @@ function createRuntimeRunService(deps: {
     },
     releaseSession(sessionId) {
       productQueue.releaseSession(sessionId);
-      for (const entry of autoModeGuardrails.get(sessionId)?.values() ?? []) {
-        entry.guardrail.clearAllowedCalls();
-      }
       autoModeGuardrails.delete(sessionId);
       for (const run of deps.runs.values()) {
         if (run.sessionId === sessionId) autoModeStates.delete(run.runId);
@@ -12563,6 +12540,9 @@ function createWorkspaceSandboxRootRegistry(input: {
 
 function buildRunOptions(input: {
   readonly agentPlane?: AgentExecutorPlane;
+  readonly authorizeForcedPermission: (
+    call: RunnerToolCall,
+  ) => Promise<RuntimePermissionToolDecision>;
   readonly defaultConfigHome: string;
   readonly events: KodaXEvents;
   readonly model?: string;
@@ -12573,6 +12553,7 @@ function buildRunOptions(input: {
 }): KodaXOptions {
   const {
     agentPlane,
+    authorizeForcedPermission,
     events,
     model,
     options,
@@ -12699,7 +12680,7 @@ function buildRunOptions(input: {
       NonNullable<KodaXContextOptions["authorizeShellHostExecution"]>
     >[0],
   ) => authorizeRuntimeShellHostExecution({
-    events,
+    authorizeForcedPermission,
     record,
     request,
     runtimeAutoGuardrail,
@@ -19342,7 +19323,17 @@ function wrapKodaXEvents(input: {
     queuedMessageIds: readonly string[],
     queuedMessageEntryIds: Readonly<Record<string, string>> | undefined,
   ) => void;
-}): KodaXEvents {
+}): {
+  readonly events: KodaXEvents;
+  /**
+   * FEATURE_298 T14: the single permission authority for sandbox-boundary
+   * escalations. The current call/context is passed directly — no
+   * pre-registered receipt and no re-entry into the tool admission hook.
+   */
+  readonly authorizeForcedPermission: (
+    call: RunnerToolCall,
+  ) => Promise<RuntimePermissionToolDecision>;
+} {
   const {
     bus,
     original,
@@ -19361,6 +19352,72 @@ function wrapKodaXEvents(input: {
     runId: record.runId,
     turnId: meta?.turnId ?? record.turnId,
   });
+  const authorizeTrackedPermission = async (
+    tool: string,
+    toolInput: Record<string, unknown>,
+    meta: KodaXToolEventMeta | undefined,
+    shellPermission:
+      | Pick<RuntimePermissionGrantContext, "shell" | "shellContractFingerprint">
+      | undefined,
+  ): Promise<RuntimePermissionToolDecision> => {
+    const stoppedBeforePermission = managedStopDecision();
+    if (stoppedBeforePermission !== undefined) return stoppedBeforePermission;
+    const previousPhase = record.phase;
+    if (record.phase === "running") {
+      onPhase("waiting_permission");
+    }
+    const pendingPermission = permissions.trackAndWait(
+      {
+        sessionId: meta?.sessionId ?? record.sessionId,
+        runId: record.runId,
+        ...((meta?.turnId ?? record.turnId)
+          ? { turnId: meta?.turnId ?? record.turnId }
+          : {}),
+        ...(meta?.toolId ? { toolCallId: meta.toolId } : {}),
+        toolName: tool,
+        inputPreview: previewInput(toolInput),
+        executionCwd: resolveRuntimeExecutionCwd(record),
+      },
+      undefined,
+      {
+        toolInput,
+        ...(shellPermission ?? {}),
+        ...(typeof record.start?.options.context?.gitRoot === "string"
+          ? { projectRoot: record.start.options.context.gitRoot }
+          : {}),
+      },
+    );
+    try {
+      return decisionToToolDecision(await pendingPermission.response);
+    } catch (error: unknown) {
+      permissions.resolve(pendingPermission.request.id, {
+        type: "reject",
+        reason: normalizeError(error).message,
+      });
+      const stoppedAfterPermissionError = managedStopDecision();
+      if (stoppedAfterPermissionError !== undefined) {
+        return stoppedAfterPermissionError;
+      }
+      throw error;
+    } finally {
+      if (record.phase === "waiting_permission") {
+        onPhase(previousPhase === "queued" ? "running" : previousPhase);
+      }
+    }
+  };
+  const authorizeForcedPermission = (
+    call: RunnerToolCall,
+  ): Promise<RuntimePermissionToolDecision> =>
+    authorizeTrackedPermission(
+      call.name,
+      call.input,
+      {
+        sessionId: record.sessionId,
+        ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
+        toolId: call.id,
+      },
+      runtimeShellPermissionIdentity(record),
+    );
   const externalCallbacks = (): KodaXEvents | undefined =>
     record.actorDurabilityFailure === undefined ? original : undefined;
   const actorDurabilityFenced = (): boolean =>
@@ -19471,7 +19528,7 @@ function wrapKodaXEvents(input: {
     }
   };
 
-  return {
+  const events: KodaXEvents = {
     ...original,
     getCostReport: input.display.getCostReport,
     onOutputSegmentStart(segment, meta) {
@@ -19900,16 +19957,8 @@ function wrapKodaXEvents(input: {
     ): Promise<RuntimePermissionToolDecision> => {
       const stoppedBeforeAdmission = managedStopDecision();
       if (stoppedBeforeAdmission !== undefined) return stoppedBeforeAdmission;
-      const exactCall: RunnerToolCall = {
-        id: meta?.toolId ?? `runtime_${tool}`,
-        name: tool,
-        input: toolInput,
-      };
-      const exactCallKey = runtimeAutoModeDecisionKey(exactCall);
-      const forcedPermission = exactCallKey !== undefined
-        && record.forcedPermissionCalls?.delete(exactCallKey) === true;
       const permissionMode = replApi.normalizePermissionMode(record.permissionMode);
-      if (permissionMode === "full-access" && !forcedPermission) {
+      if (permissionMode === "full-access") {
         const fullAccessDecision = resolveRuntimePermissionPolicy(
           record,
           tool,
@@ -19923,7 +19972,7 @@ function wrapKodaXEvents(input: {
       const runtimeOwnsAutoDecision =
         autoGuardrail !== undefined &&
         permissionMode === "auto";
-      if (runtimeOwnsAutoDecision && !forcedPermission) {
+      if (runtimeOwnsAutoDecision) {
         if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
         if (tool !== "bash") {
           const hostDecision = await original?.beforeToolExecute?.(
@@ -19939,26 +19988,14 @@ function wrapKodaXEvents(input: {
             return hostDecision;
           }
         }
-        const allowed =
-          meta?.toolId !== undefined &&
-          autoGuardrail.consumeAllowedCall({
-            id: meta.toolId,
-            name: tool,
-            input: toolInput,
-          });
-        if (!allowed) {
-          return "[Blocked] Runtime auto mode did not classify this concrete tool call.";
-        }
+        // The engine-side guardrail verdict is authoritative for the current
+        // call; admission does not re-review allowed work.
         return true;
       }
-      if (
-        permissionMode === "accept-edits"
-        && tool === "bash"
-        && !forcedPermission
-      ) {
+      if (permissionMode === "accept-edits" && tool === "bash") {
         // Edits also attempts the OS sandbox before creating user permission
-        // work. A proven pre-start boundary re-enters this hook with the exact
-        // forced receipt above.
+        // work. A failed boundary escalates through the runtime's forced
+        // permission authority with the exact current call.
         return true;
       }
       if (replApi.normalizePermissionMode(record.permissionMode) === "plan") {
@@ -19986,82 +20023,35 @@ function wrapKodaXEvents(input: {
       // An in-process host hook is authoritative. The runtime policy is the
       // fallback for headless/daemon execution where no executable callback can
       // cross the wire.
-      const policyDecision =
-        !forcedPermission && original?.beforeToolExecute === undefined
-          ? resolveRuntimePermissionPolicy(record, tool, toolInput)
-          : undefined;
+      const policyDecision = original?.beforeToolExecute === undefined
+        ? resolveRuntimePermissionPolicy(record, tool, toolInput)
+        : undefined;
       if (policyDecision !== undefined) return policyDecision;
-      const stoppedBeforePermission = managedStopDecision();
-      if (stoppedBeforePermission !== undefined) return stoppedBeforePermission;
-      const previousPhase = record.phase;
-      if (record.phase === "running") {
-        onPhase("waiting_permission");
-      }
-      const pendingPermission = permissions.trackAndWait(
-        {
-          sessionId: meta?.sessionId ?? record.sessionId,
-          runId: record.runId,
-          ...((meta?.turnId ?? record.turnId)
-            ? { turnId: meta?.turnId ?? record.turnId }
-            : {}),
-          ...(meta?.toolId ? { toolCallId: meta.toolId } : {}),
-          toolName: tool,
-          inputPreview: previewInput(toolInput),
-          executionCwd: resolveRuntimeExecutionCwd(record),
-        },
-        undefined,
-        {
-          toolInput,
-          ...(shellPermission ?? {}),
-          ...(typeof record.start?.options.context?.gitRoot === "string"
-            ? { projectRoot: record.start.options.context.gitRoot }
-            : {}),
-        },
-      );
-      try {
-        if (!original?.beforeToolExecute) {
-          const decision = await pendingPermission.response;
-          return decisionToToolDecision(decision);
+      // FEATURE_298 T14: exactly one authority answers each action. An
+      // in-process embedder hook owns the decision and no runtime permission
+      // request exists for it; headless execution answers through the shared
+      // permission registry.
+      if (original?.beforeToolExecute) {
+        const previousPhase = record.phase;
+        if (record.phase === "running") {
+          onPhase("waiting_permission");
         }
-        const hookDecision = Promise.resolve(
-          original.beforeToolExecute(tool, toolInput, meta),
-        ).then((decision): RuntimePermissionRaceResult => ({
-          source: "hook",
-          decision,
-        }));
-        const runtimeDecision = pendingPermission.response.then(
-          (decision): RuntimePermissionRaceResult => ({
-            source: "runtime",
-            decision: decisionToToolDecision(decision),
-          }),
-        );
-        const result = await Promise.race([hookDecision, runtimeDecision]);
-        const stoppedAfterPermission = managedStopDecision();
-        if (stoppedAfterPermission !== undefined) {
-          return stoppedAfterPermission;
-        }
-        if (result.source === "hook") {
-          permissions.resolve(
-            pendingPermission.request.id,
-            decisionToPermissionDecision(result.decision),
+        try {
+          const decision = await original.beforeToolExecute(
+            tool,
+            toolInput,
+            meta,
           );
-        }
-        return result.decision;
-      } catch (error: unknown) {
-        permissions.resolve(pendingPermission.request.id, {
-          type: "reject",
-          reason: normalizeError(error).message,
-        });
-        const stoppedAfterPermissionError = managedStopDecision();
-        if (stoppedAfterPermissionError !== undefined) {
-          return stoppedAfterPermissionError;
-        }
-        throw error;
-      } finally {
-        if (record.phase === "waiting_permission") {
-          onPhase(previousPhase === "queued" ? "running" : previousPhase);
+          const stoppedAfterHook = managedStopDecision();
+          if (stoppedAfterHook !== undefined) return stoppedAfterHook;
+          return decision;
+        } finally {
+          if (record.phase === "waiting_permission") {
+            onPhase(previousPhase === "queued" ? "running" : previousPhase);
+          }
         }
       }
+      return authorizeTrackedPermission(tool, toolInput, meta, shellPermission);
     },
     ...(original?.askUser || enableSharedInteractions
       ? {
@@ -20116,6 +20106,7 @@ function wrapKodaXEvents(input: {
         }
       : {}),
   };
+  return { events, authorizeForcedPermission };
 }
 
 function buildSessionRuntimeInfo(
@@ -21702,7 +21693,9 @@ function runtimeAutoReviewPolicy(
 }
 
 async function authorizeRuntimeShellHostExecution(input: {
-  readonly events: KodaXEvents;
+  readonly authorizeForcedPermission: (
+    call: RunnerToolCall,
+  ) => Promise<RuntimePermissionToolDecision>;
   readonly record: RuntimeRunRecord;
   readonly request: KodaXShellHostExecutionRequest;
   readonly runtimeAutoGuardrail?: RuntimeOwnedAutoModeGuardrail;
@@ -21729,7 +21722,7 @@ async function authorizeRuntimeShellHostExecution(input: {
     if (input.request.reason === "direct-host") {
       return "[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access.";
     }
-    return requestRuntimeForcedPermission(input.events, input.record, call);
+    return input.authorizeForcedPermission(call);
   }
   if (typeof policy === "string") return policy;
 
@@ -21738,7 +21731,7 @@ async function authorizeRuntimeShellHostExecution(input: {
     ?? replApi.normalizePermissionMode(input.record.permissionMode);
   if (mode === "full-access") return true;
   if (mode === "accept-edits") {
-    return requestRuntimeForcedPermission(input.events, input.record, call);
+    return input.authorizeForcedPermission(call);
   }
   if (mode === "auto") {
     const verdict = await input.runtimeAutoGuardrail?.reviewHostCall(call, mode);
@@ -21758,24 +21751,6 @@ async function authorizeRuntimeShellHostExecution(input: {
         : "[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.";
   }
   return "[Blocked] Host execution requires a recognized permission profile.";
-}
-
-async function requestRuntimeForcedPermission(
-  events: KodaXEvents,
-  record: RuntimeRunRecord,
-  call: RunnerToolCall,
-): Promise<boolean | string> {
-  const key = runtimeAutoModeDecisionKey(call);
-  if (key === undefined) {
-    return "[Blocked] Host-boundary operation could not be bound to an exact permission request.";
-  }
-  record.forcedPermissionCalls?.add(key);
-  const decision = await events.beforeToolExecute?.(call.name, call.input, {
-    sessionId: record.sessionId,
-    ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
-    toolId: call.id,
-  });
-  return decision ?? false;
 }
 
 function resolveRuntimeShellExecPolicy(
@@ -23492,44 +23467,29 @@ function permissionMatchesFilter(
   return true;
 }
 
-function decisionToPermissionDecision(
-  decision: boolean | string,
-): RuntimePermissionDecision {
-  if (decision === true) return { type: "allow_once" };
-  return {
-    type: "reject",
-    reason: decision === false ? "tool execution rejected" : decision,
-  };
-}
-
-type RuntimePermissionRaceResult =
-  | {
-      readonly source: "hook";
-      readonly decision: RuntimePermissionToolDecision;
-    }
-  | {
-      readonly source: "runtime";
-      readonly decision: RuntimePermissionToolDecision;
-    };
 
 interface RuntimeAutoModeGuardrailCacheEntry {
   readonly runId: string;
   readonly projectRoot: string;
   readonly executionCwd: string;
   readonly classifierModel?: string;
-  readonly guardrail: RuntimeOwnedAutoModeGuardrail;
+  readonly guardrail: AutoModeToolGuardrail;
 }
 
 const MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION = 8;
 
+/**
+ * FEATURE_298 T14: the runtime-owned auto-mode guardrail. The engine-side
+ * beforeTool verdict is authoritative for the current call; host-boundary
+ * escalation reviews the current call against the dispatch-time context that
+ * is held directly (single slot, matched by the runner's call id).
+ */
 interface RuntimeOwnedAutoModeGuardrail extends ToolGuardrail {
   prepare?(): Promise<void>;
-  consumeAllowedCall(call: RunnerToolCall): boolean;
   reviewHostCall(
     call: RunnerToolCall,
     permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
   ): Promise<GuardrailVerdict>;
-  clearAllowedCalls(): void;
 }
 
 function resolveRuntimeExecutionCwd(record: RuntimeRunRecord): string {
@@ -23565,8 +23525,6 @@ function isRuntimeAutoModeGuardrail(
   return (
     guardrail.kind === "tool" &&
     guardrail.name === "auto-mode" &&
-    "consumeAllowedCall" in guardrail &&
-    typeof guardrail.consumeAllowedCall === "function" &&
     "reviewHostCall" in guardrail &&
     typeof guardrail.reviewHostCall === "function"
   );
@@ -23581,105 +23539,6 @@ function getRuntimeAutoModeGuardrail(
   return record.start?.options.guardrails?.find(isRuntimeAutoModeGuardrail);
 }
 
-function serializeRuntimeToolInput(
-  value: unknown,
-  ancestors = new Set<object>(),
-): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return `string:${value.length}:${value}`;
-  if (typeof value === "boolean")
-    return value ? "boolean:true" : "boolean:false";
-  if (typeof value === "undefined") return "undefined";
-  if (typeof value === "bigint") return `bigint:${value.toString()};`;
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) return "number:NaN";
-    if (Object.is(value, -0)) return "number:-0";
-    return `number:${String(value)};`;
-  }
-  if (typeof value !== "object")
-    throw new Error("Tool input must contain data values only.");
-  if (ancestors.has(value)) throw new Error("Tool input must not be circular.");
-  const prototype = Object.getPrototypeOf(value);
-  if (
-    !Array.isArray(value) &&
-    prototype !== Object.prototype &&
-    prototype !== null
-  ) {
-    throw new Error("Tool input must be a plain object.");
-  }
-  ancestors.add(value);
-  try {
-    const ownKeys = Reflect.ownKeys(value);
-    if (ownKeys.some((key) => typeof key === "symbol")) {
-      throw new Error("Tool input must not contain symbol properties.");
-    }
-    if (Array.isArray(value)) {
-      const indexes = ownKeys
-        .filter(
-          (key): key is string => key !== "length" && typeof key === "string",
-        )
-        .map((key) => {
-          const index = Number(key);
-          if (
-            !Number.isInteger(index) ||
-            index < 0 ||
-            index >= value.length ||
-            String(index) !== key
-          ) {
-            throw new Error(
-              "Tool input arrays must not contain named properties.",
-            );
-          }
-          return { index, key };
-        })
-        .sort((left, right) => left.index - right.index);
-      return `array:${value.length}:[${indexes
-        .map(
-          ({ key }) =>
-            `${key}:${serializeRuntimeDataProperty(value, key, ancestors)}`,
-        )
-        .join("")}]`;
-    }
-    const keys = ownKeys
-      .filter((key): key is string => typeof key === "string")
-      .sort();
-    return `object:{${keys
-      .map(
-        (key) =>
-          `${serializeRuntimeToolInput(key, ancestors)}${serializeRuntimeDataProperty(
-            value,
-            key,
-            ancestors,
-          )}`,
-      )
-      .join("")}}`;
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
-function serializeRuntimeDataProperty(
-  owner: object,
-  key: string,
-  ancestors: Set<object>,
-): string {
-  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-  if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-    throw new Error("Tool input must contain enumerable data properties only.");
-  }
-  return serializeRuntimeToolInput(descriptor.value, ancestors);
-}
-
-function runtimeAutoModeDecisionKey(call: RunnerToolCall): string | undefined {
-  try {
-    const input = serializeRuntimeToolInput(call.input);
-    return createHash("sha256")
-      .update(`${call.id}\0${call.name}\0${input}`)
-      .digest("hex");
-  } catch {
-    return undefined;
-  }
-}
 
 function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boolean {
   const writable = (boundary: AutoModePermissionTarget["boundary"]): boolean => (
@@ -23695,79 +23554,6 @@ function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boo
     return writable(operation.source.boundary)
       && writable(operation.destination.boundary);
   });
-}
-
-function createRuntimeOwnedAutoModeGuardrail(
-  guardrail: AutoModeToolGuardrail,
-): RuntimeOwnedAutoModeGuardrail {
-  const allowedCalls = new Set<string>();
-  const pendingHostReviews = new Map<
-    string,
-    { readonly call: RunnerToolCall; readonly context: GuardrailContext }
-  >();
-  return {
-    ...guardrail,
-    beforeTool: async (
-      call: RunnerToolCall,
-      ctx: GuardrailContext,
-    ): Promise<GuardrailVerdict> => {
-      if (!guardrail.beforeTool) {
-        return {
-          action: "block",
-          reason: "Runtime auto-mode guardrail has no beforeTool hook.",
-        };
-      }
-      if (call.name === "bash") {
-        const key = runtimeAutoModeDecisionKey(call);
-        if (key === undefined) {
-          return {
-            action: "block",
-            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
-          };
-        }
-        allowedCalls.add(key);
-        pendingHostReviews.set(key, { call, context: ctx });
-        while (pendingHostReviews.size > 64) {
-          const oldest = pendingHostReviews.keys().next().value as string | undefined;
-          if (oldest === undefined) break;
-          pendingHostReviews.delete(oldest);
-        }
-        return { action: "allow" };
-      }
-      const verdict = await guardrail.beforeTool(call, ctx);
-      if (verdict.action === "allow") {
-        const bridgeTarget = resolveToolBridgeTarget(call);
-        const authorizedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
-        const key = runtimeAutoModeDecisionKey(authorizedCall);
-        if (key !== undefined) allowedCalls.add(key);
-      }
-      return verdict;
-    },
-    consumeAllowedCall(call) {
-      const key = runtimeAutoModeDecisionKey(call);
-      if (key === undefined || !allowedCalls.has(key)) return false;
-      allowedCalls.delete(key);
-      return true;
-    },
-    async reviewHostCall(call) {
-      const key = runtimeAutoModeDecisionKey(call);
-      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
-      if (key !== undefined) pendingHostReviews.delete(key);
-      if (pending === undefined || !guardrail.beforeTool) {
-        return {
-          action: "block",
-          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
-        };
-      }
-      return typeof guardrail.reviewHostBoundary === "function"
-        ? guardrail.reviewHostBoundary(pending.call, pending.context)
-        : guardrail.beforeTool(pending.call, pending.context);
-    },
-    clearAllowedCalls() {
-      allowedCalls.clear();
-      pendingHostReviews.clear();
-    },
-  };
 }
 
 function createRuntimeSessionAutoModeGuardrail(input: {
@@ -23789,17 +23575,19 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     phase: RuntimeRunPhase,
   ) => void;
 }): RuntimeOwnedAutoModeGuardrail {
-  const allowedCalls = new Set<string>();
-  const pendingHostReviews = new Map<
+  // Dispatch context per Bash sandbox attempt, keyed by the runner's call
+  // id — the current call's own identity, no content hashing. A boundary
+  // escalation reviews exactly the dispatch that produced it; runners may
+  // prepare several Bash calls of one turn before executing them.
+  const dispatchesByCallId = new Map<
     string,
     { readonly call: RunnerToolCall; readonly context: GuardrailContext }
   >();
-  let currentGuardrail: RuntimeOwnedAutoModeGuardrail | undefined;
   let configurationError: RuntimeAutoModeConfigurationError | undefined;
   const resolveGuardrail = async (
     permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
   ): Promise<
-    RuntimeOwnedAutoModeGuardrail | undefined
+    AutoModeToolGuardrail | undefined
   > => {
     const settings = (await input.settingsOwner.read(input.sessionId)).value;
     const record = input.getRecord();
@@ -23815,15 +23603,12 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       record?.model ?? input.model,
     );
     if (configurationError) {
-      currentGuardrail = undefined;
       return undefined;
     }
-    const guardrail = await createRuntimeAutoModeGuardrail({
+    return createRuntimeAutoModeGuardrail({
       ...input,
       settings: reviewSettings,
     });
-    currentGuardrail = guardrail;
-    return guardrail;
   };
   return {
     kind: "tool",
@@ -23839,19 +23624,13 @@ function createRuntimeSessionAutoModeGuardrail(input: {
             ?? input.getRecord()?.permissionMode,
         );
         if (liveMode !== "auto") return { action: "allow" };
-        const key = runtimeAutoModeDecisionKey(call);
-        if (key === undefined) {
-          return {
-            action: "block",
-            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
-          };
-        }
-        allowedCalls.add(key);
-        pendingHostReviews.set(key, { call, context: ctx });
-        while (pendingHostReviews.size > 64) {
-          const oldest = pendingHostReviews.keys().next().value as string | undefined;
+        dispatchesByCallId.set(call.id, { call, context: ctx });
+        while (dispatchesByCallId.size > 64) {
+          const oldest = dispatchesByCallId.keys().next().value as
+            | string
+            | undefined;
           if (oldest === undefined) break;
-          pendingHostReviews.delete(oldest);
+          dispatchesByCallId.delete(oldest);
         }
         return { action: "allow" };
       }
@@ -23862,36 +23641,21 @@ function createRuntimeSessionAutoModeGuardrail(input: {
         }
         return { action: "allow" };
       }
-      currentGuardrail = guardrail;
-      const verdict = await guardrail.beforeTool(call, ctx);
-      if (verdict.action === "allow") {
-        const bridgeTarget = resolveToolBridgeTarget(call);
-        const authorizedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
-        guardrail.consumeAllowedCall(authorizedCall);
-        const key = runtimeAutoModeDecisionKey(authorizedCall);
-        if (key !== undefined) allowedCalls.add(key);
-      }
-      return verdict;
-    },
-    consumeAllowedCall(call) {
-      const key = runtimeAutoModeDecisionKey(call);
-      if (key === undefined || !allowedCalls.has(key)) return false;
-      allowedCalls.delete(key);
-      return true;
+      return guardrail.beforeTool(call, ctx);
     },
     async reviewHostCall(call, permissionMode) {
-      const key = runtimeAutoModeDecisionKey(call);
-      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
-      if (key !== undefined) pendingHostReviews.delete(key);
+      const pending = dispatchesByCallId.get(call.id);
+      dispatchesByCallId.delete(call.id);
       if (pending === undefined) {
         return {
           action: "block",
-          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
+          reason: "Auto[LLM] host review did not match the current sandboxed call. Use a safer route.",
         };
       }
-      // Host-boundary review is a fresh authorization decision. Resolve from
-      // live Session settings even when an earlier tool initialized a cached
-      // reviewer with a now-stale classifier override.
+      // Host-boundary review is a fresh authorization decision over the
+      // current call and its dispatch context. Resolve from live Session
+      // settings even when an earlier tool initialized a cached reviewer with
+      // a now-stale classifier override.
       const guardrail = await resolveGuardrail(permissionMode);
       if (guardrail === undefined) {
         return {
@@ -23900,15 +23664,10 @@ function createRuntimeSessionAutoModeGuardrail(input: {
             ?? "Auto[LLM] reviewer is unavailable. Use a safer route or configure a reviewer model.",
         };
       }
-      const admitted = await guardrail.beforeTool?.(pending.call, pending.context);
-      if (admitted !== undefined && admitted.action !== "allow") return admitted;
-      guardrail.consumeAllowedCall(pending.call);
-      return guardrail.reviewHostCall(call);
-    },
-    clearAllowedCalls() {
-      allowedCalls.clear();
-      pendingHostReviews.clear();
-      currentGuardrail?.clearAllowedCalls();
+      return typeof guardrail.reviewHostBoundary === "function"
+        ? guardrail.reviewHostBoundary(pending.call, pending.context)
+        : guardrail.beforeTool?.(pending.call, pending.context)
+          ?? { action: "allow" };
     },
   };
 }
@@ -23945,7 +23704,7 @@ async function createRuntimeAutoModeGuardrail(input: {
     record: RuntimeRunRecord,
     phase: RuntimeRunPhase,
   ) => void;
-}): Promise<RuntimeOwnedAutoModeGuardrail | undefined> {
+}): Promise<AutoModeToolGuardrail | undefined> {
   if (
     replApi.normalizePermissionMode(input.settings.permissionMode) !== "auto"
   ) {
@@ -24010,7 +23769,7 @@ async function createRuntimeAutoModeGuardrail(input: {
     sharedState,
     extraCollectors: [replApi.replBashPathSignalCollector],
   });
-  const guardrail = createRuntimeOwnedAutoModeGuardrail(bootstrap.getGuardrail());
+  const guardrail = bootstrap.getGuardrail();
   const cacheEntry: RuntimeAutoModeGuardrailCacheEntry = {
     runId: input.runId,
     projectRoot,
@@ -24024,8 +23783,6 @@ async function createRuntimeAutoModeGuardrail(input: {
   while (sessionCache.size > MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION) {
     const oldestKey = sessionCache.keys().next().value as string | undefined;
     if (oldestKey === undefined || oldestKey === cacheKey) break;
-    const oldest = sessionCache.get(oldestKey);
-    oldest?.guardrail.clearAllowedCalls();
     sessionCache.delete(oldestKey);
   }
   return guardrail;

@@ -98,6 +98,12 @@ export interface KodaXProductClient {
     /** Precise request ID + typed response; only the first valid answer counts. */
     respond(requestId: string, response: ClientInteractionResponse): Promise<ClientInteractionResult>;
   };
+  readonly permissions: {
+    /** Effective explicit grants; every client sees the same revision. */
+    listGrants(): Promise<ClientPermissionGrants>;
+    /** Revoke exactly one grant by its domain identity; the revision must match. */
+    revokeGrant(grantId: string, expectedRevision: number): Promise<boolean>;
+  };
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */
     read(): Promise<ClientConfig>;
@@ -476,6 +482,17 @@ export interface ClientInteractionResult {
   readonly accepted: boolean;
   /** 'already_resolved' covers late, duplicate, cancelled, expired and unknown targets. */
   readonly status: 'answered' | 'dismissed' | 'already_resolved';
+}
+
+export interface ClientPermissionGrant {
+  readonly id: string;
+  readonly label?: string;
+  readonly persistence?: 'session' | 'persistent';
+}
+
+export interface ClientPermissionGrants {
+  readonly revision: number;
+  readonly grants: readonly ClientPermissionGrant[];
 }
 
 export interface ClientSessionSettings {
