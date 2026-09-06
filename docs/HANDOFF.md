@@ -477,3 +477,9 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 ## 2026-09-06 T22 切片 2（414ef345）
 
 callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_cli 接 interactiveRuntime.workflows——daemon client 与进程内服务同构）；/workflow runs/show/pause/resume/stop 优先 binding（process→managed snapshot 适配器保住既有格式器；无 binding 走本地路径，107 测试全绿 + 新 mock Host 面 runs/stop 测试；repl 包 2615 绿；tsc 481）。**剩余切片 3**：start/rerun 审批后改发声明式 binding.start（generated/rerun→inline manifest+source、saved/builtin→name），随后删本地 manager/lifecycle 构造（:241-248 区、builder:185、completer command-arguments:477）+ builder/completer binding 接线 + live strip 经 subscribe。完成后 T22→Done、T37 解锁。
+
+---
+
+## 2026-09-06 T22 切片 3 精确接缝（下窗直接开工）
+
+三个 startFromOptions 位点：workflow-command.ts:816（rerun saved）、:882（rerun run）、:1017（start-by-name/generate）。改造模式（hostControl 在场时）：审批 confirm 后改调 `hostControl.start({projectRoot: cwd, source, args: parseWorkflowArgs(...)})`——saved/capsule 与 builtin 有 scriptSnapshot/capsule.source 的走 `{kind:'inline', manifest: capsule.manifest, source: capsule.source}`（rerun-run 从 runDetail/scriptSnapshotPath 取 manifest+source）；bare name 走 `{kind:'name'}`。**runId 改 Host 铸造**：先 start 再打印 runId（现 UI 先铸 `run-<ts>` 后启动）。**done 观察改 Host 事件**：managed.done/getSnapshot 不存在——给 WorkflowHostControl 加 `subscribe(filter, listener)`（runtime/daemon client 均已有），写 observeHostWorkflowDone：subscribe({runId}) → workflow_finished 快照 → 复用 observeManagedWorkflowDone 的收尾打印（final assistant message 从快照 resultSummary/latestMessage 或 run.json detail 读）；live strip 同经 subscribe 的 workflow_updated。processMetadata/approvalContext/scriptSnapshot 语义：Host 侧 startManagedWorkflow 已自动补 authorship/quality metadata。builder（startGeneratedWorkflowFromRequest）暂留本地（workflow-builder 特性），completer command-arguments:477 补 binding 后删本地 manager。完成后删 :241-248 本地构造（测试无 binding 路径保留至 T34 统一收权）→ T22 Done → T37 解锁。
