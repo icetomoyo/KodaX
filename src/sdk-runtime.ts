@@ -4940,7 +4940,13 @@ async function createKodaXRuntimeInternal(
       await rebuildSessionMcpResources(sessionId);
     }
   }
+  // FEATURE_298 T31 — shared manual-compaction occupancy: the Session
+  // service registers it around the ungated model call; run admission and
+  // Session mutations consult it so no writer interleaves with the
+  // compaction's whole-lineage commit.
+  const activeCompactions = new Set<string>();
   const runService = createRuntimeRunService({
+    activeCompactions,
     extensionRuntime: (sessionId) => integrations.forSession(sessionId),
     deleteTemporarySession: (sessionId) => sessionService.deleteTemporary(sessionId),
     sessionViews,
@@ -5005,6 +5011,7 @@ async function createKodaXRuntimeInternal(
     sessionViews,
     integrations,
     sessionMcpStore,
+    activeCompactions,
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -6487,8 +6494,17 @@ function createRuntimeSessionService(
     remove(sessionId: string): void;
     rebuild(sessionId: string): Promise<void>;
   },
+  /** FEATURE_298 T31 — shared manual-compaction occupancy (see factory). */
+  activeCompactions: Set<string>,
 ): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
+  // FEATURE_298 T31 — in-flight manual compactions register occupancy so
+  // same-Session writers reject with the standard busy conflict instead of
+  // interleaving with the ungated compaction model call.
+  const sessionMutationOwner = (
+    sessionId: string,
+  ): "local" | "foreign" | undefined =>
+    activeCompactions.has(sessionId) ? "local" : activeRunOwner(sessionId);
   const toRuntimeSession = (
     id: string,
     data: KodaXSessionData,
@@ -7676,6 +7692,7 @@ function createRuntimeSessionService(
     },
   ): Promise<T> =>
     mutateActiveSession(sessionId, async (data) => {
+      assertSessionMutationAllowed(sessionId, sessionMutationOwner);
       if (data.lineage === undefined) {
         throw sessionCommandError(
           "conflict",
@@ -7712,7 +7729,7 @@ function createRuntimeSessionService(
       if (!temporaryOnly) ensureOpen();
       const session = await admission.loadRequired(sessionId);
       if (temporaryOnly && session.runtimeInfo?.temporary !== true) return;
-      assertSessionMutationAllowed(sessionId, activeRunOwner);
+      assertSessionMutationAllowed(sessionId, sessionMutationOwner);
       await sessionViews.flush(sessionId);
       await withActorSessionFileMutation(sessionId, "delete", async (ownerId) => {
         if (!ownerId) {
@@ -8504,7 +8521,7 @@ function createRuntimeSessionService(
       ensureOpen();
       // FEATURE_298 T10: derivation reads the source while it is idle, so an
       // active run is an explicit conflict instead of a torn history copy.
-      assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+      assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
       if (input.selector !== undefined && input.historyBoundary !== undefined) {
         throw new Error("fork accepts either selector or historyBoundary, not both");
       }
@@ -8567,7 +8584,7 @@ function createRuntimeSessionService(
 
     async recover(input) {
       ensureOpen();
-      assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+      assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
       const source = await admission.loadRequired(input.sessionId);
       if (source.messages.length === 0) {
         throw sessionCommandError(
@@ -8705,7 +8722,7 @@ function createRuntimeSessionService(
 
     async labelEntry(input) {
       const summary = await mutateActiveSession(input.sessionId, async (data) => {
-        assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+        assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         if (data.lineage === undefined) {
           throw sessionCommandError("conflict", "Session lineage is unavailable for label commands.");
         }
@@ -8734,6 +8751,7 @@ function createRuntimeSessionService(
 
     async appendNotice(input) {
       return mutateActiveSession(input.sessionId, async () => {
+        assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         const entry = await manager.appendClientNotice(input.sessionId, {
           content: input.content,
           ...(input.source !== undefined ? { source: input.source } : {}),
@@ -8754,7 +8772,7 @@ function createRuntimeSessionService(
 
     async rewind(input) {
       return mutateActiveSession(input.sessionId, async () => {
-        assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+        assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         if (input.selector !== undefined && input.historyBoundary !== undefined) {
           throw new Error("rewind accepts either selector or historyBoundary, not both");
         }
@@ -8793,7 +8811,7 @@ function createRuntimeSessionService(
 
     async setActiveEntry(input) {
       return mutateActiveSession(input.sessionId, async () => {
-        assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+        assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         const data = await manager.setActiveEntry(
           input.sessionId,
           input.entryId,
@@ -8816,10 +8834,17 @@ function createRuntimeSessionService(
     },
 
     async compact(input) {
-      return mutateActiveSession(input.sessionId, async (admitted) => {
-        assertSessionMutationAllowed(input.sessionId, activeRunOwner);
+      // FEATURE_298 T31 — admission registers occupancy under the
+      // per-Session gate and releases it; the compaction model call runs
+      // outside the gate so same-Session commands observe the busy conflict
+      // instead of queueing behind the Provider call. The occupancy set also
+      // keeps other actors from mutating the Session mid-compaction.
+      const admissionResult = await sessionOperations.run(input.sessionId, async () => {
+        ensureOpen();
+        const data = await admission.loadExecutable(input.sessionId);
+        assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         const trustedInput = input as RuntimeTrustedCompactSessionInput;
-        const compactProvider = input.provider ?? admitted.runtimeInfo?.provider ?? "anthropic";
+        const compactProvider = input.provider ?? data.runtimeInfo?.provider ?? "anthropic";
         if (
           trustedInput.providerCredentialAccess !== undefined
           && !trustedInput.providerCredentialAccess.allowedProviders.includes(compactProvider)
@@ -8831,63 +8856,68 @@ function createRuntimeSessionService(
         const providerCredentialScope = trustedInput.providerCredentialAccess === undefined
           ? undefined
           : createProviderCredentialLeaseScope(trustedInput.providerCredentialAccess);
-        const startedAt = Date.now();
         const beforeRevision =
-          admitted.lineage?.entries.filter(
+          data.lineage?.entries.filter(
             (entry) => entry.type === "compaction",
           ).length ?? 0;
+        activeCompactions.add(input.sessionId);
+        return { compactProvider, providerCredentialScope, beforeRevision };
+      });
+      const startedAt = Date.now();
+      let finalRevision = admissionResult.beforeRevision;
+      try {
         bus.emit(
           "context.compaction.started",
           {
             meta: {
               contextId: input.sessionId,
               contextKind: "root",
-              contextRevision: beforeRevision,
+              contextRevision: admissionResult.beforeRevision,
             },
           },
           { sessionId: input.sessionId, runId: input.sessionId },
         );
-        let finalRevision = beforeRevision;
-        try {
-          const settings = (await settingsOwner.read(input.sessionId)).value;
-          const compactOperation = () => manager.compactSession(input.sessionId, {
-            provider: compactProvider,
-            ...(providerCredentialScope === undefined ? {} : { propagateErrors: true }),
-            ...(input.model !== undefined ? { model: input.model } : {}),
-            ...(input.customInstructions !== undefined
-              ? { customInstructions: input.customInstructions }
-              : {}),
-            ...(input.contextWindow !== undefined
-              ? { contextWindow: input.contextWindow }
-              : {}),
-            ...((input.triggerPercent ?? settings.compactionTriggerPercent) !== undefined
-              ? {
-                  triggerPercent:
-                    input.triggerPercent ?? settings.compactionTriggerPercent,
-                }
-              : {}),
-            ...((input.triggerTokens ?? settings.compactionTriggerTokens) !== undefined
-              ? {
-                  triggerTokens:
-                    input.triggerTokens ?? settings.compactionTriggerTokens,
-                }
-              : {}),
-          });
-          const result = providerCredentialScope === undefined
-            ? await compactOperation()
-            : await runWithProviderCredentialLeaseScope(
-                providerCredentialScope,
-                compactOperation,
-              );
-          const loaded = await manager.loadSession(input.sessionId);
-          const session = loaded
-            ? toRuntimeSession(input.sessionId, loaded)
-            : undefined;
-          finalRevision =
-            loaded?.lineage?.entries.filter(
-              (entry) => entry.type === "compaction",
-            ).length ?? beforeRevision;
-          bus.emit(
+        const settings = (await settingsOwner.read(input.sessionId)).value;
+        const compactOperation = () => manager.compactSession(input.sessionId, {
+          provider: admissionResult.compactProvider,
+          ...(admissionResult.providerCredentialScope === undefined
+            ? {}
+            : { propagateErrors: true }),
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(input.customInstructions !== undefined
+            ? { customInstructions: input.customInstructions }
+            : {}),
+          ...(input.contextWindow !== undefined
+            ? { contextWindow: input.contextWindow }
+            : {}),
+          ...((input.triggerPercent ?? settings.compactionTriggerPercent) !== undefined
+            ? {
+                triggerPercent:
+                  input.triggerPercent ?? settings.compactionTriggerPercent,
+              }
+            : {}),
+          ...((input.triggerTokens ?? settings.compactionTriggerTokens) !== undefined
+            ? {
+                triggerTokens:
+                  input.triggerTokens ?? settings.compactionTriggerTokens,
+              }
+            : {}),
+        });
+        const result = admissionResult.providerCredentialScope === undefined
+          ? await compactOperation()
+          : await runWithProviderCredentialLeaseScope(
+              admissionResult.providerCredentialScope,
+              compactOperation,
+            );
+        const loaded = await manager.loadSession(input.sessionId);
+        const session = loaded
+          ? toRuntimeSession(input.sessionId, loaded)
+          : undefined;
+        finalRevision =
+          loaded?.lineage?.entries.filter(
+            (entry) => entry.type === "compaction",
+          ).length ?? admissionResult.beforeRevision;
+        bus.emit(
             "context.compaction.finished",
             {
               contextId: input.sessionId,
@@ -8898,7 +8928,7 @@ function createRuntimeSessionService(
               tokensAfter: result.tokensAfter,
               committed: result.compacted,
               elapsedMs: Date.now() - startedAt,
-              beforeRevision,
+              beforeRevision: admissionResult.beforeRevision,
               afterRevision: finalRevision,
               ...(result.report ?? {}),
               ...(result.reason !== undefined ? { reason: result.reason } : {}),
@@ -8924,28 +8954,29 @@ function createRuntimeSessionService(
             ...result,
             ...(session !== undefined ? { session } : {}),
           };
-        } finally {
-          providerCredentialScope?.close("manual compaction settled");
-          bus.emit(
-            "context.compaction.ended",
-            {
-              meta: {
-                contextId: input.sessionId,
-                contextKind: "root",
-                contextRevision: finalRevision,
-              },
+      } finally {
+        admissionResult.providerCredentialScope?.close("manual compaction settled");
+        activeCompactions.delete(input.sessionId);
+        invalidateMaterializedSessionCapture(input.sessionId);
+        bus.emit(
+          "context.compaction.ended",
+          {
+            meta: {
+              contextId: input.sessionId,
+              contextKind: "root",
+              contextRevision: finalRevision,
             },
-            { sessionId: input.sessionId, runId: input.sessionId },
-          );
-        }
-      });
+          },
+          { sessionId: input.sessionId, runId: input.sessionId },
+        );
+      }
     },
 
     async archive(sessionId) {
       await sessionOperations.run(sessionId, async () => {
         ensureOpen();
         await admission.loadRequired(sessionId);
-        assertSessionMutationAllowed(sessionId, activeRunOwner);
+        assertSessionMutationAllowed(sessionId, sessionMutationOwner);
         await withActorSessionFileMutation(
           sessionId,
           "archive",
@@ -8972,7 +9003,7 @@ function createRuntimeSessionService(
       await sessionOperations.run(sessionId, async () => {
         ensureOpen();
         await admission.loadRequired(sessionId);
-        assertSessionMutationAllowed(sessionId, activeRunOwner);
+        assertSessionMutationAllowed(sessionId, sessionMutationOwner);
         await withActorSessionFileMutation(
           sessionId,
           "unarchive",
@@ -9001,6 +9032,8 @@ function createRuntimeSessionService(
 
 function createRuntimeRunService(deps: {
   readonly deleteTemporarySession: (sessionId: string) => Promise<void>;
+  /** FEATURE_298 T31 — manual-compaction occupancy (shared with sessions). */
+  readonly activeCompactions: ReadonlySet<string>;
   readonly sessionViews: SessionViewOwner;
   readonly actorRegistry: RuntimeAgentActorRegistry;
   readonly setActorSettlementFenceHandler: (
@@ -9040,6 +9073,21 @@ function createRuntimeRunService(deps: {
   readonly settingsOwner: RuntimeSessionSettingsOwner;
 }): RuntimeRunServiceInternal {
   const activeRunBySession = new Map<string, string>();
+  // FEATURE_298 T31 — runs and queued inputs reject while the Session's
+  // manual compaction holds occupancy, so no writer interleaves with the
+  // compaction's whole-lineage commit.
+  const assertSessionNotCompacting = (sessionId: string): void => {
+    if (!deps.activeCompactions.has(sessionId)) return;
+    const error = new Error(
+      `Session compaction is in progress and cannot admit new work: ${sessionId}`,
+    );
+    Object.defineProperty(error, "code", {
+      configurable: true,
+      enumerable: true,
+      value: "conflict",
+    });
+    throw error;
+  };
   const productQueue = new SessionInputQueue((sessionId) => deps.sessionViews.changed(sessionId));
   const activeQueueRouteReleaseByRun = new Map<string, () => void>();
   const autoModeGuardrails = new Map<
@@ -10953,6 +11001,7 @@ function createRuntimeRunService(deps: {
       throw new RuntimeContinuationStaleError(requiredAfterRun.runId);
     }
     if (admittedSessionContext === undefined) {
+      assertSessionNotCompacting(input.sessionId);
       const session = await deps.sessionAdmission.loadExecutable(
         input.sessionId,
       );
@@ -11598,6 +11647,7 @@ function createRuntimeRunService(deps: {
       };
       return deps.sessionOperations.run(input.sessionId, async () => {
         deps.ensureOpen();
+        assertSessionNotCompacting(input.sessionId);
         const duplicate = productQueue.find(productInput);
         if (duplicate) return duplicate;
         const accepted = findAcceptedInput(productInput.sessionId, productInput.inputId);

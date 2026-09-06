@@ -1022,17 +1022,22 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('binds manual compaction to a stable v2 operation without exposing the secret', async () => {
+    const journalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-compact-journal-'));
+    try {
     const runtime = makeRuntime();
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+    const controlJournal = createRuntimeControlJournal({ rootDir: journalRoot });
     let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
     const dispatcher = createRuntimeDaemonDispatcher({
       runtime,
       reverseBridgeHub,
+      controlJournal,
+      requireOperationEnvelope: true,
       notify(notification) {
         notificationListener?.(notification);
       },
     });
-    await initializeDispatcher(dispatcher);
+    await initializeDispatcher(dispatcher, { operationDeduplication: true });
     const transport: RuntimeDaemonClientTransport = {
       async request(method, params, operation) {
         const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -1077,8 +1082,8 @@ describe('runtime daemon dispatcher', () => {
     const client = createRuntimeDaemonClient({
       identity: runtime.identity,
       transport,
-      journalEpoch: 'journal-compact',
-      capabilities: { providerCredentialBroker: { version: 2 } },
+      journalEpoch: controlJournal.journalEpoch,
+      capabilities: { providerCredentialBroker: { version: 2 }, operationDeduplication: true },
     });
     const requests: unknown[] = [];
     const lease = await client.credentials.registerScoped(
@@ -1099,7 +1104,7 @@ describe('runtime daemon dispatcher', () => {
       },
       operation: {
         operationId: 'compact-op-1',
-        journalEpoch: 'journal-compact',
+        journalEpoch: controlJournal.journalEpoch,
       },
     })).resolves.toMatchObject({ compacted: true });
 
@@ -1113,24 +1118,50 @@ describe('runtime daemon dispatcher', () => {
       },
       operation: {
         operationId: 'compact-op-provider-mismatch',
-        journalEpoch: 'journal-compact',
+        journalEpoch: controlJournal.journalEpoch,
       },
     })).rejects.toMatchObject({ code: 'credential_unavailable' });
 
+    // FEATURE_298 T31 — the credential identity is a Host-minted short-lived
+    // maintenance id, never the client envelope's operationId.
+    const mintedId = (requests[0] as { target?: { operationId?: string } }).target?.operationId;
+    expect(mintedId).toMatch(/^compact_[0-9a-f]{32}$/);
+    expect(mintedId).not.toBe('compact-op-1');
     expect(requests).toEqual([expect.objectContaining({
       provider: 'openai',
       sessionId: 'session-1',
       target: {
         kind: 'operation',
         operation: 'session.compact',
-        operationId: 'compact-op-1',
+        operationId: mintedId,
       },
       purpose: 'compaction',
     })]);
     expect(compact).toHaveBeenCalledTimes(1);
+
+    // A lost confirmation replayed under the same envelope is deduplicated by
+    // the control journal — no second credential delivery or model call.
+    await expect(client.sessions.compact({
+      sessionId: 'session-1',
+      provider: 'openai',
+      credential: {
+        leaseId: lease.id,
+        mode: 'scoped',
+        providers: ['openai'],
+      },
+      operation: {
+        operationId: 'compact-op-1',
+        journalEpoch: controlJournal.journalEpoch,
+      },
+    })).resolves.toMatchObject({ compacted: true });
+    expect(requests).toHaveLength(1);
+    expect(compact).toHaveBeenCalledTimes(1);
     await client.close();
     dispatcher.close();
     reverseBridgeHub.close();
+    } finally {
+      fs.rmSync(journalRoot, { force: true, recursive: true });
+    }
   });
 
   it('binds a scoped credential to the exact admitted Agent turn', async () => {

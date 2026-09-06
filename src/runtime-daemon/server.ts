@@ -1702,12 +1702,6 @@ async function dispatchRuntimeDaemonRequest(
           "Manual compaction requires a scoped v2 credential binding.",
         );
       }
-      if (request.operation === undefined) {
-        throw daemonError(
-          "operation_required",
-          "Credential-bound compaction requires a stable operation envelope.",
-        );
-      }
       const sessionId = requireStringField(params, "sessionId");
       const compactProvider = optionalStringField(params, "provider");
       const boundProviders = requireStringArrayField(credentialBinding, "providers");
@@ -1717,13 +1711,17 @@ async function dispatchRuntimeDaemonRequest(
           "Manual compaction Provider is outside the scoped credential binding.",
         );
       }
+      // FEATURE_298 T31 — the credential identity for manual compaction is a
+      // Host-minted short-lived maintenance id, not the client's operation
+      // envelope (which the control journal still uses purely for dedup).
+      // Mirrors the daemon-minted trustedRunId precedent on the run path.
       const providerCredentialAccess = bindTrustedScopedCredentialAccess({
         binding: credentialBinding,
         sessionId,
         target: {
           kind: "operation",
           operation: "session.compact",
-          operationId: request.operation.operationId,
+          operationId: `compact_${randomUUID().replace(/-/g, "")}`,
         },
         reverseBridge,
       });
