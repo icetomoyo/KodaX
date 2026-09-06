@@ -390,3 +390,13 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **回归**：新 S1 + daemon 55 + a2a 66 + sdk-runtime 10 预存败 + tsc 477 无键漂移（对 t12-final 日志 diff 键集=0 增 0 删）。
 
 **T16 解锁**：T19/T20/T22/T30/T31/T35/T36 全部 actionable（T36/T31/T35/T30/T22/T20/T19 仅原被 T16 阻塞）。下一前沿从这些票里选；T34 仍差 T23/T31/T36/T37，T26 仍差 T17/T18/T19/T21/T35。
+
+---
+
+## 2026-09-06 会话补记：T16 + T23 完成（19/35）
+
+**T16**：代码 `c251642a`、子模块 `8b57026`。附件引用诚实性（详见上一条记录）；解锁 T19/T20/T22/T30/T31/T35/T36。
+
+**T23**：代码 `da600df5`（+596/-44 净删）、子模块 `71fb10e`、指针已提。/learn 无 binding 直接 proposal-store fallback（读+**写**）全删，统一报 unavailable；Ink openLearningCenter 静默返回改可见通知；领域函数留 agent 包；/skill|/workflow pending 只读列表保留（Spec 确认 defensible：从不写、同源 store、不在 T23 动词表内）。10 个 fallback 测试删除换 1 个 11-子命令循环断言。双轴双 PASS（修复：遗留 import/inbox 提示语/snapshot EOL 复原）。回归：repl 2614 绿、tsc 477。**坑**：Git Bash heredoc 里 `\n` 与行尾 `\` 会被改写——复杂补丁必须 Write 工具落 .py 再跑（本票又踩两次）。
+
+**DAG 前沿（19/35）**：actionable=T15(收尾)、T19/T20/T22/T30/T31/T35/T36/T28(opt)；T37 需 T22；T34 需 T23✓/T31/T36/T37；T26 需 T17/T18/T19/T21/T35。建议下一票：T22（解锁 T37→T34 链）或 T31/T36（直接喂 T34）。
