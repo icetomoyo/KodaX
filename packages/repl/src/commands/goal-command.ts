@@ -13,11 +13,15 @@
  *   /goal clear                     — clear the current goal entirely
  *   /goal help                      — show usage
  *
- * Persistence: the command mutates `context.lineage` via
- * `appendGoalEntry` from `@kodax-ai/agent`, then calls
- * `callbacks.saveSession()` to flush. When `context.lineage` is
- * undefined (rare — sessions created pre-FEATURE_184), the command
- * surfaces a clear error rather than silently failing.
+ * Persistence: FEATURE_298 T34 — when `callbacks.goal` is bound, every
+ * mutation and read goes to the Host goal plane (session id + objective
+ * only; the Host owns lineage mutation and journal writes, and the local
+ * lineage is refreshed from storage afterwards). Unbound, the command
+ * mutates `context.lineage` via `appendGoalEntry` from `@kodax-ai/agent`,
+ * then calls `callbacks.saveSession()` to flush (standalone capability).
+ * When `context.lineage` is undefined (rare — sessions created
+ * pre-FEATURE_184), the local path surfaces a clear error rather than
+ * silently failing.
  */
 
 import chalk from 'chalk';
@@ -37,7 +41,10 @@ import {
   isValidTokenBudget,
 } from '@kodax-ai/coding';
 
-import type { Command } from './types.js';
+import type { Command, CommandCallbacks } from './types.js';
+
+type GoalContext = { sessionId: string; lineage?: KodaXSessionLineage };
+type GoalCallbacks = Pick<CommandCallbacks, 'saveSession' | 'goal' | 'refreshSessionLineage'>;
 
 function printHelp(): void {
   console.log(`
@@ -122,8 +129,8 @@ function renderStatus(goal: KodaXGoalState | null): string {
 }
 
 async function persist(
-  context: { lineage?: KodaXSessionLineage },
-  callbacks: { saveSession: () => Promise<void> },
+  context: GoalContext,
+  callbacks: GoalCallbacks,
   goal: KodaXGoalState | null,
   event: KodaXGoalEventType,
 ): Promise<void> {
@@ -136,16 +143,36 @@ async function persist(
   await callbacks.saveSession();
 }
 
+/** Host goal state when bound, local lineage state otherwise. */
+async function readGoalState(
+  context: GoalContext,
+  callbacks: GoalCallbacks,
+): Promise<KodaXGoalState | null> {
+  if (callbacks.goal) return callbacks.goal.read(context.sessionId);
+  if (!context.lineage) return null;
+  return readLatestGoalState(context.lineage);
+}
+
+/** Re-read the lineage the Host just wrote (best effort; keeps the local view coherent). */
+async function refreshBoundLineage(
+  context: GoalContext,
+  callbacks: GoalCallbacks,
+): Promise<void> {
+  const refreshed = await callbacks.refreshSessionLineage?.();
+  if (refreshed) context.lineage = refreshed;
+}
+
 async function doCreate(
   args: readonly string[],
-  context: { lineage?: KodaXSessionLineage },
-  callbacks: { saveSession: () => Promise<void> },
+  context: GoalContext,
+  callbacks: GoalCallbacks,
 ): Promise<void> {
-  if (!context.lineage) {
+  const binding = callbacks.goal;
+  if (!binding && !context.lineage) {
     console.log(chalk.red('[/goal] no active session lineage'));
     return;
   }
-  const existing = readLatestGoalState(context.lineage);
+  const existing = await readGoalState(context, callbacks);
   if (existing && existing.status !== 'complete') {
     console.log(
       chalk.yellow(
@@ -160,6 +187,24 @@ async function doCreate(
     return;
   }
   try {
+    if (binding) {
+      // Mirror the local complete → cleared → created transition pair so
+      // Host-side lineage consumers see the same explicit sequence.
+      if (existing && existing.status === 'complete') {
+        await binding.clear(context.sessionId);
+      }
+      const goal = await binding.create({
+        sessionId: context.sessionId,
+        objective: parsed.objective,
+        ...(parsed.tokenBudget !== null ? { tokenBudget: parsed.tokenBudget } : {}),
+      });
+      await refreshBoundLineage(context, callbacks);
+      console.log(chalk.green(`[/goal] created: "${goal.objective}"`));
+      if (goal.tokenBudget !== null) {
+        console.log(chalk.dim(`        budget: ${goal.tokenBudget} tokens`));
+      }
+      return;
+    }
     // If the prior goal was 'complete', emit an explicit `cleared` event
     // before the new `created` so downstream consumers always see the
     // transition (complete → cleared → created) instead of a bare
@@ -180,24 +225,24 @@ async function doCreate(
   }
 }
 
-async function doStatus(context: { lineage?: KodaXSessionLineage }): Promise<void> {
-  if (!context.lineage) {
+async function doStatus(context: GoalContext, callbacks: GoalCallbacks): Promise<void> {
+  if (!callbacks.goal && !context.lineage) {
     console.log(chalk.red('[/goal] no active session lineage'));
     return;
   }
-  const goal = readLatestGoalState(context.lineage);
+  const goal = await readGoalState(context, callbacks);
   console.log(renderStatus(goal));
 }
 
 async function doPause(
-  context: { lineage?: KodaXSessionLineage },
-  callbacks: { saveSession: () => Promise<void> },
+  context: GoalContext,
+  callbacks: GoalCallbacks,
 ): Promise<void> {
-  if (!context.lineage) {
+  if (!callbacks.goal && !context.lineage) {
     console.log(chalk.red('[/goal] no active session lineage'));
     return;
   }
-  const goal = readLatestGoalState(context.lineage);
+  const goal = await readGoalState(context, callbacks);
   if (!goal) {
     console.log(chalk.yellow('[/goal] no goal to pause'));
     return;
@@ -208,20 +253,26 @@ async function doPause(
     );
     return;
   }
+  if (callbacks.goal) {
+    await callbacks.goal.pause(context.sessionId);
+    await refreshBoundLineage(context, callbacks);
+    console.log(chalk.green('[/goal] paused'));
+    return;
+  }
   const paused = buildPausedGoal(goal);
   await persist(context, callbacks, paused, 'paused');
   console.log(chalk.green('[/goal] paused'));
 }
 
 async function doResume(
-  context: { lineage?: KodaXSessionLineage },
-  callbacks: { saveSession: () => Promise<void> },
+  context: GoalContext,
+  callbacks: GoalCallbacks,
 ): Promise<void> {
-  if (!context.lineage) {
+  if (!callbacks.goal && !context.lineage) {
     console.log(chalk.red('[/goal] no active session lineage'));
     return;
   }
-  const goal = readLatestGoalState(context.lineage);
+  const goal = await readGoalState(context, callbacks);
   if (!goal) {
     console.log(chalk.yellow('[/goal] no goal to resume'));
     return;
@@ -232,22 +283,34 @@ async function doResume(
     );
     return;
   }
+  if (callbacks.goal) {
+    await callbacks.goal.resume(context.sessionId);
+    await refreshBoundLineage(context, callbacks);
+    console.log(chalk.green('[/goal] resumed'));
+    return;
+  }
   const resumed = buildResumedGoal(goal);
   await persist(context, callbacks, resumed, 'resumed');
   console.log(chalk.green('[/goal] resumed'));
 }
 
 async function doClear(
-  context: { lineage?: KodaXSessionLineage },
-  callbacks: { saveSession: () => Promise<void> },
+  context: GoalContext,
+  callbacks: GoalCallbacks,
 ): Promise<void> {
-  if (!context.lineage) {
+  if (!callbacks.goal && !context.lineage) {
     console.log(chalk.red('[/goal] no active session lineage'));
     return;
   }
-  const goal = readLatestGoalState(context.lineage);
+  const goal = await readGoalState(context, callbacks);
   if (!goal) {
     console.log(chalk.yellow('[/goal] no goal to clear'));
+    return;
+  }
+  if (callbacks.goal) {
+    await callbacks.goal.clear(context.sessionId);
+    await refreshBoundLineage(context, callbacks);
+    console.log(chalk.green('[/goal] cleared'));
     return;
   }
   await persist(context, callbacks, null, 'cleared');
@@ -266,7 +329,7 @@ export const goalCommand: Command = {
       return;
     }
     if (sub === 'status') {
-      await doStatus(context);
+      await doStatus(context, callbacks);
       return;
     }
     if (sub === 'pause') {

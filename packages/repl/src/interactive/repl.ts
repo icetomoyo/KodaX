@@ -492,6 +492,7 @@ export interface RepLOptions extends KodaXOptions {
   prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
+  goal?: CommandCallbacks['goal'];
 }
 
 function resolveInitialReasoningMode(
@@ -1007,6 +1008,12 @@ Keyboard Shortcuts:
     prepareCommandInvocation: options.prepareCommandInvocation,
     prepareReview: options.prepareReview,
     prepareAgentsLean: options.prepareAgentsLean,
+    // FEATURE_298 T34 — goal persistence goes through the Host binding;
+    // after a bound mutation the local view re-reads the lineage the Host
+    // wrote (same session file) instead of mutating it here.
+    goal: options.goal,
+    refreshSessionLineage: async () =>
+      (await storage.getLineage?.(context.sessionId)) ?? undefined,
     exit: () => {
       isRunning = false;
       // FEATURE_125 — release the instance directory + clear the

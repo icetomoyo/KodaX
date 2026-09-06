@@ -5803,6 +5803,16 @@ complete -c kodax -l version -d 'Show version'`);
           },
           prepareAgentsLean: (input: { projectRoot: string }) =>
             interactiveRuntime.invocations.prepareAgentsLean(input),
+          // FEATURE_298 T34 — goal persistence is Host-owned; the command
+          // plane sends the session id and objective only.
+          goal: {
+            read: (sessionId: string) => interactiveRuntime.sessions.readGoal(sessionId),
+            create: (input: { sessionId: string; objective: string; tokenBudget?: number }) =>
+              interactiveRuntime.sessions.createGoal(input),
+            pause: (sessionId: string) => interactiveRuntime.sessions.pauseGoal(sessionId),
+            resume: (sessionId: string) => interactiveRuntime.sessions.resumeGoal(sessionId),
+            clear: (sessionId: string) => interactiveRuntime.sessions.clearGoal(sessionId),
+          },
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

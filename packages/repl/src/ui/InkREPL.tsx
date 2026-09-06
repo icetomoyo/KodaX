@@ -765,6 +765,7 @@ export interface InkREPLOptions extends KodaXOptions {
   prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
+  goal?: CommandCallbacks['goal'];
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -9489,6 +9490,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           prepareCommandInvocation: options.prepareCommandInvocation,
           prepareReview: options.prepareReview,
           prepareAgentsLean: options.prepareAgentsLean,
+          // FEATURE_298 T34 — goal persistence goes through the Host
+          // binding; after a bound mutation the local view re-reads the
+          // lineage the Host wrote instead of mutating it here.
+          goal: options.goal,
+          refreshSessionLineage: async () =>
+            (await storage.getLineage?.(context.sessionId)) ?? undefined,
           exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {

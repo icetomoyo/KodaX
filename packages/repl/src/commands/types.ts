@@ -3,6 +3,7 @@
  */
 
 import type {
+  KodaXSessionLineage,
   WorkflowProcessSource,
 } from '@kodax-ai/agent';
 import type {
@@ -89,9 +90,35 @@ export type SessionForkStatus = 'forked' | 'failed' | 'blocked';
 export type SessionRewindStatus = 'rewound' | 'failed' | 'blocked';
 export type SessionRecoverStatus = 'recovered' | 'empty' | 'failed' | 'blocked';
 
+/**
+ * FEATURE_298 T34 — goal persistence is Host-owned: the command plane
+ * sends the session id and objective; lineage mutation and journal
+ * writes happen inside the Host. Unbound REPLs keep the local
+ * appendGoalEntry + saveSession path (standalone capability).
+ */
+export interface SessionGoalBinding {
+  read(sessionId: string): Promise<import('@kodax-ai/agent').KodaXGoalState | null>;
+  create(input: {
+    readonly sessionId: string;
+    readonly objective: string;
+    readonly tokenBudget?: number;
+  }): Promise<import('@kodax-ai/agent').KodaXGoalState>;
+  pause(sessionId: string): Promise<import('@kodax-ai/agent').KodaXGoalState>;
+  resume(sessionId: string): Promise<import('@kodax-ai/agent').KodaXGoalState>;
+  clear(sessionId: string): Promise<void>;
+}
+
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
   saveSession: () => Promise<void>;
+  /** FEATURE_298 T34 — Host-owned goal plane; unbound keeps the local lineage path. */
+  readonly goal?: SessionGoalBinding;
+  /**
+   * FEATURE_298 T34 — after a bound session mutation, re-read the lineage
+   * the Host just wrote so local display and the embedded goal runtime
+   * stay coherent without a second writer.
+   */
+  readonly refreshSessionLineage?: () => Promise<KodaXSessionLineage | undefined>;
   startNewSession?: () => void;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;
