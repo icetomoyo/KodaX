@@ -483,3 +483,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 ## 2026-09-06 T22 切片 3 精确接缝（下窗直接开工）
 
 三个 startFromOptions 位点：workflow-command.ts:816（rerun saved）、:882（rerun run）、:1017（start-by-name/generate）。改造模式（hostControl 在场时）：审批 confirm 后改调 `hostControl.start({projectRoot: cwd, source, args: parseWorkflowArgs(...)})`——saved/capsule 与 builtin 有 scriptSnapshot/capsule.source 的走 `{kind:'inline', manifest: capsule.manifest, source: capsule.source}`（rerun-run 从 runDetail/scriptSnapshotPath 取 manifest+source）；bare name 走 `{kind:'name'}`。**runId 改 Host 铸造**：先 start 再打印 runId（现 UI 先铸 `run-<ts>` 后启动）。**done 观察改 Host 事件**：managed.done/getSnapshot 不存在——给 WorkflowHostControl 加 `subscribe(filter, listener)`（runtime/daemon client 均已有），写 observeHostWorkflowDone：subscribe({runId}) → workflow_finished 快照 → 复用 observeManagedWorkflowDone 的收尾打印（final assistant message 从快照 resultSummary/latestMessage 或 run.json detail 读）；live strip 同经 subscribe 的 workflow_updated。processMetadata/approvalContext/scriptSnapshot 语义：Host 侧 startManagedWorkflow 已自动补 authorship/quality metadata。builder（startGeneratedWorkflowFromRequest）暂留本地（workflow-builder 特性），completer command-arguments:477 补 binding 后删本地 manager。完成后删 :241-248 本地构造（测试无 binding 路径保留至 T34 统一收权）→ T22 Done → T37 解锁。
+
+---
+
+## 2026-09-06 T22 Done（943d17a1 + 31acf96b + docs 364d562/31458956）
+
+**切片 3+4+5a `943d17a1`**：三个 start 位点 + builder generated/builtin 审批后全改声明式 hostControl.start（已审 capsule→inline 审批诚实防 TOCTOU；裸 builtin/trusted-local→name；Host 铸 runId）；WorkflowHostControl 增 subscribe；observeHostWorkflowDone（live.ts）= subscribe→workflow_finished→既有完成打印复用 + 订阅后 terminal-poll 兜底（防 start 返回前已终态）+ artifact 预览回退 + totalSpawned=progress.spawnedAgents；metadata lineage（savedWorkflowName/sourceRunId/revisionOf/displayName/goal）贯穿 client-contract(ClientWorkflowStartMetadata)→RuntimeWorkflowStartInput→daemon schema/dispatch→repl binding→各 start 位点 buildSaved/WorkflowProcessMetadata；Host 端 processMetadata 原样附给 startManagedWorkflow；workflowAuthorship 仅 Host 铸（inline 客户端声明被 host.ts 防伪造剥离——builder 不再发送该死字段）。S1 displayName 经 daemon 面往返断言。
+
+**切片 5 `31acf96b`**：删全部本地 fallback——start/rerun/builder 无 binding 报 HOST_START_UNAVAILABLE；pause/resume/stop 报 HOST_CONTROLS_UNAVAILABLE（两常量 hoisted）；runs/show 未绑定降级持久化磁盘视图；rename/revise/delete 活跃守卫 hostControl.get；删 builder 本地 startFromOptions + 死选项 runBaseDir/runManager + workflow-command-cleanup 模块 + subscribeWorkflowLiveProcess；completer 只提持久化记录（run.json **完成时**落盘——进行中 run 仅 Host 面可见，注释曾写错为 start 时）；**classic repl.ts 与 InkREPL 两生产面补 workflows 转发**（RepLOptions/InkREPLOptions.workflows——切片 2 只接了 kodax_cli 没接到两个 UI 的 callbacks，Spec 评审 High 抓出）；agent runtime.ts artifact_written 事件补 path（快照消费者可预览产物内容，process.ts addArtifact 已读 data.path）；totalSpawnedFromProcess 共享助手（helpers.ts）。
+
+**评审修复要点（3 轮双轴）**：builder Host start 曾先于审批（Spec High→移到 confirm 之后）；builder callbacks Pick 缺 'workflows'（tsc -b packages/repl 抓的，根 tsc 不含）；observeHostWorkflowDone 订阅同步分发泄漏（finish 时 subscriptionRef 未赋值→补 if(done) close）；Ink/classic 转发缺失（Spec High）；死 import/死模块（Standards Medium×2）；注释事实错误。
+
+**测试设施**：bindHostWorkflowsFixture（test 内真 Host 组合：startManagedWorkflow over isolated manager + name→builtin/saved 解析 + runsBaseDirOverride——builder describe 不 chdir 必须显式传）；Windows 坑：run.json 落盘晚于 finished 事件（readSingleWorkflowRunJson 改 vi.waitFor）、afterEach rmSync EPERM（异步 run 句柄）→ maxRetries+try-catch best-effort；hostFinishedEvent 伪造 progress 必须 {spawnedAgents,...} 真形状。
+
+**门**：workflow-command 118、completers 74、agent/coding workflow 447、daemon+S1 342、repl 全量绿、tsc 481 恒定、build gate 0。
+
+**残留（票面已记）**：observeManagedWorkflowDone/workflowEventSink 无生产消费者仅测试保留（删除级联 digest-limiter 子系统+5 测试，独立小切片）；Ink callbacks 未转发 memory（T36 面）归 T17/T34。
+
+**下一步**：T37（trusted 命令/Skill 准备进 Host，T22 解锁）→T34（差 T37）→T17/T18；并行池 T19/T20/T30/T35（T35 四缺口地图在前记录）；最后 T25/T26/T27/T15。
