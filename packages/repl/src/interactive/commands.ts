@@ -84,6 +84,7 @@ import {
 import {
   assertSingleKnownUserSkillReference,
   createUserSkillInvocation,
+  prepareUserSkillInvocation,
   MultipleUserSkillReferencesError,
 } from './user-skill-invocation.js';
 import { CommandRegistry } from '../commands/registry.js';
@@ -3088,7 +3089,8 @@ export async function executeCommand(
   if (parsed.skillInvocation) {
     return await executeSkillCommand(
       { command: parsed.skillInvocation.name, args: parsed.args },
-      context
+      context,
+      callbacks
     );
   }
 
@@ -3136,7 +3138,8 @@ export async function executeCommand(
   if (namespacedDirectSkill) {
     return await executeSkillCommand(
       { command: namespacedDirectSkill.skill.name, args: namespacedDirectSkill.args },
-      context
+      context,
+      callbacks
     );
   }
 
@@ -3144,7 +3147,8 @@ export async function executeCommand(
   if (directSkill) {
     return await executeSkillCommand(
       { command: directSkill.name, args: parsed.args },
-      context
+      context,
+      callbacks
     );
   }
 
@@ -3185,7 +3189,8 @@ async function resolveDirectSkillCommand(
 // Execute skill command.
 async function executeSkillCommand(
   parsed: { command: string; args: string[] },
-  context: InteractiveContext
+  context: InteractiveContext,
+  callbacks?: CommandCallbacks
 ): Promise<CommandResult> {
   let registry = getSkillRegistry(context.gitRoot);
   const skillName = parsed.command;
@@ -3207,7 +3212,7 @@ async function executeSkillCommand(
     }
     console.log();
 
-    const invocation = await createUserSkillInvocation(skillName, skillArgs, {
+    const invocation = await prepareUserSkillInvocation(callbacks ?? {}, skillName, skillArgs, {
       workingDirectory: context.runtimeInfo?.executionCwd ?? process.cwd(),
       projectRoot: context.gitRoot ?? undefined,
       sessionId: context.sessionId,

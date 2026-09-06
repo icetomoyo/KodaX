@@ -13,6 +13,7 @@ import {
   initializeSkillRegistry,
   type SkillContext,
   type SkillDynamicContextExecutor,
+  type SkillHooks,
 } from "@kodax-ai/agent";
 import type { KodaXSkillInvocationContext } from "@kodax-ai/coding";
 
@@ -27,7 +28,7 @@ export interface RuntimePreparedSkillInvocation {
   readonly agent?: string;
   readonly argumentHint?: string;
   readonly model?: string;
-  readonly hooks?: Readonly<Record<string, readonly string[]>>;
+  readonly hooks?: SkillHooks;
   readonly skillInvocation: Omit<KodaXSkillInvocationContext, "runtimePolicy"> & {
     readonly runtimePolicy: { readonly enforceAtRuntime: true };
   };
@@ -101,9 +102,7 @@ export function createRuntimeInvocationService(deps: {
           ...(skill.agent !== undefined ? { agent: skill.agent } : {}),
           ...(skill.argumentHint !== undefined ? { argumentHint: skill.argumentHint } : {}),
           ...(skill.model !== undefined ? { model: skill.model } : {}),
-          ...(skill.hooks !== undefined
-            ? { hooks: skill.hooks as Readonly<Record<string, readonly string[]>> }
-            : {}),
+          ...(skill.hooks !== undefined ? { hooks: skill.hooks } : {}),
           skillInvocation: {
             name: input.name,
             path: skill.skillFilePath,

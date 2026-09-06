@@ -8,6 +8,7 @@ import {
   resolveUserSkillReference,
   preserveQueuedSkillContextSnapshot,
   resolveUserSkillInvocation,
+  prepareUserSkillInvocationFromInput,
 } from './user-skill-invocation.js';
 import { prepareInvocationExecution } from './invocation-runtime.js';
 
@@ -252,5 +253,68 @@ describe('resolveUserSkillInvocation', () => {
 
     expect(manual.contextTokenSnapshot).toBe(mainSnapshot);
     expect(fork.contextTokenSnapshot).toBe(mainSnapshot);
+  });
+});
+
+describe('prepareUserSkillInvocationFromInput (FEATURE_298 T37 binding)', () => {
+  afterEach(async () => {
+    resetSkillRegistry();
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it('routes through the Host binding when present and keeps local preparation otherwise', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-t37-binding-'));
+    tempDirs.push(root);
+    try {
+      await writeProjectSkill(root, 'bound-skill');
+      const seen: Array<{ name: string; argumentsText?: string; projectRoot: string }> = [];
+      const binding = {
+        async prepare(input: { name: string; argumentsText?: string; projectRoot: string }) {
+          seen.push(input);
+          if (input.name === 'bound-skill') {
+            return {
+              kind: 'prepared' as const,
+              invocation: {
+                prompt: 'Host-expanded prompt',
+                source: 'skill' as const,
+                displayName: 'bound-skill',
+                skillInvocation: {
+                  name: 'bound-skill',
+                  path: 'host-path',
+                  expandedContent: 'Host-expanded prompt',
+                  runtimePolicy: { enforceAtRuntime: true },
+                },
+              },
+            };
+          }
+          return { kind: 'unknown' as const };
+        },
+      };
+      const context = { workingDirectory: root, projectRoot: root };
+
+      const hostResult = await prepareUserSkillInvocationFromInput(
+        { prepareSkillInvocation: binding },
+        '/bound-skill host args',
+        context,
+      );
+      expect(seen).toEqual([
+        { name: 'bound-skill', argumentsText: 'host args', projectRoot: root },
+      ]);
+      expect(hostResult?.prompt).toBe('Host-expanded prompt');
+      expect(hostResult?.skillInvocation.runtimePolicy).toEqual({ enforceAtRuntime: true });
+
+      const unknown = await prepareUserSkillInvocationFromInput(
+        { prepareSkillInvocation: binding },
+        '/missing-skill args',
+        context,
+      );
+      expect(unknown).toBeUndefined();
+
+      // Without a binding the local trusted preparation still runs.
+      const localResult = await prepareUserSkillInvocationFromInput({}, '/bound-skill local args', context);
+      expect(localResult?.prompt).toContain('Handle this request: local args');
+    } finally {
+      // tempDirs is cleaned by the file-level afterEach.
+    }
   });
 });

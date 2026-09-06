@@ -131,7 +131,7 @@ class ProbeProvider extends KodaXBaseProvider {
 
 it('expands a queued Skill Host-side at actual consumption', async () => {
   const projectRoot = await seedSkillProject();
-  const captured: readonly KodaXMessage[][] = [];
+  const captured: KodaXMessage[][] = [];
   registerModelProvider('t37-probe', () => new ProbeProvider((messages) => {
     captured.push(messages.map((message) => ({ ...message })));
   }));

@@ -5781,6 +5781,16 @@ complete -c kodax -l version -d 'Show version'`);
           // FEATURE_298 T22 — workflow run/control routes to the Host
           // manager (daemon client or in-process service alike).
           workflows: interactiveRuntime.workflows,
+          // FEATURE_298 T37 — Skill preparation runs in the Host against
+          // the trusted registry; the UI sends only name + argument text.
+          prepareSkillInvocation: {
+            prepare: (input: {
+              projectRoot: string;
+              name: string;
+              argumentsText?: string;
+              sessionId?: string;
+            }) => interactiveRuntime.invocations.prepareSkill(input),
+          },
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

@@ -11,7 +11,7 @@ import {
   type KodaXContextTokenSnapshot,
   type KodaXResult,
 } from '@kodax-ai/coding';
-import type { CommandInvocationRequest } from '../commands/types.js';
+import type { CommandInvocationRequest, SkillPreparationBinding } from '../commands/types.js';
 
 function collectSkillReferences(input: string): readonly InlineSkillReference[] {
   return [
@@ -124,6 +124,50 @@ export async function createUserSkillInvocation(
       expandedContent: expanded.content,
     },
   };
+}
+
+/**
+ * FEATURE_298 T37 — binding-aware explicit Skill preparation. With a Host
+ * binding the client sends only the registered name + argument text and the
+ * Host loads/expands against its trusted registry; without one the local
+ * preparation still runs until the fallback removal slice.
+ */
+export async function prepareUserSkillInvocation(
+  bindings: { readonly prepareSkillInvocation?: SkillPreparationBinding },
+  name: string,
+  argumentsText: string,
+  context: SkillContext,
+): Promise<CommandInvocationRequest | undefined> {
+  const binding = bindings.prepareSkillInvocation;
+  if (binding === undefined) {
+    return createUserSkillInvocation(name, argumentsText, context);
+  }
+  const prepared = await binding.prepare({
+    projectRoot: context.projectRoot ?? context.workingDirectory,
+    name,
+    ...(argumentsText.trim().length > 0 ? { argumentsText } : {}),
+    ...(context.sessionId !== undefined ? { sessionId: context.sessionId } : {}),
+  });
+  if (prepared.kind === 'unknown') return undefined;
+  return {
+    ...prepared.invocation,
+    userInvocable: true,
+  } as CommandInvocationRequest;
+}
+
+/** Binding-aware form of resolveUserSkillInvocation (raw input text). */
+export async function prepareUserSkillInvocationFromInput(
+  bindings: { readonly prepareSkillInvocation?: SkillPreparationBinding },
+  input: string,
+  context: SkillContext,
+): Promise<CommandInvocationRequest | undefined> {
+  if (bindings.prepareSkillInvocation === undefined) {
+    return resolveUserSkillInvocation(input, context);
+  }
+  const reference = await resolveUserSkillReference(input, context);
+  return reference
+    ? prepareUserSkillInvocation(bindings, reference.name, reference.argumentsText, context)
+    : undefined;
 }
 
 export async function resolveUserSkillInvocation(

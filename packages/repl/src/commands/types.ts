@@ -192,6 +192,13 @@ export interface CommandCallbacks {
    * Host manager so every client of the same Host sees the same work.
    */
   workflows?: WorkflowHostControl;
+  /**
+   * FEATURE_298 T37 — Host-side trusted Skill preparation. When present,
+   * explicit Skill invocations load/expand against the Host's trusted
+   * registry (client supplies only name + argument text); absent keeps the
+   * local preparation until the fallback removal slice.
+   */
+  prepareSkillInvocation?: SkillPreparationBinding;
   getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
   openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
   /**
@@ -361,6 +368,34 @@ export interface MemoryCommandPlane {
   reviewerProviderConfigured(): boolean;
   rebuild(): Promise<MemoryRebuildResult>;
   ensureOpenTarget(targetPath: string): Promise<string>;
+}
+
+/** FEATURE_298 T37 — Host-prepared explicit Skill invocation projection. */
+export interface PreparedSkillInvocation {
+  readonly prompt: string;
+  readonly source: 'skill';
+  readonly displayName: string;
+  readonly path?: string;
+  readonly disableModelInvocation?: boolean;
+  readonly allowedTools?: string;
+  readonly context?: 'fork';
+  readonly agent?: string;
+  readonly argumentHint?: string;
+  readonly model?: string;
+  readonly hooks?: Readonly<Record<string, readonly string[]>>;
+  readonly skillInvocation: import('@kodax-ai/coding').KodaXSkillInvocationContext;
+}
+
+export interface SkillPreparationBinding {
+  prepare(input: {
+    readonly projectRoot: string;
+    readonly name: string;
+    readonly argumentsText?: string;
+    readonly sessionId?: string;
+  }): Promise<
+    | { readonly kind: 'prepared'; readonly invocation: PreparedSkillInvocation }
+    | { readonly kind: 'unknown' }
+  >;
 }
 
 export interface WorkflowHostControl {

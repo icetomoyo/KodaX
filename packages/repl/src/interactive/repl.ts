@@ -117,7 +117,7 @@ import {
 } from './commands.js';
 import {
   MultipleUserSkillReferencesError,
-  resolveUserSkillInvocation,
+  prepareUserSkillInvocationFromInput,
 } from './user-skill-invocation.js';
 import type {
   CommandWorkflowInvocationRequest,
@@ -487,6 +487,8 @@ export interface RepLOptions extends KodaXOptions {
   learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
+  /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
+  prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
 }
 
 function resolveInitialReasoningMode(
@@ -998,6 +1000,7 @@ Keyboard Shortcuts:
     learning: options.learning,
     getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
     workflows: options.workflows,
+    prepareSkillInvocation: options.prepareSkillInvocation,
     exit: () => {
       isRunning = false;
       // FEATURE_125 — release the instance directory + clear the
@@ -1811,7 +1814,7 @@ Keyboard Shortcuts:
   const resolveInlineSkillInvocation = async (input: string) => {
     try {
       return {
-        invocation: await resolveUserSkillInvocation(input, {
+        invocation: await prepareUserSkillInvocationFromInput(callbacks, input, {
           workingDirectory: currentOptions.context?.executionCwd ?? process.cwd(),
           projectRoot: context.gitRoot ?? undefined,
           sessionId: context.sessionId,

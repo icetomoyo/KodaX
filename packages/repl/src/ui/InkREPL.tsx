@@ -229,6 +229,7 @@ import {
   findQueueableUserSkillReference,
   MultipleUserSkillReferencesError,
   preserveQueuedSkillContextSnapshot,
+  prepareUserSkillInvocationFromInput,
   resolveUserSkillInvocation,
 } from "../interactive/user-skill-invocation.js";
 import {
@@ -759,6 +760,8 @@ export interface InkREPLOptions extends KodaXOptions {
   learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
+  /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
+  prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -8580,14 +8583,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const mainContextTokenSnapshot = context.contextTokenSnapshot;
     let invocation;
     try {
-      invocation = await resolveUserSkillInvocation(rawInput, {
+      invocation = await prepareUserSkillInvocationFromInput(
+        { prepareSkillInvocation: options.prepareSkillInvocation },
+        rawInput,
+        {
         workingDirectory: currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
         projectRoot: context.gitRoot ?? undefined,
         sessionId: context.sessionId,
         environment: {},
         executeDynamicContext: context.skillDynamicContext?.execute,
         disableDynamicContext: context.skillDynamicContext?.disable,
-      });
+        },
+      );
     } catch (error) {
       if (!(error instanceof MultipleUserSkillReferencesError)) throw error;
       const message = `[${error.message}]`;
@@ -9471,6 +9478,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
           openLearningCenter,
           workflows: options.workflows,
+          prepareSkillInvocation: options.prepareSkillInvocation,
           exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {
