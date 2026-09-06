@@ -1741,6 +1741,204 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     });
   });
 
+  it('routes generated starts through the Host with an inline source when the binding is present', async () => {
+    const generateWorkflow = vi.fn(async () => fakeGeneratedWorkflow());
+    const builderStages: string[] = [];
+    const runMessages: Array<{ readonly type: string; readonly text: string; readonly final?: boolean }> = [];
+    type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
+    const startInputs: unknown[] = [];
+    const subscriptions: { closed: boolean }[] = [];
+    const listeners: Array<(event: unknown) => void> = [];
+    const hostControl = {
+      async start(input: unknown) {
+        startInputs.push(input);
+        return { kind: 'started' as const, runId: 'run-host-gen-1' };
+      },
+      async list() {
+        return [];
+      },
+      async get() {
+        return undefined;
+      },
+      async pause() {
+        return true;
+      },
+      async resume() {
+        return true;
+      },
+      async stop() {
+        return true;
+      },
+      subscribe(_filter: unknown, listener: (event: unknown) => void) {
+        listeners.push(listener);
+        const subscription = { closed: false };
+        subscriptions.push(subscription);
+        return {
+          close() {
+            subscription.closed = true;
+          },
+        };
+      },
+    };
+
+    const outcome = await startGeneratedWorkflowFromRequest({
+      ...isolatedWorkflowRuntime(),
+      request: 'Generate a parallel audit workflow',
+      approval: 'silent',
+      presentation: 'agentic',
+      processSource: 'amaw',
+      callbacks: {
+        createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        onWorkflowRunMessage: (event) => runMessages.push(event),
+        workflows: hostControl,
+      },
+      generateWorkflow,
+      onBuilderEvent: (event) => builderStages.push(event.stage),
+    });
+
+    expect(outcome).toBe('started');
+    expect(generateWorkflow).toHaveBeenCalledOnce();
+    expect(builderStages).toEqual(['started', 'generating', 'validating', 'ready', 'launched']);
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]).toMatchObject({
+      projectRoot: process.cwd(),
+      source: {
+        kind: 'inline',
+        manifest: { name: 'generated-fast-audit' },
+      },
+      args: { request: 'Generate a parallel audit workflow' },
+    });
+    expect((startInputs[0] as { source: { source: string } }).source.source).toContain('async function run');
+    expect(runMessages.some((event) => (
+      event.type === 'assistant'
+      && event.final !== true
+      && event.text.includes('run-host-gen-1')
+    ))).toBe(true);
+    expect(readdirSync(runBaseDir)).toEqual([]);
+
+    listeners[0]?.({
+      type: 'workflow_finished',
+      snapshot: {
+        runId: 'run-host-gen-1',
+        workflowName: 'generated-fast-audit',
+        status: 'completed',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        counts: { pending: 0, running: 0, completed: 2, failed: 0, cancelled: 0, skipped: 0 },
+        progress: { total: 2, done: 2 },
+        items: [],
+        resultSummary: 'host synthesis done',
+      },
+    });
+    await vi.waitFor(() => {
+      expect(runMessages.some((event) => event.type === 'assistant' && event.final === true)).toBe(true);
+    }, { timeout: 5000 });
+    const finalText = runMessages.find((event) => event.type === 'assistant' && event.final === true)?.text;
+    expect(finalText).toContain('host synthesis done');
+    expect(subscriptions[0]?.closed).toBe(true);
+  });
+
+  it('routes built-in builder starts by name through the Host when the binding is present', async () => {
+    const generateWorkflow = vi.fn(async () => fakeGeneratedWorkflow());
+    const startInputs: unknown[] = [];
+    const hostControl = {
+      async start(input: unknown) {
+        startInputs.push(input);
+        return { kind: 'started' as const, runId: 'run-host-builtin-2' };
+      },
+      async list() {
+        return [];
+      },
+      async get() {
+        return undefined;
+      },
+      async pause() {
+        return true;
+      },
+      async resume() {
+        return true;
+      },
+      async stop() {
+        return true;
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
+    type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
+
+    const outcome = await startGeneratedWorkflowFromRequest({
+      ...isolatedWorkflowRuntime(),
+      request: 'Review captured packets',
+      builtin: { name: 'scoped-review', args: { packets: [] } },
+      approval: 'silent',
+      presentation: 'agentic',
+      callbacks: {
+        createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: hostControl,
+      },
+      generateWorkflow,
+    });
+
+    expect(outcome).toBe('started');
+    expect(generateWorkflow).not.toHaveBeenCalled();
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]).toMatchObject({
+      source: { kind: 'name', name: 'scoped-review' },
+      args: { packets: [] },
+    });
+    expect(readdirSync(runBaseDir)).toEqual([]);
+  });
+
+  it('reports a Host decline without creating a local run', async () => {
+    const generateWorkflow = vi.fn(async () => fakeGeneratedWorkflow());
+    const builderStages: string[] = [];
+    const runMessages: Array<{ readonly type: string; readonly text: string }> = [];
+    const hostControl = {
+      async start() {
+        return { kind: 'declined' as const, reason: 'inline validation failed' };
+      },
+      async list() {
+        return [];
+      },
+      async get() {
+        return undefined;
+      },
+      async pause() {
+        return true;
+      },
+      async resume() {
+        return true;
+      },
+      async stop() {
+        return true;
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
+    type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
+
+    const outcome = await startGeneratedWorkflowFromRequest({
+      ...isolatedWorkflowRuntime(),
+      request: 'Generate a parallel audit workflow',
+      approval: 'silent',
+      presentation: 'agentic',
+      callbacks: {
+        createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        onWorkflowRunMessage: (event) => runMessages.push(event),
+        workflows: hostControl,
+      },
+      generateWorkflow,
+      onBuilderEvent: (event) => builderStages.push(event.stage),
+    });
+
+    expect(outcome).toBe('declined');
+    expect(builderStages.at(-1)).toBe('declined');
+    expect(runMessages.some((event) => event.text.includes('inline validation failed'))).toBe(true);
+    expect(readdirSync(runBaseDir)).toEqual([]);
+  });
+
   it('uses artifact content as the agentic completion answer when no synthesis text is returned', async () => {
     const runMessages: Array<{ readonly type: string; readonly text: string; readonly final?: boolean }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
@@ -2822,5 +3020,325 @@ describe('workflowCommand create redirect (FEATURE_246 / ADR-047)', () => {
     expect(result === undefined || (typeof result === 'object' && !('invocation' in result))).toBe(true);
     const output = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(output).toContain('Built-in workflows:');
+  });
+});
+
+describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
+  let dir = '';
+  let previousCwd = '';
+  let workflowRunsDir = '';
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
+  type WorkflowRunMessage = Parameters<NonNullable<WorkflowHandlerCallbacks['onWorkflowRunMessage']>>[0];
+  type WorkflowLiveUpdate = Parameters<NonNullable<WorkflowHandlerCallbacks['onWorkflowRunUpdate']>>[0];
+  type HostProcessEvent = Parameters<Parameters<NonNullable<WorkflowHandlerCallbacks['workflows']>['subscribe']>[1]>[0];
+
+  interface HostControlHarness {
+    readonly callbacks: WorkflowHandlerCallbacks;
+    readonly startInputs: unknown[];
+    readonly subscribeFilters: unknown[];
+    readonly subscriptions: { closed: boolean }[];
+    readonly listeners: ((event: HostProcessEvent) => void)[];
+    readonly getResults: Record<string, HostProcessEvent['snapshot']>;
+    fireProcessEvent(listenerIndex: number, event: HostProcessEvent): void;
+  }
+
+  function buildHostControl(options: {
+    readonly startResult:
+      | { readonly kind: 'started'; readonly runId: string }
+      | { readonly kind: 'declined'; readonly reason: string };
+    readonly messages: WorkflowRunMessage[];
+    readonly updates: WorkflowLiveUpdate[];
+  }): HostControlHarness {
+    const startInputs: unknown[] = [];
+    const subscribeFilters: unknown[] = [];
+    const subscriptions: { closed: boolean }[] = [];
+    const listeners: ((event: HostProcessEvent) => void)[] = [];
+    type HostSnapshot = HostProcessEvent['snapshot'];
+    const getResults: Record<string, HostSnapshot> = {};
+    const hostControl = {
+      async start(input: unknown) {
+        startInputs.push(input);
+        return options.startResult;
+      },
+      async list() {
+        return [];
+      },
+      async get(runId: string): Promise<HostSnapshot | undefined> {
+        return getResults[runId];
+      },
+      async pause() {
+        return true;
+      },
+      async resume() {
+        return true;
+      },
+      async stop() {
+        return true;
+      },
+      subscribe(filter: unknown, listener: (event: HostProcessEvent) => void) {
+        subscribeFilters.push(filter);
+        listeners.push(listener);
+        const subscription = { closed: false };
+        subscriptions.push(subscription);
+        return {
+          close() {
+            subscription.closed = true;
+          },
+        };
+      },
+    };
+    const callbacks = {
+      confirm: async () => true,
+      createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      onWorkflowRunMessage: (event: WorkflowRunMessage) => {
+        options.messages.push(event);
+      },
+      onWorkflowRunUpdate: (event: WorkflowLiveUpdate) => {
+        options.updates.push(event);
+      },
+      workflows: hostControl,
+    } as WorkflowHandlerCallbacks;
+    return {
+      callbacks,
+      startInputs,
+      subscribeFilters,
+      subscriptions,
+      listeners,
+      getResults,
+      fireProcessEvent(listenerIndex, event) {
+        listeners[listenerIndex]?.(event);
+      },
+    };
+  }
+
+  function hostFinishedEvent(
+    runId: string,
+    snapshot: { status: string; resultSummary?: string; error?: string; withCounts?: boolean },
+  ): HostProcessEvent {
+    return {
+      type: 'workflow_finished',
+      snapshot: {
+        runId,
+        workflowName: 'saved-host',
+        status: snapshot.status,
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        ...(snapshot.withCounts === false
+          ? {}
+          : { counts: { pending: 0, running: 0, completed: 1, failed: 0, cancelled: 0, skipped: 0 } }),
+        progress: { spawnedAgents: 1, finishedAgents: 1, activeAgents: 0, failedAgents: 0, stoppedAgents: 0 },
+        items: [],
+        ...(snapshot.resultSummary !== undefined ? { resultSummary: snapshot.resultSummary } : {}),
+        ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
+      },
+    } as HostProcessEvent;
+  }
+
+  function localRunDirs(): string[] {
+    try {
+      return readdirSync(workflowRunsDir).filter((name) => name.startsWith('run-'));
+    } catch {
+      return [];
+    }
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'wf-host-start-'));
+    workflowRunsDir = getAgentConfigPath('workflow-runs', deriveProjectKeyFromRoot(dir).key);
+    previousCwd = process.cwd();
+    process.chdir(dir);
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.chdir(previousCwd);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(workflowRunsDir, { recursive: true, force: true });
+  });
+
+  it('routes a saved-capsule start through the Host with an inline source and host-minted runId', async () => {
+    writeSavedWorkflowCapsule(dir, 'saved-host', {
+      description: '中文主机 workflow',
+      source: 'async function run() { return "主机完成"; }',
+    });
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'started', runId: 'run-host-start-1' },
+      messages,
+      updates,
+    });
+
+    await workflowCommand.handler(
+      ['saved-host', '{"request":"请复查"}'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(host.startInputs).toHaveLength(1);
+    expect(host.startInputs[0]).toMatchObject({
+      projectRoot: dir,
+      source: {
+        kind: 'inline',
+        manifest: { name: 'saved-host' },
+      },
+      args: { request: '请复查' },
+    });
+    expect((host.startInputs[0] as { source: { source: string } }).source.source).toContain('async function run()');
+    expect(output).toContain('Started workflow saved-host (run-host-start-1)');
+    expect(localRunDirs()).toEqual([]);
+    expect(updates[0]).toMatchObject({ locale: 'zh', runId: 'run-host-start-1' });
+
+    host.fireProcessEvent(0, hostFinishedEvent('run-host-start-1', { status: 'completed', resultSummary: '主机完成' }));
+    await waitForFinalAssistantMessage(messages);
+    const finalMessage = messages.find((event) => event.type === 'assistant' && event.final === true);
+    expect(finalMessage?.text).toContain('run-host-start-1');
+    expect(finalMessage?.text).toContain('主机完成');
+    expect(host.subscriptions[0]?.closed).toBe(true);
+  });
+
+  it('rerun of a historical run sends the capsule inline to the Host instead of a local start', async () => {
+    writeGeneratedRunSnapshot(workflowRunsDir, 'run-zh-audit');
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'started', runId: 'run-host-rerun-1' },
+      messages,
+      updates,
+    });
+
+    await workflowCommand.handler(
+      ['rerun', 'run-zh-audit'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).not.toContain('rerun failed');
+    expect(host.startInputs).toHaveLength(1);
+    expect(host.startInputs[0]).toMatchObject({
+      projectRoot: dir,
+      source: {
+        kind: 'inline',
+        manifest: { name: 'feature-217-regression-audit' },
+      },
+    });
+    expect(output).toContain('run-host-rerun-1');
+    expect(localRunDirs()).toEqual(['run-zh-audit']);
+    expect(updates[0]).toMatchObject({ locale: 'zh', runId: 'run-host-rerun-1' });
+  });
+
+  it('routes built-in workflow starts by name through the Host', async () => {
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'started', runId: 'run-host-builtin-1' },
+      messages,
+      updates,
+    });
+
+    await workflowCommand.handler(
+      ['parallel-investigation'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(host.startInputs).toHaveLength(1);
+    expect(host.startInputs[0]).toMatchObject({
+      projectRoot: dir,
+      source: { kind: 'name', name: 'parallel-investigation' },
+    });
+    expect(output).toContain('run-host-builtin-1');
+    expect(localRunDirs()).toEqual([]);
+  });
+
+  it('prints the Host decline reason and starts nothing locally', async () => {
+    writeSavedWorkflowCapsule(dir, 'saved-host');
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'declined', reason: 'provider not configured' },
+      messages,
+      updates,
+    });
+
+    await workflowCommand.handler(
+      ['saved-host'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('Host declined to start: provider not configured');
+    expect(localRunDirs()).toEqual([]);
+    expect(updates).toEqual([]);
+  });
+
+  it('prints completion immediately when the Host run is already terminal at subscription time', async () => {
+    writeSavedWorkflowCapsule(dir, 'saved-host');
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'started', runId: 'run-host-fast-1' },
+      messages,
+      updates,
+    });
+    // Daemon-plane get() snapshots strip counts; progress is the fallback.
+    host.getResults['run-host-fast-1'] = hostFinishedEvent('run-host-fast-1', {
+      status: 'completed',
+      resultSummary: 'already done',
+      withCounts: false,
+    }).snapshot;
+
+    await workflowCommand.handler(
+      ['saved-host'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    await waitForFinalAssistantMessage(messages);
+    const finalMessage = messages.find((event) => event.type === 'assistant' && event.final === true);
+    expect(finalMessage?.text).toContain('already done');
+    expect(finalMessage?.text).toContain('1 agent');
+    expect(host.subscriptions[0]?.closed).toBe(true);
+    expect(host.listeners).toHaveLength(1);
+    host.fireProcessEvent(0, hostFinishedEvent('run-host-fast-1', { status: 'completed', resultSummary: 'duplicate' }));
+    expect(messages.filter((event) => event.type === 'assistant' && event.final === true)).toHaveLength(1);
+  });
+
+  it('prints a failure message when the Host reports a failed run', async () => {
+    writeSavedWorkflowCapsule(dir, 'saved-host');
+    const messages: WorkflowRunMessage[] = [];
+    const updates: WorkflowLiveUpdate[] = [];
+    const host = buildHostControl({
+      startResult: { kind: 'started', runId: 'run-host-fail-1' },
+      messages,
+      updates,
+    });
+
+    await workflowCommand.handler(
+      ['saved-host'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      host.callbacks,
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+
+    host.fireProcessEvent(0, hostFinishedEvent('run-host-fail-1', { status: 'failed', error: 'agent crashed' }));
+    await vi.waitFor(() => {
+      expect(messages.some((event) => event.type === 'error')).toBe(true);
+    }, { timeout: 5000 });
+    const errorText = messages.find((event) => event.type === 'error')?.text ?? '';
+    expect(errorText).toContain('run-host-fail-1');
+    expect(errorText).toContain('agent crashed');
   });
 });

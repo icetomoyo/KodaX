@@ -1,10 +1,12 @@
 import chalk from 'chalk';
-import type {
-  WorkflowEvent,
-  WorkflowMeta,
-  WorkflowProcessEvent,
-  WorkflowProcessSource,
-  WorkflowRunState,
+import {
+  isFinalWorkflowProcessStatus,
+  type WorkflowEvent,
+  type WorkflowMeta,
+  type WorkflowProcessEvent,
+  type WorkflowProcessSnapshot,
+  type WorkflowProcessSource,
+  type WorkflowRunState,
 } from '@kodax-ai/agent';
 import type {
   generateWorkflowFromOptions,
@@ -13,7 +15,7 @@ import type {
 } from '@kodax-ai/coding';
 
 import { workflowLiveSnapshotFromProcess } from '../ui/view-models/workflow-live.js';
-import type { CommandCallbacks } from './types.js';
+import type { CommandCallbacks, WorkflowHostControl } from './types.js';
 import {
   createWorkflowAgentDigestLimiter,
   formatArtifactResult,
@@ -460,6 +462,112 @@ export function observeManagedWorkflowDone(
   });
 }
 
+/**
+ * FEATURE_298 T22 — done-observation for a Host-minted run. There is no local
+ * `managed.done` promise: the run lives in the Host manager, so completion
+ * arrives as `workflow_finished` process events. The Host may also finish the
+ * run before the subscription attaches (start resolves after the run begins),
+ * so a one-shot terminal poll backstops the event stream.
+ */
+export function observeHostWorkflowDone(
+  hostControl: WorkflowHostControl,
+  callbacks: Pick<CommandCallbacks, 'onWorkflowRunMessage'>,
+  runId: string,
+  live?: WorkflowLiveUpdateEmitter,
+  options: {
+    readonly canRerun?: boolean;
+    readonly presentation?: WorkflowRunPresentation;
+    readonly locale?: WorkflowRunLocale;
+  } = {},
+): void {
+  const locale = options.locale ?? 'en';
+  let done = false;
+  let subscriptionRef: { close(): void } | undefined;
+  const finish = (snapshot: WorkflowProcessSnapshot): void => {
+    subscriptionRef?.close();
+    // Daemon-plane snapshots may omit counts; progress is the fallback.
+    const totalSpawned = snapshot.counts === undefined
+      ? snapshot.progress?.spawnedAgents ?? 0
+      : snapshot.counts.pending + snapshot.counts.running + snapshot.counts.completed
+        + snapshot.counts.failed + snapshot.counts.cancelled + snapshot.counts.skipped;
+    if (snapshot.status === 'cancelled') {
+      live?.complete('stopped', 'Workflow stopped by user.');
+      return;
+    }
+    if (snapshot.status === 'failed') {
+      const errorText = snapshot.error ?? 'Workflow failed.';
+      live?.complete('failed', errorText);
+      emitWorkflowRunMessage(callbacks, {
+        type: 'error',
+        text: formatWorkflowFailedMessage({
+          runId,
+          error: new Error(errorText),
+          canRerun: options.canRerun === true,
+          totalSpawned,
+          locale,
+        }),
+      });
+      return;
+    }
+    if (snapshot.status !== 'completed') return;
+    const resultText = snapshot.resultSummary ?? snapshot.latestMessage;
+    live?.complete('completed', resultText !== undefined ? 'completed with result' : 'completed');
+    if (options.presentation === 'agentic') {
+      emitWorkflowRunMessage(callbacks, {
+        type: 'assistant',
+        text: formatWorkflowCompletionAnswer({
+          runId,
+          totalSpawned,
+          ...(resultText !== undefined ? { resultText } : {}),
+          locale,
+        }),
+        final: true,
+      });
+      return;
+    }
+    emitWorkflowRunMessage(callbacks, {
+      type: 'success',
+      text: [
+        `Workflow completed (${totalSpawned} agents, run ${runId}).`,
+        `Use /workflow show ${runId} for the event timeline.`,
+      ].join('\n'),
+    });
+    if (resultText !== undefined) {
+      emitWorkflowRunMessage(callbacks, {
+        type: 'info',
+        text: `Workflow result:\n${resultText}`,
+      });
+    }
+  };
+  const subscription = hostControl.subscribe({ runId }, (event) => {
+    if (event.snapshot.runId !== runId) return;
+    live?.onProcessEvent(event);
+    if (event.type === 'workflow_finished' && !done) {
+      done = true;
+      finish(event.snapshot);
+    }
+  });
+  subscriptionRef = subscription;
+  if (done) {
+    // The Host dispatched a synchronous workflow_finished during subscribe(),
+    // before subscriptionRef was assigned; close what finish() could not.
+    subscription.close();
+  }
+  void (async () => {
+    const snapshot = await hostControl.get(runId);
+    if (done || snapshot === undefined || snapshot.runId !== runId) return;
+    if (!isFinalWorkflowProcessStatus(snapshot.status)) return;
+    done = true;
+    finish(snapshot);
+  })().catch((error: unknown) => {
+    if (done) return;
+    emitWorkflowRunMessage(callbacks, {
+      type: 'error',
+      text: `Workflow completion watch failed (run ${runId}): ${error instanceof Error ? error.message : String(error)}`,
+    });
+  });
+}
+
 export type GeneratedWorkflowApprovalMode = 'required' | 'silent';
 export type GeneratedWorkflowStartOutcome = 'started' | 'declined' | 'cancelled' | 'failed';
 export type WorkflowBuilderStage =
@@ -492,6 +600,7 @@ export interface StartGeneratedWorkflowFromRequestOptions {
     | 'readline'
     | 'onWorkflowRunMessage'
     | 'onWorkflowRunUpdate'
+    | 'workflows'
   >;
   readonly approval: GeneratedWorkflowApprovalMode;
   readonly presentation?: WorkflowRunPresentation;

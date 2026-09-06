@@ -373,9 +373,16 @@ export interface WorkflowHostControl {
     readonly args?: unknown;
     readonly provider?: string;
     readonly model?: string;
+    /** FEATURE_298 T22 — serializable run lineage the Host attaches verbatim. */
+    readonly metadata?: import('@kodax-ai/coding').WorkflowRunProcessMetadata;
   }): Promise<{ readonly kind: 'declined'; readonly reason: string } | { readonly kind: 'started'; readonly runId: string }>;
   list(): Promise<readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[]>;
   get(runId: string): Promise<import('@kodax-ai/agent').WorkflowProcessSnapshot | undefined>;
+  /** FEATURE_298 T22 — live process events for a Host-minted run. */
+  subscribe(
+    filter: { readonly runId?: string },
+    listener: (event: import('@kodax-ai/agent').WorkflowProcessEvent) => void,
+  ): { close(): void };
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
   stop(runId: string): Promise<boolean>;

@@ -26,6 +26,7 @@ import {
 import {
   createWorkflowLiveUpdateEmitter,
   emitWorkflowRunMessage,
+  observeHostWorkflowDone,
   observeManagedWorkflowDone,
   subscribeWorkflowLiveProcess,
   workflowEventSink,
@@ -182,9 +183,6 @@ export async function startGeneratedWorkflowFromRequest(
   }
   const projectKey = deriveProjectKeyFromRoot(process.cwd()).key;
   const baseDir = input.runBaseDir ?? getAgentConfigPath('workflow-runs', projectKey);
-  const manager = input.runManager ?? getDefaultWorkflowRunManager();
-  const runId = `run-${Date.now().toString(36)}`;
-  const runDir = join(baseDir, runId);
 
   if (confirm) {
     const approved = await confirm(
@@ -219,6 +217,86 @@ export async function startGeneratedWorkflowFromRequest(
       });
     }
   }
+
+  // FEATURE_298 T22 — with a Host binding the approved launch is declarative:
+  // the generated capsule travels inline (built-ins travel by name); the Host
+  // validates, mints the runId, and owns the run. There is no local run.
+  const hostControl = input.callbacks.workflows;
+  if (hostControl !== undefined) {
+    const capsule = prepared.scriptSnapshot;
+    if (input.builtin === undefined && capsule === undefined) {
+      // Unreachable today: the generated branch always attaches a capsule.
+      emitWorkflowBuilderEvent(input, {
+        stage: 'failed',
+        message: 'Generated workflow is missing its script capsule',
+      });
+      return 'failed';
+    }
+    const started = await hostControl.start({
+      projectRoot: process.cwd(),
+      source: input.builtin !== undefined
+        ? { kind: 'name', name: input.builtin.name }
+        : {
+          kind: 'inline',
+          manifest: capsule?.manifest,
+          source: capsule?.source ?? '',
+        },
+      args: prepared.args,
+      // NOTE: workflowAuthorship is deliberately NOT sent — startManagedWorkflow
+      // strips client-declared authorship for inline sources (anti-forgery);
+      // the Host mints it only for request-kind starts it generates itself.
+      metadata: buildWorkflowProcessMetadata({
+        source: input.processSource ?? 'command',
+        displayName: prepared.module.meta.name,
+        goal: input.request,
+      }),
+    });
+    if (started.kind === 'declined') {
+      emitWorkflowBuilderEvent(input, {
+        stage: 'declined',
+        message: started.reason,
+      });
+      emitWorkflowRunMessage(input.callbacks, {
+        type: 'error',
+        text: `Host declined to start: ${started.reason}`,
+      });
+      return 'declined';
+    }
+    const runId = started.runId;
+    if (presentation === 'agentic') {
+      emitWorkflowRunMessage(input.callbacks, {
+        type: 'assistant',
+        text: formatWorkflowLaunchAnswer({
+          runId,
+          summary: approvalSummary,
+          approvalSummary: prepared.approvalDescription,
+          locale,
+        }),
+        final: false,
+      });
+    } else {
+      emitWorkflowRunMessage(input.callbacks, {
+        type: 'info',
+        text: `Started workflow ${prepared.module.meta.name} (${runId}). Use /workflow show ${runId} for status.`,
+      });
+    }
+    const live = createWorkflowLiveUpdateEmitter(input.callbacks, runId, prepared.module.meta, locale);
+    live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
+    observeHostWorkflowDone(hostControl, input.callbacks, runId, live, {
+      canRerun: true,
+      presentation,
+      locale,
+    });
+    emitWorkflowBuilderEvent(input, {
+      stage: 'launched',
+      message: `Workflow ${prepared.module.meta.name} started`,
+    });
+    return 'started';
+  }
+
+  const manager = input.runManager ?? getDefaultWorkflowRunManager();
+  const runId = `run-${Date.now().toString(36)}`;
+  const runDir = join(baseDir, runId);
 
   if (presentation === 'agentic') {
     emitWorkflowRunMessage(input.callbacks, {

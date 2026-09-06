@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { buildWorkflowCapsuleIntent, getAgentConfigPath, isFinalWorkflowProcessStatus } from '@kodax-ai/agent';
 import type {
+  WorkflowMeta,
   WorkflowModule,
   WorkflowCapsule,
   WorkflowProcessSnapshot,
@@ -48,6 +49,7 @@ export { startGeneratedWorkflowFromRequest } from './workflow-command-builder.js
 import {
   createWorkflowLiveUpdateEmitter,
   emitWorkflowRunMessage,
+  observeHostWorkflowDone,
   observeManagedWorkflowDone,
   subscribeWorkflowLiveProcess,
   workflowEventSink,
@@ -202,6 +204,52 @@ function managedStatusFromProcess(
     default:
       return 'running';
   }
+}
+
+/**
+ * FEATURE_298 T22 — declarative Host start. The command keeps its local
+ * approval/preflight gates, then hands the Host a serializable source
+ * (inline capsule or name); the Host validates, mints the runId, and owns
+ * the run. Completion is observed via Host process events, not a local
+ * managed run.
+ */
+async function startWorkflowViaHost(
+  hostControl: NonNullable<Parameters<Command['handler']>[2]['workflows']>,
+  callbacks: Parameters<Command['handler']>[2],
+  input: {
+    readonly projectRoot: string;
+    readonly source:
+      | { readonly kind: 'inline'; readonly manifest: unknown; readonly source: string }
+      | { readonly kind: 'name'; readonly name: string };
+    readonly args?: unknown;
+    readonly metadata?: import('@kodax-ai/coding').WorkflowRunProcessMetadata;
+  },
+  meta: WorkflowMeta,
+  options: {
+    readonly locale?: WorkflowRunLocale;
+    readonly canRerun: boolean;
+    readonly presentation: WorkflowRunPresentation;
+  },
+): Promise<void> {
+  const started = await hostControl.start({
+    projectRoot: input.projectRoot,
+    source: input.source,
+    ...(input.args !== undefined ? { args: input.args } : {}),
+    ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+  });
+  if (started.kind === 'declined') {
+    console.log(chalk.red(`\n[workflow] Host declined to start: ${started.reason}\n`));
+    return;
+  }
+  const runId = started.runId;
+  console.log(chalk.dim(`\nStarted workflow ${meta.name} (${runId}). Use /workflow show ${runId} for status.\n`));
+  const live = createWorkflowLiveUpdateEmitter(callbacks, runId, meta, options.locale);
+  live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
+  observeHostWorkflowDone(hostControl, callbacks, runId, live, {
+    canRerun: options.canRerun,
+    presentation: options.presentation,
+    ...(options.locale !== undefined ? { locale: options.locale } : {}),
+  });
 }
 
 function processSnapshotsByRunId(
@@ -807,6 +855,38 @@ export const workflowCommand: Command = {
           console.log(chalk.dim('Workflow cancelled.\n'));
           return;
         }
+        // FEATURE_298 T22 — with a Host binding the approved start is
+        // declarative: capsule content travels inline (bare trusted-local
+        // modules travel by name for Host-side reload of the same file).
+        if (hostControl !== undefined) {
+          await startWorkflowViaHost(
+            hostControl,
+            callbacks,
+            {
+              projectRoot: process.cwd(),
+              source: prepared.scriptSnapshot
+                ? {
+                  kind: 'inline',
+                  manifest: prepared.scriptSnapshot.manifest,
+                  source: prepared.scriptSnapshot.source,
+                }
+                : { kind: 'name', name: savedRef.name },
+              args: parseWorkflowArgs(invocation.rawArgs),
+              metadata: buildSavedWorkflowProcessMetadata({
+                displayName: prepared.module.meta.name,
+                savedWorkflowName: savedRef.name,
+                provenance: prepared.provenance,
+              }),
+            },
+            prepared.module.meta,
+            {
+              locale,
+              canRerun: prepared.scriptSnapshot !== undefined,
+              presentation,
+            },
+          );
+          return;
+        }
         const newRunId = `run-${Date.now().toString(36)}`;
         const newRunDir = join(baseDir, newRunId);
         console.log(chalk.dim(`\nStarted workflow ${prepared.module.meta.name} (${newRunId}). Use /workflow show ${newRunId} for status.\n`));
@@ -871,6 +951,31 @@ export const workflowCommand: Command = {
       );
       if (!approved) {
         console.log(chalk.dim('Workflow cancelled.\n'));
+        return;
+      }
+      // FEATURE_298 T22 — reruns of historical runs replay the persisted
+      // capsule inline on the Host; the local run stays untouched.
+      if (hostControl !== undefined) {
+        await startWorkflowViaHost(
+          hostControl,
+          callbacks,
+          {
+            projectRoot: process.cwd(),
+            source: {
+              kind: 'inline',
+              manifest: loaded.capsule.manifest,
+              source: loaded.capsule.source,
+            },
+            args: parseWorkflowArgs(invocation.rawArgs),
+            metadata: buildWorkflowProcessMetadata({
+              source: 'command',
+              displayName: loaded.module.meta.name,
+              sourceRunId: invocation.runId,
+            }),
+          },
+          loaded.module.meta,
+          { locale, canRerun: true, presentation },
+        );
         return;
       }
       const newRunId = `run-${Date.now().toString(36)}`;
@@ -1000,18 +1105,57 @@ export const workflowCommand: Command = {
       return;
     }
 
-    const runId = `run-${Date.now().toString(36)}`;
-    const runDir = join(baseDir, runId);
-    console.log(chalk.dim(`\nStarted workflow ${module.meta.name} (${runId}). Use /workflow show ${runId} for status.\n`));
     const locale = inferWorkflowLocaleFromParts(
       invocation.rawArgs,
       module.meta.name,
       module.meta.description,
       scriptSnapshot?.source,
     );
+    const presentation: WorkflowRunPresentation = 'agentic';
+
+    // FEATURE_298 T22 — built-in/saved starts go through the Host as a
+    // declarative source (name for built-ins and bare trusted-local files,
+    // inline for capsules the user already reviewed here).
+    if (hostControl !== undefined) {
+      await startWorkflowViaHost(
+        hostControl,
+        callbacks,
+        {
+          projectRoot: process.cwd(),
+          source: scriptSnapshot
+            ? {
+              kind: 'inline',
+              manifest: scriptSnapshot.manifest,
+              source: scriptSnapshot.source,
+            }
+            : { kind: 'name', name: invocation.name },
+          args: parseWorkflowArgs(invocation.rawArgs),
+          metadata: savedWorkflowRef
+            ? buildSavedWorkflowProcessMetadata({
+              displayName: module.meta.name,
+              savedWorkflowName: savedWorkflowRef.name,
+              provenance: savedWorkflowProvenance,
+            })
+            : buildWorkflowProcessMetadata({
+              source: 'command',
+              displayName: module.meta.name,
+            }),
+        },
+        module.meta,
+        {
+          locale,
+          canRerun: scriptSnapshot !== undefined,
+          presentation,
+        },
+      );
+      return;
+    }
+
+    const runId = `run-${Date.now().toString(36)}`;
+    const runDir = join(baseDir, runId);
+    console.log(chalk.dim(`\nStarted workflow ${module.meta.name} (${runId}). Use /workflow show ${runId} for status.\n`));
     const live = createWorkflowLiveUpdateEmitter(callbacks, runId, module.meta, locale);
     live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
-    const presentation: WorkflowRunPresentation = 'agentic';
     const unsubscribeProcess = subscribeWorkflowLiveProcess(manager, live, runId);
 
     const managed = manager.startFromOptions({

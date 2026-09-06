@@ -47,6 +47,7 @@ it('runs one workflow on the Host that both clients observe and control', async 
     const started = await first.workflows.start({
       projectRoot: homeDir,
       source: { kind: 'inline', manifest: MANIFEST, source: SOURCE },
+      metadata: { displayName: 'Dual-client audit', source: 'command' },
     });
     expect(started).toMatchObject({ kind: 'started' });
     if (started.kind !== 'started') return;
@@ -59,6 +60,11 @@ it('runs one workflow on the Host that both clients observe and control', async 
     const seen = (await second.workflows.list()).find((run) => run.runId === runId);
     expect(seen?.workflowName).toBe('dual-client-wf');
     expect(seen?.status === 'running' || seen?.status === 'completed').toBe(true);
+
+    // FEATURE_298 T22 — the declarative start's lineage metadata is attached
+    // verbatim to the Host-minted run.
+    const seenDetail = await second.workflows.get(runId);
+    expect(seenDetail?.displayName).toBe('Dual-client audit');
 
     // A declines an unknown name without any Host-side run.
     await expect(first.workflows.start({

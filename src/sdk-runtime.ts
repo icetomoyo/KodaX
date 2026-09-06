@@ -80,6 +80,7 @@ import {
   type CodingActorCredentialAccessFactory,
   type ExecPolicyRule,
   type ExecPolicyRuleInput,
+  type WorkflowRunProcessMetadata,
   startManagedWorkflow,
   getBuiltinWorkflow,
   discoverSavedWorkflows,
@@ -3367,6 +3368,8 @@ export interface RuntimeWorkflowStartInput {
   readonly args?: unknown;
   readonly provider?: string;
   readonly model?: string;
+  /** FEATURE_298 T22 — serializable run lineage the Host attaches verbatim. */
+  readonly metadata?: WorkflowRunProcessMetadata;
 }
 
 export type RuntimeWorkflowStartResult =
@@ -12108,6 +12111,7 @@ function createRuntimeWorkflowService(deps: {
           "workflow-runs",
           workflowRunsProjectKey(input.projectRoot),
         ),
+        ...(input.metadata !== undefined ? { processMetadata: input.metadata } : {}),
       });
       return result.kind === "started"
         ? { kind: "started", runId: result.runId }

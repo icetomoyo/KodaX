@@ -637,12 +637,31 @@ export type ClientWorkflowStartSource =
   | { readonly kind: 'request'; readonly request: string }
   | { readonly kind: 'name'; readonly name: string };
 
+/**
+ * FEATURE_298 T22 — serializable process metadata for a declarative start.
+ * Mirrors the run-graph WorkflowRunProcessMetadata the Host attaches to the
+ * minted run, so saved/rerun lineage (savedWorkflowName, sourceRunId, …)
+ * survives the client→Host boundary.
+ */
+export interface ClientWorkflowStartMetadata {
+  readonly displayName?: string;
+  readonly goal?: string;
+  readonly source?: 'command' | 'review' | 'sdk' | 'capsule' | 'extension' | 'automation';
+  readonly savedWorkflowName?: string;
+  readonly sourceRunId?: string;
+  readonly sourceWorkflowName?: string;
+  readonly revisionOf?: string;
+  readonly resumedFromRunId?: string;
+  readonly hostMetadata?: Readonly<Record<string, string>>;
+}
+
 export interface ClientWorkflowStartInput {
   readonly projectRoot: string;
   readonly source: ClientWorkflowStartSource;
   readonly args?: unknown;
   readonly provider?: string;
   readonly model?: string;
+  readonly metadata?: ClientWorkflowStartMetadata;
 }
 
 export type ClientWorkflowStartResult =

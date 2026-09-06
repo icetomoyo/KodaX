@@ -457,6 +457,18 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       args: objectAnySchema,
       provider: stringSchema,
       model: stringSchema,
+      // FEATURE_298 T22 — serializable run lineage (saved/rerun provenance).
+      metadata: objectSchema({
+        displayName: stringSchema,
+        goal: stringSchema,
+        source: { type: 'string', enum: ['command', 'review', 'sdk', 'capsule', 'extension', 'automation'] },
+        savedWorkflowName: stringSchema,
+        sourceRunId: stringSchema,
+        sourceWorkflowName: stringSchema,
+        revisionOf: stringSchema,
+        resumedFromRunId: stringSchema,
+        hostMetadata: objectAnySchema,
+      }, [], true),
     }, ['projectRoot', 'source'], true),
     result: {
       oneOf: [

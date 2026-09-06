@@ -2152,6 +2152,9 @@ async function dispatchRuntimeDaemonRequest(
         ...(optionalStringField(params, "model") !== undefined
           ? { model: optionalStringField(params, "model")! }
           : {}),
+        ...(params.metadata !== undefined
+          ? { metadata: params.metadata as RuntimeWorkflowStartInput["metadata"] }
+          : {}),
       });
     }
 
