@@ -410,3 +410,13 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **核心难点**：`RunWorkflowFromOptionsInput` 携带不可序列化 `module: WorkflowModule` + `options: KodaXOptions`（workflow-runner.ts:392）——daemon RPC 不能直传。Host 侧 start 必须自己做受信模块解析（builtin/saved 名或 sourceRunId rerun → Host 内 resolve），client 只发名称/参数——这正是 T37 的主题，T22 需先行一小步。解析助手（prepareSavedWorkflow/loadGeneratedWorkflowFromRun/discoverSavedWorkflows/getBuiltinWorkflow）目前在 repl 侧 import——需确认真身在哪包、能否 Host 复用。审批 confirm/live emitter/locale/eventSink 是 UI 关注点，留 client。
 
 **实施切片建议**：① Host 服务+RPC+schema 增 serializable start（名称/rerun 引用+args，Host 内解析 module+KodaXOptions，返回 runId）；结果读经 get(WorkflowProcessSnapshot 含 resultSummary/error)。② product client 契约 + sdk-client proxy 增 workflows 面（仿 catalog）。③ workflow-command 的 runs/show/pause/resume/stop 改走 callbacks binding（仿 T23 learning binding：repl-learning-binding.ts 先例）；builder/completer 同改；删除本地控制分支。④ S1=sdk-client.queue 模式双 client：A start→B list/get 可见、B pause→A 可见、B stop→双端 terminal+结果可读；US23 保真=workflow-command.test.ts save/rerun 与 waitForFinalAssistantMessage 路径保持绿。**不要删**：coding 的 WorkflowLifecycleController/run-manager 领域码（Host 消费）、workflow.started/updated/finished 独立事件 API（boundary 条款）、run.json 持久格式。
+
+---
+
+## 2026-09-06 会话补记：T31 完成 + T22 地图（20/35）
+
+**T31**：代码 `ea4bd3fe`、子模块（20/35）、指针已提。①凭据身份：server.ts compact 派发铸造 `compact_<uuid32>`（仿 trustedRunId），operation_required 删除，journal envelope 纯去重。②队列释放：compact 分相（短准入持 gate→登记占用→模型调用 gate 外→finally 释放+ended）；占用集工厂级共享，run 准入（startRun+input.submit）与 goal/notice 写入断言，settings 更新保持 live。S1：server.test 接真实 control journal（铸造身份/越权/重放零重复）。**双轴教训**：Spec 初判 FAIL 的 High 是我自己挖的——释放 gate 后 run/notice/goal 写入可与压缩整链 commit 交错被静默丢；修复=占用集上提+run 准入断言。**坑**：mutateActiveSession 里 blanket 断言会打断 run 中 live settings 更新（4 测试红）——断言只放 goal/notice lineage 写入点，settings 不占。残留：runtime 级 admission/失败 S1（需挂起模型调用接缝）、冲突文案未区分压缩、缩进余留。
+
+**T22 地图**已在上一条 HANDOFF 记录（Host start 需受信模块解析，module/KodaXOptions 不可序列化）。
+
+**DAG 前沿（20/35）**：T34 还差 T36/T37（T23✓ T31✓）；T37 需 T06✓/T22；actionable=T15收尾/T19/T20/T22/T28opt/T30/T35/T36。建议：T36（直接喂 T34）→ T22（解锁 T37）→ T34 收口在望。
