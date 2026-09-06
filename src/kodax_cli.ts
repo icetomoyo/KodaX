@@ -5871,6 +5871,17 @@ complete -c kodax -l version -d 'Show version'`);
               surface: string;
             }) => interactiveRuntime.sessions.create(input).then(() => undefined),
           },
+          // FEATURE_298 T34 — manual /compact replays the Host journal
+          // through the compaction domain and persists there.
+          compactSession: {
+            compact: (input: { sessionId: string; customInstructions?: string }) =>
+              interactiveRuntime.sessions.compact({
+                sessionId: input.sessionId,
+                ...(input.customInstructions !== undefined
+                  ? { customInstructions: input.customInstructions }
+                  : {}),
+              }),
+          },
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

@@ -495,6 +495,7 @@ export interface RepLOptions extends KodaXOptions {
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   goal?: CommandCallbacks['goal'];
   sessionCommands?: SessionCommandBinding;
+  compactSession?: CommandCallbacks['compactSession'];
 }
 
 function resolveInitialReasoningMode(
@@ -1046,6 +1047,7 @@ Keyboard Shortcuts:
     // after a bound mutation the local view re-reads the lineage the Host
     // wrote (same session file) instead of mutating it here.
     goal: options.goal,
+    compactSession: options.compactSession,
     refreshSessionLineage: async () =>
       (await storage.getLineage?.(context.sessionId)) ?? undefined,
     exit: () => {

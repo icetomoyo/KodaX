@@ -121,3 +121,110 @@ describe('/compact command', () => {
     logSpy.mockRestore();
   });
 });
+
+/** FEATURE_298 T34 — manual /compact delegates to the Host when bound. */
+describe('/compact Host binding (T34)', () => {
+  let context: InteractiveContext;
+  let callbacks: CommandCallbacks;
+  let currentConfig: CurrentConfig;
+
+  beforeEach(async () => {
+    context = await createInteractiveContext({});
+    context.contextTokenSnapshot = {
+      currentTokens: 50000,
+      baselineEstimatedTokens: 50000,
+      source: 'estimate',
+    };
+    callbacks = {
+      exit: vi.fn(),
+      saveSession: vi.fn(async () => {}),
+      loadSession: vi.fn(async (): Promise<'loaded'> => 'loaded') as CommandCallbacks['loadSession'],
+      listSessions: vi.fn(async () => {}),
+      clearHistory: vi.fn(),
+      printHistory: vi.fn(),
+      startCompacting: vi.fn(),
+      stopCompacting: vi.fn(),
+      ui: {} as CommandCallbacks['ui'],
+    };
+    currentConfig = {
+      provider: 'zhipu-coding',
+      thinking: true,
+      reasoningMode: 'auto',
+      agentMode: 'ama',
+      permissionMode: 'accept-edits',
+    };
+    mocks.resolveProvider.mockReturnValue({
+      getContextWindow: () => 200000,
+      getEffectiveMaxOutputTokens: () => 32_000,
+    });
+    // Module-level mocks accumulate across describes; isolate this one.
+    mocks.compact.mockClear();
+    mocks.loadCompactionConfig.mockReset();
+  });
+
+  it('compacts through the binding without a provider or a local save', async () => {
+    const compactCommand = BUILTIN_COMMANDS.find(command => command.name === 'compact');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const compact = vi.fn(async () => ({
+      compacted: true,
+      tokensBefore: 50000,
+      tokensAfter: 12000,
+      messages: [
+        { role: 'system' as const, content: 'compacted checkpoint' },
+        { role: 'user' as const, content: 'recent' },
+      ],
+    }));
+
+    try {
+      await compactCommand!.handler(
+        ['focus on auth'],
+        context,
+        { ...callbacks, compactSession: { compact } },
+        currentConfig,
+      );
+
+      expect(compact).toHaveBeenCalledWith({
+        sessionId: context.sessionId,
+        customInstructions: 'focus on auth',
+      });
+      // The Host owns the provider, the compaction, and the persisted
+      // result; the local writer is never invoked.
+      expect(mocks.compact).not.toHaveBeenCalled();
+      expect(callbacks.saveSession).not.toHaveBeenCalled();
+      expect(context.messages).toHaveLength(2);
+      expect(context.messages[0]?.content).toBe('compacted checkpoint');
+      expect(context.contextTokenSnapshot?.currentTokens).toBe(12000);
+      expect(callbacks.startCompacting).toHaveBeenCalled();
+      expect(callbacks.stopCompacting).toHaveBeenCalled();
+      expect(logSpy.mock.calls.flat().join(' ')).toMatch(/Compaction complete/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('reports a no-op through the binding result', async () => {
+    const compactCommand = BUILTIN_COMMANDS.find(command => command.name === 'compact');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const compact = vi.fn(async () => ({
+      compacted: false,
+      tokensBefore: 40000,
+      tokensAfter: 40000,
+      messages: context.messages,
+      reason: 'below-threshold',
+    }));
+
+    try {
+      await compactCommand!.handler(
+        [],
+        context,
+        { ...callbacks, compactSession: { compact } },
+        currentConfig,
+      );
+      expect(compact).toHaveBeenCalledWith({ sessionId: context.sessionId });
+      expect(logSpy.mock.calls.flat().join(' ')).toMatch(/No compaction needed/);
+      expect(callbacks.saveSession).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

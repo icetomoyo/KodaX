@@ -151,6 +151,24 @@ export interface SessionCommandBinding {
   }): Promise<void>;
 }
 
+/**
+ * FEATURE_298 T34 — manual compaction is a Host session command: the Host
+ * replays its journal through the compaction domain and persists the
+ * result; the REPL only refreshes its display context.
+ */
+export interface SessionCompactBinding {
+  compact(input: {
+    readonly sessionId: string;
+    readonly customInstructions?: string;
+  }): Promise<{
+    readonly compacted: boolean;
+    readonly tokensBefore: number;
+    readonly tokensAfter: number;
+    readonly messages: readonly import('@kodax-ai/agent').KodaXMessage[];
+    readonly reason?: string;
+  }>;
+}
+
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
   saveSession: () => Promise<void>;
@@ -162,6 +180,8 @@ export interface CommandCallbacks {
    * stay coherent without a second writer.
    */
   readonly refreshSessionLineage?: () => Promise<KodaXSessionLineage | undefined>;
+  /** FEATURE_298 T34 — Host-owned manual compaction; unbound compacts locally. */
+  readonly compactSession?: SessionCompactBinding;
   startNewSession?: () => void;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;

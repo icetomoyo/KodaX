@@ -552,6 +552,44 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/compact [instructions]',
     handler: async (args, context, callbacks, currentConfig) => {
       try {
+        // Get custom instructions if provided
+        const customInstructions = args.length > 0 ? args.join(' ') : undefined;
+
+        // FEATURE_298 T34 — bound /compact delegates to the Host session
+        // command: the Host owns the provider, the compaction domain, and
+        // the persisted result; the REPL refreshes its display context.
+        if (callbacks.compactSession) {
+          console.log(chalk.dim('\n[Compacting conversation...]'));
+          callbacks.startCompacting?.();
+          try {
+            const bound = await callbacks.compactSession.compact({
+              sessionId: context.sessionId,
+              ...(customInstructions !== undefined ? { customInstructions } : {}),
+            });
+            if (!bound.compacted) {
+              console.log(chalk.green('\n[No compaction needed]'));
+              console.log(chalk.dim(`Current token usage: ${bound.tokensBefore.toLocaleString()}\n`));
+              return;
+            }
+            context.messages = [...bound.messages];
+            context.contextTokenSnapshot = {
+              currentTokens: bound.tokensAfter,
+              baselineEstimatedTokens: estimateTokens(context.messages),
+              source: context.contextTokenSnapshot?.source ?? 'estimate',
+            };
+            callbacks.onCompactStats?.({
+              tokensBefore: bound.tokensBefore,
+              tokensAfter: bound.tokensAfter,
+            });
+            callbacks.clearHistory?.();
+            console.log(chalk.green(`\n[Compaction complete: ${Math.round(bound.tokensBefore / 1000)}k -> ${Math.round(bound.tokensAfter / 1000)}k tokens, ${Math.round((1 - bound.tokensAfter / bound.tokensBefore) * 100)}% reduced]`));
+            console.log();
+          } finally {
+            callbacks.stopCompacting?.();
+          }
+          return;
+        }
+
         // Load compaction config
         const config = await loadCompactionConfig(context.gitRoot);
 
@@ -563,9 +601,6 @@ export const BUILTIN_COMMANDS: Command[] = [
           console.log(chalk.red(`\n[Provider not found: ${providerName}]`));
           return;
         }
-
-        // Get custom instructions if provided
-        const customInstructions = args.length > 0 ? args.join(' ') : undefined;
 
         // Get contextWindow:
         //   user config (manual override)

@@ -157,6 +157,20 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
     await binding.delete(forkedId!);
     expect((await runtime.sessions.list()).find((s) => s.id === forkedId)).toBeUndefined();
 
+    // Manual /compact goes through the Host compact command: the Host
+    // replays its journal through the compaction domain (manual bypasses
+    // the threshold) and persists; the local writer stays untouched.
+    const compacted = await runtime.sessions.compact({
+      sessionId,
+      customInstructions: 'focus on auth',
+    });
+    expect(compacted.tokensBefore).toBeGreaterThan(0);
+    // Whatever the outcome, the session stays readable for every client
+    // and the compacted message list is the Host's own projection.
+    expect(Array.isArray(compacted.messages)).toBe(true);
+    const compactedLineage = await runtime.sessions.readLineage(sessionId);
+    expect(compactedLineage).not.toBeNull();
+
     // The local canonical writer recorded zero writes throughout.
     expect(saveSpy).not.toHaveBeenCalled();
   } finally {
