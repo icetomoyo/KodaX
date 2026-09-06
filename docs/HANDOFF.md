@@ -430,3 +430,11 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **未完成（下窗从这里继续）**：memory-command.test.ts 剩 8 败——根因疑似 **scoped store 与旧 unscoped 扫描语义差异**：旧测试直接向 memoryDir 写 .md 期望 listRefs 扫描可见；Host plane 恒用 scoped root+identity，controller 的 memdir listRefs 可能依赖 registry/manifest 而非裸文件扫描（`list reads accepted topic content` 败在 user_role 不出现）。需核实 agent memdir store 的 refs 来源；测试应改为经 controller.remember 种子或按 scoped store 布局种子。`passes rejection feedback to the injected memory reviewer` 前提已被 T36 删除（UI 注入 reviewer）——改写为经 plane controller 的反馈断言。然后：补 src/sdk-runtime.memory.test.ts S1（US32 四句：remember→view→exact-forget、stale-approval、rebuild 保留文件、open 可信路径），跑门（repl 全包、tsc 477+2、daemon/coding 回归），双轴评审，提交三联（T36→Done 21/35）。
 
 **改动文件清单（git status）**：packages/coding/src/memory-runtime.ts、packages/coding/src/index.ts、packages/repl/src/commands/{memory-command.ts,memory-command.test.ts,types.ts}、src/{runtime-memory.ts(新),sdk-runtime.ts,kodax_cli.ts}。
+
+---
+
+## 2026-09-06 会话补记：T36 完成（21/35）
+
+**提交**：代码 `abaa5962`、子模块（21/35）、指针已提。Host 侧 runtime.memory.forProject（身份 Host 派生/MemoryControlPlane 复用/诚实 rebuild/可信 open target），/memory 删全部自建与直写；S1 四句验证。**关键根因**（适配测试时）：① scoped adapter 对无 receipt 裸文件标 `provisional`，命令过滤 active/trusted 不可见——accepted 必须经 remember/_receipt 流；② fixture 的 `RegExp.exec` 返回 **null 非 undefined**（恒真 bug）；③ learn-command.test 的 /memory pending 别名测试也要 plane+configHome rebase 种子。双轴双 PASS；修复 M1/M2+L 系列；残留（票面已记）：plane workspace/agent scope 与 run 路径漂移、reviewer 显示仅 defaultProvider、双身份逻辑三处重复。**tsc 479=477+2 TS6059 同族**（src 引 packages 的 rootDir 归因，新 import 边 +N 属该族 benign）。
+
+**DAG（21/35）**：T34 还差 T37（需 T22）；actionable=T15收尾/T19/T20/T22/T28opt/T30/T35。建议下一票 **T22**（按 HANDOFF refined 地图：Host serializable start + client workflows 面 + UI 控制迁移）→ T37 → T34 收口。
