@@ -459,3 +459,15 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **RED 骨架**（kodax_cli.daemon-smoke.test.ts 真实子进程先例，KODAX_HOME env）：①`kodax_cli.ts "..." --mode json --no-session` → exit0+JSONL+末行 run.result 全字段+iteration 对+退出后 sessions 目录无新文件；②挂起 provider 杀 CLI → 二连接断言无 terminal completed（unknown/interrupted）+temporary 会话在 executor settle 后才删；③注入 retry/recovery → JSONL 仍含 retry/provider.recovery/tool.input.delta 且 events.replay 无这些（非持久证明）。
 
 **DAG 提醒**：T35 完成后 T26 前置仅剩 T17/T18/T19/T21（T17/T18 等 T34）。T22 地图见上一条增补（startManagedWorkflow 声明式 source 为接缝，剩余=Host 级 KodaXOptions 构建，建议 inline-source+Host 基础选项切片先行）。
+
+---
+
+## 2026-09-06 会话补记：T36 闭环 + T22 切片 1（21/35，T22 In Progress）
+
+**T36**：`abaa5962`（见上条前记录——Host Memory plane + UI 删自建 + S1 四句 + 双轴双 PASS）。
+
+**T22 切片 1**：`3d796f9b`。Host 声明式 start（inline/request Host 内受信校验、name Host 内解析、Host 基础选项+run 目录）+ workflow.start RPC（schema/scope/dispatch/client）+ 产品 Client workflows 面（六操作+ClientWorkflowRun 投影）+ S1 双 client 跨端观察/控制/decline/terminal。daemon client 补 memory stub（T36 跟进：进程内服务无 RPC→干净不可用）。**坑**：schema.test 的 METHOD_SMOKE_PARAMS 是本地表需补条目；server.ts 有 scope 表（UNSCOPED 抛错自检好设计）；`import type` 块内不能再加 `type` 修饰符。
+
+**T22 切片 2 续做**（票面已记）：callbacks.workflows binding（T23/T36 模式）+ workflow-command.test binding fixture 适配（T36 规模）+ start/rerun 审批后改声明式 + 删本地 manager/控制分支（:241-248/builder:185/completer:477）。
+
+**连续目标提醒**：T22 完成→T37（T06✓T22 后解锁）→T34（差 T36✓T37）；并行池 T19/T20/T30/T35（T35 四缺口地图就绪）；T17/T18 等 T34；最后 T15 收尾+T25/T26/T27。
