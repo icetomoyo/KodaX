@@ -5778,6 +5778,9 @@ complete -c kodax -l version -d 'Show version'`);
           // FEATURE_298 T36 — the Host owns the Memory plane; the UI names
           // the project root and presents/launches only.
           memory: (projectRoot) => interactiveRuntime.memory.forProject(projectRoot),
+          // FEATURE_298 T22 — workflow run/control routes to the Host
+          // manager (daemon client or in-process service alike).
+          workflows: interactiveRuntime.workflows,
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

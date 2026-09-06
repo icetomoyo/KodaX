@@ -186,6 +186,12 @@ export interface CommandCallbacks {
    * builds its own identity/controller.
    */
   memory?: (projectRoot: string) => MemoryCommandPlane;
+  /**
+   * FEATURE_298 T22 — Host-owned workflow control plane. When present,
+   * run/control operations (list/get/pause/resume/stop/start) route to the
+   * Host manager so every client of the same Host sees the same work.
+   */
+  workflows?: WorkflowHostControl;
   getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
   openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
   /**
@@ -355,4 +361,22 @@ export interface MemoryCommandPlane {
   reviewerProviderConfigured(): boolean;
   rebuild(): Promise<MemoryRebuildResult>;
   ensureOpenTarget(targetPath: string): Promise<string>;
+}
+
+export interface WorkflowHostControl {
+  start(input: {
+    readonly projectRoot: string;
+    readonly source:
+      | { readonly kind: 'inline'; readonly manifest: unknown; readonly source: string }
+      | { readonly kind: 'request'; readonly request: string }
+      | { readonly kind: 'name'; readonly name: string };
+    readonly args?: unknown;
+    readonly provider?: string;
+    readonly model?: string;
+  }): Promise<{ readonly kind: 'declined'; readonly reason: string } | { readonly kind: 'started'; readonly runId: string }>;
+  list(): Promise<readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[]>;
+  get(runId: string): Promise<import('@kodax-ai/agent').WorkflowProcessSnapshot | undefined>;
+  pause(runId: string): Promise<boolean>;
+  resume(runId: string): Promise<boolean>;
+  stop(runId: string): Promise<boolean>;
 }

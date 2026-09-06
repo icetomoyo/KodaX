@@ -2216,6 +2216,74 @@ describe('workflowCommand saved capsule preflight', () => {
     expect(existsSync(savedPath)).toBe(false);
   });
 
+  it('routes run/control operations through the Host workflow plane when bound', async () => {
+    // FEATURE_298 T22 — with a callbacks.workflows binding the command's
+    // runs/show/pause/resume/stop operations must hit the Host plane, never
+    // a locally constructed manager.
+    const stopped: string[] = [];
+    const hostControl = {
+      async start() {
+        return { kind: 'started' as const, runId: 'run-host-1' };
+      },
+      async list() {
+        return [{
+          runId: 'run-host-1',
+          workflow: 'host-audit',
+          status: 'running' as const,
+          totalSpawned: 1,
+          eventCount: 2,
+          startedAt: Date.now(),
+          runDir: join(workflowRunsDir, 'run-host-1'),
+        }];
+      },
+      async get(runId: string) {
+        if (runId !== 'run-host-1') return undefined;
+        return {
+          runId,
+          workflowName: 'host-audit',
+          status: 'running' as const,
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          counts: { pending: 0, running: 1, completed: 0, failed: 0, cancelled: 0, skipped: 0 },
+          progress: { total: 1, done: 0 },
+          items: [],
+        };
+      },
+      async pause() {
+        return true;
+      },
+      async resume() {
+        return true;
+      },
+      async stop(runId: string) {
+        stopped.push(runId);
+        return true;
+      },
+    };
+    const callbacks = { workflows: hostControl } as unknown as Parameters<typeof workflowCommand.handler>[2];
+
+    logSpy.mockClear();
+    await workflowCommand.handler(
+      ['runs'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      callbacks,
+      {} as Parameters<typeof workflowCommand.handler>[3],
+    );
+    let output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('run-host-1');
+
+    logSpy.mockClear();
+    await workflowCommand.handler(
+      ['stop', 'run-host-1'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      callbacks,
+      {} as Parameters<typeof workflowCommand.handler>[3],
+    );
+    output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(stopped).toEqual(['run-host-1']);
+    expect(output).toContain('Stopped workflow run-host-1');
+  });
+
   it('prefers deleting a unique workflow run when its display name also matches a saved capsule', async () => {
     const savedPath = writeSavedWorkflowCapsule(dir, 'display-collision');
     const runDir = join(workflowRunsDir, 'run-display-collision');

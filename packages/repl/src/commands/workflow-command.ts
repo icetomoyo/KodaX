@@ -155,6 +155,55 @@ export {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+async function hostControlActiveRuns(
+  hostControl: NonNullable<Parameters<Command['handler']>[2]['workflows']>,
+): Promise<[
+  ReadonlyMap<string, WorkflowProcessSnapshot>,
+  readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[],
+]> {
+  const snapshots = await hostControl.list();
+  const processSnapshots = new Map<string, WorkflowProcessSnapshot>();
+  for (const snapshot of snapshots) {
+    const process = await hostControl.get(snapshot.runId);
+    if (process !== undefined) processSnapshots.set(snapshot.runId, process);
+  }
+  return [processSnapshots, snapshots.filter(isActiveManagedWorkflowRun)];
+}
+
+function toManagedSnapshot(
+  process: WorkflowProcessSnapshot | undefined,
+): import('@kodax-ai/coding').ManagedWorkflowSnapshot | undefined {
+  return process === undefined ? undefined : {
+    runId: process.runId,
+    workflow: process.workflowName,
+    status: managedStatusFromProcess(process.status),
+    totalSpawned: process.counts === undefined
+      ? 0
+      : process.counts.pending + process.counts.running + process.counts.completed
+        + process.counts.failed + process.counts.cancelled + process.counts.skipped,
+    eventCount: 0,
+    startedAt: Date.parse(process.startedAt),
+    runDir: '',
+  };
+}
+
+function managedStatusFromProcess(
+  status: WorkflowProcessSnapshot['status'],
+): import('@kodax-ai/coding').ManagedWorkflowStatus {
+  switch (status) {
+    case 'paused':
+      return 'paused';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'stopped';
+    default:
+      return 'running';
+  }
+}
+
 function processSnapshotsByRunId(
   snapshots: readonly WorkflowProcessSnapshot[],
 ): ReadonlyMap<string, WorkflowProcessSnapshot> {
@@ -238,6 +287,11 @@ export const workflowCommand: Command = {
 
     const projectKey = deriveProjectKeyFromRoot(process.cwd()).key;
     const baseDir = getAgentConfigPath('workflow-runs', projectKey);
+    // FEATURE_298 T22 — control operations prefer the Host plane so every
+    // client of the same Host observes and controls the same work; the
+    // local manager/lifecycle remain for the interactive start/save paths
+    // until those migrate to declarative Host starts.
+    const hostControl = callbacks.workflows;
     const manager = getDefaultWorkflowRunManager();
 
     const dirs = savedWorkflowDirs(process.cwd());
@@ -296,8 +350,12 @@ export const workflowCommand: Command = {
         console.log(chalk.yellow(`\nUsage: /workflow runs [--all] [--limit N]\n${options.error}\n`));
         return;
       }
-      const processSnapshots = processSnapshotsByRunId(lifecycle.listWorkflowProcessSnapshots({ activeOnly: false }));
-      const active = manager.list().filter(isActiveManagedWorkflowRun);
+      const [processSnapshots, active] = hostControl === undefined
+        ? [
+            processSnapshotsByRunId(lifecycle.listWorkflowProcessSnapshots({ activeOnly: false })),
+            manager.list().filter(isActiveManagedWorkflowRun),
+          ]
+        : await hostControlActiveRuns(hostControl);
       if (active.length > 0) {
         console.log(chalk.bold('\nActive workflow runs:'));
         console.log(formatManagedRunsList(active, { processSnapshots }));
@@ -321,9 +379,13 @@ export const workflowCommand: Command = {
         return;
       }
       if (!ensureSafeRunId(runId)) return;
-      const managed = manager.get(runId);
+      const managed = hostControl === undefined
+        ? manager.get(runId)
+        : toManagedSnapshot(await hostControl.get(runId));
       const detail = readWorkflowRunDetail(baseDir, runId);
-      const processSnapshot = lifecycle.getWorkflowProcessSnapshot(runId);
+      const processSnapshot = hostControl === undefined
+        ? lifecycle.getWorkflowProcessSnapshot(runId)
+        : await hostControl.get(runId);
       console.log(chalk.bold('\nWorkflow run:'));
       console.log(formatWorkflowRunSnapshot(managed, detail, {
         full: invocation.full === true,
@@ -335,14 +397,18 @@ export const workflowCommand: Command = {
 
     if (invocation.kind === 'pause') {
       if (!ensureSafeRunId(invocation.runId)) return;
-      const ok = manager.pause(invocation.runId);
+      const ok = hostControl === undefined
+        ? manager.pause(invocation.runId)
+        : await hostControl.pause(invocation.runId);
       console.log(ok ? chalk.dim(`Paused workflow ${invocation.runId}.\n`) : chalk.yellow(`No running workflow ${invocation.runId}.\n`));
       return;
     }
 
     if (invocation.kind === 'resume') {
       if (!ensureSafeRunId(invocation.runId)) return;
-      const ok = manager.resume(invocation.runId);
+      const ok = hostControl === undefined
+        ? manager.resume(invocation.runId)
+        : await hostControl.resume(invocation.runId);
       console.log(ok ? chalk.dim(`Resumed workflow ${invocation.runId}.\n`) : chalk.yellow(`No paused workflow ${invocation.runId}.\n`));
       return;
     }
@@ -354,8 +420,12 @@ export const workflowCommand: Command = {
         return;
       }
       if (!ensureSafeRunId(runId)) return;
-      const ok = await lifecycle.stopWorkflow(runId, 'stopped by user');
-      const snapshot = manager.get(runId);
+      const ok = hostControl === undefined
+        ? await lifecycle.stopWorkflow(runId, 'stopped by user')
+        : await hostControl.stop(runId);
+      const snapshot = hostControl === undefined
+        ? manager.get(runId)
+        : toManagedSnapshot(await hostControl.get(runId));
       const detail = readWorkflowRunDetail(baseDir, runId);
       const processSnapshot = lifecycle.getWorkflowProcessSnapshot(runId);
       const status = snapshot?.status ?? detail?.status ?? processSnapshot?.status;
