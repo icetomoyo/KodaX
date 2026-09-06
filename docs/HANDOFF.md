@@ -574,3 +574,11 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **切片 4（canonical 写停止）**：两 surface 增 `hostOwnsWrites = options.sessionCommands !== undefined`。classic：saveSession 早退、双循环 auto-save、handleCommandResult persist、commitWorkflowFinal（void save 前置条件）、appendPersistedUiHistoryItem（hint 变 display-only——Host 拥有持久 display history，记为票面残留）、goal runtime flush closure 早退；recover 本地路径的 3 写在 bound 分支已不可达（947/961 的守卫是双保险）；auto-compaction else-分支要求 !runtimeRunner（产品绑定恒伴随 runner）。Ink：**persistContextState 顶部单守卫覆盖全链**（persistHostSessionPayload 的 append-tail/delta/full-save 只从它进入）+ saveSession 早退；**坑：InkREPL 里 `const storage = options.storage` 在 runInkInteractiveMode（:11189），组件作用域在上方——hostOwnsWrites 必须声明在组件作用域（persistContextState 前），放 runInkInteractiveMode 会 TS2304**。读取保留（同文件读回）直至 T17/T18。standalone 路径全部不变（repl 全量绿证）。
 
 **门禁**：repl+daemon+T34/T37 S1 共 2985 绿、tsc 481 恒定、build 绿。**双轴评审已派发**（Standards+Spec 并行，审 4 提交 fdde170a..c80bba59）；结论回来后修复→T34 票据翻转 Done(24/35)→submodule+指针+本记录收尾。已知待评审重点：same-file 假设在产品 custom config-home 下是否恒成立；bound-mode 循环级写停止无直接 loop 测试（记 T17/T18 残留）；/load 与 /sessions 列表仍本地读=票面允许的"旧显示可暂留"读侧。
+
+---
+
+## 2026-09-06 T34 Done（24/35）— 评审闭环与下一步 T17
+
+**双轴结论**：Standards 初判 FAIL（2 High：classic 循环体内 `if (hostOwnsWrites) return` 退出 runInteractiveMode、handleCommandResult 同型守卫跳过 prepared.finalize()=Stop hooks 丢失；3 Medium：死守卫/静默吞错/Ink 4 处赋值块重复）；Spec 初判 FAIL（2 High：同循环 return+**T36 记录的 memory 转发缺口——kodax_cli 传了 memory 但两 surface options/callbacks 均未声明转发=产品 /memory unavailable**）。修复提交 `83ca60a5`：三处守卫改为只门 storage.save（finalize/循环控制流不动）；memory 两 surface 转发补齐；deleteAll 显式 limit:MAX_SAFE_INTEGER（list 默认 50 截尾）；/compact 后 refreshSessionLineage（Esc+Esc 重跑依赖）；/new 建失败告警；Ink recover 补 paste reset+续跑丢弃注释；三 binding 类型对称导出；另带入 efbc23f6 漏 stage 的 T37 sha 选项注入守卫。**残留（票面已记）**：recover 续跑轮（两 surface，T17/T18 recover 重构落地）；/tree summarize daemon 线 S1 与 bound 循环级直接测试（守卫经评审+2984 回归背书）；Ink bound 赋值块 applyBoundSessionData 抽取（后续清理切片）；uiHistory hint display-only。票据翻转 17504d1（submodule）+父指针 6765b551。门禁终态：repl+daemon+S1 2984、tsc 481、build 绿。
+
+**下一步 T17（Ink→Client 输入与展示迁移；Blocked by T34✓）**：先读票据 #17（docs/features/v0.7.97.md :549 区）与 REPL-parity 验收节；重点=Ink 输入路径走产品 Client、展示读侧从本地文件迁 Host observeView/readHistory（T34 已留同文件读回过渡）；带入本票残留：recover 续跑轮、bound 循环级测试、/tree summarize S1。之后 T18（classic）→并行池 T19/T20/T30/T35→收尾 T25/T26/T27/T15。
