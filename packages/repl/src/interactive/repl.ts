@@ -496,6 +496,7 @@ export interface RepLOptions extends KodaXOptions {
   goal?: CommandCallbacks['goal'];
   sessionCommands?: SessionCommandBinding;
   compactSession?: CommandCallbacks['compactSession'];
+  memory?: CommandCallbacks['memory'];
 }
 
 function resolveInitialReasoningMode(
@@ -944,7 +945,7 @@ Keyboard Shortcuts:
       reason: 'provider session recovery',
     });
 
-    if (!hostOwnsWrites) await storage.save(sourceSessionId, {
+    await storage.save(sourceSessionId, {
       messages: context.messages,
       title: sourceTitle,
       gitRoot: context.gitRoot ?? '',
@@ -958,7 +959,7 @@ Keyboard Shortcuts:
 
     const nextSessionId = generateInteractiveSessionId();
     const seedLineage = createSessionLineage(seed.messages);
-    if (!hostOwnsWrites) await storage.save(nextSessionId, {
+    await storage.save(nextSessionId, {
       messages: seed.messages,
       title: seed.title,
       gitRoot: context.gitRoot ?? '',
@@ -1052,6 +1053,9 @@ Keyboard Shortcuts:
     // wrote (same session file) instead of mutating it here.
     goal: options.goal,
     compactSession: options.compactSession,
+    // FEATURE_298 T36/T34 — the Host owns the Memory plane; without this
+    // forward the product wiring is silently dropped and /memory breaks.
+    memory: options.memory,
     refreshSessionLineage: async () =>
       (await storage.getLineage?.(context.sessionId)) ?? undefined,
     exit: () => {
@@ -1108,7 +1112,11 @@ Keyboard Shortcuts:
           title: 'REPL Session',
           ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
           surface: 'repl',
-        }).catch(() => undefined);
+        }).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.log(chalk.yellow(`
+[New session could not be registered with the Host: ${message}]`));
+        });
       }
     },
     loadSession: async (id: string) => {
@@ -1967,9 +1975,9 @@ Keyboard Shortcuts:
         const title = extractTitle(context.messages);
         context.title = title;
         // FEATURE_298 T34 — bound mode: the Host already committed the
-        // command round to the canonical journal.
-        if (hostOwnsWrites) return;
-        await storage.save(context.sessionId, {
+        // command round to the canonical journal. Gate the write only;
+        // prepared.finalize() below must still run (Stop hooks).
+        if (!hostOwnsWrites) await storage.save(context.sessionId, {
           messages: context.messages,
           title,
           gitRoot: context.gitRoot ?? '',
@@ -2173,9 +2181,9 @@ Keyboard Shortcuts:
             const title = extractTitle(context.messages);
             context.title = title;
             // FEATURE_298 T34 — bound mode: the Host run already committed
-            // the round to the canonical journal.
-            if (hostOwnsWrites) return;
-            await storage.save(context.sessionId, {
+            // the round to the canonical journal. Gate the write only — this
+            // is the loop body; an early return would exit the REPL.
+            if (!hostOwnsWrites) await storage.save(context.sessionId, {
               messages: context.messages,
               title,
               gitRoot: context.gitRoot ?? '',
@@ -2293,9 +2301,9 @@ Keyboard Shortcuts:
         const title = extractTitle(context.messages);
         context.title = title;
         // FEATURE_298 T34 — bound mode: the Host run already committed
-        // the round to the canonical journal.
-        if (hostOwnsWrites) return;
-        await storage.save(context.sessionId, {
+        // the round to the canonical journal. Gate the write only — this
+        // is the loop body; an early return would exit the REPL.
+        if (!hostOwnsWrites) await storage.save(context.sessionId, {
           messages: context.messages,
           title,
           gitRoot: context.gitRoot ?? '',
@@ -2446,6 +2454,10 @@ async function runAgentRound(
           throw new Error('Classic REPL compaction requires Session storage.');
         }
         try {
+          // FEATURE_298 T34 — this else-branch is the standalone path: in
+          // product mode the session-command binding is always wired
+          // together with runtimeRunner, whose branch above already owns
+          // the durable commit; no second writer reaches this save.
           await storage.save(context.sessionId, {
             messages,
             title: extractTitle(messages),

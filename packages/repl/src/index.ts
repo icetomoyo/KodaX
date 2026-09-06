@@ -77,6 +77,8 @@ export {
   type CommandCallbacks,
   type CurrentConfig,
   type SessionCommandBinding,
+  type SessionCompactBinding,
+  type SessionGoalBinding,
 } from "./interactive/commands.js";
 export {
   createUserSkillInvocation,

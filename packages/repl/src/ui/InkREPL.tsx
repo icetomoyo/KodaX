@@ -769,6 +769,7 @@ export interface InkREPLOptions extends KodaXOptions {
   goal?: CommandCallbacks['goal'];
   sessionCommands?: SessionCommandBinding;
   compactSession?: CommandCallbacks['compactSession'];
+  memory?: CommandCallbacks['memory'];
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -8790,8 +8791,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setLiveTokenCount(null);
       clearUIHistory();
       setTodoItems([]);
+      // Issue 121 session-boundary hygiene (same as the unbound path).
+      getActivePasteStore()?.reset();
       setSessionId(recoveredId);
       teamModeHandle?.writer.update({ sessionId: recoveredId });
+      // FEATURE_298 T34 — the Host derives and persists the recovery
+      // seed; the unbound path's agent continuation round is not re-run
+      // here (the user's next input drives the recovered session).
       console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
       console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
       return "recovered";
@@ -9546,6 +9552,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // lineage the Host wrote instead of mutating it here.
           goal: options.goal,
           compactSession: options.compactSession,
+          // FEATURE_298 T36/T34 — the Host owns the Memory plane.
+          memory: options.memory,
           refreshSessionLineage: async () =>
             (await storage.getLineage?.(context.sessionId)) ?? undefined,
           exit: requestGracefulExit,
@@ -9619,7 +9627,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 title: 'REPL Session',
                 ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
                 surface: 'repl',
-              }).catch(() => undefined);
+              }).catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                console.log(chalk.yellow(`
+[New session could not be registered with the Host: ${message}]`));
+              });
             }
           },
           loadSession: async (id: string) => {

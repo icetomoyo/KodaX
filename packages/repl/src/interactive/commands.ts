@@ -123,6 +123,8 @@ export type {
   RuntimeSurfaceMode,
   RuntimeSurfaceStatus,
   SessionCommandBinding,
+  SessionCompactBinding,
+  SessionGoalBinding,
 } from '../commands/types.js';
 
 // Builtin commands use the shared command definition so registry metadata stays in one model.
@@ -582,6 +584,9 @@ export const BUILTIN_COMMANDS: Command[] = [
               tokensAfter: bound.tokensAfter,
             });
             callbacks.clearHistory?.();
+            // Keep the local lineage coherent with the Host's compacted
+            // journal (Esc+Esc re-runs derive from it).
+            context.lineage = await callbacks.refreshSessionLineage?.() ?? context.lineage;
             console.log(chalk.green(`\n[Compaction complete: ${Math.round(bound.tokensBefore / 1000)}k -> ${Math.round(bound.tokensAfter / 1000)}k tokens, ${Math.round((1 - bound.tokensAfter / bound.tokensBefore) * 100)}% reduced]`));
             console.log();
           } finally {

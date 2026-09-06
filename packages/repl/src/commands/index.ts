@@ -25,6 +25,8 @@ export type {
   CommandInfo,
   Command,
   SessionCommandBinding,
+  SessionCompactBinding,
+  SessionGoalBinding,
 } from './types.js';
 export { toCommandDefinition } from './types.js';
 

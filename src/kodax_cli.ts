@@ -5819,9 +5819,12 @@ complete -c kodax -l version -d 'Show version'`);
           sessionCommands: {
             delete: (sessionId: string) => interactiveRuntime.sessions.delete(sessionId),
             deleteAll: async ({ gitRoot }: { gitRoot?: string }) => {
-              const sessions = await interactiveRuntime.sessions.list(
-                gitRoot !== undefined ? { projectRoot: gitRoot } : undefined,
-              );
+              // Explicit unbounded limit: the composed delete must match
+              // the old bulk deleteAll exactly (list defaults to 50).
+              const sessions = await interactiveRuntime.sessions.list({
+                ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}),
+                limit: Number.MAX_SAFE_INTEGER,
+              });
               for (const session of sessions) {
                 await interactiveRuntime.sessions.delete(session.id);
               }

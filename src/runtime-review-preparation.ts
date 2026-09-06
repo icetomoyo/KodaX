@@ -76,6 +76,11 @@ async function captureDiff(args: readonly string[], cwd: string): Promise<Captur
     };
   }
   if (sub === "sha" && args[1]) {
+    // The sha token reaches git argv without a shell; refuse option-shaped
+    // values so a caller cannot smuggle git flags through the ref slot.
+    if (args[1].startsWith("-")) {
+      throw new Error("invalid commit hash for sha scope");
+    }
     const baseRef = await tryResolveRef(`${args[1]}^`, cwd);
     return {
       diff: await git(["show", args[1]], cwd),
