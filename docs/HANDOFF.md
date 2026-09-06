@@ -325,3 +325,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 5. **S1/S2 清单（票面）**：确切动作绑定、插件拒绝、取消后晚答不重启动作、既有显式政策查询/精确撤销（领域身份）。
 
 **下一步**：从 `original.beforeToolExecute` 的接线处入手（run substrate / coding start options events / extension runtime host hook），确认产品面 hook 存在性后写 T14 RED（src/sdk-client.permissions.test.ts 或扩展既有 T05 套件），再按 1→2→4 顺序实施。
+
+---
+
+## 2026-09-06 会话补记：T14 完成（产品 Runtime 只安装一个权限 authority）
+
+**提交**：代码 `c0050749`（12 文件 +485/-714）、子模块 `751c410`（T14→Done，16/35）+ 指针 `83a97cce`。
+
+**实施面**（按 HANDOFF 调研地图）：(1) 竞争删除——hook 在场则 hook 单独裁决（不再 trackAndWait，双端只见一个请求），headless 走共享 `authorizeTrackedPermission` 闭包（相位管理+trackAndWait+错误时 reject）；(2) forcedPermissionCalls→`wrapKodaXEvents` 复合返回 `{events, authorizeForcedPermission}`，升级直接传当前 call（buildRunOptions 线程传递）；(3) auto-mode 深删——owned wrapper 整体删除、cache 直存 bootstrap guardrail、dispatch 上下文按 runner call id 存 Map（**评审纠正：单槽在多 bash 并发 prepare 下互相覆盖，必须按 call-id**）、准入信任引擎裁决；(4) `permission.request` wire RPC 退役（协议四处+schema+scope+dispatch+facade 本地拒绝），runtime 服务方法保留给 Host 内部。
+
+**测试坑**：python heredoc 里含 `EOF` 类内容会提前终止——复杂补丁一律先 Write 临时脚本再执行；`s.rfind('it(')` 会命中 "emit(" 里的 "it("——定位测试块用完整标题 find；tsc 错误 grep 必须看全量（head 截断漏过 TS2304，评审者抓到）——用 compare-tsc.mjs 的 JSON 而非裸 grep 计数。
+
+**评审（双轴 FAIL→修复后通过）**：悬挂 `currentGuardrail = undefined`（High，我删了声明漏了赋值，且自检 grep 截断没发现——教训：评审者的 tsc 实跑可信）；单槽 currentDispatch 并发 unsound（M，tool-dispatch 串行 prepare 全部 bash 后才执行）；permission.request 退役是票面 API 表分配给 T14 的（Spec 抓到 docs:986 行）；S1 补 toolName+preview 绑定断言。
+
+**基线**：tsc 477（=478-T33 已消的一条，无新增）；sdk-runtime.test.ts 10 败=HEAD 既有；"keeps parallel active tools"/"managed turns canonical" 为间歇性顺序 flake（隔离绿，T33 会话已证前者）。
+
+**下一步（DAG 前沿）**：T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）；T34 前置还差 T23/T31/T36/T37；T26 需 T17/T18/T19/T21/T35。
