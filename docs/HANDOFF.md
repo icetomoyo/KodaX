@@ -353,3 +353,24 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 3. **typed 核对**：S1 断言 catalog.skills/commands 反映真实 Host extension runtime（含 per-session 合并视图）、config-effective 反映真实 reload、diagnostics 真实 Host cache（probe/reset 已有 T12 前段工作，sdk-client.capabilities/mcp.test 已存在，先查缺口再补）。
 
 **下一步**：按 1→2→3 顺序实施（1 自包含可先行），每块独立 S1；T12 完成后 Done 17/35。
+---
+
+## 2026-09-06 会话补记：T12 完成（设置、能力发现和配置重载由 Host 生效）
+
+**提交**：代码 `ccd3acc7`（9 文件：agent runtime+call-context、coding 契约、sdk-runtime/client、三个新 S1 测试）、子模块 `6377bef`（T12→Done，17/35）+ 指针 `e3349e84`。
+
+**三项交付**：
+
+1. **Session 私有 MCP 侧车持久化**：`<persistence.runtimeDir>/session-mcp/<encodeURIComponent(sessionId)>.json` = `{version:1, workspaceRoot, servers}`。启动扫描：未知/损坏 GC（非 ENOENT 读错误→runtime.mcp warn 诊断；损坏 JSON/decode 失败删除继续，不崩 Host 启动；杂项条目 recursive 清除）；已知重建、archived 跳过。delete 在 deleteOwned 成功后移除记录（失败路径 journal 已有 restore）；archive→releaseSession 保留记录、unarchive→rebuild；rebuild 失败诊断+GC。
+2. **共享 MCP reverse 的 Session 归属**：关键洞见——elicitation 在 stdio receive 回调上下文触发，**不在 run 的 async 链上**，普通 AsyncLocalStorage 包 codingOperation 不传播。解法：`packages/agent/src/capabilities/mcp/call-context.ts`（runWithMcpCallContext/getActiveMcpCallContext），agent MCP runtime 在 sendRequest 时按 pending 请求捕获上下文、server→client 派发时 `pendingCallContext()` 重入（零/混上下文→undefined fail-closed）。Host 侧 sharedElicitSurface（setActiveUserInteraction）把 elicitation 映射为所属 Session 的 question_input/question 交互；prompt-context signal 被尊重（raceElicitAbort：deadline abort→立即 dismissed；registry 交互按自身 phase timeout 收尾，无外部 dismissal handle——已知边界）。
+3. **typed catalog**：契约 `catalog.commands(workspaceRoot)`/`catalog.skills({userInvocableOnly})` + `ClientCommandInfo`/`ClientSkillInfo`（source=registry-origin 词汇表，String() 前向兼容）。
+
+**S1**：src/sdk-client.mcp-restart.test.ts（双 Host 重启重建/GC/archive 往返）、mcp-elicit.test.ts（自定义 eliciting stdio server：initialize 带 elicitation 能力、tools/call 发 `elicitation/create` 且 **param 键是 `requestedSchema` 不是 `form`**、echo `elicit:<action>:<name>`；provider 触发 mcp_call → 交互携带 sessionId 归属 + 双 Client 依次应答）、catalog.test.ts（真实 Host typed 形状 + **config patch→另一 Client reload→read 观察到生效值**）。
+
+**评审（双轴 PASS 带修复）**：M1 静默吞错→分类诊断；M2 decode 崩溃面；F4 recursive；F5 delete 后置；F2 signal 转发；F3 config-effective 强化；L1 注释序、L2 store 形状（persist/remove/rebuild 一对象）、L4 export 走 capabilities/mcp/index（agent 顶层 index 的直连 block 删除——git 里 index.ts 因此无 diff）、L5 source 词汇文档、L6 sentinel 文档、L7 let→const（decodeSessionId helper）。
+
+**基线**：tsc 477 对平（compare-tsc.mjs：仅 truncate/sandbox TS6059、host.test run.completed、sdk-runtime TS2322@4498/TS2345 行移对）；sdk-runtime.test.ts 10 败=stash 对照确认预存（"managed turns canonical"/"parallel active tools" 本次全量首跑败一次、隔离+复跑均绿=flake，T33 会话已证同类）；agent mcp 181 绿；build gate 绿。**compare-tsc.mjs 在基线目录内**（%TEMP%/kodax-type-baseline-536166af8ff74fdab7a3dcf1c3153c14/），输出两段 JSON（先 summary 后 detail）——直接 require 解析会炸，分段读。
+
+**T12 残留（票面已注明，随 T16/T19 消费者补）**：extension-sourced command S1、损坏记录 warn 诊断 S1、createSession 失败 dispose S1。
+
+**下一步（DAG 前沿）**：T34 前置 T23/T31/T36/T37；T26 需 T17/T18/T19/T21/T35；T15 收尾等 T17/T18/T25。
