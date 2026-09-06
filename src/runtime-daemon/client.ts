@@ -965,6 +965,13 @@ export function createRuntimeDaemonClient(
         throw new Error('Memory management requires an in-process runtime client.');
       },
     } as unknown as KodaXRuntime['memory'],
+    // FEATURE_298 T37 — Skill preparation is likewise in-process (the Host
+    // expands queued skills server-side); no daemon RPC by design.
+    invocations: {
+      async prepareSkill() {
+        throw new Error('Skill preparation requires an in-process runtime client.');
+      },
+    } as unknown as KodaXRuntime['invocations'],
     workflows: {
       list(filter?: RuntimeWorkflowFilter) {
         return request('workflow.list', filter) as Promise<readonly RuntimeWorkflowSummary[]>;

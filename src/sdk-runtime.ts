@@ -317,6 +317,11 @@ import {
   createRuntimeMemoryService,
   type RuntimeMemoryService,
 } from "./runtime-memory.js";
+import {
+  createRuntimeInvocationService,
+  type RuntimeInvocationService,
+} from "./runtime-invocations.js";
+export type { RuntimeInvocationService } from "./runtime-invocations.js";
 export type { RuntimeLearningService } from "./runtime-learning.js";
 export type {
   RuntimeMemoryService, RuntimeMemoryPlane, RuntimeMemoryRebuildResult,
@@ -1072,6 +1077,8 @@ export interface KodaXRuntime {
   readonly workflows: RuntimeWorkflowService;
   readonly learning: RuntimeLearningService;
   readonly memory: RuntimeMemoryService;
+  /** FEATURE_298 T37 — trusted Skill/command preparation lives Host-side. */
+  readonly invocations: RuntimeInvocationService;
   readonly config: RuntimeConfigService;
   readonly catalog: RuntimeCatalogService;
   readonly mcp: RuntimeMcpService;
@@ -5103,6 +5110,11 @@ async function createKodaXRuntimeInternal(
       : {}),
   });
 
+  // FEATURE_298 T37 — Skill preparation is Host-side trusted work. No
+  // host-mediated dynamic-context executor is bound yet, so `!`cmd`` blocks
+  // are hard-disabled (the resolver's legacy execSync path never runs).
+  const invocations = createRuntimeInvocationService({});
+
   const closeRuntime = (): Promise<void> => {
     if (closeAttempt) return closeAttempt;
     closed = true;
@@ -5177,6 +5189,7 @@ async function createKodaXRuntimeInternal(
     workflows,
     learning,
     memory,
+    invocations,
     config: createRuntimeConfigService(ensureOpen, {
       configFile,
       defaultProvider: options.defaultProvider,
