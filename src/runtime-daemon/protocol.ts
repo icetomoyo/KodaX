@@ -94,6 +94,7 @@ export type RuntimeDaemonMethod =
   | 'workflow.pause'
   | 'workflow.resume'
   | 'workflow.stop'
+  | 'workflow.start'
   | 'learning.list'
   | 'learning.get'
   | 'learning.snapshot'
@@ -213,6 +214,7 @@ export type RuntimeDaemonMutationMethod =
   | 'workflow.pause'
   | 'workflow.resume'
   | 'workflow.stop'
+  | 'workflow.start'
   | 'learning.acknowledge'
   | 'learning.snooze'
   | 'learning.reject'
@@ -424,6 +426,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'workflow.pause',
   'workflow.resume',
   'workflow.stop',
+  'workflow.start',
   'learning.list',
   'learning.get',
   'learning.snapshot',
@@ -521,6 +524,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'workflow.pause',
   'workflow.resume',
   'workflow.stop',
+  'workflow.start',
   'learning.acknowledge',
   'learning.snooze',
   'learning.reject',

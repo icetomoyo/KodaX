@@ -92,6 +92,19 @@ export interface KodaXProductClient {
     /** Request a stop; accepted only means the durable Stop request was created. */
     stop(runId: string): Promise<ClientRunStopReceipt>;
   };
+  /**
+   * FEATURE_298 T22 — Host-owned workflow control. `start` takes a declarative
+   * source (validated/resolved inside the Host, never a prepared module), so
+   * every client of the same Host observes and controls the same work.
+   */
+  readonly workflows: {
+    start(input: ClientWorkflowStartInput): Promise<ClientWorkflowStartResult>;
+    list(filter?: { readonly runId?: string; readonly limit?: number }): Promise<readonly ClientWorkflowRun[]>;
+    get(runId: string): Promise<ClientWorkflowRun | undefined>;
+    pause(runId: string): Promise<boolean>;
+    resume(runId: string): Promise<boolean>;
+    stop(runId: string): Promise<boolean>;
+  };
   readonly interactions: {
     /** Answers the Host is currently waiting for. */
     list(filter?: { readonly sessionId?: string }): Promise<readonly ClientInteraction[]>;
@@ -617,4 +630,32 @@ export interface ClientMcpServerStatus {
   readonly resolvedTransport?: string;
   readonly cachedAt?: string;
   readonly lastError?: string;
+}
+
+export type ClientWorkflowStartSource =
+  | { readonly kind: 'inline'; readonly manifest: unknown; readonly source: string }
+  | { readonly kind: 'request'; readonly request: string }
+  | { readonly kind: 'name'; readonly name: string };
+
+export interface ClientWorkflowStartInput {
+  readonly projectRoot: string;
+  readonly source: ClientWorkflowStartSource;
+  readonly args?: unknown;
+  readonly provider?: string;
+  readonly model?: string;
+}
+
+export type ClientWorkflowStartResult =
+  | { readonly kind: 'declined'; readonly reason: string }
+  | { readonly kind: 'started'; readonly runId: string };
+
+export interface ClientWorkflowRun {
+  readonly runId: string;
+  readonly workflowName: string;
+  readonly status: string;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+  readonly displayName?: string;
+  readonly resultSummary?: string;
+  readonly error?: string;
 }

@@ -151,6 +151,36 @@ export async function connectKodaXClient(
       reloadServers: () => runtime.mcp.reloadServers(),
       listTools: (filter) => runtime.mcp.listTools(filter),
     },
+    workflows: {
+      start: (input) => runtime.workflows.start(input),
+      list: async (filter) => (await runtime.workflows.list(filter ?? {})).map((run) => ({
+        runId: run.runId,
+        workflowName: run.workflow,
+        status: run.status,
+        startedAt: new Date(run.startedAt).toISOString(),
+        updatedAt: run.endedAt !== undefined
+          ? new Date(run.endedAt).toISOString()
+          : new Date(run.startedAt).toISOString(),
+        ...(run.resultText !== undefined ? { resultSummary: run.resultText } : {}),
+        ...(run.error !== undefined ? { error: run.error } : {}),
+      })),
+      get: async (runId) => {
+        const snapshot = await runtime.workflows.get(runId);
+        return snapshot === undefined ? undefined : {
+          runId: snapshot.runId,
+          workflowName: snapshot.workflowName,
+          status: snapshot.status,
+          startedAt: snapshot.startedAt,
+          updatedAt: snapshot.updatedAt,
+          ...(snapshot.displayName !== undefined ? { displayName: snapshot.displayName } : {}),
+          ...(snapshot.resultSummary !== undefined ? { resultSummary: snapshot.resultSummary } : {}),
+          ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
+        };
+      },
+      pause: (runId) => runtime.workflows.pause(runId),
+      resume: (runId) => runtime.workflows.resume(runId),
+      stop: (runId) => runtime.workflows.stop(runId),
+    },
     catalog: {
       providers: () => runtime.catalog.providers(),
       models: async (filter) => (await runtime.catalog.providers())

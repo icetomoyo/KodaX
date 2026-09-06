@@ -564,6 +564,9 @@ function makeRuntime(
       },
     },
     workflows: {
+      async start() {
+        return { kind: 'declined', reason: 'fake' };
+      },
       async list() {
         return [];
       },

@@ -61,6 +61,7 @@ import type {
   RuntimeSubmitInput,
   RuntimeSubscription,
   RuntimeWorkflowFilter,
+  type RuntimeWorkflowStartInput,
 } from "../sdk-runtime.js";
 import { bindRuntimeLearningClient } from "../runtime-learning.js";
 import { sandboxRuntimeCapability } from "../sandbox-runtime.js";
@@ -316,6 +317,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "workflow.pause",
     "workflow.resume",
     "workflow.stop",
+    "workflow.start",
   ]),
   ...scopeEntries("learning:read", [
     "learning.list",
@@ -2136,6 +2138,22 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.workflows.stop(
         requireStringParam(request.params, "runId"),
       );
+    case "workflow.start": {
+      // FEATURE_298 T22 — trusted Host-side start: the source is declarative
+      // and resolved/validated inside the runtime, never a prepared module.
+      const params = requireRecord(request.params);
+      return runtime.workflows.start({
+        projectRoot: requireStringField(params, "projectRoot"),
+        source: params.source as RuntimeWorkflowStartInput["source"],
+        ...(params.args !== undefined ? { args: params.args } : {}),
+        ...(optionalStringField(params, "provider") !== undefined
+          ? { provider: optionalStringField(params, "provider")! }
+          : {}),
+        ...(optionalStringField(params, "model") !== undefined
+          ? { model: optionalStringField(params, "model")! }
+          : {}),
+      });
+    }
 
     case "learning.list":
       return bindRuntimeLearningClient(runtime.learning, principalId).list(

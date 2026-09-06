@@ -80,6 +80,10 @@ import {
   type CodingActorCredentialAccessFactory,
   type ExecPolicyRule,
   type ExecPolicyRuleInput,
+  startManagedWorkflow,
+  getBuiltinWorkflow,
+  discoverSavedWorkflows,
+  loadSavedWorkflow,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -212,6 +216,8 @@ import {
   normalizeCompactionConfig,
   resolveExecutionPath,
   getDefaultWorkflowRunManager,
+  getAgentConfigPath,
+  type WorkflowModule,
   initializeSkillRegistry,
   ContextCapacityError,
   actorQueueId,
@@ -3344,6 +3350,29 @@ export type RuntimeWorkflowSummary = ManagedWorkflowSnapshot;
 export type RuntimeWorkflowSnapshot = WorkflowProcessSnapshot;
 export type RuntimeWorkflowListener = (event: WorkflowProcessEvent) => void;
 
+/**
+ * FEATURE_298 T22 — serializable start sources. `inline`/`request` travel to
+ * the Host verbatim and are validated Host-side (the same gate the run_workflow
+ * tool uses); `name` resolves inside the Host against built-ins and the saved
+ * workflow directories. Clients never send a prepared module.
+ */
+export type RuntimeWorkflowStartSource =
+  | { readonly kind: "inline"; readonly manifest: unknown; readonly source: string }
+  | { readonly kind: "request"; readonly request: string }
+  | { readonly kind: "name"; readonly name: string };
+
+export interface RuntimeWorkflowStartInput {
+  readonly projectRoot: string;
+  readonly source: RuntimeWorkflowStartSource;
+  readonly args?: unknown;
+  readonly provider?: string;
+  readonly model?: string;
+}
+
+export type RuntimeWorkflowStartResult =
+  | { readonly kind: "declined"; readonly reason: string }
+  | { readonly kind: "started"; readonly runId: string };
+
 export interface RuntimeWorkflowService {
   list(
     filter?: RuntimeWorkflowFilter,
@@ -3356,6 +3385,8 @@ export interface RuntimeWorkflowService {
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
   stop(runId: string): Promise<boolean>;
+  /** FEATURE_298 T22 — start a workflow on the Host manager. */
+  start(input: RuntimeWorkflowStartInput): Promise<RuntimeWorkflowStartResult>;
 }
 
 export interface RuntimeStatusSnapshot {
@@ -4511,7 +4542,15 @@ async function createKodaXRuntimeInternal(
       respondToClientInteraction(interactionRegistries, requestId, response),
   };
   const artifacts = createRuntimeArtifactStore();
-  const workflows = createRuntimeWorkflowService();
+  const workflows = createRuntimeWorkflowService({
+    configHome,
+    ...(options.defaultProvider !== undefined
+      ? { defaultProvider: options.defaultProvider }
+      : {}),
+    ...(options.defaultModel !== undefined
+      ? { defaultModel: options.defaultModel }
+      : {}),
+  });
   const runs = new Map<string, RuntimeRunRecord>();
   const actorHealthBySession = new Map<string, AgentControllerHealth>();
   const actorHealthWaiters = new Map<
@@ -12000,9 +12039,80 @@ function createRuntimeRunService(deps: {
   };
 }
 
-function createRuntimeWorkflowService(): RuntimeWorkflowService {
+function workflowRunsProjectKey(root: string): string {
+  // Port of the REPL's deriveProjectKeyFromRoot (the runtime must not depend
+  // on the UI package): canonical case-folded root -> slug + short hash, so
+  // Host-owned run dirs match the /workflow convention once the UI rewires
+  // onto this service.
+  const folded = path.resolve(root).replace(/\\/g, "/").toLowerCase();
+  const slug = folded.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const readable = slug.length > 42 ? slug.slice(slug.length - 42) : slug;
+  const hash = createHash("sha256").update(folded).digest("hex").slice(0, 10);
+  return readable ? `${readable}-${hash}` : hash;
+}
+
+function createRuntimeWorkflowService(deps: {
+  readonly configHome: string;
+  readonly defaultProvider?: string;
+  readonly defaultModel?: string;
+}): RuntimeWorkflowService {
   const manager = getDefaultWorkflowRunManager();
   return {
+    async start(input) {
+      // FEATURE_298 T22 — trusted Host-side resolution: names resolve against
+      // built-ins/saved dirs here; inline/request sources are validated by
+      // startManagedWorkflow exactly like the run_workflow tool path.
+      let source:
+        | { kind: "inline"; manifest: unknown; source: string }
+        | { kind: "request"; request: string }
+        | { kind: "saved"; module: WorkflowModule };
+      if (input.source.kind === "name") {
+        const builtin = getBuiltinWorkflow(input.source.name);
+        if (builtin !== undefined) {
+          source = { kind: "saved", module: builtin };
+        } else {
+          const saved = (
+            await discoverSavedWorkflows({
+              project: path.join(input.projectRoot, ".kodax", "workflows"),
+              personal: getAgentConfigPath("workflows"),
+            })
+          ).find((ref) => ref.name === input.source.name);
+          if (saved === undefined) {
+            return {
+              kind: "declined",
+              reason: `Workflow not found: ${input.source.name}`,
+            };
+          }
+          source = { kind: "saved", module: await loadSavedWorkflow(saved.path) };
+        }
+      } else {
+        source = input.source;
+      }
+      const provider = input.provider ?? deps.defaultProvider;
+      const model = input.model ?? deps.defaultModel;
+      const options: KodaXOptions = {
+        ...(provider !== undefined ? { provider } : {}),
+        ...(model !== undefined ? { model } : {}),
+        context: {
+          configHome: deps.configHome,
+          workspaceRoot: input.projectRoot,
+          gitRoot: input.projectRoot,
+          executionCwd: input.projectRoot,
+        },
+      };
+      const result = await startManagedWorkflow({
+        source,
+        args: input.args ?? {},
+        options,
+        runsBaseDir: getAgentConfigPath(
+          "workflow-runs",
+          workflowRunsProjectKey(input.projectRoot),
+        ),
+      });
+      return result.kind === "started"
+        ? { kind: "started", runId: result.runId }
+        : { kind: "declined", reason: result.reason };
+    },
     async list(filter) {
       const list = manager.list();
       const filtered = filter?.runId

@@ -434,6 +434,43 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'workflow.pause': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.resume': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.stop': { params: runIdParamsSchema(), result: booleanSchema },
+  'workflow.start': {
+    params: objectSchema({
+      projectRoot: stringSchema,
+      source: {
+        oneOf: [
+          objectSchema({
+            kind: { type: 'string', enum: ['inline'] },
+            manifest: objectAnySchema,
+            source: stringSchema,
+          }, ['kind', 'manifest', 'source']),
+          objectSchema({
+            kind: { type: 'string', enum: ['request'] },
+            request: stringSchema,
+          }, ['kind', 'request']),
+          objectSchema({
+            kind: { type: 'string', enum: ['name'] },
+            name: stringSchema,
+          }, ['kind', 'name']),
+        ],
+      },
+      args: objectAnySchema,
+      provider: stringSchema,
+      model: stringSchema,
+    }, ['projectRoot', 'source'], true),
+    result: {
+      oneOf: [
+        objectSchema({
+          kind: { type: 'string', enum: ['declined'] },
+          reason: stringSchema,
+        }, ['kind', 'reason']),
+        objectSchema({
+          kind: { type: 'string', enum: ['started'] },
+          runId: stringSchema,
+        }, ['kind', 'runId']),
+      ],
+    },
+  },
 
   'learning.list': { params: learningQuerySchema(), result: learningPageSchema() },
   'learning.get': {

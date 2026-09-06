@@ -82,6 +82,8 @@ import type {
   RuntimeWorkflowListener,
   RuntimeWorkflowSnapshot,
   RuntimeWorkflowSummary,
+  RuntimeWorkflowStartInput,
+  RuntimeWorkflowStartResult,
 } from '../sdk-runtime.js';
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
@@ -955,6 +957,14 @@ export function createRuntimeDaemonClient(
         return request('operation.get', input) as ReturnType<KodaXRuntime['operations']['get']>;
       },
     },
+    // FEATURE_298 T36 — Memory management is an in-process Host service; the
+    // daemon surface deliberately has no memory RPC, so daemon-connected
+    // clients report unavailability instead of a silent undefined.
+    memory: {
+      forProject() {
+        throw new Error('Memory management requires an in-process runtime client.');
+      },
+    } as unknown as KodaXRuntime['memory'],
     workflows: {
       list(filter?: RuntimeWorkflowFilter) {
         return request('workflow.list', filter) as Promise<readonly RuntimeWorkflowSummary[]>;
@@ -973,6 +983,9 @@ export function createRuntimeDaemonClient(
       },
       stop(runId: string) {
         return request('workflow.stop', { runId }) as Promise<boolean>;
+      },
+      async start(input: RuntimeWorkflowStartInput): Promise<RuntimeWorkflowStartResult> {
+        return request('workflow.start', input as unknown as Record<string, unknown>) as Promise<RuntimeWorkflowStartResult>;
       },
     },
     learning: {

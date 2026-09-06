@@ -3451,6 +3451,10 @@ const METHOD_SMOKE_PARAMS = {
   'workflow.pause': { runId: 'run-1' },
   'workflow.resume': { runId: 'run-1' },
   'workflow.stop': { runId: 'run-1' },
+  'workflow.start': {
+    projectRoot: '/tmp/kodax-smoke',
+    source: { kind: 'name', name: 'smoke' },
+  },
   'learning.list': {},
   'learning.get': { nameOrSlug: 'runtime-test-skill' },
   'learning.snapshot': undefined,
@@ -3902,6 +3906,9 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     workflows: {
+      async start() {
+        return { kind: 'declined', reason: 'fake' };
+      },
       async list() {
         return [];
       },
