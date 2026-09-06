@@ -420,3 +420,13 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **T22 地图**已在上一条 HANDOFF 记录（Host start 需受信模块解析，module/KodaXOptions 不可序列化）。
 
 **DAG 前沿（20/35）**：T34 还差 T36/T37（T23✓ T31✓）；T37 需 T06✓/T22；actionable=T15收尾/T19/T20/T22/T28opt/T30/T35/T36。建议：T36（直接喂 T34）→ T22（解锁 T37）→ T34 收口在望。
+
+---
+
+## 2026-09-06 T36 续做地图（WIP 未提交，工作树含未完成改造）
+
+**已完成**：① coding 新增 `deriveCodingMemoryIdentityFromRoot(configHome, cwd)` 纯根派生（deriveCodingMemoryIdentity 已重构为委托它；coding index 已导出）。② 新文件 `src/runtime-memory.ts`：createRuntimeMemoryService({configHome, defaultProvider})，按 projectRoot 缓存 plane——Host 派生身份（projectId 恒有→resolveScopedMemoryRoot）、createMemoryControlPlane、listReviews（双 projectId 探测+去重排序）、reviewerProviderConfigured（Host 侧 resolveProvider）、rebuild（readTopicFiles+写 MEMORY.md 已移入 Host，返回结构化 result）、ensureOpenTarget（mkdir+realpath 包含校验）。③ sdk-runtime：`runtime.memory` 字段+构造（configHome/defaultProvider），类型 re-export；import 经 tsconfig 路径引 src 文件会 +2 TS6059 rootDir 归因（族内 benign，非新族）。④ repl：types.ts 增 `callbacks.memory?: (projectRoot) => MemoryCommandPlane`（结构化接口：controller/memoryRoot/entrypointPath/listReviews/reviewerProviderConfigured/rebuild/ensureOpenTarget）；memory-command.ts 已改造——createMemoryCommandRuntime 用 callbacks.memory（无 binding 报 unavailable）、status reviewer 分支走 plane、listEpisodeReviews 走 plane.listReviews、rebuild→plane.rebuild() 打印 result、open→plane.ensureOpenTarget（编辑器启动留 UI）；已删 createMemoryControlPlane/deriveCodingMemoryIdentity/ReviewIdentities/resolveMemoryRoot/resolveScopedMemoryRoot/listPendingEpisodeReviewSummaries/resolveProvider 导入与 rebuildMemory/writeFileSync 直写；readTopicFiles/formatMemoryError/resolveCwd 以只读展示形态保留。⑤ kodax_cli.ts:5777 区已接 `memory: (root) => interactiveRuntime.memory.forProject(root)`。⑥ repl tsc 绿；memory-command.test.ts 已接 plane fixture（真实 controller+本地镜像 rebuild/openTarget）。
+
+**未完成（下窗从这里继续）**：memory-command.test.ts 剩 8 败——根因疑似 **scoped store 与旧 unscoped 扫描语义差异**：旧测试直接向 memoryDir 写 .md 期望 listRefs 扫描可见；Host plane 恒用 scoped root+identity，controller 的 memdir listRefs 可能依赖 registry/manifest 而非裸文件扫描（`list reads accepted topic content` 败在 user_role 不出现）。需核实 agent memdir store 的 refs 来源；测试应改为经 controller.remember 种子或按 scoped store 布局种子。`passes rejection feedback to the injected memory reviewer` 前提已被 T36 删除（UI 注入 reviewer）——改写为经 plane controller 的反馈断言。然后：补 src/sdk-runtime.memory.test.ts S1（US32 四句：remember→view→exact-forget、stale-approval、rebuild 保留文件、open 可信路径），跑门（repl 全包、tsc 477+2、daemon/coding 回归），双轴评审，提交三联（T36→Done 21/35）。
+
+**改动文件清单（git status）**：packages/coding/src/memory-runtime.ts、packages/coding/src/index.ts、packages/repl/src/commands/{memory-command.ts,memory-command.test.ts,types.ts}、src/{runtime-memory.ts(新),sdk-runtime.ts,kodax_cli.ts}。
