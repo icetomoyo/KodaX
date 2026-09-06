@@ -341,3 +341,15 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **基线**：tsc 477（=478-T33 已消的一条，无新增）；sdk-runtime.test.ts 10 败=HEAD 既有；"keeps parallel active tools"/"managed turns canonical" 为间歇性顺序 flake（隔离绿，T33 会话已证前者）。
 
 **下一步（DAG 前沿）**：T12 剩余（typed 核对、Session 私有 MCP 重启重建、共享 MCP reverse 归属）；T34 前置还差 T23/T31/T36/T37；T26 需 T17/T18/T19/T21/T35。
+
+---
+
+## 2026-09-06 会话补记：T14 收尾后 T12 剩余 refined 地图（未实施，工作树干净）
+
+**T12 剩余三块 refined 调研**：
+
+1. **Session 私有 MCP 重启重建**：`createSession` 在 session 创建时调 `integrations.createSession(sessionId, cwd, input.mcpServers)`（sdk-runtime ~7613，失败/异常路径已 release ✓），但 `KodaXSessionData` 无 mcpServers 字段——**配置未持久化，Host 重启后私有 MCP 资源丢失**。方案：Host 侧持久化（`runtimeDir/session-mcp/<enc(sessionId)>.json` 侧车，Host 拥有资源生命周期），启动时对每个存在侧车的 session 重建 `integrations.createSession`；delete/archive/release 时清理侧车。`createHostIntegrations.createSession` 的失败清理（dispose on error）已有，但注意 `sessions.set` 在 replace 成功后才执行——失败时 runtime 已 dispose ✓。
+2. **共享 MCP reverse 请求的 Session 归属**：全局共享 server 用 `buildMcpReverseCapabilities({ cwd: process.cwd(), enableElicitation: true })`（host-integrations.ts:40）——共享 server 的 elicitation/host-tool reverse 请求不带 session 身份。归属点：run 执行期间共享 server 的 reverse 请求需绑定当前 run 的 session（reverse capabilities 需要可变的 per-run session 上下文，或在 coding 的 reverse bridge 分发处附加当前 session）。US20 同时要求"关闭/重载一端不误关其它资源"——releaseSession 只 dispose 本 session runtime ✓（combineExtensionRuntimes(session, global) 结构已隔离）。
+3. **typed 核对**：S1 断言 catalog.skills/commands 反映真实 Host extension runtime（含 per-session 合并视图）、config-effective 反映真实 reload、diagnostics 真实 Host cache（probe/reset 已有 T12 前段工作，sdk-client.capabilities/mcp.test 已存在，先查缺口再补）。
+
+**下一步**：按 1→2→3 顺序实施（1 自包含可先行），每块独立 S1；T12 完成后 Done 17/35。
