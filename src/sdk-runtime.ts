@@ -85,6 +85,8 @@ import {
   getBuiltinWorkflow,
   discoverSavedWorkflows,
   loadSavedWorkflow,
+  parseInlineSkillReferences,
+  parseBareInlineSlashReferences,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -5002,7 +5004,12 @@ async function createKodaXRuntimeInternal(
   // Session mutations consult it so no writer interleaves with the
   // compaction's whole-lineage commit.
   const activeCompactions = new Set<string>();
+  // FEATURE_298 T37 — Skill preparation is Host-side trusted work. No
+  // host-mediated dynamic-context executor is bound yet, so dynamic context
+  // blocks are hard-disabled (the resolver's legacy execSync path never runs).
+  const invocations = createRuntimeInvocationService({});
   const runService = createRuntimeRunService({
+    invocations,
     activeCompactions,
     extensionRuntime: (sessionId) => integrations.forSession(sessionId),
     deleteTemporarySession: (sessionId) => sessionService.deleteTemporary(sessionId),
@@ -5109,11 +5116,6 @@ async function createKodaXRuntimeInternal(
       ? { defaultProvider: options.defaultProvider }
       : {}),
   });
-
-  // FEATURE_298 T37 — Skill preparation is Host-side trusted work. No
-  // host-mediated dynamic-context executor is bound yet, so `!`cmd`` blocks
-  // are hard-disabled (the resolver's legacy execSync path never runs).
-  const invocations = createRuntimeInvocationService({});
 
   const closeRuntime = (): Promise<void> => {
     if (closeAttempt) return closeAttempt;
@@ -9105,6 +9107,8 @@ function createRuntimeSessionService(
 
 function createRuntimeRunService(deps: {
   readonly deleteTemporarySession: (sessionId: string) => Promise<void>;
+  /** FEATURE_298 T37 — trusted Skill preparation for queued inputs. */
+  readonly invocations: RuntimeInvocationService;
   /** FEATURE_298 T31 — manual-compaction occupancy (shared with sessions). */
   readonly activeCompactions: ReadonlySet<string>;
   readonly sessionViews: SessionViewOwner;
@@ -11382,13 +11386,63 @@ function createRuntimeRunService(deps: {
     );
   };
 
+  // FEATURE_298 T37 — a queued Skill input is prepared Host-side at actual
+  // consumption: the trusted registry expands it and mints the runtime
+  // policy; unknown references fall back to the raw user text.
+  const prepareQueuedSkillInput = async (
+    sessionId: string,
+    text: string,
+  ): Promise<{
+    readonly prompt: string;
+    readonly skillInvocation: NonNullable<
+      RuntimeDaemonContextOptions["skillInvocation"]
+    >;
+  } | undefined> => {
+    const references = [
+      ...parseInlineSkillReferences(text),
+      ...parseBareInlineSlashReferences(text),
+    ].sort((left, right) => left.start - right.start);
+    const reference = references[0];
+    if (reference === undefined) return undefined;
+    const argumentsText = text
+      .slice(reference.end, references[1]?.start ?? text.length)
+      .trim();
+    const session = await deps.sessionAdmission.loadRequired(sessionId);
+    const projectRoot = session.runtimeInfo?.workspaceRoot ?? session.gitRoot;
+    if (projectRoot === undefined || projectRoot.length === 0) return undefined;
+    const prepared = await deps.invocations.prepareSkill({
+      projectRoot,
+      name: reference.name,
+      ...(argumentsText.length > 0 ? { argumentsText } : {}),
+      sessionId,
+    });
+    if (prepared.kind !== "prepared") return undefined;
+    return {
+      prompt: prepared.invocation.prompt,
+      skillInvocation: prepared.invocation.skillInvocation,
+    };
+  };
+
   const drainProductInputs = (sessionId: string): Promise<void> => deps.sessionOperations.run(sessionId, async () => {
     if (deps.isClosed() || activeRunBySession.has(sessionId)) return;
     const batch = productQueue.batch(sessionId);
     const first = batch[0];
     if (!first) return;
+    const preparedSkill = first.skill
+      ? await prepareQueuedSkillInput(sessionId, first.input.text)
+      : undefined;
     await startRun({
-      sessionId, prompt: batch.map(({ input }) => input.text.trim()).join("\n\n---\n\n"),
+      sessionId,
+      prompt: preparedSkill !== undefined
+        ? preparedSkill.prompt
+        : batch.map(({ input }) => input.text.trim()).join("\n\n---\n\n"),
+      ...(preparedSkill !== undefined
+        ? {
+          options: {
+            context: { skillInvocation: preparedSkill.skillInvocation },
+          } as RuntimeKodaXOptions,
+        }
+        : {}),
       productInput: first.input, productBatch: batch.map(({ input }) => input.inputId), permissionBroker: "runtime",
     } as RuntimeTrustedStartRunInput, "runtime.runs.start");
   });

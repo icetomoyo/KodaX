@@ -140,13 +140,17 @@ export class SessionInputQueue {
     });
   }
 
-  /** One drain unit: consecutive plain texts merge; a Skill input drains alone. */
-  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number }[] {
+  /**
+   * One drain unit: consecutive plain texts merge; a Skill input drains
+   * alone. FEATURE_298 T37 — the skill flag tells the Host to prepare the
+   * input's trusted expansion at consumption.
+   */
+  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean }[] {
     const ordered = this.ordered(sessionId);
     const first = ordered[0];
     if (!first) return [];
     const end = first.skill ? 1 : ordered.findIndex((item, index) => index > 0 && item.skill);
-    return (end === -1 ? ordered : ordered.slice(0, end)).map(({ input, enqueuedAt }) => ({ input, enqueuedAt }));
+    return (end === -1 ? ordered : ordered.slice(0, end)).map(({ input, enqueuedAt, skill }) => ({ input, enqueuedAt, skill }));
   }
 
   submitBatch(sessionId: string, inputIds: readonly string[], runId: string): void {
