@@ -522,6 +522,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
   const startupGitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
+  // FEATURE_298 T34 — when the session-command binding is wired, the Host
+  // owns every canonical write to the session journal (same file); the
+  // REPL keeps storage for reads only (display stays until T17/T18).
+  const hostOwnsWrites = options.sessionCommands !== undefined;
   const startupSession = await loadClassicStartupSession(
     options.session,
     storage,
@@ -940,7 +944,7 @@ Keyboard Shortcuts:
       reason: 'provider session recovery',
     });
 
-    await storage.save(sourceSessionId, {
+    if (!hostOwnsWrites) await storage.save(sourceSessionId, {
       messages: context.messages,
       title: sourceTitle,
       gitRoot: context.gitRoot ?? '',
@@ -954,7 +958,7 @@ Keyboard Shortcuts:
 
     const nextSessionId = generateInteractiveSessionId();
     const seedLineage = createSessionLineage(seed.messages);
-    await storage.save(nextSessionId, {
+    if (!hostOwnsWrites) await storage.save(nextSessionId, {
       messages: seed.messages,
       title: seed.title,
       gitRoot: context.gitRoot ?? '',
@@ -1059,6 +1063,9 @@ Keyboard Shortcuts:
       rl.close();
     },
     saveSession: async () => {
+      // FEATURE_298 T34 — bound mode: the Host owns the canonical journal;
+      // /save and the round flushes below become no-ops locally.
+      if (hostOwnsWrites) return;
       if (context.messages.length > 0) {
         const title = extractTitle(context.messages);
         context.title = title;
@@ -1731,6 +1738,9 @@ Keyboard Shortcuts:
 
   const appendPersistedUiHistoryItem = async (item: KodaXSessionUiHistoryItem): Promise<void> => {
     context.uiHistory = [...(context.uiHistory ?? []), item];
+    // FEATURE_298 T34 — the Host owns persisted display history; the
+    // provider-error hint stays display-only when bound.
+    if (hostOwnsWrites) return;
     const title = context.title || extractTitle(context.messages);
     context.title = title;
     await storage.save(context.sessionId, {
@@ -1833,7 +1843,8 @@ Keyboard Shortcuts:
       context.messages.push({ role: 'assistant', content: text, timestamp: new Date().toISOString() });
       const title = extractTitle(context.messages);
       context.title = title;
-      void storage.save(context.sessionId, {
+      // FEATURE_298 T34 — workflow results persist Host-side (T22).
+      if (!hostOwnsWrites) void storage.save(context.sessionId, {
         messages: context.messages,
         title,
         gitRoot: context.gitRoot ?? '',
@@ -1955,6 +1966,9 @@ Keyboard Shortcuts:
       if (context.messages.length > 0) {
         const title = extractTitle(context.messages);
         context.title = title;
+        // FEATURE_298 T34 — bound mode: the Host already committed the
+        // command round to the canonical journal.
+        if (hostOwnsWrites) return;
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
@@ -2063,6 +2077,8 @@ Keyboard Shortcuts:
                   context.lineage = next;
                 },
                 saveSession: async () => {
+                  // FEATURE_298 T34 — the Host goal plane owns the journal.
+                  if (hostOwnsWrites) return;
                   await storage.save(context.sessionId, {
                     messages: context.messages,
                     title: context.title ?? extractTitle(context.messages),
@@ -2156,6 +2172,9 @@ Keyboard Shortcuts:
           if (context.messages.length > 0) {
             const title = extractTitle(context.messages);
             context.title = title;
+            // FEATURE_298 T34 — bound mode: the Host run already committed
+            // the round to the canonical journal.
+            if (hostOwnsWrites) return;
             await storage.save(context.sessionId, {
               messages: context.messages,
               title,
@@ -2273,6 +2292,9 @@ Keyboard Shortcuts:
       if (context.messages.length > 0) {
         const title = extractTitle(context.messages);
         context.title = title;
+        // FEATURE_298 T34 — bound mode: the Host run already committed
+        // the round to the canonical journal.
+        if (hostOwnsWrites) return;
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,

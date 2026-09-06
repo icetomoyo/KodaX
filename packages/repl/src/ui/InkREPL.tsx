@@ -8217,7 +8217,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return nextLineage;
   }, [context]);
 
+  // FEATURE_298 T34 — when the session-command binding is wired, the Host
+  // owns every canonical write to the session journal (same file); this
+  // surface's storage stays read-only (until the T17/T18 display migration).
+  const hostOwnsWrites = options.sessionCommands !== undefined;
   const persistContextState = useCallback(async (uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
+    // FEATURE_298 T34 — bound mode: the Host run already committed the
+    // round to the canonical journal; nothing is written locally.
+    if (hostOwnsWrites) return;
     const persistedUiHistory = trimPersistedUiHistorySnapshot(
       uiHistoryOverride ?? persistedUiHistoryRef.current,
     );
@@ -9543,6 +9550,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             (await storage.getLineage?.(context.sessionId)) ?? undefined,
           exit: requestGracefulExit,
           saveSession: async () => {
+            // FEATURE_298 T34 — bound mode: the Host owns the canonical
+            // journal; /save and round flushes are no-ops locally.
+            if (hostOwnsWrites) return;
             if (context.messages.length > 0) {
               const title = extractTitle(context.messages);
               context.title = title;
