@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createMemoryControlPlane,
   readLearningProposalStore,
   resolveLearningProposalStore,
   setAgentConfigHome,
@@ -12,6 +13,7 @@ import {
   upsertLearningProposal,
   type ReviewableLearningProposal,
 } from '@kodax-ai/agent';
+import { deriveCodingMemoryIdentityFromRoot } from '@kodax-ai/coding';
 
 import { learnCommand } from './learn-command.js';
 import { memoryCommand } from './memory-command.js';
@@ -228,11 +230,27 @@ describe('FEATURE_224 /learn command', () => {
         },
       },
     }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal);
+    // FEATURE_298 T36 — /memory pending rides the Host plane; seed the store
+    // the Host identity actually reads (configHome-rebased).
+    const plane = {
+      controller: createMemoryControlPlane({
+        cwd,
+        identity: deriveCodingMemoryIdentityFromRoot(tempHome, cwd),
+      }),
+      memoryRoot: '',
+      entrypointPath: '',
+      async listReviews() { return []; },
+      reviewerProviderConfigured: () => false,
+      async rebuild() {
+        return { status: 'no-topics', memoryRoot: '', entrypointPath: '', entryCount: 0, malformedFiles: [], warnings: [] };
+      },
+      async ensureOpenTarget(targetPath: string) { return targetPath; },
+    };
+    await upsertLearningProposal(resolveLearningProposalStore(cwd, tempHome), proposal);
 
     const { log, restore } = captureOutput();
     try {
-      await memoryCommand.handler(['pending'], buildContext(cwd) as never, {} as never, {} as never);
+      await memoryCommand.handler(['pending'], buildContext(cwd) as never, { memory: () => plane } as never, {} as never);
     } finally {
       restore();
     }

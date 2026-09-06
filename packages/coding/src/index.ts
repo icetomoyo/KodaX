@@ -94,6 +94,7 @@ export {
   awaitLatestCodingMemoryReviewDrain,
   canonicalMemoryProjectId,
   deriveCodingMemoryIdentity,
+  deriveCodingMemoryIdentityFromRoot,
   deriveCodingMemoryReviewIdentities,
   drainCodingMemoryReviewInbox,
 } from './memory-runtime.js';

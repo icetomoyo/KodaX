@@ -76,27 +76,48 @@ export async function maybeRunMemoryMaintenanceWindow(options: KodaXOptions): Pr
   }
 }
 
+/**
+ * FEATURE_298 T36 — the pure root of {@link deriveCodingMemoryIdentity}:
+ * derives the Host-owned Memory identity from (configHome, projectRoot)
+ * alone, so the runtime Memory service can derive the same identity the
+ * run path uses without constructing a full KodaXOptions.
+ */
+export function deriveCodingMemoryIdentityFromRoot(
+  configHome: string,
+  cwd: string,
+): MemoryContextIdentity {
+  const canonicalCwd = path.resolve(cwd).toLowerCase();
+  const remote = tryGitRemote(cwd)?.trim();
+  const projectId = remote === undefined
+    ? `local:${canonicalCwd}`
+    : canonicalMemoryProjectId(remote);
+  return {
+    configHome,
+    tenantId: `local:${configHome}`,
+    userId: `local:${configHome}`,
+    workspaceId: canonicalCwd,
+    agentId: 'kodax-coding',
+    projectId,
+    sessionId: 'runtime-memory-service',
+  };
+}
+
 export function deriveCodingMemoryIdentity(
   options: KodaXOptions,
   cwd: string,
   sessionId: string,
 ): MemoryContextIdentity {
-  const canonicalCwd = path.resolve(cwd).toLowerCase();
-  const configHome = options.context?.configHome ?? getAgentConfigPath();
-  const remote = tryGitRemote(cwd)?.trim();
-  const projectId = remote === undefined
-    ? `local:${canonicalCwd}`
-    : canonicalMemoryProjectId(remote);
+  const base = deriveCodingMemoryIdentityFromRoot(
+    options.context?.configHome ?? getAgentConfigPath(),
+    cwd,
+  );
   const workspaceId = options.context?.repoRoutingSignals?.workspaceRoot
     ?? options.context?.gitRoot
-    ?? canonicalCwd;
+    ?? base.workspaceId;
   return {
-    configHome,
-    tenantId: `local:${configHome}`,
-    userId: `local:${configHome}`,
+    ...base,
     workspaceId,
     agentId: options.context?.agentProfile?.id ?? 'kodax-coding',
-    projectId,
     sessionId,
   };
 }

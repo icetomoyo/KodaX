@@ -180,6 +180,12 @@ export interface CommandCallbacks {
     readonly guidance: readonly string[];
   }>;
   learning?: LearningBinding;
+  /**
+   * FEATURE_298 T36 — Host-owned Memory management plane for a project
+   * root. Absent means Memory controls report unavailable; the UI never
+   * builds its own identity/controller.
+   */
+  memory?: (projectRoot: string) => MemoryCommandPlane;
   getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
   openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
   /**
@@ -330,4 +336,23 @@ export function toCommandDefinition(
     disableModelInvocation: cmd.disableModelInvocation ?? false,
     argumentHint: cmd.argumentHint ?? deriveArgumentHintFromUsage(cmd.usage, cmd.name),
   };
+}
+
+export interface MemoryRebuildResult {
+  readonly status: 'missing-dir' | 'no-topics' | 'rebuilt';
+  readonly memoryRoot: string;
+  readonly entrypointPath: string;
+  readonly entryCount: number;
+  readonly malformedFiles: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export interface MemoryCommandPlane {
+  readonly controller: import('@kodax-ai/agent').MemoryManagementController;
+  readonly memoryRoot: string;
+  readonly entrypointPath: string;
+  listReviews(): Promise<readonly import('@kodax-ai/agent').PendingEpisodeReviewSummary[]>;
+  reviewerProviderConfigured(): boolean;
+  rebuild(): Promise<MemoryRebuildResult>;
+  ensureOpenTarget(targetPath: string): Promise<string>;
 }

@@ -306,7 +306,14 @@ import {
   createRuntimeLearningOwner,
   type RuntimeLearningService,
 } from "./runtime-learning.js";
+import {
+  createRuntimeMemoryService,
+  type RuntimeMemoryService,
+} from "./runtime-memory.js";
 export type { RuntimeLearningService } from "./runtime-learning.js";
+export type {
+  RuntimeMemoryService, RuntimeMemoryPlane, RuntimeMemoryRebuildResult,
+} from "./runtime-memory.js";
 import {
   createRuntimeDaemonClient,
   type RuntimeDaemonClientTransport,
@@ -1057,6 +1064,7 @@ export interface KodaXRuntime {
   readonly operations: RuntimeOperationService;
   readonly workflows: RuntimeWorkflowService;
   readonly learning: RuntimeLearningService;
+  readonly memory: RuntimeMemoryService;
   readonly config: RuntimeConfigService;
   readonly catalog: RuntimeCatalogService;
   readonly mcp: RuntimeMcpService;
@@ -5044,6 +5052,15 @@ async function createKodaXRuntimeInternal(
     ],
   });
 
+  // FEATURE_298 T36 — Host-owned Memory management; identity derives from
+  // (configHome, projectRoot), never from caller-supplied identity.
+  const memory = createRuntimeMemoryService({
+    configHome,
+    ...(options.defaultProvider !== undefined
+      ? { defaultProvider: options.defaultProvider }
+      : {}),
+  });
+
   const closeRuntime = (): Promise<void> => {
     if (closeAttempt) return closeAttempt;
     closed = true;
@@ -5117,6 +5134,7 @@ async function createKodaXRuntimeInternal(
     },
     workflows,
     learning,
+    memory,
     config: createRuntimeConfigService(ensureOpen, {
       configFile,
       defaultProvider: options.defaultProvider,

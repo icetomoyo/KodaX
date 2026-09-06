@@ -23,13 +23,9 @@ import { spawn } from 'node:child_process';
 import chalk from 'chalk';
 
 import {
-  createMemoryControlPlane,
-  listPendingEpisodeReviewSummaries,
   memoryMutationHandle,
   memoryProposalRevision,
   parseMemoryFile,
-  resolveMemoryRoot,
-  resolveScopedMemoryRoot,
   type MemoryActionProposal,
   type MemoryApplyResult,
   type MemoryClaimKind,
@@ -37,17 +33,11 @@ import {
   type MemoryManagementController,
   type MemoryRejectResult,
   type MemoryRememberResult,
-  type MemoryType,
   type PendingEpisodeReviewSummary,
 } from '@kodax-ai/agent';
-import {
-  deriveCodingMemoryIdentity,
-  deriveCodingMemoryReviewIdentities,
-  resolveProvider,
-  type KodaXOptions,
-} from '@kodax-ai/coding';
+import { type KodaXOptions } from '@kodax-ai/coding';
 
-import type { Command, CommandCallbacks } from './types.js';
+import type { Command, CommandCallbacks, MemoryCommandPlane } from './types.js';
 import type { InteractiveContext } from '../interactive/context.js';
 const PREVIEW_FINGERPRINT_TTL_MS = 15 * 60 * 1000;
 
@@ -72,119 +62,6 @@ const PUBLIC_MEMORY_COMMANDS = [
   ['/memory open', 'Open Memory externally'],
   ['/memory help', 'Show this help'],
 ] as const;
-
-async function listCurrentProjectEpisodeReviews(
-  options: KodaXOptions,
-  cwd: string,
-  sessionId: string,
-): Promise<readonly PendingEpisodeReviewSummary[]> {
-  const identityCwd = options.context?.executionCwd ?? options.context?.gitRoot ?? cwd;
-  const identity = options.context?.memoryIdentity
-    ?? deriveCodingMemoryIdentity(options, identityCwd, sessionId);
-  const ownerIdentities = deriveCodingMemoryReviewIdentities(options, identity, identityCwd);
-  const pages = await Promise.all(ownerIdentities.map((owner) => (
-    listPendingEpisodeReviewSummaries({
-      configHome: owner.configHome,
-      tenantId: owner.tenantId,
-      agentId: owner.agentId,
-      projectId: owner.projectId ?? null,
-    })
-  )));
-  const unique = new Map<string, PendingEpisodeReviewSummary>();
-  for (const review of pages.flat()) {
-    const key = review.jobId ?? `${review.ownerSessionRef}:${review.reviewKey}`;
-    if (!unique.has(key)) unique.set(key, review);
-  }
-  return [...unique.values()].sort((left, right) => (
-    left.createdAt.localeCompare(right.createdAt)
-    || left.reviewKey.localeCompare(right.reviewKey)
-  ));
-}
-
-function formatMemoryError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function resolveCwd(context: { runtimeInfo?: { workspaceRoot?: string; executionCwd?: string } }): string {
-  return (
-    context.runtimeInfo?.workspaceRoot ??
-    context.runtimeInfo?.executionCwd ??
-    process.cwd()
-  );
-}
-
-interface TopicFile {
-  filename: string;
-  absPath: string;
-  mtimeMs: number;
-  title: string;
-  description: string;
-  type: MemoryType | undefined;
-  parseOk: boolean;
-}
-
-function readTopicFiles(memoryDir: string): TopicFile[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(memoryDir, { withFileTypes: true });
-  } catch (err) {
-    // ENOENT is expected before the first accepted Memory. Surface any
-    // other failure (EPERM,
-    // ENOTDIR, etc.) so the user notices filesystem problems instead
-    // of seeing a silent "0 topic files" — per project rule "NEVER
-    // silently swallow errors" (CLAUDE.md).
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.log(chalk.red(`[memory] failed to read memory directory ${memoryDir}: ${formatMemoryError(err)}`));
-    }
-    return [];
-  }
-
-  const result: TopicFile[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'MEMORY.md') {
-      continue;
-    }
-    const absPath = path.join(memoryDir, entry.name);
-    let raw = '';
-    let mtimeMs = 0;
-    try {
-      raw = fs.readFileSync(absPath, 'utf-8');
-      mtimeMs = fs.statSync(absPath).mtimeMs;
-    } catch (err) {
-      // Per-file read errors (TOCTOU with concurrent delete, unusual
-      // permissions, etc.) skip the file but log so the user can spot
-      // it. Do NOT abort the whole scan — a single unreadable file
-      // shouldn't block rebuild of the rest of the index.
-      console.log(chalk.red(`[memory] failed to read ${absPath}: ${formatMemoryError(err)}`));
-      continue;
-    }
-    const parsed = parseMemoryFile(raw);
-    const fm = parsed.frontmatter;
-    // `parseMemoryFile` ALWAYS returns a frontmatter object (degraded
-    // tolerance — see frontmatter.ts contract). Treat "no usable
-    // fields" as malformed so the rebuild warning fires correctly when
-    // a topic file is missing its `--- name: ... ---` header.
-    const parseOk =
-      fm.name !== undefined ||
-      fm.description !== undefined ||
-      fm.type !== undefined;
-    const baseTitle = path.basename(entry.name, '.md');
-    result.push({
-      filename: entry.name,
-      absPath,
-      mtimeMs,
-      title: fm.name?.trim() || baseTitle,
-      description: fm.description?.trim() || baseTitle,
-      type: fm.type,
-      parseOk,
-    });
-  }
-  return result;
-}
-
-function buildIndexLines(files: TopicFile[]): string[] {
-  return files.map((f) => `- [${f.title}](${f.filename}) — ${f.description}`);
-}
 
 async function listAcceptedMemory(controller: MemoryController): Promise<void> {
   const refs = await controller.listRefs({
@@ -254,6 +131,54 @@ function parseRememberCommand(args: readonly string[]): ParsedRememberCommand {
   };
 }
 
+function formatMemoryError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+interface TopicFile {
+  readonly filename: string;
+  readonly absPath: string;
+  readonly mtimeMs: number;
+  readonly title: string;
+  readonly description: string;
+  readonly parseOk: boolean;
+}
+
+// Read-only presentation listing for `/memory status`; mutations and identity
+// are Host-owned (FEATURE_298 T36).
+function readTopicFiles(memoryDir: string): TopicFile[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(memoryDir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.log(chalk.red(`[memory] failed to read memory directory ${memoryDir}: ${formatMemoryError(err)}`));
+    }
+    return [];
+  }
+  const result: TopicFile[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'MEMORY.md') continue;
+    const absPath = path.join(memoryDir, entry.name);
+    try {
+      const raw = fs.readFileSync(absPath, 'utf-8');
+      const mtimeMs = fs.statSync(absPath).mtimeMs;
+      const fm = parseMemoryFile(raw).frontmatter;
+      const parseOk = fm.name !== undefined || fm.description !== undefined || fm.type !== undefined;
+      const baseTitle = path.basename(entry.name, '.md');
+      result.push({
+        filename: entry.name, absPath, mtimeMs,
+        title: fm.name?.trim() || baseTitle,
+        description: fm.description?.trim() || baseTitle,
+        parseOk,
+      });
+    } catch (err) {
+      console.log(chalk.red(`[memory] failed to read ${absPath}: ${formatMemoryError(err)}`));
+    }
+  }
+  return result;
+}
+
 async function listStorageIndex(memoryDir: string, entrypointPath: string): Promise<void> {
   console.log(chalk.cyan('\n[memory] per-project memory directory'));
   console.log(chalk.dim(`  ${memoryDir}`));
@@ -304,19 +229,16 @@ async function listStorageIndex(memoryDir: string, entrypointPath: string): Prom
  * data source already exists.
  */
 async function statusMemory(
-  memoryDir: string,
-  entrypointPath: string,
-  context: InteractiveContext,
-  callbacks: Parameters<Command['handler']>[2],
-  cwd: string,
+  runtime: MemoryCommandRuntime,
 ): Promise<void> {
+  const kodaxOptions = runtime.callbacks.createKodaXOptions?.();
   // Section 1: memory directory stats (reuses the existing list path).
-  await listStorageIndex(memoryDir, entrypointPath);
+  await listStorageIndex(runtime.memoryDir, runtime.entrypointPath);
 
   // Section 2: this-session pipeline counts from the session lineage.
   // Receipts exist only for COMPLETED reviews, so pending counts must
   // come from the inbox (section 3), never from the lineage.
-  const entries = context.lineage?.entries ?? [];
+  const entries = runtime.context.lineage?.entries ?? [];
   let digests = 0;
   let receipts = 0;
   let notices = 0;
@@ -330,40 +252,19 @@ async function statusMemory(
   console.log(chalk.dim(`  review receipts : ${receipts}`));
   console.log(chalk.dim(`  client notices  : ${notices}`));
 
-  // Section 3: cross-session pending reviews from the tenant inbox.
-  const kodaxOptions = callbacks.createKodaXOptions?.();
-  let pendingCount: number | undefined;
-  let automaticReviewCount: number | undefined;
-  let attentionReviewCount: number | undefined;
-  let unknownReviewCount: number | undefined;
-  let oldestPendingAge: string | undefined;
-  if (kodaxOptions !== undefined) {
-    const pending = await listCurrentProjectEpisodeReviews(
-      kodaxOptions,
-      cwd,
-      context.sessionId,
-    );
-    pendingCount = pending.length;
-    const counts = countReviewStates(pending);
-    automaticReviewCount = counts.automatic;
-    attentionReviewCount = counts.attention;
-    unknownReviewCount = counts.unknown;
-    const oldest = pending[0];
-    if (oldest !== undefined) {
-      oldestPendingAge = formatPendingAge(oldest.createdAt, Date.now());
-    }
-  }
+  // Section 3: cross-session pending reviews from the tenant inbox
+  // (FEATURE_298 T36 — the Host plane always answers; no UI fallback).
+  const pending = await runtime.plane.listReviews();
+  const pendingCount = pending.length;
+  const counts = countReviewStates(pending);
+  const oldest = pending[0];
   console.log(chalk.cyan('\n[memory] pending episode reviews (current project, all sessions)'));
-  if (pendingCount === undefined) {
-    console.log(chalk.dim('  unavailable — KodaX options are not bound in this session'));
-  } else {
-    console.log(chalk.dim(`  pending: ${pendingCount}`));
-    console.log(chalk.dim(`  automatic queue: ${automaticReviewCount ?? 0}`));
-    console.log(chalk.dim(`  needs attention: ${attentionReviewCount ?? 0}`));
-    console.log(chalk.dim(`  unknown state: ${unknownReviewCount ?? 0}`));
-    if (oldestPendingAge !== undefined) {
-      console.log(chalk.dim(`  oldest pending age: ${oldestPendingAge}`));
-    }
+  console.log(chalk.dim(`  pending: ${pendingCount}`));
+  console.log(chalk.dim(`  automatic queue: ${counts.automatic}`));
+  console.log(chalk.dim(`  needs attention: ${counts.attention}`));
+  console.log(chalk.dim(`  unknown state: ${counts.unknown}`));
+  if (oldest !== undefined) {
+    console.log(chalk.dim(`  oldest pending age: ${formatPendingAge(oldest.createdAt, Date.now())}`));
   }
 
   // Section 4: reviewer configuration state — the most common cause of
@@ -372,21 +273,15 @@ async function statusMemory(
   // credentials.
   let reviewerStatus: string;
   let reviewerMissing = false;
-  if (kodaxOptions === undefined) {
-    reviewerStatus = 'unknown — KodaX options are not bound in this session';
-  } else if (kodaxOptions.learningReviewer !== undefined || kodaxOptions.memoryReviewer !== undefined) {
+  if (kodaxOptions?.learningReviewer !== undefined || kodaxOptions?.memoryReviewer !== undefined) {
     reviewerStatus = 'configured (custom reviewer bound)';
   } else {
-    let providerConfigured = false;
-    try {
-      providerConfigured = resolveProvider(kodaxOptions.provider).isConfigured();
-    } catch {
-      // Unresolvable provider name => not configured; reported below.
-      providerConfigured = false;
-    }
+    // FEATURE_298 T36 — the Host answers with its own reviewer provider
+    // state; the UI no longer resolves providers itself.
+    const providerConfigured = runtime.plane.reviewerProviderConfigured();
     reviewerStatus = providerConfigured
       ? 'production reviewer auto-installed at session start'
-      : `MISSING — provider "${kodaxOptions.provider}" is not configured; episode review cannot run`;
+      : 'MISSING — Host reviewer provider is not configured; episode review cannot run';
     reviewerMissing = !providerConfigured;
   }
   console.log(chalk.cyan('\n[memory] reviewer'));
@@ -396,8 +291,8 @@ async function statusMemory(
 
   // Diagnosis: locate the broken pipeline segment, if any.
   const warnings: string[] = [];
-  if (pendingCount !== undefined && pendingCount > 0) {
-    if ((automaticReviewCount ?? 0) > 0) {
+  if (pendingCount > 0) {
+    if (counts.automatic > 0) {
       warnings.push(
         digests === 0
           ? 'review segment: pending reviews from earlier sessions are waiting'
@@ -406,14 +301,14 @@ async function statusMemory(
             : 'review segment: pending reviews are still waiting',
       );
     }
-    if ((attentionReviewCount ?? 0) > 0) {
+    if (counts.attention > 0) {
       warnings.push(
-        `review segment: ${attentionReviewCount} job(s) need operator attention and cannot be processed by review-drain`,
+        `review segment: ${counts.attention} job(s) need operator attention and cannot be processed by review-drain`,
       );
     }
-    if ((unknownReviewCount ?? 0) > 0) {
+    if (counts.unknown > 0) {
       warnings.push(
-        `review segment: ${unknownReviewCount} job(s) have missing or invalid state and require repair`,
+        `review segment: ${counts.unknown} job(s) have missing or invalid state and require repair`,
       );
     }
   } else if (digests === 0) {
@@ -429,7 +324,7 @@ async function statusMemory(
     for (const warning of warnings) {
       console.log(chalk.yellow(`  ! ${warning}`));
     }
-    if ((automaticReviewCount ?? 0) > 0) {
+    if (counts.automatic > 0) {
       console.log(chalk.dim('  Run `kodax memory review-drain` to process the backlog in the foreground.'));
     }
   }
@@ -481,9 +376,7 @@ function formatReviewAttempts(review: PendingEpisodeReviewSummary): string {
 }
 
 async function listEpisodeReviews(
-  context: InteractiveContext,
-  callbacks: Parameters<Command['handler']>[2],
-  cwd: string,
+  runtime: MemoryCommandRuntime,
   rawLimit: string | undefined,
 ): Promise<void> {
   const limit = parseReviewListLimit(rawLimit);
@@ -491,17 +384,7 @@ async function listEpisodeReviews(
     console.log(chalk.yellow('\n[memory] review list limit must be an integer from 1 to 200.\n'));
     return;
   }
-  const options = callbacks.createKodaXOptions?.();
-  if (options === undefined) {
-    console.log(chalk.yellow('\n[memory] episode-review jobs are unavailable in this session.'));
-    console.log(chalk.dim('  KodaX options are not bound; use `/memory status` for diagnostics.\n'));
-    return;
-  }
-  const reviews = await listCurrentProjectEpisodeReviews(
-    options,
-    cwd,
-    context.sessionId,
-  );
+  const reviews = await runtime.plane.listReviews();
   const visible = reviews.slice(0, limit);
   const counts = countReviewStates(reviews);
   console.log(chalk.cyan('\n[memory] episode-review jobs'));
@@ -540,56 +423,39 @@ async function listEpisodeReviews(
   }
   console.log();
 }
-
-async function rebuildMemory(memoryDir: string, entrypointPath: string): Promise<void> {
-  let dirExists = false;
-  try {
-    dirExists = fs.statSync(memoryDir).isDirectory();
-  } catch {
-    dirExists = false;
-  }
-
-  if (!dirExists) {
+async function runRebuild(plane: MemoryCommandPlane): Promise<void> {
+  const result = await plane.rebuild();
+  if (result.status === 'missing-dir') {
     console.log(chalk.yellow('\n[memory] memory directory does not exist yet — nothing to rebuild.'));
-    console.log(chalk.dim(`  ${memoryDir}`));
+    console.log(chalk.dim(`  ${result.memoryRoot}`));
     console.log(chalk.dim('  This repairs a derived index only; use `/memory list` for accepted Memory.\n'));
     return;
   }
-
-  const files = readTopicFiles(memoryDir);
-  if (files.length === 0) {
+  if (result.status === 'no-topics') {
     console.log(chalk.yellow('\n[memory] no topic files found — nothing to rebuild.'));
-    console.log(chalk.dim(`  ${memoryDir}\n`));
+    console.log(chalk.dim(`  ${result.memoryRoot}\n`));
     return;
   }
-
-  // mtime descending = newest on top, matching the natural-LRU ordering
-  // documented in memory-rules.ts (PREPEND-to-top creates newest-first).
-  const sorted = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const lines = buildIndexLines(sorted);
-  const body = lines.join('\n') + '\n';
-
-  fs.writeFileSync(entrypointPath, body, 'utf-8');
-
-  console.log(chalk.green(`\n[memory] rebuilt MEMORY.md with ${sorted.length} entries (newest first).`));
-  console.log(chalk.dim(`  ${entrypointPath}`));
-  const malformed = sorted.filter((f) => !f.parseOk);
-  if (malformed.length > 0) {
-    console.log(chalk.yellow(`  ${malformed.length} file(s) had no parsable frontmatter — used filename as fallback:`));
-    for (const file of malformed) {
-      console.log(chalk.dim(`    - ${file.filename}`));
+  console.log(chalk.green(`\n[memory] rebuilt MEMORY.md with ${result.entryCount} entries (newest first).`));
+  console.log(chalk.dim(`  ${result.entrypointPath}`));
+  if (result.malformedFiles.length > 0) {
+    console.log(chalk.yellow(`  ${result.malformedFiles.length} file(s) had no parsable frontmatter — used filename as fallback:`));
+    for (const filename of result.malformedFiles) {
+      console.log(chalk.dim(`    - ${filename}`));
     }
-    console.log(chalk.dim('  Tip: add `---\\nname: ...\\ndescription: ...\\ntype: ...\\n---` at the top of those files.'));
+    console.log(chalk.dim('  Tip: add `---\nname: ...\ndescription: ...\ntype: ...\n---` at the top of those files.'));
+  }
+  for (const warning of result.warnings) {
+    console.log(chalk.red(`  [memory] ${warning}`));
   }
   console.log();
 }
-
 async function openMemory(
-  controller: MemoryController,
-  defaultMemoryRoot: string,
+  runtime: MemoryCommandRuntime,
   token: string | undefined,
   openExternalPath?: (targetPath: string) => Promise<void>,
 ): Promise<void> {
+  const controller = runtime.controller;
   const refs = await controller.listRefs({ kinds: ['memdir'], lifecycles: ['active', 'trusted'] });
   const selected = token === undefined ? undefined : await resolveAcceptedRef(controller, token, true);
   if (token !== undefined && selected === undefined) {
@@ -609,19 +475,22 @@ async function openMemory(
   }
   const targetPath = selected?.storageUri
     ?? (storageRoots[0] === undefined
-      ? defaultMemoryRoot
+      ? runtime.memoryDir
       : fs.existsSync(path.join(storageRoots[0], 'MEMORY.md'))
         ? path.join(storageRoots[0], 'MEMORY.md')
         : storageRoots[0]);
-  if (!fs.existsSync(targetPath) && targetPath === defaultMemoryRoot) {
-    fs.mkdirSync(targetPath, { recursive: true });
+  let trustedPath: string;
+  try {
+    trustedPath = await runtime.plane.ensureOpenTarget(targetPath);
+  } catch (error) {
+    console.log(chalk.red(`\n[memory] ${error instanceof Error ? error.message : String(error)}\n`));
+    return;
   }
-  if (openExternalPath !== undefined) await openExternalPath(targetPath);
-  else await launchExternalPath(targetPath);
+  if (openExternalPath !== undefined) await openExternalPath(trustedPath);
+  else await launchExternalPath(trustedPath);
   console.log(chalk.green('\n[memory] opened in your external editor/file browser.'));
-  console.log(chalk.dim(`  ${targetPath}\n`));
+  console.log(chalk.dim(`  ${trustedPath}\n`));
 }
-
 async function launchExternalPath(targetPath: string): Promise<void> {
   const { executable, args } = externalOpenInvocation(process.platform, targetPath);
   await new Promise<void>((resolveOpen, rejectOpen) => {
@@ -811,34 +680,38 @@ interface MemoryCommandRuntime {
   readonly memoryDir: string;
   readonly entrypointPath: string;
   readonly controller: MemoryManagementController;
+  readonly plane: MemoryCommandPlane;
   readonly context: InteractiveContext;
   readonly callbacks: CommandCallbacks;
 }
 
+function resolveCwd(context: InteractiveContext): string {
+  return (
+    context.runtimeInfo?.workspaceRoot
+    ?? context.runtimeInfo?.executionCwd
+    ?? process.cwd()
+  );
+}
+
+// FEATURE_298 T36 — the Host owns the Memory identity, storage root, control
+// plane, index rebuild, and open-target trust; the command only presents and
+// launches the editor. Undefined means no Host binding: report unavailable,
+// never fall back to a self-built plane.
 function createMemoryCommandRuntime(
   context: InteractiveContext,
   callbacks: CommandCallbacks,
-): MemoryCommandRuntime {
+): MemoryCommandRuntime | undefined {
   const cwd = resolveCwd(context);
   const options = callbacks.createKodaXOptions?.();
   const identityCwd = options?.context?.executionCwd ?? context.runtimeInfo?.executionCwd ?? cwd;
-  const identity = options === undefined
-    ? undefined
-    : options.context?.memoryIdentity
-      ?? deriveCodingMemoryIdentity(options, identityCwd, context.sessionId ?? 'memory-command');
-  const memoryDir = identity?.projectId === undefined
-    ? resolveMemoryRoot(cwd)
-    : resolveScopedMemoryRoot(identity, 'project');
-  const memoryReviewer = options?.memoryReviewer;
+  const plane = callbacks.memory?.(identityCwd);
+  if (plane === undefined) return undefined;
   return {
     cwd,
-    memoryDir,
-    entrypointPath: path.join(memoryDir, 'MEMORY.md'),
-    controller: createMemoryControlPlane({
-      cwd: identityCwd,
-      ...(identity === undefined ? {} : { identity }),
-      ...(memoryReviewer === undefined ? {} : { memoryReviewer }),
-    }),
+    memoryDir: plane.memoryRoot,
+    entrypointPath: plane.entrypointPath,
+    controller: plane.controller,
+    plane,
     context,
     callbacks,
   };
@@ -939,9 +812,9 @@ async function runMemorySubcommand(
   if (sub === 'remember') return runRememberCommand(runtime, args.slice(1));
   if (sub === 'forget') return runForgetCommand(runtime, args[1]);
   if (sub === 'doctor' || sub === 'status') {
-    return statusMemory(runtime.memoryDir, runtime.entrypointPath, runtime.context, runtime.callbacks, runtime.cwd);
+    return statusMemory(runtime);
   }
-  if (sub === 'reviews') return listEpisodeReviews(runtime.context, runtime.callbacks, runtime.cwd, args[1]);
+  if (sub === 'reviews') return listEpisodeReviews(runtime, args[1]);
   if (sub === 'pending' || sub === 'inbox') {
     console.log(chalk.dim('[memory] `pending` is a compatibility alias for /memory decisions.'));
     return printMemoryInbox(await runtime.controller.listInbox());
@@ -951,9 +824,9 @@ async function runMemorySubcommand(
   if (sub === 'approve' || sub === 'reject') {
     return runDecisionCommand(runtime, sub, args[1], args.slice(2).join(' ').trim());
   }
-  if (sub === 'rebuild') return rebuildMemory(runtime.memoryDir, runtime.entrypointPath);
+  if (sub === 'rebuild') return runRebuild(runtime.plane);
   if (sub === 'open') {
-    return openMemory(runtime.controller, runtime.memoryDir, args[1], runtime.callbacks.openExternalPath);
+    return openMemory(runtime, args[1], runtime.callbacks.openExternalPath);
   }
   console.log(chalk.yellow(`\n[memory] unknown subcommand: ${sub}`));
   printHelp();
@@ -968,11 +841,17 @@ export const memoryCommand: Command = {
   usage: '/memory [list|remember|forget|decisions|show|approve|reject|doctor|open|help]',
   argumentHint: 'list | remember <text> | forget <ref> | decisions | show <ref> | approve <ref> | reject <ref> [reason] | doctor | open | help',
   handler: async (args, context, callbacks) => {
-    await runMemorySubcommand(
-      createMemoryCommandRuntime(context, callbacks),
-      (args[0] ?? 'list').toLowerCase(),
-      args,
-    );
+    const subcommand = (args[0] ?? 'list').toLowerCase();
+    if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+      printHelp();
+      return;
+    }
+    const runtime = createMemoryCommandRuntime(context, callbacks);
+    if (runtime === undefined) {
+      console.log(chalk.yellow('\n[memory] Memory controls are unavailable in this runtime.\n'));
+      return;
+    }
+    await runMemorySubcommand(runtime, subcommand, args);
   },
   detailedHelp: printDetailedHelp,
 };

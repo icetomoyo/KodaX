@@ -5775,6 +5775,9 @@ complete -c kodax -l version -d 'Show version'`);
           prepareSetupSandbox: prepareSetupSandboxReport,
           inspectSandbox: inspectSandboxReport,
           learning: createReplLearningBinding(interactiveRuntime),
+          // FEATURE_298 T36 — the Host owns the Memory plane; the UI names
+          // the project root and presents/launches only.
+          memory: (projectRoot) => interactiveRuntime.memory.forProject(projectRoot),
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

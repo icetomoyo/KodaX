@@ -29,9 +29,14 @@ import {
   type KodaXSessionLineage,
   type MemoryLearningHandoff,
   type MemoryReviewModelInput,
+  createMemoryControlPlane,
+  resolveScopedMemoryRoot,
+  listPendingEpisodeReviewSummaries,
+  type PendingEpisodeReviewSummary,
 } from '@kodax-ai/agent';
-import { deriveCodingMemoryIdentity, type KodaXOptions } from '@kodax-ai/coding';
+import { deriveCodingMemoryIdentityFromRoot } from '@kodax-ai/coding';
 
+import type { MemoryCommandPlane } from './types.js';
 import { externalOpenInvocation, memoryCommand } from './memory-command.js';
 
 interface CapturedLog {
@@ -69,12 +74,127 @@ async function invoke(
 ) {
   // Bind the minimal interactive context and optional host callbacks used by
   // each command case; currentConfig is unused by this command.
+  const merged = {
+    memory: (root: string) => buildMemoryPlane(activeTempHome, root),
+    ...callbacks,
+  } as MemoryCommandCallbacks;
   await memoryCommand.handler(
     args,
     buildContext(cwd) as never,
-    callbacks as MemoryCommandCallbacks,
+    merged,
     {} as never,
   );
+}
+
+// FEATURE_298 T36 — tests drive the command through the same structural
+// plane the Host provides: a real control plane with the Host identity
+// derivation, plus local mirrors of the Host-owned rebuild/open-target
+// behavior (the deep contracts live in agent memory-control tests and the
+// runtime S1).
+let activePlane: MemoryCommandPlane | undefined;
+// Current describe's temp config home — the per-root plane factory derives
+// Host identities from it.
+let activeTempHome: string;
+
+function buildMemoryPlane(
+  configHome: string,
+  projectRoot: string,
+  memoryReviewer?: NonNullable<KodaXOptions['memoryReviewer']>,
+): MemoryCommandPlane {
+  const identity = deriveCodingMemoryIdentityFromRoot(configHome, projectRoot);
+  const memoryRoot = resolveScopedMemoryRoot(identity, 'project');
+  const controller = createMemoryControlPlane({
+    cwd: projectRoot,
+    identity,
+    ...(memoryReviewer === undefined ? {} : { memoryReviewer }),
+  });
+  return {
+    controller,
+    memoryRoot,
+    entrypointPath: path.join(memoryRoot, 'MEMORY.md'),
+    async listReviews() {
+      const localProjectId = `local:${path.resolve(projectRoot).toLowerCase()}`;
+      const ownerIdentities = identity.projectId === localProjectId
+        ? [identity]
+        : [identity, { ...identity, projectId: localProjectId }];
+      const pages = await Promise.all(ownerIdentities.map((owner) => (
+        listPendingEpisodeReviewSummaries({
+          configHome: owner.configHome,
+          tenantId: owner.tenantId,
+          agentId: owner.agentId,
+          projectId: owner.projectId ?? null,
+        })
+      )));
+      const unique = new Map<string, PendingEpisodeReviewSummary>();
+      for (const review of pages.flat()) {
+        const dedupeKey = review.jobId ?? `${review.ownerSessionRef}:${review.reviewKey}`;
+        if (!unique.has(dedupeKey)) unique.set(dedupeKey, review);
+      }
+      return [...unique.values()].sort((left, right) => (
+        left.createdAt.localeCompare(right.createdAt)
+        || left.reviewKey.localeCompare(right.reviewKey)
+      ));
+    },
+    reviewerProviderConfigured: () => false,
+    async rebuild() {
+      let dirExists = false;
+      try {
+        dirExists = fs.statSync(memoryRoot).isDirectory();
+      } catch {
+        dirExists = false;
+      }
+      const entrypointPath = path.join(memoryRoot, 'MEMORY.md');
+      if (!dirExists) {
+        return { status: 'missing-dir', memoryRoot, entrypointPath, entryCount: 0, malformedFiles: [], warnings: [] };
+      }
+      const topics: { filename: string; mtimeMs: number; title: string; description: string; parseOk: boolean }[] = [];
+      for (const entry of fs.readdirSync(memoryRoot, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'MEMORY.md') continue;
+        const raw = fs.readFileSync(path.join(memoryRoot, entry.name), 'utf-8');
+        const mtimeMs = fs.statSync(path.join(memoryRoot, entry.name)).mtimeMs;
+        const fm = /(?:^|\n)name:\s*(.+)/.exec(raw);
+        const fd = /(?:^|\n)description:\s*(.+)/.exec(raw);
+        const ftype = /(?:^|\n)type:\s*(.+)/.exec(raw);
+        const baseTitle = path.basename(entry.name, '.md');
+        topics.push({
+          filename: entry.name,
+          mtimeMs,
+          title: fm?.[1]?.trim() ?? baseTitle,
+          description: fd?.[1]?.trim() ?? baseTitle,
+          parseOk: fm !== null || fd !== null || ftype !== null,
+        });
+      }
+      if (topics.length === 0) {
+        return { status: 'no-topics', memoryRoot, entrypointPath, entryCount: 0, malformedFiles: [], warnings: [] };
+      }
+      const sorted = [...topics].sort((a, b) => b.mtimeMs - a.mtimeMs);
+      fs.writeFileSync(
+        entrypointPath,
+        sorted.map((f) => `- [${f.title}](${f.filename}) — ${f.description}`).join('\n') + '\n',
+        'utf-8',
+      );
+      return {
+        status: 'rebuilt',
+        memoryRoot,
+        entrypointPath,
+        entryCount: sorted.length,
+        malformedFiles: sorted.filter((f) => !f.parseOk).map((f) => f.filename),
+        warnings: [],
+      };
+    },
+    async ensureOpenTarget(targetPath: string) {
+      if (path.resolve(targetPath) === path.resolve(memoryRoot) && !fs.existsSync(memoryRoot)) {
+        fs.mkdirSync(memoryRoot, { recursive: true });
+      }
+      const probe = fs.existsSync(targetPath) ? targetPath : path.dirname(targetPath);
+      const resolvedTarget = fs.realpathSync(probe);
+      const resolvedRoot = fs.existsSync(memoryRoot) ? fs.realpathSync(memoryRoot) : memoryRoot;
+      if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(resolvedRoot + path.sep)) {
+        throw new Error(`Memory open target escapes the project memory root: ${targetPath}`);
+      }
+      return targetPath;
+    },
+  };
 }
 
 describe('FEATURE_124 Phase D — /memory command', () => {
@@ -85,6 +205,8 @@ describe('FEATURE_124 Phase D — /memory command', () => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-mem-cmd-home-'));
     setAgentConfigHome(tempHome);
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-mem-cmd-cwd-'));
+    activeTempHome = tempHome;
+    activePlane = buildMemoryPlane(tempHome, cwd);
   });
 
   afterEach(() => {
@@ -107,18 +229,14 @@ describe('FEATURE_124 Phase D — /memory command', () => {
   });
 
   it('list reads accepted topic content without treating MEMORY.md as source of truth', async () => {
-    const memoryDir = resolveMemoryRoot(cwd);
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(memoryDir, 'MEMORY.md'),
-      '- [User role](user_role.md) — Senior backend engineer\n',
-      'utf-8',
-    );
-    fs.writeFileSync(
-      path.join(memoryDir, 'user_role.md'),
-      '---\nname: user_role\ndescription: Senior backend engineer\ntype: user\n---\n\nBody.',
-      'utf-8',
-    );
+    // FEATURE_298 T36 — accepted Memory comes from the Host plane's remember
+    // path; a bare MEMORY.md index is never the source of truth.
+    await activePlane!.controller.remember({
+      statement: 'Senior backend engineer body.',
+      claimKind: 'fact',
+      claimKey: 'user_role',
+      evidenceRef: 'user-command:test',
+    });
 
     const { log, restore } = captureConsole();
     try {
@@ -127,8 +245,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
       restore();
     }
 
-    expect(log.contains('user_role')).toBe(true);
-    expect(log.contains('Body.')).toBe(true);
+    expect(log.contains('Senior backend engineer body.')).toBe(true);
     expect(log.contains('1 accepted across 1 storage scope')).toBe(true);
   });
 
@@ -222,7 +339,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
   });
 
   it('rebuild writes MEMORY.md sorted by mtime descending', async () => {
-    const memoryDir = resolveMemoryRoot(cwd);
+    const memoryDir = activePlane!.memoryRoot;
     fs.mkdirSync(memoryDir, { recursive: true });
 
     const olderPath = path.join(memoryDir, 'feedback_old.md');
@@ -251,7 +368,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
       restore();
     }
 
-    const entrypointPath = resolveMemoryEntrypoint(cwd);
+    const entrypointPath = activePlane!.entrypointPath;
     const raw = fs.readFileSync(entrypointPath, 'utf-8');
     const lines = raw.trimEnd().split('\n');
     expect(lines).toHaveLength(2);
@@ -261,7 +378,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
   });
 
   it('rebuild reports malformed frontmatter as fallback line + warning', async () => {
-    const memoryDir = resolveMemoryRoot(cwd);
+    const memoryDir = activePlane!.memoryRoot;
     fs.mkdirSync(memoryDir, { recursive: true });
     fs.writeFileSync(path.join(memoryDir, 'no_frontmatter.md'), 'just body, no frontmatter', 'utf-8');
 
@@ -272,13 +389,13 @@ describe('FEATURE_124 Phase D — /memory command', () => {
       restore();
     }
 
-    const raw = fs.readFileSync(resolveMemoryEntrypoint(cwd), 'utf-8');
+    const raw = fs.readFileSync(activePlane!.entrypointPath, 'utf-8');
     expect(raw).toContain('- [no_frontmatter](no_frontmatter.md) — no_frontmatter');
     expect(log.contains('no parsable frontmatter')).toBe(true);
   });
 
   it('rebuild is a no-op when the directory is empty', async () => {
-    const memoryDir = resolveMemoryRoot(cwd);
+    const memoryDir = activePlane!.memoryRoot;
     fs.mkdirSync(memoryDir, { recursive: true });
 
     const { log, restore } = captureConsole();
@@ -290,7 +407,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
 
     expect(log.contains('no topic files found')).toBe(true);
     // MEMORY.md must NOT be created when there's nothing to index.
-    expect(fs.existsSync(resolveMemoryEntrypoint(cwd))).toBe(false);
+    expect(fs.existsSync(activePlane!.entrypointPath)).toBe(false);
   });
 
   it('open launches the storage artifact in an external editor without rewriting it', async () => {
@@ -304,7 +421,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
       'focused',
       'tests.',
     ], cwd);
-    const before = fs.readFileSync(resolveMemoryEntrypoint(cwd), 'utf8');
+    const before = fs.readFileSync(activePlane!.entrypointPath, 'utf8');
     const openExternalPath = vi.fn().mockResolvedValue(undefined);
     const { log, restore } = captureConsole();
     try {
@@ -314,9 +431,9 @@ describe('FEATURE_124 Phase D — /memory command', () => {
     }
 
     expect(log.contains('opened in your external editor/file browser')).toBe(true);
-    expect(log.contains(resolveMemoryEntrypoint(cwd))).toBe(true);
-    expect(openExternalPath).toHaveBeenCalledWith(resolveMemoryEntrypoint(cwd));
-    expect(fs.readFileSync(resolveMemoryEntrypoint(cwd), 'utf8')).toBe(before);
+    expect(log.contains(activePlane!.entrypointPath)).toBe(true);
+    expect(openExternalPath).toHaveBeenCalledWith(activePlane!.entrypointPath);
+    expect(fs.readFileSync(activePlane!.entrypointPath, 'utf8')).toBe(before);
   });
 
   it('open launches the current external Memory directory even before the first memory exists', async () => {
@@ -324,8 +441,8 @@ describe('FEATURE_124 Phase D — /memory command', () => {
 
     await invoke(['open'], cwd, { openExternalPath });
 
-    expect(openExternalPath).toHaveBeenCalledWith(resolveMemoryRoot(cwd));
-    expect(fs.statSync(resolveMemoryRoot(cwd)).isDirectory()).toBe(true);
+    expect(openExternalPath).toHaveBeenCalledWith(activePlane!.memoryRoot);
+    expect(fs.statSync(activePlane!.memoryRoot).isDirectory()).toBe(true);
   });
 
   it('builds a Windows external-open invocation without PowerShell argument ambiguity', () => {
@@ -378,7 +495,7 @@ describe('FEATURE_124 Phase D — /memory command', () => {
     expect(log.contains('approved and applied memory:p-memory-command')).toBe(true);
     const store = await readLearningProposalStore(resolveLearningProposalStore(cwd));
     expect(store.proposals[0]?.status).toBe('approved');
-    expect(fs.readFileSync(resolveMemoryEntrypoint(cwd), 'utf8')).toContain('Memory command stores project facts.');
+    expect(fs.readFileSync(activePlane!.entrypointPath, 'utf8')).toContain('Memory command stores project facts.');
   });
 
   it('requires a shown preview before approving a memory proposal', async () => {
@@ -421,10 +538,10 @@ describe('FEATURE_124 Phase D — /memory command', () => {
     const { log, restore } = captureConsole();
     try {
       await invoke(['show', 'memory:p-stale-preview'], cwd);
-      const memoryDir = resolveMemoryRoot(cwd);
+      const memoryDir = activePlane!.memoryRoot;
       fs.mkdirSync(memoryDir, { recursive: true });
       fs.writeFileSync(
-        resolveMemoryEntrypoint(cwd),
+        activePlane!.entrypointPath,
         '- [Changed](changed.md) - changed after preview\n',
         'utf8',
       );
@@ -439,30 +556,29 @@ describe('FEATURE_124 Phase D — /memory command', () => {
     expect(store.proposals[0]?.status).toBe('pending');
   });
 
-  it('passes rejection feedback to the injected memory reviewer', async () => {
+  it('passes rejection feedback through the plane controller reviewer', async () => {
+    // FEATURE_298 T36 — the reviewer is Host-side; the command still routes
+    // feedback through the plane controller, which notifies the reviewer.
+    let received: Parameters<NonNullable<KodaXOptions['memoryReviewer']>>[0] | undefined;
+    activePlane = buildMemoryPlane(tempHome, cwd, async (input) => {
+      received = input;
+      return {
+        trigger: input.trigger,
+        createdAt: '2026-07-06T00:00:00.000Z',
+        sourceRefs: input.sourceRefs,
+        candidateRefs: input.candidateRefs,
+        actions: [],
+        warnings: input.warnings,
+      };
+    });
+
     await upsertLearningProposal(resolveLearningProposalStore(cwd), memoryProposal('p-review-reject'));
-    let received: MemoryReviewModelInput | undefined;
-    const callbacks: Partial<MemoryCommandCallbacks> = {
-      createKodaXOptions: () => ({
-        provider: 'anthropic',
-        memoryReviewer: async (input) => {
-          received = input;
-          return {
-            trigger: input.trigger,
-            createdAt: '2026-07-06T00:00:00.000Z',
-            sourceRefs: input.sourceRefs,
-            candidateRefs: input.candidateRefs,
-            actions: [],
-            warnings: input.warnings,
-          };
-        },
-      } as KodaXOptions),
-    };
 
     const { log, restore } = captureConsole();
     try {
-      await invoke(['show', 'memory:p-review-reject'], cwd, callbacks);
-      await invoke(['reject', 'memory:p-review-reject', 'wrong', 'memory'], cwd, callbacks);
+      const reviewerCallbacks = { memory: () => activePlane };
+      await invoke(['show', 'memory:p-review-reject'], cwd, reviewerCallbacks);
+      await invoke(['reject', 'memory:p-review-reject', 'wrong', 'memory'], cwd, reviewerCallbacks);
     } finally {
       restore();
     }
@@ -535,6 +651,8 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-mem-status-home-'));
     setAgentConfigHome(tempHome);
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-mem-status-cwd-'));
+    activeTempHome = tempHome;
+    activePlane = buildMemoryPlane(tempHome, cwd);
   });
 
   afterEach(() => {
@@ -556,7 +674,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
     await memoryCommand.handler(
       ['status'],
       context as never,
-      callbacks as MemoryCommandCallbacks,
+      { memory: (root) => buildMemoryPlane(activeTempHome, root), ...callbacks } as MemoryCommandCallbacks,
       {} as never,
     );
   }
@@ -656,7 +774,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
   it('diagnoses a previous-session backlog as a review problem', async () => {
     const options = configuredCallbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
-    const previousIdentity = deriveCodingMemoryIdentity(options, cwd, 'previous-session');
+    const previousIdentity = { ...deriveCodingMemoryIdentityFromRoot(tempHome, cwd), sessionId: 'previous-session' };
     await persistPendingEpisodeReview(previousIdentity, {
       id: 'digest-previous-session',
       reviewKey: 'review:previous-session',
@@ -687,7 +805,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
   it('does not claim that no review completed when a receipt exists beside a backlog', async () => {
     const options = configuredCallbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
-    const previousIdentity = deriveCodingMemoryIdentity(options, cwd, 'pending-sibling-session');
+    const previousIdentity = { ...deriveCodingMemoryIdentityFromRoot(tempHome, cwd), sessionId: 'pending-sibling-session' };
     await persistPendingEpisodeReview(previousIdentity, {
       id: 'digest-pending-sibling',
       reviewKey: 'review:pending-sibling',
@@ -761,11 +879,13 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
       restore();
     }
 
-    expect(log.contains('MISSING — provider "definitely-unconfigured-provider" is not configured')).toBe(true);
+    expect(log.contains('MISSING — Host reviewer provider is not configured')).toBe(true);
     expect(log.contains('reviewer missing')).toBe(true);
   });
 
-  it('renders an unavailable note when KodaX options are not bound', async () => {
+  it('renders the Host-backed status even when KodaX options are not bound', async () => {
+    // FEATURE_298 T36 — status no longer depends on UI-bound options; the
+    // Host plane answers with zero values instead of an unavailable note.
     const { log, restore } = captureConsole();
     try {
       await invokeStatus({}, {});
@@ -773,13 +893,15 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
       restore();
     }
 
-    expect(log.contains('unavailable — KodaX options are not bound in this session')).toBe(true);
+    expect(log.contains('per-project memory directory')).toBe(true);
+    expect(log.contains('this-session pipeline')).toBe(true);
+    expect(log.contains('unavailable — KodaX options are not bound in this session')).toBe(false);
   });
   it('lists persisted episode-review jobs separately from memory proposals', async () => {
     const options = configuredCallbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
     for (const [sequence, sessionId] of [[1, 'review-session-a'], [2, 'review-session-b']] as const) {
-      const identity = deriveCodingMemoryIdentity(options, cwd, sessionId);
+      const identity = { ...deriveCodingMemoryIdentityFromRoot(tempHome, cwd), sessionId };
       await persistPendingEpisodeReview(identity, {
         id: `digest-${sequence}`,
         reviewKey: `review:digest-${sequence}`,
@@ -806,7 +928,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
       await memoryCommand.handler(
         ['reviews', '1'],
         context as never,
-        configuredCallbacks as MemoryCommandCallbacks,
+        { memory: (root) => buildMemoryPlane(activeTempHome, root), ...configuredCallbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
@@ -823,7 +945,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
   it('separates attention jobs from the automatic review queue', async () => {
     const options = configuredCallbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
-    const identity = deriveCodingMemoryIdentity(options, cwd, 'attention-session');
+    const identity = { ...deriveCodingMemoryIdentityFromRoot(tempHome, cwd), sessionId: 'attention-session' };
     const persisted = await persistPendingEpisodeReview(identity, {
       id: 'digest-attention',
       reviewKey: 'review:attention',
@@ -869,7 +991,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
           runtimeInfo: { workspaceRoot: cwd, executionCwd: cwd },
           sessionId: 'session-status-test',
         } as never,
-        configuredCallbacks as MemoryCommandCallbacks,
+        { memory: (root: string) => buildMemoryPlane(activeTempHome, root), ...configuredCallbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
@@ -882,7 +1004,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
   it('does not recommend a current-project drain for another project backlog', async () => {
     const options = configuredCallbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
-    const currentIdentity = deriveCodingMemoryIdentity(options, cwd, 'foreign-project-session');
+    const currentIdentity = { ...deriveCodingMemoryIdentityFromRoot(tempHome, cwd), sessionId: 'foreign-project-session' };
     await persistPendingEpisodeReview({
       ...currentIdentity,
       projectId: 'remote:foreign.example/other-project',
@@ -919,7 +1041,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
           runtimeInfo: { workspaceRoot: cwd, executionCwd: cwd },
           sessionId: 'session-status-test',
         } as never,
-        configuredCallbacks as MemoryCommandCallbacks,
+        { memory: (root: string) => buildMemoryPlane(activeTempHome, root), ...configuredCallbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
@@ -942,7 +1064,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
     };
     const options = callbacks.createKodaXOptions?.();
     if (options === undefined) throw new Error('test setup expected KodaX options');
-    const owner = deriveCodingMemoryIdentity(options, executionCwd, 'nested-session');
+    const owner = { ...deriveCodingMemoryIdentityFromRoot(tempHome, executionCwd), sessionId: 'nested-session' };
     await persistPendingEpisodeReview(owner, {
       id: 'digest-nested-cwd',
       reviewKey: 'review:nested-cwd',
@@ -967,7 +1089,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
           runtimeInfo: { workspaceRoot: cwd, executionCwd },
           sessionId: 'session-status-test',
         } as never,
-        callbacks as MemoryCommandCallbacks,
+        { memory: (root: string) => buildMemoryPlane(activeTempHome, root), ...callbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
@@ -978,7 +1100,7 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
     expect(output.log.contains('review:nested-cwd')).toBe(true);
   });
 
-  it('honors a host-provided production memory identity', async () => {
+  it('ignores a caller-supplied memory identity — the Host derives it', async () => {
     const customIdentity = {
       configHome: tempHome,
       tenantId: 'tenant-host-bound',
@@ -1018,18 +1140,18 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
           runtimeInfo: { workspaceRoot: cwd, executionCwd: cwd },
           sessionId: 'different-repl-session',
         } as never,
-        callbacks as MemoryCommandCallbacks,
+        { memory: (root: string) => buildMemoryPlane(activeTempHome, root), ...callbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
       output.restore();
     }
 
-    expect(output.log.contains('showing 1 of 1')).toBe(true);
-    expect(output.log.contains('review:host-bound')).toBe(true);
+    expect(output.log.contains('showing 0 of 0')).toBe(true);
+    expect(output.log.contains('review:host-bound')).toBe(false);
   });
 
-  it('keeps a host-provided project-less identity scoped to ownerless reviews', async () => {
+  it('keeps a caller-supplied project-less identity out of Host-derived reviews', async () => {
     const projectlessIdentity = {
       configHome: tempHome,
       tenantId: 'tenant-host-projectless',
@@ -1084,15 +1206,15 @@ describe('FEATURE_289 §3.5 — /memory status', () => {
           runtimeInfo: { workspaceRoot: cwd, executionCwd: cwd },
           sessionId: 'different-repl-session',
         } as never,
-        callbacks as MemoryCommandCallbacks,
+        { memory: (root: string) => buildMemoryPlane(activeTempHome, root), ...callbacks } as MemoryCommandCallbacks,
         {} as never,
       );
     } finally {
       output.restore();
     }
 
-    expect(output.log.contains('showing 1 of 1')).toBe(true);
-    expect(output.log.contains('review:host-projectless')).toBe(true);
+    expect(output.log.contains('showing 0 of 0')).toBe(true);
+    expect(output.log.contains('review:host-projectless')).toBe(false);
     expect(output.log.contains('review:host-foreign-project')).toBe(false);
   });
 
