@@ -11,7 +11,6 @@ import {
 import type {
   generateWorkflowFromOptions,
   ManagedWorkflowRun,
-  WorkflowRunManager,
 } from '@kodax-ai/coding';
 
 import { workflowLiveSnapshotFromProcess } from '../ui/view-models/workflow-live.js';
@@ -25,6 +24,7 @@ import {
   formatWorkflowEvent,
   formatWorkflowFailureAction,
   replaceWorkflowResultTruncationMarker,
+  totalSpawnedFromProcess,
   renderWorkflowEvent,
   workflowEventStatus,
   type WorkflowRunLocale,
@@ -194,17 +194,6 @@ export interface WorkflowLiveUpdateEmitter {
   onProcessEvent(event: WorkflowProcessEvent): void;
   complete(status: 'completed' | 'failed' | 'stopped', message?: string): void;
   running(message?: string): void;
-}
-
-export function subscribeWorkflowLiveProcess(
-  manager: WorkflowRunManager,
-  live: WorkflowLiveUpdateEmitter,
-  runId: string,
-): () => void {
-  return manager.subscribeWorkflowProcess((event) => {
-    if (event.snapshot.runId !== runId) return;
-    live.onProcessEvent(event);
-  });
 }
 
 export function createWorkflowLiveUpdateEmitter(
@@ -485,11 +474,7 @@ export function observeHostWorkflowDone(
   let subscriptionRef: { close(): void } | undefined;
   const finish = (snapshot: WorkflowProcessSnapshot): void => {
     subscriptionRef?.close();
-    // Daemon-plane snapshots may omit counts; progress is the fallback.
-    const totalSpawned = snapshot.counts === undefined
-      ? snapshot.progress?.spawnedAgents ?? 0
-      : snapshot.counts.pending + snapshot.counts.running + snapshot.counts.completed
-        + snapshot.counts.failed + snapshot.counts.cancelled + snapshot.counts.skipped;
+    const totalSpawned = totalSpawnedFromProcess(snapshot);
     if (snapshot.status === 'cancelled') {
       live?.complete('stopped', 'Workflow stopped by user.');
       return;
@@ -510,7 +495,13 @@ export function observeHostWorkflowDone(
       return;
     }
     if (snapshot.status !== 'completed') return;
-    const resultText = snapshot.resultSummary ?? snapshot.latestMessage;
+    // Result parity with the local done path: resultSummary first, then the
+    // artifact preview (snapshot artifacts carry run-dir paths), then the
+    // last process message.
+    const artifactText = snapshot.artifacts !== undefined && snapshot.artifacts.length > 0
+      ? formatArtifactResult(snapshot.artifacts, locale, { full: options.presentation === 'agentic' })
+      : undefined;
+    const resultText = snapshot.resultSummary ?? artifactText ?? snapshot.latestMessage;
     live?.complete('completed', resultText !== undefined ? 'completed with result' : 'completed');
     if (options.presentation === 'agentic') {
       emitWorkflowRunMessage(callbacks, {
@@ -607,8 +598,6 @@ export interface StartGeneratedWorkflowFromRequestOptions {
   readonly sourceLabel?: string;
   readonly processSource?: WorkflowProcessSource;
   readonly generateWorkflow?: GenerateWorkflowForRequest;
-  readonly runBaseDir?: string;
-  readonly runManager?: WorkflowRunManager;
   readonly onBuilderEvent?: (event: WorkflowBuilderEvent) => void;
 }
 

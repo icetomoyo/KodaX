@@ -598,6 +598,20 @@ export function formatWorkflowRunSnapshot(
   ].join('\n');
 }
 
+/**
+ * FEATURE_298 T22 — agent count from a Host process snapshot. Matches the
+ * managed world's totalSpawned semantics: progress.spawnedAgents first (item
+ * counts are skewed by phases/artifacts), counts-sum fallback for
+ * daemon-stripped snapshots.
+ */
+export function totalSpawnedFromProcess(snapshot: WorkflowProcessSnapshot): number {
+  return snapshot.progress?.spawnedAgents
+    ?? (snapshot.counts === undefined
+      ? 0
+      : snapshot.counts.pending + snapshot.counts.running + snapshot.counts.completed
+        + snapshot.counts.failed + snapshot.counts.cancelled + snapshot.counts.skipped);
+}
+
 /** Project + personal saved-workflow directories for the current cwd. */
 export function savedWorkflowDirs(cwd: string): SavedWorkflowDirs {
   return {

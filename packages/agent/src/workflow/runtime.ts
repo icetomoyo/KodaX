@@ -886,7 +886,12 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
         ? await opts.backend.writeArtifact(name, value)
         : { name };
       artifacts.push(ref);
-      recorder.emit('artifact_written', { name });
+      // FEATURE_298 T22 — the path lets process-snapshot consumers (Host
+      // clients, /workflow show) preview the artifact content.
+      recorder.emit('artifact_written', {
+        name,
+        ...(ref.path !== undefined ? { path: ref.path } : {}),
+      });
       return ref;
     },
 

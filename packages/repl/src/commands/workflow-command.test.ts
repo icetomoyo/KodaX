@@ -15,9 +15,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createWorkflowRunManager,
+  discoverSavedWorkflows,
+  getBuiltinWorkflow,
+  loadSavedWorkflow,
+  startManagedWorkflow,
   type ManagedWorkflowRun,
   type WorkflowGenerationResult,
-  type WorkflowRunManager,
 } from '@kodax-ai/coding';
 import {
   createWorkflowCapsule,
@@ -61,6 +64,7 @@ import {
   workflowCommand,
 } from './workflow-command.js';
 import { workflowEventSink } from './workflow-command-live.js';
+import type { WorkflowHostControl } from './types.js';
 import { deriveProjectKeyFromRoot } from '../interactive/project-key.js';
 
 function writeSavedWorkflowCapsule(
@@ -100,10 +104,15 @@ function writeSavedWorkflowCapsule(
   return path;
 }
 
-function readSingleWorkflowRunJson(baseDir: string): Record<string, unknown> {
-  const runIds = readdirSync(baseDir).filter((name) => name.startsWith('run-'));
-  expect(runIds).toHaveLength(1);
-  return JSON.parse(readFileSync(join(baseDir, runIds[0]!, 'run.json'), 'utf8')) as Record<string, unknown>;
+async function readSingleWorkflowRunJson(baseDir: string): Promise<Record<string, unknown>> {
+  // FEATURE_298 T22 — Host starts return before the run.json flush; wait for it.
+  let runJson: Record<string, unknown> | undefined;
+  await vi.waitFor(() => {
+    const runIds = readdirSync(baseDir).filter((name) => name.startsWith('run-'));
+    expect(runIds).toHaveLength(1);
+    runJson = JSON.parse(readFileSync(join(baseDir, runIds[0]!, 'run.json'), 'utf8')) as Record<string, unknown>;
+  }, { timeout: 5000 });
+  return runJson!;
 }
 
 async function waitForFinalAssistantMessage(
@@ -144,6 +153,75 @@ function writeGeneratedRunSnapshot(baseDir: string, runId: string): void {
     }),
     'utf8',
   );
+}
+
+/**
+ * FEATURE_298 T22 — in-process Host fixture: the same declarative-start
+ * composition the CLI binds (startManagedWorkflow over a run manager,
+ * name→builtin/saved resolution, metadata attached verbatim), so command
+ * tests exercise the real Host-side start path without mocks.
+ */
+function bindHostWorkflowsFixture(runsBaseDirOverride?: string): WorkflowHostControl {
+  const manager = createWorkflowRunManager();
+  return {
+    async start(input) {
+      let source: Parameters<typeof startManagedWorkflow>[0]['source'];
+      if (input.source.kind === 'name') {
+        const builtin = getBuiltinWorkflow(input.source.name);
+        if (builtin !== undefined) {
+          source = { kind: 'saved', module: builtin };
+        } else {
+          const ref = (await discoverSavedWorkflows({
+            project: join(input.projectRoot, '.kodax', 'workflows'),
+            personal: getAgentConfigPath('workflows'),
+          })).find((r) => r.name === input.source.name);
+          if (ref === undefined) {
+            return { kind: 'declined', reason: `Workflow not found: ${input.source.name}` };
+          }
+          source = { kind: 'saved', module: await loadSavedWorkflow(ref.path) };
+        }
+      } else {
+        source = input.source;
+      }
+      const result = await startManagedWorkflow({
+        source,
+        args: input.args ?? {},
+        options: {} as Parameters<typeof startManagedWorkflow>[0]['options'],
+        runsBaseDir: runsBaseDirOverride
+          ?? getAgentConfigPath(
+            'workflow-runs',
+            deriveProjectKeyFromRoot(input.projectRoot).key,
+          ),
+        ...(input.metadata !== undefined ? { processMetadata: input.metadata } : {}),
+        manager,
+      });
+      return result.kind === 'started'
+        ? { kind: 'started', runId: result.runId }
+        : { kind: 'declined', reason: result.reason };
+    },
+    async list() {
+      return manager.list();
+    },
+    async get(runId) {
+      return manager.getWorkflowProcessSnapshot(runId);
+    },
+    subscribe(filter, listener) {
+      const close = manager.subscribeWorkflowProcess((event) => {
+        if (filter.runId !== undefined && event.snapshot.runId !== filter.runId) return;
+        listener(event);
+      });
+      return { close };
+    },
+    async pause(runId) {
+      return manager.pause(runId);
+    },
+    async resume(runId) {
+      return manager.resume(runId);
+    },
+    async stop(runId) {
+      return manager.stop(runId);
+    },
+  };
 }
 
 function fakeGeneratedWorkflow(): Extract<WorkflowGenerationResult, { readonly kind: 'generated' }> {
@@ -188,7 +266,7 @@ function fakeArtifactOnlyGeneratedWorkflow(): Extract<WorkflowGenerationResult, 
     maxConcurrency: 2,
     patterns: ['fan-out-and-synthesize'],
   } as const;
-  const source = 'async function run(wf) { await wf.artifact("final-report", { summary: "Artifact-only final report" }); return {}; }';
+  const source = 'async function run(wf) { await wf.artifact("final-report", { summary: "Artifact-only final report" }); return { notes: "see artifact" }; }';
   return {
     kind: 'generated',
     manifest,
@@ -204,7 +282,7 @@ function fakeArtifactOnlyGeneratedWorkflow(): Extract<WorkflowGenerationResult, 
       },
       run: async (wf) => {
         await wf.artifact('final-report', { summary: 'Artifact-only final report' });
-        return {};
+        return { notes: 'see artifact' };
       },
     },
     scriptSnapshot: { manifest, source },
@@ -1616,11 +1694,9 @@ describe('resolveConfirm', () => {
 
 describe('startGeneratedWorkflowFromRequest launch policy', () => {
   let runBaseDir = '';
-  let runManager: WorkflowRunManager;
 
   beforeEach(() => {
     runBaseDir = mkdtempSync(join(tmpdir(), 'wf-generated-runs-'));
-    runManager = createWorkflowRunManager();
   });
 
   afterEach(() => {
@@ -1629,9 +1705,9 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
 
   function isolatedWorkflowRuntime(): {
     readonly runBaseDir: string;
-    readonly runManager: WorkflowRunManager;
+    readonly workflows: WorkflowHostControl;
   } {
-    return { runBaseDir, runManager };
+    return { runBaseDir, workflows: bindHostWorkflowsFixture(runBaseDir) };
   }
 
   it('starts a trusted built-in directly without invoking workflow generation', async () => {
@@ -1640,8 +1716,8 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const runMessages: Array<{ readonly type: string; readonly text: string }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Review captured packets',
       builtin: { name: 'scoped-review', args: { packets: [] } },
       approval: 'silent',
@@ -1649,6 +1725,7 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
       processSource: 'review',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow,
@@ -1661,16 +1738,21 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     await vi.waitFor(() => {
       expect(runMessages.some((event) => event.type === 'error')).toBe(true);
     }, { timeout: 5000 });
-    const [runId] = readdirSync(runBaseDir);
-    const runJson = JSON.parse(
-      readFileSync(join(runBaseDir, runId ?? '', 'run.json'), 'utf8'),
-    ) as Record<string, unknown>;
+    let runJson: Record<string, unknown> | undefined;
+    await vi.waitFor(() => {
+      const [runId] = readdirSync(runBaseDir);
+      expect(runId).toBeDefined();
+      // The finished event may beat the run.json flush by a tick.
+      runJson = JSON.parse(readFileSync(join(runBaseDir, runId ?? '', 'run.json'), 'utf8')) as Record<string, unknown>;
+    }, { timeout: 5000 });
     expect(runJson).toMatchObject({
       workflow: 'scoped-review',
       source: 'review',
       args: { packets: [] },
-      hostMetadata: { workflowAuthorship: 'kodax-generated' },
     });
+    // FEATURE_298 T22 — client-declared authorship is stripped Host-side
+    // (anti-forgery); only request-kind Host starts mint it.
+    expect((runJson.hostMetadata as Record<string, unknown> | undefined)?.workflowAuthorship).toBeUndefined();
     expect(runJson).not.toHaveProperty('scriptSnapshotPath');
   });
 
@@ -1683,8 +1765,8 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     type WorkflowRunUpdate = Parameters<NonNullable<WorkflowHandlerCallbacks['onWorkflowRunUpdate']>>[0];
     const runUpdates: WorkflowRunUpdate[] = [];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       presentation: 'agentic',
@@ -1692,6 +1774,7 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
       callbacks: {
         confirm,
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
         onWorkflowRunUpdate: (event) => runUpdates.push(event),
       },
@@ -1728,17 +1811,20 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
       && event.final === true
       && event.text.includes('/workflow show')
     ))).toBe(false);
-    const [runId] = readdirSync(runBaseDir);
-    const runJson = JSON.parse(
-      readFileSync(join(runBaseDir, runId ?? '', 'run.json'), 'utf8'),
-    ) as Record<string, unknown>;
+    let runJson: Record<string, unknown> | undefined;
+    await vi.waitFor(() => {
+      const [runId] = readdirSync(runBaseDir);
+      expect(runId).toBeDefined();
+      // The finished event may beat the run.json flush by a tick.
+      runJson = JSON.parse(readFileSync(join(runBaseDir, runId ?? '', 'run.json'), 'utf8')) as Record<string, unknown>;
+    }, { timeout: 5000 });
     expect(runJson).toMatchObject({
       workflow: 'generated-fast-audit',
       displayName: 'generated-fast-audit',
       source: 'amaw',
       goal: 'Generate a parallel audit workflow',
-      hostMetadata: { workflowAuthorship: 'kodax-generated' },
     });
+    expect((runJson.hostMetadata as Record<string, unknown> | undefined)?.workflowAuthorship).toBeUndefined();
   });
 
   it('routes generated starts through the Host with an inline source when the binding is present', async () => {
@@ -1781,8 +1867,8 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
       },
     };
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       presentation: 'agentic',
@@ -1867,8 +1953,8 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     };
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Review captured packets',
       builtin: { name: 'scoped-review', args: { packets: [] } },
       approval: 'silent',
@@ -1919,8 +2005,8 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     };
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       presentation: 'agentic',
@@ -1943,13 +2029,14 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const runMessages: Array<{ readonly type: string; readonly text: string; readonly final?: boolean }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: '请只输出 artifact 报告',
       approval: 'silent',
       presentation: 'agentic',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow: async () => fakeArtifactOnlyGeneratedWorkflow(),
@@ -1974,13 +2061,14 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
     const longRequest = `full report start\n${'detail '.repeat(1200)}\nfull report end`;
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: longRequest,
       approval: 'silent',
       presentation: 'agentic',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow: async () => fakeGeneratedWorkflow(),
@@ -2000,12 +2088,13 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const runMessages: Array<{ readonly type: string; readonly text: string; readonly final?: boolean }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow: async () => fakeGeneratedWorkflow(),
@@ -2029,17 +2118,24 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const runMessages: Array<{ readonly type: string; readonly text: string; readonly final?: boolean }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
     const generated = fakeGeneratedWorkflow();
+    const failingSource = generated.source.replace(
+      'return { synthesis: String(args.request || "") };',
+      'throw new Error("restricted workflow script failed to compile: Invalid or unexpected token"); return { synthesis: "unreachable" };',
+    );
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a broken audit workflow',
       approval: 'silent',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow: async () => ({
         ...generated,
+        source: failingSource,
+        scriptSnapshot: { ...generated.scriptSnapshot, source: failingSource },
         module: {
           ...generated.module,
           run: async () => {
@@ -2067,13 +2163,14 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
     try {
+      const runtime = isolatedWorkflowRuntime();
       const outcome = await startGeneratedWorkflowFromRequest({
-        ...isolatedWorkflowRuntime(),
         request: 'Generate a parallel audit workflow',
         approval: 'silent',
         presentation: 'agentic',
         callbacks: {
           createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+          workflows: runtime.workflows,
         },
         generateWorkflow: async () => fakeGeneratedWorkflow(),
       });
@@ -2097,13 +2194,14 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const confirm = vi.fn(async () => false);
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'required',
       callbacks: {
         confirm,
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
       },
       generateWorkflow: async () => fakeGeneratedWorkflow(),
     });
@@ -2118,12 +2216,13 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const builderEvents: Array<{ readonly stage: string; readonly message: string }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
       },
       generateWorkflow: async () => {
         throw new Error('workflow generation failed (timeout after 120000ms): This operation was aborted');
@@ -2146,14 +2245,15 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const builderEvents: Array<{ readonly stage: string; readonly message: string }> = [];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       callbacks: {
         createKodaXOptions: () => {
           throw new Error('options unavailable');
         },
+        workflows: runtime.workflows,
       },
       generateWorkflow: async () => fakeGeneratedWorkflow(),
       onBuilderEvent: (event) => builderEvents.push({ stage: event.stage, message: event.message }),
@@ -2174,12 +2274,13 @@ describe('startGeneratedWorkflowFromRequest launch policy', () => {
     const runMessages: Array<{ readonly type: string; readonly text: string }> = [];
     type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
 
+    const runtime = isolatedWorkflowRuntime();
     const outcome = await startGeneratedWorkflowFromRequest({
-      ...isolatedWorkflowRuntime(),
       request: 'Generate a parallel audit workflow',
       approval: 'silent',
       callbacks: {
         createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+        workflows: runtime.workflows,
         onWorkflowRunMessage: (event) => runMessages.push(event),
       },
       generateWorkflow: async () => {
@@ -2336,8 +2437,15 @@ describe('workflowCommand saved capsule preflight', () => {
   afterEach(() => {
     logSpy.mockRestore();
     process.chdir(previousCwd);
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(workflowRunsDir, { recursive: true, force: true });
+    // FEATURE_298 T22 — Host-started runs finish asynchronously; a lingering
+    // handle can outlive the test on Windows. The temp dir is left for the OS
+    // cleaner rather than failing unrelated assertions.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch { /* teardown best-effort */ }
+    try {
+      rmSync(workflowRunsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch { /* teardown best-effort */ }
   });
 
   it('refuses non-terminal persisted workflow runs unless --force is explicit', async () => {
@@ -2645,6 +2753,52 @@ describe('workflowCommand saved capsule preflight', () => {
     expect(output).toContain('metadata-backed result');
   });
 
+  it('refuses start-class subcommands without a Host binding instead of starting locally', async () => {
+    // FEATURE_298 T22 — the local start fallback is gone; without the Host
+    // binding the command must fail closed, never start a local run.
+    type WorkflowHandlerCallbacks = Parameters<typeof workflowCommand.handler>[2];
+    writeSavedWorkflowCapsule(dir, 'saved-unbound');
+    await workflowCommand.handler(
+      ['saved-unbound'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      {
+        confirm: async () => true,
+        createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      } as Parameters<typeof workflowCommand.handler>[2],
+      { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
+    );
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('the workflow Host runtime is unavailable in this session');
+    let runDirNames: string[] = [];
+    try {
+      runDirNames = readdirSync(workflowRunsDir).filter((name) => name.startsWith('run-'));
+    } catch {
+      runDirNames = [];
+    }
+    expect(runDirNames).toEqual([]);
+  });
+
+  it('refuses control subcommands without a Host binding', async () => {
+    await workflowCommand.handler(
+      ['pause', 'run-anywhere'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      {} as Parameters<typeof workflowCommand.handler>[2],
+      {} as Parameters<typeof workflowCommand.handler>[3],
+    );
+    let output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('workflow controls are unavailable in this runtime');
+
+    logSpy.mockClear();
+    await workflowCommand.handler(
+      ['stop', 'run-anywhere'],
+      {} as Parameters<typeof workflowCommand.handler>[1],
+      {} as Parameters<typeof workflowCommand.handler>[2],
+      {} as Parameters<typeof workflowCommand.handler>[3],
+    );
+    output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('workflow controls are unavailable in this runtime');
+  });
+
   it('reports persisted-only terminal workflow runs as already finished on stop', async () => {
     const runDir = join(workflowRunsDir, 'run-terminal-stop');
     mkdirSync(runDir, { recursive: true });
@@ -2662,10 +2816,44 @@ describe('workflowCommand saved capsule preflight', () => {
       'utf8',
     );
 
+    const hostControl = {
+      async start() {
+        throw new Error('unexpected host start');
+      },
+      async list() {
+        return [];
+      },
+      get(runId: string): Promise<WorkflowProcessSnapshot | undefined> {
+        return Promise.resolve(runId === 'run-terminal-stop'
+          ? {
+            runId,
+            workflowName: 'terminal-audit',
+            status: 'completed',
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            counts: { pending: 0, running: 0, completed: 1, failed: 0, cancelled: 0, skipped: 0 },
+            progress: { spawnedAgents: 1, finishedAgents: 1, activeAgents: 0, failedAgents: 0, stoppedAgents: 0 },
+            items: [],
+          }
+          : undefined);
+      },
+      async pause() {
+        return false;
+      },
+      async resume() {
+        return false;
+      },
+      async stop() {
+        return false;
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    };
     await workflowCommand.handler(
       ['stop', 'run-terminal-stop'],
       {} as Parameters<typeof workflowCommand.handler>[1],
-      {} as Parameters<typeof workflowCommand.handler>[2],
+      { workflows: hostControl } as Parameters<typeof workflowCommand.handler>[2],
       {} as Parameters<typeof workflowCommand.handler>[3],
     );
 
@@ -2741,6 +2929,7 @@ describe('workflowCommand saved capsule preflight', () => {
         return true;
       },
       createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      workflows: bindHostWorkflowsFixture(),
       onWorkflowRunMessage: (event) => {
         runMessages.push(event);
       },
@@ -2784,6 +2973,7 @@ describe('workflowCommand saved capsule preflight', () => {
     const callbacks = {
       confirm: async () => true,
       createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      workflows: bindHostWorkflowsFixture(),
       onWorkflowRunMessage: (event) => {
         runMessages.push(event);
       },
@@ -2797,7 +2987,7 @@ describe('workflowCommand saved capsule preflight', () => {
     );
 
     await waitForFinalAssistantMessage(runMessages);
-    const runJson = readSingleWorkflowRunJson(workflowRunsDir);
+    const runJson = await readSingleWorkflowRunJson(workflowRunsDir);
     expect(runJson.source).toBe('capsule');
     expect(runJson.savedWorkflowName).toBe('saved-lineage-rerun');
     expect(runJson.sourceRunId).toBe('run-source');
@@ -2815,6 +3005,7 @@ describe('workflowCommand saved capsule preflight', () => {
     const callbacks = {
       confirm: async () => true,
       createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      workflows: bindHostWorkflowsFixture(),
       onWorkflowRunMessage: (event) => {
         runMessages.push(event);
       },
@@ -2849,6 +3040,7 @@ describe('workflowCommand saved capsule preflight', () => {
     const callbacks = {
       confirm: async () => true,
       createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      workflows: bindHostWorkflowsFixture(),
       onWorkflowRunMessage: (event) => {
         runMessages.push(event);
       },
@@ -2885,6 +3077,7 @@ describe('workflowCommand saved capsule preflight', () => {
     const callbacks = {
       confirm: async () => true,
       createKodaXOptions: () => ({}) as ReturnType<NonNullable<WorkflowHandlerCallbacks['createKodaXOptions']>>,
+      workflows: bindHostWorkflowsFixture(),
       onWorkflowRunMessage: (event) => {
         runMessages.push(event);
       },
@@ -2898,7 +3091,7 @@ describe('workflowCommand saved capsule preflight', () => {
     );
 
     await waitForFinalAssistantMessage(runMessages);
-    const runJson = readSingleWorkflowRunJson(workflowRunsDir);
+    const runJson = await readSingleWorkflowRunJson(workflowRunsDir);
     expect(runJson.source).toBe('capsule');
     expect(runJson.savedWorkflowName).toBe('saved-lineage-direct');
     expect(runJson.sourceRunId).toBe('run-original');
@@ -3155,8 +3348,15 @@ describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
   afterEach(() => {
     logSpy.mockRestore();
     process.chdir(previousCwd);
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(workflowRunsDir, { recursive: true, force: true });
+    // FEATURE_298 T22 — Host-started runs finish asynchronously; a lingering
+    // handle can outlive the test on Windows. The temp dir is left for the OS
+    // cleaner rather than failing unrelated assertions.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch { /* teardown best-effort */ }
+    try {
+      rmSync(workflowRunsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch { /* teardown best-effort */ }
   });
 
   it('routes a saved-capsule start through the Host with an inline source and host-minted runId', async () => {

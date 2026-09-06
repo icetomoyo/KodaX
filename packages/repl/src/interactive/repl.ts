@@ -485,6 +485,8 @@ export interface RepLOptions extends KodaXOptions {
   prepareSetupSandbox?: CommandCallbacks['prepareSetupSandbox'];
   inspectSandbox?: CommandCallbacks['inspectSandbox'];
   learning?: LearningBinding;
+  /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
+  workflows?: CommandCallbacks['workflows'];
 }
 
 function resolveInitialReasoningMode(
@@ -995,6 +997,7 @@ Keyboard Shortcuts:
     inspectSandbox: options.inspectSandbox,
     learning: options.learning,
     getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
+    workflows: options.workflows,
     exit: () => {
       isRunning = false;
       // FEATURE_125 — release the instance directory + clear the

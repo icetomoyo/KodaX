@@ -14,7 +14,6 @@ import type { ArgumentDefinition, CommandArgumentsRegistry } from './types.js';
 import { getAgentConfigPath } from '@kodax-ai/agent';
 import {
   getAvailableProviderNames,
-  getDefaultWorkflowRunManager,
   isKnownProvider,
   listBuiltinWorkflows,
 } from '@kodax-ai/coding';
@@ -377,24 +376,6 @@ const WORKFLOW_DELETE_OPTION_ARGS: ArgumentDefinition[] = [
 
 const WORKFLOW_SAVED_FILE_SUFFIXES = ['.workflow.json', '.ts', '.mjs', '.js'] as const;
 
-function workflowRunMatchesSubcommand(subcommand: string, status: string): boolean {
-  switch (subcommand) {
-    case 'pause':
-      return status === 'running';
-    case 'resume':
-      return status === 'paused';
-    case 'stop':
-      return status === 'running' || status === 'paused';
-    case 'delete':
-      return status !== 'running' && status !== 'paused';
-    case 'show':
-    case 'rerun':
-    case 'save':
-    default:
-      return true;
-  }
-}
-
 function isWorkflowRunEntryName(value: string): boolean {
   return (
     /^[a-zA-Z0-9._-]{1,120}$/.test(value) &&
@@ -474,23 +455,13 @@ function getPersistedWorkflowRunIdArgs(): ArgumentDefinition[] {
 }
 
 function getWorkflowRunIdArgs(subcommand: string): ArgumentDefinition[] {
-  const activeArgs = getDefaultWorkflowRunManager()
-    .list()
-    .filter((run) => workflowRunMatchesSubcommand(subcommand, run.status))
-    .map((run) => ({
-      name: run.runId,
-      description: `${run.workflow} - ${run.status}`,
-      type: 'string' as const,
-    }));
-  const persistedArgs = WORKFLOW_PERSISTED_RUN_ID_SUBCOMMANDS.has(subcommand)
+  // FEATURE_298 T22 — active runs live in the Host plane, which the sync
+  // completer cannot reach; completion offers persisted run records instead.
+  // run.json lands at completion, so in-flight runs are Host-plane-only
+  // until they finish.
+  return WORKFLOW_PERSISTED_RUN_ID_SUBCOMMANDS.has(subcommand)
     ? getPersistedWorkflowRunIdArgs()
     : [];
-  const seen = new Set<string>();
-  return [...activeArgs, ...persistedArgs].filter((arg) => {
-    if (seen.has(arg.name)) return false;
-    seen.add(arg.name);
-    return true;
-  });
 }
 
 function savedWorkflowNameFromFile(entry: string): string | undefined {

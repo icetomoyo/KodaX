@@ -611,7 +611,7 @@ describe('ArgumentCompleter', () => {
         }
       });
 
-      it('should return active run ids after workflow control subcommands', async () => {
+      it('does not offer in-flight run ids — the Host plane owns active runs', async () => {
         const runDir = mkdtempSync(join(tmpdir(), 'kodax-workflow-complete-'));
         const manager = getDefaultWorkflowRunManager();
         let finishRun = (): void => undefined;
@@ -635,8 +635,11 @@ describe('ArgumentCompleter', () => {
         });
 
         try {
+          // FEATURE_298 T22 — active runs live in the Host plane, which the
+          // sync completer cannot see; an in-flight run id is offered only
+          // after it finishes and run.json lands on disk.
           const completions = await completer.getCompletions('/workflow stop ', 15);
-          expect(completions.some(c => c.display === 'run-autocomplete-live')).toBe(true);
+          expect(completions.some(c => c.display === 'run-autocomplete-live')).toBe(false);
         } finally {
           manager.stop('run-autocomplete-live');
           finishRun();

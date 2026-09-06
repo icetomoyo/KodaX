@@ -757,6 +757,8 @@ export interface InkREPLOptions extends KodaXOptions {
   prepareSetupSandbox?: CommandCallbacks['prepareSetupSandbox'];
   inspectSandbox?: CommandCallbacks['inspectSandbox'];
   learning?: LearningBinding;
+  /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
+  workflows?: CommandCallbacks['workflows'];
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -9468,6 +9470,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           learning: options.learning,
           getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
           openLearningCenter,
+          workflows: options.workflows,
           exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {

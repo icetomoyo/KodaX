@@ -1,21 +1,16 @@
-import { join } from 'node:path';
-
 import chalk from 'chalk';
-import {
-  getAgentConfigPath,
-  type WorkflowModule,
-  type WorkflowProcessSource,
+import type {
+  WorkflowModule,
+  WorkflowProcessSource,
 } from '@kodax-ai/agent';
 import {
   buildApprovalSummary,
   generateWorkflowFromOptions,
   getBuiltinWorkflow,
-  getDefaultWorkflowRunManager,
   type WorkflowScriptSnapshotInput,
   type WorkflowRunProcessMetadata,
 } from '@kodax-ai/coding';
 
-import { deriveProjectKeyFromRoot } from '../interactive/project-key.js';
 import type { CommandCallbacks } from './types.js';
 import {
   detectWorkflowLocale,
@@ -27,14 +22,10 @@ import {
   createWorkflowLiveUpdateEmitter,
   emitWorkflowRunMessage,
   observeHostWorkflowDone,
-  observeManagedWorkflowDone,
-  subscribeWorkflowLiveProcess,
-  workflowEventSink,
   type GeneratedWorkflowStartOutcome,
   type StartGeneratedWorkflowFromRequestOptions,
   type WorkflowBuilderEvent,
 } from './workflow-command-live.js';
-import { unsubscribeWorkflowLiveProcessOnDone } from './workflow-command-cleanup.js';
 
 function emitWorkflowBuilderEvent(
   input: StartGeneratedWorkflowFromRequestOptions,
@@ -181,9 +172,6 @@ export async function startGeneratedWorkflowFromRequest(
       text: `${input.builtin ? 'Built-in' : 'Generated'} workflow: ${prepared.approvalDescription}`,
     });
   }
-  const projectKey = deriveProjectKeyFromRoot(process.cwd()).key;
-  const baseDir = input.runBaseDir ?? getAgentConfigPath('workflow-runs', projectKey);
-
   if (confirm) {
     const approved = await confirm(
       renderApprovalPrompt(approvalSummary, {
@@ -218,86 +206,61 @@ export async function startGeneratedWorkflowFromRequest(
     }
   }
 
-  // FEATURE_298 T22 — with a Host binding the approved launch is declarative:
-  // the generated capsule travels inline (built-ins travel by name); the Host
-  // validates, mints the runId, and owns the run. There is no local run.
+  // FEATURE_298 T22 — the approved launch is declarative: the generated
+  // capsule travels inline (built-ins travel by name); the Host validates,
+  // mints the runId, and owns the run. There is no local run.
   const hostControl = input.callbacks.workflows;
-  if (hostControl !== undefined) {
-    const capsule = prepared.scriptSnapshot;
-    if (input.builtin === undefined && capsule === undefined) {
-      // Unreachable today: the generated branch always attaches a capsule.
-      emitWorkflowBuilderEvent(input, {
-        stage: 'failed',
-        message: 'Generated workflow is missing its script capsule',
-      });
-      return 'failed';
-    }
-    const started = await hostControl.start({
-      projectRoot: process.cwd(),
-      source: input.builtin !== undefined
-        ? { kind: 'name', name: input.builtin.name }
-        : {
-          kind: 'inline',
-          manifest: capsule?.manifest,
-          source: capsule?.source ?? '',
-        },
-      args: prepared.args,
-      // NOTE: workflowAuthorship is deliberately NOT sent — startManagedWorkflow
-      // strips client-declared authorship for inline sources (anti-forgery);
-      // the Host mints it only for request-kind starts it generates itself.
-      metadata: buildWorkflowProcessMetadata({
-        source: input.processSource ?? 'command',
-        displayName: prepared.module.meta.name,
-        goal: input.request,
-      }),
-    });
-    if (started.kind === 'declined') {
-      emitWorkflowBuilderEvent(input, {
-        stage: 'declined',
-        message: started.reason,
-      });
-      emitWorkflowRunMessage(input.callbacks, {
-        type: 'error',
-        text: `Host declined to start: ${started.reason}`,
-      });
-      return 'declined';
-    }
-    const runId = started.runId;
-    if (presentation === 'agentic') {
-      emitWorkflowRunMessage(input.callbacks, {
-        type: 'assistant',
-        text: formatWorkflowLaunchAnswer({
-          runId,
-          summary: approvalSummary,
-          approvalSummary: prepared.approvalDescription,
-          locale,
-        }),
-        final: false,
-      });
-    } else {
-      emitWorkflowRunMessage(input.callbacks, {
-        type: 'info',
-        text: `Started workflow ${prepared.module.meta.name} (${runId}). Use /workflow show ${runId} for status.`,
-      });
-    }
-    const live = createWorkflowLiveUpdateEmitter(input.callbacks, runId, prepared.module.meta, locale);
-    live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
-    observeHostWorkflowDone(hostControl, input.callbacks, runId, live, {
-      canRerun: true,
-      presentation,
-      locale,
-    });
+  if (hostControl === undefined) {
     emitWorkflowBuilderEvent(input, {
-      stage: 'launched',
-      message: `Workflow ${prepared.module.meta.name} started`,
+      stage: 'failed',
+      message: 'Workflow Host runtime is unavailable in this session',
     });
-    return 'started';
+    emitWorkflowRunMessage(input.callbacks, {
+      type: 'error',
+      text: 'The workflow Host runtime is unavailable in this session; cannot start.',
+    });
+    return 'failed';
   }
-
-  const manager = input.runManager ?? getDefaultWorkflowRunManager();
-  const runId = `run-${Date.now().toString(36)}`;
-  const runDir = join(baseDir, runId);
-
+  const capsule = prepared.scriptSnapshot;
+  if (input.builtin === undefined && capsule === undefined) {
+    // Unreachable today: the generated branch always attaches a capsule.
+    emitWorkflowBuilderEvent(input, {
+      stage: 'failed',
+      message: 'Generated workflow is missing its script capsule',
+    });
+    return 'failed';
+  }
+  const started = await hostControl.start({
+    projectRoot: process.cwd(),
+    source: input.builtin !== undefined
+      ? { kind: 'name', name: input.builtin.name }
+      : {
+        kind: 'inline',
+        manifest: capsule?.manifest,
+        source: capsule?.source ?? '',
+      },
+    args: prepared.args,
+    // NOTE: workflowAuthorship is deliberately NOT sent — startManagedWorkflow
+    // strips client-declared authorship for inline sources (anti-forgery);
+    // the Host mints it only for request-kind starts it generates itself.
+    metadata: buildWorkflowProcessMetadata({
+      source: input.processSource ?? 'command',
+      displayName: prepared.module.meta.name,
+      goal: input.request,
+    }),
+  });
+  if (started.kind === 'declined') {
+    emitWorkflowBuilderEvent(input, {
+      stage: 'declined',
+      message: started.reason,
+    });
+    emitWorkflowRunMessage(input.callbacks, {
+      type: 'error',
+      text: `Host declined to start: ${started.reason}`,
+    });
+    return 'declined';
+  }
+  const runId = started.runId;
   if (presentation === 'agentic') {
     emitWorkflowRunMessage(input.callbacks, {
       type: 'assistant',
@@ -317,39 +280,15 @@ export async function startGeneratedWorkflowFromRequest(
   }
   const live = createWorkflowLiveUpdateEmitter(input.callbacks, runId, prepared.module.meta, locale);
   live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
-  const unsubscribeProcess = subscribeWorkflowLiveProcess(manager, live, runId);
-
-  const managed = manager.startFromOptions({
-    module: prepared.module,
-    args: prepared.args,
-    options,
-    runId,
-    runDir,
-    ...(prepared.scriptSnapshot !== undefined ? { scriptSnapshot: prepared.scriptSnapshot } : {}),
-    processMetadata: buildWorkflowProcessMetadata({
-      source: input.processSource ?? 'command',
-      displayName: prepared.module.meta.name,
-      goal: input.request,
-      hostMetadata: { workflowAuthorship: 'kodax-generated' },
-    }),
-    onEvent: workflowEventSink(input.callbacks, undefined, {
-      presentation: input.presentation ?? 'command',
-      locale,
-      runId,
-    }),
-  });
-  unsubscribeWorkflowLiveProcessOnDone(managed, unsubscribeProcess);
-  emitWorkflowBuilderEvent(input, {
-    stage: 'launched',
-    message: `Workflow ${prepared.module.meta.name} started`,
-  });
-
-  observeManagedWorkflowDone(managed, input.callbacks, runId, live, {
+  observeHostWorkflowDone(hostControl, input.callbacks, runId, live, {
     canRerun: true,
     presentation,
     locale,
   });
-
+  emitWorkflowBuilderEvent(input, {
+    stage: 'launched',
+    message: `Workflow ${prepared.module.meta.name} started`,
+  });
   return 'started';
 }
 
