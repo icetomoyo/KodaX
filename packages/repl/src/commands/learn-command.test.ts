@@ -9,7 +9,6 @@ import {
   resolveLearningProposalStore,
   setAgentConfigHome,
   triageProceduralLearning,
-  updateLearningProposalStatus,
   upsertLearningProposal,
   type ReviewableLearningProposal,
 } from '@kodax-ai/agent';
@@ -102,379 +101,49 @@ describe('FEATURE_224 /learn command', () => {
     fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
-  it('lists pending learning suggestions', async () => {
+  it('reports every control unavailable without a Learning Center binding and never touches the proposal store', async () => {
+    // FEATURE_298 T23 — /learn is Learning-Center-only: without a binding it
+    // reports unavailable for every subcommand and never falls back to the
+    // cwd proposal store (the standalone domain functions stay in the agent
+    // package, tested there).
     const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-list',
+      proposalId: 'p-fallback',
       origin: 'background_learning',
       completedTurn: true,
-      sourceRefs: ['turn:list'],
+      sourceRefs: ['turn:fallback'],
       candidate: {
         kind: 'skill_patch',
         skillName: 'release-notes',
         whyDurable: 'Repeated completed sessions used the same checklist.',
         trigger: 'When drafting release notes.',
         changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal);
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['pending'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('pending learning suggestions')).toBe(true);
-    expect(log.contains('p-list')).toBe(true);
-    expect(log.contains('release-notes')).toBe(true);
-  });
-
-  it('approves and applies skill plans', async () => {
-    const skillRoot = path.join(cwd, '.kodax', 'skills', 'release-notes');
-    fs.mkdirSync(skillRoot, { recursive: true });
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'old skill', 'utf8');
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-approve',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:approve'],
-      candidate: {
-        kind: 'skill_patch',
-        skillName: 'release-notes',
-        whyDurable: 'Repeated completed sessions used the same checklist.',
-        trigger: 'When drafting release notes.',
-        changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal, {
-      applyPlan: {
-        kind: 'skill',
-        governance: {
-          action: 'patch',
-          source: 'project',
-          ownership: 'human',
-          origin: 'background_learning',
-        },
-        skillRoot,
-        changes: [{ kind: 'write', relativePath: 'SKILL.md', content: 'new skill' }],
-      },
-    });
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['approve', 'p-approve'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('approved and applied p-approve')).toBe(true);
-    expect(fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8')).toBe('new skill');
-    const store = await readLearningProposalStore(resolveLearningProposalStore(cwd));
-    expect(store.proposals[0]?.status).toBe('approved');
-    expect(store.proposals[0]?.appliedAt).toBeTruthy();
-    expect(store.proposals[0]?.appliedChangedPaths).toEqual(['SKILL.md']);
-    expect(store.proposals[0]?.appliedSnapshotPath).toBeTruthy();
-  });
-
-  it('approves crash-recovered skill plans when files already match', async () => {
-    const skillRoot = path.join(cwd, '.kodax', 'skills', 'release-notes-recovered');
-    fs.mkdirSync(skillRoot, { recursive: true });
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'new skill', 'utf8');
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-recovered',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:recovered'],
-      candidate: {
-        kind: 'skill_patch',
-        skillName: 'release-notes-recovered',
-        whyDurable: 'Repeated completed sessions used the same checklist.',
-        trigger: 'When drafting release notes.',
-        changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal, {
-      applyPlan: {
-        kind: 'skill',
-        governance: {
-          action: 'patch',
-          source: 'project',
-          ownership: 'human',
-          origin: 'background_learning',
-        },
-        skillRoot,
-        changes: [{ kind: 'write', relativePath: 'SKILL.md', content: 'new skill' }],
-      },
-    });
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['approve', 'p-recovered'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('files already match the apply plan')).toBe(true);
-    expect(fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8')).toBe('new skill');
-    const store = await readLearningProposalStore(resolveLearningProposalStore(cwd));
-    expect(store.proposals[0]?.status).toBe('approved');
-    expect(store.proposals[0]?.appliedChangedPaths).toEqual(['SKILL.md']);
-  });
-
-  it('refuses to reapply pending skill plans over edits made after a snapshot', async () => {
-    const skillRoot = path.join(cwd, '.kodax', 'skills', 'release-notes-conflict');
-    fs.mkdirSync(skillRoot, { recursive: true });
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'old skill', 'utf8');
-    const storePath = resolveLearningProposalStore(cwd);
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-conflict',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:conflict'],
-      candidate: {
-        kind: 'skill_patch',
-        skillName: 'release-notes-conflict',
-        whyDurable: 'Repeated completed sessions used the same checklist.',
-        trigger: 'When drafting release notes.',
-        changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(storePath, proposal, {
-      applyPlan: {
-        kind: 'skill',
-        governance: {
-          action: 'patch',
-          source: 'project',
-          ownership: 'human',
-          origin: 'background_learning',
-        },
-        skillRoot,
-        changes: [{ kind: 'write', relativePath: 'SKILL.md', content: 'new skill' }],
-      },
-    });
-
-    const first = captureOutput();
-    try {
-      await invoke(['approve', 'p-conflict'], cwd);
-    } finally {
-      first.restore();
-    }
-    await updateLearningProposalStatus(storePath, 'p-conflict', 'pending');
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'manual edit', 'utf8');
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['approve', 'p-conflict'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('refusing to reapply p-conflict')).toBe(true);
-    expect(fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8')).toBe('manual edit');
-    const store = await readLearningProposalStore(storePath);
-    expect(store.proposals[0]?.status).toBe('pending');
-  });
-
-  it('does not apply a proposal twice after approval', async () => {
-    const skillRoot = path.join(cwd, '.kodax', 'skills', 'release-notes-once');
-    fs.mkdirSync(skillRoot, { recursive: true });
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'old skill', 'utf8');
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-once',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:once'],
-      candidate: {
-        kind: 'skill_patch',
-        skillName: 'release-notes-once',
-        whyDurable: 'Repeated completed sessions used the same checklist.',
-        trigger: 'When drafting release notes.',
-        changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal, {
-      applyPlan: {
-        kind: 'skill',
-        governance: {
-          action: 'patch',
-          source: 'project',
-          ownership: 'human',
-          origin: 'background_learning',
-        },
-        skillRoot,
-        changes: [{ kind: 'write', relativePath: 'SKILL.md', content: 'new skill' }],
-      },
-    });
-
-    const first = captureOutput();
-    try {
-      await invoke(['approve', 'p-once'], cwd);
-    } finally {
-      first.restore();
-    }
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), 'manual edit', 'utf8');
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['approve', 'p-once'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('is already approved')).toBe(true);
-    expect(fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8')).toBe('manual edit');
-  });
-
-  it('does not approve skill proposals without an apply plan', async () => {
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-no-plan',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:no-plan'],
-      candidate: {
-        kind: 'skill_patch',
-        skillName: 'release-notes',
-        whyDurable: 'Repeated completed sessions used the same checklist.',
-        trigger: 'When drafting release notes.',
-        changeSummary: 'Add checklist.',
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal);
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['approve', 'p-no-plan'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('has no skill apply plan')).toBe(true);
-    const store = await readLearningProposalStore(resolveLearningProposalStore(cwd));
-    expect(store.proposals[0]?.status).toBe('pending');
-  });
-
-  it('rejects proposals with feedback', async () => {
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-reject',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:reject'],
-      candidate: {
-        kind: 'workflow_handoff',
-        workflowRunId: 'wf-reject',
-        workflowStatus: 'completed',
-        suggestedAction: 'save_from_run',
-        whyWorkflowNotSkill: 'The learning is a repeatable phase graph.',
-        requiredWorkflowEvidence: ['completed run'],
-        risk: 'low',
-        consumerImpact: {
-          workflowCapsules: [],
-          savedWorkflows: [],
-          constructedAgents: [],
-          promptReferences: [],
-          action: 'none',
-        },
-      },
-    }));
-    await upsertLearningProposal(resolveLearningProposalStore(cwd), proposal);
-
-    const { restore } = captureOutput();
-    try {
-      await invoke(['reject', 'p-reject', 'too', 'broad'], cwd);
-    } finally {
-      restore();
-    }
-
-    const store = await readLearningProposalStore(resolveLearningProposalStore(cwd));
-    expect(store.proposals[0]).toMatchObject({
-      status: 'rejected',
-      rejectedReason: 'too broad',
-    });
-  });
-
-  it('requires explicit impact acknowledgement before approving impacted workflow handoffs', async () => {
-    const proposal = requireReviewable(triageProceduralLearning({
-      proposalId: 'p-impact',
-      origin: 'background_learning',
-      completedTurn: true,
-      sourceRefs: ['turn:impact'],
-      candidate: {
-        kind: 'workflow_handoff',
-        workflowRunId: 'wf-impact',
-        workflowStatus: 'completed',
-        suggestedAction: 'revise_capsule',
-        whyWorkflowNotSkill: 'The learning is a repeatable phase graph.',
-        requiredWorkflowEvidence: ['completed run'],
-        risk: 'medium',
-        consumerImpact: {
-          workflowCapsules: ['workflows/release.json'],
-          savedWorkflows: [],
-          constructedAgents: [],
-          promptReferences: ['prompts/release.md'],
-          action: 'block_until_manual_review',
-        },
       },
     }));
     const storePath = resolveLearningProposalStore(cwd);
     await upsertLearningProposal(storePath, proposal);
+    const before = fs.readFileSync(storePath, 'utf-8');
 
-    const blocked = captureOutput();
-    try {
-      await invoke(['approve', 'p-impact'], cwd);
-    } finally {
-      blocked.restore();
+    for (const args of [
+      ['pending'], ['list'], ['ready'],
+      ['show', 'p-fallback'], ['diff', 'p-fallback'],
+      ['approve', 'p-fallback'], ['reject', 'p-fallback', 'not wanted'],
+      ['trust', 'p-fallback'], ['disable', 'p-fallback'], ['rollback', 'p-fallback'],
+      ['promote', 'p-fallback'],
+    ]) {
+      const { log, restore } = captureOutput();
+      try {
+        await invoke(args, cwd);
+      } finally {
+        restore();
+      }
+      expect(log.contains('Learning Center controls are unavailable in this runtime')).toBe(true);
     }
 
-    expect(blocked.log.contains('requires manual consumer-impact review')).toBe(true);
-    let store = await readLearningProposalStore(storePath);
-    expect(store.proposals[0]?.status).toBe('pending');
-
-    const acknowledged = captureOutput();
-    try {
-      await invoke(['approve', 'p-impact', '--ack-impact'], cwd);
-    } finally {
-      acknowledged.restore();
-    }
-
-    expect(acknowledged.log.contains('approved p-impact as a downstream handoff')).toBe(true);
-    store = await readLearningProposalStore(storePath);
-    expect(store.proposals[0]?.status).toBe('approved');
-    expect(store.proposals[0]?.appliedAt).toBeUndefined();
-  });
-
-  it('keeps pending read-only when store entries contain warnings', async () => {
-    const storePath = resolveLearningProposalStore(cwd);
-    fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    fs.writeFileSync(
-      storePath,
-      `${JSON.stringify({
-        version: 1,
-        proposals: [
-          {
-            proposalId: 'p-bad',
-            status: 'pending',
-            createdAt: '2026-06-21T00:00:00.000Z',
-            updatedAt: '2026-06-21T00:00:00.000Z',
-            proposal: {
-              destination: 'unknown_carrier',
-              proposalId: 'p-bad',
-            },
-          },
-        ],
-      }, null, 2)}\n`,
-      'utf8',
-    );
-
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['pending'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('invalid proposal payload')).toBe(true);
-    expect(log.contains('pending learning suggestions')).toBe(true);
-    expect(log.contains('refusing to mutate')).toBe(false);
+    expect(fs.readFileSync(storePath, 'utf-8')).toBe(before);
+    expect(
+      (await readLearningProposalStore(storePath)).proposals
+        .find((entry) => entry.proposalId === 'p-fallback')?.status,
+    ).toBe('pending');
   });
 
   it('shows skill suggestions through /skill pending', async () => {
@@ -785,17 +454,4 @@ describe('FEATURE_224 /learn command', () => {
     expect(log.contains('Memory pipeline health: /memory doctor')).toBe(true);
   });
 
-  it('labels the legacy proposal fallback when no Learning Center is bound', async () => {
-    const { log, restore } = captureOutput();
-    try {
-      await invoke(['pending'], cwd);
-      await invoke(['ready'], cwd);
-    } finally {
-      restore();
-    }
-
-    expect(log.contains('showing the legacy pending learning proposals')).toBe(true);
-    expect(log.contains('Learning Center controls are unavailable in this runtime')).toBe(true);
-    expect(log.contains('missing proposal id for ready')).toBe(false);
-  });
 });

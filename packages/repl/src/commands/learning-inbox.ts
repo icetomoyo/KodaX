@@ -72,5 +72,5 @@ export async function printLearningPendingForFilter(cwd: string, filter: Learnin
   for (const entry of pending) {
     writeOutput(`  ${chalk.cyan(entry.proposalId)} ${chalk.dim(`[${entry.proposal.destination}]`)} ${proposalLabel(entry)}`);
   }
-  writeOutput(chalk.dim('\n  Use /learn diff <id>, /learn approve <id>, or /learn reject <id>.\n'));
+  writeOutput(chalk.dim('\n  Review these in the Learning Center (/learn list, /learn show <id>).\n'));
 }

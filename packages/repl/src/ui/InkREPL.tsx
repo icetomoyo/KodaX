@@ -6230,7 +6230,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const openLearningCenter = useCallback(async (requested?: string): Promise<void> => {
     const binding = options.learning;
-    if (!binding) return;
+    if (!binding) {
+      // FEATURE_298 T23 — a missing binding is reported, never silently
+      // ignored, and no other learning store is consulted.
+      setLearningNotices([{
+        id: "learning-center-unavailable",
+        text: "Learning Center is unavailable in this runtime.",
+        tone: "warning",
+      }]);
+      return;
+    }
     let capabilityKey = requested;
     if (!capabilityKey) {
       const page = await binding.list({ limit: 200 });
