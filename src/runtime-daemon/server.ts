@@ -248,6 +248,14 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "skill.list",
     "skill.describe",
     "skill.read",
+    // FEATURE_298 T37 — trusted preparation reads (same exposure class as
+    // skill.read/command.resolve). prepareReview additionally runs git
+    // capture and writes review packets Host-side (same writes the embedded
+    // run path performs); the sha ref is option-guarded before git argv.
+    "invocations.prepareSkill",
+    "invocations.prepareCommand",
+    "invocations.prepareReview",
+    "invocations.prepareAgentsLean",
     "artifact.get",
   ]),
   ...scopeEntries("session:write", [
@@ -1241,6 +1249,40 @@ async function dispatchRuntimeDaemonRequest(
         ...(typeof params.projectRoot === "string"
           ? { projectRoot: params.projectRoot }
           : {}),
+      });
+    }
+    case "invocations.prepareSkill": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.prepareSkill({
+        projectRoot: requireStringField(params, "projectRoot"),
+        name: requireStringField(params, "name"),
+        ...(typeof params.argumentsText === "string"
+          ? { argumentsText: params.argumentsText }
+          : {}),
+        ...(typeof params.sessionId === "string"
+          ? { sessionId: params.sessionId }
+          : {}),
+      });
+    }
+    case "invocations.prepareCommand": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.prepareCommand({
+        projectRoot: requireStringField(params, "projectRoot"),
+        name: requireStringField(params, "name"),
+      });
+    }
+    case "invocations.prepareReview": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.prepareReview({
+        projectRoot: requireStringField(params, "projectRoot"),
+        sessionId: requireStringField(params, "sessionId"),
+        args: requireStringArrayField(params, "args"),
+      });
+    }
+    case "invocations.prepareAgentsLean": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.prepareAgentsLean({
+        projectRoot: requireStringField(params, "projectRoot"),
       });
     }
     case "artifact.create":
@@ -2471,6 +2513,10 @@ function runtimeDaemonCapabilities(
       version: 1,
       methodNamespace: "agents",
     },
+    // FEATURE_298 T37 — the invocations.* preparation methods this daemon
+    // dispatches; clients gate on this fact instead of RPC'ing methods an
+    // older Host would reject with an unsettled id-less invalid_frame.
+    invocationPreparation: { version: 1 },
     sandboxRuntime: sandboxRuntimeCapability(),
     managedRunDurability: {
       version: 1,

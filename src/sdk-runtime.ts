@@ -4312,6 +4312,10 @@ async function createKodaXRuntimeInternal(
       rollback: true,
     },
     actorControlPlane: { version: 1, methodNamespace: "agents" },
+    // FEATURE_298 T37 — trusted invocation preparation over the daemon face;
+    // clients gate on this instead of RPC'ing methods an older Host lacks
+    // (an unknown method's id-less invalid_frame would never settle).
+    invocationPreparation: { version: 1 },
     effectiveConfig: {
       version: 1,
       credentialValues: false,

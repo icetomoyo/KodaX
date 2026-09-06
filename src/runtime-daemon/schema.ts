@@ -598,6 +598,31 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'skill.describe': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
   'skill.read': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
+  'invocations.prepareSkill': {
+    params: objectSchema({
+      projectRoot: stringSchema,
+      name: stringSchema,
+      argumentsText: stringSchema,
+      sessionId: stringSchema,
+    }, ['projectRoot', 'name'], true),
+    result: objectAnySchema,
+  },
+  'invocations.prepareCommand': {
+    params: objectSchema({ projectRoot: stringSchema, name: stringSchema }, ['projectRoot', 'name'], true),
+    result: objectAnySchema,
+  },
+  'invocations.prepareReview': {
+    params: objectSchema({
+      projectRoot: stringSchema,
+      sessionId: stringSchema,
+      args: { type: 'array', items: stringSchema },
+    }, ['projectRoot', 'sessionId', 'args'], true),
+    result: objectAnySchema,
+  },
+  'invocations.prepareAgentsLean': {
+    params: objectSchema({ projectRoot: stringSchema }, ['projectRoot'], true),
+    result: objectAnySchema,
+  },
 
   'artifact.create': {
     params: objectSchema({

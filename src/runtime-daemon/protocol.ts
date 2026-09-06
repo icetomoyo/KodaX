@@ -134,6 +134,10 @@ export type RuntimeDaemonMethod =
   | 'skill.list'
   | 'skill.describe'
   | 'skill.read'
+  | 'invocations.prepareSkill'
+  | 'invocations.prepareCommand'
+  | 'invocations.prepareReview'
+  | 'invocations.prepareAgentsLean'
   | 'artifact.create'
   | 'artifact.get'
   | 'artifact.delete'
@@ -466,6 +470,10 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'skill.list',
   'skill.describe',
   'skill.read',
+  'invocations.prepareSkill',
+  'invocations.prepareCommand',
+  'invocations.prepareReview',
+  'invocations.prepareAgentsLean',
   'artifact.create',
   'artifact.get',
   'artifact.delete',

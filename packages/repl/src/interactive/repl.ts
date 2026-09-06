@@ -489,6 +489,9 @@ export interface RepLOptions extends KodaXOptions {
   workflows?: CommandCallbacks['workflows'];
   /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
   prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
+  prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
+  prepareReview?: CommandCallbacks['prepareReview'];
+  prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
 }
 
 function resolveInitialReasoningMode(
@@ -1001,6 +1004,9 @@ Keyboard Shortcuts:
     getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
     workflows: options.workflows,
     prepareSkillInvocation: options.prepareSkillInvocation,
+    prepareCommandInvocation: options.prepareCommandInvocation,
+    prepareReview: options.prepareReview,
+    prepareAgentsLean: options.prepareAgentsLean,
     exit: () => {
       isRunning = false;
       // FEATURE_125 — release the instance directory + clear the

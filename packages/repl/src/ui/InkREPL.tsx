@@ -762,6 +762,9 @@ export interface InkREPLOptions extends KodaXOptions {
   workflows?: CommandCallbacks['workflows'];
   /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
   prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
+  prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
+  prepareReview?: CommandCallbacks['prepareReview'];
+  prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -9483,6 +9486,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           openLearningCenter,
           workflows: options.workflows,
           prepareSkillInvocation: options.prepareSkillInvocation,
+          prepareCommandInvocation: options.prepareCommandInvocation,
+          prepareReview: options.prepareReview,
+          prepareAgentsLean: options.prepareAgentsLean,
           exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {

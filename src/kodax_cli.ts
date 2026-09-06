@@ -5783,30 +5783,26 @@ complete -c kodax -l version -d 'Show version'`);
           workflows: interactiveRuntime.workflows,
           // FEATURE_298 T37 — Skill preparation runs in the Host against
           // the trusted registry; the UI sends only name + argument text.
-          // FEATURE_298 T37 — preparation bindings need the in-process
-          // invocation service; daemon-mode REPLs keep the local paths.
-          ...(interactiveRuntime.identity.mode === 'embedded'
-            ? {
-              prepareSkillInvocation: {
-                prepare: (input: {
-                  projectRoot: string;
-                  name: string;
-                  argumentsText?: string;
-                  sessionId?: string;
-                }) => interactiveRuntime.invocations.prepareSkill(input),
-              },
-              prepareCommandInvocation: {
-                prepare: (input: { projectRoot: string; name: string }) =>
-                  interactiveRuntime.invocations.prepareCommand(input),
-              },
-              prepareReview: {
-                prepare: (input: { projectRoot: string; sessionId: string; args: readonly string[] }) =>
-                  interactiveRuntime.invocations.prepareReview(input),
-              },
-              prepareAgentsLean: (input: { projectRoot: string }) =>
-                interactiveRuntime.invocations.prepareAgentsLean(input),
-            }
-            : {}),
+          // Slice 4: the daemon face carries the same service over RPC, so
+          // every interactive runtime (embedded or daemon-connected) binds.
+          prepareSkillInvocation: {
+            prepare: (input: {
+              projectRoot: string;
+              name: string;
+              argumentsText?: string;
+              sessionId?: string;
+            }) => interactiveRuntime.invocations.prepareSkill(input),
+          },
+          prepareCommandInvocation: {
+            prepare: (input: { projectRoot: string; name: string }) =>
+              interactiveRuntime.invocations.prepareCommand(input),
+          },
+          prepareReview: {
+            prepare: (input: { projectRoot: string; sessionId: string; args: readonly string[] }) =>
+              interactiveRuntime.invocations.prepareReview(input),
+          },
+          prepareAgentsLean: (input: { projectRoot: string }) =>
+            interactiveRuntime.invocations.prepareAgentsLean(input),
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

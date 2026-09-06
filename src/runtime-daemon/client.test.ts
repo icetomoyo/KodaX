@@ -227,6 +227,43 @@ describe('runtime daemon client proxy', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('requires an upgraded daemon before preparing any invocation', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-old-invocations-daemon',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-07-10T00:00:00.000Z',
+        version: '0.7.96',
+      },
+      transport: fakeTransport(calls),
+      capabilities: {},
+    });
+
+    await expect(client.invocations.prepareSkill({
+      projectRoot: process.cwd(),
+      name: 'review',
+    })).rejects.toMatchObject({
+      code: 'daemon_upgrade_required',
+      capability: 'invocationPreparation',
+      restartRequired: true,
+    });
+    await expect(client.invocations.prepareCommand({
+      projectRoot: process.cwd(),
+      name: 'help',
+    })).rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'invocationPreparation' });
+    await expect(client.invocations.prepareReview({
+      projectRoot: process.cwd(),
+      sessionId: 'session-1',
+      args: [],
+    })).rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'invocationPreparation' });
+    await expect(client.invocations.prepareAgentsLean({ projectRoot: process.cwd() }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'invocationPreparation' });
+    expect(calls).toHaveLength(0);
+    await client.close();
+  });
+
   it('requires an upgraded daemon before Stop or cancellable reads', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const client = createRuntimeDaemonClient({

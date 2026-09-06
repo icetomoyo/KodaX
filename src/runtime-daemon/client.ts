@@ -85,6 +85,14 @@ import type {
   RuntimeWorkflowStartInput,
   RuntimeWorkflowStartResult,
 } from '../sdk-runtime.js';
+import type {
+  RuntimePreparedCommand,
+  RuntimePreparedSkill,
+} from '../runtime-invocations.js';
+import type {
+  RuntimePreparedAgentsLean,
+  RuntimePreparedReview,
+} from '../runtime-review-preparation.js';
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
 import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
@@ -166,6 +174,19 @@ export class RuntimeDaemonUpgradeRequiredError extends Error {
       'Runtime daemon does not advertise actorControlPlane v1. Upgrade KodaX and restart the daemon before using Runtime Actor control.',
     );
     this.name = 'RuntimeDaemonUpgradeRequiredError';
+  }
+}
+
+export class RuntimeInvocationPreparationUpgradeRequiredError extends Error {
+  readonly code = 'daemon_upgrade_required' as const;
+  readonly capability = 'invocationPreparation' as const;
+  readonly restartRequired = true as const;
+
+  constructor() {
+    super(
+      'Runtime daemon does not advertise invocationPreparation v1. Upgrade KodaX and restart the daemon before preparing invocations.',
+    );
+    this.name = 'RuntimeInvocationPreparationUpgradeRequiredError';
   }
 }
 
@@ -323,6 +344,18 @@ export function createRuntimeDaemonClient(
       || capability.methodNamespace !== 'agents'
     ) {
       return new RuntimeDaemonUpgradeRequiredError();
+    }
+    return undefined;
+  };
+  const invocationPreparationError = (): RuntimeInvocationPreparationUpgradeRequiredError | undefined => {
+    const capability = options.capabilities?.invocationPreparation;
+    if (
+      typeof capability !== 'object'
+      || capability === null
+      || !('version' in capability)
+      || capability.version !== 1
+    ) {
+      return new RuntimeInvocationPreparationUpgradeRequiredError();
     }
     return undefined;
   };
@@ -965,20 +998,31 @@ export function createRuntimeDaemonClient(
         throw new Error('Memory management requires an in-process runtime client.');
       },
     } as unknown as KodaXRuntime['memory'],
-    // FEATURE_298 T37 — Skill preparation is likewise in-process (the Host
-    // expands queued skills server-side); no daemon RPC by design.
+    // FEATURE_298 T37 slice 4 — trusted Skill/command/review/agents-lean
+    // preparation runs Host-side; daemon-connected clients reach the same
+    // invocation service over RPC (the results are plain JSON projections).
+    // Each method gates on the advertised capability so an older Host fails
+    // fast with an upgrade-required error instead of an unsettled request.
     invocations: {
-      async prepareSkill() {
-        throw new Error('Skill preparation requires an in-process runtime client.');
+      prepareSkill(input) {
+        const unavailable = invocationPreparationError();
+        if (unavailable) return Promise.reject(unavailable);
+        return request('invocations.prepareSkill', input) as Promise<RuntimePreparedSkill>;
       },
-      async prepareCommand() {
-        throw new Error('Command preparation requires an in-process runtime client.');
+      prepareCommand(input) {
+        const unavailable = invocationPreparationError();
+        if (unavailable) return Promise.reject(unavailable);
+        return request('invocations.prepareCommand', input) as Promise<RuntimePreparedCommand>;
       },
-      async prepareReview() {
-        throw new Error('Review preparation requires an in-process runtime client.');
+      prepareReview(input) {
+        const unavailable = invocationPreparationError();
+        if (unavailable) return Promise.reject(unavailable);
+        return request('invocations.prepareReview', input) as Promise<RuntimePreparedReview>;
       },
-      async prepareAgentsLean() {
-        throw new Error('Agents-lean preparation requires an in-process runtime client.');
+      prepareAgentsLean(input) {
+        const unavailable = invocationPreparationError();
+        if (unavailable) return Promise.reject(unavailable);
+        return request('invocations.prepareAgentsLean', input) as Promise<RuntimePreparedAgentsLean>;
       },
     },
     workflows: {

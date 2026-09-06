@@ -1493,6 +1493,105 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
+  it('routes invocation preparations with parsed params and passes results through', async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const runtime: KodaXRuntime = {
+      ...makeRuntime(),
+      invocations: {
+        async prepareSkill(input) {
+          calls.push({ method: 'prepareSkill', input: { ...input } });
+          return {
+            kind: 'prepared',
+            invocation: {
+              prompt: `expanded:${input.name}`,
+              source: 'skill',
+              displayName: input.name,
+              path: '/skills/audit-helper/SKILL.md',
+              skillInvocation: {
+                name: input.name,
+                path: '/skills/audit-helper/SKILL.md',
+                expandedContent: `expanded:${input.name}`,
+                runtimePolicy: { enforceAtRuntime: true },
+              },
+            },
+          };
+        },
+        async prepareCommand(input) {
+          calls.push({ method: 'prepareCommand', input: { ...input } });
+          return { kind: 'local' };
+        },
+        async prepareReview(input) {
+          calls.push({ method: 'prepareReview', input: { ...input } });
+          return {
+            kind: 'prepared',
+            invocation: { prompt: 'review prompt', source: 'prompt', displayName: '/review' },
+          };
+        },
+        async prepareAgentsLean(input) {
+          calls.push({ method: 'prepareAgentsLean', input: { ...input } });
+          return { kind: 'missing' };
+        },
+      },
+    };
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher);
+
+    const skill = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-invocations-skill',
+      'invocations.prepareSkill',
+      { projectRoot: '/proj', name: 'audit-helper', argumentsText: 'focus on auth', sessionId: 'session-9' },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(skill)).toBe(true);
+    if (isRuntimeDaemonSuccessResponse(skill)) {
+      expect(skill.result).toMatchObject({
+        kind: 'prepared',
+        invocation: { displayName: 'audit-helper', skillInvocation: { runtimePolicy: { enforceAtRuntime: true } } },
+      });
+    }
+
+    const review = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-invocations-review',
+      'invocations.prepareReview',
+      { projectRoot: '/proj', sessionId: 'session-9', args: ['--lean'] },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(review)).toBe(true);
+
+    const command = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-invocations-command',
+      'invocations.prepareCommand',
+      { projectRoot: '/proj', name: 'Help' },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(command)).toBe(true);
+
+    const agentsLean = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-invocations-agents-lean',
+      'invocations.prepareAgentsLean',
+      { projectRoot: '/proj' },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(agentsLean)).toBe(true);
+
+    expect(calls).toEqual([
+      { method: 'prepareSkill', input: { projectRoot: '/proj', name: 'audit-helper', argumentsText: 'focus on auth', sessionId: 'session-9' } },
+      { method: 'prepareReview', input: { projectRoot: '/proj', sessionId: 'session-9', args: ['--lean'] } },
+      { method: 'prepareCommand', input: { projectRoot: '/proj', name: 'Help' } },
+      { method: 'prepareAgentsLean', input: { projectRoot: '/proj' } },
+    ]);
+
+    // Missing required params are rejected before the Host service runs.
+    const invalid = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-invocations-invalid',
+      'invocations.prepareReview',
+      { projectRoot: '/proj' },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(invalid)).toBe(false);
+    if (!isRuntimeDaemonSuccessResponse(invalid)) {
+      expect(invalid.error.code).toBe('invalid_params');
+    }
+    // The rejected request never reached the Host service.
+    expect(calls).toHaveLength(4);
+    dispatcher.close();
+  });
+
   it('requires host authorization but never treats client capability claims as authorization', async () => {
     const hostDenied = createRuntimeDaemonDispatcher({
       runtime: makeRuntime(),
@@ -3502,6 +3601,10 @@ const METHOD_SMOKE_PARAMS = {
   'skill.list': { projectRoot: process.cwd(), userInvocableOnly: true },
   'skill.describe': { name: 'review', projectRoot: process.cwd() },
   'skill.read': { name: 'review', projectRoot: process.cwd() },
+  'invocations.prepareSkill': { projectRoot: process.cwd(), name: 'review' },
+  'invocations.prepareCommand': { projectRoot: process.cwd(), name: 'help' },
+  'invocations.prepareReview': { projectRoot: process.cwd(), sessionId: 'session-1', args: [] },
+  'invocations.prepareAgentsLean': { projectRoot: process.cwd() },
   'artifact.create': { kind: 'file', path: '/tmp/runtime-daemon-smoke.txt' },
   'artifact.get': { artifactId: 'art-1' },
   'artifact.delete': { artifactId: 'art-1' },
@@ -3959,6 +4062,12 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async promote() {},
       async review() {},
       async trust() {},
+    },
+    invocations: {
+      async prepareSkill() { return { kind: 'unknown' as const }; },
+      async prepareCommand() { return { kind: 'local' as const }; },
+      async prepareReview() { return { kind: 'empty' as const }; },
+      async prepareAgentsLean() { return { kind: 'missing' as const }; },
     },
     config: {
       async read() {

@@ -233,6 +233,12 @@ it('prepares /review Host-side: diff capture, workflow pieces, empty, and error'
     });
     expect(badScope).toMatchObject({ kind: 'error' });
 
+    // Option-shaped sha tokens never reach git argv.
+    const optionShaped = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: ['sha', '--help'],
+    });
+    expect(optionShaped).toMatchObject({ kind: 'error', message: expect.stringContaining('invalid commit hash') });
+
     // /agents lean: present file prepares; missing file reports missing.
     const leanPresent = await runtime.invocations.prepareAgentsLean({ projectRoot });
     expect(leanPresent.kind).toBe('missing');
