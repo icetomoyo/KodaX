@@ -374,3 +374,19 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **T12 残留（票面已注明，随 T16/T19 消费者补）**：extension-sourced command S1、损坏记录 warn 诊断 S1、createSession 失败 dispose S1。
 
 **下一步（DAG 前沿）**：T34 前置 T23/T31/T36/T37；T26 需 T17/T18/T19/T21/T35；T15 收尾等 T17/T18/T25。
+
+---
+
+## 2026-09-06 会话补记：T16 完成（凭据、Host Tools 和附件归可信 Host）
+
+**提交**：代码 `c251642a`（sdk-runtime fingerprint + 新 S1 测试）、子模块 `8b57026`（T16→Done，18/35）+ 指针。
+
+**调研结论（Explore 代理）**：三子句中两子句是此前切片已交付——凭据 resolver（daemon 侧 v1/v2 credential lease + `runWithProviderCredentialLease` AsyncLocalStorage 逐 wire 取密 + 错误脱敏；embedded runtime 故意不支持 `credentials`/`hostTools`）与 host-tool 桥断开语义（reverse-bridge：未派发→`host_tool_unavailable`、已派发→`host_tool_unknown`，durable invocation 状态 prepared→not_dispatched/dispatched→unknown 恢复映射=不重放）。缺口只有**附件引用诚实性**：artifact 只在注册时 stat，丢失文件在执行深处失败或静默变成 wire 占位符（llm `MISSING_IMAGE_PLACEHOLDER`——对历史回放是有意设计，不能在 serializer 层改），改写内容被无声当新内容消费。
+
+**实施**：`createRuntimeArtifactStore` 内部 `fingerprints` Map（size+mtimeMs，与 artifacts 同生灭），`resolve()` 重 stat：不可读/非普通文件/漂移分别拒绝；resolve 被 `normalizeRuntimeRunInput` 在 runs.start 准入与 run input 入队两处调用（artifact_ref 无其它入口）。无内容快照（票面边界）；同 mtime tick 同尺寸改写、准入后漂移为已注释的尽力而为边界。
+
+**S1 关键坑**：runtime-registered provider（registerModelProvider）**过不了媒体门**——`getModelInputCapabilities` 只认 official openai/anthropic、source-backed 路由或 custom provider 的 `imageInput:true`，且 registerModelProvider 与 custom-registry 同名互斥。解法=crash 测试模式：config.json `customProviders`（protocol openai + imageInput:true）+ 本地 SSE 服务器；**SSE 帧必须** content chunk(null) + `chunk({}, 'stop')` + `[DONE]`，缺终帧报 invalid_response/mid_stream_text；`data:` 前不能有空格。完好引用断言 PNG base64 出现在真实 HTTP 请求体。双轴评审双 PASS（Standards M1 边界注释/M2 清理起点+L1-L6；Spec 确认准入为正确 seam、无遗留子句）。
+
+**回归**：新 S1 + daemon 55 + a2a 66 + sdk-runtime 10 预存败 + tsc 477 无键漂移（对 t12-final 日志 diff 键集=0 增 0 删）。
+
+**T16 解锁**：T19/T20/T22/T30/T31/T35/T36 全部 actionable（T36/T31/T35/T30/T22/T20/T19 仅原被 T16 阻塞）。下一前沿从这些票里选；T34 仍差 T23/T31/T36/T37，T26 仍差 T17/T18/T19/T21/T35。
