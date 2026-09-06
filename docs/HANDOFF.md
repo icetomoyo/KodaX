@@ -445,3 +445,17 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 
 **最有价值的发现**：`packages/coding/src/workflows/host.ts` 的 **startManagedWorkflow(input)** 已接受声明式 source——`{kind:'saved', module}` | `{kind:'inline', manifest, source}`（manifest+source 为字符串，**可序列化**）| request（NL 生成）。inline 路径 Host 侧已做受信校验：validateWorkflowScriptManifest + validateGeneratedWorkflowSource + assertInlineWorkflowSmoke + splitWorkflowQualityWarnings——run_workflow 工具即此路径（tool-execution-context.ts:333+）。**因此 Host RPC start 的合理形状**：client 发 inline manifest+source+args（或 name 由 Host 用 coding 的 getBuiltinWorkflow/loadSavedWorkflow/discoverSavedWorkflows 解析为 saved module），Host 调 startManagedWorkflow（manager=getDefaultWorkflowRunManager()=runtime.workflows 同一单例）。
 **剩余大障碍（定价）**：`options: KodaXOptions`。run 路径的 buildRunOptions（sdk-runtime.ts:12865+）深耦合 RuntimeRunRecord（guardrail/workspaceSandbox/trustedTextMutationHost/权限 host）。UI /workflow start 现用 UI 闭包选项（plan-mode 检查/standalone shell 边界/UI events）。daemon 模式正确性要求 Host 侧构建（否则 workflow 在 CLI 进程本地 manager 跑，另一 client 不可见=票面缺口本体）。**方案候选**：(a) 抽 buildRunOptions 的 workflow 变体（无 run record 耦合的 Host 级选项构建——工作量最大但最正确）；(b) workflow.start 限定 inline source + Host 基础选项（provider/model/configHome/events sink），权限边界沿用 Host 默认策略（先 S1 双 client 可见性，选项完备性留 T37 消费者票验证）。建议 (b) 先行切片。
+
+---
+
+## 2026-09-06 T35 refined 调研地图（未实施，工作树干净）
+
+**现状**：one-shot 已走 runtime facade（kodax_cli.ts:5831-5864 → runCliTaskWithRuntime:5852 → createInteractiveRuntimeRunner:655-752 → runtime.runs.start managed_task:720-727）——**无直跑 coding**。缺口四项：
+1. **产品 Client 化**：connectKodaXClient 仅测试用；CLI 用 runtime facade 且默认 embedded 模式（getCliRuntime:5395-5437，resolveCliRuntimeMode 默认 embedded）。目标路径=ensure/attach Host → connectKodaXClient → client.sessions.create({temporary:--no-session, projectPath, surface:'cli'}) → client.sessions.updateSettings(toClientSessionSettings src/client-settings.ts:4-13) → client.inputs.submit → runtime.runs.await → SIGINT→client.runs.stop；phase 'unknown'≠完成（sdk-client.inputs-late-cleanup.test.ts:54-57 先例）。
+2. **会话生命周期归 Host**：删 runCliTaskWithRuntime(813-839) 的 CLI 侧 resolveCliTaskSessionId+finally delete——Host 原生 temporary 会话已在（client-contract.ts:396-407，finishRun 后删 sdk-runtime.ts:9281-9320）。
+3. **SIGINT/退出码**：one-shot 无 abort 接线（729-736 仅 options.abortSignal）；目标=SIGINT→client.runs.stop + result(success/limitReached/interrupted)→退出码映射；断线=run 孤儿 Host 侧（现状即如此，S1 断言）。
+4. **事件转发器专用化**：daemon-only 链（createRuntimeReplEventBridge:971-1012 + forwardDaemonRunProgress:1161/Retry:1330/Recovery:1361/ToolProgress:1095）供 REPL+one-shot 共用——one-shot 换专用**非持久 progress adapter**（只转 iteration/retry/provider.recovery/tool input delta 进既有 createJsonEvents/createCliEvents 格式器；不 journal、不进普通 UI）；REPL 侧链保留至 T34。
+**保留**：emitJsonRunResultIfNeeded(3266-3283) 输出协议字段逐字节不变；runKodaX import（__skill-tool:4077）；interruptedRuntimeResult/normalizeCliError。
+**RED 骨架**（kodax_cli.daemon-smoke.test.ts 真实子进程先例，KODAX_HOME env）：①`kodax_cli.ts "..." --mode json --no-session` → exit0+JSONL+末行 run.result 全字段+iteration 对+退出后 sessions 目录无新文件；②挂起 provider 杀 CLI → 二连接断言无 terminal completed（unknown/interrupted）+temporary 会话在 executor settle 后才删；③注入 retry/recovery → JSONL 仍含 retry/provider.recovery/tool.input.delta 且 events.replay 无这些（非持久证明）。
+
+**DAG 提醒**：T35 完成后 T26 前置仅剩 T17/T18/T19/T21（T17/T18 等 T34）。T22 地图见上一条增补（startManagedWorkflow 声明式 source 为接缝，剩余=Host 级 KodaXOptions 构建，建议 inline-source+Host 基础选项切片先行）。
