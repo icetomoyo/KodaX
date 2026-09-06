@@ -117,6 +117,22 @@ export interface KodaXProductClient {
     /** Explicitly sends minimal Provider requests; never runs during connect or discovery. */
     probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[] }): Promise<readonly ClientCapabilityProbeResult[]>;
     forgetCapabilities(input?: { readonly provider?: string; readonly model?: string }): Promise<void>;
+    /**
+     * Slash commands visible for a workspace. `source` is where the Host
+     * resolved the command from — one of the registry origins ("builtin",
+     * "user", "project", "learned", "extension") — reported as a string so
+     * the contract stays forward-compatible with new origins.
+     */
+    commands(workspaceRoot: string): Promise<readonly ClientCommandInfo[]>;
+    /**
+     * Skills the Host can invoke. `source` uses the same registry-origin
+     * vocabulary as `commands`; see {@link ClientSkillInfo}.
+     */
+    skills(input?: { readonly userInvocableOnly?: boolean }): Promise<readonly ClientSkillInfo[]>;
+    /** Commands the real Host discovered for a workspace. */
+    commands(workspaceRoot: string): Promise<readonly ClientCommandInfo[]>;
+    /** Skills the real Host registry discovered. */
+    skills(input?: { readonly userInvocableOnly?: boolean }): Promise<readonly ClientSkillInfo[]>;
   };
   readonly mcp: {
     listServers(): Promise<Readonly<Record<string, ClientMcpServerConfig>>>;
@@ -143,6 +159,25 @@ export interface ClientModelSelection {
 export interface ClientModelCatalog {
   readonly provider: string;
   readonly models: readonly string[];
+}
+
+/** `source`: registry origin — "builtin" | "user" | "project" | "learned" | "extension". */
+export interface ClientCommandInfo {
+  readonly name: string;
+  readonly description: string;
+  /** Where the Host discovered the command (builtin/project/extension/...). */
+  readonly source: string;
+  readonly userInvocable?: boolean;
+}
+
+/** `source`: same registry-origin vocabulary as ClientCommandInfo. */
+export interface ClientSkillInfo {
+  readonly name: string;
+  readonly description: string;
+  readonly userInvocable: boolean;
+  readonly path: string;
+  /** Where the Host discovered the Skill (builtin/user/project/...). */
+  readonly source: string;
 }
 
 export interface ClientProviderInfo {

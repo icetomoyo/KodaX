@@ -38,6 +38,8 @@ export type {
   ClientSessionRecoverInput,
   ClientPermissionGrant,
   ClientPermissionGrants,
+  ClientCommandInfo,
+  ClientSkillInfo,
 } from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
@@ -157,6 +159,19 @@ export async function connectKodaXClient(
       reasoningEfforts: (input) => runtime.catalog.reasoningEfforts(input),
       probeReasoningEfforts: (input) => runtime.catalog.probeReasoningEfforts(input),
       forgetCapabilities: (input) => runtime.catalog.forgetCapabilities(input),
+      commands: async (workspaceRoot) => (await runtime.catalog.commands(workspaceRoot)).map((command) => ({
+        name: command.name,
+        description: command.description,
+        source: String(command.source),
+        ...(command.userInvocable !== undefined ? { userInvocable: command.userInvocable } : {}),
+      })),
+      skills: async (input) => (await runtime.catalog.skills(input)).map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        userInvocable: skill.userInvocable,
+        path: skill.path,
+        source: String(skill.source),
+      })),
     },
     disconnect: () => runtime.close(),
   };

@@ -94,4 +94,8 @@ export type {
 } from './manager.js';
 export { McpManager, createMcpManager } from './manager.js';
 
+// FEATURE_298 T12 — host call-context propagation for server→client requests
+// (elicitation attribution). Re-exported through the package root.
+export { runWithMcpCallContext, getActiveMcpCallContext } from './call-context.js';
+
 export { createMcpTestServerFixture } from './test-helpers.js';

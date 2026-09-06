@@ -1,4 +1,5 @@
 import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
+import { getActiveMcpCallContext, runWithMcpCallContext } from './call-context.js';
 import {
   buildCatalogSearchText,
   createMcpCapabilityId,
@@ -40,6 +41,8 @@ interface JsonRpcRequestRecord {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  /** Host call context captured when the request was sent (may be absent). */
+  context?: unknown;
 }
 
 interface JsonRpcResponseError {
@@ -1113,7 +1116,12 @@ export class McpServerRuntime {
       }, timeoutMs);
       timeout.unref?.();
 
-      this.pending.set(requestId, { resolve, reject, timeout });
+      this.pending.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        context: getActiveMcpCallContext(),
+      });
 
       this.transport!.send(json).catch((error) => {
         clearTimeout(timeout);
@@ -1206,7 +1214,10 @@ export class McpServerRuntime {
       // user elicitation, LLM sampling). Dispatch off the sync message handler
       // and reply when the handler settles; an unhandled method still gets
       // -32601 so the server does not hang.
-      void this.handleServerRequest(method, asRecord(payload.params), requestId as string | number);
+      // Re-enter the host call context of the in-flight client requests so
+      // elicitation and other reverse requests attribute to the caller.
+      void runWithMcpCallContext(this.pendingCallContext(), () =>
+        this.handleServerRequest(method, asRecord(payload.params), requestId as string | number));
     }
   }
 
@@ -1218,6 +1229,24 @@ export class McpServerRuntime {
   /** Best-effort JSON-RPC error send. */
   private sendError(id: string | number, code: number, message: string): void {
     this.transport?.send(jsonRpcString({ jsonrpc: '2.0', id, error: { code, message } })).catch(() => {});
+  }
+
+  /**
+   * The shared host call context of the currently in-flight client requests.
+   * Zero, one, or many pending requests may share one context; a mix of
+   * different contexts cannot be attributed and resolves to undefined
+   * (fail-closed: the host handler declines rather than mis-attributes).
+   */
+  private pendingCallContext(): unknown {
+    let context: unknown;
+    let seen = false;
+    for (const entry of this.pending.values()) {
+      if (entry.context === undefined) return undefined;
+      if (seen && context !== entry.context) return undefined;
+      context = entry.context;
+      seen = true;
+    }
+    return seen ? context : undefined;
   }
 
   /**

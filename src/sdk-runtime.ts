@@ -218,6 +218,12 @@ import {
   enqueueWithArtifacts,
   getMessageQueue,
   registerActiveRootQueueRoute,
+  getActiveUserInteraction,
+  setActiveUserInteraction,
+  runWithMcpCallContext,
+  getActiveMcpCallContext,
+  type UserInteraction,
+  type UserInteractionPromptContext,
   resolveLearningProposalStore,
 } from "@kodax-ai/agent";
 import {
@@ -4751,6 +4757,189 @@ async function createKodaXRuntimeInternal(
   };
 
   const integrations = await createHostIntegrations(configHome, readRuntimeConfig(path.join(configHome, "config.json")));
+  // FEATURE_298 T12: per-Session MCP resources persist Host-side so a restart
+  // rebuilds them. A deleted Session drops its record; an archived Session
+  // keeps it for the unarchive rebuild while its live resources are released.
+  const sessionMcpDir = path.join(persistence.runtimeDir, "session-mcp");
+  const sessionMcpFile = (sessionId: string): string =>
+    path.join(sessionMcpDir, `${encodeURIComponent(sessionId)}.json`);
+  const removeSessionMcpServers = (sessionId: string): void => {
+    fs.rmSync(sessionMcpFile(sessionId), { force: true });
+  };
+  const persistSessionMcpServers = (
+    sessionId: string,
+    workspaceRoot: string,
+    servers: Readonly<Record<string, McpServerConfig>>,
+  ): void => {
+    fs.mkdirSync(sessionMcpDir, { recursive: true });
+    writeRuntimeTextAtomic(sessionMcpFile(sessionId), JSON.stringify(
+      { version: 1, workspaceRoot, servers },
+      null,
+      2,
+    ));
+  };
+  const readSessionMcpRecord = (
+    sessionId: string,
+  ): { readonly workspaceRoot: string; readonly servers: Readonly<Record<string, McpServerConfig>> } | undefined => {
+    try {
+      const parsed: unknown = JSON.parse(
+        fs.readFileSync(sessionMcpFile(sessionId), "utf-8"),
+      );
+      if (
+        !isRecord(parsed)
+        || parsed.version !== 1
+        || typeof parsed.workspaceRoot !== "string"
+        || !isRecord(parsed.servers)
+      ) {
+        return undefined;
+      }
+      return {
+        workspaceRoot: parsed.workspaceRoot,
+        servers: parsed.servers as Readonly<Record<string, McpServerConfig>>,
+      };
+    } catch (error: unknown) {
+      if (runtimeErrorCode(error) === "ENOENT") return undefined;
+      if (error instanceof SyntaxError) return undefined;
+      emitKodaXDiagnostic({
+        source: "runtime.mcp",
+        level: "warn",
+        message: `Per-Session MCP record could not be read for ${sessionId}.`,
+        detail: normalizeError(error),
+      });
+      return undefined;
+    }
+  };
+  const rebuildSessionMcpResources = async (sessionId: string): Promise<void> => {
+    const record = readSessionMcpRecord(sessionId);
+    if (record === undefined) return;
+    try {
+      await integrations.createSession(
+        sessionId,
+        record.workspaceRoot,
+        record.servers,
+      );
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: "runtime.mcp",
+        level: "warn",
+        message: `Per-Session MCP resources could not be rebuilt for ${sessionId}.`,
+        detail: normalizeError(error),
+      });
+      removeSessionMcpServers(sessionId);
+    }
+  };
+  const sessionMcpStore = {
+    persist: persistSessionMcpServers,
+    remove: removeSessionMcpServers,
+    rebuild: rebuildSessionMcpResources,
+  };
+  // FEATURE_298 T12: shared MCP servers elicit through the process-wide live
+  // surface; the MCP call-context binds each elicitation to the Session whose
+  // Run triggered it, so the request surfaces as that Session's interaction
+  // instead of an anonymous global prompt.
+  const mcpCallScope = (): {
+    readonly sessionId: string;
+    readonly events: KodaXEvents;
+  } | undefined =>
+    getActiveMcpCallContext() as
+      | { readonly sessionId: string; readonly events: KodaXEvents }
+      | undefined;
+  // The elicitation caller races a deadline and aborts its prompt-context
+  // signal when it fires; resolving the dismissed value on abort lets the
+  // MCP reply settle promptly. The tracked interaction still resolves through
+  // its own phase timeout — the registry offers no external dismissal handle.
+  const raceElicitAbort = async <T>(
+    pending: Promise<T>,
+    context: UserInteractionPromptContext | undefined,
+    dismissed: T,
+  ): Promise<T> => {
+    const signal = context?.signal;
+    if (signal === undefined) return pending;
+    if (signal.aborted) {
+      void pending.catch(() => {});
+      return dismissed;
+    }
+    return new Promise<T>((resolve) => {
+      const onAbort = (): void => resolve(dismissed);
+      signal.addEventListener("abort", onAbort, { once: true });
+      void pending.then(
+        (value) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(dismissed);
+        },
+      );
+    });
+  };
+  const sharedElicitSurface: UserInteraction = {
+    // Un-attributable calls (no Session scope, or the Host wires no event
+    // hook) answer with the "cancel"/undefined sentinel so the server sees a
+    // three-state elicitation result instead of a hang or a global prompt.
+    askUser: async (options, context) => {
+      const scope = mcpCallScope();
+      if (scope === undefined || !scope.events.askUser) return "cancel";
+      return raceElicitAbort(
+        scope.events.askUser(options, { sessionId: scope.sessionId }),
+        context,
+        "cancel",
+      );
+    },
+    askUserMulti: async (options, context) => {
+      const scope = mcpCallScope();
+      if (scope === undefined || !scope.events.askUserMulti) return undefined;
+      return raceElicitAbort(
+        scope.events.askUserMulti(options, { sessionId: scope.sessionId }),
+        context,
+        undefined,
+      );
+    },
+    askUserInput: async (options, context) => {
+      const scope = mcpCallScope();
+      if (scope === undefined || !scope.events.askUserInput) return undefined;
+      return raceElicitAbort(
+        scope.events.askUserInput(options, { sessionId: scope.sessionId }),
+        context,
+        undefined,
+      );
+    },
+  };
+  setActiveUserInteraction(sharedElicitSurface);
+  if (fs.existsSync(sessionMcpDir)) {
+    const summaries = await sessionManager.listSessions({ includeArchived: true });
+    const knownSessions = new Set(summaries.map((summary) => summary.id));
+    const archivedSessions = new Set(
+      summaries
+        .filter((summary) => summary.archived === true)
+        .map((summary) => summary.id),
+    );
+    const removeJunk = (entry: string): void => {
+      fs.rmSync(path.join(sessionMcpDir, entry), { force: true, recursive: true });
+    };
+    const decodeSessionId = (entry: string): string | undefined => {
+      if (!entry.endsWith(".json")) return undefined;
+      try {
+        return decodeURIComponent(entry.slice(0, -".json".length));
+      } catch {
+        return undefined;
+      }
+    };
+    for (const entry of fs.readdirSync(sessionMcpDir)) {
+      const sessionId = decodeSessionId(entry);
+      if (
+        sessionId === undefined
+        || !knownSessions.has(sessionId)
+        || readSessionMcpRecord(sessionId) === undefined
+      ) {
+        removeJunk(entry);
+        continue;
+      }
+      if (archivedSessions.has(sessionId)) continue;
+      await rebuildSessionMcpResources(sessionId);
+    }
+  }
   const runService = createRuntimeRunService({
     extensionRuntime: (sessionId) => integrations.forSession(sessionId),
     deleteTemporarySession: (sessionId) => sessionService.deleteTemporary(sessionId),
@@ -4815,6 +5004,7 @@ async function createKodaXRuntimeInternal(
     },
     sessionViews,
     integrations,
+    sessionMcpStore,
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -4872,6 +5062,9 @@ async function createKodaXRuntimeInternal(
         agentPlaneClosed = true;
       }
       await integrations.close();
+      if (getActiveUserInteraction() === sharedElicitSurface) {
+        setActiveUserInteraction(undefined);
+      }
       // Keep the liveness endpoint reachable until every executor has stopped
       // and the Actor owner has been durably released. A failed close can then
       // be retried without allowing another Runtime to take over prematurely.
@@ -6285,6 +6478,15 @@ function createRuntimeSessionService(
   ) => void,
   sessionViews: SessionViewOwner,
   integrations: Awaited<ReturnType<typeof createHostIntegrations>>,
+  sessionMcpStore: {
+    persist(
+      sessionId: string,
+      workspaceRoot: string,
+      servers: Readonly<Record<string, McpServerConfig>>,
+    ): void;
+    remove(sessionId: string): void;
+    rebuild(sessionId: string): Promise<void>;
+  },
 ): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
   const toRuntimeSession = (
@@ -7565,6 +7767,7 @@ function createRuntimeSessionService(
       });
       invalidateMaterializedSessionCapture(sessionId);
       settingsOwner.release(sessionId);
+      sessionMcpStore.remove(sessionId);
       onSessionDeleted(sessionId);
     });
   };
@@ -7610,7 +7813,18 @@ function createRuntimeSessionService(
           ...(runtimeInfo !== undefined ? { runtimeInfo } : {}),
           scope: "user",
         };
-        await integrations.createSession(sessionId, projectPath ?? gitRoot ?? process.cwd(), input.mcpServers);
+        const sessionWorkspaceRoot = projectPath ?? gitRoot ?? process.cwd();
+        await integrations.createSession(sessionId, sessionWorkspaceRoot, input.mcpServers);
+        if (
+          input.mcpServers !== undefined
+          && Object.keys(input.mcpServers).length > 0
+        ) {
+          sessionMcpStore.persist(
+            sessionId,
+            sessionWorkspaceRoot,
+            input.mcpServers,
+          );
+        }
         ownsSessionResources = true;
         bus.prepareSessionJournal(sessionId);
         if (input.sessionId === undefined) {
@@ -8747,6 +8961,9 @@ function createRuntimeSessionService(
             }
           },
         );
+        // Archived Sessions release their live per-Session MCP resources;
+        // the persisted record stays for the unarchive rebuild.
+        await integrations.releaseSession(sessionId);
         invalidateMaterializedSessionCapture(sessionId);
       });
     },
@@ -8771,6 +8988,7 @@ function createRuntimeSessionService(
             }
           },
         );
+        await sessionMcpStore.rebuild(sessionId);
         invalidateMaterializedSessionCapture(sessionId);
       });
     },
@@ -10304,7 +10522,10 @@ function createRuntimeRunService(deps: {
       return;
     }
 
-    const codingOperation = () => startKodaX(runOptions, record.start!.prompt);
+    const codingOperation = () => runWithMcpCallContext(
+      { sessionId: record.sessionId, events },
+      () => startKodaX(runOptions, record.start!.prompt),
+    );
     let running: RunningSession;
     if (record.providerCredentialScope !== undefined) {
       running = runWithProviderCredentialLeaseScope(
