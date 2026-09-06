@@ -24,6 +24,7 @@ export type {
   CommandDefinition,
   CommandInfo,
   Command,
+  SessionCommandBinding,
 } from './types.js';
 export { toCommandDefinition } from './types.js';
 

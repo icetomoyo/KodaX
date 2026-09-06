@@ -122,6 +122,7 @@ export type {
   CurrentConfig,
   RuntimeSurfaceMode,
   RuntimeSurfaceStatus,
+  SessionCommandBinding,
 } from '../commands/types.js';
 
 // Builtin commands use the shared command definition so registry metadata stays in one model.

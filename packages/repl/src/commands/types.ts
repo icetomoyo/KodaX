@@ -108,6 +108,49 @@ export interface SessionGoalBinding {
   clear(sessionId: string): Promise<void>;
 }
 
+/**
+ * FEATURE_298 T34 — session-command mutations are Host-owned: the surface
+ * sends ids/selectors only and re-reads the session file the Host wrote;
+ * unbound REPLs keep the direct SessionStorage paths (standalone).
+ */
+export interface SessionCommandBinding {
+  delete(sessionId: string): Promise<void>;
+  deleteAll(input: { readonly gitRoot?: string }): Promise<void>;
+  /** Returns false when no lineage entry matches the selector. */
+  setActiveEntry(input: {
+    readonly sessionId: string;
+    readonly selector: string;
+    readonly summarizeCurrentBranch?: boolean;
+  }): Promise<boolean>;
+  /** Returns false when no lineage entry matches the selector. */
+  setLabel(input: {
+    readonly sessionId: string;
+    readonly selector: string;
+    readonly label?: string;
+  }): Promise<boolean>;
+  /** Returns the new session id, or undefined when the fork failed. */
+  fork(input: {
+    readonly sessionId: string;
+    readonly selector?: string;
+  }): Promise<string | undefined>;
+  /** Returns false when the rewind failed. */
+  rewind(input: {
+    readonly sessionId: string;
+    readonly selector?: string;
+  }): Promise<boolean>;
+  /** Recovers into a fresh Host-derived seed session; returns its id. */
+  recover(input: {
+    readonly sessionId: string;
+    readonly reason?: string;
+  }): Promise<string | undefined>;
+  create(input: {
+    readonly sessionId: string;
+    readonly title: string;
+    readonly gitRoot?: string;
+    readonly surface: string;
+  }): Promise<void>;
+}
+
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
   saveSession: () => Promise<void>;

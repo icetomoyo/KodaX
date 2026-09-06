@@ -1615,8 +1615,9 @@ async function rewindSessionImpl(
 export async function setActiveEntry(
   id: string,
   selector: string,
+  options?: { summarizeCurrentBranch?: boolean },
 ): Promise<SessionData | null> {
-  return setActiveEntryImpl(id, selector, undefined);
+  return setActiveEntryImpl(id, selector, undefined, undefined, options);
 }
 
 async function setActiveEntryImpl(
@@ -1624,9 +1625,10 @@ async function setActiveEntryImpl(
   selector: string,
   sessionsDirOverride: string | undefined,
   configHomeOverride?: string,
+  options?: { summarizeCurrentBranch?: boolean },
 ): Promise<SessionData | null> {
   try {
-    return await getStorage(sessionsDirOverride, configHomeOverride).setActiveEntry(id, selector);
+    return await getStorage(sessionsDirOverride, configHomeOverride).setActiveEntry(id, selector, options);
   } catch {
     return null;
   }
@@ -2026,8 +2028,8 @@ export function createSessionManager(opts?: {
     appendClientNotice: (id, options) => appendClientNoticeWithStorage(id, options, storage),
     forkSession: (id, o) => forkSessionImpl(id, o, sessionsDir),
     rewindSession: (id, o) => rewindSessionImpl(id, o, sessionsDir, configHome),
-    setActiveEntry: (id, selector) =>
-      setActiveEntryImpl(id, selector, sessionsDir, configHome),
+    setActiveEntry: (id, selector, options) =>
+      setActiveEntryImpl(id, selector, sessionsDir, configHome, options),
     deleteSession: (id) => deleteSessionImpl(id, sessionsDir),
     archiveSession: (id) => archiveSessionImpl(id, sessionsDir),
     unarchiveSession: (id) => unarchiveSessionImpl(id, sessionsDir),

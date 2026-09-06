@@ -5813,6 +5813,64 @@ complete -c kodax -l version -d 'Show version'`);
             resume: (sessionId: string) => interactiveRuntime.sessions.resumeGoal(sessionId),
             clear: (sessionId: string) => interactiveRuntime.sessions.clearGoal(sessionId),
           },
+          // FEATURE_298 T34 — session-command mutations are Host-owned; the
+          // REPL sends ids/selectors and re-reads the session file the Host
+          // wrote. deleteAll composes existing Host list + delete (no bulk RPC).
+          sessionCommands: {
+            delete: (sessionId: string) => interactiveRuntime.sessions.delete(sessionId),
+            deleteAll: async ({ gitRoot }: { gitRoot?: string }) => {
+              const sessions = await interactiveRuntime.sessions.list(
+                gitRoot !== undefined ? { projectRoot: gitRoot } : undefined,
+              );
+              for (const session of sessions) {
+                await interactiveRuntime.sessions.delete(session.id);
+              }
+            },
+            setActiveEntry: async (input: {
+              sessionId: string;
+              selector: string;
+              summarizeCurrentBranch?: boolean;
+            }) => {
+              try {
+                await interactiveRuntime.sessions.setActiveEntry({
+                  sessionId: input.sessionId,
+                  entryId: input.selector,
+                  ...(input.summarizeCurrentBranch === true
+                    ? { summarizeCurrentBranch: true }
+                    : {}),
+                });
+                return true;
+              } catch {
+                return false;
+              }
+            },
+            setLabel: async (input: { sessionId: string; selector: string; label?: string }) => {
+              try {
+                await interactiveRuntime.sessions.labelEntry(input);
+                return true;
+              } catch {
+                return false;
+              }
+            },
+            fork: async (input: { sessionId: string; selector?: string }) => {
+              const forked = await interactiveRuntime.sessions.fork(input);
+              return forked?.id;
+            },
+            rewind: async (input: { sessionId: string; selector?: string }) => {
+              const rewound = await interactiveRuntime.sessions.rewind(input);
+              return rewound !== null;
+            },
+            recover: async (input: { sessionId: string; reason?: string }) => {
+              const recovered = await interactiveRuntime.sessions.recover(input);
+              return recovered.id;
+            },
+            create: (input: {
+              sessionId: string;
+              title: string;
+              gitRoot?: string;
+              surface: string;
+            }) => interactiveRuntime.sessions.create(input).then(() => undefined),
+          },
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };

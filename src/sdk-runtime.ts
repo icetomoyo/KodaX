@@ -1642,6 +1642,8 @@ export interface RuntimeRewindSessionInput {
 export interface RuntimeSetActiveEntryInput {
   readonly sessionId: string;
   readonly entryId: string;
+  /** FEATURE_298 T34 — summarize the abandoned branch before switching (REPL /branch semantics). */
+  readonly summarizeCurrentBranch?: boolean;
 }
 
 export interface RuntimeCompactSessionInput {
@@ -8898,6 +8900,9 @@ function createRuntimeSessionService(
         const data = await manager.setActiveEntry(
           input.sessionId,
           input.entryId,
+          input.summarizeCurrentBranch === true
+            ? { summarizeCurrentBranch: true }
+            : undefined,
         );
         if (!data) {
           throw sessionCommandError("conflict", `No lineage entry matches '${input.entryId}'.`);

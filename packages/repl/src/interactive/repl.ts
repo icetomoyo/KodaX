@@ -114,6 +114,7 @@ import {
   executeCommand,
   CommandCallbacks,
   CurrentConfig,
+  SessionCommandBinding,
 } from './commands.js';
 import {
   MultipleUserSkillReferencesError,
@@ -493,6 +494,7 @@ export interface RepLOptions extends KodaXOptions {
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   goal?: CommandCallbacks['goal'];
+  sessionCommands?: SessionCommandBinding;
 }
 
 function resolveInitialReasoningMode(
@@ -890,6 +892,38 @@ Keyboard Shortcuts:
       return 'blocked';
     }
 
+    // FEATURE_298 T34 — recovery is a Host session command: the seed is
+    // derived inside the Host from its journal (same buildRecoverySeed
+    // domain), and the local view re-reads the session it wrote.
+    if (options.sessionCommands) {
+      const recoveredId = await options.sessionCommands.recover({
+        sessionId: context.sessionId,
+        ...(prompt !== undefined && prompt.length > 0 ? { reason: prompt } : {}),
+      });
+      if (recoveredId === undefined) {
+        return 'failed';
+      }
+      const loaded = await storage.load(recoveredId);
+      if (!loaded) {
+        return 'failed';
+      }
+      context.sessionId = recoveredId;
+      context.messages = loaded.messages;
+      context.title = loaded.title;
+      context.lineage = loaded.lineage;
+      context.artifactLedger = loaded.artifactLedger ?? context.artifactLedger;
+      context.contextTokenSnapshot = undefined;
+      context.createdAt = new Date().toISOString();
+      context.lastAccessed = context.createdAt;
+      currentOptions.session = {
+        ...currentOptions.session,
+        id: recoveredId,
+      };
+      console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
+      console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+      return 'recovered';
+    }
+
     const sourceSessionId = context.sessionId;
     const sourceLineage = context.lineage ?? createSessionLineage(context.messages);
     context.lineage = sourceLineage;
@@ -1057,6 +1091,16 @@ Keyboard Shortcuts:
         id: context.sessionId,
       };
       teamModeHandle?.writer.update({ sessionId: context.sessionId });
+      // FEATURE_298 T34 — the Host owns session creation; the local writer
+      // stays untouched for a brand-new session until the first run.
+      if (options.sessionCommands) {
+        void options.sessionCommands.create({
+          sessionId: context.sessionId,
+          title: 'REPL Session',
+          ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
+          surface: 'repl',
+        }).catch(() => undefined);
+      }
     },
     loadSession: async (id: string) => {
       const loaded = await storage.load(id);
@@ -1223,9 +1267,20 @@ Keyboard Shortcuts:
       }
     },
     deleteSession: async (id: string) => {
+      // FEATURE_298 T34 — deletion is a Host session command.
+      if (options.sessionCommands) {
+        await options.sessionCommands.delete(id);
+        return;
+      }
       await storage.delete?.(id);
     },
     deleteAllSessions: async () => {
+      if (options.sessionCommands) {
+        await options.sessionCommands.deleteAll({
+          ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
+        });
+        return;
+      }
       await storage.deleteAll?.(context.gitRoot ?? undefined);
     },
     printSessionTree: async () => {
@@ -1247,6 +1302,30 @@ Keyboard Shortcuts:
         return 'blocked';
       }
 
+      // FEATURE_298 T34 — the Host mutates the lineage; the local view
+      // re-reads the session file the Host just wrote.
+      if (options.sessionCommands) {
+        const found = await options.sessionCommands.setActiveEntry({
+          sessionId: context.sessionId,
+          selector,
+          summarizeCurrentBranch: true,
+        });
+        if (!found) {
+          return 'missing';
+        }
+        const loaded = await storage.load(context.sessionId);
+        if (!loaded) {
+          return 'missing';
+        }
+        context.messages = loaded.messages;
+        context.title = loaded.title;
+        context.lineage = loaded.lineage;
+        context.contextTokenSnapshot = undefined;
+        console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
+        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        return 'switched';
+      }
+
       const loaded = await storage.setActiveEntry?.(
         context.sessionId,
         selector,
@@ -1264,6 +1343,22 @@ Keyboard Shortcuts:
       return 'switched';
     },
     labelSessionBranch: async (selector: string, label?: string) => {
+      if (options.sessionCommands) {
+        const updated = await options.sessionCommands.setLabel({
+          sessionId: context.sessionId,
+          selector,
+          ...(label !== undefined ? { label } : {}),
+        });
+        if (!updated) {
+          return false;
+        }
+        context.lineage = await storage.getLineage?.(context.sessionId) ?? context.lineage;
+        const boundAction = label && label.trim()
+          ? `checkpoint label set: ${label.trim()}`
+          : 'checkpoint label cleared';
+        console.log(chalk.green(`\n[${boundAction}]`));
+        return true;
+      }
       const updated = await storage.setLabel?.(context.sessionId, selector, label);
       if (!updated) {
         return false;
@@ -1278,6 +1373,35 @@ Keyboard Shortcuts:
     forkSession: async (selector?: string) => {
       if (!guardSessionTransition('Forking a session branch')) {
         return 'blocked';
+      }
+
+      if (options.sessionCommands) {
+        const forkedId = await options.sessionCommands.fork({
+          sessionId: context.sessionId,
+          ...(selector !== undefined ? { selector } : {}),
+        });
+        if (forkedId === undefined) {
+          return 'failed';
+        }
+        const loaded = await storage.load(forkedId);
+        if (!loaded) {
+          return 'failed';
+        }
+        context.sessionId = forkedId;
+        context.messages = loaded.messages;
+        context.title = loaded.title;
+        context.lineage = loaded.lineage;
+        context.contextTokenSnapshot = undefined;
+        context.createdAt = new Date().toISOString();
+        context.lastAccessed = context.createdAt;
+        applyRuntimeContext(context, currentOptions, resolveSessionRuntimeInfo(loaded) ?? context.runtimeInfo);
+        currentOptions.session = {
+          ...currentOptions.session,
+          id: forkedId,
+        };
+        console.log(chalk.green(`\n[Forked session: ${forkedId}]`));
+        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        return 'forked';
       }
 
       const forked = await storage.fork?.(context.sessionId, selector);
@@ -1304,6 +1428,28 @@ Keyboard Shortcuts:
     rewindSession: async (selector?: string) => {
       if (!guardSessionTransition('Rewinding session')) {
         return 'blocked';
+      }
+
+      if (options.sessionCommands) {
+        const rewound = await options.sessionCommands.rewind({
+          sessionId: context.sessionId,
+          ...(selector !== undefined ? { selector } : {}),
+        });
+        if (!rewound) {
+          return 'failed';
+        }
+        const loaded = await storage.load(context.sessionId);
+        if (!loaded) {
+          return 'failed';
+        }
+        context.messages = loaded.messages;
+        context.title = loaded.title;
+        context.lineage = loaded.lineage;
+        context.contextTokenSnapshot = undefined;
+        context.lastAccessed = new Date().toISOString();
+        console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : ' to previous turn'}]`));
+        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        return 'rewound';
       }
 
       const rewound = await storage.rewind?.(context.sessionId, selector);

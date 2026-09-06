@@ -1275,7 +1275,8 @@ function activeEntryParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     sessionId: stringSchema,
     entryId: stringSchema,
-  }, ['sessionId', 'entryId']);
+    summarizeCurrentBranch: booleanSchema,
+  }, ['sessionId', 'entryId'], true);
 }
 
 function compactSessionParamsSchema(): RuntimeDaemonJsonSchema {

@@ -224,6 +224,7 @@ import {
   isRegisteredUserCommand,
   CommandCallbacks,
   CurrentConfig,
+  SessionCommandBinding,
 } from "../interactive/commands.js";
 import {
   findQueueableUserSkillReference,
@@ -766,6 +767,7 @@ export interface InkREPLOptions extends KodaXOptions {
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   goal?: CommandCallbacks['goal'];
+  sessionCommands?: SessionCommandBinding;
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -8746,6 +8748,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return "blocked";
     }
 
+    // FEATURE_298 T34 — recovery is a Host session command: the seed is
+    // derived inside the Host from its journal (same buildRecoverySeed
+    // domain), and the local view re-reads the session it wrote.
+    if (options.sessionCommands) {
+      const recoveredId = await options.sessionCommands.recover({
+        sessionId: context.sessionId,
+        ...(prompt !== undefined && prompt.length > 0 ? { reason: prompt } : {}),
+      });
+      if (recoveredId === undefined) {
+        return "failed";
+      }
+      const boundLoaded = await storage.load(recoveredId);
+      if (!boundLoaded) {
+        return "failed";
+      }
+      context.sessionId = recoveredId;
+      context.messages = boundLoaded.messages;
+      context.title = boundLoaded.title;
+      context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
+      context.lineage = boundLoaded.lineage;
+      context.artifactLedger = boundLoaded.artifactLedger ?? context.artifactLedger;
+      context.contextTokenSnapshot = undefined;
+      context.sessionSnapshotDirty = false;
+      persistedUiHistoryRef.current = context.uiHistory ?? [];
+      const boundNow = new Date().toISOString();
+      context.createdAt = boundNow;
+      context.lastAccessed = boundNow;
+      currentOptionsRef.current.session = {
+        ...currentOptionsRef.current.session,
+        id: recoveredId,
+      };
+      setLiveTokenCount(null);
+      clearUIHistory();
+      setTodoItems([]);
+      setSessionId(recoveredId);
+      teamModeHandle?.writer.update({ sessionId: recoveredId });
+      console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
+      console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+      return "recovered";
+    }
+
     const sourceSessionId = context.sessionId;
     const sourceLineage = context.lineage ?? reconcileContextLineage(context.messages);
     context.lineage = sourceLineage;
@@ -9555,6 +9598,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             getActivePasteStore()?.reset();
             setSessionId(nextSessionId);
             teamModeHandle?.writer.update({ sessionId: nextSessionId });
+            // FEATURE_298 T34 — the Host owns session creation; the local
+            // writer stays untouched for a brand-new session until the
+            // first run.
+            if (options.sessionCommands) {
+              void options.sessionCommands.create({
+                sessionId: nextSessionId,
+                title: 'REPL Session',
+                ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
+                surface: 'repl',
+              }).catch(() => undefined);
+            }
           },
           loadSession: async (id: string) => {
             const loaded = await storage.load(id);
@@ -9737,9 +9791,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
           },
           deleteSession: async (id: string) => {
+            // FEATURE_298 T34 — deletion is a Host session command.
+            if (options.sessionCommands) {
+              await options.sessionCommands.delete(id);
+              return;
+            }
             await storage.delete?.(id);
           },
           deleteAllSessions: async () => {
+            if (options.sessionCommands) {
+              await options.sessionCommands.deleteAll({
+                ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
+              });
+              return;
+            }
             await storage.deleteAll?.(context.gitRoot ?? undefined);
           },
           printSessionTree: async () => {
@@ -9762,6 +9827,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             );
             if (!allowed) {
               return "blocked";
+            }
+
+            // FEATURE_298 T34 — the Host mutates the lineage; the local
+            // view re-reads the session file the Host just wrote.
+            if (options.sessionCommands) {
+              const found = await options.sessionCommands.setActiveEntry({
+                sessionId: context.sessionId,
+                selector,
+                summarizeCurrentBranch: true,
+              });
+              if (!found) {
+                return "missing";
+              }
+              const boundLoaded = await storage.load(context.sessionId);
+              if (!boundLoaded) {
+                return "missing";
+              }
+              context.messages = boundLoaded.messages;
+              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
+              context.lineage = boundLoaded.lineage;
+              context.artifactLedger = boundLoaded.artifactLedger;
+              context.extensionState = boundLoaded.extensionState
+                ? structuredClone(boundLoaded.extensionState)
+                : undefined;
+              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
+              context.extensionStateDirty = false;
+              context.extensionRecordsDirty = false;
+              context.title = boundLoaded.title;
+              context.contextTokenSnapshot = undefined;
+              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
+              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
+              applyInteractiveRuntimeInfo(boundAppliedRuntime);
+              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
+                !== JSON.stringify(boundSavedRuntime);
+              persistedUiHistoryRef.current = context.uiHistory ?? [];
+              setLiveTokenCount(null);
+              clearUIHistory();
+              setTodoItems([]);
+              console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
+              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              return "switched";
             }
 
             const loaded = await storage.setActiveEntry?.(
@@ -9800,6 +9906,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             return "switched";
           },
           labelSessionBranch: async (selector: string, label?: string) => {
+            if (options.sessionCommands) {
+              const boundUpdated = await options.sessionCommands.setLabel({
+                sessionId: context.sessionId,
+                selector,
+                ...(label !== undefined ? { label } : {}),
+              });
+              if (!boundUpdated) {
+                return false;
+              }
+              // Keep the interactive snapshot pinned to the rotated lineage
+              // the Host just persisted (read back from the session file).
+              context.lineage = await storage.getLineage?.(context.sessionId) ?? context.lineage;
+              const boundAction = label && label.trim()
+                ? `checkpoint label set: ${label.trim()}`
+                : "checkpoint label cleared";
+              console.log(chalk.green(`\n[${boundAction}]`));
+              return true;
+            }
             const updated = await storage.setLabel?.(context.sessionId, selector, label);
             if (!updated) {
               return false;
@@ -9824,6 +9948,55 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             );
             if (!allowed) {
               return "blocked";
+            }
+
+            if (options.sessionCommands) {
+              const boundForkedId = await options.sessionCommands.fork({
+                sessionId: context.sessionId,
+                ...(selector !== undefined ? { selector } : {}),
+              });
+              if (boundForkedId === undefined) {
+                return "failed";
+              }
+              const boundLoaded = await storage.load(boundForkedId);
+              if (!boundLoaded) {
+                return "failed";
+              }
+              context.sessionId = boundForkedId;
+              context.messages = boundLoaded.messages;
+              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
+              context.lineage = boundLoaded.lineage;
+              context.artifactLedger = boundLoaded.artifactLedger;
+              context.extensionState = boundLoaded.extensionState
+                ? structuredClone(boundLoaded.extensionState)
+                : undefined;
+              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
+              context.extensionStateDirty = false;
+              context.extensionRecordsDirty = false;
+              context.title = boundLoaded.title;
+              context.contextTokenSnapshot = undefined;
+              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
+              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
+              applyInteractiveRuntimeInfo(boundAppliedRuntime);
+              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
+                !== JSON.stringify(boundSavedRuntime);
+              persistedUiHistoryRef.current = context.uiHistory ?? [];
+              const boundNow = new Date().toISOString();
+              context.createdAt = boundNow;
+              context.lastAccessed = boundNow;
+              currentOptionsRef.current.session = {
+                ...currentOptionsRef.current.session,
+                id: boundForkedId,
+                tag: boundLoaded.tag,
+              };
+              setLiveTokenCount(null);
+              clearUIHistory();
+              setTodoItems([]);
+              setSessionId(boundForkedId);
+              teamModeHandle?.writer.update({ sessionId: boundForkedId });
+              console.log(chalk.green(`\n[Forked session: ${boundForkedId}]`));
+              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              return "forked";
             }
 
             const forked = await storage.fork?.(context.sessionId, selector);
@@ -9878,6 +10051,44 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             );
             if (!allowed) {
               return "blocked";
+            }
+
+            if (options.sessionCommands) {
+              const boundRewound = await options.sessionCommands.rewind({
+                sessionId: context.sessionId,
+                ...(selector !== undefined ? { selector } : {}),
+              });
+              if (!boundRewound) {
+                return "failed";
+              }
+              const boundLoaded = await storage.load(context.sessionId);
+              if (!boundLoaded) {
+                return "failed";
+              }
+              context.messages = boundLoaded.messages;
+              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
+              context.lineage = boundLoaded.lineage;
+              context.artifactLedger = boundLoaded.artifactLedger;
+              context.extensionState = boundLoaded.extensionState
+                ? structuredClone(boundLoaded.extensionState)
+                : undefined;
+              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
+              context.extensionStateDirty = false;
+              context.extensionRecordsDirty = false;
+              context.title = boundLoaded.title;
+              context.contextTokenSnapshot = undefined;
+              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
+              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
+              applyInteractiveRuntimeInfo(boundAppliedRuntime);
+              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
+                !== JSON.stringify(boundSavedRuntime);
+              persistedUiHistoryRef.current = context.uiHistory ?? [];
+              setLiveTokenCount(null);
+              clearUIHistory();
+              setTodoItems([]);
+              console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : " to previous turn"}]`));
+              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              return "rewound";
             }
 
             const rewound = await storage.rewind?.(context.sessionId, selector);
