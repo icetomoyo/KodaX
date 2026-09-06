@@ -261,7 +261,7 @@ export function buildReviewPrompt(options: BuildReviewPromptOptions): string {
   return lines.join('\n');
 }
 
-function buildDisplayName(invocation: ReviewInvocation): string {
+export function buildDisplayName(invocation: ReviewInvocation): string {
   const flags = [
     invocation.workflow ? '--workflow' : undefined,
     invocation.lean ? '--lean' : undefined,
@@ -295,8 +295,40 @@ export const reviewCommand: Command = {
   usage: '/review [--lean] [--workflow] [base | sha <hash>] [prompt...]',
   argumentHint: '[--lean] [--workflow] [base | sha <hash>] [prompt...]',
   detailedHelp: printReviewHelp,
-  handler: async (args, context) => {
+  handler: async (args, context, callbacks) => {
     const cwd = context.gitRoot ?? process.cwd();
+    // FEATURE_298 T37 — with a Host binding the git capture and packet
+    // writing happen Host-side; the client sends only the parsed flags.
+    const reviewBinding = callbacks?.prepareReview;
+    if (reviewBinding !== undefined) {
+      const prepared = await reviewBinding.prepare({
+        projectRoot: cwd,
+        sessionId: context.sessionId,
+        args,
+      });
+      if (prepared.kind === 'prepared') {
+        return { success: true, invocation: prepared.invocation };
+      }
+      if (prepared.kind === 'workflow') {
+        return {
+          success: true,
+          workflow: {
+            request: prepared.workflow.request,
+            source: 'command',
+            displayName: prepared.workflow.displayName,
+            processSource: 'review',
+            builtin: {
+              name: prepared.workflow.builtinName,
+              args: prepared.workflow.builtinArgs,
+            },
+          },
+        };
+      }
+      if (prepared.kind === 'empty') {
+        return { success: true, message: 'No changes to review.' };
+      }
+      return { success: false, message: prepared.message };
+    }
     const invocation = parseReviewInvocation(args);
     if (invocation.error) {
       return { success: false, message: `/review: ${invocation.error}` };

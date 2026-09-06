@@ -149,10 +149,24 @@ export async function prepareUserSkillInvocation(
     ...(context.sessionId !== undefined ? { sessionId: context.sessionId } : {}),
   });
   if (prepared.kind === 'unknown') return undefined;
+  const invocation = prepared.invocation;
   return {
-    ...prepared.invocation,
+    prompt: invocation.prompt,
+    source: invocation.source,
+    displayName: invocation.displayName,
+    ...(invocation.path !== undefined ? { path: invocation.path } : {}),
+    ...(invocation.disableModelInvocation !== undefined
+      ? { disableModelInvocation: invocation.disableModelInvocation }
+      : {}),
     userInvocable: true,
-  } as CommandInvocationRequest;
+    ...(invocation.allowedTools !== undefined ? { allowedTools: invocation.allowedTools } : {}),
+    ...(invocation.context !== undefined ? { context: invocation.context } : {}),
+    ...(invocation.agent !== undefined ? { agent: invocation.agent } : {}),
+    ...(invocation.argumentHint !== undefined ? { argumentHint: invocation.argumentHint } : {}),
+    ...(invocation.model !== undefined ? { model: invocation.model } : {}),
+    ...(invocation.hooks !== undefined ? { hooks: invocation.hooks } : {}),
+    skillInvocation: invocation.skillInvocation,
+  };
 }
 
 /** Binding-aware form of resolveUserSkillInvocation (raw input text). */

@@ -89,7 +89,14 @@ export type {
   RuntimeSurfaceMode,
   RuntimeSurfaceStatus,
 } from "./commands/types.js";
-export { listRegisteredCommands } from "./commands/index.js";
+export { listRegisteredCommands, discoverCommands, commandDiscoveryDirs } from "./commands/index.js";
+export {
+  buildDisplayName as buildReviewDisplayName,
+  buildReviewPrompt,
+  buildReviewWorkflowRequest,
+  parseReviewInvocation,
+} from "./commands/review-command.js";
+export { buildLeanReviewPrompt } from "./commands/agents-command.js";
 export type { CommandInfo } from "./commands/index.js";
 
 // === 共享工具 ===

@@ -173,6 +173,80 @@ describe('extension command host adapters', () => {
     expect(output).not.toContain('diag-cmd  Diagnostic command');
   });
 
+  it('prepares discovered prompt commands through the Host binding (FEATURE_298 T37)', async () => {
+    const cmdDir = path.join(tempDir, '.kodax', 'commands');
+    await mkdir(cmdDir, { recursive: true });
+    await writeFile(
+      path.join(cmdDir, 'host-prep.md'),
+      [
+        '---',
+        'description: Locally discovered command',
+        'allowed-tools: Read',
+        '---',
+        '',
+        'Local prompt body.',
+      ].join('\n'),
+      'utf8',
+    );
+    // Re-init the registry after chdir so it discovers the seeded command.
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+    const registry = getCommandRegistry();
+    registry.clear();
+    getCommandRegistry(tempDir);
+    try {
+      const seen: Array<{ name: string; projectRoot: string }> = [];
+      const binding = {
+        async prepare(input: { name: string; projectRoot: string }) {
+          seen.push(input);
+          if (input.name !== 'host-prep') return { kind: 'local' as const };
+          return {
+            kind: 'prepared' as const,
+            invocation: {
+              prompt: 'Host-prepared prompt body.',
+              source: 'prompt' as const,
+              displayName: 'host-prep',
+              allowedTools: 'Read',
+            },
+          };
+        },
+      };
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const result = await executeCommand(
+        { command: 'host-prep', args: [] },
+        { sessionId: 'session-1', gitRoot: tempDir } as never,
+        { prepareCommandInvocation: binding } as never,
+        {} as never,
+      );
+      logSpy.mockRestore();
+
+      expect(seen).toEqual([{ name: 'host-prep', projectRoot: tempDir }]);
+      expect(result).toMatchObject({
+        invocation: {
+          prompt: 'Host-prepared prompt body.',
+          source: 'prompt',
+          displayName: 'host-prep',
+        },
+      });
+
+      // Without a binding the local registry handler still runs.
+      const local = await executeCommand(
+        { command: 'host-prep', args: [] },
+        { sessionId: 'session-1', gitRoot: tempDir } as never,
+        {} as never,
+        {} as never,
+      );
+      expect(local).toMatchObject({
+        invocation: {
+          prompt: 'Local prompt body.',
+          source: 'prompt',
+        },
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   it('discovers newly added default extensions through manual /reload', async () => {
     const extensionDir = path.join(tempDir, 'extensions', 'fresh-extension');
     await mkdir(extensionDir, { recursive: true });

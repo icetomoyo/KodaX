@@ -83,7 +83,6 @@ import {
 } from '@kodax-ai/agent';
 import {
   assertSingleKnownUserSkillReference,
-  createUserSkillInvocation,
   prepareUserSkillInvocation,
   MultipleUserSkillReferencesError,
 } from './user-skill-invocation.js';
@@ -3104,6 +3103,28 @@ export async function executeCommand(
     if (isCommandHelpRequest(parsed.args)) {
       printDetailedHelp(parsed.command, parsed.args.slice(1));
       return true;
+    }
+
+    // FEATURE_298 T37 — discovered prompt commands prepare Host-side when a
+    // binding is present: the client sends only the registered name and the
+    // Host reads the command file against its trusted discovery order.
+    if (
+      callbacks.prepareCommandInvocation !== undefined
+      && cmd.source === 'extension'
+      && cmd.path !== undefined
+    ) {
+      try {
+        const prepared = await callbacks.prepareCommandInvocation.prepare({
+          projectRoot: context.gitRoot ?? process.cwd(),
+          name: parsed.command,
+        });
+        if (prepared.kind === 'prepared') {
+          return { invocation: prepared.invocation };
+        }
+      } catch (error) {
+        console.log(chalk.red(`\n[Command preparation failed: ${error instanceof Error ? error.message : String(error)}]`));
+        return false;
+      }
     }
 
     try {

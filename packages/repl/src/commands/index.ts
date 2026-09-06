@@ -57,16 +57,10 @@ export function registerAllCommands(registry: CommandRegistry, projectRoot?: str
     const home = os.homedir();
     const root = projectRoot ?? process.cwd();
 
-    const discovered = discoverCommands([
-      // Highest priority: project-level commands
-      { path: path.join(root, '.kodax', 'commands'), location: 'project' },
-      // User-level: KodaX agent home (default ~/.kodax/, redirectable
-      // via setAgentConfigHome / KODAX_HOME — v0.7.35.1 FEATURE_145).
-      { path: getAgentConfigPath('commands'), location: 'user' },
-      // User-level: ~/.agents/commands/ (cross-vendor AgentSkills standard,
-      // intentionally NOT redirectable — common across CLI agents).
-      { path: path.join(home, '.agents', 'commands'), location: 'user' },
-    ]);
+    // Highest priority first: project-level, then the redirectable KodaX
+    // agent home (~/.kodax/, FEATURE_145), then the cross-vendor
+    // ~/.agents/commands standard. Order owned by commandDiscoveryDirs.
+    const discovered = discoverCommands([...commandDiscoveryDirs(root)]);
     registerDiscoveredCommands(discovered, registry);
   } catch (error) {
     emitKodaXDiagnostic({
@@ -76,6 +70,22 @@ export function registerAllCommands(registry: CommandRegistry, projectRoot?: str
       detail: error,
     });
   }
+}
+
+/**
+ * FEATURE_298 T37 — the single source of truth for prompt-command discovery
+ * order (project > ~/.kodax > ~/.agents). The Host's prepareCommand consumes
+ * this so its trusted discovery can never drift from the REPL registry.
+ */
+export function commandDiscoveryDirs(
+  projectRoot: string,
+): readonly { path: string; location: 'user' | 'project' }[] {
+  const home = os.homedir();
+  return [
+    { path: path.join(projectRoot, '.kodax', 'commands'), location: 'project' },
+    { path: getAgentConfigPath('commands'), location: 'user' },
+    { path: path.join(home, '.agents', 'commands'), location: 'user' },
+  ];
 }
 
 export function listRegisteredCommands(projectRoot?: string): CommandInfo[] {

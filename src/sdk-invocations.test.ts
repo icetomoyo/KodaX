@@ -161,8 +161,8 @@ it('expands a queued Skill Host-side at actual consumption', async () => {
       return runs.filter((run) => run.phase === 'completed' || run.phase === 'failed').length;
     }, { timeout: 20_000 }).toBe(2);
 
-    const skillTurn = captured.at(-1) ?? [];
-    const userText = skillTurn
+    // The learning reviewer shares this provider; assert on content, not order.
+    const userText = captured.flat()
       .filter((message) => message.role === 'user')
       .map((message) => (typeof message.content === 'string'
         ? message.content
@@ -176,3 +176,140 @@ it('expands a queued Skill Host-side at actual consumption', async () => {
     await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 60_000);
+
+async function seedGitRepo(): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-t37-review-'));
+  const git = (args: string[]) => run('git', args, { cwd: projectRoot, windowsHide: true });
+  await git(['init', '-q']);
+  await git(['config', 'user.email', 't37@test.local']);
+  await git(['config', 'user.name', 't37']);
+  await writeFile(path.join(projectRoot, 'a.txt'), 'one\n', 'utf8');
+  await git(['add', 'a.txt']);
+  await git(['commit', '-qm', 'base']);
+  await writeFile(path.join(projectRoot, 'a.txt'), 'one\ntwo\n', 'utf8');
+  return projectRoot;
+}
+
+it('prepares /review Host-side: diff capture, workflow pieces, empty, and error', async () => {
+  const projectRoot = await seedGitRepo();
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true });
+  try {
+    const prepared = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: [],
+    });
+    expect(prepared.kind).toBe('prepared');
+    if (prepared.kind !== 'prepared') return;
+    expect(prepared.invocation.source).toBe('prompt');
+    expect(prepared.invocation.displayName).toBe('/review');
+    expect(prepared.invocation.prompt).toContain('uncommitted changes');
+    expect(prepared.invocation.prompt).toContain('+two');
+
+    const lean = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: ['--lean'],
+    });
+    expect(lean.kind).toBe('prepared');
+    if (lean.kind === 'prepared') {
+      expect(lean.invocation.displayName).toBe('/review --lean');
+      expect(lean.invocation.prompt.toLowerCase()).toContain('lean');
+    }
+
+    const workflow = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: ['--workflow', '--lean'],
+    });
+    expect(workflow.kind).toBe('workflow');
+    if (workflow.kind !== 'workflow') return;
+    expect(workflow.workflow.builtinName).toBe('scoped-review');
+    expect(workflow.workflow.displayName).toBe('/review --workflow --lean');
+    expect(workflow.workflow.request).toContain('scoped-review');
+    const args = workflow.workflow.builtinArgs as { packets?: unknown[]; lean?: boolean };
+    expect(Array.isArray(args.packets)).toBe(true);
+    expect(args.lean).toBe(true);
+
+    const badScope = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: ['sha'],
+    });
+    expect(badScope).toMatchObject({ kind: 'error' });
+
+    // /agents lean: present file prepares; missing file reports missing.
+    const leanPresent = await runtime.invocations.prepareAgentsLean({ projectRoot });
+    expect(leanPresent.kind).toBe('missing');
+    await writeFile(path.join(projectRoot, 'AGENTS.md'), '# Agents\n', 'utf8');
+    const leanPrepared = await runtime.invocations.prepareAgentsLean({ projectRoot });
+    expect(leanPrepared.kind).toBe('prepared');
+    if (leanPrepared.kind !== 'prepared') return;
+    expect(leanPrepared.invocation.displayName).toBe('/agents lean');
+    expect(leanPrepared.invocation.prompt).toContain('AGENTS.md');
+  } finally {
+    await runtime.close();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 60_000);
+
+it('reports an empty review for a clean tree', async () => {
+  const projectRoot = await seedGitRepo();
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)('git', ['checkout', '--', 'a.txt'], { cwd: projectRoot, windowsHide: true });
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true });
+  try {
+    const prepared = await runtime.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37', args: [],
+    });
+    expect(prepared).toMatchObject({ kind: 'empty' });
+  } finally {
+    await runtime.close();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 60_000);
+
+it('prepares discovered prompt commands Host-side with frontmatter metadata', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-t37-cmd-'));
+  const cmdDir = path.join(projectRoot, '.kodax', 'commands');
+  await mkdir(cmdDir, { recursive: true });
+  await writeFile(
+    path.join(cmdDir, 'deploy-check.md'),
+    [
+      '---',
+      'description: Verify the deploy checklist',
+      'allowed-tools: Read, Bash',
+      'context: fork',
+      'argument-hint: [env]',
+      '---',
+      '',
+      'Run the deploy checklist for $ARGUMENTS.',
+    ].join('\n'),
+    'utf8',
+  );
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true });
+  try {
+    const prepared = await runtime.invocations.prepareCommand({
+      projectRoot,
+      name: 'deploy-check',
+    });
+    expect(prepared.kind).toBe('prepared');
+    if (prepared.kind !== 'prepared') return;
+    expect(prepared.invocation.source).toBe('prompt');
+    expect(prepared.invocation.prompt).toContain('deploy checklist');
+    expect(prepared.invocation.allowedTools ?? '').toContain('Read');
+    expect(prepared.invocation.context).toBe('fork');
+
+    // Registry-known builtin commands stay client-side.
+    const local = await runtime.invocations.prepareCommand({
+      projectRoot,
+      name: 'help',
+    });
+    expect(local.kind).toBe('local');
+
+    const unknown = await runtime.invocations.prepareCommand({
+      projectRoot,
+      name: 'definitely-not-a-command',
+    });
+    expect(unknown.kind).toBe('unknown');
+  } finally {
+    await runtime.close();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

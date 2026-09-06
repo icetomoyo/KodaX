@@ -110,7 +110,7 @@ async function initializeAgentsFile(
   };
 }
 
-function buildLeanReviewPrompt(agentsPath: string, content: string): string {
+export function buildLeanReviewPrompt(agentsPath: string, content: string): string {
   return [
     `Review and update the target project's AGENTS.md at ${agentsPath}.`,
     '',
@@ -185,6 +185,17 @@ export const agentsCommand: Command = {
     }
 
     if (!agentsExists) {
+      return await initializeAgentsFile(agentsPath, callbacks);
+    }
+
+    // FEATURE_298 T37 — with a Host binding the AGENTS.md read and prompt
+    // build happen Host-side; missing files keep the local init fallback.
+    const leanBinding = callbacks?.prepareAgentsLean;
+    if (leanBinding !== undefined) {
+      const prepared = await leanBinding({ projectRoot: root });
+      if (prepared.kind === 'prepared') {
+        return { success: true, invocation: prepared.invocation };
+      }
       return await initializeAgentsFile(agentsPath, callbacks);
     }
 

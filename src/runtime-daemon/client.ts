@@ -971,7 +971,16 @@ export function createRuntimeDaemonClient(
       async prepareSkill() {
         throw new Error('Skill preparation requires an in-process runtime client.');
       },
-    } as unknown as KodaXRuntime['invocations'],
+      async prepareCommand() {
+        throw new Error('Command preparation requires an in-process runtime client.');
+      },
+      async prepareReview() {
+        throw new Error('Review preparation requires an in-process runtime client.');
+      },
+      async prepareAgentsLean() {
+        throw new Error('Agents-lean preparation requires an in-process runtime client.');
+      },
+    },
     workflows: {
       list(filter?: RuntimeWorkflowFilter) {
         return request('workflow.list', filter) as Promise<readonly RuntimeWorkflowSummary[]>;

@@ -323,6 +323,7 @@ import {
   createRuntimeInvocationService,
   type RuntimeInvocationService,
 } from "./runtime-invocations.js";
+import { createRuntimeReviewPreparationService } from "./runtime-review-preparation.js";
 export type { RuntimeInvocationService } from "./runtime-invocations.js";
 export type { RuntimeLearningService } from "./runtime-learning.js";
 export type {
@@ -5007,7 +5008,10 @@ async function createKodaXRuntimeInternal(
   // FEATURE_298 T37 — Skill preparation is Host-side trusted work. No
   // host-mediated dynamic-context executor is bound yet, so dynamic context
   // blocks are hard-disabled (the resolver's legacy execSync path never runs).
-  const invocations = createRuntimeInvocationService({});
+  const invocations = createRuntimeInvocationService({
+    listCommands: listRuntimeCommands,
+    reviewPreparation: createRuntimeReviewPreparationService(),
+  });
   const runService = createRuntimeRunService({
     invocations,
     activeCompactions,
@@ -11402,6 +11406,9 @@ function createRuntimeRunService(deps: {
       ...parseInlineSkillReferences(text),
       ...parseBareInlineSlashReferences(text),
     ].sort((left, right) => left.start - right.start);
+    // More than one Skill reference would need the REPL's reject semantics;
+    // forward the raw text instead of silently dropping references.
+    if (references.length > 1) return undefined;
     const reference = references[0];
     if (reference === undefined) return undefined;
     const argumentsText = text

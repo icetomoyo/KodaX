@@ -9434,7 +9434,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       try {
         inlineSkillInvocation = parsed || fullText.trim().startsWith('!')
           ? undefined
-          : await resolveUserSkillInvocation(fullText.trim(), {
+          : await prepareUserSkillInvocationFromInput(
+            { prepareSkillInvocation: options.prepareSkillInvocation },
+            fullText.trim(),
+            {
               workingDirectory: currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
               projectRoot: context.gitRoot ?? undefined,
               sessionId: context.sessionId,
@@ -9442,6 +9445,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               executeDynamicContext: context.skillDynamicContext?.execute,
               disableDynamicContext: context.skillDynamicContext?.disable,
             });
+            
       } catch (error) {
         if (!(error instanceof MultipleUserSkillReferencesError)) throw error;
         addHistoryItem({ type: "info", text: `[${error.message}]` });
