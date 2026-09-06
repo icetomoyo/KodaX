@@ -471,3 +471,9 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **T22 切片 2 续做**（票面已记）：callbacks.workflows binding（T23/T36 模式）+ workflow-command.test binding fixture 适配（T36 规模）+ start/rerun 审批后改声明式 + 删本地 manager/控制分支（:241-248/builder:185/completer:477）。
 
 **连续目标提醒**：T22 完成→T37（T06✓T22 后解锁）→T34（差 T36✓T37）；并行池 T19/T20/T30/T35（T35 四缺口地图就绪）；T17/T18 等 T34；最后 T15 收尾+T25/T26/T27。
+
+---
+
+## 2026-09-06 T22 切片 2（414ef345）
+
+callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_cli 接 interactiveRuntime.workflows——daemon client 与进程内服务同构）；/workflow runs/show/pause/resume/stop 优先 binding（process→managed snapshot 适配器保住既有格式器；无 binding 走本地路径，107 测试全绿 + 新 mock Host 面 runs/stop 测试；repl 包 2615 绿；tsc 481）。**剩余切片 3**：start/rerun 审批后改发声明式 binding.start（generated/rerun→inline manifest+source、saved/builtin→name），随后删本地 manager/lifecycle 构造（:241-248 区、builder:185、completer command-arguments:477）+ builder/completer binding 接线 + live strip 经 subscribe。完成后 T22→Done、T37 解锁。
