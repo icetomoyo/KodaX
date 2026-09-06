@@ -438,3 +438,10 @@ $taskRuntimeRoot = 'C:/Users/ADMIN/.cache/codex-runtimes/codex-primary-runtime/d
 **提交**：代码 `abaa5962`、子模块（21/35）、指针已提。Host 侧 runtime.memory.forProject（身份 Host 派生/MemoryControlPlane 复用/诚实 rebuild/可信 open target），/memory 删全部自建与直写；S1 四句验证。**关键根因**（适配测试时）：① scoped adapter 对无 receipt 裸文件标 `provisional`，命令过滤 active/trusted 不可见——accepted 必须经 remember/_receipt 流；② fixture 的 `RegExp.exec` 返回 **null 非 undefined**（恒真 bug）；③ learn-command.test 的 /memory pending 别名测试也要 plane+configHome rebase 种子。双轴双 PASS；修复 M1/M2+L 系列；残留（票面已记）：plane workspace/agent scope 与 run 路径漂移、reviewer 显示仅 defaultProvider、双身份逻辑三处重复。**tsc 479=477+2 TS6059 同族**（src 引 packages 的 rootDir 归因，新 import 边 +N 属该族 benign）。
 
 **DAG（21/35）**：T34 还差 T37（需 T22）；actionable=T15收尾/T19/T20/T22/T28opt/T30/T35。建议下一票 **T22**（按 HANDOFF refined 地图：Host serializable start + client workflows 面 + UI 控制迁移）→ T37 → T34 收口。
+
+---
+
+## 2026-09-06 T22 地图增补（本窗新发现，仍未实施）
+
+**最有价值的发现**：`packages/coding/src/workflows/host.ts` 的 **startManagedWorkflow(input)** 已接受声明式 source——`{kind:'saved', module}` | `{kind:'inline', manifest, source}`（manifest+source 为字符串，**可序列化**）| request（NL 生成）。inline 路径 Host 侧已做受信校验：validateWorkflowScriptManifest + validateGeneratedWorkflowSource + assertInlineWorkflowSmoke + splitWorkflowQualityWarnings——run_workflow 工具即此路径（tool-execution-context.ts:333+）。**因此 Host RPC start 的合理形状**：client 发 inline manifest+source+args（或 name 由 Host 用 coding 的 getBuiltinWorkflow/loadSavedWorkflow/discoverSavedWorkflows 解析为 saved module），Host 调 startManagedWorkflow（manager=getDefaultWorkflowRunManager()=runtime.workflows 同一单例）。
+**剩余大障碍（定价）**：`options: KodaXOptions`。run 路径的 buildRunOptions（sdk-runtime.ts:12865+）深耦合 RuntimeRunRecord（guardrail/workspaceSandbox/trustedTextMutationHost/权限 host）。UI /workflow start 现用 UI 闭包选项（plan-mode 检查/standalone shell 边界/UI events）。daemon 模式正确性要求 Host 侧构建（否则 workflow 在 CLI 进程本地 manager 跑，另一 client 不可见=票面缺口本体）。**方案候选**：(a) 抽 buildRunOptions 的 workflow 变体（无 run record 耦合的 Host 级选项构建——工作量最大但最正确）；(b) workflow.start 限定 inline source + Host 基础选项（provider/model/configHome/events sink），权限边界沿用 Host 默认策略（先 S1 双 client 可见性，选项完备性留 T37 消费者票验证）。建议 (b) 先行切片。
