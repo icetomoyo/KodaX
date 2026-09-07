@@ -1673,37 +1673,7 @@ function runStageSchema(): RuntimeDaemonJsonSchema {
 
 
 
-function scopedEventFilterSchema(
-  extra: Readonly<Record<string, RuntimeDaemonJsonSchema>> = {},
-): RuntimeDaemonJsonSchema {
-  const common = {
-    type: { oneOf: [stringSchema, arraySchema(stringSchema)] },
-    ...extra,
-  };
-  return {
-    oneOf: [
-      objectSchema({ ...common, sessionId: stringSchema }, ['sessionId']),
-      objectSchema({ ...common, runId: stringSchema }, ['runId']),
-      objectSchema(
-        { ...common, sessionId: stringSchema, runId: stringSchema },
-        ['sessionId', 'runId'],
-      ),
-    ],
-  };
-}
 
-function runtimeEventSchema(): RuntimeDaemonJsonSchema {
-  return objectSchema({
-    id: stringSchema,
-    seq: integerSchema,
-    time: stringSchema,
-    sessionId: stringSchema,
-    runId: stringSchema,
-    turnId: stringSchema,
-    type: stringSchema,
-    payload: {},
-  }, ['id', 'seq', 'time', 'sessionId', 'runId', 'type', 'payload'], true);
-}
 
 
 /** Typed Interaction response; answer payloads are validated by the Runtime. */

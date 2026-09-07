@@ -2578,33 +2578,6 @@ async function assertAdmittedSessionId(
   if (sessionId !== undefined) await runtime.sessions.transcript(sessionId);
 }
 
-async function assertAdmittedEventScope(
-  runtime: KodaXRuntime,
-  filter: RuntimeEventFilter | undefined,
-): Promise<void> {
-  if (filter?.sessionId !== undefined) {
-    if (filter.runId !== undefined) {
-      const run = await runtime.runs.get(filter.runId);
-      if (run.sessionId !== filter.sessionId) {
-        throw daemonError(
-          "invalid_request",
-          "Runtime event Run belongs to a different Session.",
-        );
-      }
-    }
-    await assertAdmittedSessionId(runtime, filter.sessionId);
-    return;
-  }
-  if (filter?.runId !== undefined) {
-    const sessionId = (await runtime.runs.get(filter.runId)).sessionId;
-    await assertAdmittedSessionId(runtime, sessionId);
-    return;
-  }
-  throw daemonError(
-    "invalid_request",
-    "Runtime event access must specify a Session or Run scope.",
-  );
-}
 
 function augmentObservationRunRequirements(
   snapshot: RuntimeSessionObservationSnapshot,

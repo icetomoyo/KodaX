@@ -1502,7 +1502,10 @@ function subscribeToDaemonEvents(
 ): RuntimeSubscription {
   let closed = false;
   let remoteSubscriptionId: string | undefined;
-  const pendingNotifications: Array<Record<string, unknown>> = [];
+  const pendingNotifications: Array<{
+    readonly method: string;
+    readonly payload: Record<string, unknown>;
+  }> = [];
   const matches = (event: RuntimeEvent): boolean => {
     if (filter.runId !== undefined && event.runId !== filter.runId) return false;
     if (filter.type !== undefined) {
@@ -1519,7 +1522,7 @@ function subscribeToDaemonEvents(
       if (pendingNotifications.length >= MAX_PENDING_SUBSCRIPTION_NOTIFICATIONS) {
         pendingNotifications.shift();
       }
-      pendingNotifications.push(payload);
+      pendingNotifications.push({ method: notification.method, payload });
       return;
     }
     if (payload.subscriptionId !== remoteSubscriptionId) return;
@@ -1538,7 +1541,14 @@ function subscribeToDaemonEvents(
     const subscriptionId = remoteSubscriptionId;
     remoteSubscriptionId = undefined;
     if (subscriptionId !== undefined) {
-      void request('subscription.close', { subscriptionId }).catch(() => undefined);
+      void request('subscription.close', { subscriptionId }).catch((error: unknown) => {
+        emitKodaXDiagnostic({
+          source: 'runtime.daemon.client',
+          level: 'warn',
+          message: 'Failed to close a remote Session observation subscription.',
+          detail: error,
+        });
+      });
     }
   };
   const ready = request('session.observe', { sessionId: filter.sessionId }).then((value) => {
@@ -1549,9 +1559,9 @@ function subscribeToDaemonEvents(
       pendingNotifications.length = 0;
       return;
     }
-    for (const payload of pendingNotifications.splice(0)) {
+    for (const { method, payload } of pendingNotifications.splice(0)) {
       if (payload.subscriptionId !== remoteSubscriptionId) continue;
-      if (payload.invalidated !== undefined) {
+      if (method === 'observation.invalidated') {
         close();
         break;
       }

@@ -497,29 +497,21 @@ being established. Non-terminal persisted runs become `interrupted` after an
 owner restart. Reconnection is explicit; automatic replay of an unknown
 in-flight operation is forbidden.
 
-Runtime event persistence is Session-owned. Each Session has an independent
-`sequence`, `sequence.lock`, and journal epoch under
-`.kodax/runtime/session-events/<encoded-session-id>/`; Run event bodies remain
-in their bounded `events.jsonl` files. A cursor is the complete
-`{ sessionId, journalEpoch, seq }` tuple and is comparable only within that
-Session journal. Public event subscriptions/replay require a `sessionId` or
-`runId`; a Run scope resolves its owning Session before cursor validation.
-Internal Run diagnostics may merge root and managed-child Session events by
-timestamp, but that aggregate has no resumable numeric order. Retention
-watermarks are keyed by both Session and journal epoch; legacy numeric or
-Session-only watermarks cannot invalidate a new journal. Every Run also keeps
-a durable journal-identity index, so a corrupted watermark remains attributable
-after all managed-child event rows have been trimmed and cannot poison an
-unrelated Session when that index is valid. If the index is absent or corrupt,
-non-membership is unknowable and cursor replay conservatively requires resync.
-Deleting a Session rotates its journal before the same ID can be reused. A
-persistence failure is latched only for the affected Session, so a blocked
-writer cannot poison other Session queues in the same process.
-There is no numeric-cursor compatibility path because it cannot detect journal
-replacement. Legacy Runtime-global event files are left untouched for audit
-and ignored by live replay. Inline, Worker, and daemon owners share this code,
-while `sessionEventJournal:1` prevents a new client from attaching to an old
-daemon with different ordering semantics.
+Runtime events are a live in-process stream, not a persistence surface
+(retired in v0.7.97, replacing the v0.7.85 per-Session journal). Each event
+envelope carries `{ id, seq, time, sessionId, runId, turnId?, type, payload }`,
+where `seq` is a per-Session monotonic ordering hint that starts at 1 in the
+current process and resets when a Session is deleted and recreated; it is not
+comparable across owner restarts. Emission is synchronous through an in-memory
+bus with a short merge window, and committed events fire after the run-state
+change they describe, preserving `run.input.delivered` ordering. Observation
+snapshots record the current `seq` high-water: events with `seq <= snapshot.seq`
+are already reflected in the snapshot, and live notifications carry strictly
+greater values. Deleting or recreating a Session invalidates outstanding
+observations with reason `runtime_changed`, so a consumer can never read a
+stale snapshot against a recycled ID. Wire-level `event.subscribe` and
+`event.replay` are gone; remote event consumption reuses the `session.observe`
+notification stream and closes through the shared `subscription.close` channel.
 
 Live provider output is not reconstructed from Run-wide cumulative text.
 `output.segment.started` records `{ responseId, providerRequestId, mode }`

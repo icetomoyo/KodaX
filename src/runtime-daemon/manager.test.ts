@@ -784,7 +784,7 @@ function createTestObservation(sessionId: string) {
   return {
     snapshot: {
       runtimeId: 'runtime-test',
-      cursor: 0,
+      seq: 0,
       transcriptRevision: 'sha256:test',
       session: { id: sessionId, title: 'Test Session' },
       transcript: null,

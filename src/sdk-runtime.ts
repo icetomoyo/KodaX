@@ -952,7 +952,7 @@ export interface RuntimeCapabilityRequirements {
   readonly managedRunDurability?: 1;
   /** Require fail-closed root fencing plus automatic same-owner Actor settlement repair. */
   readonly actorSettlementConvergence?: 1 | 2;
-  /** Require Session-local sequences, epoch-bound cursors, and scoped event access. */
+  /** Require Session-local event ordering and scoped event access. */
   readonly daemonManagement?: 1;
   /** Require a read-only inventory of initialized logical daemon clients. */
   readonly daemonClientInventory?: 1;
@@ -2355,7 +2355,7 @@ export type RuntimeEventType =
 
 export interface RuntimeTextDeltaEventPayload {
   readonly text: string;
-  /** Absent only in historical journals written before liveOutputSegments:1. */
+  /** Absent only in events emitted before liveOutputSegments:1. */
   readonly providerRequestId?: string;
   readonly meta?: KodaXActivityEventMeta;
 }
@@ -3847,7 +3847,6 @@ class RuntimeStatusLockTimeoutError extends Error {
 const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_USER_INPUT_TIMEOUT_MS = 5 * 60_000;
 const MAX_RUNTIME_TIMEOUT_MS = 2_147_483_647;
-const MAX_RUNTIME_MEMORY_EVENTS = 10_000;
 const MAX_RUNTIME_PENDING_EVENTS = 1_024;
 const MAX_RUNTIME_PENDING_EVENT_BYTES = 1024 * 1024;
 const MAX_RUNTIME_MEMORY_RUNS = 1_000;
@@ -3858,9 +3857,6 @@ const MAX_RUNTIME_RUN_STATUS_INDEX_ID_BYTES = 512;
 const MAX_RUNTIME_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const RUNTIME_EVENT_COALESCE_INTERVAL_MS = 50;
 const MAX_RUNTIME_COALESCED_EVENT_BYTES = 8 * 1024;
-const MAX_RUNTIME_EVENT_FILE_BYTES = 16 * 1024 * 1024;
-const TARGET_RUNTIME_EVENT_FILE_BYTES = MAX_RUNTIME_EVENT_FILE_BYTES / 2;
-const MAX_RUNTIME_EVENT_SEQUENCE_TAIL_BYTES = 128 * 1024;
 const MAX_RUNTIME_SNAPSHOT_ATTEMPTS = 8;
 const MAX_RUNTIME_OBSERVATION_HANDOFF_EVENTS = 256;
 const MAX_RUNTIME_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
@@ -7496,18 +7492,10 @@ function createRuntimeSessionService(
           });
         }
         await integrations.releaseSession(sessionId);
-        bus.retireSessionJournal(sessionId);
+        bus.retireSessionEvents(sessionId);
         try {
           await manager.storage.deleteOwned(sessionId, ownerId);
         } catch (error: unknown) {
-          try {
-            bus.restoreSessionJournal(sessionId);
-          } catch (restoreError: unknown) {
-            throw new AggregateError(
-              [error, restoreError],
-              `Session deletion failed and its event journal could not be restored: ${sessionId}`,
-            );
-          }
           if (
             isRecord(error)
             && (
@@ -7589,7 +7577,7 @@ function createRuntimeSessionService(
           );
         }
         ownsSessionResources = true;
-        bus.prepareSessionJournal(sessionId);
+        bus.prepareSessionEvents(sessionId);
         if (input.sessionId === undefined) {
           await manager.storage.createGenerated(sessionId, data);
         } else {
@@ -14225,7 +14213,7 @@ function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: Runt
       liveBySession.clear();
       seqBySession.clear();
     },
-    retireSessionJournal(sessionId: string): void {
+    retireSessionEvents(sessionId: string): void {
       flushPending(sessionId);
       liveBySession.delete(sessionId);
       clearPreservedLatestKeys(sessionId);
@@ -14235,11 +14223,8 @@ function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: Runt
         "runtime_changed",
       );
     },
-    restoreSessionJournal(_sessionId: string): void {
-      // Deleting the in-memory projection above already invalidated live
-      // observers; a failed storage delete only needs them to resnapshot.
-    },
-    prepareSessionJournal(sessionId: string): void {
+
+    prepareSessionEvents(sessionId: string): void {
       removePendingSession(sessionId);
       seqBySession.delete(sessionId);
       liveBySession.delete(sessionId);
@@ -14542,12 +14527,10 @@ function createRuntimePersistence(
         )
       : path.join(baseDir, ".kodax", "runtime");
   const runsDir = path.join(runtimeDir, "runs");
-  const sessionEventsDir = path.join(runtimeDir, "session-events");
   const sessionSettingsDir = path.join(runtimeDir, "session-settings");
   const sessionOrdersDir = path.join(runtimeDir, "session-orders");
   const permissionGrantsFile = path.join(runtimeDir, "permission-grants.json");
   const runStatusIndexFile = path.join(runtimeDir, "run-status-index.json");
-  const validatedSequenceFloorBySession = new Map<string, number>();
 
   const runDir = (runId: string): string =>
     path.join(runsDir, encodeURIComponent(runId));
@@ -16143,33 +16126,7 @@ function encodeRuntimePathComponent(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url") || "_";
 }
 
-function assertRuntimeEventReplayLimit(limit: unknown): void {
-  if (
-    limit === undefined
-    || (
-      typeof limit === "number"
-      && Number.isSafeInteger(limit)
-      && limit > 0
-    )
-  ) return;
-  throw Object.assign(
-    new Error("Runtime event replay limit must be a positive safe integer"),
-    { code: "invalid_argument" as const },
-  );
-}
 
-function isRuntimeEvent(value: unknown): value is RuntimeEvent {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.seq === "number" &&
-    typeof value.time === "string" &&
-    typeof value.sessionId === "string" &&
-    typeof value.runId === "string" &&
-    typeof value.type === "string" &&
-    "payload" in value
-  );
-}
 
 function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
   if (!isRecord(value)) return undefined;

@@ -310,11 +310,13 @@ Learned Skill discovery likewise treats local and remote project identities as
 distinct physical roots, searches each applicable root, and directs lifecycle
 mutations back to the store that owns the discovered record.
 
-The v0.7.85 Runtime owns one event journal per Session. Events carry a
-`{sessionId, journalEpoch, seq}` cursor, replay is scoped by `sessionId` or
-`runId`, and A2A maps each Task to one Runtime Session. Journal retention,
-failure latches, and per-Run attribution fail closed when cursor or index
-evidence is malformed. The Memory surface is likewise host-governed:
+Since v0.7.97 the Runtime streams events live in-process instead of owning a
+per-Session durable journal (the retired v0.7.85 design): events carry a
+per-Session in-process `seq` ordering hint that never survives an owner
+restart, observation snapshots record the seq high-water, and A2A maps each
+Task to one Runtime Session. Stale observations are invalidated with reason
+`runtime_changed` whenever a Session is deleted or recreated. The Memory
+surface is likewise host-governed:
 conversation-first explicit mutations use stable semantic claim keys and a
 host-owned handled-operation marker, while exceptional inferred changes remain
 reviewable. F289/F290 drain and lesson pipelines are bounded and observable;

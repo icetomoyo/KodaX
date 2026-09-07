@@ -204,7 +204,7 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
-  it('applies session admission to event, interaction, and diagnostic side paths', async () => {
+  it('applies session admission to observation and interaction side paths', async () => {
     const runtime = makeRuntime();
     const notAdmitted = () => {
       throw Object.assign(new Error('Partner session is not admitted.'), {
