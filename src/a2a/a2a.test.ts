@@ -328,6 +328,14 @@ function pendingRuntime(): {
     },
     userInputs: {
       async listPending() { return [...pendingInputs.values()]; },
+      async respond(requestId: string) {
+        pendingInputs.delete(requestId);
+        return { requestId, accepted: true, status: 'answered' as const };
+      },
+      async dismiss(requestId: string) {
+        pendingInputs.delete(requestId);
+        return { requestId, accepted: true, status: 'dismissed' as const };
+      },
     },
     async close() {},
   } as unknown as KodaXRuntime;
@@ -1207,6 +1215,91 @@ describe('FEATURE_267 bidirectional A2A', () => {
       expect(JSON.stringify(converged)).not.toContain('TASK_STATE_INPUT_REQUIRED');
     } finally {
       await server.close();
+    }
+  });
+
+  it('restores INPUT_REQUIRED across a restart and resumes through the current pending input (T20)', async () => {
+    const controlled = pendingRuntime();
+    const dataDir = temporaryRoot();
+    const first = createKodaXA2AServer(serverOptions(controlled.runtime, dataDir));
+    const firstUrl = await first.listen({ hostname: '127.0.0.1', port: 0 });
+    const sent = await rpc(firstUrl, 'SendMessage', {
+      message: { messageId: 'restart-input-start', role: 'ROLE_USER', parts: [{ text: 'restart' }] },
+      configuration: { returnImmediately: true },
+    });
+    const taskId = (sent.body.result as { readonly task: { readonly id: string } }).task.id;
+    controlled.emitInputRequired(1);
+    await first.close();
+
+    const second = createKodaXA2AServer(serverOptions(controlled.runtime, dataDir));
+    const secondUrl = await second.listen({ hostname: '127.0.0.1', port: 0 });
+    try {
+      let restored: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        restored = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
+        if (JSON.stringify(restored).includes('TASK_STATE_INPUT_REQUIRED')) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(JSON.stringify(restored)).toContain('TASK_STATE_INPUT_REQUIRED');
+      expect(JSON.stringify(restored)).toContain('Continue?');
+
+      const continued = await rpc(secondUrl, 'SendMessage', {
+        message: {
+          messageId: 'restart-input-answer', taskId, role: 'ROLE_USER',
+          parts: [{ text: 'yes', mediaType: 'text/plain' }],
+        },
+        configuration: { returnImmediately: true },
+      });
+      expect(continued.body.error).toBeUndefined();
+      expect(JSON.stringify(continued.body)).toContain('TASK_STATE_WORKING');
+      controlled.complete('resumed-after-restart');
+      let finished: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
+        if (JSON.stringify(finished).includes('TASK_STATE_COMPLETED')) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(JSON.stringify(finished)).toContain('TASK_STATE_COMPLETED');
+      expect(JSON.stringify(finished)).toContain('resumed-after-restart');
+    } finally {
+      await second.close();
+    }
+  });
+
+  it('converges to WORKING after restart when the pending input was answered while disconnected (T20)', async () => {
+    const controlled = pendingRuntime();
+    const dataDir = temporaryRoot();
+    const first = createKodaXA2AServer(serverOptions(controlled.runtime, dataDir));
+    const firstUrl = await first.listen({ hostname: '127.0.0.1', port: 0 });
+    const sent = await rpc(firstUrl, 'SendMessage', {
+      message: { messageId: 'answered-away-start', role: 'ROLE_USER', parts: [{ text: 'away' }] },
+      configuration: { returnImmediately: true },
+    });
+    const taskId = (sent.body.result as { readonly task: { readonly id: string } }).task.id;
+    controlled.emitInputRequired(1);
+    await first.close();
+
+    // Another client answers while this A2A edge is down: the pending input
+    // leaves the Runtime registry, no resolved event is ever observed.
+    controlled.answerExternally(1);
+    const second = createKodaXA2AServer(serverOptions(controlled.runtime, dataDir));
+    const secondUrl = await second.listen({ hostname: '127.0.0.1', port: 0 });
+    try {
+      await second.whenReady();
+      const refetched = await rpc(secondUrl, 'GetTask', { id: taskId });
+      expect(JSON.stringify(refetched.body.result)).toContain('TASK_STATE_WORKING');
+      expect(JSON.stringify(refetched.body.result)).not.toContain('TASK_STATE_INPUT_REQUIRED');
+
+      controlled.complete('answered-while-away');
+      let finished: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
+        if (JSON.stringify(finished).includes('TASK_STATE_COMPLETED')) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(JSON.stringify(finished)).toContain('TASK_STATE_COMPLETED');
+    } finally {
+      await second.close();
     }
   });
 
