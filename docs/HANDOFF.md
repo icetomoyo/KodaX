@@ -640,3 +640,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **切入点 Slice 1**：权限桥→Interaction 面（票面明确"权限与 form/url 请求交既有 Interaction"）。查 interactions face 形状（runtime.interactions.list({sessionId})/respond(requestId,response)——T17 用过；form/url=question_input/question 交互 kind？查 ClientInteraction kinds）。
 
 **T19 Slice 1 补充侦察**：src/client-interactions.ts（218 行）= Interaction 面 over permissions/userInputs 注册表——listClientInteractions 映射 permissions.listPending→kind:'permission'（requestId=权限请求 id=permission.requested 事件 payload.id）+ question* 交互；respondToClientInteraction 校验 pending/kind 匹配后 permissions.respond。ClientPermissionDecision（allow_once/allow_session+ suggestionId/allow_always+ suggestionId/reject）与 ACP 桥现有 decision 构造（handleRuntimePermissionRequest 回调返回值）**完全同构**。方案：保留 permission.requested 事件订阅（唤醒+runId 缓冲语义不变），应答从 handleRuntimePermissionRequest 换为 client.interactions.respond(requestId,{kind:'permission',decision})——票面"权限交既有 Interaction"落地；form/url（MCP elicitation）今日 ACP 侧 buildMcpReverseCapabilities 未开 enableElicitation=无既有面，不发明 ACP 协议能力（粒度边界），票面记录。ACP 运行时保持进程内（extensionRuntime 实例不可 IPC），经 toKodaXProductClient 出产品面。
+
+---
+
+## 2026-09-07 T19 Done (28/35) — ACP 会话/流式/权限/取消走 Host 产品面
+
+**四代码提交**：`1f99da11`（权限应答走 Interaction 面：client.interactions.respond(requestId,{kind:'permission',decision})，decision 映射与旧回调同构；permission.requested 订阅保留 runId 缓冲；修复预存 acp_server.test 12 挂=createExtensionRuntime mock 缺 loadExtensions）、`4f16e00a`（ensureRuntimeSession/setSessionMode→client.sessions.*，abortSessionRuns→client.runs.read+stop；acpAbortPhaseRank 收宽 string）、`9582f82f`（S1：append-only 文本/工具状态/取消/会话继续 + 边界文档）、`0c03a9ca`（评审修复）。票据 bf136a2（submodule）+父指针 cd24b014。
+
+**关键设计裁决**：(1) prompt 路径 `runtime.runs.start` 与权限桥 `runtime.events.subscribe` 留进程内=文档化接缝：产品面无 coding runs.start（start 是声明式 inputs.submit，承载不了流式回调/permissionBroker:'client'/extensionRuntime），storage/extension/callback 不过边界（票面原话）；(2) append-only 边界写在 sendTextChunk（ACP 0.15 agent_message_chunk 无替换变体——对照 SDK schema 验证；新连接从持久状态开始、不复造瞬态事件）；(3) elicitation 边界写在权限桥：ACP 无 form/url 反向请求→非权限交互留 Host 侧（其它客户端可答）、纯 ACP 连接经 interaction phase timeout 结算（不发明协议能力=粒度边界）；(4) 陈旧对话竞速=watchRuntimePermissionSettlement 订阅 permission.resolved({requestId 匹配})——settlePending 在"他客户端先答/dismiss/registry 超时"所有路径都发该事件，一个竞速全覆盖。
+
+**双轴**：PASS/PASS 0C/0H。修复：Spec M1 旧 handleRuntimePermissionRequest 的 deadline/resolved 竞速在 Slice 1 迁移中丢失→陈旧 ACP 对话可把已结束 run 的 prompt 应答吊死在 permissionBridge.close()（M1 测试：对话永不答+他客户端 reject→prompt 仍按期 end_turn；mutation 换错误事件类型=红）；M2 elicitation 边界未文档化；L3 决策映射只测 allow_once→toClientPermissionDecision 提取纯函数+4 组单测（reject override/默认、allow_once、remember 无建议降级、persistent>session）。Standards M1 嵌套三元+IIFE、M2 手写轮询≠waitForCondition、M3 T19 describe beforeEach 仅 mockClear（mockImplementation 跨 describe 泄漏→mockReset+capturedOptions 清空）、L4 stub 缺 signal（sendSessionUpdate 会读 connection.signal.aborted）、L5 promptPromise 无 expectSettles 守卫。接受不改：L6 restoreAllMocks 会清空 hoisted vi.fn 实现有连锁风险（spy 挂在 per-test runtime 上）；L7 AcpLogger 无 warn 级。
+
+**坑**：ClientInteraction 判别字段是 `requestId` 不是 `id`（ClientInteractionBase）；vitest -t 匹配全名（内部 label 不算）；bash heredoc 里 python 反引号/中文长文本=转义地狱，一律写 .py 文件再执行；parity 基线只含 "error TS" 行（419），先 grep 再 comm。
+
+**门禁终态**：build 绿、acp_server 19/19、root tsc 唯一集 416（无新增；kodax_cli.run-options/run-progress-events/runtime-daemon 5 条为已知行移噪声）。
+
+**残留**（票内已记）：interactions.respond spy 无法区分 client 投影 vs runtime 直连（进程内投影固有）；loadExtensions mock 修复或为防御性；良性 already-answered 记 error（无 warn 级）。
+
+**下一步（28/35）**：DAG 前沿=T20（A2A，T08✓T16✓）、T30；T26 前置剩 T21（T19✓T17✓T18✓T35✓）；T21 前置 T20+T30。建议顺序 T30→T20→T21→T26（T26 还差 T25？查票面：T26 Blocked by T15/T17/T18/T19/T21/T35→还差 T15/T21）。收尾链 T25→T26→T27、T15 收尾。
