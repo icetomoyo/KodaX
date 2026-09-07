@@ -790,3 +790,19 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **切片**：S1 embedded 核心（bus 重写内存化、类型面、persistence 事件腿全删、observe seq 化、acp filter 一行、session-events.test 重写为 live-only 套件、sdk-runtime.test 顺带修）；S2 wire+诊断+capability（protocol/schema/server/client、事件订阅重锚、矩阵测试、daemon 套件）；S3 残留（self-knowledge、daemon-smoke 探针替换、shared-daemon、parity、翻牌）。
 
 **测试红线（S1 先行 RED）**：新 session-events 套件钉——envelope 无 cursor/journalEpoch 字段且 seq 进程内单调；全流程跑完后 session-events/ 与 runs/*/events.jsonl/event-journals.json/events.watermark 均不存在；observe 快照 seq 高水位 + 后续事件 seq 严格递增；session 删除+重建后旧 observation 以 runtime_changed 失效且新 observation 从新 seq 序列工作。
+
+## 2026-09-07 T26 完成（33/35）
+
+**提交**：`01d8a487`（实现，24 文件 +1153/−6783）→ `6f3ac975`（双轴评审修复）→ 翻牌子模块 `eff4d27` + 父指针 `7b1c3928`。实施=设计定稿全量落地（上节 8 项决策无一偏离）。
+
+**落地要点**（增量于上两节）：retire/prepare 更名 retireSessionEvents/prepareSessionEvents 并带 reason 参数（`runtime_changed`），restoreSessionJournal 删除；诊断面整删后 `contextDiagnostics` capability 收窄为仅门诊断事件通知（server notify 的 isContextDiagnosticRuntimeEvent）；status.json 去 sessionJournalEpoch 镜像；persistence.close()（run-status 索引重建）在 runtime 关闭路径于 bus.close() 后显式调用。新测试套件 `src/sdk-runtime.session-events.test.ts` 5 例全绿（live seq 无 cursor、per-session 独立、零 durable 文件、快照高水位+严格递增、删除重建失效+seq 归 1）；sdk-runtime.test.ts 重写为 291 项（删 39、~40 项适配 50ms 合并窗——`await new Promise(r=>setTimeout(r,100))` 模式）。
+
+**双轴评审**：Spec PASS（9 条款逐条过，4 处 dead-code 顺修）；Standards 初判 FAIL——1 High：client 缓冲 drain 检查 `payload.invalidated`（死字段，缓冲丢失 method 信息，observation.invalidated 永不触发关闭）→ 修为缓冲 `{method, payload}` 对 + `method === 'observation.invalidated'` 判定 + subscription.close 失败 warn。dead-code 群（MAX_* 常量/assertRuntimeEventReplayLimit/isRuntimeEvent/scopedEventFilterSchema/runtimeEventSchema/assertAdmittedEventScope）全删；DD.md:500-523 整段重写为 live 流设计、HLD.md:313 加退役注记、self-knowledge registry 4 处陈旧主张（in-process seq、live output-segment projection、无 replay 长轮询、entryId 保留不含 replay）修正。
+
+**门禁**：build 绿；parity 419→376 唯一错误零新增（噪声类照旧）；runtime-daemon 288 绿；runtime-event+session-events 18 绿；repl 2669 绿（实现时点）；sdk-runtime 288/291（3 预存逐一对齐：extension inventory / uiHistory 凭据回显 / queued-run settings）；sdk-client+a2a+acp 299/301；daemon-smoke 24-25/25 轮转 spawn flake（既有）。
+
+**预存失败查证（本轮硬证据）**：`permission-analyzer.test.ts` 222 败在 merge-base `a8f0eedc`（merge-base worktree + node_modules junction）完全一致——Windows 路径归一化环境性，与本分支零关系。`sdk-client.workflow.test.ts` 20s stop→settle 超时：干净 bisect（stash + 路径 checkout 于主工作树，避免 junction 把 `@kodax-ai/kodax/client` 解析进主树污染）在 T22 诞生 `3d796f9b`、T22 末 `943d17a1`、T26 父 `689bd46d` 均同样失败，而 T22 票面记录 S1 绿——判定本机环境漂移（T22 后出现）而非 T26 回归，**记为独立跟进项**。教训：worktree+junction 跑测试时 workspace 包符号链接指回主树，跨提交 bisect 必须 stash+路径 checkout 在主树做。
+
+**残留（票内/跟进）**：sdk-client.workflow.test.ts 本机环境漂移（独立跟进）；daemon-smoke 轮转 flake、sdk-runtime 3 预存败（既有）；embedder-guide v0.7.96 快照退役顺延 T27；goal/notice 写入绕 draining fence（票前既有，独立票）。
+
+**下一步（33/35）**：T27（收缩产品模式与 SDK 出口+发布验收：删产品 embedded/worker facade、旧 mode/isolation options、专属 sidecar/exports 与无消费者 callback；保留 constructed-handler Worker 与 Host A2A outbound/bootstrap/watchers；embedder-guide 快照退役；迁移文档；request.cancel/ack 行）→ T15 验收（T25 exit-protocol 条款已交付）。
