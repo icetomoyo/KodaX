@@ -211,6 +211,7 @@ import {
   runProviderSetupWizard,
   initializeSetupConfiguration,
   renderSetupGuide,
+  IntegrationConfigController,
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
   type CanonicalPermissionMode,
@@ -230,8 +231,16 @@ import {
   createConfiguredA2ARuntimeIntegration,
   type ConfiguredA2ARuntimeHandle,
 } from './a2a/runtime-config.js';
-import { parseA2AIntegrationDocument, readA2AIntegration } from './a2a/config.js';
-import { createA2AServerOptionsFromConfig } from './a2a/product.js';
+import {
+  classifyA2AServerChange,
+  type A2AIntegrationDocument,
+  parseA2AIntegrationDocument,
+  readA2AIntegration,
+} from './a2a/config.js';
+import {
+  createA2AServerHotOptions,
+  createA2AServerOptionsFromConfig,
+} from './a2a/product.js';
 import { prepareKodaXA2AServer } from './a2a/server.js';
 import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
@@ -1116,6 +1125,7 @@ async function serveDaemonCommand(input: {
   let ownedRuntime: KodaXRuntime | undefined;
   let a2aHandle: ConfiguredA2ARuntimeHandle | undefined;
   let hostedA2AServer: Awaited<ReturnType<typeof prepareKodaXA2AServer>> | undefined;
+  let hostedA2AConfigController: IntegrationConfigController<A2AIntegrationDocument> | undefined;
   let completedNormally = false;
   let ownedRuntimeId: string | undefined;
   let primaryError: Error | undefined;
@@ -1185,9 +1195,45 @@ async function serveDaemonCommand(input: {
                 : {}),
             });
             console.error(chalk.dim(`[integrations] A2A serving on ${baseUrl}`));
+            // Hot fields (published/auth/limits) apply live; binding, store,
+            // and listen changes stay restart-required by classification.
+            let appliedServer = serverConfig;
+            hostedA2AConfigController = new IntegrationConfigController({
+              domain: 'a2a',
+              configHome: daemonConfigHome,
+              validate: parseA2AIntegrationDocument,
+              read: () => readA2AIntegration(daemonConfigHome),
+            });
+            hostedA2AConfigController.subscribe((snapshot) => {
+              const next = snapshot.document.server;
+              if (!next) return;
+              const change = classifyA2AServerChange(appliedServer, next);
+              if (change.kind === 'restart-required') {
+                console.error(chalk.yellow(
+                  `[integrations] A2A config change pending Host restart: ${change.fields.join(', ')}`,
+                ));
+                return;
+              }
+              if (change.kind === 'hot' && hostedA2AServer) {
+                hostedA2AServer.updateHot(
+                  createA2AServerHotOptions({ config: next, listenBaseUrl: baseUrl }),
+                );
+                appliedServer = next;
+                console.error(chalk.dim(
+                  `[integrations] A2A serving hot-reloaded: ${change.fields.join(', ')}`,
+                ));
+              }
+            });
+            hostedA2AConfigController.startWatching();
           }
           return runtime;
         } catch (error: unknown) {
+          try {
+            hostedA2AConfigController?.close();
+          } catch {
+            // Watcher teardown is best effort before process-level cleanup.
+          }
+          hostedA2AConfigController = undefined;
           try {
             await hostedA2AServer?.close();
           } catch {
@@ -1245,6 +1291,8 @@ async function serveDaemonCommand(input: {
       await waitForShutdownSignal(shutdown, externallyClosed);
     } finally {
       testParentWatch?.close();
+      hostedA2AConfigController?.close();
+      hostedA2AConfigController = undefined;
       await hostedA2AServer?.close().catch(() => undefined);
       hostedA2AServer = undefined;
       a2aHandle?.close();
@@ -1262,6 +1310,8 @@ async function serveDaemonCommand(input: {
   try {
     await cleanupDaemonServeProcessResources({
       closeA2A: () => {
+        hostedA2AConfigController?.close();
+        hostedA2AConfigController = undefined;
         void hostedA2AServer?.close().catch(() => undefined);
         hostedA2AServer = undefined;
         a2aHandle?.close();
@@ -3637,7 +3687,15 @@ async function main() {
       .description('KodaX - Intelligent Coding Agent')
       .version(version),
   );
-  configureIntegrationCommands(program, { version });
+  configureIntegrationCommands(program, {
+    version,
+    serveDaemonHost: (input) => serveDaemonCommand({
+      profile: input.profile,
+      ...resolveCliRuntimeDaemonLocation(input.homeDir, KODAX_DIR),
+      provider: input.provider,
+      model: input.model,
+    }),
+  });
 
   configureKodaXSetupCommand(program);
   configureKodaXMemoryCommand(program);

@@ -10,9 +10,7 @@ import {
 } from "@kodax-ai/agent";
 import {
   createExtensionRuntime,
-  KODAX_DEFAULT_PROVIDER,
   loadMarkdownAgentScope,
-  registerConfiguredMcpCapabilityProvider,
   resolveExtensionEntrypoint,
 } from "@kodax-ai/coding";
 import {
@@ -25,13 +23,10 @@ import {
   migrateLegacyIntegrationConfig,
   parseExtensionsIntegrationDocument,
   planLegacyIntegrationMigration,
-  prepareRuntimeConfig,
   readExtensionsIntegration,
   readMcpIntegration,
   removeMcpServer,
   resolveIntegrationConfigPath,
-  resolveRuntimeModelSelection,
-  resolveRuntimeProviderSelection,
   upsertMcpServer,
   writeIntegrationDocument,
 } from "@kodax-ai/repl";
@@ -45,18 +40,13 @@ import {
   upsertA2AOutboundAgent,
 } from "./a2a/config.js";
 import {
-  classifyA2AServerChange,
   CONFIGURED_A2A_TASK_RESPONSE_BYTES,
   configuredA2AArtifactPolicy,
-  createConfiguredA2ARuntimeIntegration,
-  createA2AServerHotOptions,
-  createA2AServerOptionsFromConfig,
   createA2AAgentExecutorFactory,
   discoverA2ARegistration,
   inspectA2AIntegration,
   migrateA2ALegacyTaskOwners,
   parseA2AIntegrationDocument,
-  prepareKodaXA2AServer,
   readA2AIntegration,
   type A2AAgentCard,
   type A2AIntegrationDocument,
@@ -66,7 +56,7 @@ import {
   type A2AServerConfig,
 } from "./a2a/index.js";
 import { mergeCommandOptionsWithGlobals } from "./cli_option_helpers.js";
-import { connectKodaXRuntime, createKodaXRuntime } from "./sdk-runtime.js";
+import { connectKodaXRuntime } from "./sdk-runtime.js";
 import {
   isRuntimeDaemonPidAlive,
   observeRuntimeDaemonHealth,
@@ -613,27 +603,6 @@ async function validateExtensions(paths: readonly string[]): Promise<void> {
   }
 }
 
-async function createA2AServerExtensionRuntime(): Promise<
-  ReturnType<typeof createExtensionRuntime>
-> {
-  const runtime = createExtensionRuntime();
-  try {
-    await registerConfiguredMcpCapabilityProvider(
-      runtime,
-      readMcpIntegration(KODAX_DIR).document.servers,
-    );
-    await runtime.loadExtensions(
-      [...readExtensionsIntegration(KODAX_DIR).document.paths],
-      { continueOnError: true, loadSource: "config" },
-    );
-    runtime.activate();
-    return runtime;
-  } catch (error: unknown) {
-    await runtime.dispose();
-    throw error;
-  }
-}
-
 function configureExtensionCommands(program: Command): void {
   const extensions = program
     .command("extensions")
@@ -952,6 +921,7 @@ async function serveA2A(options: {
   readonly home?: string;
   readonly provider?: string;
   readonly model?: string;
+  readonly serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>;
 }): Promise<void> {
   assertLoopbackHostname(options.hostname);
   const controller = new IntegrationConfigController<A2AIntegrationDocument>({
@@ -960,97 +930,45 @@ async function serveA2A(options: {
     validate: parseA2AIntegrationDocument,
     read: () => readA2AIntegration(KODAX_DIR),
   });
-  const initial = await controller.initialize();
-  if (!initial.document.server)
-    throw new Error(
-      "A2A server is not configured; run kodax a2a expose first.",
-    );
-  const extensionRuntime = await createA2AServerExtensionRuntime();
-  const outboundIntegration = createConfiguredA2ARuntimeIntegration({
-    configHome: KODAX_DIR,
-  });
-  let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
-  const requestedBase = `http://${options.hostname.includes(":") ? `[${options.hostname}]` : options.hostname}:${options.port}`;
-  let outboundHandle:
-    Awaited<ReturnType<typeof outboundIntegration.start>> | undefined;
-  let server: Awaited<ReturnType<typeof prepareKodaXA2AServer>> | undefined;
-  let applied = initial.document.server;
   try {
-    const environmentProvider = process.env.KODAX_PROVIDER;
-    const config = prepareRuntimeConfig();
-    const defaultProvider = resolveRuntimeProviderSelection({
-      explicitProvider: options.provider,
-      environmentProvider,
-      configuredProvider: config.provider,
-      defaultProvider: KODAX_DEFAULT_PROVIDER,
+    const initial = await controller.initialize();
+    if (!initial.document.server)
+      throw new Error(
+        "A2A server is not configured; run kodax a2a expose first.",
+      );
+    // FEATURE_298 T21 — serving is bootstrap config owned by the Host: the
+    // requested address is persisted, then the daemon Host runs in the
+    // foreground and owns the binding, workspaces, and A2A requests itself.
+    // The adapter no longer creates a private embedded Runtime.
+    await assertA2AConfigOwnerCompatible();
+    setA2AServerConfig(KODAX_DIR, {
+      ...initial.document.server,
+      listen: { hostname: options.hostname, port: options.port },
     });
-    const defaultModel = resolveRuntimeModelSelection({
-      explicitProvider: options.provider,
-      environmentProvider,
-      explicitModel: options.model,
-      configuredProvider: config.provider,
-      configuredModel: config.model,
-    });
-    runtime = await createKodaXRuntime({
-      mode: "embedded",
-      isolation: "inline",
-      profile: options.profile,
-      ...(options.home ? { homeDir: path.resolve(options.home) } : {}),
-      defaultProvider,
-      ...(defaultModel ? { defaultModel } : {}),
-      externalAgents: outboundIntegration.runtimeOptions,
-    });
-    outboundHandle = await outboundIntegration.start(runtime);
-    const prepared = await prepareKodaXA2AServer(
-      createA2AServerOptionsFromConfig({
-        runtime,
-        config: initial.document.server,
-        listenBaseUrl: requestedBase,
-      }),
+    stdout(
+      `A2A serving is Host-owned on ${options.hostname}:${options.port}; config changes to serving need a Host restart.`,
     );
-    server = prepared;
-    const baseUrl = await prepared.listen({
-      hostname: options.hostname,
-      port: options.port,
-      ...(initial.document.server.publicBaseUrl
-        ? { publicBaseUrl: initial.document.server.publicBaseUrl }
-        : {}),
-    });
-    controller.subscribe((snapshot) => {
-      const next = snapshot.document.server;
-      const change = classifyA2AServerChange(applied, next);
-      if (change.kind === "restart-required" || !next) {
-        stderr(
-          `[a2a] valid config change pending restart: ${change.fields.join(", ") || "server"}`,
-        );
-        return;
-      }
-      if (change.kind === "hot") {
-        prepared.updateHot(
-          createA2AServerHotOptions({ config: next, listenBaseUrl: baseUrl }),
-        );
-        applied = next;
-        stderr(`[a2a] hot-reloaded: ${change.fields.join(", ")}`);
-      }
-    });
-    controller.startWatching();
-    stdout(`A2A server listening on ${baseUrl}`);
-    stdout(`Agent Card: ${baseUrl}/.well-known/agent-card.json`);
-    await new Promise<void>((resolve) => {
-      const stop = (): void => resolve();
-      process.once("SIGINT", stop);
-      process.once("SIGTERM", stop);
+    if (!options.serveDaemonHost) {
+      throw new Error(
+        "Host-owned A2A serving requires the runtime daemon host; run `kodax daemon serve` instead.",
+      );
+    }
+    await options.serveDaemonHost({
+      profile: options.profile,
+      homeDir: options.home,
+      provider: options.provider,
+      model: options.model,
     });
   } finally {
     controller.close();
-    await server?.close();
-    outboundHandle?.close();
-    await runtime?.close();
-    await extensionRuntime.dispose();
   }
 }
 
-function configureA2ACommands(program: Command, version: string): void {
+function configureA2ACommands(
+  program: Command,
+  version: string,
+  serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>,
+): void {
   const a2a = program
     .command("a2a")
     .description("Call third-party A2A Agents or expose KodaX as an A2A Agent");
@@ -1367,6 +1285,7 @@ function configureA2ACommands(program: Command, version: string): void {
           home: options.home,
           provider: options.provider,
           model: options.model,
+          serveDaemonHost,
         });
       },
     );
@@ -1402,14 +1321,25 @@ function configureSandboxCommands(program: Command): void {
     });
 }
 
+export interface A2AServeDelegateInput {
+  readonly profile: string;
+  readonly homeDir?: string;
+  readonly provider?: string;
+  readonly model?: string;
+}
+
 export function configureIntegrationCommands(
   program: Command,
-  options: { readonly version: string },
+  options: {
+    readonly version: string;
+    /** FEATURE_298 T21 — runs the daemon Host in the foreground; the Host owns A2A serving. */
+    readonly serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>;
+  },
 ): void {
   configureConfigCommands(program);
   configureIntegrationManagement(program);
   configureMcpCommands(program);
   configureExtensionCommands(program);
-  configureA2ACommands(program, options.version);
+  configureA2ACommands(program, options.version, options.serveDaemonHost);
   configureSandboxCommands(program);
 }
