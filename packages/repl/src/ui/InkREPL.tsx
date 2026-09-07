@@ -529,6 +529,7 @@ import { buildHostSessionPayload } from "./utils/session-payload.js";
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  mintInkInputId,
   runClientPlaneRound,
   viewRunsActive,
   type ClientPlaneDialogSurface,
@@ -1891,6 +1892,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const terminalWidth = stdout.columns || 80;
 
   const streamingState = useStreamingState();
+
+  // FEATURE_298 T17 — when the plane owns the queue, the Host view is the
+  // queue display source (local pendingInputs stays empty in that mode).
+  const displayPendingInputs = options.clientPlane
+    ? (clientView?.queue.map((entry) => entry.text) ?? [])
+    : streamingState.pendingInputs;
 
   // Mirror live streaming state into a ref so memDiagSnapshot can read it
   // without pulling `streamingState` into callback deps (that would rebuild
@@ -4477,14 +4484,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // by N rows for queue depth ≥ 2, pushing composer + status bar off screen
   // instead of compressing the transcript above.
   const pendingInputSummary = useMemo(
-    () => formatPendingInputsBudgetText(streamingState.pendingInputs),
-    [streamingState.pendingInputs]
+    () => formatPendingInputsBudgetText(displayPendingInputs),
+    [displayPendingInputs]
   );
   const footerHeaderViewModel = useMemo(
     () => buildFooterHeaderViewModel({
       isHistorySearchActive,
       isTranscriptMode,
-      pendingInputCount: streamingState.pendingInputs.length,
+      pendingInputCount: displayPendingInputs.length,
       buffering: transcriptDisplayState.buffering,
       pendingLiveUpdates: pendingTranscriptUpdateCount,
     }),
@@ -5771,7 +5778,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         isAwaitingUserInteraction,
         isInputEmpty,
         isDoubleEscape,
-        pendingInputCount: streamingState.pendingInputs.length,
+        pendingInputCount: displayPendingInputs.length,
         hasTranscriptTextSelection: Boolean(transcriptModeTextSelection),
       });
 
@@ -5781,7 +5788,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           resetInterruptedPromptState();
           return true;
         case "pop-pending-input":
-          removeLastPendingInput();
+          if (streamingState.pendingInputs.length > 0) {
+            removeLastPendingInput();
+            return true;
+          }
+          // FEATURE_298 T17 — with the plane owning the queue, Esc drops the
+          // newest Host-queued input instead of a local pending entry.
+          const hostQueue = clientView?.queue ?? [];
+          const newest = hostQueue[hostQueue.length - 1];
+          if (newest !== undefined) {
+            void options.clientPlane?.withdraw(context.sessionId, newest.inputId)
+              .catch(() => undefined);
+          }
           return true;
         case "none":
         default:
@@ -5795,7 +5813,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isTranscriptMode,
       isAwaitingUserInteraction,
       isInputEmpty,
+      displayPendingInputs.length,
       streamingState.pendingInputs.length,
+      clientView,
+      options.clientPlane,
+      context.sessionId,
       removeLastPendingInput,
       queueInterruptedPersistence,
       resetInterruptedPromptState,
@@ -9047,6 +9069,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     teamModeHandle,
   ]);
 
+  // FEATURE_298 T17 — submit a streaming-time follow-up into the Host
+  // queue; capacity conflicts surface as a visible error item.
+  const submitHostQueuedFollowUp = useCallback((text: string): Promise<void> => {
+    const plane = options.clientPlane;
+    if (!plane) return Promise.resolve();
+    return plane.submit({
+      sessionId: context.sessionId,
+      text,
+      inputId: mintInkInputId(),
+      delivery: 'after_turn',
+    }).then(() => undefined, (error: unknown) => {
+      addHistoryItem({
+        type: "error",
+        text: `Queued follow-up rejected: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    });
+  }, [options.clientPlane, context.sessionId, addHistoryItem]);
+
   // Issue 120: drain pending inputs left over from skill / plan-mode rounds.
   // Hands the first queued prompt to `runQueueableAgentSequence`, which then
   // drains the remainder via its internal loop. Keeps behaviour identical to
@@ -9279,7 +9319,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (!canQueueFollowUps) {
           return;
         }
-        if (streamingState.pendingInputs.length >= MAX_PENDING_INPUTS) {
+        if (displayPendingInputs.length >= MAX_PENDING_INPUTS) {
           // Queue-limit notice fires while the user is typing a
           // follow-up during an active managed task; route to the
           // correct layer so it does not anchor near the user prompt
@@ -9358,7 +9398,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (activeToolName) {
           const def = getRegisteredToolDefinition(activeToolName);
           if (def?.interruptBehavior === 'cancel') {
-            addPendingInput(fullText, pendingInputOptions);
+            if (options.clientPlane && !queuedSkillReference) {
+              void submitHostQueuedFollowUp(fullText);
+            } else {
+              addPendingInput(fullText, pendingInputOptions);
+            }
             abort({ preservePendingInputs: true });
             setInputText("");
             setIsInputEmpty(true);
@@ -9369,7 +9413,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         // Queue the EXPANDED text — downstream drain path feeds the agent.
-        addPendingInput(fullText, pendingInputOptions);
+        // FEATURE_298 T17 — with the plane bound, plain follow-ups join the
+        // Host queue (the Host batches them into continuation runs); Skill
+        // references keep the local queue so the trusted resolver expands
+        // them after the round yields.
+        if (options.clientPlane && !queuedSkillReference) {
+          void submitHostQueuedFollowUp(fullText);
+        } else {
+          addPendingInput(fullText, pendingInputOptions);
+        }
         setInputText("");
         setIsInputEmpty(true);
         setSubmitCounter(prev => prev + 1);
@@ -10839,7 +10891,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     <PromptFooter
       left={<PromptFooterLeftSide items={footerLeftItems} />}
       right={<PromptFooterRightSide items={footerRightItems} />}
-      queued={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
+      queued={<QueuedCommandsSurface pendingInputs={displayPendingInputs} />}
       stashNotice={<StashNotice text={stashNoticeText} />}
       notifications={<NotificationsSurface notifications={footerNotifications} />}
       inlineNotices={promptFooterNotices.length > 0 ? (
@@ -10944,8 +10996,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // hand (mirrors Claude Code's `popAllEditable`).
           onPopPendingInputs={() => {
             const inputs = consumePendingInputs();
-            if (inputs.length === 0) return undefined;
-            return inputs.join("\n---\n");
+            if (inputs.length > 0) return inputs.join("\n---\n");
+            // FEATURE_298 T17 -- plane-bound follow-ups live in the Host
+            // queue; pull them back by withdrawing every entry.
+            const plane = options.clientPlane;
+            const hostQueue = clientView?.queue ?? [];
+            if (!plane || hostQueue.length === 0) return undefined;
+            for (const entry of hostQueue) {
+              void plane.withdraw(context.sessionId, entry.inputId).catch(() => undefined);
+            }
+            return hostQueue.map((entry) => entry.text).join("\n---\n");
           }}
           prompt=">"
           placeholder={buildPromptPlaceholderText({

@@ -23,11 +23,18 @@ export type { SessionPickerItem } from "./SessionPicker.js";
 // CLI event handler - CLI 事件处理器
 export { createCliEvents } from "./cli-events.js";
 export {
+  answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  firstActiveRunId,
+  mintInkInputId,
   runClientPlaneRound,
   viewRunsActive,
 } from "./client-plane.js";
-export type { ClientRoundOutcome, InkClientPlane } from "./client-plane.js";
+export type {
+  ClientPlaneDialogSurface,
+  ClientRoundOutcome,
+  InkClientPlane,
+} from "./client-plane.js";
 export { createJsonEvents } from "./json-events.js";
 
 // Contexts - 上下文 (unique exports not in hooks)

@@ -37,11 +37,12 @@ export interface ClientRoundOutcome {
 }
 
 export interface InkClientPlane {
-  /** Submit user text; immediate delivery starts the run (runId when known). */
+  /** Submit user text; immediate delivery starts the run, after_turn queues Host-side. */
   submit(input: {
     readonly sessionId: string;
     readonly text: string;
     readonly inputId: string;
+    readonly delivery?: 'immediate' | 'after_turn';
   }): Promise<{ readonly runId?: string }>;
   /** Withdraw a queued input; returns the original text when this caller owned it. */
   withdraw(sessionId: string, inputId: string): Promise<string | undefined>;
@@ -49,6 +50,8 @@ export interface InkClientPlane {
   awaitRun(sessionId: string, runId: string): Promise<ClientRoundOutcome>;
   /** Request a stop for one run (Esc); the receipt never implies terminal state. */
   stop(runId: string): Promise<ClientRunStopReceipt | undefined>;
+  /** Newest run in a live phase for the session, or undefined when idle. */
+  activeRun(sessionId: string): Promise<string | undefined>;
   /** Live current-state replacement; resolves with the closer. */
   observe(
     sessionId: string,
@@ -91,10 +94,44 @@ function interruptedPlaneResult(sessionId: string): KodaXResult {
   };
 }
 
+/** Client-minted input identity; withdraw targets it while the input is queued. */
+export function mintInkInputId(): string {
+  return `ink-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const CHAIN_POLL_INTERVAL_MS = 25;
+/** How long a queued input waits for its run before the round gives up. */
+const QUEUED_RUN_WAIT_MS = 10_000;
+/** Grace window after a terminal run for the Host to start a continuation. */
+const CONTINUATION_WINDOW_MS = 600;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollActiveRun(
+  plane: Pick<InkClientPlane, 'activeRun'>,
+  sessionId: string,
+  accept: (runId: string) => boolean,
+  timeoutMs: number,
+  bail?: () => boolean,
+): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (bail?.()) return undefined;
+    const active = await plane.activeRun(sessionId);
+    if (active !== undefined && accept(active)) return active;
+    if (Date.now() >= deadline) return undefined;
+    await sleep(CHAIN_POLL_INTERVAL_MS);
+  }
+}
+
 /**
- * FEATURE_298 T17 — run one round over the client plane: submit the input,
- * keep the Esc abort translated into a Host stop request, and project the
- * terminal run result back into the legacy shape the Ink loop expects.
+ * FEATURE_298 T17 — run one round over the client plane. A submitted input
+ * may start its run immediately or sit in the Host queue (the Host batches
+ * queued text into continuation runs once the active run settles), so the
+ * round follows the whole chain: the Esc abort always stops the run
+ * currently in flight and withdraws the input while it is still queued.
  */
 export async function runClientPlaneRound(input: {
   readonly plane: InkClientPlane;
@@ -102,34 +139,63 @@ export async function runClientPlaneRound(input: {
   readonly prompt: string;
   readonly abortSignal?: AbortSignal;
 }): Promise<KodaXResult> {
-  const inputId = `ink-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const inputId = mintInkInputId();
+  const aborted = (): boolean => input.abortSignal?.aborted === true;
+  const stopRun = (runId: string | undefined): void => {
+    if (runId !== undefined) {
+      void input.plane.stop(runId).catch(() => undefined);
+    } else {
+      void input.plane.withdraw(input.sessionId, inputId).catch(() => undefined);
+    }
+  };
   const accepted = await input.plane.submit({
     sessionId: input.sessionId,
     text: input.prompt,
     inputId,
   });
-  if (accepted.runId === undefined) {
-    throw new Error(
-      'The Host queued the input instead of starting the run; retry when the session is idle.',
-    );
+  if (aborted()) {
+    stopRun(accepted.runId);
+    return interruptedPlaneResult(input.sessionId);
   }
-  const runId = accepted.runId;
-  let stopRequested = false;
-  const stop = (): void => {
-    stopRequested = true;
-    void input.plane.stop(runId).catch(() => undefined);
-  };
+  let currentRunId = accepted.runId;
+  let lastOutcome: ClientRoundOutcome | undefined;
+  const stop = (): void => stopRun(currentRunId);
   input.abortSignal?.addEventListener('abort', stop, { once: true });
   try {
-    const outcome = await input.plane.awaitRun(input.sessionId, runId);
+    for (;;) {
+      if (currentRunId === undefined) {
+        currentRunId = await pollActiveRun(
+          input.plane,
+          input.sessionId,
+          () => true,
+          QUEUED_RUN_WAIT_MS,
+          aborted,
+        );
+        if (currentRunId === undefined) {
+          if (aborted()) return interruptedPlaneResult(input.sessionId);
+          throw new Error('The queued input did not start a run within the wait window.');
+        }
+      }
+      lastOutcome = await input.plane.awaitRun(input.sessionId, currentRunId);
+      const continuation = await pollActiveRun(
+        input.plane,
+        input.sessionId,
+        (runId) => runId !== currentRunId,
+        CONTINUATION_WINDOW_MS,
+        aborted,
+      );
+      if (continuation === undefined) break;
+      currentRunId = continuation;
+    }
+    const outcome = lastOutcome;
+    if (outcome === undefined) throw new Error('The client-plane round ended without a run outcome.');
     if (outcome.result !== undefined) return outcome.result;
     if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) {
       return interruptedPlaneResult(input.sessionId);
     }
-    throw new Error(outcome.error ?? `Run ${runId} ended in phase '${outcome.phase}' without a result.`);
+    throw new Error(outcome.error ?? `Run ${currentRunId} ended in phase '${outcome.phase}' without a result.`);
   } finally {
     input.abortSignal?.removeEventListener('abort', stop);
-    void stopRequested;
   }
 }
 
@@ -142,14 +208,22 @@ const LIVE_RUN_PHASES = new Set([
   'waiting_user_input',
 ]);
 
+/** First run in a live phase; run lists are ordered oldest-first. */
+export function firstActiveRunId(
+  runs: readonly { readonly runId: string; readonly phase: string }[],
+): string | undefined {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index]!;
+    if (LIVE_RUN_PHASES.has(run.phase)) return run.runId;
+  }
+  return undefined;
+}
+
 /** Active run id from the view's run list, or undefined when idle. */
 export function viewRunsActive(
   view: Pick<ClientSessionView, 'runs'>,
 ): string | undefined {
-  for (const run of view.runs) {
-    if (LIVE_RUN_PHASES.has(run.phase)) return run.runId;
-  }
-  return undefined;
+  return firstActiveRunId(view.runs);
 }
 
 /** Map the Host's display items onto the Ink render model (types align by design). */

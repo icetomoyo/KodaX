@@ -10,8 +10,10 @@ import { ToolCallStatus } from './types.js';
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  runClientPlaneRound,
   viewRunsActive,
   type ClientPlaneDialogSurface,
+  type ClientRoundOutcome,
   type InkClientPlane,
 } from './client-plane.js';
 
@@ -294,5 +296,116 @@ describe('answerClientPlaneInteraction (T17)', () => {
     await expect(answerClientPlaneInteraction(
       plane, interaction('question', { question: 'Ship?' }), baseSurface,
     )).resolves.toBe(false);
+  });
+});
+
+describe('runClientPlaneRound queue chain (T17)', () => {
+  interface ScriptedPlaneLog {
+    readonly stops: string[];
+    readonly withdraws: string[];
+    readonly submissions: { readonly inputId: string; readonly delivery?: string }[];
+  }
+
+  function scriptedPlane(script: {
+    readonly firstAcceptance: { readonly runId?: string };
+    readonly activeRun: readonly (string | undefined)[];
+    readonly outcomes: Readonly<Record<string, ClientRoundOutcome>>;
+    readonly onAwait?: (runId: string) => void;
+  }): InkClientPlane & ScriptedPlaneLog {
+    const stops: string[] = [];
+    const withdraws: string[] = [];
+    const submissions: { inputId: string; delivery?: string }[] = [];
+    let activeRunIndex = 0;
+    return {
+      stops,
+      withdraws,
+      submissions,
+      submit: (input) => {
+        submissions.push({ inputId: input.inputId, ...(input.delivery !== undefined ? { delivery: input.delivery } : {}) });
+        return Promise.resolve(script.firstAcceptance);
+      },
+      withdraw: (_sessionId, inputId) => {
+        withdraws.push(inputId);
+        return Promise.resolve(undefined);
+      },
+      awaitRun: (_sessionId, runId) => {
+        script.onAwait?.(runId);
+        const outcome = script.outcomes[runId];
+        if (!outcome) throw new Error(`No scripted outcome for run ${runId}`);
+        return Promise.resolve(outcome);
+      },
+      stop: (runId) => {
+        stops.push(runId);
+        return Promise.resolve(undefined);
+      },
+      activeRun: () => {
+        const value = script.activeRun[activeRunIndex];
+        if (activeRunIndex < script.activeRun.length - 1) activeRunIndex += 1;
+        return Promise.resolve(value);
+      },
+      observe: () => Promise.resolve(() => undefined),
+      readItem: () => Promise.resolve(null),
+      respondInteraction: () => Promise.resolve(true),
+    };
+  }
+
+  it('waits for the queued input to start its run and returns that result', async () => {
+    const plane = scriptedPlane({
+      firstAcceptance: {},
+      activeRun: [undefined, 'r9'],
+      outcomes: { r9: { phase: 'completed', result: { success: true, lastText: 'queued answer', messages: [], sessionId: 's1' } } },
+    });
+    const result = await runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Later.' });
+    expect(plane.submissions[0]).toMatchObject({ inputId: expect.stringMatching(/^ink-/) });
+    expect(result.lastText).toBe('queued answer');
+  });
+
+  it('follows the continuation run the Host starts for queued batches', async () => {
+    const plane = scriptedPlane({
+      firstAcceptance: { runId: 'r1' },
+      activeRun: ['r2'],
+      outcomes: {
+        r1: { phase: 'completed', result: { success: true, lastText: 'first', messages: [], sessionId: 's1' } },
+        r2: { phase: 'completed', result: { success: true, lastText: 'second', messages: [], sessionId: 's1' } },
+      },
+    });
+    const result = await runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Go.' });
+    expect(result.lastText).toBe('second');
+  });
+
+  it('stops the run currently in the chain when aborted mid-continuation', async () => {
+    const controller = new AbortController();
+    const plane = scriptedPlane({
+      firstAcceptance: { runId: 'r1' },
+      activeRun: ['r2'],
+      outcomes: {
+        r1: { phase: 'completed', result: { success: true, lastText: 'first', messages: [], sessionId: 's1' } },
+        r2: { phase: 'cancelled' },
+      },
+      onAwait: (runId) => {
+        if (runId === 'r2' && !controller.signal.aborted) controller.abort();
+      },
+    });
+    const result = await runClientPlaneRound({
+      plane, sessionId: 's1', prompt: 'Go.', abortSignal: controller.signal,
+    });
+    expect(result.interrupted).toBe(true);
+    expect(plane.stops).toEqual(['r2']);
+  });
+
+  it('withdraws the queued input when aborted before any run starts', async () => {
+    const controller = new AbortController();
+    const plane = scriptedPlane({
+      firstAcceptance: {},
+      activeRun: [undefined],
+      outcomes: {},
+    });
+    controller.abort();
+    const result = await runClientPlaneRound({
+      plane, sessionId: 's1', prompt: 'Later.', abortSignal: controller.signal,
+    });
+    expect(result.interrupted).toBe(true);
+    expect(plane.withdraws).toEqual([plane.submissions[0]!.inputId]);
+    expect(plane.stops).toEqual([]);
   });
 });

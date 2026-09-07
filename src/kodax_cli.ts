@@ -193,6 +193,8 @@ import {
   resolveInteractiveSurfacePreference,
   resolveUserSkillInvocation,
   prepareInvocationExecution,
+  firstActiveRunId,
+  mintInkInputId,
   runInteractiveMode,
   runInkInteractiveMode,
   runSessionPicker,
@@ -5879,12 +5881,17 @@ complete -c kodax -l version -d 'Show version'`);
           // Host input face, renders from the live session view, and stops
           // via run receipts. Works in-process and over the daemon face.
           clientPlane: {
-            submit: (input: { sessionId: string; text: string; inputId: string }) =>
+            submit: (input: {
+              sessionId: string;
+              text: string;
+              inputId: string;
+              delivery?: 'immediate' | 'after_turn';
+            }) =>
               interactiveRuntime.runs.acceptInput({
                 sessionId: input.sessionId,
                 text: input.text,
                 inputId: input.inputId,
-                delivery: 'immediate',
+                ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
               }),
             withdraw: (sessionId: string, inputId: string) =>
               interactiveRuntime.runs.withdrawInput(sessionId, inputId)
@@ -5901,6 +5908,11 @@ complete -c kodax -l version -d 'Show version'`);
             },
             stop: (runId: string) =>
               interactiveRuntime.runs.abort(runId).catch(() => undefined),
+            activeRun: (sessionId: string) =>
+              interactiveRuntime.runs
+                .list({ sessionId })
+                .then((runs) => firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase }))))
+                .catch(() => undefined),
             observe: (sessionId: string, onView: (view: ClientSessionView) => void) =>
               interactiveRuntime.sessions
                 .observeView(sessionId, onView)

@@ -11,7 +11,7 @@ import {
   type KodaXProviderStreamOptions,
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { runClientPlaneRound, type InkClientPlane } from '@kodax-ai/repl';
+import { runClientPlaneRound, firstActiveRunId, type InkClientPlane } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
 
@@ -50,7 +50,7 @@ function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
       sessionId: input.sessionId,
       text: input.text,
       inputId: input.inputId,
-      delivery: 'immediate',
+      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
     }),
     withdraw: (sessionId, inputId) =>
       runtime.runs.withdrawInput(sessionId, inputId)
@@ -66,6 +66,9 @@ function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
       };
     },
     stop: (runId) => runtime.runs.abort(runId).catch(() => undefined),
+    activeRun: (sessionId) =>
+      runtime.runs.list({ sessionId }).then((runs) =>
+        firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase })))),
     observe: (sessionId, onView) =>
       runtime.sessions
         .observeView(sessionId, onView)
@@ -195,3 +198,58 @@ it('stops a client-plane round with a receipt and maps it to the interrupted res
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+it('queues a follow-up Host-side and rides the continuation run to its result', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-t17-queue-'));
+  const resolvers: ((result: KodaXStreamResult) => void)[] = [];
+  registerModelProvider('t17-probe', () => new ProbeProvider((resolve) => {
+    resolvers.push(resolve);
+  }));
+  vi.stubEnv('KODAX_T17_KEY', 'test-key');
+  const runtime = await createKodaXRuntime({
+    homeDir, sharedDaemonHost: true, defaultProvider: 't17-probe',
+  });
+  const plane = wireClientPlane(runtime);
+  try {
+    const session = await runtime.sessions.create({ title: 'T17 queue', surface: 'repl' });
+    await runtime.sessions.updateSettings(session.id, {
+      agentMode: 'sa', permissionMode: 'full-access',
+    });
+    const views: ClientSessionView[] = [];
+    const close = await plane.observe(session.id, (view) => views.push(view));
+
+    const roundPromise = runClientPlaneRound({
+      plane, sessionId: session.id, prompt: 'First.',
+    });
+    // Wait until the run has reached the provider, then queue a follow-up.
+    await expect.poll(() => resolvers.length, { timeout: 15_000 }).toBe(1);
+    const queued = await plane.submit({
+      sessionId: session.id, text: 'Follow-up.', inputId: 'ink-followup', delivery: 'after_turn',
+    });
+    expect(queued.runId).toBeUndefined();
+    // The queued input is visible to every observer before delivery.
+    await expect.poll(() =>
+      views.some((view) => view.queue.some((entry) => entry.inputId === 'ink-followup')),
+    { timeout: 15_000 }).toBe(true);
+
+    resolvers[0]!({
+      textBlocks: [{ type: 'text', text: 'First answer.' }],
+      thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
+    });
+    // The Host batches the queued text into a continuation run.
+    await expect.poll(() => resolvers.length, { timeout: 15_000 }).toBe(2);
+    resolvers[1]!({
+      textBlocks: [{ type: 'text', text: 'Second answer.' }],
+      thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
+    });
+    const result = await roundPromise;
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Second answer.');
+    close();
+  } finally {
+    vi.unstubAllEnvs();
+    clearRuntimeModelProviders();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 90_000);
