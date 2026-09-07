@@ -79,7 +79,6 @@ export {
 } from './acp_events.js';
 import {
   createKodaXRuntime,
-  handleRuntimePermissionRequest,
   type KodaXRuntime,
   type RuntimeEvent,
   type RuntimePermissionGrantSuggestion,
@@ -87,6 +86,11 @@ import {
   type RuntimeRunHandle,
   type RuntimeRunPhase,
 } from './sdk-runtime.js';
+import { toKodaXProductClient } from './sdk-client.js';
+import type {
+  ClientPermissionDecision,
+  KodaXProductClient,
+} from '@kodax-ai/coding/client-contract';
 
 // v0.7.42 — replaced the hardcoded `Set(['write', 'edit'])` with the
 // metadata-driven `isToolFileMutation` from `@kodax-ai/coding`. The old
@@ -532,6 +536,8 @@ export class KodaXAcpServer implements Agent {
   private readonly agentVersion: string;
   private readonly storage: FileSessionStorage;
   private readonly runtimeReady: Promise<KodaXRuntime>;
+  /** FEATURE_298 T19 — the same Host seen through the product client face. */
+  private readonly clientReady: Promise<KodaXProductClient>;
   private readonly ownsRuntime: boolean;
   private readonly logger: AcpLogger;
   private readonly events: AcpEventEmitter;
@@ -604,6 +610,7 @@ export class KodaXAcpServer implements Agent {
           defaultProvider: this.provider,
           ...(this.model !== undefined ? { defaultModel: this.model } : {}),
         });
+    this.clientReady = this.runtimeReady.then((runtime) => toKodaXProductClient(runtime));
     this.configuredExtensions = configuredExtensions;
     this.discoveredExtensions = discoveredExtensionsPromise;
     this.events = new AcpEventEmitter({
@@ -1131,7 +1138,7 @@ export class KodaXAcpServer implements Agent {
     let chain = Promise.resolve();
     const enqueue = (request: RuntimePermissionRequest): void => {
       chain = chain
-        .then(() => this.respondToRuntimePermission(runtime, session, request))
+        .then(() => this.respondToRuntimePermission(session, request))
         .catch((error: unknown) => {
           this.logger.error(
             `ACP Runtime permission bridge failed: ${
@@ -1167,7 +1174,6 @@ export class KodaXAcpServer implements Agent {
   }
 
   private async respondToRuntimePermission(
-    runtime: KodaXRuntime,
     session: KodaXAcpSessionState,
     request: RuntimePermissionRequest,
   ): Promise<void> {
@@ -1178,33 +1184,46 @@ export class KodaXAcpServer implements Agent {
       toolId: request.toolCallId ?? null,
       permissionMode: session.permissionMode,
     });
-    await handleRuntimePermissionRequest(runtime, request, async () => {
-      const decision = await this.requestPermissionFromClient(
-        session,
-        request.toolName,
-        parsePermissionInputPreview(request.inputPreview),
-        request.toolCallId,
-      );
-      if (!decision.allowed) {
-        return {
-          type: 'reject',
-          reason: decision.override ?? 'Operation cancelled by user.',
-        };
+    // FEATURE_298 T19 — permission answers travel the product Interaction
+    // face; the pending request and its grant suggestions are the same
+    // objects the face serves to every other client of this Host.
+    const decision = await this.requestPermissionFromClient(
+      session,
+      request.toolName,
+      parsePermissionInputPreview(request.inputPreview),
+      request.toolCallId,
+    );
+    const client = await this.clientReady;
+    const response: ClientPermissionDecision = !decision.allowed
+      ? {
+        type: 'reject',
+        reason: decision.override ?? 'Operation cancelled by user.',
       }
-      if (decision.remember) {
-        const suggestion = request.grantSuggestions?.find(
-          (candidate) => candidate.kind === 'persistent',
-        ) ?? request.grantSuggestions?.find(
-          (candidate) => candidate.kind === 'session',
-        );
-        if (suggestion) {
-          return suggestion.kind === 'persistent'
-            ? { type: 'allow_always', suggestionId: suggestion.id }
-            : { type: 'allow_session', suggestionId: suggestion.id };
-        }
-      }
-      return { type: 'allow_once' };
+      : decision.remember
+        ? (() => {
+          const suggestion = request.grantSuggestions?.find(
+            (candidate) => candidate.kind === 'persistent',
+          ) ?? request.grantSuggestions?.find(
+            (candidate) => candidate.kind === 'session',
+          );
+          return suggestion !== undefined
+            ? suggestion.kind === 'persistent'
+              ? { type: 'allow_always' as const, suggestionId: suggestion.id }
+              : { type: 'allow_session' as const, suggestionId: suggestion.id }
+            : { type: 'allow_once' as const };
+        })()
+        : { type: 'allow_once' };
+    const result = await client.interactions.respond(request.id, {
+      kind: 'permission',
+      decision: response,
     });
+    if (!result.accepted) {
+      // Another window answered first or the request expired; the run's own
+      // settlement governs — nothing further for this bridge to do.
+      this.logger.error(
+        `ACP permission answer for ${request.toolName} was not accepted (${result.status}).`,
+      );
+    }
   }
 
   private async requestPermissionFromClient(

@@ -57,6 +57,7 @@ vi.mock('@kodax-ai/coding', async (importOriginal) => {
     createExtensionRuntime: vi.fn(() => ({
       activate: vi.fn(),
       dispose: vi.fn(async () => undefined),
+      loadExtensions: vi.fn(async () => undefined),
     })),
     dedupeExtensionPathsByEntrypoint: vi.fn((paths: string[]) => paths),
     discoverDefaultExtensions: vi.fn(async () => []),
@@ -463,3 +464,100 @@ async function expectSettles<T>(promise: Promise<T>, label: string): Promise<T> 
     if (timer) clearTimeout(timer);
   }
 }
+
+describe('KodaXAcpServer permission answering through the Interaction face (T19)', () => {
+  let testHome: string;
+  const testServers = new Set<KodaXAcpServer>();
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-acp-perm-'));
+    delete process.env.KODAX_PROVIDER;
+    delete process.env.KODAX_EFFORT;
+    acpServerState.startKodaX.mockClear();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...testServers].map((server) => server.dispose()));
+    testServers.clear();
+    await fs.rm(testHome, { recursive: true, force: true });
+    vi.clearAllMocks();
+    if (originalProvider === undefined) delete process.env.KODAX_PROVIDER;
+    else process.env.KODAX_PROVIDER = originalProvider;
+    if (originalEffort === undefined) delete process.env.KODAX_EFFORT;
+    else process.env.KODAX_EFFORT = originalEffort;
+  });
+
+  it('answers a runtime permission escalation via client.interactions.respond', async () => {
+    const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
+    let releaseExecutor: ((result: KodaXResult) => void) | undefined;
+    acpServerState.startKodaX.mockImplementationOnce(
+      (options: { session?: { id?: string } }) => {
+        const sessionId = options.session?.id ?? 'missing-session';
+        return {
+          id: sessionId,
+          attached: true,
+          currentProvider: 'openai',
+          currentModel: undefined,
+          currentReasoning: undefined,
+          aborted: false,
+          setProvider: vi.fn(),
+          setModel: vi.fn(),
+          setReasoning: vi.fn(),
+          abort: vi.fn(),
+          result: new Promise<KodaXResult>((resolve) => {
+            releaseExecutor = resolve;
+          }),
+        };
+      },
+    );
+    const server = new KodaXAcpServer({ runtime, homeDir: testHome });
+    testServers.add(server);
+    const { sessionId } = await server.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    } as NewSessionRequest);
+
+    const permissionCalls: Array<{ toolCall: { title: string } }> = [];
+    (server as unknown as {
+      connection: {
+        requestPermission(request: unknown): Promise<{ outcome: { outcome: string; optionId: string } }>;
+      };
+    }).connection = {
+      requestPermission: async (request: { toolCall: { title: string } }) => {
+        permissionCalls.push(request);
+        return { outcome: { outcome: 'selected', optionId: 'allow_once' } };
+      },
+    };
+    const interactionsRespond = vi.spyOn(runtime.interactions, 'respond');
+
+    const promptPromise = server.prompt(makePrompt(sessionId));
+    let runId: string | undefined;
+    for (let attempt = 0; attempt < 100 && runId === undefined; attempt += 1) {
+      const runs = await runtime.runs.list({ sessionId });
+      runId = runs[0]?.runId;
+      if (runId === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(runId).toBeDefined();
+
+    const decision = runtime.permissions.request({
+      sessionId,
+      runId: runId!,
+      toolCallId: 'call-perm-1',
+      toolName: 'bash',
+      inputPreview: '{"command":"npm test"}',
+    });
+    await expect(decision).resolves.toMatchObject({ type: 'allow_once' });
+    expect(permissionCalls).toHaveLength(1);
+    expect(permissionCalls[0]!.toolCall.title).toBe('bash');
+    expect(interactionsRespond).toHaveBeenCalledWith(
+      expect.any(String),
+      { kind: 'permission', decision: { type: 'allow_once' } },
+    );
+
+    releaseExecutor!({
+      success: true, lastText: 'done', messages: [], sessionId,
+    });
+    await promptPromise;
+    await runtime.close();
+  }, 30_000);
+});
