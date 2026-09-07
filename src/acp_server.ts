@@ -536,7 +536,15 @@ export class KodaXAcpServer implements Agent {
   private readonly agentVersion: string;
   private readonly storage: FileSessionStorage;
   private readonly runtimeReady: Promise<KodaXRuntime>;
-  /** FEATURE_298 T19 — the same Host seen through the product client face. */
+  /**
+   * FEATURE_298 T19 — the same Host seen through the product client face.
+   * Session lifecycle, settings, permission answers, and run control go
+   * through this face. The process-embedded runtime stays the owner of
+   * prompt execution: streaming event callbacks, extension runtime
+   * composition, and session storage instances cannot cross a client
+   * boundary, so `runtime.runs.start` and the permission bridge's event
+   * subscription remain in-process seams by design.
+   */
   private readonly clientReady: Promise<KodaXProductClient>;
   private readonly ownsRuntime: boolean;
   private readonly logger: AcpLogger;
@@ -1343,6 +1351,14 @@ export class KodaXAcpServer implements Agent {
     };
   }
 
+  /**
+   * FEATURE_298 T19 — ACP `agent_message_chunk` is an append-only stream: the
+   * protocol has no way to express output replacement, so revised or re-sent
+   * assistant text arrives as additional chunks within the connection. A new
+   * connection starts from persisted session state, not a replay — transient
+   * chunks, thought deltas, and tool-status updates observed by an earlier
+   * client are not recreated by a later snapshot.
+   */
   private async sendTextChunk(sessionId: string, text: string): Promise<void> {
     await this.sendSessionUpdate({
       sessionId,

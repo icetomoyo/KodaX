@@ -465,7 +465,7 @@ async function expectSettles<T>(promise: Promise<T>, label: string): Promise<T> 
   }
 }
 
-describe('KodaXAcpServer permission answering through the Interaction face (T19)', () => {
+describe('KodaXAcpServer product client face behaviors (T19)', () => {
   let testHome: string;
   const testServers = new Set<KodaXAcpServer>();
 
@@ -558,6 +558,116 @@ describe('KodaXAcpServer permission answering through the Interaction face (T19)
       success: true, lastText: 'done', messages: [], sessionId,
     });
     await promptPromise;
+    await runtime.close();
+  }, 30_000);
+
+  it('streams append-only text and tool status over the notification face and continues a session (T19)', async () => {
+    const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
+    const resolvers: Array<(result: KodaXResult) => void> = [];
+    acpServerState.startKodaX.mockImplementation((options: { session?: { id?: string } }) => {
+      acpServerState.capturedOptions.push(options);
+      const sessionId = options.session?.id ?? 'missing-session';
+      let resolveResult: ((result: KodaXResult) => void) | undefined;
+      const result = new Promise<KodaXResult>((resolve) => {
+        resolveResult = resolve;
+      });
+      const abort = vi.fn(() => {
+        resolveResult?.({
+          success: false, lastText: '', messages: [], sessionId, interrupted: true,
+        });
+        resolveResult = undefined;
+      });
+      resolvers.push((resolved: KodaXResult) => {
+        resolveResult?.(resolved);
+        resolveResult = undefined;
+      });
+      return {
+        id: sessionId,
+        attached: true,
+        currentProvider: 'openai',
+        currentModel: undefined,
+        currentReasoning: undefined,
+        aborted: false,
+        setProvider: vi.fn(),
+        setModel: vi.fn(),
+        setReasoning: vi.fn(),
+        abort,
+        result,
+      };
+    });
+
+    const server = new KodaXAcpServer({ runtime, homeDir: testHome });
+    testServers.add(server);
+    const { sessionId } = await server.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    } as NewSessionRequest);
+
+    type RecordedUpdate = {
+      sessionUpdate: string;
+      content?: { text?: string };
+      toolCallId?: string;
+      status?: string;
+    };
+    const recordedUpdates: RecordedUpdate[] = [];
+    (server as unknown as {
+      connection: {
+        signal: { aborted: boolean };
+        sessionUpdate(notification: { update: unknown }): Promise<void>;
+      };
+    }).connection = {
+      signal: { aborted: false },
+      sessionUpdate: (notification: { update: unknown }) => {
+        recordedUpdates.push(notification.update as RecordedUpdate);
+        return Promise.resolve();
+      },
+    };
+
+    type CapturedRunEvents = {
+      events: {
+        onTextDelta: (text: string) => void;
+        onToolUseStart: (tool: { id: string; name: string; input?: unknown }) => void;
+        onToolResult: (result: { id: string; name: string; content: unknown }) => void;
+      };
+    };
+    const promptPromise = server.prompt(makePrompt(sessionId));
+    await waitForCondition('first ACP coding run', () => acpServerState.startKodaX.mock.calls.length === 1);
+    const firstEvents = (acpServerState.startKodaX.mock.calls[0]?.[0] as CapturedRunEvents).events;
+    firstEvents.onTextDelta('Hel');
+    firstEvents.onTextDelta('lo');
+    firstEvents.onToolUseStart({ id: 'call-stream-1', name: 'bash', input: { command: 'ls' } });
+    firstEvents.onToolResult({ id: 'call-stream-1', name: 'bash', content: [{ type: 'text', text: 'ok' }] });
+
+    const chunks = recordedUpdates.filter((update) => update.sessionUpdate === 'agent_message_chunk');
+    expect(chunks.map((update) => update.content?.text)).toEqual(['Hel', 'lo']);
+    expect(recordedUpdates).toContainEqual(expect.objectContaining({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-stream-1',
+      status: 'pending',
+    }));
+    expect(recordedUpdates).toContainEqual(expect.objectContaining({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-stream-1',
+      status: 'completed',
+    }));
+
+    await server.cancel({ sessionId });
+    await expect(expectSettles(promptPromise, 'cancelled streaming prompt')).resolves.toMatchObject({
+      stopReason: 'cancelled',
+    });
+    const runsAfterCancel = await runtime.runs.list({ sessionId });
+    expect(runsAfterCancel).toHaveLength(1);
+    expect(runsAfterCancel[0]?.phase).toBe('interrupted');
+
+    const sessionsCreateSpy = vi.spyOn(runtime.sessions, 'create');
+    const secondPrompt = server.prompt(makePrompt(sessionId));
+    await waitForCondition('second ACP coding run', () => acpServerState.startKodaX.mock.calls.length === 2);
+    expect(acpServerState.startKodaX.mock.calls[1]?.[0]).toMatchObject({ session: { id: sessionId } });
+    expect(sessionsCreateSpy).not.toHaveBeenCalled();
+    resolvers.at(-1)!({ success: true, lastText: 'done', messages: [], sessionId });
+    await expect(expectSettles(secondPrompt, 'continued session prompt')).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
     await runtime.close();
   }, 30_000);
 });
