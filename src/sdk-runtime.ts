@@ -772,7 +772,6 @@ export interface RuntimeClientCapabilities {
   readonly skillCatalog?: boolean;
   readonly artifactUpload?: boolean;
   readonly contextDiagnostics?: boolean;
-  readonly operationDeduplication?: boolean;
 }
 
 export type RuntimeGrantedScope =
@@ -936,7 +935,6 @@ export interface RuntimeCapabilityRequirements {
   readonly externalAgentAdmin?: 1;
   /** Require a daemon that owns and hot-reconciles its A2A integration config. */
   readonly a2aConfigReconciler?: 1;
-  readonly operationDeduplication?: 1;
   readonly sessionObservation?: 1;
   readonly afterTurnInput?: 1;
   readonly learningCenter?: 1;
@@ -993,38 +991,6 @@ export interface RuntimeCapabilityRequirements {
   readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5;
 }
 
-export type RuntimeOperationState =
-  | "accepted"
-  | "dispatched"
-  | "applied"
-  | "rejected"
-  | "interrupted"
-  | "unknown";
-
-export interface RuntimeOperationReceipt {
-  readonly operationId: string;
-  readonly journalEpoch: string;
-  readonly principalId: string;
-  readonly method: string;
-  readonly resourceId?: string;
-  readonly requestDigest: string;
-  readonly state: RuntimeOperationState;
-  /** Serialized mutation result when state is applied; exact retries return the same value. */
-  readonly result?: unknown;
-  readonly updatedAt: string;
-  readonly error?: {
-    readonly code: string;
-    readonly message: string;
-  };
-}
-
-export interface RuntimeOperationService {
-  get(input: {
-    readonly operationId: string;
-    readonly journalEpoch: string;
-  }): Promise<RuntimeOperationReceipt>;
-}
-
 export interface RuntimeDiagnosticFilter {
   readonly sessionId?: string;
   readonly runId?: string;
@@ -1049,7 +1015,6 @@ export interface RuntimeConnectionState {
   readonly state: "connected" | "disconnected";
   readonly connectionId: string;
   readonly runtimeEpoch: string;
-  readonly journalEpoch?: string;
   readonly code?: RuntimeDaemonTransportLifecycleState["code"];
   readonly reason?: string;
   readonly reconnectable: boolean;
@@ -1076,7 +1041,6 @@ export interface KodaXRuntime {
   readonly interactions: RuntimeInteractionService;
   readonly credentials: RuntimeCredentialService;
   readonly hostTools: RuntimeHostToolService;
-  readonly operations: RuntimeOperationService;
   readonly workflows: RuntimeWorkflowService;
   readonly learning: RuntimeLearningService;
   readonly memory: RuntimeMemoryService;
@@ -1372,9 +1336,7 @@ export interface RuntimeArtifactService {
   delete(artifactId: string): Promise<boolean>;
 }
 
-export interface RuntimeCreateSessionInput extends ClientCreateSessionInput {
-  readonly operation?: RuntimeOperationOptions;
-}
+export interface RuntimeCreateSessionInput extends ClientCreateSessionInput {}
 
 export type RuntimeSession = ClientSession;
 
@@ -1663,8 +1625,6 @@ export interface RuntimeCompactSessionInput {
   readonly triggerTokens?: number;
   /** Daemon-issued credential lease used only by this compaction operation. */
   readonly credential?: RuntimeCredentialBinding;
-  /** Stable mutation identity for safe retry after a lost daemon response. */
-  readonly operation?: RuntimeOperationOptions;
 }
 
 /**
@@ -1702,7 +1662,7 @@ export interface RuntimeVersionedValue<T> {
   readonly value: T;
 }
 
-export interface RuntimeVersionedUpdateOptions extends RuntimeOperationOptions {
+export interface RuntimeVersionedUpdateOptions {
   readonly expectedRevision: number;
 }
 
@@ -1981,7 +1941,6 @@ export interface RuntimeStartRunInput {
   readonly credential?: RuntimeCredentialBinding;
   /** Daemon-issued host capability binding. Unbound runs never inherit it. */
   readonly hostTools?: { readonly leaseId: string };
-  readonly operation?: RuntimeOperationOptions;
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
@@ -2003,7 +1962,6 @@ export interface RuntimeSubmitInput {
   /** Continuations receive only bindings explicitly supplied for this input. */
   readonly credential?: RuntimeCredentialBinding;
   readonly hostTools?: { readonly leaseId: string };
-  readonly operation?: RuntimeOperationOptions;
 }
 
 interface RuntimeTrustedSubmitInput extends RuntimeSubmitInput {
@@ -2043,12 +2001,6 @@ export type RuntimeSubmitInputResult =
       readonly reason:
         "stale_run" | "unsupported_capability" | "interrupt_window_closed";
     };
-
-export interface RuntimeOperationOptions {
-  readonly operationId?: string;
-  readonly journalEpoch?: string;
-  readonly expectedRevision?: number;
-}
 
 export type RuntimeKodaXOptions = Omit<
   KodaXOptions,
@@ -2162,7 +2114,6 @@ export interface RuntimeRunStatus {
     readonly principalId: string;
     readonly clientName?: string;
     readonly clientVersion?: string;
-    readonly operationId?: string;
   };
   readonly model?: string;
   readonly reasoning?: KodaXReasoningMode;
@@ -3229,7 +3180,6 @@ export type RuntimeScopedCredentialTarget =
   | {
       readonly kind: "run";
       readonly runId: string;
-      readonly operationId?: string;
     }
   | {
       readonly kind: "operation";
@@ -3492,7 +3442,6 @@ export interface RuntimeDaemonRollbackInput {
   readonly expectedRuntimeId: string;
   readonly expectedRevision: number;
   readonly expectedOwnerPolicyRevision: number;
-  readonly operation?: RuntimeOperationOptions;
 }
 
 export interface RuntimeDaemonRollbackResult {
@@ -5200,13 +5149,6 @@ async function createKodaXRuntimeInternal(
     interactions,
     credentials: createUnsupportedCredentialService(),
     hostTools: createUnsupportedHostToolService(),
-    operations: {
-      async get() {
-        throw new Error(
-          "Embedded Runtime does not persist daemon operation receipts.",
-        );
-      },
-    },
     workflows,
     learning,
     memory,
@@ -5468,7 +5410,6 @@ function assertRuntimeCapabilities(
     !requirements?.externalAgents &&
     requirements?.externalAgentAdmin === undefined &&
     requirements?.a2aConfigReconciler === undefined &&
-    requirements?.operationDeduplication === undefined &&
     requirements?.sessionObservation === undefined &&
     requirements?.afterTurnInput === undefined &&
     requirements?.learningCenter === undefined &&
@@ -5517,13 +5458,6 @@ function assertRuntimeCapabilities(
   if (requirements.externalAgents && capabilities.externalAgents !== true) {
     throw new Error(
       "Runtime does not support the required externalAgents capability.",
-    );
-  }
-  if (requirements.operationDeduplication !== undefined) {
-    assertVersionedRuntimeCapability(
-      capabilities,
-      "operationDeduplication",
-      requirements.operationDeduplication,
     );
   }
   const versionedRequirements = [
@@ -5719,7 +5653,6 @@ interface CapabilityUpgradeInput {
   readonly capabilities: Readonly<Record<string, unknown>>;
   readonly transport: RuntimeDaemonClientTransport;
   readonly lease: RuntimeDaemonProcessLease;
-  readonly journalEpoch?: string;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly requiredCapability: string;
   readonly exitTimeoutMs: number;
@@ -5732,7 +5665,6 @@ function createCapabilityUpgradeRuntime(
     identity: { ...input.identity, mode: "daemon", isolation: "process" },
     transport: input.transport,
     capabilities: input.capabilities,
-    ...(input.journalEpoch !== undefined ? { journalEpoch: input.journalEpoch } : {}),
     ...(input.grantedScopes !== undefined ? { grantedScopes: input.grantedScopes } : {}),
   });
 }
@@ -6157,7 +6089,6 @@ async function connectKodaXRuntimeInternal(
   const token = resolveConnectDaemonToken(options);
   let identity: RuntimeIdentity;
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
-  let journalEpoch: string | undefined;
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
   let upgradeReleasedLease = false;
   try {
@@ -6203,10 +6134,7 @@ async function connectKodaXRuntimeInternal(
         autoStart: options.autoStart === true,
         ...(token !== undefined ? { token } : {}),
         clientInfo,
-        capabilities: {
-          ...options.capabilities,
-          operationDeduplication: true,
-        },
+        capabilities: { ...options.capabilities },
         ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
       }),
     );
@@ -6224,10 +6152,6 @@ async function connectKodaXRuntimeInternal(
     if (process.platform === "win32") {
       diagnoseStaleGitSafeDirectory(daemonCapabilities);
     }
-    journalEpoch =
-      typeof initialized.journalEpoch === "string"
-        ? initialized.journalEpoch
-        : undefined;
     grantedScopes = parseRuntimeGrantedScopes(initialized.grantedScopes);
     const requiredUpgrade = firstRequiredDaemonUpgrade(
       identity,
@@ -6277,7 +6201,6 @@ async function connectKodaXRuntimeInternal(
           capabilities: daemonCapabilities,
           transport,
           lease,
-          ...(journalEpoch !== undefined ? { journalEpoch } : {}),
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
           exitTimeoutMs: options.daemonStartupTimeoutMs ?? 60_000,
@@ -6319,7 +6242,6 @@ async function connectKodaXRuntimeInternal(
     identity: { ...identity, mode: "daemon", isolation: "process" },
     transport,
     capabilities: daemonCapabilities,
-    ...(journalEpoch !== undefined ? { journalEpoch } : {}),
     ...(grantedScopes !== undefined ? { grantedScopes } : {}),
   });
   if (!lease) return runtime;
@@ -18174,9 +18096,6 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
             ...(typeof value.origin.clientVersion === "string"
               ? { clientVersion: value.origin.clientVersion }
               : {}),
-            ...(typeof value.origin.operationId === "string"
-              ? { operationId: value.origin.operationId }
-              : {}),
           },
         }
       : {}),
@@ -18389,9 +18308,6 @@ function parseRuntimeInterruptInputStatus(
             : {}),
           ...(typeof value.origin.clientVersion === "string"
             ? { clientVersion: value.origin.clientVersion }
-            : {}),
-          ...(typeof value.origin.operationId === "string"
-            ? { operationId: value.origin.operationId }
             : {}),
         }
       : undefined;

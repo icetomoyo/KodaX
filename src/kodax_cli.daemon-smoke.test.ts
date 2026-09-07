@@ -976,7 +976,6 @@ describe('daemon CLI smoke', () => {
       const settings = await runtime.sessions.getSettingsVersioned(session.id);
       await runtime.sessions.updateSettingsVersioned(session.id, { model: 'space-model' }, {
         expectedRevision: settings.revision,
-        operationId: 'space-settings-1',
       });
       let brokerCalls = 0;
       const credential = await runtime.credentials.register({ providers: ['mock-provider'] }, async (request) => {
@@ -998,7 +997,6 @@ describe('daemon CLI smoke', () => {
           options: { provider: 'mock-provider' },
           credential: { leaseId: credential.id, provider: 'mock-provider' },
           hostTools: { leaseId: hostTools.id },
-          operation: { operationId: 'space-run-1' },
         });
         await run.result;
       } catch (error) {

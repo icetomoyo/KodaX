@@ -25,23 +25,6 @@ describe('runtime daemon protocol frames', () => {
     expect(parseRuntimeDaemonFrame(JSON.stringify(request))).toEqual(request);
   });
 
-  it('carries a durable mutation envelope independently from method params', () => {
-    const request = createRuntimeDaemonRequest('req-operation', 'run.start', {
-      sessionId: 'session-1',
-      prompt: 'hello',
-    }, {
-      operationId: 'op-request-1',
-      journalEpoch: 'epoch-1',
-    });
-
-    expect(isRuntimeDaemonRequest(request)).toBe(true);
-    expect(request.operation).toEqual({
-      operationId: 'op-request-1',
-      journalEpoch: 'epoch-1',
-    });
-    expect(parseRuntimeDaemonFrame(JSON.stringify(request))).toEqual(request);
-  });
-
   it('rejects unknown request methods fail-closed', () => {
     const frame = {
       ...createRuntimeDaemonRequest('req-1', 'ping'),

@@ -558,11 +558,6 @@ function makeRuntime(
     userInputs: createTestUserInputs(),
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
-    operations: {
-      async get() {
-        throw new Error('operation not found');
-      },
-    },
     workflows: {
       async start() {
         return { kind: 'declined', reason: 'fake' };

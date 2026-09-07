@@ -123,8 +123,6 @@ export type {
   RuntimePermissionRisk,
   RuntimePermissionScope,
   RuntimePermissionService,
-  RuntimeOperationReceipt,
-  RuntimeOperationService,
   RuntimeRunFilter,
   RuntimeFailureDetail,
   RuntimeFailureStage,

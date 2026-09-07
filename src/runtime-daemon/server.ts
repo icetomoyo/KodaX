@@ -76,14 +76,11 @@ import {
   type RuntimeDaemonRequest,
   type RuntimeDaemonSuccessResponse,
   RUNTIME_DAEMON_METHODS,
-  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
   isRuntimeDaemonDrainingSensitiveMethod,
-  isRuntimeDaemonMutationMethod,
   isRuntimeDaemonRetiredMethod,
   isRetiredInteractionAliasMethod,
   type RuntimeDaemonWireMethod,
 } from "./protocol.js";
-import type { RuntimeControlJournal } from "./control-journal.js";
 import type { RuntimeDaemonManagementController } from "./management.js";
 import {
   RUNTIME_DAEMON_METHOD_SCHEMAS,
@@ -132,8 +129,6 @@ export interface RuntimeDaemonDispatcherOptions {
   readonly ownsA2AConfigReconciler?: boolean;
   /** Trusted host fact; true only when this daemon was started with orphan idle-exit enabled. */
   readonly orphanExitEnabled?: boolean;
-  readonly controlJournal?: RuntimeControlJournal;
-  readonly requireOperationEnvelope?: boolean;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly reverseBridgeHub?: RuntimeDaemonReverseBridgeHub;
   readonly durableHostToolInvocations?: boolean;
@@ -196,7 +191,6 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "runtime.capabilities",
     "daemon.status",
     "daemon.logs",
-    "operation.get",
     "session.load",
     "session.list",
     "session.status",
@@ -704,11 +698,9 @@ export function createRuntimeDaemonDispatcher(
         );
       let dispatched: unknown;
       try {
-        const operation = dispatchWithOperation(
+        const operation = dispatchMutation(
           request,
           options,
-          clientCapabilities,
-          principalId,
           dispatch,
         );
         dispatched = isRuntimeDaemonDrainingSensitiveMethod(request.method)
@@ -848,63 +840,16 @@ function raceRuntimeDaemonRequestCancellation<T>(
   });
 }
 
-async function dispatchWithOperation(
+async function dispatchMutation(
   request: RuntimeDaemonRequest,
   options: RuntimeDaemonDispatcherOptions,
-  capabilities: RuntimeClientCapabilities,
-  principalId: string,
   dispatch: () => Promise<unknown>,
 ): Promise<unknown> {
-  const execute = (): Promise<unknown> =>
-    options.management !== undefined && isManagedRuntimeMutation(request.method)
-      ? options.management.runMutation(request.method, dispatch)
-      : dispatch();
-  if (
-    !isRuntimeDaemonMutationMethod(request.method) ||
-    request.method === "input.submit" ||
-    request.method === "input.withdraw" ||
-    request.method === "session.settings.update" ||
-    RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(request.method) ||
-    options.requireOperationEnvelope !== true
-  ) {
-    return execute();
-  }
-  if (capabilities.operationDeduplication !== true) {
-    throw daemonError(
-      "client_upgrade_required",
-      "Runtime daemon mutations require durable operation support.",
-    );
-  }
-  if (!request.operation) {
-    throw daemonError(
-      "operation_required",
-      "Runtime daemon mutation is missing its operation envelope.",
-    );
-  }
-  if (!options.controlJournal) {
-    throw daemonError(
-      "internal_error",
-      "Runtime daemon control journal is unavailable.",
-    );
-  }
-  return options.controlJournal.execute(
-    {
-      operationId: request.operation.operationId,
-      journalEpoch: request.operation.journalEpoch,
-      principalId,
-      method: request.method,
-      ...(operationResourceId(request.params) !== undefined
-        ? { resourceId: operationResourceId(request.params) }
-        : {}),
-      params: request.params ?? {},
-    },
-    {
-      // Once dispatch begins, every mutation may have changed durable or
-      // externally visible state before its applied receipt is persisted.
-      externalEffect: true,
-    },
-    execute,
-  );
+  // FEATURE_298 T25 — mutations dispatch directly under their domain rules;
+  // the generic operation envelope and control journal are retired.
+  return options.management !== undefined && isManagedRuntimeMutation(request.method)
+    ? options.management.runMutation(request.method, dispatch)
+    : dispatch();
 }
 
 function isManagedRuntimeMutation(method: RuntimeDaemonMethod): boolean {
@@ -969,22 +914,6 @@ function requirePersistentGrantScope(
   );
 }
 
-function operationResourceId(value: unknown): string | undefined {
-  if (!isRecord(value)) return undefined;
-  for (const key of [
-    "sessionId",
-    "runId",
-    "taskId",
-    "artifactId",
-    "requestId",
-    "name",
-  ]) {
-    if (typeof value[key] === "string" && value[key].length > 0)
-      return value[key];
-  }
-  return undefined;
-}
-
 function parseRuntimeClientPrincipal(value: unknown, fallback: string): string {
   if (!isRecord(value)) return fallback;
   const instanceId = value.instanceId;
@@ -1034,7 +963,6 @@ async function dispatchRuntimeDaemonRequest(
           runtime.agents.enabled &&
             options.allowAgentRegistrationAdmin === true,
           options.ownsA2AConfigReconciler === true,
-          options.controlJournal,
           options.reverseBridgeHub !== undefined,
           options.durableHostToolInvocations === true,
           options.management !== undefined,
@@ -1042,9 +970,6 @@ async function dispatchRuntimeDaemonRequest(
           runtimeImplementsEventCoalescing(runtime),
         ),
         principalId,
-        ...(options.controlJournal !== undefined
-          ? { journalEpoch: options.controlJournal.journalEpoch }
-          : {}),
         grantedScopes: [
           ...(options.grantedScopes ?? ALL_RUNTIME_GRANTED_SCOPES),
         ],
@@ -1109,32 +1034,12 @@ async function dispatchRuntimeDaemonRequest(
         runtime.agents.enabled,
         runtime.agents.enabled && options.allowAgentRegistrationAdmin === true,
         options.ownsA2AConfigReconciler === true,
-        options.controlJournal,
         options.reverseBridgeHub !== undefined,
         options.durableHostToolInvocations === true,
         options.management !== undefined,
         options.orphanExitEnabled === true,
         runtimeImplementsEventCoalescing(runtime),
       );
-    case "operation.get": {
-      const params = requireRecord(request.params);
-      const operationId = requireStringField(params, "operationId");
-      const journalEpoch = requireStringField(params, "journalEpoch");
-      if (!options.controlJournal) {
-        return runtime.operations.get({ operationId, journalEpoch });
-      }
-      if (journalEpoch !== options.controlJournal.journalEpoch) {
-        throw daemonError(
-          "operation_epoch_mismatch",
-          "Runtime operation belongs to another journal epoch.",
-        );
-      }
-      const receipt = options.controlJournal.get(operationId);
-      if (!receipt || receipt.principalId !== principalId) {
-        throw daemonError("not_found", "Runtime operation was not found.");
-      }
-      return publicOperationReceipt(receipt);
-    }
     case "config.read":
       return options.config
         ? redactRuntimeConfig(await options.config())
@@ -1859,7 +1764,6 @@ async function dispatchRuntimeDaemonRequest(
         principalId,
         clientName,
         clientVersion,
-        operationId: request.operation?.operationId,
         reverseBridge,
       })) as unknown as RuntimeStartRunInput;
       const handle = await runtime.runs.start(trustedInput);
@@ -1925,9 +1829,6 @@ async function dispatchRuntimeDaemonRequest(
             principalId,
             ...(clientName !== undefined ? { clientName } : {}),
             ...(clientVersion !== undefined ? { clientVersion } : {}),
-            ...(request.operation?.operationId !== undefined
-              ? { operationId: request.operation.operationId }
-              : {}),
           },
         } as unknown as RuntimeSubmitInput);
       }
@@ -1939,7 +1840,6 @@ async function dispatchRuntimeDaemonRequest(
         principalId,
         clientName,
         clientVersion,
-        operationId: request.operation?.operationId,
         reverseBridge,
       })) as unknown as RuntimeSubmitInput;
       const result = await runtime.runs.submitInput(trustedInput);
@@ -2320,7 +2220,6 @@ async function bindTrustedRunInput(input: {
   readonly principalId: string;
   readonly clientName?: string;
   readonly clientVersion?: string;
-  readonly operationId?: string;
   readonly reverseBridge: RuntimeDaemonReverseBridge;
 }): Promise<Record<string, unknown>> {
   const credentialBinding = optionalRecord(input.params.credential);
@@ -2332,7 +2231,6 @@ async function bindTrustedRunInput(input: {
         target: {
           kind: "run",
           runId: input.trustedRunId,
-          ...(input.operationId !== undefined ? { operationId: input.operationId } : {}),
         },
         reverseBridge: input.reverseBridge,
       })
@@ -2391,9 +2289,6 @@ async function bindTrustedRunInput(input: {
         : {}),
       ...(input.clientVersion !== undefined
         ? { clientVersion: input.clientVersion }
-        : {}),
-      ...(input.operationId !== undefined
-        ? { operationId: input.operationId }
         : {}),
     },
     ...(providerCredential !== undefined ? { providerCredential } : {}),
@@ -2463,9 +2358,6 @@ function parseRuntimeClientCapabilities(
     ...(value.skillCatalog === true ? { skillCatalog: true } : {}),
     ...(value.artifactUpload === true ? { artifactUpload: true } : {}),
     ...(value.contextDiagnostics === true ? { contextDiagnostics: true } : {}),
-    ...(value.operationDeduplication === true
-      ? { operationDeduplication: true }
-      : {}),
   };
 }
 
@@ -2474,7 +2366,6 @@ function runtimeDaemonCapabilities(
   externalAgents = false,
   externalAgentAdmin = false,
   ownsA2AConfigReconciler = false,
-  controlJournal?: RuntimeControlJournal,
   reverseBridgeResume = false,
   durableHostToolInvocations = false,
   daemonManagement = false,
@@ -2599,16 +2490,6 @@ function runtimeDaemonCapabilities(
           a2aConfigReconciler: { version: 1 },
         }
       : {}),
-    ...(controlJournal !== undefined
-      ? {
-          operationDeduplication: {
-            version: 1,
-            retentionMs: Number.MAX_SAFE_INTEGER,
-          },
-          journalEpoch: controlJournal.journalEpoch,
-          controlHealth: controlJournal.health,
-        }
-      : {}),
     sessionObservation: {
       version: 1,
       maxBufferedEvents: 256,
@@ -2671,19 +2552,14 @@ function runtimeDaemonCapabilities(
         "autoModeClassifierModel",
       ],
     },
-    ...(controlJournal !== undefined
-      ? {
-          durableRecoveryQueries: {
-            version: 1,
-            operationResult: true,
-            hostToolInvocation: durableHostToolInvocations,
-            permissionGrants: true,
-            daemonPreflight: true,
-            terminalAcknowledgement: false,
-            terminalAcknowledgementOwner: "client",
-          },
-        }
-      : {}),
+    durableRecoveryQueries: {
+      version: 1,
+      hostToolInvocation: durableHostToolInvocations,
+      permissionGrants: true,
+      daemonPreflight: true,
+      terminalAcknowledgement: false,
+      terminalAcknowledgementOwner: "client",
+    },
     afterTurnInput: { version: 1 },
     interruptInput: { version: 1, availability: "per_run" },
     contextCompaction: {
@@ -2774,13 +2650,6 @@ function runtimeImplementsEventCoalescing(runtime: KodaXRuntime): boolean {
     && typeof capability.version === "number"
     && capability.version >= 1
   );
-}
-
-function publicOperationReceipt(
-  receipt: ReturnType<RuntimeControlJournal["get"]> & {},
-): Record<string, unknown> {
-  if (!receipt) return {};
-  return { ...receipt };
 }
 
 function requireExternalAgentsEnabled(runtime: KodaXRuntime): void {

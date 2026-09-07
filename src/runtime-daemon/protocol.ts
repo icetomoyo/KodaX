@@ -15,7 +15,6 @@ export type RuntimeDaemonMethod =
   | 'daemon.preflight'
   | 'daemon.management.get'
   | 'daemon.rollbackToInline'
-  | 'operation.get'
   | 'session.create'
   | 'session.load'
   | 'session.list'
@@ -274,12 +273,6 @@ export type RuntimeDaemonErrorCode =
   | 'cancelled'
   | 'overloaded'
   | 'client_upgrade_required'
-  | 'operation_required'
-  | 'operation_epoch_mismatch'
-  | 'operation_id_reuse'
-  | 'operation_interrupted'
-  | 'operation_unknown'
-  | 'control_history_untrusted'
   | 'resync_required'
   | 'read_timeout'
   | 'read_cancelled'
@@ -305,12 +298,6 @@ export interface RuntimeDaemonRequest<
   readonly id: string;
   readonly method: Method;
   readonly params?: unknown;
-  readonly operation?: RuntimeDaemonOperationEnvelope;
-}
-
-export interface RuntimeDaemonOperationEnvelope {
-  readonly operationId: string;
-  readonly journalEpoch: string;
 }
 
 export interface RuntimeDaemonSuccessResponse extends RuntimeDaemonFrameBase {
@@ -351,7 +338,6 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'daemon.preflight',
   'daemon.management.get',
   'daemon.rollbackToInline',
-  'operation.get',
   'session.create',
   'session.load',
   'session.list',
@@ -586,25 +572,8 @@ const MUTATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonMutationMetho
   RUNTIME_DAEMON_MUTATION_METHODS,
 );
 
-/**
- * FEATURE_298 T30 — agent-family mutations carry their own domain identity
- * (registration revision CAS, followup expectedRevision, actor turn/message
- * semantics), so they neither require nor carry the generic operation
- * envelope ahead of the T25 control-journal retirement.
- */
-export const RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS: ReadonlySet<RuntimeDaemonMethod> = new Set([
-  'agents.spawn',
-  'agents.send',
-  'agents.followup',
-  'agents.interrupt',
-  'agentRegistrations.upsert',
-  'agentRegistrations.setEnabled',
-  'agentRegistrations.remove',
-]);
-
-// Reverse-bridge control requests mutate daemon-owned live state, but must not
-// enter the durable operation journal: credential.supply can contain a secret,
-// while supply/complete are already reconciled by their one-shot request IDs.
+// Reverse-bridge control requests mutate daemon-owned live state and are
+// already reconciled by their one-shot request IDs.
 const REVERSE_BRIDGE_STATE_METHODS: ReadonlySet<RuntimeDaemonMethod> = new Set([
   'credential.register',
   'credential.revoke',
@@ -637,12 +606,6 @@ const ERROR_CODES: ReadonlySet<string> = new Set<RuntimeDaemonErrorCode>([
   'cancelled',
   'overloaded',
   'client_upgrade_required',
-  'operation_required',
-  'operation_epoch_mismatch',
-  'operation_id_reuse',
-  'operation_interrupted',
-  'operation_unknown',
-  'control_history_untrusted',
   'resync_required',
   'read_timeout',
   'read_cancelled',
@@ -661,7 +624,6 @@ export function createRuntimeDaemonRequest(
   id: string,
   method: RuntimeDaemonMethod,
   params?: unknown,
-  operation?: RuntimeDaemonOperationEnvelope,
 ): RuntimeDaemonRequest {
   return {
     protocol: KODAX_DAEMON_PROTOCOL,
@@ -670,7 +632,6 @@ export function createRuntimeDaemonRequest(
     id,
     method,
     ...(params !== undefined ? { params } : {}),
-    ...(operation !== undefined ? { operation } : {}),
   };
 }
 
@@ -752,8 +713,7 @@ export function isRuntimeDaemonRequest(
     && typeof frame.id === 'string'
     && frame.id.length > 0
     && typeof frame.method === 'string'
-    && REQUEST_METHODS.has(frame.method)
-    && (frame.operation === undefined || isRuntimeDaemonOperationEnvelope(frame.operation));
+    && REQUEST_METHODS.has(frame.method);
 }
 
 export function isRuntimeDaemonSuccessResponse(
@@ -828,13 +788,4 @@ function isRuntimeDaemonError(value: unknown): value is RuntimeDaemonError {
   return typeof error.code === 'string'
     && ERROR_CODES.has(error.code)
     && typeof error.message === 'string';
-}
-
-function isRuntimeDaemonOperationEnvelope(value: unknown): value is RuntimeDaemonOperationEnvelope {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const operation = value as Record<string, unknown>;
-  return typeof operation.operationId === 'string'
-    && operation.operationId.length > 0
-    && typeof operation.journalEpoch === 'string'
-    && operation.journalEpoch.length > 0;
 }

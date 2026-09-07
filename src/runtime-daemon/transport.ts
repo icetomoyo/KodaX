@@ -19,8 +19,6 @@ import {
   isRuntimeDaemonRequest,
   isRuntimeDaemonNotification,
   isRuntimeDaemonSuccessResponse,
-  isRuntimeDaemonMutationMethod,
-  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
   parseRuntimeDaemonFrame,
   type RuntimeDaemonFrame,
   type RuntimeDaemonNotification,
@@ -195,7 +193,6 @@ export async function createRuntimeDaemonSocketClientTransport(
 
   const maxFrameBytes = options.maxFrameBytes ?? RUNTIME_DAEMON_MAX_FRAME_BYTES;
   let closed = false;
-  let journalEpoch: string | undefined;
   const clientInstanceId = `transport_${randomUUID().replace(/-/g, '')}`;
   const clientInstanceSecret = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
   const connectionId = `connection_${randomUUID().replace(/-/g, '')}`;
@@ -375,7 +372,7 @@ export async function createRuntimeDaemonSocketClientTransport(
   });
 
   return {
-    request(method, params, operation, control) {
+    request(method, params, _operation, control) {
       if (closed) {
         return Promise.reject(disconnectError ?? new RuntimeDaemonDisconnectError(
           'Runtime daemon transport is closed.',
@@ -388,17 +385,7 @@ export async function createRuntimeDaemonSocketClientTransport(
       const requestParams = method === 'initialize' || method === 'runtime.initialize'
         ? withDurableOperationCapability(params, clientInstanceId, clientInstanceSecret)
         : params;
-      const requestOperation = operation ?? (
-        journalEpoch !== undefined
-          && isRuntimeDaemonMutationMethod(method)
-          && !RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(method)
-          ? {
-              operationId: `op_${randomUUID().replace(/-/g, '')}`,
-              journalEpoch,
-            }
-          : undefined
-      );
-      const frame = createRuntimeDaemonRequest(id, method, requestParams, requestOperation);
+      const frame = createRuntimeDaemonRequest(id, method, requestParams);
       let encoded: string;
       try {
         encoded = JSON.stringify(frame);
@@ -447,15 +434,7 @@ export async function createRuntimeDaemonSocketClientTransport(
       if (control?.signal?.aborted) return result;
       socket.write(`${encoded}\n`);
       sent = true;
-      return result.then((value) => {
-        if (method === 'initialize' || method === 'runtime.initialize') {
-          const initialized = asRecord(value);
-          if (typeof initialized?.journalEpoch === 'string') {
-            journalEpoch = initialized.journalEpoch;
-          }
-        }
-        return value;
-      });
+      return result;
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -507,11 +486,9 @@ function withDurableOperationCapability(
   instanceSecret: string,
 ): Record<string, unknown> {
   const params = asRecord(value) ?? {};
-  const capabilities = asRecord(params.capabilities) ?? {};
   const clientInfo = asRecord(params.clientInfo) ?? { name: 'kodax-transport' };
   return {
     ...params,
-    capabilities: { ...capabilities, operationDeduplication: true },
     clientInfo: {
       ...clientInfo,
       instanceId: typeof clientInfo.instanceId === 'string'

@@ -30,7 +30,6 @@ import {
   type RuntimeDaemonEndpoint,
   type RuntimeDaemonSocketServer,
 } from './transport.js';
-import { createRuntimeControlJournal } from './control-journal.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createRuntimeDaemonManagementController } from './management.js';
 
@@ -81,9 +80,6 @@ export async function startRuntimeDaemonHost(
     scheduleStop();
   };
   const runResults = createRuntimeDaemonRunResultStore();
-  const controlJournal = createRuntimeControlJournal({
-    rootDir: path.join(options.paths.rootDir, 'control'),
-  });
   const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub({
     invocationStateFile: path.join(options.paths.rootDir, 'host-tool-invocations.json'),
   });
@@ -110,11 +106,9 @@ export async function startRuntimeDaemonHost(
         allowAgentRegistrationAdmin: true,
         notify,
         runResults,
-        controlJournal,
         reverseBridgeHub,
         management,
         durableHostToolInvocations: true,
-        requireOperationEnvelope: true,
         logs: () => ({
           logFile: options.paths.logFile,
           entries: readRuntimeDaemonLog(options.paths),

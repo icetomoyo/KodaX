@@ -38,8 +38,10 @@ import {
 import type { ClientInteractionResponse } from '@kodax-ai/coding/client-contract';
 import {
   RUNTIME_DAEMON_METHODS,
+  RUNTIME_DAEMON_MUTATION_METHODS,
   createRuntimeDaemonRequest,
   isRuntimeDaemonSuccessResponse,
+  parseRuntimeDaemonFrame,
   type RuntimeDaemonMethod,
   type RuntimeDaemonNotification,
 } from './protocol.js';
@@ -51,7 +53,6 @@ import {
   createRuntimeDaemonClient,
   type RuntimeDaemonClientTransport,
 } from './client.js';
-import { createRuntimeControlJournal } from './control-journal.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 
@@ -261,185 +262,66 @@ describe('runtime daemon dispatcher', () => {
     expect(isRuntimeDaemonSuccessResponse(accepted)).toBe(true);
   });
 
-  it('requires the negotiated durable envelope and deduplicates an exact mutation retry', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-operations-'));
-    try {
-      const runtime = makeRuntime();
-      const start = vi.spyOn(runtime.runs, 'start');
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
+  it('dispatches mutations without an operation envelope and rejects the retired operations.get (T25)', async () => {
+    const runtime = makeRuntime();
+    const start = vi.spyOn(runtime.runs, 'start');
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher, {});
 
-      const missing = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-missing-operation',
-        'run.start',
-        { sessionId: 'session-1', prompt: 'hello' },
-      ));
-      expect(isRuntimeDaemonSuccessResponse(missing)).toBe(false);
-      if (!isRuntimeDaemonSuccessResponse(missing)) {
-        expect(missing.error.code).toBe('operation_required');
-      }
-
-      const operation = {
-        operationId: 'op-server-1',
-        journalEpoch: controlJournal.journalEpoch,
-      } as const;
-      const first = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-operation-1',
-        'run.start',
-        { sessionId: 'session-1', prompt: 'hello' },
-        operation,
-      ));
-      const retried = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-operation-2',
-        'run.start',
-        { sessionId: 'session-1', prompt: 'hello' },
-        operation,
-      ));
-      const receipt = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-operation-get',
-        'operation.get',
-        operation,
-      ));
-
-      expect(isRuntimeDaemonSuccessResponse(first)).toBe(true);
-      expect(retried).toEqual({ ...first, id: 'req-operation-2' });
-      expect(isRuntimeDaemonSuccessResponse(receipt)).toBe(true);
-      if (isRuntimeDaemonSuccessResponse(receipt)) {
-        expect(receipt.result).toMatchObject({ operationId: operation.operationId, state: 'applied' });
-        expect(receipt.result).toMatchObject({
-          result: { runId: 'run-1', sessionId: 'session-1' },
-        });
-      }
-      expect(start).toHaveBeenCalledTimes(1);
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
+    const mutation = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-no-envelope',
+      'run.start',
+      { sessionId: 'session-1', prompt: 'hello' },
+    ));
+    expect(isRuntimeDaemonSuccessResponse(mutation)).toBe(true);
+    if (isRuntimeDaemonSuccessResponse(mutation)) {
+      expect(mutation.result).toMatchObject({ runId: 'run-1', sessionId: 'session-1' });
     }
+    expect(start).toHaveBeenCalledTimes(1);
+
+    // The retired operations.get no longer parses as a request frame.
+    const retiredFrame = {
+      ...createRuntimeDaemonRequest('req-operation-get', 'ping'),
+      method: 'operation.get',
+      params: { operationId: 'op-server-1' },
+    };
+    expect(parseRuntimeDaemonFrame(JSON.stringify(retiredFrame))).toMatchObject({
+      kind: 'error',
+      error: { code: 'invalid_frame' },
+    });
+    dispatcher.close();
   });
 
-  it('serves agent-family mutations without the generic operation envelope (T30)', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-agent-envelope-'));
-    try {
-      const runtime = makeRuntime();
-      const send = vi.spyOn(runtime.agents, 'send');
-      const interrupt = vi.spyOn(runtime.agents, 'interrupt');
-      const setEnabled = vi.spyOn(runtime.admin.agentRegistrations, 'setEnabled');
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-        allowAgentRegistrationAdmin: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
+  it('serves agent-family mutations through their domain identity without a generic envelope (T30)', async () => {
+    const runtime = makeRuntime();
+    const send = vi.spyOn(runtime.agents, 'send');
+    const interrupt = vi.spyOn(runtime.agents, 'interrupt');
+    const setEnabled = vi.spyOn(runtime.admin.agentRegistrations, 'setEnabled');
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime,
+      allowAgentRegistrationAdmin: true,
+    });
+    await initializeDispatcher(dispatcher, {});
 
-      // Generic mutations still demand the durable envelope.
-      const denied = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-agent-envelope-generic',
-        'run.start',
-        { sessionId: 'session-1', prompt: 'hello' },
+    for (const [id, method] of [
+      ['req-agent-envelope-send', 'agents.send'],
+      ['req-agent-envelope-interrupt', 'agents.interrupt'],
+      ['req-agent-envelope-registration', 'agentRegistrations.setEnabled'],
+    ] as const) {
+      const response = await dispatcher.handle(createRuntimeDaemonRequest(
+        id,
+        method,
+        METHOD_SMOKE_PARAMS[method],
       ));
-      expect(isRuntimeDaemonSuccessResponse(denied)).toBe(false);
-      if (!isRuntimeDaemonSuccessResponse(denied)) {
-        expect(denied.error.code).toBe('operation_required');
-      }
-
-      for (const [id, method] of [
-        ['req-agent-envelope-send', 'agents.send'],
-        ['req-agent-envelope-interrupt', 'agents.interrupt'],
-        ['req-agent-envelope-registration', 'agentRegistrations.setEnabled'],
-      ] as const) {
-        const response = await dispatcher.handle(createRuntimeDaemonRequest(
-          id,
-          method,
-          METHOD_SMOKE_PARAMS[method],
-        ));
-        expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
-      }
-      expect(send).toHaveBeenCalledWith('session-1', '/root/smoke', 'continue', undefined);
-      expect(interrupt).toHaveBeenCalledWith('session-1', '/root/smoke', undefined);
-      expect(setEnabled).toHaveBeenCalledWith('external:smoke', false, {
-        expectedConfigurationRevision: undefined,
-        expectedManagementOwner: undefined,
-      });
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
+      expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
     }
-  });
-
-  it('marks every dispatched mutation unknown-safe before applying its effect', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-dispatch-'));
-    try {
-      const runtime = makeRuntime();
-      let resolveCreate: ((value: Awaited<ReturnType<KodaXRuntime['sessions']['create']>>) => void)
-        | undefined;
-      const pendingCreate = new Promise<Awaited<ReturnType<KodaXRuntime['sessions']['create']>>>(
-        (resolve) => { resolveCreate = resolve; },
-      );
-      vi.spyOn(runtime.sessions, 'create').mockImplementation(() => pendingCreate);
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
-      const operation = {
-        operationId: 'op-session-create',
-        journalEpoch: controlJournal.journalEpoch,
-      } as const;
-
-      const response = dispatcher.handle(createRuntimeDaemonRequest(
-        'req-session-create',
-        'session.create',
-        { title: 'Created once' },
-        operation,
-      ));
-
-      await vi.waitFor(() => {
-        expect(controlJournal.get(operation.operationId)?.state).toBe('dispatched');
-      });
-      resolveCreate?.({ id: 'session-created', title: 'Created once' });
-      expect(isRuntimeDaemonSuccessResponse(await response)).toBe(true);
-      expect(controlJournal.get(operation.operationId)?.state).toBe('applied');
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
-    }
-  });
-
-  it('keeps a legacy client read-only when durable operations are required', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-legacy-'));
-    try {
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime: makeRuntime(),
-        controlJournal: createRuntimeControlJournal({ rootDir }),
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, {});
-
-      const read = await dispatcher.handle(createRuntimeDaemonRequest('req-read', 'run.list'));
-      const mutation = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-write',
-        'session.create',
-        { title: 'legacy write' },
-      ));
-
-      expect(isRuntimeDaemonSuccessResponse(read)).toBe(true);
-      expect(isRuntimeDaemonSuccessResponse(mutation)).toBe(false);
-      if (!isRuntimeDaemonSuccessResponse(mutation)) {
-        expect(mutation.error.code).toBe('client_upgrade_required');
-      }
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
-    }
+    expect(send).toHaveBeenCalledWith('session-1', '/root/smoke', 'continue', undefined);
+    expect(interrupt).toHaveBeenCalledWith('session-1', '/root/smoke', undefined);
+    expect(setEnabled).toHaveBeenCalledWith('external:smoke', false, {
+      expectedConfigurationRevision: undefined,
+      expectedManagementOwner: undefined,
+    });
+    dispatcher.close();
   });
 
   it('routes reverse-bridge state changes through the daemon draining fence', async () => {
@@ -464,9 +346,8 @@ describe('runtime daemon dispatcher', () => {
     const dispatcher = createRuntimeDaemonDispatcher({
       runtime: makeRuntime(),
       management,
-      requireOperationEnvelope: true,
     });
-    await initializeDispatcher(dispatcher, { operationDeduplication: true });
+    await initializeDispatcher(dispatcher, {});
     const requests: readonly {
       readonly method: RuntimeDaemonMethod;
       readonly params: unknown;
@@ -514,165 +395,114 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('accepts a Session settings patch without a revision or operation envelope on a shared Host', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-settings-'));
-    try {
-      const runtime = makeRuntime();
-      const update = vi.spyOn(runtime.sessions, 'updateSettings');
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
+  it('accepts a Session settings patch without a revision on a shared Host', async () => {
+    const runtime = makeRuntime();
+    const update = vi.spyOn(runtime.sessions, 'updateSettings');
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher, {});
 
-      const response = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-legacy-settings',
-        'session.settings.update',
-        { sessionId: 'session-1', patch: { model: 'racing-model' } },
-      ));
+    const response = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-legacy-settings',
+      'session.settings.update',
+      { sessionId: 'session-1', patch: { model: 'racing-model' } },
+    ));
 
-      expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
-      expect(update).toHaveBeenCalledWith('session-1', { model: 'racing-model' });
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
-    }
+    expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+    expect(update).toHaveBeenCalledWith('session-1', { model: 'racing-model' });
+    dispatcher.close();
   });
 
-  it('orders an after-turn continuation once across an exact operation retry', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-input-'));
-    try {
-      const runtime = makeRuntime();
-      vi.spyOn(runtime.runs, 'get').mockResolvedValue({
-        runId: 'run-active',
-        sessionId: 'session-1',
-        phase: 'running',
-        startedAt: '2026-07-14T00:00:00.000Z',
-        provider: 'mock',
-      });
-      const submit = vi.spyOn(runtime.runs, 'submitInput').mockResolvedValue({
-        accepted: true,
-        delivery: 'after_turn',
-        runId: 'run-continuation',
-        sessionId: 'session-1',
-        afterRunId: 'run-active',
-        sessionOrder: 2,
-      });
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
-      const operation = {
-        operationId: 'op-input-1',
-        journalEpoch: controlJournal.journalEpoch,
-      } as const;
-      const params = {
-        sessionId: 'session-1',
-        afterRunId: 'run-active',
-        delivery: 'after_turn',
-        input: { type: 'text', text: 'continue' },
-      } as const;
+  it('orders an after-turn continuation without an operation envelope (T25)', async () => {
+    const runtime = makeRuntime();
+    vi.spyOn(runtime.runs, 'get').mockResolvedValue({
+      runId: 'run-active',
+      sessionId: 'session-1',
+      phase: 'running',
+      startedAt: '2026-07-14T00:00:00.000Z',
+      provider: 'mock',
+    });
+    const submit = vi.spyOn(runtime.runs, 'submitInput').mockResolvedValue({
+      accepted: true,
+      delivery: 'after_turn',
+      runId: 'run-continuation',
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      sessionOrder: 2,
+    });
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher, {});
+    const params = {
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      delivery: 'after_turn',
+      input: { type: 'text', text: 'continue' },
+    } as const;
 
-      const first = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-input-1',
-        'run.input.submit',
-        params,
-        operation,
-      ));
-      const retry = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-input-2',
-        'run.input.submit',
-        params,
-        operation,
-      ));
+    const response = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-input-1',
+      'run.input.submit',
+      params,
+    ));
 
-      expect(isRuntimeDaemonSuccessResponse(first)).toBe(true);
-      expect(retry).toEqual({ ...first, id: 'req-input-2' });
-      expect(runtime.runs.get).toHaveBeenCalledTimes(1);
-      expect(submit).toHaveBeenCalledTimes(1);
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
-    }
+    expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      delivery: 'after_turn',
+    }));
+    dispatcher.close();
   });
 
-  it('queues an interrupt once across an exact operation retry', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-interrupt-'));
-    try {
-      const runtime = makeRuntime();
-      vi.spyOn(runtime.runs, 'get').mockResolvedValue({
-        runId: 'run-active',
-        sessionId: 'session-1',
-        phase: 'running',
-        startedAt: '2026-07-14T00:00:00.000Z',
-        provider: 'mock',
-      });
-      const submit = vi.spyOn(runtime.runs, 'submitInput').mockResolvedValue({
+  it('queues an interrupt without an operation envelope (T25)', async () => {
+    const runtime = makeRuntime();
+    vi.spyOn(runtime.runs, 'get').mockResolvedValue({
+      runId: 'run-active',
+      sessionId: 'session-1',
+      phase: 'running',
+      startedAt: '2026-07-14T00:00:00.000Z',
+      provider: 'mock',
+    });
+    const submit = vi.spyOn(runtime.runs, 'submitInput').mockResolvedValue({
+      accepted: true,
+      delivery: 'interrupt',
+      inputId: 'input-interrupt-1',
+      runId: 'run-active',
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      sessionOrder: 1,
+    });
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher, {});
+    const params = {
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      delivery: 'interrupt',
+      input: { type: 'text', text: 'urgent' },
+    } as const;
+
+    const response = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-interrupt-1',
+      'run.input.submit',
+      params,
+    ));
+
+    expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+    if (isRuntimeDaemonSuccessResponse(response)) {
+      expect(response.result).toMatchObject({
         accepted: true,
         delivery: 'interrupt',
         inputId: 'input-interrupt-1',
-        runId: 'run-active',
-        sessionId: 'session-1',
-        afterRunId: 'run-active',
-        sessionOrder: 1,
       });
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        requireOperationEnvelope: true,
-      });
-      await initializeDispatcher(dispatcher, { operationDeduplication: true });
-      const operation = {
-        operationId: 'op-interrupt-1',
-        journalEpoch: controlJournal.journalEpoch,
-      } as const;
-      const params = {
-        sessionId: 'session-1',
-        afterRunId: 'run-active',
-        delivery: 'interrupt',
-        input: { type: 'text', text: 'urgent' },
-      } as const;
-
-      const first = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-interrupt-1',
-        'run.input.submit',
-        params,
-        operation,
-      ));
-      const retry = await dispatcher.handle(createRuntimeDaemonRequest(
-        'req-interrupt-2',
-        'run.input.submit',
-        params,
-        operation,
-      ));
-
-      expect(isRuntimeDaemonSuccessResponse(first)).toBe(true);
-      if (isRuntimeDaemonSuccessResponse(first)) {
-        expect(first.result).toMatchObject({
-          accepted: true,
-          delivery: 'interrupt',
-          inputId: 'input-interrupt-1',
-        });
-      }
-      expect(retry).toEqual({ ...first, id: 'req-interrupt-2' });
-      expect(runtime.runs.get).toHaveBeenCalledTimes(1);
-      expect(submit).toHaveBeenCalledTimes(1);
-      expect(submit).toHaveBeenCalledWith(expect.objectContaining({
-        sessionId: 'session-1',
-        afterRunId: 'run-active',
-        delivery: 'interrupt',
-        origin: expect.objectContaining({ operationId: 'op-interrupt-1' }),
-      }));
-      dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
     }
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1',
+      afterRunId: 'run-active',
+      delivery: 'interrupt',
+      origin: expect.objectContaining({ principalId: expect.any(String) }),
+    }));
+    dispatcher.close();
   });
 
   it('keeps interrupt input fenced to the current active session run', async () => {
@@ -883,12 +713,11 @@ describe('runtime daemon dispatcher', () => {
     });
     await initializeDispatcher(dispatcher);
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
+      async request(method, params) {
         const response = await dispatcher.handle(createRuntimeDaemonRequest(
           `req-loopback-${randomRequestSuffix()}`,
           method,
           params,
-          operation,
         ));
         if (isRuntimeDaemonSuccessResponse(response)) return response.result;
         throw Object.assign(new Error(response.error.message), { code: response.error.code });
@@ -1072,30 +901,24 @@ describe('runtime daemon dispatcher', () => {
     await legacyExtensionRuntime.dispose();
   });
 
-  it('binds manual compaction to a stable v2 operation without exposing the secret', async () => {
-    const journalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-compact-journal-'));
-    try {
+  it('binds manual compaction to a Host-minted credential target without exposing the secret (T31/T25)', async () => {
     const runtime = makeRuntime();
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
-    const controlJournal = createRuntimeControlJournal({ rootDir: journalRoot });
     let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
     const dispatcher = createRuntimeDaemonDispatcher({
       runtime,
       reverseBridgeHub,
-      controlJournal,
-      requireOperationEnvelope: true,
       notify(notification) {
         notificationListener?.(notification);
       },
     });
-    await initializeDispatcher(dispatcher, { operationDeduplication: true });
+    await initializeDispatcher(dispatcher, {});
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
+      async request(method, params) {
         const response = await dispatcher.handle(createRuntimeDaemonRequest(
           `req-compact-${randomRequestSuffix()}`,
           method,
           params,
-          operation,
         ));
         if (isRuntimeDaemonSuccessResponse(response)) return response.result;
         throw Object.assign(new Error(response.error.message), { code: response.error.code });
@@ -1133,8 +956,7 @@ describe('runtime daemon dispatcher', () => {
     const client = createRuntimeDaemonClient({
       identity: runtime.identity,
       transport,
-      journalEpoch: controlJournal.journalEpoch,
-      capabilities: { providerCredentialBroker: { version: 2 }, operationDeduplication: true },
+      capabilities: { providerCredentialBroker: { version: 2 } },
     });
     const requests: unknown[] = [];
     const lease = await client.credentials.registerScoped(
@@ -1153,10 +975,6 @@ describe('runtime daemon dispatcher', () => {
         mode: 'scoped',
         providers: ['openai'],
       },
-      operation: {
-        operationId: 'compact-op-1',
-        journalEpoch: controlJournal.journalEpoch,
-      },
     })).resolves.toMatchObject({ compacted: true });
 
     await expect(client.sessions.compact({
@@ -1167,17 +985,12 @@ describe('runtime daemon dispatcher', () => {
         mode: 'scoped',
         providers: ['openai'],
       },
-      operation: {
-        operationId: 'compact-op-provider-mismatch',
-        journalEpoch: controlJournal.journalEpoch,
-      },
     })).rejects.toMatchObject({ code: 'credential_unavailable' });
 
     // FEATURE_298 T31 — the credential identity is a Host-minted short-lived
-    // maintenance id, never the client envelope's operationId.
+    // maintenance id, not any client-supplied mutation identity.
     const mintedId = (requests[0] as { target?: { operationId?: string } }).target?.operationId;
     expect(mintedId).toMatch(/^compact_[0-9a-f]{32}$/);
-    expect(mintedId).not.toBe('compact-op-1');
     expect(requests).toEqual([expect.objectContaining({
       provider: 'openai',
       sessionId: 'session-1',
@@ -1189,30 +1002,9 @@ describe('runtime daemon dispatcher', () => {
       purpose: 'compaction',
     })]);
     expect(compact).toHaveBeenCalledTimes(1);
-
-    // A lost confirmation replayed under the same envelope is deduplicated by
-    // the control journal — no second credential delivery or model call.
-    await expect(client.sessions.compact({
-      sessionId: 'session-1',
-      provider: 'openai',
-      credential: {
-        leaseId: lease.id,
-        mode: 'scoped',
-        providers: ['openai'],
-      },
-      operation: {
-        operationId: 'compact-op-1',
-        journalEpoch: controlJournal.journalEpoch,
-      },
-    })).resolves.toMatchObject({ compacted: true });
-    expect(requests).toHaveLength(1);
-    expect(compact).toHaveBeenCalledTimes(1);
     await client.close();
     dispatcher.close();
     reverseBridgeHub.close();
-    } finally {
-      fs.rmSync(journalRoot, { force: true, recursive: true });
-    }
   });
 
   it('binds a scoped credential to the exact admitted Agent turn', async () => {
@@ -1228,12 +1020,11 @@ describe('runtime daemon dispatcher', () => {
     });
     await initializeDispatcher(dispatcher);
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
+      async request(method, params) {
         const response = await dispatcher.handle(createRuntimeDaemonRequest(
           `req-agent-credential-${randomRequestSuffix()}`,
           method,
           params,
-          operation,
         ));
         if (isRuntimeDaemonSuccessResponse(response)) return response.result;
         throw Object.assign(new Error(response.error.message), { code: response.error.code });
@@ -1330,7 +1121,6 @@ describe('runtime daemon dispatcher', () => {
     const client = createRuntimeDaemonClient({
       identity: runtime.identity,
       transport,
-      journalEpoch: 'journal-agent',
       capabilities: {
         actorControlPlane: { version: 1, methodNamespace: 'agents' },
         providerCredentialBroker: { version: 2 },
@@ -1452,12 +1242,11 @@ describe('runtime daemon dispatcher', () => {
       });
       await initializeDispatcher(dispatcher);
       const transport: RuntimeDaemonClientTransport = {
-        async request(method, params, operation) {
+        async request(method, params) {
           const response = await dispatcher.handle(createRuntimeDaemonRequest(
             `req-collide-${randomRequestSuffix()}`,
             method,
             params,
-            operation,
           ));
           if (isRuntimeDaemonSuccessResponse(response)) return response.result;
           throw Object.assign(new Error(response.error.message), { code: response.error.code });
@@ -1539,6 +1328,35 @@ describe('runtime daemon dispatcher', () => {
       expect(
         implemented,
         `${method} should be implemented by runtime daemon dispatcher`,
+      ).toBe(true);
+    }
+  });
+
+  it('dispatches every mutation domain without an operation envelope (T25)', async () => {
+    // The generic control journal is retired: every mutation method reaches
+    // its domain branch (revision CAS, draining fence, idempotency keys)
+    // with no envelope, no capability negotiation, and no journal option.
+    for (const method of RUNTIME_DAEMON_MUTATION_METHODS) {
+      const dispatcher = createRuntimeDaemonDispatcher({
+        runtime: makeRuntime(),
+        allowAgentRegistrationAdmin: true,
+      });
+      await initializeDispatcher(dispatcher);
+
+      const response = await dispatcher.handle(createRuntimeDaemonRequest(
+        `req-t25-${method.replace(/[^a-zA-Z0-9]/g, '-')}`,
+        method,
+        METHOD_SMOKE_PARAMS[method],
+      ));
+      dispatcher.close();
+
+      const implemented = isRuntimeDaemonSuccessResponse(response) || (
+        method === 'daemon.rollbackToInline'
+        && response.error.code === 'client_upgrade_required'
+      );
+      expect(
+        implemented,
+        `${method} should dispatch without an operation envelope`,
       ).toBe(true);
     }
   });
@@ -1849,29 +1667,24 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('advertises versioned shared-daemon facts including interrupt support', async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-capabilities-'));
-    try {
-      const controlJournal = createRuntimeControlJournal({ rootDir });
-      const runtime = {
-        ...makeRuntime(),
-        capabilities: {
-          runtimeEventCoalescing: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 1, owner: 'legacy-client' },
-          sharedSessionSettings: { version: 1, permissionModes: ['plan'] },
-        },
-      } satisfies KodaXRuntime;
-      const dispatcher = createRuntimeDaemonDispatcher({
-        runtime,
-        controlJournal,
-        allowAgentRegistrationAdmin: true,
-      });
-      const initialized = await initializeDispatcher(dispatcher, { operationDeduplication: true });
+    const runtime = {
+      ...makeRuntime(),
+      capabilities: {
+        runtimeEventCoalescing: { version: 1 },
+        runtimeAutoModeGuardrail: { version: 1, owner: 'legacy-client' },
+        sharedSessionSettings: { version: 1, permissionModes: ['plan'] },
+      },
+    } satisfies KodaXRuntime;
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime,
+      allowAgentRegistrationAdmin: true,
+    });
+    const initialized = await initializeDispatcher(dispatcher, {});
 
-      expect(initialized).toMatchObject({
-        capabilities: {
-          sessionObservation: { version: 1 },
-          operationDeduplication: { version: 1 },
-          externalAgentAdmin: {
+    expect(initialized).toMatchObject({
+      capabilities: {
+        sessionObservation: { version: 1 },
+        externalAgentAdmin: {
             version: 1,
             activation: true,
             conditionalMutations: true,
@@ -1974,7 +1787,6 @@ describe('runtime daemon dispatcher', () => {
           },
           durableRecoveryQueries: {
             version: 1,
-            operationResult: true,
             daemonPreflight: true,
             terminalAcknowledgement: false,
           },
@@ -1986,9 +1798,6 @@ describe('runtime daemon dispatcher', () => {
       expect(settingsCapability.keys).not.toContain('autoModeTimeoutMs');
       expect(settingsCapability.keys).not.toContain('autoModeSpeculativeWindowMs');
       dispatcher.close();
-    } finally {
-      fs.rmSync(rootDir, { force: true, recursive: true });
-    }
   });
 
   it('closes a Session observation that resolves after protocol cancellation', async () => {
@@ -2518,12 +2327,11 @@ describe('runtime daemon dispatcher', () => {
     const dispatcher = createRuntimeDaemonDispatcher({ runtime, runResults });
     await initializeDispatcher(dispatcher);
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
+      async request(method, params) {
         const response = await dispatcher.handle(createRuntimeDaemonRequest(
           `req-loopback-${randomRequestSuffix()}`,
           method,
           params,
-          operation,
         ));
         if (isRuntimeDaemonSuccessResponse(response)) return response.result;
         throw Object.assign(new Error(response.error.message), {
@@ -3493,7 +3301,6 @@ const METHOD_SMOKE_PARAMS = {
     expectedRevision: 0,
     expectedOwnerPolicyRevision: 0,
   },
-  'operation.get': { operationId: 'op-missing', journalEpoch: 'epoch-missing' },
   'session.create': { sessionId: 'session-smoke', title: 'Smoke Session' },
   'session.load': { sessionId: 'session-1' },
   'session.list': { limit: 5 },
@@ -4046,18 +3853,6 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
     interactions: createTestInteractions(),
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
-    operations: {
-      async get(input) {
-        return {
-          ...input,
-          principalId: 'vitest',
-          method: 'run.start',
-          requestDigest: 'digest',
-          state: 'applied',
-          updatedAt: '2026-07-14T00:00:00.000Z',
-        };
-      },
-    },
     workflows: {
       async start() {
         return { kind: 'declined', reason: 'fake' };

@@ -122,13 +122,6 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       ownerPolicy: ownerPolicySchema('inline'),
     }, ['accepted', 'runtimeId', 'revision', 'ownerPolicy']),
   },
-  'operation.get': {
-    params: objectSchema({
-      operationId: stringSchema,
-      journalEpoch: stringSchema,
-    }, ['operationId', 'journalEpoch']),
-    result: objectAnySchema,
-  },
 
   'session.create': { params: createSessionParamsSchema(), result: sessionSchema() },
   'session.load': {

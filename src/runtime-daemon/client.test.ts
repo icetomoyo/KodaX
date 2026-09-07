@@ -27,14 +27,13 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
-  it('sends a stable compact operation in the envelope, never in params', async () => {
+  it('sends compact params plainly with no operation envelope (T25)', async () => {
     let captured: {
       readonly params?: unknown;
-      readonly operation?: { readonly operationId: string; readonly journalEpoch: string };
     } | undefined;
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
-        if (method === 'session.compact') captured = { params, operation };
+      async request(method, params) {
+        if (method === 'session.compact') captured = { params };
         return { compacted: false, reason: 'below threshold' };
       },
       subscribe() {
@@ -49,7 +48,6 @@ describe('runtime daemon client proxy', () => {
         startedAt: '2026-08-29T00:00:00.000Z',
         version: '0.7.96',
       },
-      journalEpoch: 'journal-1',
       transport,
     });
 
@@ -57,7 +55,6 @@ describe('runtime daemon client proxy', () => {
       sessionId: 'session-1',
       triggerPercent: 75,
       triggerTokens: 150_000,
-      operation: { operationId: 'compact-op-1', journalEpoch: 'journal-1' },
     });
 
     expect(captured).toEqual({
@@ -66,21 +63,16 @@ describe('runtime daemon client proxy', () => {
         triggerPercent: 75,
         triggerTokens: 150_000,
       },
-      operation: {
-        operationId: 'compact-op-1',
-        journalEpoch: 'journal-1',
-      },
     });
   });
 
   it('keeps Agent credential binding host-only and sends no operation envelope (T30)', async () => {
     let captured: {
       readonly params?: unknown;
-      readonly operation?: { readonly operationId: string; readonly journalEpoch: string };
     } | undefined;
     const transport: RuntimeDaemonClientTransport = {
-      async request(method, params, operation) {
-        if (method === 'agents.spawn') captured = { params, operation };
+      async request(method, params) {
+        if (method === 'agents.spawn') captured = { params };
         return { actorPath: '/root/reviewer', turnId: 'turn-1', state: 'accepted' };
       },
       subscribe() {
@@ -96,7 +88,6 @@ describe('runtime daemon client proxy', () => {
         version: '0.7.96',
       },
       transport,
-      journalEpoch: 'journal-agent',
       capabilities: {
         actorControlPlane: { version: 1, methodNamespace: 'agents' },
       },
@@ -128,7 +119,6 @@ describe('runtime daemon client proxy', () => {
           providers: ['openai'],
         },
       },
-      operation: undefined,
     });
     expect(JSON.stringify((captured?.params as { input?: unknown }).input)).not.toContain('credential');
     await client.close();
@@ -465,7 +455,6 @@ describe('runtime daemon client proxy', () => {
         version: '0.7.69',
       },
       transport,
-      journalEpoch: 'journal-epoch-1',
     });
     const seen: RuntimeConnectionState[] = [];
 
@@ -480,7 +469,6 @@ describe('runtime daemon client proxy', () => {
     expect(client.connection?.current()).toMatchObject({
       state: 'disconnected',
       runtimeEpoch: 'runtime-epoch-1',
-      journalEpoch: 'journal-epoch-1',
     });
     expect(seen.at(-1)).toMatchObject({ state: 'disconnected', reason: 'socket closed' });
     transport.emitLifecycle({
@@ -526,7 +514,6 @@ describe('runtime daemon client proxy', () => {
       expectedRuntimeId: state.runtimeId,
       expectedRevision: state.revision,
       expectedOwnerPolicyRevision: state.ownerPolicy.revision,
-      operation: { operationId: 'op-rollback' },
     })).resolves.toMatchObject({ accepted: true, ownerPolicy: { mode: 'inline' } });
 
     expect(calls).toEqual([
@@ -2425,7 +2412,6 @@ describe('runtime daemon client session view reconnect', () => {
         startedAt: '2026-09-07T00:00:00.000Z',
         version: '0.7.97',
       },
-      journalEpoch: 'journal-1',
       transport,
     });
     const marks: string[] = [];

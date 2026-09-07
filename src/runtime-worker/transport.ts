@@ -147,7 +147,7 @@ export function createRuntimeWorkerTransport(
   worker.on('exit', (code) => markClosed(new Error(`Runtime Worker exited with code ${code}.`)));
 
   const transport: RuntimeDaemonClientTransport = {
-    request(method, params, operation, control) {
+    request(method, params, _operation, control) {
       if (closed) return Promise.reject(new Error('Runtime Worker transport is closed.'));
       const id = `worker_${++requestSequence}`;
       let abort: (() => void) | undefined;
@@ -180,7 +180,7 @@ export function createRuntimeWorkerTransport(
       });
       if (control?.signal?.aborted) return result;
       try {
-        worker.postMessage(createRuntimeDaemonRequest(id, method, params, operation));
+        worker.postMessage(createRuntimeDaemonRequest(id, method, params));
         sent = true;
       } catch (error: unknown) {
         const entry = pending.get(id);

@@ -39,7 +39,6 @@ import type {
   RuntimeMcpToolListFilter,
   RuntimeMcpValidateResult,
   RuntimeModelListFilter,
-  RuntimeOperationOptions,
   RuntimeObservationInvalidation,
   RuntimePermissionDecision,
   RuntimePermissionFilter,
@@ -108,11 +107,6 @@ import { KODAX_VERSION } from '@kodax-ai/repl';
 import type {
   RuntimeDaemonMethod,
   RuntimeDaemonNotification,
-  RuntimeDaemonOperationEnvelope,
-} from './protocol.js';
-import {
-  isRuntimeDaemonMutationMethod,
-  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
 } from './protocol.js';
 
 const MAX_PENDING_SUBSCRIPTION_NOTIFICATIONS = 256;
@@ -127,7 +121,7 @@ export interface RuntimeDaemonClientTransport {
   request(
     method: RuntimeDaemonMethod,
     params?: unknown,
-    operation?: RuntimeDaemonOperationEnvelope,
+    operation?: undefined,
     control?: RuntimeDaemonRequestControl,
   ): Promise<unknown>;
   subscribe(listener: (notification: RuntimeDaemonNotification) => void): RuntimeSubscription;
@@ -238,7 +232,6 @@ export interface RuntimeDaemonClientOptions {
   readonly identity: RuntimeIdentity;
   readonly transport: RuntimeDaemonClientTransport;
   readonly capabilities?: Readonly<Record<string, unknown>>;
-  readonly journalEpoch?: string;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
 }
 
@@ -268,16 +261,11 @@ export function createRuntimeDaemonClient(
   const request = (
     method: RuntimeDaemonMethod,
     params?: unknown,
-    operation?: RuntimeOperationOptions,
     control?: RuntimeDaemonRequestControl,
   ): Promise<unknown> => options.transport.request(
     method,
     params,
-    isRuntimeDaemonMutationMethod(method)
-      && method !== 'session.settings.update'
-      && !RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(method)
-      ? createOperationEnvelope(options.journalEpoch, operation)
-      : undefined,
+    undefined,
     control,
   );
   const readRequest = (
@@ -319,7 +307,7 @@ export function createRuntimeDaemonClient(
       ...(readOptions?.timeoutMs !== undefined
         ? { timeoutMs: readOptions.timeoutMs }
         : {}),
-    }, undefined, {
+    }, {
       signal: controller.signal,
       ...(onLateResult !== undefined
         ? { onLateResult: deliverLateResult }
@@ -393,14 +381,12 @@ export function createRuntimeDaemonClient(
     state: 'connected',
     connectionId: `connection_${randomUUID().replace(/-/g, '')}`,
     runtimeEpoch: options.identity.runtimeId,
-    ...(options.journalEpoch !== undefined ? { journalEpoch: options.journalEpoch } : {}),
     reconnectable: false,
   };
   const transportLifecycleSubscription = options.transport.subscribeLifecycle?.((state) => {
     connectionState = {
       ...state,
       runtimeEpoch: options.identity.runtimeId,
-      ...(options.journalEpoch !== undefined ? { journalEpoch: options.journalEpoch } : {}),
     };
     for (const listener of connectionListeners) {
       try {
@@ -509,8 +495,8 @@ export function createRuntimeDaemonClient(
     ...(options.grantedScopes !== undefined ? { grantedScopes: options.grantedScopes } : {}),
     sessions: {
       create(input = {}) {
-        const { operation, ...transportInput } = input;
-        return request('session.create', transportInput, operation) as Promise<RuntimeSession>;
+        const transportInput = input;
+        return request('session.create', transportInput) as Promise<RuntimeSession>;
       },
       load(sessionId, readOptions) {
         return readRequest('session.load', { sessionId }, readOptions) as Promise<RuntimeSession>;
@@ -647,11 +633,10 @@ export function createRuntimeDaemonClient(
       updateSettings(sessionId, patch) {
         return request('session.settings.update', { sessionId, patch }) as Promise<RuntimeSessionSettings>;
       },
-      updateSettingsVersioned(sessionId, patch, operation) {
+      updateSettingsVersioned(sessionId, patch, options) {
         return request(
           'session.settings.updateVersioned',
-          { sessionId, patch, expectedRevision: operation.expectedRevision },
-          operation,
+          { sessionId, patch, expectedRevision: options.expectedRevision },
         ) as ReturnType<KodaXRuntime['sessions']['updateSettingsVersioned']>;
       },
       appendNotice(input) {
@@ -685,11 +670,10 @@ export function createRuntimeDaemonClient(
         return request('session.active_entry.set', input) as Promise<RuntimeSession | null>;
       },
       compact(input) {
-        const { operation, ...transportInput } = input;
+        const transportInput = input;
         return request(
           'session.compact',
           transportInput,
-          operation,
         ) as Promise<RuntimeCompactSessionResult>;
       },
       async archive(sessionId) {
@@ -713,9 +697,9 @@ export function createRuntimeDaemonClient(
         return options.transport.request('input.withdraw', { sessionId, inputId }) as ReturnType<KodaXRuntime['runs']['withdrawInput']>;
       },
       async start(input: RuntimeDaemonStartRunInput): Promise<RuntimeRunHandle> {
-        const { operation, ...transportInput } = input;
+        const transportInput = input;
         assertRuntimeTransportSafe(transportInput, 'run.start');
-        const started = requireRecord(await request('run.start', transportInput, operation));
+        const started = requireRecord(await request('run.start', transportInput));
         const runId = requireStringField(started, 'runId');
         const sessionId = requireStringField(started, 'sessionId');
         const turnId = optionalStringField(started, 'turnId');
@@ -727,9 +711,9 @@ export function createRuntimeDaemonClient(
         };
       },
       async submitInput(input) {
-        const { operation, ...transportInput } = input;
+        const transportInput = input;
         assertRuntimeTransportSafe(transportInput, 'run.input.submit');
-        return request('run.input.submit', transportInput, operation) as ReturnType<
+        return request('run.input.submit', transportInput) as ReturnType<
           KodaXRuntime['runs']['submitInput']
         >;
       },
@@ -988,11 +972,6 @@ export function createRuntimeDaemonClient(
         const revoked = await request('host_tool.revoke', { leaseId }) as boolean;
         if (revoked) hostToolHandlers.delete(leaseId);
         return revoked;
-      },
-    },
-    operations: {
-      get(input) {
-        return request('operation.get', input) as ReturnType<KodaXRuntime['operations']['get']>;
       },
     },
     // FEATURE_298 T36 — Memory management is an in-process Host service; the
@@ -1368,11 +1347,10 @@ export function createRuntimeDaemonClient(
         });
       },
       stopForInline(input: RuntimeDaemonRollbackInput) {
-        const { operation, ...params } = input;
+        const params = input;
         return request(
           'daemon.rollbackToInline',
           params,
-          operation,
         ) as Promise<RuntimeDaemonRollbackResult>;
       },
     },
@@ -1444,7 +1422,6 @@ async function answerCredentialRequest(
   request: (
     method: RuntimeDaemonMethod,
     params?: unknown,
-    operation?: RuntimeOperationOptions,
   ) => Promise<unknown>,
 ): Promise<void> {
   const payload = requireRecord(params);
@@ -1487,7 +1464,6 @@ async function answerHostToolInvocation(
   request: (
     method: RuntimeDaemonMethod,
     params?: unknown,
-    operation?: RuntimeOperationOptions,
   ) => Promise<unknown>,
 ): Promise<void> {
   const payload = requireRecord(params);
@@ -1552,18 +1528,6 @@ function pruneHostToolResults(results: Map<string, HostToolInvocationResult>): v
     if (results.size <= MAX_RETAINED_HOST_TOOL_RESULTS) return;
     if (result.settled) results.delete(invocationId);
   }
-}
-
-function createOperationEnvelope(
-  journalEpoch: string | undefined,
-  operation: RuntimeOperationOptions | undefined,
-): RuntimeDaemonOperationEnvelope | undefined {
-  const epoch = operation?.journalEpoch ?? journalEpoch;
-  if (epoch === undefined) return undefined;
-  return {
-    operationId: operation?.operationId ?? `op_${randomUUID().replace(/-/g, '')}`,
-    journalEpoch: epoch,
-  };
 }
 
 function subscribeToDaemonEvents(
