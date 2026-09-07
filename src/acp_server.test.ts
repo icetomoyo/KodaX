@@ -139,9 +139,10 @@ vi.mock('@kodax-ai/repl', async (importOriginal) => {
 
 import {
   KodaXAcpServer,
+  toClientPermissionDecision,
   type KodaXAcpServerOptions,
 } from './acp_server.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime, type RuntimePermissionRequest } from './sdk-runtime.js';
 
 type PromptRequestWithEffort = PromptRequest & {
   effort?: string;
@@ -473,7 +474,8 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-acp-perm-'));
     delete process.env.KODAX_PROVIDER;
     delete process.env.KODAX_EFFORT;
-    acpServerState.startKodaX.mockClear();
+    acpServerState.startKodaX.mockReset();
+    acpServerState.capturedOptions = [];
   });
 
   afterEach(async () => {
@@ -520,9 +522,11 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     const permissionCalls: Array<{ toolCall: { title: string } }> = [];
     (server as unknown as {
       connection: {
+        signal: { aborted: boolean };
         requestPermission(request: unknown): Promise<{ outcome: { outcome: string; optionId: string } }>;
       };
     }).connection = {
+      signal: { aborted: false },
       requestPermission: async (request: { toolCall: { title: string } }) => {
         permissionCalls.push(request);
         return { outcome: { outcome: 'selected', optionId: 'allow_once' } };
@@ -532,11 +536,11 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
 
     const promptPromise = server.prompt(makePrompt(sessionId));
     let runId: string | undefined;
-    for (let attempt = 0; attempt < 100 && runId === undefined; attempt += 1) {
+    await waitForCondition('ACP permission run registration', async () => {
       const runs = await runtime.runs.list({ sessionId });
       runId = runs[0]?.runId;
-      if (runId === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+      return runId !== undefined;
+    });
     expect(runId).toBeDefined();
 
     const decision = runtime.permissions.request({
@@ -557,7 +561,85 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     releaseExecutor!({
       success: true, lastText: 'done', messages: [], sessionId,
     });
-    await promptPromise;
+    await expectSettles(promptPromise, 'permission prompt');
+    await runtime.close();
+  }, 30_000);
+
+  it('does not hang when the Host settles a permission before the ACP client answers (T19)', async () => {
+    const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
+    let releaseExecutor: ((result: KodaXResult) => void) | undefined;
+    acpServerState.startKodaX.mockImplementationOnce(
+      (options: { session?: { id?: string } }) => {
+        const sessionId = options.session?.id ?? 'missing-session';
+        return {
+          id: sessionId,
+          attached: true,
+          currentProvider: 'openai',
+          currentModel: undefined,
+          currentReasoning: undefined,
+          aborted: false,
+          setProvider: vi.fn(),
+          setModel: vi.fn(),
+          setReasoning: vi.fn(),
+          abort: vi.fn(),
+          result: new Promise<KodaXResult>((resolve) => {
+            releaseExecutor = resolve;
+          }),
+        };
+      },
+    );
+    const server = new KodaXAcpServer({ runtime, homeDir: testHome });
+    testServers.add(server);
+    const { sessionId } = await server.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    } as NewSessionRequest);
+
+    (server as unknown as {
+      connection: {
+        signal: { aborted: boolean };
+        requestPermission(request: unknown): Promise<{ outcome: { outcome: string; optionId: string } }>;
+      };
+    }).connection = {
+      signal: { aborted: false },
+      // The ACP client never answers this dialog.
+      requestPermission: () => new Promise(() => {}),
+    };
+
+    const promptPromise = server.prompt(makePrompt(sessionId));
+    let runId: string | undefined;
+    await waitForCondition('stale-dialog run registration', async () => {
+      const runs = await runtime.runs.list({ sessionId });
+      runId = runs[0]?.runId;
+      return runId !== undefined;
+    });
+
+    const permissionsRequest = runtime.permissions.request({
+      sessionId,
+      runId: runId!,
+      toolCallId: 'call-stale-1',
+      toolName: 'bash',
+      inputPreview: '{"command":"npm test"}',
+    });
+    let interactionId: string | undefined;
+    await waitForCondition('pending permission interaction', async () => {
+      const pending = await runtime.interactions.list({ sessionId });
+      interactionId = pending.find((interaction) => interaction.kind === 'permission')?.requestId;
+      return interactionId !== undefined;
+    });
+    // Another client of the same Host answers first; the ACP dialog goes stale.
+    await runtime.interactions.respond(interactionId!, {
+      kind: 'permission',
+      decision: { type: 'reject' },
+    });
+    await expect(permissionsRequest).resolves.toMatchObject({ type: 'reject' });
+
+    releaseExecutor!({
+      success: true, lastText: 'done', messages: [], sessionId,
+    });
+    await expect(expectSettles(promptPromise, 'stale-dialog prompt')).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
     await runtime.close();
   }, 30_000);
 
@@ -670,4 +752,39 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     });
     await runtime.close();
   }, 30_000);
+});
+
+describe('toClientPermissionDecision (T19)', () => {
+  const request = (
+    grantSuggestions?: Array<{ id: string; kind: 'session' | 'persistent'; label: string }>,
+  ): RuntimePermissionRequest =>
+    ({ id: 'req-1', grantSuggestions }) as RuntimePermissionRequest;
+
+  it('maps rejections with the client override reason', () => {
+    expect(toClientPermissionDecision({ allowed: false, override: '[Cancelled] no' }, request()))
+      .toEqual({ type: 'reject', reason: '[Cancelled] no' });
+    expect(toClientPermissionDecision({ allowed: false }, request()))
+      .toEqual({ type: 'reject', reason: 'Operation cancelled by user.' });
+  });
+
+  it('maps a plain allow to allow_once', () => {
+    expect(toClientPermissionDecision({ allowed: true }, request())).toEqual({ type: 'allow_once' });
+  });
+
+  it('downgrades remember to allow_once without a matching grant suggestion', () => {
+    expect(toClientPermissionDecision({ allowed: true, remember: true }, request()))
+      .toEqual({ type: 'allow_once' });
+    expect(toClientPermissionDecision({ allowed: true, remember: true }, request([])))
+      .toEqual({ type: 'allow_once' });
+  });
+
+  it('prefers the persistent grant suggestion and falls back to session', () => {
+    expect(toClientPermissionDecision({ allowed: true, remember: true }, request([
+      { id: 's-session', kind: 'session', label: 'session' },
+      { id: 's-persist', kind: 'persistent', label: 'persistent' },
+    ]))).toEqual({ type: 'allow_always', suggestionId: 's-persist' });
+    expect(toClientPermissionDecision({ allowed: true, remember: true }, request([
+      { id: 's-session', kind: 'session', label: 'session' },
+    ]))).toEqual({ type: 'allow_session', suggestionId: 's-session' });
+  });
 });

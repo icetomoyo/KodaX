@@ -326,6 +326,63 @@ interface AcpPermissionDecision {
   readonly remember?: boolean;
 }
 
+/**
+ * FEATURE_298 T19 — translates an ACP dialog outcome into the product-face
+ * permission decision. `allow_always`/`allow_session` must carry the pending
+ * request's own suggestionId; without a matching suggestion the only legal
+ * upgrade-free answer is `allow_once`.
+ */
+export function toClientPermissionDecision(
+  decision: AcpPermissionDecision,
+  request: RuntimePermissionRequest,
+): ClientPermissionDecision {
+  if (!decision.allowed) {
+    return {
+      type: 'reject',
+      reason: decision.override ?? 'Operation cancelled by user.',
+    };
+  }
+  if (!decision.remember) {
+    return { type: 'allow_once' };
+  }
+  const suggestion = request.grantSuggestions?.find(
+    (candidate) => candidate.kind === 'persistent',
+  ) ?? request.grantSuggestions?.find(
+    (candidate) => candidate.kind === 'session',
+  );
+  if (suggestion === undefined) {
+    return { type: 'allow_once' };
+  }
+  return suggestion.kind === 'persistent'
+    ? { type: 'allow_always', suggestionId: suggestion.id }
+    : { type: 'allow_session', suggestionId: suggestion.id };
+}
+
+/**
+ * FEATURE_298 T19 — resolves when the Host settles this permission request
+ * through any path other than this bridge: another client answered, the
+ * request was dismissed, or its phase timeout fired. Keeps `prompt()` from
+ * waiting on an ACP dialog that has already gone stale.
+ */
+function watchRuntimePermissionSettlement(
+  runtime: KodaXRuntime,
+  request: RuntimePermissionRequest,
+): { settled: Promise<boolean>; close(): void } {
+  let closeSubscription: (() => void) | undefined;
+  const settled = new Promise<boolean>((resolve) => {
+    const subscription = runtime.events.subscribe(
+      { runId: request.runId, type: 'permission.resolved' },
+      (event) => {
+        const payload = event.payload as { requestId?: string } | undefined;
+        if (payload?.requestId !== request.id) return;
+        resolve(true);
+      },
+    );
+    closeSubscription = () => subscription.close();
+  });
+  return { settled, close: () => closeSubscription?.() };
+}
+
 function normalizeAcpPermissionMode(
   mode: string | undefined,
   fallback: AcpPermissionMode = 'accept-edits',
@@ -1137,6 +1194,14 @@ export class KodaXAcpServer implements Agent {
     };
   }
 
+  /**
+   * Adapts Host permission escalations onto the ACP permission dialog.
+   * Boundary: ACP 0.15 has no elicitation reverse request, so non-permission
+   * interactions raised during an ACP run (MCP form/url elicitation,
+   * user-input questions) stay Host-side pending interactions — answerable by
+   * any other client of this Host — and settle via the interaction phase
+   * timeout in a pure ACP-only connection rather than an ACP dialog.
+   */
   private createRuntimePermissionBridge(
     runtime: KodaXRuntime,
     session: KodaXAcpSessionState,
@@ -1194,36 +1259,36 @@ export class KodaXAcpServer implements Agent {
     });
     // FEATURE_298 T19 — permission answers travel the product Interaction
     // face; the pending request and its grant suggestions are the same
-    // objects the face serves to every other client of this Host.
-    const decision = await this.requestPermissionFromClient(
-      session,
-      request.toolName,
-      parsePermissionInputPreview(request.inputPreview),
-      request.toolCallId,
-    );
-    const client = await this.clientReady;
-    const response: ClientPermissionDecision = !decision.allowed
-      ? {
-        type: 'reject',
-        reason: decision.override ?? 'Operation cancelled by user.',
+    // objects the face serves to every other client of this Host. The ACP
+    // dialog races the Host settlement so a stale dialog never keeps a
+    // finished run's prompt response pending.
+    const runtime = await this.runtimeReady;
+    const settlement = watchRuntimePermissionSettlement(runtime, request);
+    let dialogDecision: AcpPermissionDecision;
+    try {
+      const winner = await Promise.race([
+        this.requestPermissionFromClient(
+          session,
+          request.toolName,
+          parsePermissionInputPreview(request.inputPreview),
+          request.toolCallId,
+        ),
+        settlement.settled.then(() => null),
+      ]);
+      if (winner === null) {
+        this.logger.error(
+          `ACP permission request for ${request.toolName} was settled host-side before the ACP client answered; the run's own settlement governs.`,
+        );
+        return;
       }
-      : decision.remember
-        ? (() => {
-          const suggestion = request.grantSuggestions?.find(
-            (candidate) => candidate.kind === 'persistent',
-          ) ?? request.grantSuggestions?.find(
-            (candidate) => candidate.kind === 'session',
-          );
-          return suggestion !== undefined
-            ? suggestion.kind === 'persistent'
-              ? { type: 'allow_always' as const, suggestionId: suggestion.id }
-              : { type: 'allow_session' as const, suggestionId: suggestion.id }
-            : { type: 'allow_once' as const };
-        })()
-        : { type: 'allow_once' };
+      dialogDecision = winner;
+    } finally {
+      settlement.close();
+    }
+    const client = await this.clientReady;
     const result = await client.interactions.respond(request.id, {
       kind: 'permission',
-      decision: response,
+      decision: toClientPermissionDecision(dialogDecision, request),
     });
     if (!result.accepted) {
       // Another window answered first or the request expired; the run's own
