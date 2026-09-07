@@ -163,6 +163,37 @@ describe('clientViewToHistoryItems (T17)', () => {
     expect(third[0]).not.toBe(first[0]);
     expect(third[1]).toBe(first[1]);
   });
+
+  it('remaps the trailing assistant item when its run turns terminal (T27 review)', () => {
+    const memo = { entries: new Map() };
+    const streaming = clientViewToHistoryItems(
+      [viewItem({ id: 'a1', type: 'assistant', text: 'abc' })],
+      { memo, activeRunId: 'r1' },
+    );
+    expect(streaming[0]).toMatchObject({ isStreaming: true });
+    // Same text, same length — but the run ended, so the stale
+    // streaming-marked item must not be reused.
+    const terminal = clientViewToHistoryItems(
+      [viewItem({ id: 'a1', type: 'assistant', text: 'abc' })],
+      { memo },
+    );
+    expect(terminal[0]).not.toBe(streaming[0]);
+    expect(terminal[0]).not.toMatchObject({ isStreaming: true });
+  });
+
+  it('remaps items whose text changed with an equal length (T27 review)', () => {
+    const memo = { entries: new Map() };
+    const first = clientViewToHistoryItems(
+      [viewItem({ id: 'u1', type: 'user', text: 'abcdef' })],
+      { memo },
+    );
+    const swapped = clientViewToHistoryItems(
+      [viewItem({ id: 'u1', type: 'user', text: 'xyzklm' })],
+      { memo },
+    );
+    expect(swapped[0]).not.toBe(first[0]);
+    expect(swapped[0]).toMatchObject({ text: 'xyzklm' });
+  });
 });
 
 describe('viewRunsActive (T17)', () => {

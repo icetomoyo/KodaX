@@ -15,8 +15,6 @@
     "integrationConfigResilience": 1,
     "managedRunDurability": 1,
     "runtimeAutoModeGuardrail": 5,
-    "runtimeExitSettlement": 2,
-    "sessionEventJournal": 1,
     "sharedSessionSettings": 2,
     "liveOutputSegments": 1
   },

@@ -77,11 +77,14 @@ it('runs one workflow on the Host that both clients observe and control', async 
     const paused = await second.workflows.get(runId);
     expect(['paused', 'pausing', 'completed']).toContain(paused?.status ?? 'completed');
     await second.workflows.stop(runId);
+    // workflows.get projects the WorkflowProcess snapshot; a Host stop settles
+    // the process as 'cancelled' (run.status is 'stopped', but that never
+    // reaches this view — the process statuses are the contract here).
     await expect.poll(async () => {
       const settled = await first.workflows.get(runId);
       return settled !== undefined
         && (settled.status === 'completed'
-          || settled.status === 'stopped'
+          || settled.status === 'cancelled'
           || settled.status === 'failed');
     }, { timeout: 20_000 }).toBe(true);
     const terminal = await first.workflows.get(runId);

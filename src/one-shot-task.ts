@@ -10,6 +10,7 @@ import type {
   KodaXOptions,
   KodaXResult,
 } from '@kodax-ai/coding';
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type {
   ClientSessionSettings,
   ClientSessionSettingsPatch,
@@ -201,7 +202,16 @@ export async function runOneShotClientTask(
     progress.setRunId(accepted.runId);
 
     const requestStop = (): void => {
-      void client.runs.stop(accepted.runId!).catch(() => undefined);
+      void client.runs.stop(accepted.runId!).catch((error: unknown) => {
+        // The abort path must not swallow stop failures: the run would keep
+        // consuming Provider work while the caller already reported interrupt.
+        emitKodaXDiagnostic({
+          source: 'kodax.one-shot',
+          level: 'warn',
+          message: `The stop request for run ${accepted.runId} failed; the run may still be executing.`,
+          detail: error,
+        });
+      });
     };
     input.abortSignal?.addEventListener('abort', requestStop, { once: true });
     if (input.abortSignal?.aborted) requestStop();

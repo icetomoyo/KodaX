@@ -172,7 +172,14 @@ export async function runClientPlaneRound(input: {
         },
       );
     } else {
-      void input.plane.withdraw(input.sessionId, inputId).catch(() => undefined);
+      void input.plane.withdraw(input.sessionId, inputId).catch((error: unknown) => {
+        emitKodaXDiagnostic({
+          source: 'client.plane',
+          level: 'warn',
+          message: `The withdraw request for input ${inputId} failed; the queued input may still run.`,
+          detail: error,
+        });
+      });
     }
   };
   const accepted = await input.plane.submit({
@@ -206,9 +213,24 @@ export async function runClientPlaneRound(input: {
         if (currentRunId === undefined) {
           if (aborted()) return interruptedPlaneResult(input.sessionId);
           // The input never started; take it back so it cannot run later
-          // after the caller has already surfaced the failure.
-          void input.plane.withdraw(input.sessionId, inputId).catch(() => undefined);
-          throw new Error('The queued input did not start a run within the wait window.');
+          // after the caller has already surfaced the failure. A failed
+          // withdraw must not be silent: the input would stay runnable
+          // while the caller believes it was taken back.
+          let withdrawNote = '';
+          try {
+            await input.plane.withdraw(input.sessionId, inputId);
+          } catch (error: unknown) {
+            withdrawNote = ` The take-back after the timeout also failed (${error instanceof Error ? error.message : String(error)}); the input may still run from the Host queue.`;
+            emitKodaXDiagnostic({
+              source: 'client.plane',
+              level: 'warn',
+              message: `The withdraw request for input ${inputId} failed after the queued input never started.`,
+              detail: error,
+            });
+          }
+          throw new Error(
+            `The queued input did not start a run within the wait window.${withdrawNote}`,
+          );
         }
       }
       lastOutcome = await input.plane.awaitRun(input.sessionId, currentRunId);
@@ -266,15 +288,30 @@ export interface ClientViewItemMemo {
   readonly entries: Map<string, { fingerprint: string; item: HistoryItem }>;
 }
 
+/** djb2 over the string — content-sensitive, cheap, stable across pushes. */
+function textHash(value: string | undefined): number {
+  if (value === undefined) return -1;
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash + value.charCodeAt(index)) | 0;
+  }
+  return hash;
+}
+
 function itemFingerprint(item: ClientViewItem): string {
   return [
     item.type,
-    item.text.length,
-    item.compactText?.length ?? -1,
+    `${item.text.length}:${textHash(item.text)}`,
+    item.compactText === undefined
+      ? '-'
+      : `${item.compactText.length}:${textHash(item.compactText)}`,
     item.icon ?? '',
     item.tool?.status ?? '',
     item.tool?.progress ?? '',
     item.tool?.endedAt ?? 0,
+    item.tool?.inputText === undefined
+      ? '-'
+      : `${item.tool.inputText.length}:${textHash(item.tool.inputText)}`,
     item.totalTextLength ?? -1,
   ].join('|');
 }
@@ -315,8 +352,10 @@ export function clientViewToHistoryItems(
   }
   return items.map((item, index) => {
     const memoized = options.memo?.entries.get(item.id);
-    const fingerprint = itemFingerprint(item);
     const streamingThisItem = index === trailingAssistantIndex;
+    // The streaming position is part of the identity: when the run turns
+    // terminal the same text must remap without the streaming marker.
+    const fingerprint = `${streamingThisItem ? 'live' : 'done'}|${itemFingerprint(item)}`;
     if (
       memoized !== undefined
       && memoized.fingerprint === fingerprint

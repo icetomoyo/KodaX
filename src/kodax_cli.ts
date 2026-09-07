@@ -5461,7 +5461,17 @@ complete -c kodax -l version -d 'Show version'`);
               interactiveRuntime.runs
                 .list({ sessionId })
                 .then((runs) => firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase }))))
-                .catch(() => undefined),
+                .catch((error: unknown) => {
+                  // Surface the failure instead of reporting a silent
+                  // "no active run": callers gate redirects on this answer.
+                  emitKodaXDiagnostic({
+                    source: 'kodax-cli',
+                    level: 'warn',
+                    message: `The active-run lookup for session ${sessionId} failed; redirect decisions will treat the session as idle.`,
+                    detail: error,
+                  });
+                  return undefined;
+                }),
             observe: (sessionId: string, onView: (view: ClientSessionView) => void) =>
               interactiveRuntime.sessions
                 .observeView(sessionId, onView)
