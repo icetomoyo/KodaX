@@ -704,3 +704,17 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留**（票内已记）：S1 授权腿靠既有域测试（executor-plane 策略拒绝/controller 消息授权）；A2A 配置 watcher 的 Host 退出关闭为既有接线未单独断言。
 
 **下一步（30/35）**：T21（A2A prepared serving Host 持有，前置 T20✓T30✓）→解锁 T26（还差 T15/T21）；然后 T25（control journal 全退役，agent 族已先行）→T26→T27；T15 验收（需 T25）。可选 T28/T29 未选。建议顺序 T21→T25→T26→T27→T15。
+
+---
+
+## 2026-09-07 T21 调研地图（未实施，接续点）
+
+**票面**：受限 local-agent 的准备、工作区绑定及实际 A2A 请求均在 Host 执行；移除 serving adapter 的 embedded-only execution binding 和自行 create embedded Runtime，复用 Host 既有 Agent 领域实现。边界：不暴露任意工厂跨 IPC；管理员经明确 bootstrap 配置启用；活 Host 不支持的新配置要求显式重启。US22 S1：清单/工具授权限制、身份归属、工作区边界。
+
+**现状（已核实）**：(1) 每个 embedded runtime 都无条件挂 bindingService（sdk-runtime.ts:5104 createRuntimeAgentBindingService(runs/sessions/skill runner)，runtime.agents.execution?）；(2) **问题本体**：`kodax a2a serve`（integration-cli.ts:963 runA2AServeCommand）自建第二个私有 embedded runtime（mode:'embedded', isolation:'inline', profile a2a 专用）+ prepareKodaXA2AServer(runtime.agents.execution)——binding/执行不进共享 Host；(3) binding 服务无 daemon RPC（protocol.ts 无 agents.execution.*）="embedded-only binding"；(4) daemon Host 入口 startRuntimeDaemonHost（host.ts:57）已有 ownsA2AConfigReconciler 选项先例；a2a 配置变更分类 classifyA2AServerChange 已有 restart-required 档（integration-cli.ts:990 附近）——与"新配置要求显式重启"边界天然对齐。
+
+**推荐方案（A）daemon Host 内托管 A2A serving**（而非（B）把 binding RPC 暴露过 wire——B 增加 IPC 面且 A2A 请求处理仍在 adapter 进程，不合票面"均在 Host 执行"）：daemon bootstrap 读 a2a config server 块（execution declaration）→ prepareKodaXA2AServer(Host runtime) → listen 配置端口；能力面 advertise（如 a2aServing）；binding 变更走 restart-required（classifyA2AServerChange 已分类）。CLI `kodax a2a serve` 改薄壳（确保 Host 带 a2a serving 配置在跑）或指路错误。
+
+**切片**：S1=host.ts/manager 托管 wiring+配置读取+能力 advertise+重启语义；S2=integration-cli serve 改造删私有 runtime（净删 createA2AServerExtensionRuntime/outbound integration 中的 embedded 部分按依赖评估）；S3=S1 证据（toolPolicy 越权拒绝、a2a:principal 身份归属、workspace 隔离、bootstrap 启用+改 binding 需重启）。既有测试锚点：a2a.test.ts:815 'prepares a user Markdown Agent through the Runtime-owned binding capability'、integration-cli.a2a-serve.test.ts。
+
+**注意**：daemon Host 的 runtime 也有 agents.execution（embedded 本体）；a2a serve 的 extensionRuntime（createA2AServerExtensionRuntime）与 outbound integration（createConfiguredA2ARuntimeIntegration）也在 CLI 进程——迁移时逐个定去向；T22 已把 workflow 托管做过一遍（observeHostWorkflowDone 模式可参考 Host 进程内完成通知）。
