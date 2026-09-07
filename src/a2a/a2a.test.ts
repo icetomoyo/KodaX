@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,7 @@ import type {
   RuntimeEventListener,
   RuntimeRunHandle,
   RuntimeRunResult,
+  RuntimeUserInputRequest,
 } from '../sdk-runtime.js';
 import {
   A2AError,
@@ -143,7 +144,9 @@ function fakeRuntime(
         listeners.push(entry);
         return { close: () => listeners.splice(listeners.indexOf(entry), 1) };
       },
-      async replay() { return []; },
+    },
+    userInputs: {
+      async listPending() { return []; },
     },
     async close() {},
   };
@@ -225,7 +228,6 @@ function interactiveRuntime(): {
         listeners.push(listener);
         return { close: () => listeners.splice(listeners.indexOf(listener), 1) };
       },
-      async replay() { return []; },
     },
     async close() {},
   } as unknown as KodaXRuntime;
@@ -290,10 +292,13 @@ function pendingRuntime(): {
   emitInputRequired(seq: number, time?: string): void;
   emitRunStarted(seq: number, time?: string): void;
   listenerCount(): number;
+  setPendingInput(seq?: number): void;
+  answerExternally(seq?: number): void;
 } {
   let resolveResult: ((result: RuntimeRunResult) => void) | undefined;
   let phase: RuntimeRunResult['phase'] = 'running';
   const listeners: RuntimeEventListener[] = [];
+  const pendingInputs = new Map<string, RuntimeUserInputRequest>();
   const result = new Promise<RuntimeRunResult>((resolve) => { resolveResult = resolve; });
   const runtime = {
     identity: {
@@ -320,7 +325,9 @@ function pendingRuntime(): {
         listeners.push(listener);
         return { close: () => listeners.splice(listeners.indexOf(listener), 1) };
       },
-      async replay() { return []; },
+    },
+    userInputs: {
+      async listPending() { return [...pendingInputs.values()]; },
     },
     async close() {},
   } as unknown as KodaXRuntime;
@@ -337,8 +344,19 @@ function pendingRuntime(): {
       }
     },
     emitInputRequired(seq: number, time = new Date().toISOString()) {
+      const event = pendingInputEvent(seq);
+      pendingInputs.set(`input-${seq}`, {
+        id: `input-${seq}`,
+        revision: 0,
+        sessionId: 'session-pending',
+        runId: 'run-pending',
+        kind: 'askUserInput',
+        options: { question: 'Continue?' },
+        createdAt: event.time,
+        expiresAt: new Date(Date.parse(event.time) + 60_000).toISOString(),
+      });
       for (const listener of [...listeners]) {
-        listener({ ...pendingInputEvent(seq), time });
+        listener({ ...event, time });
       }
     },
     emitRunStarted(seq: number, time = new Date().toISOString()) {
@@ -368,6 +386,30 @@ function pendingRuntime(): {
         runId: 'run-pending', sessionId: 'session-pending', phase: 'completed',
         result: { success: true, lastText: output, messages: [], sessionId: 'session-pending' },
       });
+    },
+    setPendingInput(seq = 1) {
+      const event = pendingInputEvent(seq);
+      pendingInputs.set(`input-${seq}`, {
+        id: `input-${seq}`,
+        revision: 0,
+        sessionId: 'session-pending',
+        runId: 'run-pending',
+        kind: 'askUserInput',
+        options: { question: 'Continue?' },
+        createdAt: event.time,
+        expiresAt: new Date(Date.parse(event.time) + 60_000).toISOString(),
+      });
+    },
+    answerExternally(seq = 1) {
+      pendingInputs.delete(`input-${seq}`);
+      for (const listener of [...listeners]) {
+        listener({
+          id: `event-resolved-${seq}`, seq, time: new Date().toISOString(),
+          cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq },
+          sessionId: 'session-pending', runId: 'run-pending',
+          type: 'user_input.resolved', payload: { id: `input-${seq}` },
+        });
+      }
     },
   };
 }
@@ -940,14 +982,13 @@ describe('FEATURE_267 bidirectional A2A', () => {
       const before = readFileSync(taskFile, 'utf8');
       controlled.emitProgress(1);
       expect(readFileSync(taskFile, 'utf8')).toBe(before);
-      expect(readdirSync(path.join(dataDir, 'runtime-cursors'))).toHaveLength(1);
     } finally {
       controlled.complete();
       await server.close();
     }
   });
 
-  it('poisons Runtime projection after a semantic Task save failure without advancing its cursor', async () => {
+  it('poisons Runtime projection after a semantic Task save failure', async () => {
     const dataDir = temporaryRoot();
     const controlled = pendingRuntime();
     const base = serverOptions(controlled.runtime, dataDir);
@@ -961,24 +1002,16 @@ describe('FEATURE_267 bidirectional A2A', () => {
     let sabotaged = false;
     try {
       await startPendingTask(server, 'semantic-save-failure');
-      controlled.emitProgress(1);
-      const [cursorName] = readdirSync(path.join(dataDir, 'runtime-cursors'));
-      expect(cursorName).toBeDefined();
-      const cursorFile = path.join(dataDir, 'runtime-cursors', cursorName!);
-      const beforeFailure = readFileSync(cursorFile, 'utf8');
-
       renameSync(taskFile, backupFile);
       mkdirSync(taskFile);
       sabotaged = true;
       expect(() => controlled.emitInputRequired(2)).toThrow();
       expect(controlled.listenerCount()).toBe(0);
       controlled.emitProgress(3);
-      expect(readFileSync(cursorFile, 'utf8')).toBe(beforeFailure);
-      expect(JSON.parse(beforeFailure)).toMatchObject({ seq: 1 });
       rmSync(taskFile, { recursive: true, force: true });
       renameSync(backupFile, taskFile);
       sabotaged = false;
-      controlled.complete('must wait for semantic replay');
+      controlled.complete('must stay working while poisoned');
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(JSON.parse(readFileSync(taskFile, 'utf8'))).toEqual([
         expect.objectContaining({
@@ -1117,30 +1150,61 @@ describe('FEATURE_267 bidirectional A2A', () => {
     }
   });
 
-  it('replays Runtime events emitted before a new run subscription is attached', async () => {
+  it('derives INPUT_REQUIRED from the current pending Runtime input when the request fired before attach (T20)', async () => {
     const controlled = pendingRuntime();
-    const event = pendingInputEvent();
-    const runtime = {
-      ...controlled.runtime,
-      events: {
-        subscribe(filter: RuntimeEventFilter, listener: RuntimeEventListener) {
-          return controlled.runtime.events.subscribe(filter, listener);
-        },
-        async replay() { return [event]; },
-      },
-    } as KodaXRuntime;
+    // The pending input exists in the Runtime registries before the A2A
+    // subscription attaches; no journal replay is available or needed.
+    controlled.setPendingInput(1);
+    const runtime = controlled.runtime;
     const base = serverOptions(runtime, temporaryRoot());
     const server = createKodaXA2AServer({
       ...base,
       limits: { ...base.limits, maxTaskWaitMs: 1 },
     });
     try {
-      const taskId = await startPendingTask(server, 'early-runtime-event');
+      const taskId = await startPendingTask(server, 'current-state-input');
       const response = await server.handle(directRpcRequest('GetTask', { id: taskId }));
       const body = await response.json() as {
-        readonly result: { readonly status: { readonly state: string } };
+        readonly result: { readonly status: { readonly state: string; readonly message?: { readonly parts?: readonly { readonly text?: string }[] } } };
       };
       expect(body.result.status.state).toBe('TASK_STATE_INPUT_REQUIRED');
+      expect(JSON.stringify(body.result.status.message)).toContain('Continue?');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('converges when another client answers the pending Runtime input (T20)', async () => {
+    const controlled = pendingRuntime();
+    const server = createKodaXA2AServer(serverOptions(controlled.runtime, temporaryRoot()));
+    const baseUrl = await server.listen({ hostname: '127.0.0.1', port: 0 });
+    try {
+      const sent = await rpc(baseUrl, 'SendMessage', {
+        message: { messageId: 'external-answer-start', role: 'ROLE_USER', parts: [{ text: 'start' }] },
+        configuration: { returnImmediately: true },
+      });
+      const taskId = (sent.body.result as { readonly task: { readonly id: string } }).task.id;
+      controlled.emitInputRequired(1);
+      let waiting: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        waiting = (await rpc(baseUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
+        if (JSON.stringify(waiting).includes('TASK_STATE_INPUT_REQUIRED')) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(JSON.stringify(waiting)).toContain('TASK_STATE_INPUT_REQUIRED');
+
+      // Another client of the same Host answers the pending input directly.
+      controlled.answerExternally(1);
+      controlled.complete('answered-elsewhere');
+      let converged: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        converged = (await rpc(baseUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
+        if (JSON.stringify(converged).includes('TASK_STATE_COMPLETED')) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(JSON.stringify(converged)).toContain('TASK_STATE_COMPLETED');
+      expect(JSON.stringify(converged)).toContain('answered-elsewhere');
+      expect(JSON.stringify(converged)).not.toContain('TASK_STATE_INPUT_REQUIRED');
     } finally {
       await server.close();
     }
@@ -1394,22 +1458,24 @@ describe('FEATURE_267 bidirectional A2A', () => {
     }
   });
 
-  it('releases global admission after reserving working state while Runtime replay attaches', async () => {
+  it('releases global admission after reserving working state while the current-state snapshot attaches', async () => {
     const controlled = pendingRuntime();
-    let markReplayEntered!: () => void;
-    let releaseReplay!: () => void;
-    const replayEntered = new Promise<void>((resolve) => { markReplayEntered = resolve; });
-    const replayGate = new Promise<void>((resolve) => { releaseReplay = resolve; });
+    let markSnapshotEntered!: () => void;
+    let releaseSnapshot!: () => void;
+    const snapshotEntered = new Promise<void>((resolve) => { markSnapshotEntered = resolve; });
+    const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+    let firstStatusRead = false;
     const runtime = {
       ...controlled.runtime,
-      events: {
-        subscribe(filter: RuntimeEventFilter, listener: RuntimeEventListener) {
-          return controlled.runtime.events.subscribe(filter, listener);
-        },
-        async replay() {
-          markReplayEntered();
-          await replayGate;
-          return [];
+      runs: {
+        ...controlled.runtime.runs,
+        async get(runId: string) {
+          if (!firstStatusRead) {
+            firstStatusRead = true;
+            markSnapshotEntered();
+            await snapshotGate;
+          }
+          return controlled.runtime.runs.get(runId);
         },
       },
     } as KodaXRuntime;
@@ -1420,12 +1486,12 @@ describe('FEATURE_267 bidirectional A2A', () => {
     });
     await server.whenReady();
     const first = server.handle(directRpcRequest('SendMessage', {
-      message: { messageId: 'replay-lock-one', role: 'ROLE_USER', parts: [{ text: 'first' }] },
+      message: { messageId: 'snapshot-lock-one', role: 'ROLE_USER', parts: [{ text: 'first' }] },
       configuration: { returnImmediately: true },
     }));
-    await replayEntered;
+    await snapshotEntered;
     const secondRequest = directRpcRequest('SendMessage', {
-      message: { messageId: 'replay-lock-two', role: 'ROLE_USER', parts: [{ text: 'second' }] },
+      message: { messageId: 'snapshot-lock-two', role: 'ROLE_USER', parts: [{ text: 'second' }] },
       configuration: { returnImmediately: true },
     });
     secondRequest.headers.set('authorization', 'Bearer other-token');
@@ -1434,14 +1500,14 @@ describe('FEATURE_267 bidirectional A2A', () => {
       const second = await Promise.race([
         server.handle(secondRequest),
         new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(() => reject(new Error('Global admission remained locked by Runtime replay.')), 1_000);
+          timeout = setTimeout(() => reject(new Error('Global admission remained locked by the state snapshot.')), 1_000);
         }),
       ]);
       const body = await second.json() as { readonly error?: { readonly code: number } };
       expect(body.error?.code).toBe(-32004);
     } finally {
       if (timeout) clearTimeout(timeout);
-      releaseReplay();
+      releaseSnapshot();
       await first;
       await server.close();
     }
@@ -2046,14 +2112,14 @@ describe('FEATURE_267 bidirectional A2A', () => {
     }
   });
 
-  it('buffers live Runtime events while recovery replay is in progress', async () => {
+  it('buffers live Runtime events while the recovery state snapshot is in progress (T20)', async () => {
     const controlled = pendingRuntime();
     const listeners = new Set<RuntimeEventListener>();
-    let blockReplay = false;
-    let markReplayEntered!: () => void;
-    let releaseReplay!: () => void;
-    const replayEntered = new Promise<void>((resolve) => { markReplayEntered = resolve; });
-    const replayGate = new Promise<void>((resolve) => { releaseReplay = resolve; });
+    let blockSnapshot = false;
+    let markSnapshotEntered!: () => void;
+    let releaseSnapshot!: () => void;
+    const snapshotEntered = new Promise<void>((resolve) => { markSnapshotEntered = resolve; });
+    const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
     const runtime = {
       ...controlled.runtime,
       events: {
@@ -2061,12 +2127,24 @@ describe('FEATURE_267 bidirectional A2A', () => {
           listeners.add(listener);
           return { close: () => listeners.delete(listener) };
         },
-        async replay() {
-          if (blockReplay) {
-            markReplayEntered();
-            await replayGate;
+        async replay() { return []; },
+      },
+      // listPending is only reached after the live subscription attached, so
+      // gating it blocks exactly inside the current-state snapshot.
+      userInputs: {
+        async listPending() {
+          if (blockSnapshot) {
+            blockSnapshot = false;
+            markSnapshotEntered();
+            await snapshotGate;
           }
           return [];
+        },
+        async respond(requestId: string) {
+          return { requestId, accepted: true, status: 'answered' as const };
+        },
+        async dismiss(requestId: string) {
+          return { requestId, accepted: true, status: 'dismissed' as const };
         },
       },
     } as KodaXRuntime;
@@ -2079,15 +2157,15 @@ describe('FEATURE_267 bidirectional A2A', () => {
     const taskId = await startPendingTask(first, 'recovery-live-gap');
     await first.close();
 
-    blockReplay = true;
+    blockSnapshot = true;
     const second = createKodaXA2AServer({
       ...base,
       limits: { ...base.limits, maxTaskWaitMs: 1 },
     });
     try {
-      await replayEntered;
+      await snapshotEntered;
       for (const listener of listeners) listener(pendingInputEvent());
-      releaseReplay();
+      releaseSnapshot();
       await second.whenReady();
 
       const response = await second.handle(directRpcRequest('GetTask', { id: taskId }));
@@ -2096,7 +2174,7 @@ describe('FEATURE_267 bidirectional A2A', () => {
       };
       expect(body.result.status.state).toBe('TASK_STATE_INPUT_REQUIRED');
     } finally {
-      releaseReplay();
+      releaseSnapshot();
       await second.close();
     }
   });

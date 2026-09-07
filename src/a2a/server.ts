@@ -66,6 +66,16 @@ const TERMINAL_STATES = new Set<A2ATaskState>([
   'TASK_STATE_CANCELED',
   'TASK_STATE_REJECTED',
 ]);
+/**
+ * FEATURE_298 T20 — terminal Run phases are owned by the Run result path
+ * (finishRun); the current-state snapshot never writes them itself.
+ */
+const TERMINAL_RUN_PHASES = new Set<RuntimeRunPhase>([
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
 const TASK_STATES = new Set<A2ATaskState>([
   'TASK_STATE_UNSPECIFIED', 'TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING',
   'TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED',
@@ -252,16 +262,19 @@ function publicInputOptions(value: unknown): Readonly<Record<string, unknown>> {
   return publicInputQuestion(value) ?? {};
 }
 
-function pendingInputMessage(taskId: string, contextId: string, event: RuntimeEvent): A2AMessage | undefined {
-  if (!isRecord(event.payload) || typeof event.payload.kind !== 'string') return undefined;
-  const publicOptions = publicInputOptions(event.payload.options);
+function pendingInputMessage(
+  taskId: string,
+  contextId: string,
+  source: { readonly kind: string; readonly options: unknown },
+): A2AMessage | undefined {
+  const publicOptions = publicInputOptions(source.options);
   let rendered = '';
   try { rendered = JSON.stringify(publicOptions); }
   catch { rendered = '{}'; }
   const bounded = rendered.length > 4_096 ? `${rendered.slice(0, 4_093)}...` : rendered;
   return {
-    ...agentMessage(taskId, contextId, `Input required (${event.payload.kind}): ${bounded}`),
-    metadata: { 'kodax.ai/user-input': { kind: event.payload.kind, options: publicOptions } },
+    ...agentMessage(taskId, contextId, `Input required (${source.kind}): ${bounded}`),
+    metadata: { 'kodax.ai/user-input': { kind: source.kind, options: publicOptions } },
   };
 }
 
@@ -273,6 +286,18 @@ function continuationAnswer(message: A2AMessage, kind: string): unknown {
     try { return JSON.parse(text) as unknown; } catch { /* plain text remains valid below */ }
   }
   return text;
+}
+
+/** Snapshot writes are change-driven; an identical current state is not re-saved. */
+function samePendingUserInput(
+  left: A2AServerTaskRecord['pendingUserInput'],
+  right: A2AServerTaskRecord['pendingUserInput'],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.requestId === right.requestId
+    && left.revision === right.revision
+    && left.runId === right.runId
+    && left.kind === right.kind;
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -1152,6 +1177,14 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     return { type: 'artifact_ref', artifactId: artifact.id, description: 'Inbound A2A attachment' };
   }
 
+  /**
+   * FEATURE_298 T20 — task state maps from the CURRENT Run and pending
+   * Runtime inputs, not from a Runtime event journal fold. The live
+   * subscription attaches before the current-state snapshot is read so no
+   * transition between snapshot and attach is lost; buffered live events
+   * drain after the snapshot in arrival order. Terminal transitions stay
+   * owned by the Run result path (finishRun).
+   */
   private async attachRuntimeEvents(
     record: A2AServerTaskRecord,
     runId: string,
@@ -1160,38 +1193,75 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     this.#runtimeSubscriptions.get(record.taskId)?.close();
     this.#runtimeSubscriptions.delete(record.taskId);
     const buffered: RuntimeEvent[] = [];
-    let replaying = true;
+    let snapshotting = true;
     const subscription = options.runtime.events.subscribe(
       { sessionId: record.sessionId, runId },
       (event) => {
-        if (replaying) buffered.push(event);
+        if (snapshotting) buffered.push(event);
         else this.onRuntimeEvent(record.taskId, event, options);
       },
     );
     this.#runtimeSubscriptions.set(record.taskId, subscription);
     try {
-      const replayed = await options.runtime.events.replay({
-        sessionId: record.sessionId,
-        runId,
-        ...(record.runtimeSessionCursor !== undefined
-          ? { after: record.runtimeSessionCursor }
-          : {}),
-      });
-      const ordered = [...replayed, ...buffered].sort((left, right) => (
-        left.seq - right.seq
-        || left.time.localeCompare(right.time)
-        || left.id.localeCompare(right.id)
-      ));
-      for (const event of ordered) this.onRuntimeEvent(record.taskId, event, options);
-      replaying = false;
+      await this.applyCurrentRunState(record.taskId, runId, options);
+      snapshotting = false;
+      for (const event of buffered) this.onRuntimeEvent(record.taskId, event, options);
     } catch (error: unknown) {
-      replaying = false;
+      snapshotting = false;
       if (this.#runtimeSubscriptions.get(record.taskId) === subscription) {
         subscription.close();
         this.#runtimeSubscriptions.delete(record.taskId);
       }
       throw error;
     }
+  }
+
+  private async applyCurrentRunState(
+    taskId: string,
+    runId: string,
+    options: PreparedA2AServerOptions,
+  ): Promise<void> {
+    if (this.#closed) return;
+    const record = this.#store.get(taskId);
+    if (!record || TERMINAL_STATES.has(record.task.status.state)) return;
+    const status = await options.runtime.runs.get(runId);
+    if (TERMINAL_RUN_PHASES.has(status.phase)) return;
+    const pending = (await options.runtime.userInputs.listPending({ sessionId: record.sessionId }))
+      .find((request) => request.runId === runId);
+    const state: A2ATaskState = pending !== undefined
+      ? 'TASK_STATE_INPUT_REQUIRED'
+      : 'TASK_STATE_WORKING';
+    const pendingUserInput = pending === undefined ? undefined : {
+      requestId: pending.id,
+      revision: pending.revision,
+      runId: pending.runId,
+      kind: pending.kind,
+    };
+    if (
+      record.task.status.state === state
+      && samePendingUserInput(record.pendingUserInput, pendingUserInput)
+    ) return;
+    const interactionMessage = pending !== undefined
+      ? pendingInputMessage(taskId, record.contextId, {
+        kind: pending.kind,
+        options: pending.options,
+      })
+      : undefined;
+    const { pendingUserInput: _previous, ...withoutPending } = record;
+    this.#store.save({
+      ...withoutPending,
+      task: {
+        ...record.task,
+        status: {
+          state,
+          ...(interactionMessage ? { message: interactionMessage } : {}),
+          timestamp: nowIso(this.#now),
+        },
+      },
+      ...(pendingUserInput !== undefined ? { pendingUserInput } : {}),
+      updatedAt: nowIso(this.#now),
+      eventSeq: record.eventSeq + 1,
+    });
   }
 
   private onRuntimeEvent(
@@ -1218,29 +1288,11 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     if (this.#closed) return;
     const record = this.#store.get(taskId);
     if (!record || TERMINAL_STATES.has(record.task.status.state)) return;
-    const eventCursor = event.cursor;
-    if (
-      eventCursor.sessionId !== record.sessionId
-      || (
-        record.runtimeSessionCursor !== undefined
-        && eventCursor.journalEpoch !== record.runtimeSessionCursor.journalEpoch
-      )
-    ) {
-      this.failTask(taskId, 'Runtime Session event journal changed; task resync is required.', options);
-      return;
-    }
-    if (
-      record.runtimeSessionCursor !== undefined
-      && eventCursor.seq <= record.runtimeSessionCursor.seq
-    ) return;
     if (
       event.type !== 'user_input.requested'
       && event.type !== 'user_input.resolved'
       && event.type !== 'run.started'
-    ) {
-      this.#store.checkpointRuntimeCursor(taskId, eventCursor);
-      return;
-    }
+    ) return;
     const eventBytes = Buffer.byteLength(JSON.stringify(event));
     const runtimeEventCount = record.runtimeEventCount + 1;
     const runtimeEventBytes = record.runtimeEventBytes + eventBytes;
@@ -1255,8 +1307,13 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
       ? 'TASK_STATE_INPUT_REQUIRED'
       : 'TASK_STATE_WORKING';
     const interactionMessage = event.type === 'user_input.requested'
-      ? pendingInputMessage(taskId, record.contextId, event)
-      : undefined;
+      && isRecord(event.payload)
+      && typeof event.payload.kind === 'string'
+        ? pendingInputMessage(taskId, record.contextId, {
+          kind: event.payload.kind,
+          options: event.payload.options,
+        })
+        : undefined;
     const pending = event.type === 'user_input.requested' && isRecord(event.payload)
       && typeof event.payload.id === 'string'
       && Number.isSafeInteger(event.payload.revision)
@@ -1269,8 +1326,9 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
           kind: event.payload.kind,
         }
       : undefined;
+    const { pendingUserInput: _previous, ...withoutPending } = record;
     this.#store.save({
-      ...record,
+      ...withoutPending,
       task: {
         ...record.task,
         status: {
@@ -1283,7 +1341,6 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
       ...(event.type === 'user_input.resolved' ? { pendingUserInput: undefined } : {}),
       updatedAt: event.time,
       eventSeq: record.eventSeq + 1,
-      runtimeSessionCursor: eventCursor,
       runtimeEventCount,
       runtimeEventBytes,
     });

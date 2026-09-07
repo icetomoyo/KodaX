@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 
 import { A2A_PRINCIPAL_KEY_SCHEME } from './principal-key.js';
 import { isRecord, parseA2AMessage, parseA2ATask } from './schemas.js';
-import type { RuntimeSessionCursor } from '../sdk-runtime.js';
 import type { A2AMessage, A2ATask } from './types.js';
 
 export interface A2AServerTaskRecord {
@@ -23,7 +21,6 @@ export interface A2AServerTaskRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly eventSeq: number;
-  readonly runtimeSessionCursor?: RuntimeSessionCursor;
   readonly runtimeEventCount: number;
   readonly runtimeEventBytes: number;
   readonly acceptedOutputModes?: readonly string[];
@@ -59,10 +56,8 @@ function parseRecord(value: unknown): A2AServerTaskRecord {
   if (!Number.isSafeInteger(value.eventSeq)) {
     throw new Error('A2A task store event cursors are invalid.');
   }
-  const runtimeSessionCursor = parseRuntimeSessionCursor(value.runtimeSessionCursor);
-  if (value.runtimeSessionCursor !== undefined && runtimeSessionCursor === undefined) {
-    throw new Error('A2A task store Runtime Session cursor is invalid.');
-  }
+  // FEATURE_298 T20 — legacy Runtime session cursor checkpoints are dropped
+  // on load; task state now maps from the current Run and pending inputs.
   const pendingUserInput = value.pendingUserInput;
   if (pendingUserInput !== undefined && (
     !isRecord(pendingUserInput)
@@ -97,7 +92,6 @@ function parseRecord(value: unknown): A2AServerTaskRecord {
     createdAt: value.createdAt as string,
     updatedAt: value.updatedAt as string,
     eventSeq: value.eventSeq as number,
-    ...(runtimeSessionCursor !== undefined ? { runtimeSessionCursor } : {}),
     runtimeEventCount: Number.isSafeInteger(value.runtimeEventCount) ? value.runtimeEventCount as number : 0,
     runtimeEventBytes: Number.isSafeInteger(value.runtimeEventBytes) ? value.runtimeEventBytes as number : 0,
     ...(value.acceptedOutputModes !== undefined
@@ -114,29 +108,10 @@ function parseRecord(value: unknown): A2AServerTaskRecord {
   };
 }
 
-function parseRuntimeSessionCursor(value: unknown): RuntimeSessionCursor | undefined {
-  if (
-    !isRecord(value)
-    || typeof value.sessionId !== 'string'
-    || value.sessionId.length === 0
-    || typeof value.journalEpoch !== 'string'
-    || value.journalEpoch.length === 0
-    || !Number.isSafeInteger(value.seq)
-    || typeof value.seq !== 'number'
-    || value.seq < 0
-  ) return undefined;
-  return {
-    sessionId: value.sessionId,
-    journalEpoch: value.journalEpoch,
-    seq: value.seq,
-  };
-}
-
 export class A2AFileTaskStore {
   readonly #records = new Map<string, A2AServerTaskRecord>();
   readonly #listeners = new Map<string, Set<TaskListener>>();
   readonly #file: string;
-  readonly #cursorDir: string;
   readonly #lockPath: string;
   readonly #lockFd: number;
 
@@ -144,7 +119,6 @@ export class A2AFileTaskStore {
     const resolved = path.resolve(root);
     fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
     this.#file = path.join(resolved, 'tasks.json');
-    this.#cursorDir = path.join(resolved, 'runtime-cursors');
     this.#lockPath = path.join(resolved, '.server.lock');
     this.#lockFd = this.acquireLock();
     try {
@@ -154,6 +128,9 @@ export class A2AFileTaskStore {
       fs.rmSync(this.#lockPath, { force: true });
       throw error;
     }
+    // FEATURE_298 T20 — the store exclusively owns its dataDir (lock above),
+    // so retired Runtime cursor checkpoints are garbage-collected on open.
+    fs.rmSync(path.join(resolved, 'runtime-cursors'), { recursive: true, force: true });
   }
 
   get(taskId: string): A2AServerTaskRecord | undefined {
@@ -199,25 +176,6 @@ export class A2AFileTaskStore {
     return clone(next);
   }
 
-  checkpointRuntimeCursor(
-    taskId: string,
-    cursor: RuntimeSessionCursor,
-  ): void {
-    const previous = this.#records.get(taskId);
-    if (!previous) return;
-    if (cursor.sessionId !== previous.sessionId) {
-      throw new Error(`A2A Runtime cursor belongs to another Session: ${taskId}`);
-    }
-    const next = { ...previous, runtimeSessionCursor: { ...cursor } };
-    this.#records.set(taskId, next);
-    try {
-      this.persistRuntimeCursor(taskId, cursor);
-    } catch (error: unknown) {
-      this.#records.set(taskId, previous);
-      throw error;
-    }
-  }
-
   pruneTerminal(principalKey: string, maxRecords: number): readonly A2AServerTaskRecord[] {
     const records = [...this.#records.values()]
       .filter((record) => record.principalKey === principalKey)
@@ -238,9 +196,6 @@ export class A2AFileTaskStore {
       removed.push(clone(record));
     }
     if (removed.length > 0) this.persist();
-    for (const record of removed) {
-      fs.rmSync(this.runtimeCursorFile(record.taskId), { force: true });
-    }
     return removed;
   }
 
@@ -336,57 +291,8 @@ export class A2AFileTaskStore {
     if (!Array.isArray(parsed)) throw new Error('A2A task store root must be an array.');
     for (const value of parsed) {
       const record = parseRecord(value);
-      const checkpoint = this.loadRuntimeCursor(record.taskId);
-      if (checkpoint !== undefined && checkpoint.sessionId !== record.sessionId) {
-        throw new Error(`A2A task Runtime cursor belongs to another Session: ${record.taskId}`);
-      }
-      const runtimeSessionCursor = checkpoint !== undefined && (
-        record.runtimeSessionCursor === undefined
-        || (
-          checkpoint.journalEpoch === record.runtimeSessionCursor.journalEpoch
-          && checkpoint.seq > record.runtimeSessionCursor.seq
-        )
-      ) ? checkpoint : record.runtimeSessionCursor;
-      this.#records.set(record.taskId, {
-        ...record,
-        ...(runtimeSessionCursor !== undefined ? { runtimeSessionCursor } : {}),
-      });
+      this.#records.set(record.taskId, record);
     }
-  }
-
-  private runtimeCursorFile(taskId: string): string {
-    const key = createHash('sha256').update(taskId).digest('hex');
-    return path.join(this.#cursorDir, `${key}.json`);
-  }
-
-  private loadRuntimeCursor(taskId: string): RuntimeSessionCursor | undefined {
-    const file = this.runtimeCursorFile(taskId);
-    if (!fs.existsSync(file)) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
-    } catch (error: unknown) {
-      throw new Error(`Failed to read A2A Runtime cursor checkpoint: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const cursor = parseRuntimeSessionCursor(parsed);
-    if (cursor === undefined) {
-      throw new Error(`A2A Runtime cursor checkpoint is invalid: ${taskId}`);
-    }
-    return cursor;
-  }
-
-  private persistRuntimeCursor(
-    taskId: string,
-    cursor: RuntimeSessionCursor,
-  ): void {
-    fs.mkdirSync(this.#cursorDir, { recursive: true, mode: 0o700 });
-    const file = this.runtimeCursorFile(taskId);
-    const temporary = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(temporary, `${JSON.stringify(cursor)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    fs.renameSync(temporary, file);
   }
 
   private persist(): void {
