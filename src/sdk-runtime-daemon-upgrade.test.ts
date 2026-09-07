@@ -9,9 +9,7 @@ const upgradeMocks = vi.hoisted(() => ({
   enableDaemonOwner: vi.fn(),
   readDaemonState: vi.fn(),
   readDaemonToken: vi.fn(),
-  readExitIntent: vi.fn(),
   readLockOwner: vi.fn(),
-  settleExit: vi.fn(),
   waitOwnerExit: vi.fn(),
 }));
 
@@ -45,20 +43,10 @@ vi.mock('./runtime-daemon/transport.js', async (importOriginal) => {
   };
 });
 
-vi.mock('./runtime-daemon/exit-settlement.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./runtime-daemon/exit-settlement.js')>();
-  return {
-    ...actual,
-    readRuntimeExitSettlementIntent: upgradeMocks.readExitIntent,
-    settleRuntimeDaemonExit: upgradeMocks.settleExit,
-  };
-});
-
 import {
   connectKodaXRuntime,
   ensureKodaXRuntime,
   createKodaXRuntime,
-  settleKodaXRuntimeExit,
   type RuntimeDaemonManagementState,
   type RuntimeDaemonPreflight,
 } from './sdk-runtime.js';
@@ -98,9 +86,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.enableDaemonOwner.mockReset();
     upgradeMocks.readDaemonState.mockReset();
     upgradeMocks.readDaemonToken.mockReset();
-    upgradeMocks.readExitIntent.mockReset();
     upgradeMocks.readLockOwner.mockReset();
-    upgradeMocks.settleExit.mockReset();
 
   });
 
@@ -116,7 +102,6 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     const runtime = await ensureKodaXRuntime({ profile: PROFILE });
     expect(calls).toEqual(['old:initialize', 'old:daemon.management.get', 'old:runtime.shutdown', 'old:close', 'new:initialize']);
-    expect(upgradeMocks.settleExit).not.toHaveBeenCalled();
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
     await runtime.close();
   });
@@ -146,7 +131,6 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     const runtime = await ensureKodaXRuntime({ profile: PROFILE });
     expect(calls.filter((call) => call === 'old:runtime.shutdown')).toHaveLength(1);
-    expect(upgradeMocks.settleExit).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -162,7 +146,6 @@ describe('product Host startup and passive connection', () => {
       expect(calls).toEqual(['old:initialize', 'old:daemon.management.get', 'old:close']);
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
       expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
-      expect(upgradeMocks.settleExit).not.toHaveBeenCalled();
     },
   );
 
@@ -265,7 +248,6 @@ describe('product Host startup and passive connection', () => {
     expect(calls).toContain('old:runtime.shutdown');
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
-    expect(upgradeMocks.settleExit).not.toHaveBeenCalled();
   });
 
   it('does not restart after shutdown was refused at the draining boundary', async () => {
@@ -284,148 +266,6 @@ describe('product Host startup and passive connection', () => {
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
   });
-  it('resumes one exact prepared exit ticket through an ephemeral management-only client', async () => {
-    const configHome = path.join('C:', 'kodax-upgrade-test', '.kodax');
-    const owner = {
-      runtimeId: RUNTIME_ID,
-      pid: 101,
-      createdAt: '2026-07-19T00:00:00.000Z',
-      kind: 'daemon' as const,
-    };
-    const prepared = {
-      version: 1 as const,
-      settlementId: 'settlement_exact',
-      owner,
-      phase: 'prepared' as const,
-      createdAt: '2026-07-19T00:00:00.000Z',
-      updatedAt: '2026-07-19T00:00:01.000Z',
-    };
-    const calls: string[] = [];
-    const initializedParams: unknown[] = [];
-    const transport = createLegacyTransport({
-      preflight: createPreflight(),
-      calls,
-      close: vi.fn(async () => undefined),
-      omitLiveOutputSegments: true,
-      capabilities: {
-        daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
-      },
-      onInitialize: (params) => initializedParams.push(params),
-    });
-    upgradeMocks.createSocketTransport.mockResolvedValueOnce(transport);
-    upgradeMocks.readDaemonState.mockReturnValue({
-      runtimeId: RUNTIME_ID,
-      profile: PROFILE,
-      pid: owner.pid,
-      startedAt: owner.createdAt,
-      endpoint: '\\\\.\\pipe\\kodax-upgrade-test',
-      version: '0.7.90',
-      status: 'ready',
-      configHome,
-    });
-    upgradeMocks.readDaemonToken.mockReturnValue('daemon-token');
-    upgradeMocks.readLockOwner.mockReturnValue(owner);
-    upgradeMocks.readExitIntent.mockReturnValue(prepared);
-    upgradeMocks.settleExit
-      .mockResolvedValueOnce({
-        status: 'blocked',
-        reason: 'stop_not_accepted',
-        nextAction: 'relaunch-space',
-        message: 'Resume the retained prepared ticket.',
-      })
-      .mockResolvedValueOnce({ status: 'clean', repairs: [] });
-
-    await expect(settleKodaXRuntimeExit({ configHome, profile: PROFILE })).resolves.toEqual({
-      status: 'clean',
-      repairs: [],
-    });
-    expect(initializedParams).toHaveLength(1);
-    expect(initializedParams[0]).toMatchObject({
-      connectionPurpose: 'client',
-      autoStart: false,
-      token: 'daemon-token',
-      clientInfo: {
-        name: 'kodax-sdk-exit-settlement',
-        instanceId: expect.stringMatching(/^sdk_exit_/),
-      },
-    });
-    expect(initializedParams[0]).not.toMatchObject({
-      clientInfo: { instanceSecret: expect.any(String) },
-    });
-    expect(upgradeMocks.settleExit).toHaveBeenNthCalledWith(2, {
-      configHome,
-      profile: PROFILE,
-      runtime: expect.objectContaining({
-        identity: expect.objectContaining({ runtimeId: RUNTIME_ID }),
-      }),
-    });
-  });
-
-  it.each([
-    ['kind', { kind: 'inline' as const }],
-    ['process containment', { processContainment: undefined }],
-    ['supervisor PID', { supervisorPid: 202 }],
-    ['supervisor process identity', { supervisorProcessStartIdentity: 'replacement-102' }],
-  ])('rejects a prepared exit ticket whose %s identity changed before attach', async (
-    _label,
-    changedOwner,
-  ) => {
-    const configHome = path.join('C:', 'kodax-upgrade-test', '.kodax');
-    const owner = {
-      runtimeId: RUNTIME_ID,
-      pid: 101,
-      createdAt: '2026-07-19T00:00:00.000Z',
-      kind: 'daemon' as const,
-      processStartIdentity: 'process-start-101',
-      processContainment: 'windows-job' as const,
-      supervisorPid: 102,
-      supervisorProcessStartIdentity: 'process-start-102',
-    };
-    upgradeMocks.readExitIntent.mockReturnValue({
-      version: 1,
-      settlementId: 'settlement_changed_owner',
-      owner,
-      phase: 'prepared',
-      createdAt: '2026-07-19T00:00:00.000Z',
-      updatedAt: '2026-07-19T00:00:01.000Z',
-    });
-    upgradeMocks.readLockOwner.mockReturnValue({ ...owner, ...changedOwner });
-    upgradeMocks.readDaemonState.mockReturnValue({
-      runtimeId: RUNTIME_ID,
-      profile: PROFILE,
-      pid: owner.pid,
-      startedAt: owner.createdAt,
-      endpoint: '\\\\.\\pipe\\kodax-upgrade-test',
-      version: '0.7.90',
-      status: 'ready',
-      configHome,
-    });
-    upgradeMocks.readDaemonToken.mockReturnValue('daemon-token');
-    upgradeMocks.createSocketTransport.mockResolvedValue(createLegacyTransport({
-      preflight: createPreflight(),
-      calls: [],
-      close: vi.fn(async () => undefined),
-      omitLiveOutputSegments: true,
-      capabilities: { daemonManagement: { version: 1 } },
-    }));
-    upgradeMocks.settleExit.mockResolvedValueOnce({
-      status: 'blocked',
-      reason: 'stop_not_accepted',
-      nextAction: 'relaunch-space',
-      message: 'Resume the retained prepared ticket.',
-    });
-
-    await expect(settleKodaXRuntimeExit({ configHome, profile: PROFILE })).resolves.toEqual({
-      status: 'blocked',
-      reason: 'owner_changed',
-      nextAction: 'relaunch-space',
-      message: 'The prepared Runtime exit ticket no longer matches the exact daemon owner.',
-    });
-    expect(upgradeMocks.createSocketTransport).not.toHaveBeenCalled();
-    expect(upgradeMocks.settleExit).toHaveBeenCalledTimes(1);
-  });
-
 });
 
 function createLegacyTransport(input: {

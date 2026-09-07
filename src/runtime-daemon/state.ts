@@ -238,43 +238,6 @@ export function updateRuntimeOwnerPolicy(
   }
 }
 
-/**
- * Commit sticky inline policy while the verified daemon still owns the fence.
- * The caller must stop that same daemon after this transaction returns.
- */
-export function commitRuntimeDaemonRollbackPolicy(
-  paths: RuntimeDaemonPaths,
-  expectedRuntimeId: string,
-  expectedRevision: number,
-): RuntimeOwnerPolicy {
-  ensureRuntimeDaemonDirectories(paths);
-  const coordination = tryAcquireRuntimeOwnerCoordination(paths);
-  if (!coordination) {
-    throw runtimeOwnerPolicyConflict('Runtime owner rollback is already in progress.');
-  }
-  try {
-    const owner = readRuntimeDaemonLockOwner(paths.lockFile);
-    if (
-      owner?.kind !== 'daemon'
-      || owner.runtimeId !== expectedRuntimeId
-    ) {
-      throw runtimeOwnerPolicyConflict('Runtime daemon owner changed before rollback commit.');
-    }
-    const current = readRuntimeOwnerPolicy(paths);
-    if (current.mode !== 'daemon') {
-      throw runtimeOwnerPolicyConflict('Runtime owner policy changed before rollback commit.');
-    }
-    return writeRuntimeOwnerPolicy(
-      paths,
-      'inline',
-      expectedRevision,
-      coordination.nonce,
-    );
-  } finally {
-    releaseRuntimeOwnerCoordination(paths, coordination);
-  }
-}
-
 /** Enable daemon ownership, reclaiming only a provably abandoned inline fence. */
 export function enableRuntimeDaemonOwner(paths: RuntimeDaemonPaths): RuntimeOwnerPolicy {
   ensureRuntimeDaemonDirectories(paths);

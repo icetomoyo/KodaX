@@ -615,7 +615,11 @@ const TOPICS: readonly KodaXManualTopic[] = [
         + " `settleKodaXRuntimeExit()` persists the exact owner before stop,"
         + " resumes a crash-safe ticket, and repairs only verified Windows"
         + " process/Job/ACL residue. Same-boot POSIX ambiguity, active work,"
-        + " foreign markers, PID reuse, and corrupt evidence remain fail-closed.",
+        + " foreign markers, PID reuse, and corrupt evidence remain fail-closed."
+        + " The v0.7.97 release retired that prepared-ticket protocol: shutdown"
+        + " is now the real idle `runtime.shutdown` (busy rejects, owner mode"
+        + " never changes), and daemon→inline policy is an explicit owner-mode"
+        + " update after the daemon stops.",
       "The same Runtime owner bounds AskUser, permission, and MCP elicitation"
         + " lifecycles. SDK hosts receive an AbortSignal and can use"
         + " `handleRuntimePermissionRequest()`; timeout, cancellation, or a"
@@ -1338,6 +1342,10 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "means verified orderly shutdown, `recovered` means identity-scoped repair",
       "was proven safe, and `blocked` supplies a bounded next action. The API never",
       "accepts short caller timeouts and never exposes bare-PID kill or raw ACL deletion.",
+      "The v0.7.97 SDK retires the settlement transaction and",
+      "`daemon.rollbackToInline`: clients stop daemons with the real idle",
+      "`runtime.shutdown` and flip sticky owner policy through an explicit",
+      "owner-mode update once no owner lock remains.",
       "The v0.7.94 SDK keeps `sandboxRuntime:4` and `crashOutcomeModel:2`.",
       "The v0.7.95 SDK advertises Windows `sandboxRuntime:5` and local",
       "`runtimeExitSettlement:2`; `crashOutcomeModel:2` is unchanged and publication remains manual.",

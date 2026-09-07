@@ -8,7 +8,6 @@ import {
   claimRuntimeDaemonOwnership,
   classifyRuntimeDaemonHealth,
   clearRuntimeDaemonShutdownOutcome,
-  commitRuntimeDaemonRollbackPolicy,
   createRuntimeDaemonToken,
   enableRuntimeDaemonOwner,
   normalizeRuntimeDaemonProfile,
@@ -429,7 +428,7 @@ describe('runtime Coder owner policy', () => {
     expect(readRuntimeOwnerPolicy(paths)).toMatchObject({ mode: 'daemon', revision: 0 });
   });
 
-  it('atomically commits daemon rollback policy for the verified owner and resumes without a guessed revision', () => {
+  it('re-enables daemon ownership after a stopped daemon releases its lock', () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: 'runtime-rollback',
@@ -440,22 +439,14 @@ describe('runtime Coder owner policy', () => {
     expect(lock).toBeDefined();
     if (!lock) throw new Error('Expected daemon owner lock.');
 
-    expect(() => commitRuntimeDaemonRollbackPolicy(
-      paths,
-      'runtime-other',
-      0,
-    )).toThrow(/owner.*changed/i);
-    const inline = commitRuntimeDaemonRollbackPolicy(paths, 'runtime-rollback', 0);
-
-    expect(inline).toMatchObject({ mode: 'inline', revision: 1 });
-    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toMatchObject({
-      runtimeId: 'runtime-rollback',
-      kind: 'daemon',
-    });
+    // FEATURE_298 T25 — rollbackToInline is retired; a stopped daemon keeps
+    // its sticky daemon policy and the next owner resumes at the next
+    // revision without guessing.
+    expect(readRuntimeOwnerPolicy(paths)).toMatchObject({ mode: 'daemon', revision: 0 });
     expect(releaseRuntimeDaemonLock(lock)).toBe(true);
 
     const daemon = enableRuntimeDaemonOwner(paths);
-    expect(daemon).toMatchObject({ mode: 'daemon', revision: 2 });
+    expect(daemon).toMatchObject({ mode: 'daemon', revision: 0 });
     expect(enableRuntimeDaemonOwner(paths)).toEqual(daemon);
   });
 

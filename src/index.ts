@@ -40,7 +40,6 @@ export {
   RuntimePermissionScopeUpgradeRequiredError,
   RuntimeTransportBoundaryError,
   setKodaXRuntimeOwnerMode,
-  settleKodaXRuntimeExit,
   waitForRuntimeDaemonShutdown,
 } from './sdk-runtime.js';
 export type {
@@ -93,11 +92,6 @@ export type {
   RuntimeDaemonPreflight,
   RuntimeDaemonManagementService,
   RuntimeDaemonManagementState,
-  RuntimeDaemonRollbackInput,
-  RuntimeDaemonRollbackResult,
-  RuntimeExitSettlement,
-  RuntimeExitSettlementBlockReason,
-  RuntimeExitSettlementInput,
   RuntimeDaemonShutdownVerification,
   RuntimeDaemonShutdownVerificationInput,
   RuntimeDaemonShutdownVerificationOwner,

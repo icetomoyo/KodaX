@@ -357,8 +357,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "agents.events",
     "agents.wait",
   ]),
-  ...scopeEntries("owner:admin", ["daemon.rollbackToInline"]),
-  ...scopeEntries("daemon:admin", [
+    ...scopeEntries("daemon:admin", [
     "runtime.shutdown",
     "daemon.stop",
     "daemon.preflight",
@@ -856,8 +855,7 @@ function isManagedRuntimeMutation(method: RuntimeDaemonMethod): boolean {
   return (
     isRuntimeDaemonDrainingSensitiveMethod(method) &&
     method !== "daemon.stop" &&
-    method !== "runtime.shutdown" &&
-    method !== "daemon.rollbackToInline"
+    method !== "runtime.shutdown"
   );
 }
 
@@ -1010,24 +1008,6 @@ async function dispatchRuntimeDaemonRequest(
         );
       }
       return options.management.inspect();
-    case "daemon.rollbackToInline": {
-      if (!options.management) {
-        throw daemonError(
-          "client_upgrade_required",
-          "Runtime daemon rollback management is unavailable.",
-        );
-      }
-      const params = requireRecord(request.params);
-      const rollback: RuntimeDaemonRollbackInput = {
-        expectedRuntimeId: requireStringField(params, "expectedRuntimeId"),
-        expectedRevision: requireIntegerField(params, "expectedRevision"),
-        expectedOwnerPolicyRevision: requireIntegerField(
-          params,
-          "expectedOwnerPolicyRevision",
-        ),
-      };
-      return options.management.rollbackToInline(rollback);
-    }
     case "runtime.capabilities":
       return runtimeDaemonCapabilities(
         options.capabilities,

@@ -22,8 +22,6 @@ import type {
   RuntimeDiagnosticFilter,
   RuntimeDaemonPreflight,
   RuntimeDaemonManagementState,
-  RuntimeDaemonRollbackInput,
-  RuntimeDaemonRollbackResult,
   RuntimeEvent,
   RuntimeEventFilter,
   RuntimeEventListener,
@@ -1345,13 +1343,6 @@ export function createRuntimeDaemonClient(
             preflight: normalizeRuntimeDaemonPreflight(state.preflight),
           };
         });
-      },
-      stopForInline(input: RuntimeDaemonRollbackInput) {
-        const params = input;
-        return request(
-          'daemon.rollbackToInline',
-          params,
-        ) as Promise<RuntimeDaemonRollbackResult>;
       },
     },
     diagnostics: {

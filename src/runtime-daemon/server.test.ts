@@ -340,7 +340,6 @@ describe('runtime daemon dispatcher', () => {
       async preflight() { throw new Error('not used'); },
       async inspect() { throw new Error('not used'); },
       async stop() { throw new Error('not used'); },
-      async rollbackToInline() { throw new Error('not used'); },
       close() {},
     };
     const dispatcher = createRuntimeDaemonDispatcher({
@@ -1319,10 +1318,7 @@ describe('runtime daemon dispatcher', () => {
       dispatcher.close();
 
       const implemented = isRuntimeDaemonSuccessResponse(response) || (
-        (
-          method === 'daemon.management.get'
-          || method === 'daemon.rollbackToInline'
-        )
+        method === 'daemon.management.get'
         && response.error.code === 'client_upgrade_required'
       );
       expect(
@@ -1350,10 +1346,7 @@ describe('runtime daemon dispatcher', () => {
       ));
       dispatcher.close();
 
-      const implemented = isRuntimeDaemonSuccessResponse(response) || (
-        method === 'daemon.rollbackToInline'
-        && response.error.code === 'client_upgrade_required'
-      );
+      const implemented = isRuntimeDaemonSuccessResponse(response);
       expect(
         implemented,
         `${method} should dispatch without an operation envelope`,
@@ -3296,11 +3289,6 @@ const METHOD_SMOKE_PARAMS = {
   'daemon.logs': undefined,
   'daemon.preflight': undefined,
   'daemon.management.get': undefined,
-  'daemon.rollbackToInline': {
-    expectedRuntimeId: 'runtime-smoke',
-    expectedRevision: 0,
-    expectedOwnerPolicyRevision: 0,
-  },
   'session.create': { sessionId: 'session-smoke', title: 'Smoke Session' },
   'session.load': { sessionId: 'session-1' },
   'session.list': { limit: 5 },

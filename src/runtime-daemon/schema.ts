@@ -109,19 +109,6 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       integrations: integrationHealthSchema(),
     }, ['runtimeId', 'revision', 'ownerPolicy', 'owner', 'preflight']),
   },
-  'daemon.rollbackToInline': {
-    params: objectSchema({
-      expectedRuntimeId: stringSchema,
-      expectedRevision: integerSchema,
-      expectedOwnerPolicyRevision: integerSchema,
-    }, ['expectedRuntimeId', 'expectedRevision', 'expectedOwnerPolicyRevision']),
-    result: objectSchema({
-      accepted: { type: 'boolean', enum: [true] },
-      runtimeId: stringSchema,
-      revision: integerSchema,
-      ownerPolicy: ownerPolicySchema('inline'),
-    }, ['accepted', 'runtimeId', 'revision', 'ownerPolicy']),
-  },
 
   'session.create': { params: createSessionParamsSchema(), result: sessionSchema() },
   'session.load': {

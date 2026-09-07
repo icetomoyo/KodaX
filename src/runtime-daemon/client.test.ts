@@ -490,7 +490,7 @@ describe('runtime daemon client proxy', () => {
     await client.close();
   });
 
-  it('maps typed daemon inspection and safe inline rollback without leaking operation metadata', async () => {
+  it('maps typed daemon inspection and the real idle shutdown', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const client = createRuntimeDaemonClient({
       identity: {
@@ -510,23 +510,12 @@ describe('runtime daemon client proxy', () => {
     expect(state.preflight.activeAgentTasks).toBe(state.preflight.activeAgentTurns);
     const preflight = await client.status.preflight();
     expect(preflight.activeAgentTasks).toBe(preflight.activeAgentTurns);
-    await expect(client.daemon.stopForInline({
-      expectedRuntimeId: state.runtimeId,
-      expectedRevision: state.revision,
-      expectedOwnerPolicyRevision: state.ownerPolicy.revision,
-    })).resolves.toMatchObject({ accepted: true, ownerPolicy: { mode: 'inline' } });
+    await expect(client.daemon.shutdown()).resolves.toMatchObject({ accepted: true });
 
     expect(calls).toEqual([
       { method: 'daemon.management.get', params: undefined },
       { method: 'daemon.preflight', params: undefined },
-      {
-        method: 'daemon.rollbackToInline',
-        params: {
-          expectedRuntimeId: 'runtime-management',
-          expectedRevision: 4,
-          expectedOwnerPolicyRevision: 2,
-        },
-      },
+      { method: 'runtime.shutdown', params: undefined },
     ]);
     await client.close();
   });
@@ -2068,18 +2057,6 @@ function fakeTransport(
           pendingUserInputs: [],
           blockers: ['active_agent_tasks'],
           canStop: false,
-        };
-      }
-      if (method === 'daemon.rollbackToInline') {
-        return {
-          accepted: true,
-          runtimeId: 'runtime-management',
-          revision: 5,
-          ownerPolicy: {
-            mode: 'inline',
-            revision: 3,
-            updatedAt: '2026-07-15T00:00:01.000Z',
-          },
         };
       }
       if (method === 'run.input.submit') {

@@ -295,7 +295,7 @@ describe("runtime daemon host", () => {
     }
   });
 
-  it("counts initialized logical clients instead of internal sockets and rejects stale rollback commits", async () => {
+  it("counts initialized logical clients instead of internal sockets and stops on the real idle shutdown", async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
     const runtime = makeRuntime();
     const lock = tryAcquireRuntimeDaemonLock(paths, {
@@ -436,35 +436,13 @@ describe("runtime daemon host", () => {
     expect(afterReconnectClosed.clients[0]).not.toHaveProperty("instanceSecret");
     expect(afterReconnectClosed.clients[0]).not.toHaveProperty("token");
 
-    await expect(
-      first.request("daemon.rollbackToInline", {
-        expectedRuntimeId: stale.runtimeId,
-        expectedRevision: stale.revision,
-        expectedOwnerPolicyRevision: stale.ownerPolicy.revision,
-      }),
-    ).rejects.toMatchObject({ code: "conflict" });
-    expect(readRuntimeDaemonState(paths)).toMatchObject({ status: "ready" });
-
-    const current = (await first.request("daemon.management.get")) as {
-      runtimeId: string;
-      revision: number;
-      ownerPolicy: { revision: number };
-    };
-    await expect(
-      first.request("daemon.rollbackToInline", {
-        expectedRuntimeId: current.runtimeId,
-        expectedRevision: current.revision,
-        expectedOwnerPolicyRevision: current.ownerPolicy.revision,
-      }),
-    ).resolves.toMatchObject({
-      accepted: true,
-      ownerPolicy: { mode: "inline", revision: 1 },
-    });
+    // FEATURE_298 T25 — the retired rollbackToInline protocol is gone; the
+    // real idle shutdown stops the Host without touching owner mode.
+    await expect(first.request("runtime.shutdown")).resolves.toBeTruthy();
     await host.closed;
     await waitForHostStateRemoval(paths);
     expect(readRuntimeOwnerPolicy(paths)).toMatchObject({
-      mode: "inline",
-      revision: 1,
+      mode: "daemon",
     });
   });
 
@@ -613,11 +591,7 @@ describe("runtime daemon host", () => {
     activeWorkflow = backgroundWorkflow;
     activeAgentTurn = backgroundAgentTurn();
     await expect(
-      client.request("daemon.rollbackToInline", {
-        expectedRuntimeId: first.runtimeId,
-        expectedRevision: first.revision,
-        expectedOwnerPolicyRevision: first.ownerPolicy.revision,
-      }),
+      client.request("runtime.shutdown"),
     ).rejects.toMatchObject({ code: "conflict" });
 
     const changed = (await client.request("daemon.management.get")) as {

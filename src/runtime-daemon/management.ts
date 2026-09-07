@@ -3,14 +3,11 @@ import type {
   RuntimeDaemonClientSnapshot,
   RuntimeDaemonManagementState,
   RuntimeDaemonPreflight,
-  RuntimeDaemonRollbackInput,
-  RuntimeDaemonRollbackResult,
   RuntimeIntegrationDomainStatus,
 } from '../sdk-runtime.js';
 import type { RuntimeDaemonMethod } from './protocol.js';
 import {
   appendRuntimeDaemonLog,
-  commitRuntimeDaemonRollbackPolicy,
   readRuntimeDaemonLockOwner,
   readRuntimeOwnerPolicy,
   type RuntimeDaemonPaths,
@@ -24,7 +21,6 @@ export interface RuntimeDaemonManagementController {
   preflight(): Promise<RuntimeDaemonPreflight>;
   inspect(): Promise<RuntimeDaemonManagementState>;
   stop(): Promise<{ readonly ok: true }>;
-  rollbackToInline(input: RuntimeDaemonRollbackInput): Promise<RuntimeDaemonRollbackResult>;
   close(): void;
 }
 
@@ -157,35 +153,6 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       await this.assertStoppable();
       this.input.requestStop();
       return { ok: true };
-    } catch (error: unknown) {
-      this.draining = false;
-      throw error;
-    }
-  }
-
-  async rollbackToInline(rollback: RuntimeDaemonRollbackInput): Promise<RuntimeDaemonRollbackResult> {
-    if (rollback.expectedRuntimeId !== this.input.runtime.identity.runtimeId) {
-      throw managementError('conflict', 'Runtime daemon instance changed before rollback commit.');
-    }
-    this.beginDraining(rollback.expectedRevision);
-    try {
-      await this.assertStoppable(rollback.expectedRevision);
-      const ownerPolicy = commitRuntimeDaemonRollbackPolicy(
-        this.input.paths,
-        rollback.expectedRuntimeId,
-        rollback.expectedOwnerPolicyRevision,
-      );
-      if (ownerPolicy.mode !== 'inline') {
-        throw managementError('internal_error', 'Runtime owner rollback did not commit inline mode.');
-      }
-      this.revision += 1;
-      this.input.requestStop();
-      return {
-        accepted: true,
-        runtimeId: this.input.runtime.identity.runtimeId,
-        revision: this.revision,
-        ownerPolicy: { ...ownerPolicy, mode: 'inline' },
-      };
     } catch (error: unknown) {
       this.draining = false;
       throw error;

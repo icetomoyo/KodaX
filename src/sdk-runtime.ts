@@ -347,18 +347,6 @@ export type {
   RuntimeDaemonShutdownVerificationInput,
   RuntimeDaemonShutdownVerificationOwner,
 } from "./runtime-daemon/shutdown-verifier.js";
-import {
-  readRuntimeExitSettlementIntent,
-  settleRuntimeDaemonExit,
-  type RuntimeExitSettlement,
-  type RuntimeExitSettlementInput,
-  type RuntimeExitSettlementIntent,
-} from "./runtime-daemon/exit-settlement.js";
-export type {
-  RuntimeExitSettlement,
-  RuntimeExitSettlementBlockReason,
-  RuntimeExitSettlementInput,
-} from "./runtime-daemon/exit-settlement.js";
 import { createRuntimeWorkerTransport } from "./runtime-worker/transport.js";
 import type { RuntimeWorkerOptions } from "./runtime-worker/protocol.js";
 import {
@@ -918,7 +906,6 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   effectiveConfig: 1,
   managedRunDurability: 1,
   runtimeAutoModeGuardrail: 5,
-  runtimeExitSettlement: 2,
   sandboxRuntime: 11,
   sessionEventJournal: 1,
   sharedSessionSettings: 2,
@@ -3438,25 +3425,9 @@ export interface RuntimeDaemonManagementState {
   readonly integrations?: RuntimeIntegrationHealth;
 }
 
-export interface RuntimeDaemonRollbackInput {
-  readonly expectedRuntimeId: string;
-  readonly expectedRevision: number;
-  readonly expectedOwnerPolicyRevision: number;
-}
-
-export interface RuntimeDaemonRollbackResult {
-  readonly accepted: true;
-  readonly runtimeId: string;
-  readonly revision: number;
-  readonly ownerPolicy: RuntimeOwnerPolicyState & { readonly mode: "inline" };
-}
-
 export interface RuntimeDaemonManagementService {
   shutdown(): Promise<{ readonly accepted: true }>;
   inspect(): Promise<RuntimeDaemonManagementState>;
-  stopForInline(
-    input: RuntimeDaemonRollbackInput,
-  ): Promise<RuntimeDaemonRollbackResult>;
 }
 
 export interface RuntimeStatusService {
@@ -4212,7 +4183,7 @@ async function createKodaXRuntimeInternal(
           }
           : {}),
       },
-    }, true, "execution", ownerBootstrap);
+    }, true, ownerBootstrap);
   }
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
@@ -5671,11 +5642,7 @@ function createCapabilityUpgradeRuntime(
 
 function daemonCapabilityRequirements(
   options: ConnectKodaXRuntimeOptions,
-  contract: "execution" | "prepared-exit-settlement",
 ): RuntimeCapabilityRequirements {
-  if (contract === "prepared-exit-settlement") {
-    return { daemonManagement: 1 };
-  }
   return {
     ...options.requirements,
     sessionEventJournal: 1,
@@ -5872,144 +5839,9 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
   }
 }
 
-function samePreparedExitOwner(
-  intent: RuntimeExitSettlementIntent,
-  owner: ReturnType<typeof readRuntimeDaemonLockOwner>,
-): boolean {
-  return owner !== undefined
-    && owner.runtimeId === intent.owner.runtimeId
-    && owner.pid === intent.owner.pid
-    && owner.createdAt === intent.owner.createdAt
-    && owner.kind === intent.owner.kind
-    && owner.processStartIdentity === intent.owner.processStartIdentity
-    && owner.processContainment === intent.owner.processContainment
-    && owner.supervisorPid === intent.owner.supervisorPid
-    && owner.supervisorProcessStartIdentity
-      === intent.owner.supervisorProcessStartIdentity;
-}
-
-function preparedExitTicketStillExact(
-  input: RuntimeExitSettlementInput,
-  expected: RuntimeExitSettlementIntent,
-): boolean {
-  const current = readRuntimeExitSettlementIntent(
-    input.configHome,
-    input.profile ?? "default",
-  );
-  if (
-    current?.phase !== "prepared"
-    || current.settlementId !== expected.settlementId
-    || !samePreparedExitOwner(current, expected.owner)
-  ) {
-    return false;
-  }
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(
-    input.configHome,
-    input.profile ?? "default",
-  );
-  const state = readRuntimeDaemonState(paths);
-  return state !== undefined
-    && state.runtimeId === expected.owner.runtimeId
-    && state.pid === expected.owner.pid
-    && state.profile === paths.profile
-    && samePreparedExitOwner(expected, readRuntimeDaemonLockOwner(paths.lockFile));
-}
-
-function preparedExitOwnerChanged(): RuntimeExitSettlement {
-  return {
-    status: "blocked",
-    reason: "owner_changed",
-    nextAction: "relaunch-space",
-    message: "The prepared Runtime exit ticket no longer matches the exact daemon owner.",
-  };
-}
-
-type PreparedExitRuntimeConnection =
-  | { runtime: KodaXDaemonRuntime }
-  | { settlement: RuntimeExitSettlement };
-
-async function connectPreparedExitSettlementRuntime(
-  input: RuntimeExitSettlementInput,
-): Promise<PreparedExitRuntimeConnection> {
-  const profile = input.profile ?? "default";
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(input.configHome, profile);
-  const state = readRuntimeDaemonState(paths);
-  if (state === undefined) return { settlement: preparedExitOwnerChanged() };
-  const token = readRuntimeDaemonToken(paths);
-  if (token === undefined) {
-    return {
-      settlement: {
-        status: "blocked",
-        reason: "owner_unverified",
-        nextAction: "manual-recovery",
-        message: "The exact prepared Runtime owner has no readable daemon authentication token.",
-      },
-    };
-  }
-  const runtime = await connectKodaXRuntimeInternal(
-    {
-      profile,
-      autoStart: false,
-      endpoint: state.endpoint,
-      daemonToken: token,
-      clientInfo: {
-        name: "kodax-sdk-exit-settlement",
-        instanceId: `sdk_exit_${randomUUID().replace(/-/g, "")}`,
-        clientType: "automation",
-      },
-      requirements: { daemonManagement: 1 },
-    },
-    false,
-    "prepared-exit-settlement",
-  );
-  return { runtime };
-}
-
-/**
- * Resume a durable exit ticket. Only this exact prepared-ticket path may attach
- * a management-only client that does not satisfy the normal execution contract.
- */
-export async function settleKodaXRuntimeExit(
-  input: RuntimeExitSettlementInput,
-): Promise<RuntimeExitSettlement> {
-  const initial = await settleRuntimeDaemonExit(input);
-  if (
-    input.runtime !== undefined
-    || initial.status !== "blocked"
-    || initial.reason !== "stop_not_accepted"
-    || initial.nextAction !== "relaunch-space"
-  ) {
-    return initial;
-  }
-  const profile = input.profile ?? "default";
-  const intent = readRuntimeExitSettlementIntent(input.configHome, profile);
-  if (intent?.phase !== "prepared" || !preparedExitTicketStillExact(input, intent)) {
-    return preparedExitOwnerChanged();
-  }
-  const connection = await connectPreparedExitSettlementRuntime(input);
-  if ("settlement" in connection) return connection.settlement;
-  const { runtime } = connection;
-  let settlementOwnsClose = false;
-  try {
-    if (
-      runtime.identity.runtimeId !== intent.owner.runtimeId
-      || !preparedExitTicketStillExact(input, intent)
-    ) {
-      return preparedExitOwnerChanged();
-    }
-    const settlement = await settleRuntimeDaemonExit({ ...input, runtime });
-    settlementOwnsClose = settlement.status !== "blocked"
-      || settlement.nextAction !== "keep-open";
-    return settlement;
-  } finally {
-    if (!settlementOwnsClose) await runtime.close();
-  }
-}
-
 async function connectKodaXRuntimeInternal(
   options: ConnectKodaXRuntimeOptions,
   allowCapabilityUpgrade: boolean,
-  contract: "execution" | "prepared-exit-settlement" = "execution",
   ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
   startupRetries = 2,
 ): Promise<KodaXDaemonRuntime> {
@@ -6092,7 +5924,7 @@ async function connectKodaXRuntimeInternal(
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
   let upgradeReleasedLease = false;
   try {
-    const requirements = daemonCapabilityRequirements(options, contract);
+    const requirements = daemonCapabilityRequirements(options);
     const probedDaemon = parseProbedDaemon(lease);
     const probedUpgrade = probedDaemon === undefined
       ? undefined
@@ -6100,7 +5932,7 @@ async function connectKodaXRuntimeInternal(
           probedDaemon.identity,
           probedDaemon.capabilities,
           requirements,
-          contract === "execution" && allowCapabilityUpgrade && options.autoStart === true,
+          allowCapabilityUpgrade && options.autoStart === true,
         );
     const requestedClientInfo: RuntimeClientInfo = {
       name: options.clientInfo?.name ?? "kodax-sdk",
@@ -6157,7 +5989,7 @@ async function connectKodaXRuntimeInternal(
       identity,
       daemonCapabilities,
       requirements,
-      contract === "execution" && allowCapabilityUpgrade && options.autoStart === true,
+      allowCapabilityUpgrade && options.autoStart === true,
     );
     if (
       probedDaemon !== undefined
@@ -6172,8 +6004,7 @@ async function connectKodaXRuntimeInternal(
     }
     if (requiredUpgrade !== undefined) {
       if (
-        contract === "execution"
-        && replApi.KODAX_VERSION !== "0.0.0"
+        replApi.KODAX_VERSION !== "0.0.0"
         && compareSemanticVersions(identity.version, replApi.KODAX_VERSION) === 1
       ) {
         throw new RuntimeDaemonCapabilityUpgradeError(
@@ -6215,7 +6046,7 @@ async function connectKodaXRuntimeInternal(
           // Release temporary startup clients before retrying; the existing
           // owner lock still decides which process may start the replacement.
           await new Promise<void>((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
-          return connectKodaXRuntimeInternal(options, true, contract, ownerBootstrap, startupRetries - 1);
+          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1);
         }
         throw error;
       } finally {
@@ -6226,7 +6057,6 @@ async function connectKodaXRuntimeInternal(
       return connectKodaXRuntimeInternal(
         options,
         false,
-        contract,
         ownerBootstrap,
       );
     }

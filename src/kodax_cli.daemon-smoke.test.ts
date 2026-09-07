@@ -717,7 +717,6 @@ describe('daemon CLI smoke', () => {
       blockers: [],
       canStop: true,
     });
-    const stale = await first.daemon.inspect();
 
     const readyFile = path.join(homeDir, 'child-ready');
     const releaseFile = path.join(homeDir, 'child-release');
@@ -744,11 +743,7 @@ describe('daemon CLI smoke', () => {
         blockers: ['connected_clients'],
         canStop: false,
       });
-      await expect(first.daemon.stopForInline({
-        expectedRuntimeId: stale.runtimeId,
-        expectedRevision: stale.revision,
-        expectedOwnerPolicyRevision: stale.ownerPolicy.revision,
-      })).rejects.toMatchObject({ code: 'conflict' });
+      await expect(first.daemon.shutdown()).rejects.toMatchObject({ code: 'busy' });
     } finally {
       fs.writeFileSync(releaseFile, 'release', 'utf8');
     }
@@ -758,12 +753,9 @@ describe('daemon CLI smoke', () => {
     const firstSupervisorPid = process.platform === 'win32'
       ? readDaemonSupervisorPid(homeDir, profile)
       : undefined;
-    const firstCommit = await first.daemon.inspect();
-    await expect(first.daemon.stopForInline({
-      expectedRuntimeId: firstCommit.runtimeId,
-      expectedRevision: firstCommit.revision,
-      expectedOwnerPolicyRevision: firstCommit.ownerPolicy.revision,
-    })).resolves.toMatchObject({ accepted: true, ownerPolicy: { mode: 'inline', revision: 1 } });
+    // FEATURE_298 T25 — the retired rollbackToInline exit protocol is gone;
+    // the real idle shutdown stops the daemon without touching owner mode.
+    await expect(first.daemon.shutdown()).resolves.toMatchObject({ accepted: true });
     await first.close();
     await waitForDaemonState(profile, homeDir, false);
     await waitForDaemonPidExit(firstDaemonPid, 10_000);
@@ -771,12 +763,12 @@ describe('daemon CLI smoke', () => {
       await waitForDaemonPidExit(firstSupervisorPid, 10_000);
     }
     expect(getKodaXRuntimeOwnerState({ homeDir, profile })).toMatchObject({
-      policy: { mode: 'inline', revision: 1 },
+      policy: { mode: 'daemon', revision: 0 },
       ownerStatus: 'unowned',
       owner: null,
     });
 
-    const firstInline = acquireKodaXInlineOwner({ homeDir, profile });
+    const firstInline = acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true });
     expect(firstInline.ownerPolicy).toMatchObject({ mode: 'inline', revision: 1 });
     firstInline.close();
     expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 2 });
@@ -796,12 +788,7 @@ describe('daemon CLI smoke', () => {
     const secondSupervisorPid = process.platform === 'win32'
       ? readDaemonSupervisorPid(homeDir, profile)
       : undefined;
-    const secondCommit = await second.daemon.inspect();
-    await second.daemon.stopForInline({
-      expectedRuntimeId: secondCommit.runtimeId,
-      expectedRevision: secondCommit.revision,
-      expectedOwnerPolicyRevision: secondCommit.ownerPolicy.revision,
-    });
+    await second.daemon.shutdown();
     await second.close();
     await waitForDaemonState(profile, homeDir, false);
     await waitForDaemonPidExit(secondDaemonPid, 10_000);
@@ -809,7 +796,7 @@ describe('daemon CLI smoke', () => {
       await waitForDaemonPidExit(secondSupervisorPid, 10_000);
     }
 
-    const secondInline = acquireKodaXInlineOwner({ homeDir, profile });
+    const secondInline = acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true });
     expect(secondInline.ownerPolicy).toMatchObject({ mode: 'inline', revision: 3 });
     secondInline.close();
     expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 4 });
