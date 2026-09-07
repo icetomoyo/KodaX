@@ -70,6 +70,9 @@ jobs:
       - name: Build bundled SDK and Worker sidecars
         run: npm run build:bundle
 
+      - name: Bundled Provider credentials and daemon compaction
+        run: npm run test:bundle
+
       - name: Native trusted text transaction tests
         if: matrix.node == '22'
         run: npm run test:native
@@ -232,6 +235,9 @@ jobs:
 
       - name: Build packaged Electron gate inputs
         run: npm run build
+
+      - name: Bundled Provider credentials and daemon compaction
+        run: npm run test:bundle
 
       - name: Windows native transaction and runner tests
         run: npm run test:native

@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep bundled Provider credential scopes shared across SDK, Agent summaries,
+  CLI, and Runtime Worker requests, restoring keychain-only manual and managed
+  compaction. Add bundle identity checks and real daemon broker regressions
+  to CI and release gates (Issue 332).
 - Omit empty `tools` arrays from OpenAI- and Anthropic-compatible streaming and
   non-streaming wire requests, so tool-free side queries such as Auto[LLM]
   classification remain compatible with strict vLLM gateways (Issue 329).
