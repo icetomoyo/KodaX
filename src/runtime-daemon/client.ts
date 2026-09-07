@@ -110,7 +110,10 @@ import type {
   RuntimeDaemonNotification,
   RuntimeDaemonOperationEnvelope,
 } from './protocol.js';
-import { isRuntimeDaemonMutationMethod } from './protocol.js';
+import {
+  isRuntimeDaemonMutationMethod,
+  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
+} from './protocol.js';
 
 const MAX_PENDING_SUBSCRIPTION_NOTIFICATIONS = 256;
 const MAX_RETAINED_HOST_TOOL_RESULTS = 1_000;
@@ -270,7 +273,9 @@ export function createRuntimeDaemonClient(
   ): Promise<unknown> => options.transport.request(
     method,
     params,
-    isRuntimeDaemonMutationMethod(method) && method !== 'session.settings.update'
+    isRuntimeDaemonMutationMethod(method)
+      && method !== 'session.settings.update'
+      && !RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(method)
       ? createOperationEnvelope(options.journalEpoch, operation)
       : undefined,
     control,
@@ -1261,7 +1266,7 @@ export function createRuntimeDaemonClient(
           ...(options?.credential !== undefined
             ? { credential: options.credential }
             : {}),
-        }, options?.operation) as ReturnType<
+        }) as ReturnType<
           KodaXRuntime['agents']['spawn']
         >;
       },
@@ -1289,7 +1294,7 @@ export function createRuntimeDaemonClient(
           ...(options?.credential !== undefined
             ? { credential: options.credential }
             : {}),
-        }, options?.operation) as ReturnType<
+        }) as ReturnType<
           KodaXRuntime['agents']['followup']
         >;
       },

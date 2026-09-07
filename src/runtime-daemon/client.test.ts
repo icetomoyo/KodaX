@@ -73,7 +73,7 @@ describe('runtime daemon client proxy', () => {
     });
   });
 
-  it('keeps Agent credential binding host-only and sends its operation in the envelope', async () => {
+  it('keeps Agent credential binding host-only and sends no operation envelope (T30)', async () => {
     let captured: {
       readonly params?: unknown;
       readonly operation?: { readonly operationId: string; readonly journalEpoch: string };
@@ -112,7 +112,6 @@ describe('runtime daemon client proxy', () => {
         mode: 'scoped',
         providers: ['openai'],
       },
-      operation: { operationId: 'agent-op-1' },
     });
 
     expect(captured).toEqual({
@@ -129,10 +128,7 @@ describe('runtime daemon client proxy', () => {
           providers: ['openai'],
         },
       },
-      operation: {
-        operationId: 'agent-op-1',
-        journalEpoch: 'journal-agent',
-      },
+      operation: undefined,
     });
     expect(JSON.stringify((captured?.params as { input?: unknown }).input)).not.toContain('credential');
     await client.close();

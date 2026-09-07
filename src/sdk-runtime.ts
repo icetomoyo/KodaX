@@ -1667,9 +1667,13 @@ export interface RuntimeCompactSessionInput {
   readonly operation?: RuntimeOperationOptions;
 }
 
+/**
+ * FEATURE_298 T30 — agent mutations carry their own domain identity
+ * (followup expectedRevision, actor turn semantics); the generic operation
+ * envelope is deliberately not part of this contract.
+ */
 export interface RuntimeAgentOperationOptions {
   readonly credential?: RuntimeCredentialBinding;
-  readonly operation?: RuntimeOperationOptions;
 }
 
 export interface RuntimeAgentFollowupOptions extends RuntimeAgentOperationOptions {

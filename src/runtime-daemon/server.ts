@@ -76,6 +76,7 @@ import {
   type RuntimeDaemonRequest,
   type RuntimeDaemonSuccessResponse,
   RUNTIME_DAEMON_METHODS,
+  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
   isRuntimeDaemonDrainingSensitiveMethod,
   isRuntimeDaemonMutationMethod,
   isRuntimeDaemonRetiredMethod,
@@ -863,6 +864,7 @@ async function dispatchWithOperation(
     request.method === "input.submit" ||
     request.method === "input.withdraw" ||
     request.method === "session.settings.update" ||
+    RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(request.method) ||
     options.requireOperationEnvelope !== true
   ) {
     return execute();

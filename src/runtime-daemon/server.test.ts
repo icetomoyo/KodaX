@@ -322,6 +322,57 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
+  it('serves agent-family mutations without the generic operation envelope (T30)', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-agent-envelope-'));
+    try {
+      const runtime = makeRuntime();
+      const send = vi.spyOn(runtime.agents, 'send');
+      const interrupt = vi.spyOn(runtime.agents, 'interrupt');
+      const setEnabled = vi.spyOn(runtime.admin.agentRegistrations, 'setEnabled');
+      const controlJournal = createRuntimeControlJournal({ rootDir });
+      const dispatcher = createRuntimeDaemonDispatcher({
+        runtime,
+        controlJournal,
+        requireOperationEnvelope: true,
+        allowAgentRegistrationAdmin: true,
+      });
+      await initializeDispatcher(dispatcher, { operationDeduplication: true });
+
+      // Generic mutations still demand the durable envelope.
+      const denied = await dispatcher.handle(createRuntimeDaemonRequest(
+        'req-agent-envelope-generic',
+        'run.start',
+        { sessionId: 'session-1', prompt: 'hello' },
+      ));
+      expect(isRuntimeDaemonSuccessResponse(denied)).toBe(false);
+      if (!isRuntimeDaemonSuccessResponse(denied)) {
+        expect(denied.error.code).toBe('operation_required');
+      }
+
+      for (const [id, method] of [
+        ['req-agent-envelope-send', 'agents.send'],
+        ['req-agent-envelope-interrupt', 'agents.interrupt'],
+        ['req-agent-envelope-registration', 'agentRegistrations.setEnabled'],
+      ] as const) {
+        const response = await dispatcher.handle(createRuntimeDaemonRequest(
+          id,
+          method,
+          METHOD_SMOKE_PARAMS[method],
+        ));
+        expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+      }
+      expect(send).toHaveBeenCalledWith('session-1', '/root/smoke', 'continue', undefined);
+      expect(interrupt).toHaveBeenCalledWith('session-1', '/root/smoke', undefined);
+      expect(setEnabled).toHaveBeenCalledWith('external:smoke', false, {
+        expectedConfigurationRevision: undefined,
+        expectedManagementOwner: undefined,
+      });
+      dispatcher.close();
+    } finally {
+      fs.rmSync(rootDir, { force: true, recursive: true });
+    }
+  });
+
   it('marks every dispatched mutation unknown-safe before applying its effect', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-dispatch-'));
     try {
@@ -1304,7 +1355,6 @@ describe('runtime daemon dispatcher', () => {
         mode: 'scoped',
         providers: ['openai'],
       },
-      operation: { operationId: 'agent-op-1' },
     })).resolves.toMatchObject({ turnId: 'turn-agent-1' });
 
     await expect(client.agents.spawn('session-1', {

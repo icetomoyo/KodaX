@@ -586,6 +586,22 @@ const MUTATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonMutationMetho
   RUNTIME_DAEMON_MUTATION_METHODS,
 );
 
+/**
+ * FEATURE_298 T30 — agent-family mutations carry their own domain identity
+ * (registration revision CAS, followup expectedRevision, actor turn/message
+ * semantics), so they neither require nor carry the generic operation
+ * envelope ahead of the T25 control-journal retirement.
+ */
+export const RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS: ReadonlySet<RuntimeDaemonMethod> = new Set([
+  'agents.spawn',
+  'agents.send',
+  'agents.followup',
+  'agents.interrupt',
+  'agentRegistrations.upsert',
+  'agentRegistrations.setEnabled',
+  'agentRegistrations.remove',
+]);
+
 // Reverse-bridge control requests mutate daemon-owned live state, but must not
 // enter the durable operation journal: credential.supply can contain a secret,
 // while supply/complete are already reconciled by their one-shot request IDs.
