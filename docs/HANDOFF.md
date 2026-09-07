@@ -596,3 +596,17 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留（票面已记）**：REPL parity 人工终端回归待发布验收；daemon 观察自脱离后 Ink 不自动重挂（重连语义 T18/T25 评估）；redirect 续跑 600ms 窗口约束（慢启动按中断轮返回、输入仍在 Host 队列，recover continuation-round deferral 已有记录）。
 
 **下一步**：T18（classic+编辑器→Client；Blocked by T34✓，与 T17 无依赖）：classic repl.ts 普通输入/外部编辑器返回/继续旧会话/交互显示切同一 Client（复用 T17 的 client-plane 适配与投影，classic surface 有自己的渲染路径）；删 classic runtimeRunner+storage fallback（createRuntimeReplEventBridge 随之退役）+kodax_cli classic 分叉不再传 runner。之后并行池 T19/T20/T30/T35（T35 四缺口图在前记录）→收尾 T25/T26/T27→T15。
+
+---
+
+## 2026-09-07 T18 Done (26/35) — classic 控制台面切换完成、复验闭环
+
+**落地 `dee66bea`**:classic-plane-display.ts(createClassicPlaneDisplayDiffer:基线全量打底防历史重印、为终态工具补 :start+:done、assistant 后缀流式、工具三段(▶ live 含 awaiting_approval/✓✗• 终态恰一次)、窗口外 id 双 Map/Set 剪枝、thinking 100 字符预览、notice 一次;attachClassicPlaneDisplay:observe→differ 打印+view.interactions 经 dialogChain 串行排空,handledInteractions 防重,not-accepted 释放条目);classic-plane-interactions.ts(parseClassicChoice:/^[1-9][0-9]*$/ 数字|精确标签|allowCustomInput 自由文本|空=取消;createClassicPlaneDialogSurface:question/questionMulti/questionInput/permission——permission 返回原始 ConfirmResult,answerClientPlaneInteraction 负责归约)。repl.ts:RepLOptions.clientPlane;planeDisplayWrite(assistant 无换行流式+pendingAssistantNewline 守卫);attachPlaneDisplayFor(退避重试 5 次 min(1s*n,5s)+最终 emitKodaXDiagnostic);setContextSessionId 统一 6 处切换点(/recover/启动播种//new//load/fork×2)并重挂;runPlaneRoundWithStop(AbortController+activePlaneAbort,SIGINT 捕获→abort→Host stop)对话轮与编辑器返回两用;编辑器三元 plane 分支;resume 会话列表 (await getGitRoot())??undefined→sessions.list projectRoot 限定。**删除**:repl classic runner 全套(ReplRuntimeRunner 类型/dispatch/boundary/bash/compaction 分支/requestRuntimePermission/死导入 ConfirmResult 等),runAgentRound 签名简化;kodax_cli classic 分叉复用 Ink 同一 clientPlane 接线。
+
+**双轴(Standards 1H/6M+Spec 4H/3M)修复 `f2f6a545`**:awaiting_approval 按 live 打印不落 ✓(High);attach catch-all 不静默;会话切换重挂显示(High——原仅初始化挂一次);编辑器轮 SIGINT;resume projectRoot;基线为终态工具补 :done(否则恢复的工具在下一 push 重印);死导入/剪枝/数字守卫(0x2 不当数字)。**复验 PASS(静态)+追加修复 `25ff5b0b`**:退避重试携带旧 sessionId,会话在 1-5s 窗口内切换时重试会拆新显示挂旧会话(NEW-Medium——入口守卫 attempt>0&&planeDisplaySessionId!==sessionId 即弃);同会话在途 attach 重复调用泄漏双份打印(NEW-Low——attachInFlightSessionId 去重,.then/.catch 各自清);S3 基线回归测试第二条 push 原先丢弃已完成工具=对 pre-fix differ 也通过(空测试)——改为保留 restored 条目使其 load-bearing。**门禁终态**:classic-plane-display 7、classic-plane-interactions 4、S1 sdk-classic-plane 2(真实 Host 轮打印 assistant 流式且无 user: 重印;仅挂视图不打字)、repl 全量 2669、tsc 481 恒定、build 绿。票据翻转 186eb45(submodule)+父指针 34895301。
+
+**坑**:python patch 中途 assert 失败=整体不写(重贴全量);半应用 attach 重构直接整块删除重写更稳;differ 期望值手算易错(测试内计算期望)。
+
+**残留(票面已记)**:plane 提交丢 inputArtifacts(承 T17,待 Host input face 工件通道);classic differ 假定增长前缀——有界 [truncated] 与 readItem 分页 classic 未做(Low);REPL parity classic/编辑器人工回归归发布验收。
+
+**下一步 T35(单发 CLI→Client;四缺口图见上)**:(1) KodaXProductClient 增 runs.await(client-contract+sdk-client 投影,现有 runs.read/stop);(2) kodax_cli runCliTaskWithRuntime 改 connectKodaXClient+sessions.create({temporary:--no-session})+inputs.submit+runs.await,删 CLI 侧 resolveCliTaskSessionId+finally delete(Host 临时会话已自删,T09 S1 已证);(3) SIGINT→client.runs.stop+退出码映射,断连≠完成(phase unknown 不当成功);(4) 一次性专用非持久进度适配器替代 createRuntimeReplEventBridge daemon 链(iteration/retry/provider.recovery/tool input delta 进 JSONL),emitJsonRunResultIfNeeded 字节不变。RED 骨架:json --no-session 退出 0+JSONL+无会话文件;中途 kill→终端无 completed;注入 retry/recovery 事件在 JSONL 有、events.replay 无。之后 T19/T20/T30→收尾 T25/T26/T27→T15。
