@@ -42,6 +42,7 @@ type UIAction =
   | { type: "CLEAR_RESPONSE" }
   | { type: "ADD_HISTORY_ITEM"; payload: HistoryItem }
   | { type: "BULK_ADD_HISTORY_ITEMS"; payload: HistoryItem[] }
+  | { type: "REPLACE_HISTORY_ITEMS"; payload: HistoryItem[] }
   | { type: "UPDATE_HISTORY_ITEM"; payload: { id: string; updates: Partial<HistoryItem> } }
   | { type: "CLEAR_HISTORY" }
   | { type: "ADD_TOOL_CALL"; payload: ToolCall }
@@ -184,6 +185,11 @@ function uiReducer(state: UIState, action: UIAction): UIState {
       // Add item and trim to max limit at round boundaries - 添加项目并在 round 边界处裁剪到最大限制
       return { ...state, history: trimHistoryToRounds([...state.history, action.payload]) };
 
+    case "REPLACE_HISTORY_ITEMS":
+      // FEATURE_298 T17 — the Host session view replaces the display list
+      // wholesale (already bounded Host-side); no local round trimming.
+      return { ...state, history: action.payload };
+
     case "BULK_ADD_HISTORY_ITEMS":
       // FEATURE_212 (v0.7.45) — append many items in ONE dispatch (one
       // re-render) instead of N dispatches. Same round-boundary trim as the
@@ -299,6 +305,10 @@ export function UIStateProvider({
     []
   );
 
+  const replaceHistoryItems = useCallback((items: HistoryItem[]) => {
+    dispatch({ type: "REPLACE_HISTORY_ITEMS", payload: items });
+  }, []);
+
   const updateHistoryItem = useCallback(
     (id: string, updates: Partial<HistoryItem>) => {
       dispatch({ type: "UPDATE_HISTORY_ITEM", payload: { id, updates } });
@@ -366,6 +376,7 @@ export function UIStateProvider({
       clearResponse,
       addHistoryItem,
       addHistoryItems,
+      replaceHistoryItems,
       updateHistoryItem,
       clearHistory,
       addToolCall,
@@ -385,6 +396,7 @@ export function UIStateProvider({
       clearResponse,
       addHistoryItem,
       addHistoryItems,
+      replaceHistoryItems,
       updateHistoryItem,
       clearHistory,
       addToolCall,

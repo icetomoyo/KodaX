@@ -166,6 +166,7 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
+import type { ClientInteractionResponse, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -5873,6 +5874,48 @@ complete -c kodax -l version -d 'Show version'`);
               gitRoot?: string;
               surface: string;
             }) => interactiveRuntime.sessions.create(input).then(() => undefined),
+          },
+          // FEATURE_298 T17 — the client plane: Ink submits through the
+          // Host input face, renders from the live session view, and stops
+          // via run receipts. Works in-process and over the daemon face.
+          clientPlane: {
+            submit: (input: { sessionId: string; text: string; inputId: string }) =>
+              interactiveRuntime.runs.acceptInput({
+                sessionId: input.sessionId,
+                text: input.text,
+                inputId: input.inputId,
+                delivery: 'immediate',
+              }),
+            withdraw: (sessionId: string, inputId: string) =>
+              interactiveRuntime.runs.withdrawInput(sessionId, inputId)
+                .then((withdrawn) => withdrawn.text)
+                .catch(() => undefined),
+            awaitRun: async (sessionId: string, runId: string) => {
+              void sessionId;
+              const outcome = await interactiveRuntime.runs.await(runId);
+              return {
+                phase: outcome.phase,
+                ...(outcome.result !== undefined ? { result: outcome.result } : {}),
+                ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
+              };
+            },
+            stop: (runId: string) =>
+              interactiveRuntime.runs.abort(runId).catch(() => undefined),
+            observe: (sessionId: string, onView: (view: ClientSessionView) => void) =>
+              interactiveRuntime.sessions
+                .observeView(sessionId, onView)
+                .then((observation) => () => observation.close()),
+            readItem: (sessionId: string, itemId: string, offset?: number) =>
+              interactiveRuntime.sessions.readViewItem(
+                sessionId,
+                itemId,
+                offset !== undefined ? { offset } : undefined,
+              ),
+            respondInteraction: (requestId: string, response: ClientInteractionResponse) =>
+              interactiveRuntime.interactions
+                .respond(requestId, response)
+                .then((result) => result.accepted)
+                .catch(() => false),
           },
           // FEATURE_298 T34 — manual /compact replays the Host journal
           // through the compaction domain and persists there.

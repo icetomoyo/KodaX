@@ -617,6 +617,8 @@ export interface UIActions {
   // FEATURE_212 (v0.7.45) — add many items in ONE dispatch (one re-render).
   // Used by session resume to avoid N dispatches → N re-renders (O(n²)).
   addHistoryItems: (items: CreatableHistoryItem[]) => void;
+  /** FEATURE_298 T17 — wholesale replacement from the Host session view. */
+  replaceHistoryItems: (items: HistoryItem[]) => void;
   updateHistoryItem: (id: string, updates: Partial<HistoryItem>) => void;
   clearHistory: () => void;
 

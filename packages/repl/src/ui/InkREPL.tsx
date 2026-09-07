@@ -526,6 +526,13 @@ import {
   type TranscriptSelectionSpan,
 } from "./utils/transcript-selection-gestures.js";
 import { buildHostSessionPayload } from "./utils/session-payload.js";
+import {
+  clientViewToHistoryItems,
+  runClientPlaneRound,
+  viewRunsActive,
+  type InkClientPlane,
+} from "./client-plane.js";
+import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
 import { SessionReadError } from "../interactive/storage.js";
 import type {
   PreparedSessionAppendBaseline,
@@ -770,6 +777,8 @@ export interface InkREPLOptions extends KodaXOptions {
   sessionCommands?: SessionCommandBinding;
   compactSession?: CommandCallbacks['compactSession'];
   memory?: CommandCallbacks['memory'];
+  /** FEATURE_298 T17 — when bound, execution/observation travel the Client plane. */
+  clientPlane?: InkClientPlane;
   subscribeTransientNotices?: (
     listener: (notice: InkTransientNotice) => void,
   ) => () => void;
@@ -1795,7 +1804,37 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // `emitInfoItemToCorrectLayer` instead — see its JSDoc (~L1510) for
   // the hard rule. Plain assistant / tool_group / thinking items are
   // fine to `addHistoryItem` directly.
-  const { addHistoryItem, addHistoryItems, clearHistory: clearUIHistory, setSessionId } = useUIActions();
+  const { addHistoryItem, addHistoryItems, replaceHistoryItems, clearHistory: clearUIHistory, setSessionId } = useUIActions();
+  // FEATURE_298 T17 — the client plane: when bound, the Host session view is
+  // the display authority (items replace wholesale) and rounds travel the
+  // Host input/run faces instead of the in-process runner.
+  const [clientView, setClientView] = useState<ClientSessionView | null>(null);
+  const clientPlaneActiveRunRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!options.clientPlane) return;
+    let closed = false;
+    let closer: (() => void) | undefined;
+    void options.clientPlane.observe(context.sessionId, (view) => {
+      if (closed) return;
+      setClientView(view);
+      clientPlaneActiveRunRef.current = viewRunsActive(view);
+      replaceHistoryItems(
+        clientViewToHistoryItems(view.items, { activeRunId: viewRunsActive(view) }),
+      );
+    }).then((close) => {
+      if (closed) {
+        close();
+        return;
+      }
+      closer = close;
+    }).catch(() => undefined);
+    return () => {
+      closed = true;
+      closer?.();
+      setClientView(null);
+      clientPlaneActiveRunRef.current = undefined;
+    };
+  }, [options.clientPlane, context.sessionId, replaceHistoryItems]);
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
     serializeUiHistorySnapshot(history),
@@ -8187,6 +8226,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
 
     try {
+      // FEATURE_298 T17 — client plane: the round travels the Host input/run
+      // faces; display comes from the live session view (no in-band events).
+      if (options.clientPlane) {
+        return await runClientPlaneRound({
+          plane: options.clientPlane,
+          sessionId: context.sessionId,
+          prompt,
+          abortSignal: runOptions.abortSignal,
+        });
+      }
       if (options.runtimeRunner) {
         return await options.runtimeRunner({
           options: runOptions,
