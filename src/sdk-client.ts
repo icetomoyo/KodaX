@@ -1,6 +1,6 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import { connectKodaXRuntime } from './sdk-runtime.js';
+import { connectKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
 
 export type {
@@ -63,9 +63,24 @@ export async function connectKodaXClient(
     daemonToken: options.token,
     autoStart: false,
   });
+  return toKodaXProductClient(runtime);
+}
+
+/**
+ * FEATURE_298 T35 — project a connected runtime as the product client. The
+ * CLI uses this over the runtime its process already owns (embedded or
+ * daemon); external clients use connectKodaXClient.
+ */
+export function toKodaXProductClient(
+  runtime: KodaXRuntime,
+): KodaXProductClient {
   return {
     host: {
-      shutdown: () => runtime.daemon.shutdown(),
+      shutdown: () => runtime.daemon !== undefined
+        ? runtime.daemon.shutdown()
+        // An embedded facade is the Host in this process: closing it is the
+        // shutdown.
+        : runtime.close().then(() => ({ accepted: true as const })),
     },
     sessions: {
       create: (input) => runtime.sessions.create(input),

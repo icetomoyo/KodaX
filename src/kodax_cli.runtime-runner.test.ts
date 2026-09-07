@@ -9,10 +9,10 @@ import type {
 import {
   createInteractiveRuntimeRunner,
   createReplRuntimeAutoModeControl,
-  forwardDaemonCompactionEvent,
   toDaemonRuntimeRunOptions,
   toRuntimeOwnedInteractiveOptions,
 } from './kodax_cli.js';
+import { forwardDaemonCompactionEvent } from './run-progress-events.js';
 
 describe('interactive daemon runtime bridge', () => {
   it('projects only committed daemon compactions as legacy successes', () => {

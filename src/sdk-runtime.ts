@@ -1090,6 +1090,8 @@ export interface KodaXRuntime {
   readonly diagnostics: RuntimeDiagnosticsService;
   /** Present on daemon facades; emits disconnects without waiting for polling. */
   readonly connection?: RuntimeConnectionService;
+  /** Present on daemon facades; the embedded Host's owner closes instead. */
+  readonly daemon?: RuntimeDaemonManagementService;
   readonly admin: RuntimeAdminService;
   readonly agents: RuntimeAgentService;
   /**
