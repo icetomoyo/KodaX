@@ -1020,7 +1020,7 @@ describe('runtime daemon client proxy', () => {
     const base = fakeTransport(calls);
     const transport: RuntimeDaemonClientTransport = {
       ...base,
-      request(method, params, operation, control) {
+      request(method, params, control) {
         if (method === 'session.transcript') {
           if (control?.signal !== undefined) interruptedReads.push(control.signal);
           return new Promise((_resolve, reject) => {
@@ -1029,7 +1029,7 @@ describe('runtime daemon client proxy', () => {
             }, { once: true });
           });
         }
-        return base.request(method, params, operation, control);
+        return base.request(method, params, control);
       },
     };
     const client = createRuntimeDaemonClient({
@@ -1069,9 +1069,9 @@ describe('runtime daemon client proxy', () => {
     let waitSignal: AbortSignal | undefined;
     const transport: RuntimeDaemonClientTransport = {
       ...base,
-      request(method, params, operation, control) {
+      request(method, params, control) {
         if (method !== 'agents.wait') {
-          return base.request(method, params, operation, control);
+          return base.request(method, params, control);
         }
         calls.push({ method, params });
         waitSignal = control?.signal;
@@ -1117,9 +1117,9 @@ describe('runtime daemon client proxy', () => {
     const base = fakeTransport(calls);
     const transport: RuntimeDaemonClientTransport = {
       ...base,
-      request(method, params, operation, control) {
+      request(method, params, control) {
         if (method !== 'session.observe') {
-          return base.request(method, params, operation, control);
+          return base.request(method, params, control);
         }
         calls.push({ method, params });
         return new Promise((_resolve, reject) => {

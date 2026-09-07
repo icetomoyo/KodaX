@@ -166,15 +166,9 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.clients.clear();
   }
 
-  private beginDraining(expectedRevision?: number): void {
+  private beginDraining(): void {
     if (this.closed) throw managementError('conflict', 'Runtime daemon management is closed.');
     if (this.draining) throw managementError('conflict', 'Runtime daemon is already draining.');
-    if (expectedRevision !== undefined && this.revision !== expectedRevision) {
-      throw managementError(
-        'conflict',
-        `Runtime daemon management revision changed: expected ${expectedRevision}, current ${this.revision}.`,
-      );
-    }
     if (this.activeMutations > 0) {
       throw managementError(
         'conflict',
@@ -187,14 +181,8 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.cancelOrphanExitCheck();
   }
 
-  private async assertStoppable(expectedRevision?: number): Promise<void> {
+  private async assertStoppable(): Promise<void> {
     const current = await this.preflight();
-    if (expectedRevision !== undefined && this.revision !== expectedRevision) {
-      throw managementError(
-        'conflict',
-        `Runtime daemon state changed before stop commit: expected ${expectedRevision}, current ${this.revision}.`,
-      );
-    }
     if (!current.canStop) {
       throw managementError(
         'conflict',

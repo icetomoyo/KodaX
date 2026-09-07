@@ -372,7 +372,7 @@ export async function createRuntimeDaemonSocketClientTransport(
   });
 
   return {
-    request(method, params, _operation, control) {
+    request(method, params, control) {
       if (closed) {
         return Promise.reject(disconnectError ?? new RuntimeDaemonDisconnectError(
           'Runtime daemon transport is closed.',
@@ -383,7 +383,7 @@ export async function createRuntimeDaemonSocketClientTransport(
       }
       const id = `req_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
       const requestParams = method === 'initialize' || method === 'runtime.initialize'
-        ? withDurableOperationCapability(params, clientInstanceId, clientInstanceSecret)
+        ? withClientInstanceIdentity(params, clientInstanceId, clientInstanceSecret)
         : params;
       const frame = createRuntimeDaemonRequest(id, method, requestParams);
       let encoded: string;
@@ -480,7 +480,7 @@ export async function createRuntimeDaemonSocketClientTransport(
   };
 }
 
-function withDurableOperationCapability(
+function withClientInstanceIdentity(
   value: unknown,
   instanceId: string,
   instanceSecret: string,

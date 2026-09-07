@@ -203,10 +203,9 @@ describe('runtime daemon transport', () => {
     const pending = transport.request(
       'daemon.status',
       undefined,
-      undefined,
       {
         signal: controller.signal,
-        onLateResult: (value) => lateResults.push(value),
+        onLateResult: (value: unknown) => lateResults.push(value),
       },
     );
     await waitFor(() => requestId !== undefined && accepted !== undefined);
@@ -231,10 +230,9 @@ describe('runtime daemon transport', () => {
     const expiredPending = transport.request(
       'daemon.status',
       undefined,
-      undefined,
       {
         signal: expiredController.signal,
-        onLateResult: (value) => lateResults.push(value),
+        onLateResult: (value: unknown) => lateResults.push(value),
       },
     );
     await waitFor(() => requestId !== undefined);

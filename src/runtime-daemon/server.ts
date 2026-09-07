@@ -29,7 +29,6 @@ import type {
   RuntimeDaemonClientSnapshot,
   RuntimeDaemonClientType,
   RuntimeDaemonPreflight,
-  RuntimeDaemonRollbackInput,
   RuntimeDiagnosticFilter,
   RuntimeEvent,
   RuntimeEventFilter,
@@ -61,7 +60,7 @@ import type {
   RuntimeSubmitInput,
   RuntimeSubscription,
   RuntimeWorkflowFilter,
-  type RuntimeWorkflowStartInput,
+  RuntimeWorkflowStartInput,
 } from "../sdk-runtime.js";
 import { bindRuntimeLearningClient } from "../runtime-learning.js";
 import { sandboxRuntimeCapability } from "../sandbox-runtime.js";
@@ -357,7 +356,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "agents.events",
     "agents.wait",
   ]),
-    ...scopeEntries("daemon:admin", [
+  ...scopeEntries("daemon:admin", [
     "runtime.shutdown",
     "daemon.stop",
     "daemon.preflight",
@@ -697,15 +696,15 @@ export function createRuntimeDaemonDispatcher(
         );
       let dispatched: unknown;
       try {
-        const operation = dispatchMutation(
+        const mutation = dispatchMutation(
           request,
           options,
           dispatch,
         );
         dispatched = isRuntimeDaemonDrainingSensitiveMethod(request.method)
-          ? await operation
+          ? await mutation
           : await raceRuntimeDaemonRequestCancellation(
-              operation,
+              mutation,
               requestController.signal,
             );
       } catch (error: unknown) {
@@ -1643,8 +1642,7 @@ async function dispatchRuntimeDaemonRequest(
         );
       }
       // FEATURE_298 T31 — the credential identity for manual compaction is a
-      // Host-minted short-lived maintenance id, not the client's operation
-      // envelope (which the control journal still uses purely for dedup).
+      // Host-minted short-lived maintenance id, not a client-supplied identity.
       // Mirrors the daemon-minted trustedRunId precedent on the run path.
       const providerCredentialAccess = bindTrustedScopedCredentialAccess({
         binding: credentialBinding,
@@ -3647,12 +3645,6 @@ function isRuntimeDaemonErrorCode(
     value === "cancelled" ||
     value === "overloaded" ||
     value === "client_upgrade_required" ||
-    value === "operation_required" ||
-    value === "operation_epoch_mismatch" ||
-    value === "operation_id_reuse" ||
-    value === "operation_interrupted" ||
-    value === "operation_unknown" ||
-    value === "control_history_untrusted" ||
     value === "resync_required" ||
     value === "read_timeout" ||
     value === "read_cancelled" ||

@@ -359,7 +359,6 @@ import {
   acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
   readRuntimeDaemonLockOwner,
-  readRuntimeDaemonState,
   readRuntimeOwnerProcessStartIdentity,
   readRuntimeOwnerPolicy,
   readRuntimeDaemonToken,
@@ -2194,8 +2193,7 @@ export type RuntimeTerminalCode =
   | "credential_unavailable"
   | "host_not_dispatched"
   | "host_outcome_unknown"
-  | "actor_settlement_not_persisted"
-  | "control_history_untrusted";
+  | "actor_settlement_not_persisted";
 
 /** Credential-safe failure category; raw provider error text is never required. */
 export type RuntimeRunFailureKind =
@@ -18349,8 +18347,7 @@ function isRuntimeTerminalCode(value: unknown): value is RuntimeTerminalCode {
     value === "credential_unavailable" ||
     value === "host_not_dispatched" ||
     value === "host_outcome_unknown" ||
-    value === "actor_settlement_not_persisted" ||
-    value === "control_history_untrusted"
+    value === "actor_settlement_not_persisted"
   );
 }
 

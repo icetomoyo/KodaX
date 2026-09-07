@@ -1514,7 +1514,6 @@ function runtimeTerminalFactSchema(): RuntimeDaemonJsonSchema {
         'host_not_dispatched',
         'host_outcome_unknown',
         'actor_settlement_not_persisted',
-        'control_history_untrusted',
       ],
     },
     effectOutcome: { enum: ['none', 'known', 'unknown'] },

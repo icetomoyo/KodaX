@@ -169,8 +169,8 @@ describe('product Host startup and passive connection', () => {
     const current = createCurrentTransport([], async () => undefined);
     const transport: RuntimeDaemonClientTransport = {
       ...current,
-      async request(method, params, operation) {
-        const result = await current.request(method, params, operation) as { readonly identity: Record<string, unknown> };
+      async request(method, params) {
+        const result = await current.request(method, params) as { readonly identity: Record<string, unknown> };
         return { ...result, identity: { ...result.identity, version: OLDER_RUNTIME_VERSION } };
       },
     };
@@ -205,8 +205,8 @@ describe('product Host startup and passive connection', () => {
       const current = createCurrentTransport([], async () => undefined);
       const transport: RuntimeDaemonClientTransport = {
         ...current,
-        async request(method, params, operation) {
-          const result = await current.request(method, params, operation) as { readonly identity: Record<string, unknown> };
+        async request(method, params) {
+          const result = await current.request(method, params) as { readonly identity: Record<string, unknown> };
           return { ...result, identity: { ...result.identity, version } };
         },
       };
@@ -255,9 +255,9 @@ describe('product Host startup and passive connection', () => {
     const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
     const transport: RuntimeDaemonClientTransport = {
       ...base,
-      async request(method, params, operation) {
+      async request(method, params) {
         if (method === 'runtime.shutdown') throw new Error('Host became busy');
-        return base.request(method, params, operation);
+        return base.request(method, params);
       },
     };
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport));

@@ -119,7 +119,6 @@ export interface RuntimeDaemonClientTransport {
   request(
     method: RuntimeDaemonMethod,
     params?: unknown,
-    operation?: undefined,
     control?: RuntimeDaemonRequestControl,
   ): Promise<unknown>;
   subscribe(listener: (notification: RuntimeDaemonNotification) => void): RuntimeSubscription;
@@ -263,7 +262,6 @@ export function createRuntimeDaemonClient(
   ): Promise<unknown> => options.transport.request(
     method,
     params,
-    undefined,
     control,
   );
   const readRequest = (
