@@ -38,12 +38,35 @@ function isSessionNotFound(error: unknown): boolean {
   );
 }
 
+/**
+ * Terminal outcome → legacy result. An executor-produced result passes
+ * through untouched; a run that settles cancelled/interrupted without one
+ * gets the synthesized interrupted shape; anything else (including the
+ * disconnect `unknown` phase) is an error, never success.
+ */
+export function projectOneShotOutcome(
+  outcome: { readonly phase: string; readonly result?: KodaXResult; readonly error?: string },
+  runId: string,
+  fallbackSessionId: string,
+): KodaXResult {
+  if (outcome.error !== undefined) {
+    throw new Error(outcome.error);
+  }
+  if (outcome.result !== undefined) {
+    return outcome.result;
+  }
+  if (outcome.phase === 'cancelled' || outcome.phase === 'interrupted') {
+    return interruptedOneShotResult(fallbackSessionId);
+  }
+  throw new Error(`Runtime run ${runId} ended without a result.`);
+}
+
 interface OneShotSessionPlan {
   readonly sessionId: string;
   readonly resumed: boolean;
 }
 
-async function resolveOneShotSession(
+export async function resolveOneShotSession(
   client: KodaXProductClient,
   options: KodaXOptions,
   prompt: string,
@@ -174,18 +197,7 @@ export async function runOneShotClientTask(
 
     const outcome = await client.runs.await(accepted.runId);
     input.abortSignal?.removeEventListener('abort', requestStop);
-    if (outcome.error !== undefined) {
-      throw new Error(outcome.error);
-    }
-    if (outcome.result !== undefined) {
-      return outcome.result;
-    }
-    if (outcome.phase === 'cancelled' || outcome.phase === 'interrupted') {
-      return interruptedOneShotResult(plan.sessionId);
-    }
-    throw new Error(
-      `Runtime run ${accepted.runId} ended without a result.`,
-    );
+    return projectOneShotOutcome(outcome, accepted.runId, plan.sessionId);
   } finally {
     progress.close();
     if (previousSettings !== undefined) {

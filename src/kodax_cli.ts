@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
-import { forwardRunProgressEvent } from './run-progress-events.js';
-import { exitCodeForOneShotResult, runOneShotClientTask } from './one-shot-task.js';
+import { attachRunProgressAdapter, forwardRunProgressEvent } from './run-progress-events.js';
+import {
+  exitCodeForOneShotResult,
+  projectOneShotOutcome,
+  resolveOneShotSession,
+  runOneShotClientTask,
+} from './one-shot-task.js';
 import { toKodaXProductClient } from './sdk-client.js';
 
 // ── Runtime environment defaults ──
@@ -145,6 +150,7 @@ const version =
 
 import {
   KodaXEvents,
+  type KodaXResult,
   type KodaXOptions,
   KodaXReasoningMode,
   createExtensionRuntime,
@@ -201,7 +207,6 @@ import {
   runInteractiveMode,
   runInkInteractiveMode,
   runSessionPicker,
-  findMostRecentResumableSession,
   getProviderSetupCatalog,
   inspectProviderSetupReadiness,
   providerSetupRestartInstructions,
@@ -565,18 +570,6 @@ async function getInteractiveRuntimeStatus(input: {
   };
 }
 
-interface InteractiveRuntimeRunnerInput {
-  readonly options: KodaXOptions;
-  readonly prompt: string;
-  readonly sessionId: string;
-  readonly permissionMode?: CanonicalPermissionMode;
-  readonly autoModeSettings?: ReplRuntimeAutoModeSettings;
-  readonly surface?: 'cli' | 'repl';
-  readonly requestPermission?: ReplRuntimePermissionPrompt;
-  /** True only for the REPL-owned legacy permission callback. */
-  readonly legacyPermissionHook?: true;
-}
-
 export function createReplRuntimeAutoModeControl(
   runtime: KodaXRuntime,
 ): ReplRuntimeAutoModeControl {
@@ -653,111 +646,6 @@ export function createReplRuntimeAutoModeControl(
   };
 }
 
-interface RuntimeReplEventBridge {
-  setRunId(runId: string): void;
-  close(): Promise<void>;
-}
-
-export function createInteractiveRuntimeRunner(
-  runtime: KodaXRuntime,
-  autoModeControl: ReplRuntimeAutoModeControl = createReplRuntimeAutoModeControl(
-    runtime,
-  ),
-) {
-  return async (
-    input: InteractiveRuntimeRunnerInput,
-  ): Promise<Awaited<ReturnType<typeof runManagedTask>>> => {
-    // Validate transport-isolated options before any durable Session write.
-    // An impossible Run must not leave an empty Session or changed settings.
-    const transportIsolated =
-      runtime.identity.mode === 'daemon' ||
-      runtime.identity.isolation === 'worker';
-    const workerHosted = runtime.identity.isolation === 'worker';
-    const invocationPolicy = input.options.context?.skillInvocation?.runtimePolicy;
-    const policyOptions: KodaXOptions = transportIsolated && invocationPolicy
-      ? {
-          ...input.options,
-          context: {
-            ...input.options.context,
-            skillInvocation: {
-              ...input.options.context?.skillInvocation,
-              runtimePolicy: { ...invocationPolicy, enforceAtRuntime: true },
-            },
-          },
-        }
-      : input.options;
-    const runtimeOptions = toRuntimeOwnedInteractiveOptions(policyOptions, {
-      // Only Worker isolation strips callbacks the outer CLI has already
-      // rejected. Daemon mode keeps host bindings for loud validation below.
-      omitLegacyBeforeToolExecute:
-        input.legacyPermissionHook === true || workerHosted ||
-        (transportIsolated && invocationPolicy !== undefined),
-      omitExtensionRuntime: workerHosted,
-    });
-    const startOptions = transportIsolated
-      ? toDaemonRuntimeRunOptions(runtimeOptions)
-      : runtimeOptions;
-
-    await ensureCliRuntimeSession(
-      runtime,
-      input.sessionId,
-      input.surface ?? 'repl',
-      input.prompt,
-    );
-    if (
-      input.permissionMode !== undefined &&
-      input.autoModeSettings !== undefined &&
-      autoModeControl.syncSettings !== undefined
-    ) {
-      await autoModeControl.syncSettings(
-        input.sessionId,
-        input.permissionMode,
-        input.autoModeSettings,
-      );
-    } else if (input.permissionMode !== undefined) {
-      await runtime.sessions.updateSettings(input.sessionId, {
-        permissionMode: input.permissionMode,
-      });
-    }
-    const bridge = createRuntimeReplEventBridge(runtime, input);
-    const abortSignal = input.options.abortSignal;
-    let abortRun: (() => void) | undefined;
-    try {
-      const handle = await runtime.runs.start({
-        sessionId: input.sessionId,
-        prompt: input.prompt,
-        mode: 'managed_task',
-        permissionBroker:
-          input.requestPermission === undefined ? 'runtime' : 'client',
-        options: startOptions,
-      });
-      bridge.setRunId(handle.runId);
-      abortRun = () => {
-        void runtime.runs.abort(handle.runId).catch(() => undefined);
-      };
-      if (abortSignal?.aborted) {
-        abortRun();
-      } else {
-        abortSignal?.addEventListener('abort', abortRun, { once: true });
-      }
-
-      const result = await handle.result;
-      if (result.error) throw normalizeCliError(result.error);
-      if (!result.result) {
-        if (result.phase === 'cancelled' || result.phase === 'interrupted') {
-          return interruptedRuntimeResult(input.sessionId);
-        }
-        throw new Error(`Runtime run ${handle.runId} ended without a result.`);
-      }
-      return result.result;
-    } finally {
-      if (abortRun) abortSignal?.removeEventListener('abort', abortRun);
-      await bridge.close();
-    }
-  };
-}
-
-/** Keep the shared Session Runtime as the sole owner of Auto receipts. */
 export function toRuntimeOwnedInteractiveOptions(
   options: KodaXOptions,
   sanitization: {
@@ -791,71 +679,14 @@ function omitBeforeToolExecute(
   return rest;
 }
 
-async function ensureCliRuntimeSession(
-  runtime: KodaXRuntime,
-  sessionId: string,
-  surface: 'cli' | 'repl',
-  prompt: string,
-): Promise<void> {
-  try {
-    await runtime.sessions.load(sessionId);
-  } catch (error: unknown) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.startsWith('Session not found:')
-    ) {
-      throw error;
-    }
-    await runtime.sessions.create({
-      sessionId,
-      title: surface === 'repl' ? 'REPL Session' : prompt.slice(0, 50),
-      projectPath: process.cwd(),
-      gitRoot: (await getGitRoot()) ?? process.cwd(),
-      surface,
-    });
-  }
-}
-
-async function runCliTaskWithRuntime(
-  runtime: KodaXRuntime,
-  options: KodaXOptions,
-  prompt: string,
-): Promise<Awaited<ReturnType<typeof runManagedTask>>> {
-  const sessionId = await resolveCliTaskSessionId(options);
-  const transientSession = options.session === undefined;
-  const runOptions: KodaXOptions =
-    options.session === undefined
-      ? options
-      : {
-          ...options,
-          session: { ...options.session, id: sessionId },
-        };
-  try {
-    return await createInteractiveRuntimeRunner(runtime)({
-      options: runOptions,
-      prompt,
-      sessionId,
-      surface: 'cli',
-    });
-  } finally {
-    if (transientSession) {
-      await runtime.sessions.delete(sessionId);
-    }
-  }
-}
-
 /**
- * FEATURE_298 T35 — plain one-shot runs (no prepared Skill/command overlay)
- * travel the product client face: the Host owns session lifecycle, input
- * acceptance, and settlement; CLI flags become session settings. SIGINT
- * requests a durable Host stop (a second SIGINT forces the conventional
- * 130 exit) and the settled result maps to the process exit code.
+ * FEATURE_298 T35 — shared one-shot process ownership: SIGINT requests a
+ * durable Host stop (a second SIGINT forces the conventional 130 exit) and
+ * the settled result maps to the process exit code.
  */
-async function runCliTaskViaClient(
-  runtime: KodaXRuntime,
-  options: KodaXOptions,
-  prompt: string,
-): Promise<Awaited<ReturnType<typeof runManagedTask>>> {
+async function runOneShotOwnedProcess(
+  execute: (abortSignal: AbortSignal) => Promise<KodaXResult>,
+): Promise<KodaXResult> {
   const controller = new AbortController();
   const onSigint = (): void => {
     if (controller.signal.aborted) process.exit(130);
@@ -863,18 +694,120 @@ async function runCliTaskViaClient(
   };
   process.on('SIGINT', onSigint);
   try {
-    const result = await runOneShotClientTask({
-      client: toKodaXProductClient(runtime),
-      runtime,
-      options,
-      prompt,
-      abortSignal: controller.signal,
-    });
+    const result = await execute(controller.signal);
     process.exitCode = exitCodeForOneShotResult(result);
     return result;
   } finally {
     process.removeListener('SIGINT', onSigint);
   }
+}
+
+/**
+ * FEATURE_298 T35 — plain one-shot runs (no prepared Skill/command overlay)
+ * travel the product client face: the Host owns session lifecycle, input
+ * acceptance, and settlement; CLI flags become session settings.
+ */
+async function runCliTaskViaClient(
+  runtime: KodaXRuntime,
+  options: KodaXOptions,
+  prompt: string,
+): Promise<KodaXResult> {
+  return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
+    client: toKodaXProductClient(runtime),
+    runtime,
+    options,
+    prompt,
+    abortSignal,
+  }));
+}
+
+/**
+ * FEATURE_298 T35 — transport shaping for the prepared runs.start seam:
+ * transport-isolated runs wrap the Skill runtime policy with
+ * enforceAtRuntime and strip callbacks the boundary cannot reproduce;
+ * inline embedded runs keep their options intact.
+ */
+export function toPreparedRunStartOptions(
+  identity: Pick<KodaXRuntime['identity'], 'mode' | 'isolation'>,
+  options: KodaXOptions,
+): RuntimeKodaXOptions | KodaXOptions {
+  const transportIsolated =
+    identity.mode === 'daemon' || identity.isolation === 'worker';
+  const workerHosted = identity.isolation === 'worker';
+  const invocationPolicy = options.context?.skillInvocation?.runtimePolicy;
+  const policyOptions: KodaXOptions = transportIsolated && invocationPolicy
+    ? {
+        ...options,
+        context: {
+          ...options.context,
+          skillInvocation: {
+            ...options.context?.skillInvocation,
+            runtimePolicy: { ...invocationPolicy, enforceAtRuntime: true },
+          },
+        },
+      }
+    : options;
+  const runtimeOptions = toRuntimeOwnedInteractiveOptions(policyOptions, {
+    // Worker isolation strips callbacks the outer CLI has already
+    // rejected; daemon mode keeps them for loud validation below.
+    omitLegacyBeforeToolExecute:
+      workerHosted || (transportIsolated && invocationPolicy !== undefined),
+    omitExtensionRuntime: workerHosted,
+  });
+  return transportIsolated
+    ? toDaemonRuntimeRunOptions(runtimeOptions)
+    : runtimeOptions;
+}
+
+/**
+ * FEATURE_298 T35 — prepared Skill/command invocations still carry per-run
+ * options the product input face intentionally does not transport (prompt
+ * overlay, model override, serialized runtime policy), so runs.start stays
+ * as the narrow seam. Session lifecycle, progress forwarding, stop, and
+ * exit codes are identical to the product path.
+ */
+async function runCliTaskWithPreparedOptions(
+  runtime: KodaXRuntime,
+  options: KodaXOptions,
+  prompt: string,
+): Promise<KodaXResult> {
+  const client = toKodaXProductClient(runtime);
+  return runOneShotOwnedProcess(async (abortSignal) => {
+    const plan = await resolveOneShotSession(client, options, prompt);
+    const startOptions = toPreparedRunStartOptions(runtime.identity, options);
+    // Daemon runs get progress through the event bus (their options cross
+    // without callbacks); embedded runs keep receiving the callbacks
+    // directly through startOptions, so an adapter there would double-print.
+    const progress = runtime.identity.mode === 'daemon'
+      ? attachRunProgressAdapter(runtime, {
+          sessionId: plan.sessionId,
+          events: options.events,
+        })
+      : undefined;
+    try {
+      const handle = await runtime.runs.start({
+        sessionId: plan.sessionId,
+        prompt,
+        mode: 'managed_task',
+        permissionBroker: 'runtime',
+        options: startOptions,
+      });
+      progress?.setRunId(handle.runId);
+      const requestStop = (): void => {
+        void client.runs.stop(handle.runId).catch(() => undefined);
+      };
+      abortSignal.addEventListener('abort', requestStop, { once: true });
+      if (abortSignal.aborted) requestStop();
+      try {
+        const outcome = await client.runs.await(handle.runId);
+        return projectOneShotOutcome(outcome, handle.runId, plan.sessionId);
+      } finally {
+        abortSignal.removeEventListener('abort', requestStop);
+      }
+    } finally {
+      progress?.close();
+    }
+  });
 }
 
 export async function prepareCliSkillInvocation(
@@ -892,40 +825,6 @@ export async function prepareCliSkillInvocation(
   return invocation
     ? prepareInvocationExecution(options, invocation, userPrompt, emit)
     : undefined;
-}
-
-async function resolveCliTaskSessionId(options: KodaXOptions): Promise<string> {
-  if (options.session?.id) return options.session.id;
-  if (
-    (options.session?.resume || options.session?.autoResume) &&
-    options.session.storage?.list
-  ) {
-    const storage = options.session.storage;
-    const list = storage.list;
-    const recent = await findMostRecentResumableSession(
-      {
-        list: (gitRoot, listOptions) =>
-          list.call(storage, gitRoot, listOptions),
-      },
-      options.context?.gitRoot ?? undefined,
-    );
-    if (recent) return recent.id;
-  }
-  return generateSessionId();
-}
-
-function interruptedRuntimeResult(
-  sessionId: string,
-): Awaited<ReturnType<typeof runManagedTask>> {
-  return {
-    success: false,
-    lastText: '',
-    messages: [],
-    sessionId,
-    interrupted: true,
-    signal: 'BLOCKED',
-    signalReason: 'Runtime run cancelled.',
-  };
 }
 
 export function toDaemonRuntimeRunOptions(
@@ -1005,155 +904,6 @@ function assertDaemonHostBindingsAbsent(options: KodaXOptions): void {
     `KodaX daemon run option '${binding[0]}' cannot cross the process boundary. ` +
       'Configure the capability in the daemon owner or use embedded mode.',
   );
-}
-
-function createRuntimeReplEventBridge(
-  runtime: KodaXRuntime,
-  input: InteractiveRuntimeRunnerInput,
-): RuntimeReplEventBridge {
-  const buffered: RuntimeEvent[] = [];
-  const toolInputs = new Map<string, Record<string, unknown>>();
-  let activeRunId: string | undefined;
-  let eventChain = Promise.resolve();
-  const enqueue = (event: RuntimeEvent): void => {
-    eventChain = eventChain
-      .then(() => forwardRuntimeReplEvent(runtime, input, event, toolInputs))
-      .catch((error: unknown) => {
-        try {
-          input.options.events?.onError?.(normalizeCliError(error));
-        } catch {
-          // A UI observer cannot be allowed to break the daemon permission bridge.
-        }
-      });
-  };
-  const subscription = runtime.events.subscribe(
-    { sessionId: input.sessionId },
-    (event) => {
-      if (activeRunId === undefined) {
-        buffered.push(event);
-      } else if (event.runId === activeRunId) {
-        enqueue(event);
-      }
-    },
-  );
-  return {
-    setRunId(runId) {
-      activeRunId = runId;
-      for (const event of buffered.splice(0)) {
-        if (event.runId === runId) enqueue(event);
-      }
-    },
-    async close() {
-      subscription.close();
-      await eventChain;
-    },
-  };
-}
-
-async function forwardRuntimeReplEvent(
-  runtime: KodaXRuntime,
-  input: InteractiveRuntimeRunnerInput,
-  event: RuntimeEvent,
-  toolInputs: Map<string, Record<string, unknown>>,
-): Promise<void> {
-  const payload = isRecord(event.payload) ? event.payload : {};
-  if (event.type === 'permission.requested') {
-    await respondToRuntimePermission(
-      runtime,
-      input.requestPermission,
-      event,
-      payload,
-      toolInputs,
-    );
-    return;
-  }
-  if (runtime.identity.mode !== 'daemon') return;
-  forwardRunProgressEvent(
-    input.options.events,
-    event,
-    payload,
-    toolInputs,
-  );
-}
-
-async function respondToRuntimePermission(
-  runtime: KodaXRuntime,
-  requestPermission: ReplRuntimePermissionPrompt | undefined,
-  event: RuntimeEvent,
-  payload: Record<string, unknown>,
-  toolInputs: ReadonlyMap<string, Record<string, unknown>>,
-): Promise<void> {
-  if (typeof payload.id !== 'string' || typeof payload.toolName !== 'string')
-    return;
-  const toolCallId =
-    typeof payload.toolCallId === 'string' ? payload.toolCallId : undefined;
-  const input =
-    toolCallId !== undefined
-      ? (toolInputs.get(toolCallId) ??
-        parsePermissionInput(payload.inputPreview))
-      : parsePermissionInput(payload.inputPreview);
-  const grantSuggestions = parseRuntimeGrantSuggestions(
-    payload.grantSuggestions,
-  );
-  const request = {
-    id: payload.id,
-    sessionId: event.sessionId,
-    runId: event.runId,
-    toolName: payload.toolName,
-    ...(toolCallId !== undefined ? { toolCallId } : {}),
-    input,
-    ...(typeof payload.reason === 'string' ? { reason: payload.reason } : {}),
-    ...(isRuntimePermissionRisk(payload.risk) ? { risk: payload.risk } : {}),
-    ...(typeof payload.executionCwd === 'string'
-      ? { executionCwd: payload.executionCwd }
-      : {}),
-    ...(grantSuggestions.length > 0 ? { grantSuggestions } : {}),
-    createdAt:
-      typeof payload.createdAt === 'string' ? payload.createdAt : event.time,
-    ...(typeof payload.expiresAt === 'string' ? { expiresAt: payload.expiresAt } : {}),
-  };
-  await handleRuntimePermissionRequest(
-    runtime,
-    request,
-    requestPermission
-      ? async (_runtimeRequest, context) => requestPermission(request, context)
-      : async () => ({
-          type: 'reject',
-          reason: 'Interactive permission handler unavailable.',
-        }),
-  );
-}
-
-function isRuntimePermissionRisk(
-  value: unknown,
-): value is 'low' | 'medium' | 'high' {
-  return value === 'low' || value === 'medium' || value === 'high';
-}
-
-function parseRuntimeGrantSuggestions(
-  value: unknown,
-): ReplRuntimePermissionGrantSuggestion[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate) => {
-    if (
-      !isRecord(candidate) ||
-      typeof candidate.id !== 'string' ||
-      (candidate.kind !== 'session' && candidate.kind !== 'persistent') ||
-      typeof candidate.label !== 'string'
-    )
-      return [];
-    return [{ id: candidate.id, kind: candidate.kind, label: candidate.label }];
-  });
-}
-
-function parsePermissionInput(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'string' || value.length === 0) return {};
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isRecord(parsed) ? parsed : { _inputPreview: value };
-  } catch {
-    return { _inputPreview: value };
-  }
 }
 
 function isActiveDaemonRunStatus(value: unknown): boolean {
@@ -5733,7 +5483,7 @@ complete -c kodax -l version -d 'Show version'`);
     try {
       const cliRuntime = await getCliRuntime();
       const result = await (prepared !== undefined
-        ? runCliTaskWithRuntime(
+        ? runCliTaskWithPreparedOptions(
             cliRuntime,
             prepared.mode === 'fork'
               ? { ...prepared.options!, session: undefined }

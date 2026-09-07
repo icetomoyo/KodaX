@@ -255,3 +255,32 @@ it('FEATURE_298 T35 — maps one-shot results to process exit codes', async () =
     success: false, lastText: 'err', messages: [], sessionId: 's',
   })).toBe(1);
 });
+
+it('FEATURE_298 T35 — a disconnect settles as unknown, never as completion', async () => {
+  const harness = await startHarness('kodax-one-shot-disconnect-');
+  const client = toKodaXProductClient(harness.runtime);
+  let release: ((result: KodaXResult) => void) | undefined;
+  executor.managed.mockImplementation((runOptions: KodaXOptions) => {
+    executor.options.push(runOptions);
+    return new Promise<KodaXResult>((resolve) => { release = resolve; });
+  });
+  const runtime = harness.runtime;
+  const baseline = executor.options.length;
+  try {
+    const pending = runOneShotClientTask({
+      client, runtime,
+      options: { provider: 'disconnect-provider' },
+      prompt: 'Outlive the connection.',
+    });
+    await expect.poll(() => executor.options.length).toBe(baseline + 1);
+    // Closing the Host-owning runtime mid-run is the disconnect: the await
+    // must surface phase unknown as an error, not success or interruption.
+    await runtime.close();
+    await expect(pending).rejects.toThrow(/ended without a result|closed|unknown/i);
+    release?.({
+      success: false, interrupted: true, lastText: '', messages: [], sessionId: 'cleanup',
+    });
+  } finally {
+    await harness.close();
+  }
+}, 120_000);
