@@ -527,9 +527,11 @@ import {
 } from "./utils/transcript-selection-gestures.js";
 import { buildHostSessionPayload } from "./utils/session-payload.js";
 import {
+  answerClientPlaneInteraction,
   clientViewToHistoryItems,
   runClientPlaneRound,
   viewRunsActive,
+  type ClientPlaneDialogSurface,
   type InkClientPlane,
 } from "./client-plane.js";
 import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
@@ -1835,6 +1837,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clientPlaneActiveRunRef.current = undefined;
     };
   }, [options.clientPlane, context.sessionId, replaceHistoryItems]);
+  // FEATURE_298 T17 — pending Host interactions drive the Ink dialogs; the
+  // answers travel back through respondInteraction (first valid answer wins
+  // Host-side, so a late dialog result resolves as not accepted). An entry
+  // stays until the interaction leaves the view, which also aborts a dialog
+  // the Host has already resolved elsewhere.
+  const clientPlaneDialogsRef = useRef<ClientPlaneDialogSurface | null>(null);
+  const clientPlaneOpenInteractionsRef = useRef(new Map<string, AbortController>());
+  useEffect(() => {
+    const plane = options.clientPlane;
+    if (!plane) return;
+    const pending = clientView?.interactions ?? [];
+    const pendingIds = new Set(pending.map((interaction) => interaction.requestId));
+    for (const [requestId, controller] of clientPlaneOpenInteractionsRef.current) {
+      if (pendingIds.has(requestId)) continue;
+      clientPlaneOpenInteractionsRef.current.delete(requestId);
+      controller.abort();
+    }
+    for (const interaction of pending) {
+      if (clientPlaneOpenInteractionsRef.current.has(interaction.requestId)) continue;
+      const dialogs = clientPlaneDialogsRef.current;
+      if (!dialogs) continue;
+      const controller = new AbortController();
+      clientPlaneOpenInteractionsRef.current.set(interaction.requestId, controller);
+      void answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal)
+        .catch(() => undefined);
+    }
+  }, [clientView, options.clientPlane]);
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
     serializeUiHistorySnapshot(history),
@@ -8027,6 +8056,40 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       promptContext.signal,
     );
     return resolveReplRuntimePermissionDecision(request, result);
+  };
+
+  // FEATURE_298 T17 — bind the client plane's dialog surface to the same
+  // dialogs the embedded callbacks use; assigned during render so the
+  // interaction effect above always observes the latest closures.
+  clientPlaneDialogsRef.current = {
+    question: (askOptions, signal) => {
+      const events = createStreamingEvents();
+      return events.askUser!(askOptions, undefined, signal === undefined ? undefined : { signal });
+    },
+    questionMulti: (askOptions, signal) => {
+      const events = createStreamingEvents();
+      return events.askUserMulti!(askOptions, undefined, signal === undefined ? undefined : { signal });
+    },
+    questionInput: (askOptions, signal) => {
+      const events = createStreamingEvents();
+      return events.askUserInput!(askOptions, undefined, signal === undefined ? undefined : { signal });
+    },
+    permission: (permissionOptions, signal) =>
+      showConfirmDialog(
+        permissionOptions.toolName,
+        {
+          ...(permissionOptions.inputPreview !== undefined
+            ? { input: permissionOptions.inputPreview }
+            : {}),
+          ...(permissionOptions.reason !== undefined ? { _reason: permissionOptions.reason } : {}),
+          ...(permissionOptions.executionCwd !== undefined
+            ? { _executionCwd: permissionOptions.executionCwd }
+            : {}),
+          ...(permissionOptions.risk !== undefined ? { _runtimeRisk: permissionOptions.risk } : {}),
+        },
+        permissionOptions.grantSuggestions ?? [],
+        signal,
+      ),
   };
 
   // FEATURE_092 v0.7.34 hotfix-3: keep the bootstrap's currentConfig ref in

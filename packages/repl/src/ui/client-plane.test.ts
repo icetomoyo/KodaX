@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
+import type {
+  ClientInteraction,
+  ClientInteractionResponse,
+  ClientSessionView,
+  ClientViewItem,
+} from '@kodax-ai/coding/client-contract';
+import { CANCELLED_TOOL_RESULT_MESSAGE, type AskUserAnswer } from '@kodax-ai/coding';
 import { ToolCallStatus } from './types.js';
-import { clientViewToHistoryItems, viewRunsActive } from './client-plane.js';
+import {
+  answerClientPlaneInteraction,
+  clientViewToHistoryItems,
+  viewRunsActive,
+  type ClientPlaneDialogSurface,
+  type InkClientPlane,
+} from './client-plane.js';
 
 function viewItem(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | 'type' | 'text'>): ClientViewItem {
   return { timestamp: 1_700_000_000_000, ...overrides };
@@ -147,5 +159,140 @@ describe('viewRunsActive (T17)', () => {
       ...base,
       runs: [{ runId: 'r3', phase: 'waiting_user_input' }],
     } as unknown as ClientSessionView)).toBe('r3');
+  });
+});
+
+describe('answerClientPlaneInteraction (T17)', () => {
+  function interaction(kind: 'question', options: { question: string; options?: string[] }): ClientInteraction;
+  function interaction(kind: 'question_input', options: { question: string; default?: string }): ClientInteraction;
+  function interaction(kind: 'permission', options: {
+    toolName: string; reason?: string; grantSuggestions?: { id: string; kind: 'session' | 'persistent'; label: string }[];
+  }): ClientInteraction;
+  function interaction(kind: 'question_multi', options: { questions: { question: string }[] }): ClientInteraction;
+  function interaction(kind: ClientInteraction['kind'], options: unknown): ClientInteraction {
+    return {
+      requestId: `req-${kind}`,
+      sessionId: 's1',
+      runId: 'r1',
+      createdAt: '2026-09-07T00:00:00.000Z',
+      kind,
+      options,
+      ...(kind === 'permission' ? {} : { expiresAt: '2026-09-07T00:05:00.000Z' }),
+    } as ClientInteraction;
+  }
+
+  function planeWith(responses: ClientInteractionResponse[], accepted = true): InkClientPlane & { calls: ClientInteractionResponse[] } {
+    const calls: ClientInteractionResponse[] = [];
+    return {
+      calls,
+      submit: () => Promise.resolve({}),
+      withdraw: () => Promise.resolve(undefined),
+      awaitRun: () => Promise.resolve({ phase: 'completed' }),
+      stop: () => Promise.resolve(undefined),
+      observe: () => Promise.resolve(() => undefined),
+      readItem: () => Promise.resolve(null),
+      respondInteraction: (_requestId, response) => {
+        calls.push(response);
+        responses.push(response);
+        return Promise.resolve(accepted);
+      },
+    };
+  }
+
+  const baseSurface: ClientPlaneDialogSurface = {
+    question: () => Promise.resolve('yes' as AskUserAnswer),
+    questionMulti: () => Promise.resolve({ 'Deploy?' : 'later' }),
+    questionInput: () => Promise.resolve('typed'),
+    permission: () => Promise.resolve({ confirmed: true }),
+  };
+
+  it('answers a question with the dialog selection', async () => {
+    const plane = planeWith([]);
+    const accepted = await answerClientPlaneInteraction(
+      plane, interaction('question', { question: 'Ship?' }), baseSurface,
+    );
+    expect(accepted).toBe(true);
+    expect(plane.calls[0]).toEqual({ kind: 'question', answer: 'yes' });
+  });
+
+  it('maps a cancelled question dialog to the cancel response', async () => {
+    const plane = planeWith([]);
+    await answerClientPlaneInteraction(
+      plane,
+      interaction('question', { question: 'Ship?' }),
+      { ...baseSurface, question: () => Promise.resolve(CANCELLED_TOOL_RESULT_MESSAGE as AskUserAnswer) },
+    );
+    expect(plane.calls[0]).toEqual({ kind: 'cancel' });
+  });
+
+  it('maps multi-question ESC to cancel and answers to the record', async () => {
+    const cancelledPlane = planeWith([]);
+    await answerClientPlaneInteraction(
+      cancelledPlane,
+      interaction('question_multi', { questions: [{ question: 'A?' }, { question: 'B?' }] }),
+      { ...baseSurface, questionMulti: () => Promise.resolve(undefined) },
+    );
+    expect(cancelledPlane.calls[0]).toEqual({ kind: 'cancel' });
+
+    const plane = planeWith([]);
+    await answerClientPlaneInteraction(
+      plane,
+      interaction('question_multi', { questions: [{ question: 'A?' }] }),
+      baseSurface,
+    );
+    expect(plane.calls[0]).toEqual({ kind: 'question_multi', answers: { 'Deploy?': 'later' } });
+  });
+
+  it('maps a text question answer and its ESC to cancel', async () => {
+    const plane = planeWith([]);
+    await answerClientPlaneInteraction(
+      plane, interaction('question_input', { question: 'Name?' }), baseSurface,
+    );
+    expect(plane.calls[0]).toEqual({ kind: 'question_input', text: 'typed' });
+
+    const cancelledPlane = planeWith([]);
+    await answerClientPlaneInteraction(
+      cancelledPlane,
+      interaction('question_input', { question: 'Name?' }),
+      { ...baseSurface, questionInput: () => Promise.resolve(undefined) },
+    );
+    expect(cancelledPlane.calls[0]).toEqual({ kind: 'cancel' });
+  });
+
+  it('resolves a permission decision from the confirm result and suggestions', async () => {
+    const plane = planeWith([]);
+    await answerClientPlaneInteraction(
+      plane,
+      interaction('permission', {
+        toolName: 'bash',
+        grantSuggestions: [
+          { id: 'g1', kind: 'session', label: 'npm scripts' },
+          { id: 'g2', kind: 'persistent', label: 'npm scripts forever' },
+        ],
+      }),
+      { ...baseSurface, permission: () => Promise.resolve({ confirmed: true, runtimeGrantKind: 'session' }) },
+    );
+    expect(plane.calls[0]).toEqual({
+      kind: 'permission',
+      decision: { type: 'allow_session', suggestionId: 'g1' },
+    });
+
+    const rejectedPlane = planeWith([]);
+    await answerClientPlaneInteraction(
+      rejectedPlane,
+      interaction('permission', { toolName: 'bash' }),
+      { ...baseSurface, permission: () => Promise.resolve({ confirmed: false }) },
+    );
+    expect(rejectedPlane.calls[0]).toEqual({
+      kind: 'permission',
+      decision: { type: 'reject', reason: 'User rejected the tool call.' },
+    });
+  });
+
+  it('propagates a not-accepted response as false', async () => {
+    const plane = planeWith([], false);
+    await expect(answerClientPlaneInteraction(
+      plane, interaction('question', { question: 'Ship?' }), baseSurface,
+    )).resolves.toBe(false);
   });
 });
