@@ -12,6 +12,7 @@ import {
   rememberChildProcessTree,
 } from '@kodax-ai/agent';
 import { createMcpTestServerFixture } from '../packages/agent/src/capabilities/mcp/test-helpers.js';
+import { readA2AIntegration, setA2AServerConfig } from './a2a/config.js';
 
 import {
   acquireKodaXInlineOwner,
@@ -430,6 +431,9 @@ describe('daemon CLI smoke', () => {
         KODAX_TRACING: '0',
       },
     });
+    // The serving Host writes stderr continuously; drain it so a full pipe
+    // buffer cannot stall the child.
+    child.stderr?.on('data', () => undefined);
     const baseUrl = `http://127.0.0.1:${listenPort}`;
     const paths = resolveRuntimeDaemonPaths(homeDir, profile);
     try {
@@ -478,6 +482,50 @@ describe('daemon CLI smoke', () => {
       };
       expect(admittedBody.result?.task?.id).toBeDefined();
 
+      // Hot publication fields apply live on the serving Host.
+      const configHomeDir = path.join(homeDir, '.kodax');
+      const servingConfig = readA2AIntegration(configHomeDir).document.server;
+      if (!servingConfig) throw new Error('Hosted A2A server block disappeared.');
+      setA2AServerConfig(configHomeDir, {
+        ...servingConfig,
+        published: { ...servingConfig.published, name: 'Hosted KodaX Agent Renamed' },
+      });
+      const cardName = async (): Promise<string> => {
+        const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+        expect(card.status).toBe(200);
+        return (await card.json() as { readonly name: string }).name;
+      };
+      const renameDeadline = Date.now() + 15_000;
+      while (await cardName() !== 'Hosted KodaX Agent Renamed') {
+        if (Date.now() > renameDeadline) {
+          throw new Error('Hosted A2A hot rename did not propagate to the agent card.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+
+      // Listen changes stay restart-required: the live Host keeps serving the
+      // bootstrap address and never binds the rewritten one.
+      const secondProbe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        secondProbe.once('error', reject);
+        secondProbe.listen(0, '127.0.0.1', resolve);
+      });
+      const secondAddress = secondProbe.address();
+      if (secondAddress === null || typeof secondAddress === 'string') {
+        throw new Error('Second probe address unavailable.');
+      }
+      const untouchedPort = secondAddress.port;
+      await new Promise<void>((resolve) => secondProbe.close(() => resolve()));
+      const renamedConfig = readA2AIntegration(configHomeDir).document.server;
+      if (!renamedConfig) throw new Error('Hosted A2A server block disappeared.');
+      setA2AServerConfig(configHomeDir, {
+        ...renamedConfig,
+        listen: { hostname: '127.0.0.1', port: untouchedPort },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await expect(cardName()).resolves.toBe('Hosted KodaX Agent Renamed');
+      await expect(fetch(`http://127.0.0.1:${untouchedPort}/.well-known/agent-card.json`)).rejects.toThrow();
+
       await runDaemonCommand([
         'stop', '--home', homeDir, '--profile', profile,
         '--timeout-ms', '30000', '--json',
@@ -493,7 +541,7 @@ describe('daemon CLI smoke', () => {
         await killChildProcessTree(child, { forceMs: 2_000, taskkillMs: 5_000 });
       }
     }
-  }, 120_000);
+  }, 150_000);
 
   it('SDK auto-start owns a daemon process outside the embedding process', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-sdk-smoke-'));

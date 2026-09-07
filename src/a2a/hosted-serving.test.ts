@@ -126,6 +126,7 @@ async function pollTaskTerminal(
 it('serves A2A through the Host binding contract: allowed work succeeds, out-of-policy tools are refused, identity and workspaces stay attributed (T21)', async () => {
   const requestBodies: string[] = [];
   const providerServer = createServer((request, response) => {
+    // Client aborts must not crash the mock provider.
     response.socket?.on('error', () => undefined);
     if (!request.url?.includes('/chat/completions')) {
       response.writeHead(404).end();
@@ -309,12 +310,13 @@ it('serves A2A through the Host binding contract: allowed work succeeds, out-of-
       expect(context.actorId).toBe(`a2a:${expectedPrincipal.slice(0, 16)}`);
     }
   } finally {
-    await server?.close();
-    await runtime?.close();
+    // Each step is guarded so a failing close cannot leak the rest.
+    await server?.close().catch(() => undefined);
+    await runtime?.close().catch(() => undefined);
     registerCustomProviders([]);
     vi.unstubAllEnvs();
-    await new Promise<void>((resolve, reject) => {
-      providerServer.close((error) => (error ? reject(error) : resolve()));
+    await new Promise<void>((resolve) => {
+      providerServer.close(() => resolve());
     });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

@@ -1126,6 +1126,20 @@ async function serveDaemonCommand(input: {
   let a2aHandle: ConfiguredA2ARuntimeHandle | undefined;
   let hostedA2AServer: Awaited<ReturnType<typeof prepareKodaXA2AServer>> | undefined;
   let hostedA2AConfigController: IntegrationConfigController<A2AIntegrationDocument> | undefined;
+  // Shared teardown for the hosted A2A serving pair; watcher close is best
+  // effort so a failing close cannot skip the server and outbound cleanup.
+  const closeHostedA2AServing = async (): Promise<void> => {
+    try {
+      hostedA2AConfigController?.close();
+    } catch {
+      // Watcher teardown is best effort before process-level cleanup.
+    }
+    hostedA2AConfigController = undefined;
+    await hostedA2AServer?.close().catch(() => undefined);
+    hostedA2AServer = undefined;
+    a2aHandle?.close();
+    a2aHandle = undefined;
+  };
   let completedNormally = false;
   let ownedRuntimeId: string | undefined;
   let primaryError: Error | undefined;
@@ -1172,7 +1186,7 @@ async function serveDaemonCommand(input: {
           // to serving require an explicit Host restart. An invalid config
           // keeps the Host's existing degraded-domain behavior — serving
           // simply does not start.
-          let serverConfig: ReturnType<typeof readA2AIntegration>['document']['server'];
+          let serverConfig: A2AIntegrationDocument['server'];
           try {
             serverConfig = readA2AIntegration(daemonConfigHome).document.server;
           } catch {
@@ -1180,6 +1194,9 @@ async function serveDaemonCommand(input: {
           }
           if (serverConfig?.listen) {
             const { hostname, port } = serverConfig.listen;
+            // A busy listen port fails the whole Host startup: serving was
+            // explicitly enabled by bootstrap config, so silently serving
+            // nowhere would hide the misconfiguration.
             hostedA2AServer = await prepareKodaXA2AServer(
               createA2AServerOptionsFromConfig({
                 runtime,
@@ -1206,7 +1223,12 @@ async function serveDaemonCommand(input: {
             });
             hostedA2AConfigController.subscribe((snapshot) => {
               const next = snapshot.document.server;
-              if (!next) return;
+              if (!next) {
+                console.error(chalk.yellow(
+                  '[integrations] A2A server block removed; serving continues until Host restart.',
+                ));
+                return;
+              }
               const change = classifyA2AServerChange(appliedServer, next);
               if (change.kind === 'restart-required') {
                 console.error(chalk.yellow(
@@ -1228,19 +1250,7 @@ async function serveDaemonCommand(input: {
           }
           return runtime;
         } catch (error: unknown) {
-          try {
-            hostedA2AConfigController?.close();
-          } catch {
-            // Watcher teardown is best effort before process-level cleanup.
-          }
-          hostedA2AConfigController = undefined;
-          try {
-            await hostedA2AServer?.close();
-          } catch {
-            // Server cleanup is best effort; the runtime close below is the
-            // authoritative teardown path.
-          }
-          hostedA2AServer = undefined;
+          await closeHostedA2AServing();
           try {
             await runtime.close();
           } catch (cleanupError: unknown) {
@@ -1291,12 +1301,7 @@ async function serveDaemonCommand(input: {
       await waitForShutdownSignal(shutdown, externallyClosed);
     } finally {
       testParentWatch?.close();
-      hostedA2AConfigController?.close();
-      hostedA2AConfigController = undefined;
-      await hostedA2AServer?.close().catch(() => undefined);
-      hostedA2AServer = undefined;
-      a2aHandle?.close();
-      a2aHandle = undefined;
+      await closeHostedA2AServing();
       await shutdown();
     }
     completedNormally = true;
@@ -1310,12 +1315,7 @@ async function serveDaemonCommand(input: {
   try {
     await cleanupDaemonServeProcessResources({
       closeA2A: () => {
-        hostedA2AConfigController?.close();
-        hostedA2AConfigController = undefined;
-        void hostedA2AServer?.close().catch(() => undefined);
-        hostedA2AServer = undefined;
-        a2aHandle?.close();
-        a2aHandle = undefined;
+        void closeHostedA2AServing();
       },
       closeHotReload: () => extensions.hotReload.close(),
       disposeExtensions: () => extensions.runtime.dispose(),

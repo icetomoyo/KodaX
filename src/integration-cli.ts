@@ -924,6 +924,11 @@ async function serveA2A(options: {
   readonly serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>;
 }): Promise<void> {
   assertLoopbackHostname(options.hostname);
+  if (!options.serveDaemonHost) {
+    throw new Error(
+      "Host-owned A2A serving requires the runtime daemon host; run `kodax daemon serve` instead.",
+    );
+  }
   const controller = new IntegrationConfigController<A2AIntegrationDocument>({
     domain: "a2a",
     configHome: KODAX_DIR,
@@ -945,14 +950,12 @@ async function serveA2A(options: {
       ...initial.document.server,
       listen: { hostname: options.hostname, port: options.port },
     });
+    const displayHost = options.hostname.includes(":")
+      ? `[${options.hostname}]`
+      : options.hostname;
     stdout(
-      `A2A serving is Host-owned on ${options.hostname}:${options.port}; config changes to serving need a Host restart.`,
+      `A2A serving is Host-owned on ${displayHost}:${options.port}; config changes to serving need a Host restart.`,
     );
-    if (!options.serveDaemonHost) {
-      throw new Error(
-        "Host-owned A2A serving requires the runtime daemon host; run `kodax daemon serve` instead.",
-      );
-    }
     await options.serveDaemonHost({
       profile: options.profile,
       homeDir: options.home,
