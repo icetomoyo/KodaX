@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
-import { attachRunProgressAdapter, forwardRunProgressEvent } from './run-progress-events.js';
+import { attachRunProgressAdapter } from './run-progress-events.js';
 import {
   exitCodeForOneShotResult,
   projectOneShotOutcome,
@@ -54,9 +54,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import {
   createKodaXRuntime,
-  handleRuntimePermissionRequest,
   type KodaXRuntime,
-  type RuntimeEvent,
   type RuntimeKodaXOptions,
 } from './sdk-runtime.js';
 import {
@@ -216,8 +214,6 @@ import {
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
   type CanonicalPermissionMode,
-  type ReplRuntimePermissionGrantSuggestion,
-  type ReplRuntimePermissionPrompt,
   type PreparedInvocation,
   type SessionPickerItem,
   type SessionDedupeReport,
@@ -646,6 +642,7 @@ export function createReplRuntimeAutoModeControl(
   };
 }
 
+/** Keep the shared Session Runtime as the sole owner of Auto receipts. */
 export function toRuntimeOwnedInteractiveOptions(
   options: KodaXOptions,
   sanitization: {
@@ -706,12 +703,20 @@ async function runOneShotOwnedProcess(
  * FEATURE_298 T35 — plain one-shot runs (no prepared Skill/command overlay)
  * travel the product client face: the Host owns session lifecycle, input
  * acceptance, and settlement; CLI flags become session settings.
+ * Repo-intelligence overrides ride the runs.start seam below: they are
+ * per-run options with no session-settings home (F1 parity).
  */
 async function runCliTaskViaClient(
   runtime: KodaXRuntime,
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  const needsRunOptionsSeam =
+    options.context?.repoIntelligenceMode !== undefined
+    || options.context?.repoIntelligenceTrace !== undefined;
+  if (needsRunOptionsSeam) {
+    return runCliTaskWithPreparedOptions(runtime, options, prompt);
+  }
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
     client: toKodaXProductClient(runtime),
     runtime,
@@ -760,11 +765,12 @@ export function toPreparedRunStartOptions(
 }
 
 /**
- * FEATURE_298 T35 — prepared Skill/command invocations still carry per-run
- * options the product input face intentionally does not transport (prompt
- * overlay, model override, serialized runtime policy), so runs.start stays
- * as the narrow seam. Session lifecycle, progress forwarding, stop, and
- * exit codes are identical to the product path.
+ * FEATURE_298 T35 — per-run options the product input face intentionally
+ * does not transport (prepared Skill/command overlays: prompt overlay,
+ * model override, serialized runtime policy; plus repo-intelligence
+ * overrides from flags/env) keep runs.start as the narrow seam. Session
+ * lifecycle, progress forwarding, stop, and exit codes are identical to
+ * the product path.
  */
 async function runCliTaskWithPreparedOptions(
   runtime: KodaXRuntime,

@@ -220,13 +220,14 @@ it('FEATURE_298 T35 — abort requests a Host stop and settles as interrupted', 
   });
   const controller = new AbortController();
   try {
+    const baseline = executor.options.length;
     const pending = runOneShotClientTask({
       client, runtime: harness.runtime,
       options: { provider: 'abort-provider' },
       prompt: 'Stop on request.',
       abortSignal: controller.signal,
     });
-    await expect.poll(() => executor.options.length).toBeGreaterThan(0);
+    await expect.poll(() => executor.options.length).toBe(baseline + 1);
     controller.abort();
     await expect.poll(() => stopSpy.mock.calls.length).toBe(1);
     release!({
@@ -273,10 +274,15 @@ it('FEATURE_298 T35 — a disconnect settles as unknown, never as completion', a
       prompt: 'Outlive the connection.',
     });
     await expect.poll(() => executor.options.length).toBe(baseline + 1);
+    // Attach the expectation first: the rejection fires DURING close, and an
+    // unattached rejection would leak as an unhandled rejection.
+    const expectation = expect(pending).rejects.toThrow(
+      /ended without a result|closed|unknown/i,
+    );
     // Closing the Host-owning runtime mid-run is the disconnect: the await
     // must surface phase unknown as an error, not success or interruption.
     await runtime.close();
-    await expect(pending).rejects.toThrow(/ended without a result|closed|unknown/i);
+    await expectation;
     release?.({
       success: false, interrupted: true, lastText: '', messages: [], sessionId: 'cleanup',
     });

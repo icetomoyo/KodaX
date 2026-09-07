@@ -64,6 +64,8 @@ export function projectOneShotOutcome(
 interface OneShotSessionPlan {
   readonly sessionId: string;
   readonly resumed: boolean;
+  /** Host deletes temporary sessions at settlement; no restore applies. */
+  readonly temporary: boolean;
 }
 
 export async function resolveOneShotSession(
@@ -72,37 +74,38 @@ export async function resolveOneShotSession(
   prompt: string,
 ): Promise<OneShotSessionPlan> {
   const gitRoot = (await getGitRoot()) ?? process.cwd();
+  const temporary = options.session === undefined;
   const createInput = (sessionId?: string) => ({
     ...(sessionId !== undefined ? { sessionId } : {}),
     title: prompt.slice(0, 50),
     projectPath: process.cwd(),
     gitRoot,
     surface: 'cli',
-    ...(options.session === undefined ? { temporary: true as const } : {}),
+    ...(temporary ? { temporary: true as const } : {}),
   });
 
   if (options.session?.id !== undefined) {
     try {
       await client.sessions.read(options.session.id);
-      return { sessionId: options.session.id, resumed: true };
+      return { sessionId: options.session.id, resumed: true, temporary: false };
     } catch (error: unknown) {
       if (!isSessionNotFound(error)) throw error;
       const created = await client.sessions.create(createInput(options.session.id));
-      return { sessionId: created.id, resumed: false };
+      return { sessionId: created.id, resumed: false, temporary: false };
     }
   }
   if (options.session?.resume === true) {
     // Project-scoped like the storage scan this replaces (FEATURE_219).
     const candidates = await client.sessions.list({
-      ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}),
+      projectRoot: gitRoot,
       scope: 'user',
       limit: 1000,
     });
     const recent = candidates.find((session) => session.msgCount > 0);
-    if (recent !== undefined) return { sessionId: recent.id, resumed: true };
+    if (recent !== undefined) return { sessionId: recent.id, resumed: true, temporary: false };
   }
   const created = await client.sessions.create(createInput());
-  return { sessionId: created.id, resumed: false };
+  return { sessionId: created.id, resumed: false, temporary };
 }
 
 /** Run-shaping flags the product path expresses as session settings. */
@@ -163,7 +166,15 @@ export async function runOneShotClientTask(
   const plan = await resolveOneShotSession(client, options, prompt);
 
   const patch = toOneShotSettingsPatch(options);
-  const previousSettings = Object.keys(patch).length > 0 && plan.resumed
+  // Flags stay per-invocation: settings are patched for this run and
+  // restored afterwards, for resumed AND freshly created persistent
+  // sessions (pre-T35 run options never persisted). A concurrent run
+  // another client starts on the same session during this window also
+  // observes the patched settings — bounded by this invocation.
+  // Temporary sessions are deleted by the Host at settlement; nothing
+  // to restore.
+  const restoreSettings = Object.keys(patch).length > 0 && !plan.temporary;
+  const previousSettings = restoreSettings
     ? await client.sessions.getSettings(plan.sessionId)
     : undefined;
   if (Object.keys(patch).length > 0) {
@@ -194,17 +205,24 @@ export async function runOneShotClientTask(
     };
     input.abortSignal?.addEventListener('abort', requestStop, { once: true });
     if (input.abortSignal?.aborted) requestStop();
-
-    const outcome = await client.runs.await(accepted.runId);
-    input.abortSignal?.removeEventListener('abort', requestStop);
-    return projectOneShotOutcome(outcome, accepted.runId, plan.sessionId);
+    try {
+      const outcome = await client.runs.await(accepted.runId);
+      return projectOneShotOutcome(outcome, accepted.runId, plan.sessionId);
+    } finally {
+      input.abortSignal?.removeEventListener('abort', requestStop);
+    }
   } finally {
     progress.close();
     if (previousSettings !== undefined) {
-      // A resumed session keeps its own settings once this invocation ends.
+      // A failed restore would leave this invocation's flags on the
+      // session — surface it instead of swallowing (e.g. disconnect).
       await client.sessions
         .updateSettings(plan.sessionId, restoreSettingsPatch(previousSettings, patch))
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          options.events?.onError?.(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        });
     }
   }
 }

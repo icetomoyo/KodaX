@@ -395,7 +395,15 @@ export function attachRunProgressAdapter(
   const buffered: RuntimeEvent[] = [];
   const dispatch = (event: RuntimeEvent): void => {
     const payload = isRecord(event.payload) ? event.payload : {};
-    forwardRunProgressEvent(input.events, event, payload, toolInputs);
+    try {
+      forwardRunProgressEvent(input.events, event, payload, toolInputs);
+    } catch (error: unknown) {
+      // A formatter defect must not break the subscription; surface it the
+      // same way the retired CLI bridge did — as an output error event.
+      input.events?.onError?.(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
   };
   const subscription = runtime.events.subscribe(
     { sessionId: input.sessionId },
