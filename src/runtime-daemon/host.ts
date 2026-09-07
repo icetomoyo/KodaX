@@ -100,7 +100,7 @@ export async function startRuntimeDaemonHost(
   try {
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
-      createDispatcher: (notify) => createRuntimeDaemonDispatcher({
+      createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({
         runtime: options.runtime,
         authToken: token,
         ...(options.ownsA2AConfigReconciler === true
@@ -109,6 +109,7 @@ export async function startRuntimeDaemonHost(
         ...(options.orphanExitMs !== undefined ? { orphanExitEnabled: true } : {}),
         allowAgentRegistrationAdmin: true,
         notify,
+        disconnect,
         runResults,
         controlJournal,
         reverseBridgeHub,

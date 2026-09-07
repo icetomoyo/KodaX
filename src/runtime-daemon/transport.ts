@@ -47,6 +47,7 @@ export interface RuntimeDaemonSocketServerOptions {
   readonly maxFrameBytes?: number;
   readonly createDispatcher: (
     notify: (notification: RuntimeDaemonNotification) => void,
+    disconnect: () => void,
   ) => RuntimeDaemonDispatcher;
 }
 
@@ -570,7 +571,10 @@ export async function createRuntimeDaemonSocketServer(
       }
       socket.write(`${encoded}\n`);
     };
-    const dispatcher = options.createDispatcher((notification) => send(notification));
+    const dispatcher = options.createDispatcher(
+      (notification) => send(notification),
+      () => socket.destroy(),
+    );
     dispatchers.add(dispatcher);
     const parser = createRuntimeDaemonFrameParser((frame) => {
       if (isRuntimeDaemonRequest(frame)) {

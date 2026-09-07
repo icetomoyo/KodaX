@@ -114,6 +114,8 @@ const LEGACY_TRANSCRIPT_WIRE_BUDGET_BYTES = 512 * 1024;
 export interface RuntimeDaemonDispatcherOptions {
   readonly runtime: KodaXRuntime;
   readonly notify?: RuntimeDaemonNotificationSink;
+  /** Close the physical transport after a stable identity takes over. */
+  readonly disconnect?: () => void;
   readonly runResults?: RuntimeDaemonRunResultStore;
   readonly authToken?: string;
   readonly status?: () => Promise<unknown> | unknown;
@@ -460,6 +462,7 @@ export function createRuntimeDaemonDispatcher(
   let reverseBridgeAttachment:
     RuntimeDaemonReverseBridgeHubAttachment | undefined;
   let initialized = false;
+  let closed = false;
   let logicalClientAttached = false;
   let connectionPurpose: "client" | "probe" = "client";
   let clientCapabilities: RuntimeClientCapabilities = {};
@@ -522,6 +525,7 @@ export function createRuntimeDaemonDispatcher(
         }
       | undefined;
     try {
+      if (closed) throw daemonError("read_cancelled", "Runtime daemon connection is closed; reconnect before sending requests.");
       if (isRuntimeDaemonRetiredMethod(wireRequest.method)) {
         throw daemonError(
           "client_upgrade_required",
@@ -710,6 +714,7 @@ export function createRuntimeDaemonDispatcher(
         "internal_error",
       );
       if (isInitializeMethod(request.method)) {
+        if (closed) throw daemonError("read_cancelled", "Runtime daemon connection closed during initialization.");
         clientCapabilities = parseRuntimeClientCapabilities(
           initializeParams?.capabilities,
         );
@@ -731,6 +736,10 @@ export function createRuntimeDaemonDispatcher(
                 }
               : {}),
             notify: options.notify,
+            onReplaced() {
+              close();
+              options.disconnect?.();
+            },
           });
           reverseBridge = reverseBridgeAttachment.bridge;
           privateReverseBridge.close();
@@ -776,29 +785,26 @@ export function createRuntimeDaemonDispatcher(
     }
   };
 
-  return {
-    handle,
-    close() {
-      for (const request of inFlightRequests.values()) {
-        request.controller.abort(
-          Object.assign(new Error("Runtime daemon connection closed."), {
-            code: "read_cancelled" as const,
-          }),
-        );
-      }
-      inFlightRequests.clear();
-      for (const id of [...subscriptions.keys()]) {
-        closeSubscription(id);
-      }
-      if (reverseBridgeAttachment !== undefined)
-        reverseBridgeAttachment.close();
-      else reverseBridge.close();
-      if (logicalClientAttached) {
-        options.management?.detachClient(connectionId);
-        logicalClientAttached = false;
-      }
-    },
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    for (const request of inFlightRequests.values()) {
+      request.controller.abort(
+        Object.assign(new Error("Runtime daemon connection closed."), {
+          code: "read_cancelled" as const,
+        }),
+      );
+    }
+    inFlightRequests.clear();
+    for (const id of [...subscriptions.keys()]) closeSubscription(id);
+    if (reverseBridgeAttachment !== undefined) reverseBridgeAttachment.close();
+    else reverseBridge.close();
+    if (logicalClientAttached) {
+      options.management?.detachClient(connectionId);
+      logicalClientAttached = false;
+    }
   };
+  return { handle, close };
 }
 
 function raceRuntimeDaemonRequestCancellation<T>(

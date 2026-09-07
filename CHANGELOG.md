@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Retire the old RPC connection and socket when the same authenticated client
+  identity takes over the credential/Host Tool reverse bridge. Clients now
+  observe a reconnectable disconnect instead of remaining RPC-connected with
+  an unusable credential channel. Reconnection can resume live scoped leases;
+  stale closes/replies cannot detach the successor or replay dispatched tools.
+
 ## [0.7.96-beta.2] - 2026-09-07
 
 Second beta pre-release of the v0.7.96 line: it retains the beta.1 sandbox-

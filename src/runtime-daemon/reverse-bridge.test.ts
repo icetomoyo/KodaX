@@ -11,6 +11,44 @@ import {
 } from './reverse-bridge.js';
 
 describe('runtime daemon reverse bridge', () => {
+  it.each(['operation', 'run'] as const)('rejects stale %s credential replies without detaching the successor', async (kind) => {
+    const hub = createRuntimeDaemonReverseBridgeHub();
+    const identity = { principalId: 'space', instanceSecret: 's'.repeat(32) };
+    const oldNotifications: RuntimeDaemonNotification[] = [];
+    const newNotifications: RuntimeDaemonNotification[] = [];
+    const onReplaced = vi.fn();
+    const first = hub.attach({ ...identity, connectionId: 'a', onReplaced,
+      notify: (notification) => oldNotifications.push(notification) });
+    first.bridge.registerCredential({ leaseId: 'scoped', providers: ['openai'], brokerVersion: 2 });
+    const target = kind === 'operation'
+      ? { kind, operation: 'session.compact' as const, operationId: 'compact-op' }
+      : { kind, runId: 'run-1' };
+    const input = { leaseId: 'scoped', provider: 'openai', sessionId: 'session-1',
+      purpose: 'compaction' as const, target };
+    const rejected = expect(first.bridge.acquireScopedCredential(input))
+      .rejects.toMatchObject({ code: 'credential_unavailable' });
+    const second = hub.attach({ ...identity, connectionId: 'b',
+      notify: (notification) => newNotifications.push(notification) });
+    try {
+      await rejected;
+      expect(onReplaced).toHaveBeenCalledTimes(1);
+      first.close();
+      expect(second.bridge.supplyCredential({
+        requestId: readString(oldNotifications[0]?.params, 'requestId'), credential: 'stale',
+      })).toBe(false);
+      const acquired = second.bridge.acquireScopedCredential(input);
+      expect(second.bridge.supplyCredential({
+        requestId: readString(newNotifications[0]?.params, 'requestId'), credential: 'fresh',
+      })).toBe(true);
+      await expect(acquired).resolves.toBe('fresh');
+      expect(oldNotifications).toHaveLength(1);
+    } finally {
+      first.close();
+      second.close();
+      hub.close();
+    }
+  });
+
   it('recovers a durably dispatched host invocation as unknown without replay', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-invocation-'));
     const stateFile = path.join(root, 'invocations.json');

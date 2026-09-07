@@ -58,6 +58,37 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('retires the old RPC connection when the same stable identity takes over', async () => {
+    const hub = createRuntimeDaemonReverseBridgeHub();
+    const runtime = makeRuntime();
+    const first = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const second = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const params = { clientInfo: { instanceId: 'space', instanceSecret: 's'.repeat(32) } };
+    try {
+      expect(isRuntimeDaemonSuccessResponse(await first.handle(
+        createRuntimeDaemonRequest('init-a', 'initialize', params),
+      ))).toBe(true);
+      expect(isRuntimeDaemonSuccessResponse(await second.handle(
+        createRuntimeDaemonRequest('init-b', 'initialize', params),
+      ))).toBe(true);
+      second.close();
+      for (const request of [
+        createRuntimeDaemonRequest('ping-a', 'ping'),
+        createRuntimeDaemonRequest('lease-a', 'credential.register', {
+          leaseId: 'lease-a', providers: ['openai'], brokerVersion: 2,
+        }),
+      ]) {
+        expect(await first.handle(request)).toMatchObject({
+          kind: 'error', error: { code: 'read_cancelled', message: expect.stringMatching(/connection.*closed/i) },
+        });
+      }
+    } finally {
+      first.close();
+      second.close();
+      hub.close();
+    }
+  });
+
   it('passes Agent revision fences and maps stale follow-ups to conflict', async () => {
     const runtime = makeRuntime();
     const detail = vi.spyOn(runtime.agents, 'detail').mockRejectedValue(

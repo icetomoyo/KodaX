@@ -3,8 +3,15 @@ import * as fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
-import { emitKodaXDiagnostic } from "@kodax-ai/agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { emitKodaXDiagnostic, generateSummary } from "@kodax-ai/agent";
+import {
+  createProviderCredentialLeaseScope,
+  KodaXBaseProvider,
+  runWithProviderCredentialLeaseScope,
+  type KodaXStreamResult,
+  type ProviderCredentialLeaseAccess,
+} from "@kodax-ai/llm";
 import type { ManagedWorkflowSnapshot } from "@kodax-ai/agent";
 
 import type {
@@ -20,6 +27,7 @@ import type {
   RuntimeStartRunInput,
 } from "../sdk-runtime.js";
 import { startRuntimeDaemonHost } from "./host.js";
+import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
 import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
@@ -33,6 +41,103 @@ import {
   type RuntimeDaemonEndpoint,
 } from "./transport.js";
 
+class BrokerSummaryProvider extends KodaXBaseProvider {
+  readonly name = 'broker-summary';
+  readonly supportsThinking = false;
+  protected readonly config = {
+    apiKeyEnv: 'KODAX_TEST_BROKER_SUMMARY_KEY', model: 'summary',
+    supportsThinking: false, contextWindow: 131072,
+  };
+  calls = 0;
+  async stream(): Promise<KodaXStreamResult> {
+    expect(this.getApiKey()).toBe('synthetic-summary-secret');
+    this.calls += 1;
+    return { textBlocks: [{ type: 'text', text: 'Continue the implementation after reconnect.' }],
+      toolBlocks: [], thinkingBlocks: [] };
+  }
+}
+
+async function summarizeWithBroker(input: unknown, provider: BrokerSummaryProvider): Promise<void> {
+  const { providerCredentialAccess } = input as { providerCredentialAccess: ProviderCredentialLeaseAccess };
+  expect(providerCredentialAccess).toBeDefined();
+  const scope = createProviderCredentialLeaseScope(providerCredentialAccess);
+  try {
+    await runWithProviderCredentialLeaseScope(scope, () => generateSummary(
+      [{ role: 'user', content: 'Continue the long coding session.' }],
+      provider, { readFiles: [], modifiedFiles: [] },
+    ));
+  } finally {
+    scope.close();
+  }
+}
+
+async function makeBrokerHostConnections(runtime: KodaXRuntime) {
+  const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+  const lock = tryAcquireRuntimeDaemonLock(paths, {
+    runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+  });
+  if (!lock) throw new Error('Expected test host lock.');
+  const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: await makeTestEndpoint() });
+  cleanupTasks.push(() => host.close());
+  return async () => {
+    const transport = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+    cleanupTasks.push(async () => transport.close?.());
+    await transport.request('initialize', {
+      token: readRuntimeDaemonToken(paths),
+      clientInfo: { instanceId: 'space-broker-test', instanceSecret: 's'.repeat(32) },
+    });
+    return transport;
+  };
+}
+
+async function exerciseBrokerTakeover(
+  connect: () => Promise<RuntimeDaemonClientTransport>, runtime: KodaXRuntime,
+  mode: 'manual' | 'automatic',
+): Promise<void> {
+  const first = await connect();
+  await first.request('credential.register', {
+    leaseId: 'summary-lease', providers: ['broker-summary'], brokerVersion: 2,
+  });
+  const disconnected = new Promise<void>((resolve) => first.subscribeLifecycle?.((state) => {
+    if (state.state !== 'disconnected') return;
+    expect(state.reconnectable).toBe(true);
+    resolve();
+  }));
+  const second = await connect();
+  await disconnected;
+  await second.close?.();
+  await expect(first.request('credential.get', { leaseId: 'summary-lease' })).rejects.toMatchObject({ reconnectable: true });
+  const resumed = await connect();
+  await first.close?.(); // A's late close cannot detach its successor.
+  const client = createRuntimeDaemonClient({
+    identity: runtime.identity, transport: resumed,
+    capabilities: { providerCredentialBroker: { version: 2 } },
+  });
+  const requests: unknown[] = [];
+  await client.credentials.resumeScoped('summary-lease', async (request) => {
+    requests.push(request);
+    return 'synthetic-summary-secret';
+  });
+  const input = { sessionId: 'session-1', provider: 'broker-summary',
+    credential: { leaseId: 'summary-lease', mode: 'scoped' as const, providers: ['broker-summary'] } };
+  if (mode === 'manual') await client.sessions.compact(input);
+  else {
+    const run = await client.runs.start({
+      sessionId: input.sessionId, credential: input.credential,
+      options: { provider: input.provider }, prompt: 'continue',
+    });
+    await run.result;
+  }
+  expect(requests).toEqual([expect.objectContaining({
+    purpose: 'compaction', sessionId: 'session-1', provider: 'broker-summary',
+    target: expect.objectContaining(mode === 'manual'
+      ? { kind: 'operation', operation: 'session.compact' } : { kind: 'run' }),
+  })]);
+  expect(JSON.stringify(await resumed.request('credential.get', { leaseId: 'summary-lease' })))
+    .not.toContain('synthetic-summary-secret');
+  await client.close();
+}
+
 const tempRoots: string[] = [];
 const cleanupTasks: Array<() => Promise<void>> = [];
 
@@ -45,6 +150,32 @@ afterEach(async () => {
 });
 
 describe("runtime daemon host", () => {
+  it.each(['manual', 'automatic'] as const)(
+    'restores %s summary credentials after A is replaced by B, B closes, and A reconnects',
+    async (mode) => {
+      const runtime = makeRuntime();
+      const summaryProvider = new BrokerSummaryProvider();
+      // Exercise the real shared summary/credential seam behind each admitted target.
+      if (mode === 'manual') {
+        const original = runtime.sessions.compact;
+        vi.spyOn(runtime.sessions, 'compact').mockImplementation(async (input) => {
+          await summarizeWithBroker(input, summaryProvider);
+          return original(input);
+        });
+      } else {
+        const original = runtime.runs.start;
+        vi.spyOn(runtime.runs, 'start').mockImplementation(async (input) => {
+          await summarizeWithBroker(input, summaryProvider);
+          return original(input);
+        });
+      }
+      const connection = await makeBrokerHostConnections(runtime);
+      await exerciseBrokerTakeover(connection, runtime, mode);
+      expect(summaryProvider.calls).toBe(1);
+      expect(mode === 'manual' ? runtime.sessions.compact : runtime.runs.start).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("serves a hosted runtime over the local daemon transport and releases ownership on close", async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
     const runtime = makeRuntime();

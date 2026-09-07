@@ -96,7 +96,53 @@ mismatch predates this patch and remains a follow-up; this fix changes only
 bundle resolution and validation gates. The manual compaction HTTP 401 case is
 covered and passes.
 
-## Sign-off
+## Follow-up: stable-identity connection takeover (2026-09-08, unreleased)
+
+This follow-up fixes a separate beta.2 failure after a diagnostic client reused
+Space's `principalId` and `instanceSecret`. A new connection took over the
+reverse transport while the old socket kept accepting ordinary RPC. Closing
+the new connection then left the old client unable to acquire credentials.
+
+The contract is one active connection per authenticated stable identity:
+
+1. B takes over A's reverse bridge. A's dispatcher, subscriptions and socket
+   retire; the client observes a reconnectable disconnect. Pending credential
+   acquisitions fail, and already-dispatched host calls remain unknown without
+   automatic replay. Ordinary RPC and credential supply on retired A are rejected.
+2. Closing B does not revive A. Reconnect as A2 and call
+   `credentials.resumeScoped(leaseId, broker)` for still-live v2 leases, or
+   register a new lease. Host handlers similarly use `hostTools.resume`.
+   SDK connection objects do not silently reconnect or replay mutations.
+3. An old close cannot detach A2. Expired/revoked leases remain unavailable,
+   and different secrets/principals retain separate authority. Do not run two
+   reconnect loops with the same identity: independent diagnostic clients
+   must use independent identities; read-only diagnostics may use probe mode.
+
+The actual bundle test now runs A → B takeover → B close → A2 reconnect and
+scoped lease resume **before** the existing manual and managed compaction cases.
+The old bundle fails because A remains `connected`; the corrected bundle must
+commit a real manual summary and a managed `context.compaction.finished` event
+through a local HTTP Provider, with the original purpose/target assertions.
+Source tests additionally cover late replies, delayed closes and RPC retirement.
+
+For Space integration, restart the daemon with rebuilt SDK bytes, confirm that
+Space responds to `connection.subscribe` disconnection by establishing a fresh
+connection and rebinding brokers, then repeat manual and automatic compaction.
+This SDK change does not fix the separately reported gateway timeout or Space's
+`appendNotice`/compaction read-lock race. Do not delete active lock files.
+
+Local checks (2026-09-08): old bundle reproduced the connected/credential-dead
+state; corrected bundle passed all 13 credential/daemon artifact tests including
+manual and managed compaction. Actual Space UI/keychain and customer gateway
+checks remain integration work.
+
+Source regression checks passed 314 tests, including prior capacity recovery,
+daemon transport/credential contracts and SDK capacity projection. Bundle and
+SDK declaration generation passed. The optional root `tsc --noEmit` check still
+reports 479 pre-existing diagnostics: a compiler comparison against HEAD file
+contents found the same 479 diagnostics and zero additions.
+
+## Original Issue 332 sign-off
 
 Manual cases: **7**; passed / failed / blocked: **pending integration testing**.
 

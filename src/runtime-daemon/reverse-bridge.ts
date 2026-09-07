@@ -146,6 +146,8 @@ export interface RuntimeDaemonReverseBridgeHub {
     readonly connectionId: string;
     readonly instanceSecret?: string;
     readonly notify: (notification: RuntimeDaemonNotification) => void;
+    /** Retire the previous RPC connection as well as its reverse transport. */
+    readonly onReplaced?: () => void;
   }): RuntimeDaemonReverseBridgeHubAttachment;
   getRunRequirements(runId: string): RuntimeRunRequirements | undefined;
   close(): void;
@@ -819,6 +821,10 @@ export function createRuntimeDaemonReverseBridgeHub(
   options: RuntimeDaemonReverseBridgeHubOptions = {},
 ): RuntimeDaemonReverseBridgeHub {
   const bridges = new Map<string, RuntimeDaemonReverseBridge>();
+  const attachments = new Map<string, {
+    readonly attachment: RuntimeDaemonReverseBridgeHubAttachment;
+    readonly onReplaced?: () => void;
+  }>();
   const persistedInvocations = loadHostToolInvocationStore(options.invocationStateFile);
   let closed = false;
   return {
@@ -856,17 +862,23 @@ export function createRuntimeDaemonReverseBridgeHub(
         saveHostToolInvocationStore(options.invocationStateFile, persistedInvocations);
       }
       bridges.set(key, bridge);
+      const previous = attachments.get(key);
       const transport = bridge.attachTransport(input.notify);
-      return {
+      const attachment: RuntimeDaemonReverseBridgeHubAttachment = {
         bridge,
         close() {
           transport.close();
+          if (attachments.get(key)?.attachment === attachment) attachments.delete(key);
           if (!stable && bridges.get(key) === bridge) {
             bridges.delete(key);
             bridge.close();
           }
         },
       };
+      attachments.set(key, { attachment, onReplaced: input.onReplaced });
+      previous?.attachment.close();
+      previous?.onReplaced?.();
+      return attachment;
     },
     getRunRequirements(runId) {
       for (const bridge of bridges.values()) {
@@ -880,6 +892,7 @@ export function createRuntimeDaemonReverseBridgeHub(
       closed = true;
       for (const bridge of bridges.values()) bridge.close();
       bridges.clear();
+      attachments.clear();
     },
   };
 }

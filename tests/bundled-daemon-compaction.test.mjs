@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -11,6 +13,32 @@ import { connectKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-r
 const summary = '## Goal\nContinue implementing the requested feature.\n## Progress\n'
   + 'The earlier investigation identified the affected components and preserved the user requirements.\n'
   + '## Next Steps\nFinish implementation and verify the behavior with regression tests.';
+
+async function reconnectAfterTakeover(original, options, leaseId, broker) {
+  const replacement = await connectKodaXRuntime(options);
+  try {
+    for (let attempt = 0; attempt < 40 && original.connection.current().state !== 'disconnected'; attempt += 1) {
+      await delay(25);
+    }
+    assert.equal(original.connection.current().state, 'disconnected');
+    assert.equal(original.connection.current().reconnectable, true);
+    await replacement.close();
+    await assert.rejects(original.credentials.registerScoped(
+      { providers: ['daemon-test-openai'] }, broker,
+    ), /transport.*closed/i);
+    const resumed = await connectKodaXRuntime(options);
+    await original.close();
+    try {
+      await resumed.credentials.resumeScoped(leaseId, broker);
+      return resumed;
+    } catch (error) {
+      await resumed.close();
+      throw error;
+    }
+  } finally {
+    await replacement.close();
+  }
+}
 
 test('bundled daemon routes manual and managed compaction through the v2 broker', { timeout: 60_000 }, async (t) => {
   // macOS /var tmp paths are symlinks; the Runtime requires canonical roots.
@@ -72,21 +100,24 @@ test('bundled daemon routes manual and managed compaction through the v2 broker'
       })),
     });
   }
-  runtime = await connectKodaXRuntime({
+  const connectionOptions = {
     homeDir, sessionsDir, autoStart: true, daemonOrphanExitMs: 1000,
-    clientInfo: { name: 'bundle-compaction-test' },
+    clientInfo: { name: 'bundle-compaction-test', instanceId: 'bundle-compaction', instanceSecret: randomUUID() },
     requirements: { providerCredentialBroker: 2, daemonManagement: 1 },
-  });
+  };
+  runtime = await connectKodaXRuntime(connectionOptions);
   try {
     owner = (await runtime.daemon.inspect()).owner;
     const brokerRequests = [];
+    const broker = async (request) => {
+      brokerRequests.push(request);
+      return 'daemon-test-scoped-key';
+    };
     const lease = await runtime.credentials.registerScoped(
       { providers: customProviders.map(({ name }) => name) },
-      async (request) => {
-        brokerRequests.push(request);
-        return 'daemon-test-scoped-key';
-      },
+      broker,
     );
+    runtime = await reconnectAfterTakeover(runtime, connectionOptions, lease.id, broker);
     for (const { name, protocol } of customProviders) {
       rejectRequest = protocol === 'anthropic';
       const operationId = `compact-${name}`;
