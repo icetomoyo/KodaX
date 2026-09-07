@@ -1586,6 +1586,7 @@ async function observeDaemonSessionView(
   let previous: ClientSessionView | undefined;
   let connectionId: string | undefined;
   let lifecycle: RuntimeSubscription | undefined;
+  let resubscribing: Promise<void> | undefined;
   const deliver = (view: ClientSessionView): void => {
     const previousItems = new Map(previous?.items.map((item) => [item.id, item]));
     const items = view.items.map((item) => {
@@ -1611,16 +1612,46 @@ async function observeDaemonSessionView(
     }
     else latest = view;
   });
+  const openRemoteView = async (): Promise<void> => {
+    const response = requireRecord(await transport.request('session.view.observe', { sessionId, subscriptionId }));
+    if (closed) {
+      void transport.request('session.view.close', { subscriptionId }).catch(() => undefined);
+      throw new Error('Connection closed while opening the Session view.');
+    }
+    deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
+    latest = undefined;
+    ready = true;
+  };
   lifecycle = transport.subscribeLifecycle?.((state) => {
-    if (state.state === 'connected' && (connectionId === undefined || connectionId === state.connectionId)) {
+    if (state.state === 'connected') {
+      if (connectionId === undefined || connectionId === state.connectionId) {
+        connectionId = state.connectionId;
+        return;
+      }
       connectionId = state.connectionId;
+      // FEATURE_298 T17 — the server drops this connection's subscriptions,
+      // so a reconnected transport reopens the view; the fresh snapshot is a
+      // full current-state replacement, which is exactly what the listener
+      // expects (reconnect must not lose pending answers or queued inputs).
+      if (closed || ready || resubscribing !== undefined) return;
+      resubscribing = openRemoteView().catch((error: unknown) => {
+        if (!closed) {
+          emitKodaXDiagnostic({
+            source: 'session.view',
+            level: 'warn',
+            message: 'Session view could not reopen after a Runtime reconnect; the observation was detached.',
+            detail: error,
+          });
+          close();
+        }
+      }).finally(() => {
+        resubscribing = undefined;
+      });
       return;
     }
-    closed = true;
-    local.close();
-    lifecycle?.close();
+    // Disconnected: hold deliveries until the transport reconnects.
+    ready = false;
     latest = undefined;
-    previous = undefined;
   });
   const close = (): void => {
     if (closed) { lifecycle?.close(); return; }
@@ -1634,11 +1665,7 @@ async function observeDaemonSessionView(
     });
   };
   try {
-    const response = requireRecord(await transport.request('session.view.observe', { sessionId, subscriptionId }));
-    if (closed) throw new Error('Connection closed while opening the Session view.');
-    deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
-    latest = undefined;
-    ready = true;
+    await openRemoteView();
     return { close };
   } catch (error: unknown) {
     close();

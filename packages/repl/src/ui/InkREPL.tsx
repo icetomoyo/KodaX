@@ -1814,26 +1814,41 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [clientView, setClientView] = useState<ClientSessionView | null>(null);
   const clientPlaneActiveRunRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!options.clientPlane) return;
+    const plane = options.clientPlane;
+    if (!plane) return;
     let closed = false;
     let closer: (() => void) | undefined;
-    void options.clientPlane.observe(context.sessionId, (view) => {
-      if (closed) return;
-      setClientView(view);
-      clientPlaneActiveRunRef.current = viewRunsActive(view);
-      replaceHistoryItems(
-        clientViewToHistoryItems(view.items, { activeRunId: viewRunsActive(view) }),
-      );
-    }).then((close) => {
-      if (closed) {
-        close();
-        return;
-      }
-      closer = close;
-    }).catch(() => undefined);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const observe = (): void => {
+      void plane.observe(context.sessionId, (view) => {
+        if (closed) return;
+        setClientView(view);
+        clientPlaneActiveRunRef.current = viewRunsActive(view);
+        replaceHistoryItems(
+          clientViewToHistoryItems(view.items, { activeRunId: viewRunsActive(view) }),
+        );
+      }).then((close) => {
+        if (closed) {
+          close();
+          return;
+        }
+        closer = close;
+        attempt = 0;
+      }).catch(() => {
+        // FEATURE_298 T17 reconnection: a failed attach (Host briefly
+        // unavailable) retries with backoff; the first view restores items,
+        // queue, and pending interactions.
+        if (closed) return;
+        attempt += 1;
+        retry = setTimeout(observe, Math.min(1000 * attempt, 5000));
+      });
+    };
+    observe();
     return () => {
       closed = true;
       closer?.();
+      if (retry !== undefined) clearTimeout(retry);
       setClientView(null);
       clientPlaneActiveRunRef.current = undefined;
     };

@@ -2376,3 +2376,97 @@ function flushAsyncNotifications(): Promise<void> {
     setImmediate(resolve);
   });
 }
+
+describe('runtime daemon client session view reconnect', () => {
+  it('resubscribes the session view after a transport reconnect and keeps delivering', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    let opens = 0;
+    const listeners: Array<(notification: RuntimeDaemonNotification) => void> = [];
+    const lifecycleListeners: Array<(state: RuntimeDaemonTransportLifecycleState) => void> = [];
+    const view = (mark: string): Record<string, unknown> => ({
+      session: { id: 'session-1', title: 'Session' },
+      settings: {},
+      queue: [],
+      interactions: [],
+      runs: [],
+      items: [{ id: `item-${mark}`, type: 'info', text: mark }],
+    });
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params) {
+        calls.push({ method, params });
+        if (method === 'session.view.observe') {
+          opens += 1;
+          return { view: view(`snapshot-${opens}`) };
+        }
+        if (method === 'session.view.close') return { ok: true };
+        return {};
+      },
+      subscribe(listener) {
+        listeners.push(listener);
+        return {
+          close() {
+            const index = listeners.indexOf(listener);
+            if (index >= 0) listeners.splice(index, 1);
+          },
+        };
+      },
+      subscribeLifecycle(listener) {
+        lifecycleListeners.push(listener);
+        listener({ state: 'connected', connectionId: 'connection-1', reconnectable: true });
+        return {
+          close() {
+            const index = lifecycleListeners.indexOf(listener);
+            if (index >= 0) lifecycleListeners.splice(index, 1);
+          },
+        };
+      },
+    };
+    const client = createRuntimeDaemonClient({
+      identity: {
+        runtimeId: 'runtime-view-reconnect',
+        mode: 'daemon',
+        profile: 'default',
+        startedAt: '2026-09-07T00:00:00.000Z',
+        version: '0.7.97',
+      },
+      journalEpoch: 'journal-1',
+      transport,
+    });
+    const marks: string[] = [];
+    const markOf = (value: unknown): string | undefined => {
+      const items = (value as { items?: { text?: string }[] }).items;
+      return items?.[0]?.text;
+    };
+    const observation = await client.sessions.observeView('session-1', (next) => {
+      const mark = markOf(next);
+      if (mark !== undefined) marks.push(mark);
+    });
+    try {
+      expect(marks).toEqual(['snapshot-1']);
+      // The transport drops and reconnects on a NEW connection; the server
+      // dropped this connection's subscriptions, so the view must reopen.
+      for (const listener of [...lifecycleListeners]) {
+        listener({ state: 'disconnected', connectionId: 'connection-1', reason: 'socket closed', reconnectable: true });
+      }
+      for (const listener of [...lifecycleListeners]) {
+        listener({ state: 'connected', connectionId: 'connection-2', reconnectable: true });
+      }
+      await expect.poll(() => marks.includes('snapshot-2')).toBe(true);
+      expect(opens).toBe(2);
+      // Live notifications addressed to the reopened subscription deliver.
+      const lastOpen = calls
+        .filter((call) => call.method === 'session.view.observe')
+        .at(-1)?.params as { subscriptionId: string } | undefined;
+      expect(lastOpen?.subscriptionId).toBeTypeOf('string');
+      for (const listener of [...listeners]) {
+        listener(createRuntimeDaemonNotification('session.view', {
+          subscriptionId: lastOpen!.subscriptionId,
+          view: view('live-after-reconnect'),
+        }));
+      }
+      await expect.poll(() => marks.includes('live-after-reconnect')).toBe(true);
+    } finally {
+      observation.close();
+    }
+  });
+});
