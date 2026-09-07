@@ -658,18 +658,6 @@ function applyRuntimeSessionSnapshot(context: InteractiveContext, result: KodaXR
 }
 
 // REPL options
-export interface InkRuntimeRunnerInput {
-  readonly options: KodaXOptions;
-  readonly prompt: string;
-  readonly sessionId: string;
-  readonly permissionMode: PermissionMode;
-  readonly autoModeSettings?: ReplRuntimeAutoModeSettings;
-  readonly requestPermission?: ReplRuntimePermissionPrompt;
-  /** Marks the callback installed by the REPL's legacy permission UI. */
-  readonly legacyPermissionHook?: true;
-}
-
-export type InkRuntimeRunner = (input: InkRuntimeRunnerInput) => Promise<KodaXResult>;
 export type InkRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | undefined>;
 
 export interface InkTransientNotice {
@@ -762,7 +750,6 @@ export interface InkREPLOptions extends KodaXOptions {
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
   hardExitOnClose?: boolean;
-  runtimeRunner?: InkRuntimeRunner;
   runtimeAutoModeControl?: ReplRuntimeAutoModeControl;
   getRuntimeStatus?: InkRuntimeStatusProvider;
   validateSetupA2AConfig?: (value: unknown) => unknown;
@@ -5497,11 +5484,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // the active-entry pointer on resume.
       persistedByHost: true,
     },
-    // An external Runtime owns shared-session Auto classification and receipts.
-    // Keep the local guardrail only for the standalone REPL runner.
-    guardrails: options.runtimeRunner
-      ? undefined
-      : buildAutoModeGuardrails(currentConfig.permissionMode, autoModeBootstrap),
+    guardrails: buildAutoModeGuardrails(currentConfig.permissionMode, autoModeBootstrap),
   });
   useEffect(() => {
     currentOptionsRef.current.effort = runtimeEffort;
@@ -5576,11 +5559,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentOptionsRef.current = {
       ...currentOptionsRef.current,
       effort: modeEffortResolution.runtimeEffort,
-      guardrails: options.runtimeRunner
-        ? undefined
-        : buildAutoModeGuardrails(canonicalMode, autoModeBootstrap),
+      guardrails: buildAutoModeGuardrails(canonicalMode, autoModeBootstrap),
     };
-  }, [autoModeBootstrap, autoModeSettings, context.sessionId, options.runtimeAutoModeControl, options.runtimeRunner]);
+  }, [autoModeBootstrap, autoModeSettings, context.sessionId, options.runtimeAutoModeControl]);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
   const lastInterruptEscapeAtRef = useRef(0);
@@ -7569,7 +7550,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Standalone Bash always enters the Coding-owned sandbox/host boundary.
       // Mode review and Edits prompts happen only after a real boundary.
-      if (!options.runtimeRunner && tool === 'bash') return true;
+      if (tool === 'bash') return true;
 
       // === 2. Safe read-only bash commands: auto-allowed BEFORE protected path check ===
       // Issue 085: All modes should allow safe read commands without confirmation
@@ -7911,15 +7892,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       };
       touchContext(context);
       setLiveTokenCount(currentTokens);
-      if (options.runtimeRunner) {
-        // The embedded/daemon Runtime has already acknowledged its canonical
-        // durable commit before invoking this in-process projection. Avoid a
-        // second writer while still releasing the UI's exact in-memory copy.
-        if (context.lineage === durableLineage) {
-          context.lineage = evictOldIslandMessageContent(durableLineage);
-        }
-        return;
-      }
       const persist = persistContextStateRef.current;
       if (!persist) {
         throw new Error('Ink REPL compaction persistence is not initialized.');
@@ -8080,21 +8052,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   };
 
-  const requestRuntimePermission: ReplRuntimePermissionPrompt = async (request, promptContext) => {
-    const result = await showConfirmDialog(
-      request.toolName,
-      {
-        ...request.input,
-        ...(request.reason !== undefined ? { _reason: request.reason } : {}),
-        ...(request.executionCwd !== undefined ? { _executionCwd: request.executionCwd } : {}),
-        ...(request.risk !== undefined ? { _runtimeRisk: request.risk } : {}),
-      },
-      request.grantSuggestions ?? [],
-      promptContext.signal,
-    );
-    return resolveReplRuntimePermissionDecision(request, result);
-  };
-
   // FEATURE_298 T17 — bind the client plane's dialog surface to the same
   // dialogs the embedded callbacks use; assigned during render so the
   // interaction effect above always observes the latest closures.
@@ -8179,7 +8136,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       : context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
-    if (!options.runtimeRunner) autoModeBootstrap.resetTurn();
+    autoModeBootstrap.resetTurn();
     outputSegmentProjectionRef.current = createOutputSegmentProjection();
     managedOutputSegmentItemsRef.current = {};
     const events = {
@@ -8253,9 +8210,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return getPlanModeBlockReason(tool, input, context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd());
     };
 
-    const standaloneShellBoundary = options.runtimeRunner
-      ? undefined
-      : createStandaloneShellPermissionBoundary({
+    const standaloneShellBoundary = createStandaloneShellPermissionBoundary({
           getPermissionMode: () => permissionModeRef.current,
           getAutoGuardrail: autoModeBootstrap.getGuardrail,
           shellSandbox: managedRunContext.shellSandbox,
@@ -8334,17 +8289,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           sessionId: context.sessionId,
           prompt,
           abortSignal: runOptions.abortSignal,
-        });
-      }
-      if (options.runtimeRunner) {
-        return await options.runtimeRunner({
-          options: runOptions,
-          prompt,
-          sessionId: context.sessionId,
-          permissionMode: permissionModeRef.current,
-          autoModeSettings,
-          requestPermission: requestRuntimePermission,
-          legacyPermissionHook: true,
         });
       }
       return await runManagedTask(runOptions, prompt);
@@ -10344,11 +10288,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
-            // Runtime-backed sessions classify in the Runtime owner. Standalone
-            // sessions retain the local guardrail for backwards compatibility.
-            guardrails: options.runtimeRunner
-              ? undefined
-              : buildAutoModeGuardrails(permissionModeRef.current, autoModeBootstrap),
+            guardrails: buildAutoModeGuardrails(permissionModeRef.current, autoModeBootstrap),
             // workflowRunsBaseDir is inherited from `...currentOptionsRef.current`
             // (set at session init for FEATURE_246 A5).
             events: createStreamingEvents(), // Include streaming events for /project commands

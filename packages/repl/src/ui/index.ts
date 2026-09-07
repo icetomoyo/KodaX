@@ -13,8 +13,6 @@ export { runInkInteractiveMode } from "./InkREPL.js";
 export { runSessionPicker } from "./SessionPicker.js";
 export type {
   InkREPLOptions,
-  InkRuntimeRunner,
-  InkRuntimeRunnerInput,
   InkRuntimeStatusProvider,
   InkTransientNotice,
 } from "./InkREPL.js";

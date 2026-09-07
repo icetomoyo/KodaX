@@ -16,8 +16,6 @@ export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot } from '
 export { runInkInteractiveMode } from "./ui/index.js";
 export type {
   InkREPLOptions,
-  InkRuntimeRunner,
-  InkRuntimeRunnerInput,
   InkRuntimeStatusProvider,
   InkTransientNotice,
 } from "./ui/index.js";

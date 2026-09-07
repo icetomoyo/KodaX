@@ -5960,7 +5960,11 @@ complete -c kodax -l version -d 'Show version'`);
         if (useClassicInteractiveMode) {
           await runInteractiveMode(interactiveOptions);
         } else {
-          await runInkInteractiveMode(interactiveOptions);
+          // FEATURE_298 T17 — Ink runs/renders through the client plane; the
+          // legacy runtimeRunner (and its KodaXEvents reverse bridge) stays
+          // classic-only until T18 retires it there.
+          const { runtimeRunner: _classicOnlyRunner, ...inkOptions } = interactiveOptions;
+          await runInkInteractiveMode(inkOptions);
         }
         shouldHardExitAfterInteractiveCleanup = true;
       } catch (error) {
