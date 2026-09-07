@@ -83,11 +83,7 @@ function resolvedEvent(
     runId: request.runId,
     seq: 2,
     time: "2026-08-17T00:00:01.000Z",
-    cursor: {
-      sessionId: request.sessionId,
-      journalEpoch: "journal-sdk-lifecycle",
-      seq: 2,
-    },
+
     payload: {
       requestId: request.id,
       decision: {

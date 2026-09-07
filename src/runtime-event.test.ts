@@ -6,7 +6,6 @@ function event(type: string, payload: unknown): Record<string, unknown> {
   return {
     id: 'evt-1',
     seq: 1,
-    cursor: { sessionId: 'session-1', journalEpoch: 'epoch-1', seq: 1 },
     time: '2026-07-14T00:00:00.000Z',
     sessionId: 'session-1',
     runId: 'run-1',
@@ -16,28 +15,18 @@ function event(type: string, payload: unknown): Record<string, unknown> {
 }
 
 describe('parseRuntimeEvent', () => {
-  it('requires a complete Session journal cursor', () => {
-    const withoutCursor = event(
-      'session.loaded',
-      { id: 'session-1', title: 'Coder session' },
-    );
-    delete withoutCursor.cursor;
-    expect(parseRuntimeEvent(withoutCursor).ok).toBe(false);
-    expect(parseRuntimeEvent({
-      ...withoutCursor,
-      cursor: { sessionId: 'session-1', journalEpoch: '', seq: 1 },
-    }).ok).toBe(false);
+  it('accepts live envelopes without durable cursor fields (T26)', () => {
+    expect(parseRuntimeEvent(
+      event('session.loaded', { id: 'session-1', title: 'Coder session' }),
+    ).ok).toBe(true);
   });
 
-  it('rejects a cursor that does not identify the event Session and sequence', () => {
-    expect(parseRuntimeEvent({
-      ...event('session.loaded', { id: 'session-1', title: 'Coder session' }),
-      cursor: { sessionId: 'another-session', journalEpoch: 'epoch-1', seq: 1 },
-    }).ok).toBe(false);
-    expect(parseRuntimeEvent({
-      ...event('session.loaded', { id: 'session-1', title: 'Coder session' }),
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-1', seq: 2 },
-    }).ok).toBe(false);
+  it('rejects a missing or negative live sequence', () => {
+    const base = event('session.loaded', { id: 'session-1', title: 'Coder session' });
+    expect(parseRuntimeEvent({ ...base, seq: -1 }).ok).toBe(false);
+    expect(parseRuntimeEvent({ ...base, seq: 1.5 }).ok).toBe(false);
+    delete (base as Record<string, unknown>).seq;
+    expect(parseRuntimeEvent(base).ok).toBe(false);
   });
 
   it('accepts both explicit and provider-backed session.loaded payloads', () => {

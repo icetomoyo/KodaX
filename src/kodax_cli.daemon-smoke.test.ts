@@ -1011,10 +1011,7 @@ describe('daemon CLI smoke', () => {
         runtimeId: runtime.identity.runtimeId,
         sessionId: observation.snapshot.session.id,
         settings: observation.snapshot.settings,
-        terminalEvents: (await runtime.events.replay({
-          sessionId: 'shared-session',
-          type: ['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'],
-        })).map((event) => event.id),
+        terminalRuns: observation.snapshot.runs.map((run) => run.runId + ':' + run.phase),
       }));
       observation.close();
       await runtime.close();
@@ -1023,14 +1020,16 @@ describe('daemon CLI smoke', () => {
       runtimeId: string;
       sessionId: string;
       settings: { revision: number; value: { model: string } };
-      terminalEvents: string[];
+      terminalRuns: string[];
     };
     expect(observer).toMatchObject({
       runtimeId: space.runtimeId,
       sessionId: 'shared-session',
       settings: { revision: 1, value: { model: 'space-model' } },
     });
-    expect(new Set(observer.terminalEvents).size).toBe(observer.terminalEvents.length);
+    expect(new Set(observer.terminalRuns).size).toBe(observer.terminalRuns.length);
+    expect(observer.terminalRuns.length).toBe(1);
+    expect(observer.terminalRuns[0]).toMatch(/:(completed|failed|cancelled|interrupted)$/);
     expect(readAllDaemonText(homeDir)).not.toContain('SPACE_SMOKE_SECRET_DO_NOT_PERSIST');
 
     const stop = await runDaemonCommand([

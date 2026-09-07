@@ -19,7 +19,6 @@ import type {
   RuntimeCommandInfo,
   RuntimeCreateArtifactInput,
   RuntimeArtifact,
-  RuntimeDiagnosticFilter,
   RuntimeDaemonPreflight,
   RuntimeDaemonManagementState,
   RuntimeEvent,
@@ -53,7 +52,6 @@ import type {
   RuntimeSessionDiagnostics,
   RuntimeSessionObservation,
   RuntimeSessionObservationSnapshot,
-  RuntimeSessionCursor,
   RuntimeSessionSettings,
   RuntimeSessionStatus,
   RuntimeSessionSummary,
@@ -744,15 +742,6 @@ export function createRuntimeDaemonClient(
       subscribe(filter, listener) {
         return subscribeToDaemonEvents(options.transport, request, filter, listener);
       },
-      replay(filter) {
-        return request('event.replay', filter).then((value) => {
-          if (!Array.isArray(value)) throw new Error('Expected daemon event replay array.');
-          return value.flatMap((item) => {
-            const event = parseRuntimeEventForClient(item);
-            return event === undefined ? [] : [event];
-          });
-        });
-      },
     },
     // The typed Interaction RPCs are the wire surface; the registry-shaped
     // members below are compatibility adapters over them (the old
@@ -1343,20 +1332,6 @@ export function createRuntimeDaemonClient(
         });
       },
     },
-    diagnostics: {
-      latestContextBudget(filter?: RuntimeDiagnosticFilter) {
-        return request('context.budget.get', filter) as Promise<RuntimeContextBudgetSnapshot | null>;
-      },
-      latestToolExposure(filter?: RuntimeDiagnosticFilter) {
-        return request('tool.exposure.preview', filter) as Promise<RuntimeToolExposurePlan | null>;
-      },
-      latestProviderCacheDiagnostic(filter?: RuntimeDiagnosticFilter) {
-        return request(
-          'provider.cache.diagnostics.get',
-          filter,
-        ) as Promise<KodaXPromptCacheDiagnosticEvent | null>;
-      },
-    },
     connection: {
       current() {
         return connectionState;
@@ -1525,11 +1500,72 @@ function subscribeToDaemonEvents(
   filter: RuntimeEventFilter,
   listener: RuntimeEventListener,
 ): RuntimeSubscription {
-  return subscribeToDaemonNotification(transport, request, 'event.subscribe', {
-    filter,
-  }, (event) => {
-    deliverRuntimeEvent(event, listener);
+  let closed = false;
+  let remoteSubscriptionId: string | undefined;
+  const pendingNotifications: Array<Record<string, unknown>> = [];
+  const matches = (event: RuntimeEvent): boolean => {
+    if (filter.runId !== undefined && event.runId !== filter.runId) return false;
+    if (filter.type !== undefined) {
+      const types = Array.isArray(filter.type) ? filter.type : [filter.type];
+      if (!types.includes(event.type)) return false;
+    }
+    return true;
+  };
+  const local = transport.subscribe((notification) => {
+    if (closed) return;
+    if (notification.method !== 'event' && notification.method !== 'observation.invalidated') return;
+    const payload = requireRecord(notification.params);
+    if (remoteSubscriptionId === undefined) {
+      if (pendingNotifications.length >= MAX_PENDING_SUBSCRIPTION_NOTIFICATIONS) {
+        pendingNotifications.shift();
+      }
+      pendingNotifications.push(payload);
+      return;
+    }
+    if (payload.subscriptionId !== remoteSubscriptionId) return;
+    if (notification.method === 'observation.invalidated') {
+      close();
+      return;
+    }
+    deliverRuntimeEvent(payload.event, (event) => {
+      if (matches(event)) listener(event);
+    });
   });
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    local.close();
+    const subscriptionId = remoteSubscriptionId;
+    remoteSubscriptionId = undefined;
+    if (subscriptionId !== undefined) {
+      void request('subscription.close', { subscriptionId }).catch(() => undefined);
+    }
+  };
+  const ready = request('session.observe', { sessionId: filter.sessionId }).then((value) => {
+    const result = requireRecord(value);
+    remoteSubscriptionId = requireStringField(result, 'subscriptionId');
+    if (closed) {
+      void request('subscription.close', { subscriptionId: remoteSubscriptionId }).catch(() => undefined);
+      pendingNotifications.length = 0;
+      return;
+    }
+    for (const payload of pendingNotifications.splice(0)) {
+      if (payload.subscriptionId !== remoteSubscriptionId) continue;
+      if (payload.invalidated !== undefined) {
+        close();
+        break;
+      }
+      deliverRuntimeEvent(payload.event, (event) => {
+        if (matches(event)) listener(event);
+      });
+    }
+  }).catch((error: unknown) => {
+    pendingNotifications.length = 0;
+    local.close();
+    throw error;
+  });
+  void ready.catch(() => undefined);
+  return { ready, close };
 }
 
 async function observeDaemonSessionView(
@@ -1657,7 +1693,7 @@ async function observeDaemonSession(
   let live = false;
   let remoteSubscriptionId: string | undefined;
   let bufferOverflowed = false;
-  let cursor: RuntimeSessionCursor | undefined;
+  let lastSeq: number | undefined;
   let invalidated = false;
   let connectionId: string | undefined;
   let resolveInvalidated:
@@ -1681,7 +1717,7 @@ async function observeDaemonSession(
     const subscriptionId = remoteSubscriptionId;
     remoteSubscriptionId = undefined;
     if (subscriptionId !== undefined) {
-      void request('event.unsubscribe', { subscriptionId }).catch(
+      void request('subscription.close', { subscriptionId }).catch(
         (error: unknown) => {
           emitKodaXDiagnostic({
             source: 'runtime.daemon.client',
@@ -1721,31 +1757,19 @@ async function observeDaemonSession(
       );
       return;
     }
-    if (
-      cursor !== undefined
-      && (
-        event.cursor.sessionId !== cursor.sessionId
-        || event.cursor.journalEpoch !== cursor.journalEpoch
-      )
-    ) {
-      invalidate(
-        'runtime_changed',
-        'Runtime Session event journal changed; full resync is required.',
-        runtimeId,
-      );
-      return;
+    if (lastSeq !== undefined) {
+      if (event.seq < lastSeq) {
+        if (!live) return;
+        invalidate(
+          'event_order',
+          `Runtime observation event order regressed from ${lastSeq} to ${event.seq}.`,
+          runtimeId,
+        );
+        return;
+      }
+      if (event.seq === lastSeq) return;
     }
-    if (cursor !== undefined && event.seq < cursor.seq) {
-      if (!live) return;
-      invalidate(
-        'event_order',
-        `Runtime observation event order regressed from ${cursor.seq} to ${event.seq}.`,
-        runtimeId,
-      );
-      return;
-    }
-    if (cursor !== undefined && event.seq === cursor.seq) return;
-    cursor = event.cursor;
+    lastSeq = event.seq;
     try {
       listener(event);
     } catch (error: unknown) {
@@ -1844,7 +1868,7 @@ async function observeDaemonSession(
         requireRecord(value),
         'subscriptionId',
       );
-      void request('event.unsubscribe', { subscriptionId }).catch(
+      void request('subscription.close', { subscriptionId }).catch(
         (error: unknown) => {
           emitKodaXDiagnostic({
             source: 'runtime.daemon.client',
@@ -1878,7 +1902,7 @@ async function observeDaemonSession(
       );
     }
     const snapshot = requireRecord(result.snapshot) as unknown as RuntimeSessionObservationSnapshot;
-    cursor = snapshot.cursor;
+    lastSeq = typeof snapshot.seq === 'number' ? snapshot.seq : undefined;
     const observation: RuntimeSessionObservation = {
       snapshot,
       invalidated: invalidation,
@@ -2103,7 +2127,7 @@ function subscribeToDaemonWorkflowEvents(
 function subscribeToDaemonNotification(
   transport: RuntimeDaemonClientTransport,
   request: RuntimeDaemonClientTransport['request'],
-  method: 'event.subscribe' | 'workflow.subscribe',
+  method: 'workflow.subscribe',
   params: unknown,
   listener: (event: unknown) => void,
 ): RuntimeSubscription {
@@ -2197,12 +2221,10 @@ function deserializeRuntimeError(value: unknown): Error | undefined {
 
 function unsubscribeRemote(
   request: RuntimeDaemonClientTransport['request'],
-  subscribeMethod: 'event.subscribe' | 'workflow.subscribe',
+  subscribeMethod: 'workflow.subscribe',
   subscriptionId: string,
 ): void {
-  const unsubscribeMethod = subscribeMethod === 'event.subscribe'
-    ? 'event.unsubscribe'
-    : 'workflow.unsubscribe';
+  const unsubscribeMethod = 'workflow.unsubscribe';
   void request(unsubscribeMethod, { subscriptionId }).catch(() => undefined);
 }
 

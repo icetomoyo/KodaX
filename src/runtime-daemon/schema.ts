@@ -338,12 +338,10 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     params: objectSchema({ requestId: stringSchema }, ['requestId']),
     result: okSchema,
   },
-  'event.subscribe': { params: filterParamsSchema(eventFilterSchema(), true), result: subscriptionSchema() },
-  'event.unsubscribe': {
+  'subscription.close': {
     params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
     result: okSchema,
   },
-  'event.replay': { params: eventReplayFilterSchema(), result: arraySchema(runtimeEventSchema()) },
 
   'permission.grants.list': { params: noParamsSchema, result: objectAnySchema },
   'permission.grants.revoke': {
@@ -714,12 +712,6 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     }, ['sessionId'], true),
     result: nullableSchema(objectAnySchema),
   },
-  'context.budget.get': { params: diagnosticParamsSchema(), result: { oneOf: [objectAnySchema, { type: 'null' }] } },
-  'tool.exposure.preview': { params: diagnosticParamsSchema(), result: { oneOf: [objectAnySchema, { type: 'null' }] } },
-  'provider.cache.diagnostics.get': {
-    params: diagnosticParamsSchema(),
-    result: { oneOf: [objectAnySchema, { type: 'null' }] },
-  },
 } satisfies Record<RuntimeDaemonMethod, RuntimeDaemonMethodSchema>;
 
 export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS = {
@@ -907,14 +899,6 @@ function filterParamsSchema(
   return objectSchema({ filter }, required ? ['filter'] : []);
 }
 
-function diagnosticParamsSchema(): RuntimeDaemonJsonSchema {
-  return objectSchema({
-    sessionId: stringSchema,
-    runId: stringSchema,
-    contextKind: { type: 'string', enum: ['root', 'child'] },
-    agentId: stringSchema,
-  }, [], true);
-}
 
 function subscriptionSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']);
@@ -1478,9 +1462,9 @@ function sessionDiagnosticsSchema(): RuntimeDaemonJsonSchema {
     runtimeMode: { enum: ['embedded', 'daemon'] },
     sessionId: stringSchema,
     observation: objectSchema({
-      cursor: runtimeSessionCursorSchema(),
+      seq: integerSchema,
       transcriptRevision: stringSchema,
-    }, ['cursor', 'transcriptRevision']),
+    }, ['seq', 'transcriptRevision']),
     run: diagnosticRun,
   }, [
     'schemaVersion',
@@ -1687,20 +1671,7 @@ function runStageSchema(): RuntimeDaemonJsonSchema {
   };
 }
 
-function eventFilterSchema(): RuntimeDaemonJsonSchema {
-  return scopedEventFilterSchema();
-}
 
-function eventReplayFilterSchema(): RuntimeDaemonJsonSchema {
-  return scopedEventFilterSchema({
-    after: runtimeSessionCursorSchema(),
-    limit: {
-      type: 'integer',
-      minimum: 1,
-      maximum: Number.MAX_SAFE_INTEGER,
-    },
-  });
-}
 
 function scopedEventFilterSchema(
   extra: Readonly<Record<string, RuntimeDaemonJsonSchema>> = {},
@@ -1725,23 +1696,15 @@ function runtimeEventSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     id: stringSchema,
     seq: integerSchema,
-    cursor: runtimeSessionCursorSchema(),
     time: stringSchema,
     sessionId: stringSchema,
     runId: stringSchema,
     turnId: stringSchema,
     type: stringSchema,
     payload: {},
-  }, ['id', 'seq', 'cursor', 'time', 'sessionId', 'runId', 'type', 'payload'], true);
+  }, ['id', 'seq', 'time', 'sessionId', 'runId', 'type', 'payload'], true);
 }
 
-function runtimeSessionCursorSchema(): RuntimeDaemonJsonSchema {
-  return objectSchema({
-    sessionId: stringSchema,
-    journalEpoch: stringSchema,
-    seq: integerSchema,
-  }, ['sessionId', 'journalEpoch', 'seq']);
-}
 
 /** Typed Interaction response; answer payloads are validated by the Runtime. */
 function interactionResponseSchema(): RuntimeDaemonJsonSchema {

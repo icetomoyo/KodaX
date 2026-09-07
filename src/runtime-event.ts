@@ -1,7 +1,6 @@
 import type {
   RuntimeEventEnvelope,
   RuntimeEventParseResult,
-  RuntimeSessionCursor,
   RuntimeEventType,
   RuntimeTypedEvent,
 } from './sdk-runtime.js';
@@ -38,8 +37,9 @@ export function parseRuntimeEvent(value: unknown): RuntimeEventParseResult {
   if (!isRecord(value)) return invalid('Runtime event must be an object.');
   if (
     typeof value.id !== 'string'
-    || !Number.isSafeInteger(value.seq)
     || typeof value.seq !== 'number'
+    || !Number.isSafeInteger(value.seq)
+    || value.seq < 0
     || typeof value.time !== 'string'
     || typeof value.sessionId !== 'string'
     || typeof value.runId !== 'string'
@@ -57,17 +57,10 @@ export function parseRuntimeEvent(value: unknown): RuntimeEventParseResult {
   }
   const payloadError = validateKnownRuntimeEventPayload(value.type as RuntimeEventType, value.payload);
   if (payloadError !== undefined) return invalid(`${value.type} ${payloadError}`);
-  const parsedCursor = parseRuntimeSessionCursor(value.cursor);
-  if (
-    parsedCursor === undefined
-    || parsedCursor.sessionId !== value.sessionId
-    || parsedCursor.seq !== value.seq
-  ) return invalid('Runtime event cursor does not match its Session envelope.');
 
   const envelope: RuntimeEventEnvelope = {
     id: value.id,
     seq: value.seq,
-    cursor: parsedCursor,
     time: value.time,
     sessionId: value.sessionId,
     runId: value.runId,
@@ -76,24 +69,6 @@ export function parseRuntimeEvent(value: unknown): RuntimeEventParseResult {
     payload: value.payload,
   };
   return { ok: true, event: envelope as RuntimeTypedEvent };
-}
-
-function parseRuntimeSessionCursor(value: unknown): RuntimeSessionCursor | undefined {
-  if (
-    !isRecord(value)
-    || typeof value.sessionId !== 'string'
-    || value.sessionId.length === 0
-    || typeof value.journalEpoch !== 'string'
-    || value.journalEpoch.length === 0
-    || !Number.isSafeInteger(value.seq)
-    || typeof value.seq !== 'number'
-    || value.seq < 0
-  ) return undefined;
-  return {
-    sessionId: value.sessionId,
-    journalEpoch: value.journalEpoch,
-    seq: value.seq,
-  };
 }
 
 function validateKnownRuntimeEventPayload(

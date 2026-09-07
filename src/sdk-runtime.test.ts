@@ -259,6 +259,19 @@ vi.mock("@kodax-ai/repl", async (importOriginal) => {
   };
 });
 
+function collectEvents(
+  runtime: KodaXRuntime,
+  sessionId: string,
+  ...types: RuntimeEvent["type"][]
+) {
+  const events: RuntimeEvent[] = [];
+  const subscription = runtime.events.subscribe(
+    { sessionId, ...(types.length ? { type: types } : {}) },
+    (event) => events.push(event),
+  );
+  return { events, subscription };
+}
+
 describe("createKodaXRuntime", () => {
   let tempRoot: string;
 
@@ -638,32 +651,6 @@ describe("createKodaXRuntime", () => {
         requirements: { conversationHistory: 2 },
       }),
     ).rejects.toThrow(/does not support.*conversationHistory/i);
-  });
-
-  it("rejects an older daemon without the Session event journal contract", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
-    const transport: RuntimeDaemonClientTransport = {
-      async request(method) {
-        if (method !== "initialize") return null;
-        return {
-          identity: {
-            runtimeId: "daemon-with-global-event-sequence",
-            mode: "daemon",
-            profile: "default",
-            startedAt: "2026-08-08T00:00:00.000Z",
-            version: "0.7.84",
-          },
-          capabilities: {},
-        };
-      },
-      subscribe() {
-        return { close() {} };
-      },
-    };
-
-    await expect(connectKodaXRuntime({ transport })).rejects.toThrow(
-      /does not support.*sessionEventJournal/i,
-    );
   });
 
   it("fails closed when inline embedded Runtime cannot satisfy hard disposal", async () => {
@@ -1659,12 +1646,11 @@ describe("createKodaXRuntime", () => {
         source: "file-picker",
       });
       const artifactFromSpace = await space.artifacts.get(artifact.id);
-      const [providers, commands, skills, latestBudget, status] =
+      const [providers, commands, skills, status] =
         await Promise.all([
           ide.catalog.providers(),
           ide.catalog.commands(tempRoot),
           ide.catalog.skills({ userInvocableOnly: true }),
-          ide.diagnostics.latestContextBudget({ sessionId: session.id }),
           ide.status.snapshot(),
         ]);
 
@@ -1687,7 +1673,6 @@ describe("createKodaXRuntime", () => {
       expect(Array.isArray(providers)).toBe(true);
       expect(Array.isArray(commands)).toBe(true);
       expect(Array.isArray(skills)).toBe(true);
-      expect(latestBudget).toBeNull();
       expect(status.runtimeId).toBe(space.identity.runtimeId);
       expect(status.profile).toBe(profile);
       expect(status.sessions.some((item) => item.id === session.id)).toBe(true);
@@ -1815,9 +1800,6 @@ describe("createKodaXRuntime", () => {
     expect(transcript?.transcriptEntries).toEqual([]);
     expect(forked?.title).toBe("Runtime Fork");
     expect(seen.filter((type) => type === "session.created")).toHaveLength(1);
-    await expect(runtime.events.replay({ sessionId: forked!.id })).resolves.toEqual([
-      expect.objectContaining({ type: "session.created" }),
-    ]);
 
     await runtime.close();
   }, 60_000);
@@ -1920,9 +1902,6 @@ describe("createKodaXRuntime", () => {
 
     expect(session.title).toBe("Listener Isolation");
     expect(received).toEqual(["session.created"]);
-    await expect(
-      runtime.events.replay({ sessionId: session.id }),
-    ).resolves.toEqual([expect.objectContaining({ type: "session.created" })]);
     await runtime.close();
   });
 
@@ -2301,7 +2280,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("skips corrupted runtime persistence records and exposes runtime warnings", async () => {
+  it("skips corrupted runtime persistence records", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const badRunDir = path.join(
       tempRoot,
@@ -2324,11 +2303,6 @@ describe("createKodaXRuntime", () => {
       "utf-8",
     );
     await fs.writeFile(
-      path.join(badRunDir, "events.jsonl"),
-      '{"id":"evt_bad","seq":1}\nnot-json\n',
-      "utf-8",
-    );
-    await fs.writeFile(
       path.join(settingsDir, "corrupt-session.json"),
       "{bad settings",
       "utf-8",
@@ -2341,28 +2315,6 @@ describe("createKodaXRuntime", () => {
     await expect(
       runtime.sessions.getSettings("corrupt-session"),
     ).resolves.toEqual({});
-    const warnings = [
-      ...await runtime.events.replay({
-        sessionId: "runtime",
-        type: "runtime.warning",
-      }),
-      ...await runtime.events.replay({
-        sessionId: "corrupt-session",
-        type: "runtime.warning",
-      }),
-    ];
-    const messages = warnings.map(
-      (event) => (event.payload as { readonly message?: string }).message ?? "",
-    );
-    expect(
-      messages.some((message) => message.includes("runtime status record")),
-    ).toBe(true);
-    expect(
-      messages.some((message) => message.includes("runtime event record")),
-    ).toBe(true);
-    expect(
-      messages.some((message) => message.includes("runtime session settings")),
-    ).toBe(true);
 
     await runtime.close();
   });
@@ -2515,68 +2467,6 @@ describe("createKodaXRuntime", () => {
       ]);
     } finally {
       await restarted.close();
-    }
-  });
-
-  it("skips unreadable run event ledgers during session sequence recovery", async () => {
-    // A run ledger that cannot be read at the fs level (disk-sector failure,
-    // filter state, EIO) must degrade to a skip: the sequence scan must never
-    // fail session creation or the first turn.
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
-    const corruptDir = path.join(runtimeDir, "runs", "unreadable-ledger-eio");
-    await fs.mkdir(corruptDir, { recursive: true });
-    const corruptFile = path.join(corruptDir, "events.jsonl");
-    await fs.writeFile(corruptFile, `${"x".repeat(64)}\n`.repeat(64), "utf-8");
-    const sentinelFd = 0x7ffffff0;
-    const originalOpenSync = mutableNodeFs.openSync;
-    const originalReadSync = mutableNodeFs.readSync;
-    const originalCloseSync = mutableNodeFs.closeSync;
-    mutableNodeFs.openSync = ((file, flags, mode) => (
-      String(file) === corruptFile
-        ? sentinelFd
-        : originalOpenSync(file, flags, mode)
-    )) as typeof nodeFs.openSync;
-    mutableNodeFs.readSync = ((fd, ...rest) => {
-      if (fd === sentinelFd) {
-        throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
-      }
-      return originalReadSync(fd, ...rest);
-    }) as typeof nodeFs.readSync;
-    mutableNodeFs.closeSync = ((fd) => {
-      if (fd === sentinelFd) return;
-      return originalCloseSync(fd);
-    }) as typeof nodeFs.closeSync;
-    syncBuiltinESMExports();
-    let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
-    try {
-      runtime = await createKodaXRuntime({
-        homeDir: tempRoot,
-        defaultProvider: "mock-provider",
-      });
-      const session = await runtime.sessions.create({
-        sessionId: "unreadable-ledger-session",
-      });
-      codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => (
-        fakeRunningSession(options, Promise.resolve({
-          success: true,
-          lastText: "unreadable ledger witness done",
-          messages: [],
-          sessionId: session.id,
-        }))
-      ));
-      const handle = await runtime.runs.start({
-        sessionId: session.id,
-        prompt: "unreadable ledger witness",
-      });
-      expect(handle).toBeTruthy();
-      await runtime.runs.abort(handle.runId);
-    } finally {
-      mutableNodeFs.openSync = originalOpenSync;
-      mutableNodeFs.readSync = originalReadSync;
-      mutableNodeFs.closeSync = originalCloseSync;
-      syncBuiltinESMExports();
-      await runtime?.close();
     }
   });
 
@@ -2748,396 +2638,6 @@ describe("createKodaXRuntime", () => {
     expect(index.requiresRescan).toBe(true);
   });
 
-  it("does not reclaim an old Runtime lock while its owner PID is alive", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "live-lock-must-not-be-stolen";
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    await fs.mkdir(path.dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, JSON.stringify({
-      pid: process.pid,
-      createdAt: Date.now() - 60_000,
-      token: "live-owner",
-    }), "utf-8");
-
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    await runtime.sessions.create({ sessionId });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).rejects.toThrow("Runtime status lock timed out");
-    await expect(fs.stat(lockFile)).resolves.toBeDefined();
-    await fs.rm(lockFile, { force: true });
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    await expect(fs.stat(runtimeSessionEventSequencePath(tempRoot, sessionId)))
-      .rejects.toMatchObject({ code: "ENOENT" });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    await runtime.close();
-  });
-
-  it("keeps an acquired lock usable when candidate cleanup is deferred", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const sessionId = "candidate-cleanup-deferred";
-    const rmSync = mutableNodeFs.rmSync;
-    let cleanupFailed = false;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (
-        !cleanupFailed
-        && String(file).includes("sequence.lock.candidate.")
-      ) {
-        cleanupFailed = true;
-        throw new Error("synthetic candidate cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-
-    try {
-      await expect(runtime.sessions.create({
-        sessionId,
-      })).resolves.toMatchObject({ id: sessionId });
-    } finally {
-      mutableNodeFs.rmSync = rmSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(cleanupFailed).toBe(true);
-    const eventDir = runtimeSessionEventDir(tempRoot, sessionId);
-    await expect(fs.stat(runtimeSessionEventLockPath(tempRoot, sessionId)))
-      .rejects.toMatchObject({ code: "ENOENT" });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    await runtime.sessions.create({ sessionId: "candidate-cleanup-retry" });
-    expect((await fs.readdir(eventDir)).some((name) => (
-      name.includes("sequence.lock.candidate.")
-    ))).toBe(false);
-    await runtime.close();
-  });
-
-  it("bounds orphan candidates when candidate cleanup keeps failing", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const sessionId = "persistent-candidate-cleanup";
-    const eventDir = runtimeSessionEventDir(tempRoot, sessionId);
-    const rmSync = mutableNodeFs.rmSync;
-    let rejectedCandidateRemovals = 0;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (String(file).includes("sequence.lock.candidate.")) {
-        rejectedCandidateRemovals += 1;
-        throw new Error("persistent candidate cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-
-    try {
-      await runtime.sessions.create({ sessionId });
-      for (let index = 0; index < 2; index += 1) {
-        await runtime.sessions.updateSettings(sessionId, {
-          permissionMode: index === 0 ? "plan" : "auto",
-        });
-        await runtime.events.replay({ sessionId });
-      }
-      expect((await fs.readdir(eventDir)).filter((name) => (
-        name.includes("sequence.lock.candidate.")
-      ))).toHaveLength(1);
-      expect(rejectedCandidateRemovals).toBeGreaterThan(1);
-    } finally {
-      mutableNodeFs.rmSync = rmSync;
-      syncBuiltinESMExports();
-    }
-
-    await runtime.sessions.updateSettings(sessionId, { permissionMode: "plan" });
-    await runtime.events.replay({ sessionId });
-    expect((await fs.readdir(eventDir)).filter((name) => (
-      name.includes("sequence.lock.candidate.")
-    ))).toHaveLength(0);
-    await runtime.close();
-  });
-
-  it("does not create a new candidate beside an unremovable prior-process candidate", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "prior-process-candidate-bound";
-    const eventDir = runtimeSessionEventDir(tempRoot, sessionId);
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    const candidate = `${lockFile}.candidate.2147483647.00000000-0000-4000-8000-000000000001`;
-    await fs.mkdir(eventDir, { recursive: true });
-    await fs.writeFile(candidate, JSON.stringify({
-      pid: 2_147_483_647,
-      createdAt: Date.now() - 60_000,
-      token: "prior-process-candidate",
-    }), "utf-8");
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const rmSync = mutableNodeFs.rmSync;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (String(file).includes("sequence.lock.candidate.")) {
-        throw new Error("persistent prior-process candidate cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-
-    try {
-      await expect(runtime.sessions.create({
-        sessionId,
-      })).resolves.toMatchObject({ id: sessionId });
-      expect((await fs.readdir(eventDir)).filter((name) => (
-        name.includes("sequence.lock.candidate.")
-      ))).toHaveLength(1);
-    } finally {
-      mutableNodeFs.rmSync = rmSync;
-      syncBuiltinESMExports();
-      await fs.rm(candidate, { force: true });
-    }
-
-    await runtime.close();
-  });
-
-  it("removes a published bakery claim when atomic-writer cleanup fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "published-claim-cleanup-failure";
-    const eventDir = runtimeSessionEventDir(tempRoot, sessionId);
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    await fs.mkdir(eventDir, { recursive: true });
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const staleChoosing = `${lockFile}.choosing.00000000-0000-4000-8000-000000000001`;
-    await fs.writeFile(staleChoosing, JSON.stringify({
-      pid: 2_147_483_647,
-      createdAt: Date.now(),
-      token: "dead-chooser-before-claim-cleanup",
-    }), "utf-8");
-    const renameSync = mutableNodeFs.renameSync;
-    let claimCleanupFailed = false;
-    mutableNodeFs.renameSync = ((oldPath, newPath) => {
-      renameSync(oldPath, newPath);
-      if (
-        !claimCleanupFailed
-        && String(newPath).includes("sequence.lock.claim.")
-      ) {
-        claimCleanupFailed = true;
-        throw new Error("synthetic published-claim writer failure");
-      }
-    }) as typeof nodeFs.renameSync;
-    syncBuiltinESMExports();
-
-    try {
-      await runtime.sessions.create({
-        sessionId,
-      });
-      expect(claimCleanupFailed).toBe(true);
-    } finally {
-      mutableNodeFs.renameSync = renameSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(claimCleanupFailed).toBe(true);
-    expect((await fs.readdir(eventDir)).some((name) => (
-      name.includes("sequence.lock.claim.")
-    ))).toBe(false);
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    expect((await fs.readdir(eventDir)).some((name) => (
-      name.includes("sequence.lock.claim.")
-      || name.includes("sequence.lock.choosing.")
-    ))).toBe(false);
-    await expect(runtime.sessions.create({
-      sessionId: "after-published-claim-cleanup",
-    })).resolves.toMatchObject({ id: "after-published-claim-cleanup" });
-    await runtime.close();
-  });
-
-  it("falls back to exclusive lock creation when hard links are unavailable", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const linkSync = mutableNodeFs.linkSync;
-    let fallbackUsed = false;
-    mutableNodeFs.linkSync = ((_existingPath, _newPath) => {
-      fallbackUsed = true;
-      throw Object.assign(new Error("hard links unavailable"), { code: "EPERM" });
-    }) as typeof nodeFs.linkSync;
-    syncBuiltinESMExports();
-
-    try {
-      await expect(runtime.sessions.create({
-        sessionId: "hard-link-fallback",
-      })).resolves.toMatchObject({ id: "hard-link-fallback" });
-    } finally {
-      mutableNodeFs.linkSync = linkSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(fallbackUsed).toBe(true);
-    await expect(runtime.events.replay({
-      sessionId: "hard-link-fallback",
-    })).resolves.toHaveLength(1);
-    await runtime.close();
-  });
-
-  it("reclaims its malformed fallback lock by file identity after write cleanup fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "malformed-fallback-first-attempt";
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    const openSync = mutableNodeFs.openSync;
-    const writeFileSync = mutableNodeFs.writeFileSync;
-    const linkSync = mutableNodeFs.linkSync;
-    const rmSync = mutableNodeFs.rmSync;
-    let fallbackDescriptor: number | undefined;
-    let fallbackCleanupFailed = false;
-    mutableNodeFs.openSync = ((file, flags, mode) => {
-      const descriptor = openSync(file, flags, mode);
-      if (String(file) === lockFile && flags === "wx") {
-        fallbackDescriptor = descriptor;
-      }
-      return descriptor;
-    }) as typeof nodeFs.openSync;
-    mutableNodeFs.writeFileSync = ((file, data, options) => {
-      if (file === fallbackDescriptor) {
-        throw new Error("synthetic fallback record write failure");
-      }
-      return writeFileSync(file, data, options);
-    }) as typeof nodeFs.writeFileSync;
-    mutableNodeFs.linkSync = (() => {
-      throw Object.assign(new Error("hard links unavailable"), { code: "EPERM" });
-    }) as typeof nodeFs.linkSync;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (!fallbackCleanupFailed && String(file) === lockFile) {
-        fallbackCleanupFailed = true;
-        throw new Error("synthetic fallback cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-
-    try {
-      await expect(runtime.sessions.create({
-        sessionId,
-      })).resolves.toMatchObject({ id: sessionId });
-    } finally {
-      mutableNodeFs.openSync = openSync;
-      mutableNodeFs.writeFileSync = writeFileSync;
-      mutableNodeFs.linkSync = linkSync;
-      mutableNodeFs.rmSync = rmSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(fallbackCleanupFailed).toBe(true);
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    await runtime.sessions.updateSettings(sessionId, { permissionMode: "plan" });
-    await expect(runtime.events.replay({ sessionId })).resolves.toHaveLength(2);
-    await expect(fs.stat(lockFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await runtime.close();
-  });
-
-  it("reclaims a reclaim gate after its owner is definitely gone", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "stale-reclaim-gate";
-    const eventDir = runtimeSessionEventDir(tempRoot, sessionId);
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    const reclaimFile = `${lockFile}.reclaim`;
-    const cleanupFile = `${reclaimFile}.cleanup`;
-    await fs.mkdir(eventDir, { recursive: true });
-    await fs.writeFile(reclaimFile, JSON.stringify({
-      pid: 2_147_483_647,
-      createdAt: Date.now() - 60_000,
-      token: "crashed-reclaimer",
-    }), "utf-8");
-    await fs.writeFile(cleanupFile, JSON.stringify({
-      pid: 2_147_483_646,
-      createdAt: Date.now() - 60_000,
-      token: "crashed-reclaim-cleaner",
-    }), "utf-8");
-
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    await expect(runtime.sessions.create({
-      sessionId,
-    })).resolves.toMatchObject({ id: sessionId });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    await expect(fs.stat(lockFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(reclaimFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(cleanupFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await runtime.close();
-  });
-
-  it("fails closed for an old malformed Runtime lock", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "malformed-stale-lock";
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    await fs.mkdir(path.dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, "not-json", "utf-8");
-    const stale = new Date(Date.now() - 31_000);
-    await fs.utimes(lockFile, stale, stale);
-
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    await runtime.sessions.create({ sessionId });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).rejects.toThrow("Runtime status lock timed out");
-    await expect(fs.readFile(lockFile, "utf-8")).resolves.toBe("not-json");
-    await fs.rm(lockFile, { force: true });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toHaveLength(1);
-    await runtime.close();
-  });
-
-  it("reclaims a Runtime lock only after its owner is definitely gone", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "dead-lock-recovery";
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    await fs.mkdir(path.dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, JSON.stringify({
-      pid: 2_147_483_647,
-      createdAt: Date.now(),
-      token: "dead-owner",
-      processStartIdentity: "gone:identity",
-    }), "utf-8");
-
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    await expect(runtime.sessions.create({
-      sessionId,
-    })).resolves.toMatchObject({ id: sessionId });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "session.created" }),
-    ]));
-    await expect(fs.stat(lockFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await runtime.close();
-  });
-
-  it("reclaims a Runtime lock when process identity proves PID reuse", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "reused-pid-lock-recovery";
-    const lockFile = runtimeSessionEventLockPath(tempRoot, sessionId);
-    await fs.mkdir(path.dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, JSON.stringify({
-      pid: process.pid,
-      createdAt: Date.now(),
-      token: "reused-pid-owner",
-      processStartIdentity: "invalid:previous-process",
-    }), "utf-8");
-
-    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
-    await expect(runtime.sessions.create({
-      sessionId,
-    })).resolves.toMatchObject({ id: sessionId });
-    await expect(runtime.events.replay({
-      sessionId,
-    })).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "session.created" }),
-    ]));
-    await expect(fs.stat(lockFile)).rejects.toMatchObject({ code: "ENOENT" });
-    await runtime.close();
-  });
-
   it("marks non-terminal runs from a definitely dead Runtime interrupted on startup", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runDir = path.join(
@@ -3253,12 +2753,6 @@ describe("createKodaXRuntime", () => {
       phase: "interrupted",
       error: expect.any(Error),
     });
-    await expect(
-      runtime.events.replay({
-        runId: "run-crashed",
-        type: "run.interrupted",
-      }),
-    ).resolves.toHaveLength(1);
 
     await runtime.close();
   });
@@ -3298,10 +2792,6 @@ describe("createKodaXRuntime", () => {
       activeRuns: [expect.objectContaining({ runId, phase: "unknown" })],
     });
     expect(await fs.readFile(statusFile)).toEqual(before);
-    await expect(runtime.events.replay({
-      runId,
-      type: "run.interrupted",
-    })).resolves.toHaveLength(0);
 
     await runtime.close();
   });
@@ -3344,10 +2834,6 @@ describe("createKodaXRuntime", () => {
     await expect(second.runs.get(runId)).resolves.toMatchObject({
       phase: "interrupted",
     });
-    await expect(first.events.replay({
-      runId,
-      type: "run.interrupted",
-    })).resolves.toHaveLength(1);
 
     await Promise.all([first.close(), second.close()]);
   });
@@ -3393,9 +2879,6 @@ describe("createKodaXRuntime", () => {
     await expect(runtime.runs.abort(runId)).rejects.toMatchObject({
       code: "conflict",
     });
-    await expect(
-      runtime.events.replay({ runId, type: "run.interrupted" }),
-    ).resolves.toEqual([]);
     expect(JSON.parse(await fs.readFile(statusFile, "utf-8"))).toEqual(
       persisted,
     );
@@ -3403,26 +2886,11 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("does not restore a terminal from Runtime events and reads the legacy Run conservatively", async () => {
+  it("does not restore a terminal for an ownerless legacy Run and reads it conservatively", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runId = "run-terminal-event-won";
     const sessionId = "session-terminal-event-won";
-    const journalEpoch = "epoch-terminal-event-won";
     const runDir = path.join(tempRoot, ".kodax", "runtime", "runs", runId);
-    const completed = {
-      runId,
-      sessionId,
-      phase: "completed",
-      startedAt: "2026-07-09T00:00:00.000Z",
-      endedAt: "2026-07-09T00:01:00.000Z",
-      provider: "mock-provider",
-      terminal: {
-        revision: 1,
-        kind: "completed",
-        code: "completed",
-        effectOutcome: "known",
-      },
-    };
     await fs.mkdir(runDir, { recursive: true });
     await fs.writeFile(
       path.join(runDir, "status.json"),
@@ -3430,60 +2898,33 @@ describe("createKodaXRuntime", () => {
         runId,
         sessionId,
         phase: "running",
-        startedAt: completed.startedAt,
-        provider: completed.provider,
+        startedAt: "2026-07-09T00:00:00.000Z",
+        provider: "mock-provider",
       }),
       "utf-8",
-    );
-    await fs.writeFile(
-      path.join(runDir, "events.jsonl"),
-      `${JSON.stringify({
-        id: "evt-terminal-event-won",
-        seq: 1,
-        cursor: { sessionId, journalEpoch, seq: 1 },
-        time: completed.endedAt,
-        sessionId,
-        runId,
-        type: "run.completed",
-        payload: completed,
-      })}\n`,
-      "utf-8",
-    );
-    await seedRuntimeSessionEventJournal(
-      tempRoot,
-      sessionId,
-      journalEpoch,
-      1,
     );
 
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
 
-    // FEATURE_298 T33: the intact terminal Runtime event never restores a
-    // terminal — the ownerless legacy Run reads as metadata-unknown and the
-    // original status file is not rewritten.
+    // FEATURE_298 T33: the ownerless legacy Run reads as metadata-unknown and
+    // the original status file is not rewritten.
     const statusBefore = await fs.readFile(path.join(runDir, "status.json"));
     await expect(runtime.runs.get(runId)).resolves.toMatchObject({
       phase: "unknown",
       error: "owner_liveness_unconfirmed",
     });
-    await expect(runtime.events.replay({ runId })).resolves.toEqual([
-      expect.objectContaining({ type: "run.completed" }),
-    ]);
     expect(await fs.readFile(path.join(runDir, "status.json"))).toEqual(
       statusBefore,
     );
     await runtime.close();
   });
 
-  it("does not fabricate legacy input deliveries from Runtime events", async () => {
+  it("does not fabricate legacy input deliveries for an ownerless Run", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runId = "run-durable-interrupt-event";
     const sessionId = "session-durable-interrupt-event";
-    const journalEpoch = "epoch-durable-interrupt-event";
     const runDir = path.join(tempRoot, ".kodax", "runtime", "runs", runId);
     const queuedAt = "2026-07-09T00:00:01.000Z";
-    const deliveredAt = "2026-07-09T00:00:02.000Z";
-    const canonicalEntryId = "entry_durable_interrupt";
     await fs.mkdir(runDir, { recursive: true });
     const statusFile = path.join(runDir, "status.json");
     await fs.writeFile(
@@ -3516,49 +2957,11 @@ describe("createKodaXRuntime", () => {
       "utf-8",
     );
     const originalStatus = await fs.readFile(statusFile);
-    await fs.writeFile(
-      path.join(runDir, "events.jsonl"),
-      `${JSON.stringify({
-        id: "evt-durable-interrupt",
-        seq: 1,
-        cursor: { sessionId, journalEpoch, seq: 1 },
-        time: deliveredAt,
-        sessionId,
-        runId,
-        type: "run.input.delivered",
-        payload: {
-          inputs: [
-            {
-              inputId: "input-durable",
-              afterRunId: runId,
-              input: { type: "text", text: "already consumed" },
-              queuedAt,
-              deliveredAt,
-              entryId: canonicalEntryId,
-            },
-            {
-              inputId: "input-legacy",
-              afterRunId: runId,
-              input: { type: "text", text: "legacy consumed input" },
-              queuedAt,
-              deliveredAt,
-            },
-          ],
-        },
-      })}\n`,
-      "utf-8",
-    );
-    await seedRuntimeSessionEventJournal(
-      tempRoot,
-      sessionId,
-      journalEpoch,
-      1,
-    );
 
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
 
-    // FEATURE_298 T33: queued legacy inputs stay queued — delivery facts are
-    // never fabricated from Runtime events — and the status file is untouched.
+    // FEATURE_298 T33: queued legacy inputs stay queued and the status file
+    // is untouched.
     const recovered = await runtime.runs.get(runId);
     expect(recovered).toMatchObject({
       phase: "unknown",
@@ -3668,16 +3071,6 @@ describe("createKodaXRuntime", () => {
         second.sessions.load(session.id),
       ])),
     );
-    const replay = await second.events.replay({ sessionId: session.id });
-    expect(replay.map((event) => event.seq)).toEqual(
-      [...replay.map((event) => event.seq)].sort((left, right) => left - right),
-    );
-    expect(new Set(replay.map((event) => event.seq)).size).toBe(replay.length);
-    expect(replay.filter(
-      (event) =>
-        event.sessionId === session.id
-        && event.type === "session.loaded",
-    )).toHaveLength(0);
 
     const firstStatus = await second.runs.get(handle.runId);
     await first.close();
@@ -4324,6 +3717,7 @@ describe("createKodaXRuntime", () => {
       runId: string;
       seq: number;
       time: string;
+      payload: unknown;
       turnId?: string;
     }> = [];
     runtime.events.subscribe({ sessionId: session.id }, (event) => {
@@ -4333,6 +3727,7 @@ describe("createKodaXRuntime", () => {
         runId: event.runId,
         seq: event.seq,
         time: event.time,
+        payload: event.payload,
         ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
       });
     });
@@ -4427,11 +3822,6 @@ describe("createKodaXRuntime", () => {
     const result = await handle.result;
     const awaitedResult = await runtime.runs.await(handle.runId);
     const status = await runtime.runs.get(handle.runId);
-    const replay = await runtime.events.replay({ runId: handle.runId });
-    const assistantReplay = await runtime.events.replay({
-      runId: handle.runId,
-      type: "assistant.delta",
-    });
 
     expect(result.phase).toBe("completed");
     expect(awaitedResult).toEqual(result);
@@ -4455,16 +3845,15 @@ describe("createKodaXRuntime", () => {
     expect(
       events.every((event) => event.seq > 0 && event.time.includes("T")),
     ).toBe(true);
-    expect(replay.every((event) => event.sessionId === session.id)).toBe(true);
-    expect(replay.every((event) => event.runId === handle.runId)).toBe(true);
     expect(
-      replay.every((event) => event.id && event.time && event.seq > 0),
-    ).toBe(true);
-    expect(replay.map((event) => event.seq)).toEqual([
-      2, 3, 4, 5, 6, 7, 8, 9, 10,
-    ]);
+      events.filter((event) => event.type === "run.started").length,
+    ).toBe(1);
+    expect(events.map((event) => event.seq)).toEqual(
+      [...events.map((event) => event.seq)].sort((left, right) => left - right),
+    );
+    expect(new Set(events.map((event) => event.seq)).size).toBe(events.length);
     expect(
-      replay.find((event) => event.type === "tool.sandbox")?.payload,
+      events.find((event) => event.type === "tool.sandbox")?.payload,
     ).toMatchObject({
       update: {
         id: "tool-1",
@@ -4474,9 +3863,9 @@ describe("createKodaXRuntime", () => {
         },
       },
     });
-    expect(assistantReplay.map((event) => event.type)).toEqual([
-      "assistant.delta",
-    ]);
+    expect(
+      events.filter((event) => event.type === "assistant.delta"),
+    ).toHaveLength(1);
 
     await runtime.close();
   });
@@ -4508,50 +3897,6 @@ describe("createKodaXRuntime", () => {
         requirements: { actorSettlementConvergence: 2 },
       }),
     ).rejects.toThrow(/does not support.*actorSettlementConvergence/i);
-  });
-
-  it("validates embedded Session and Run ownership even when the event log is empty", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const first = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const owner = await first.sessions.create({ title: "Run owner" });
-    const other = await first.sessions.create({ title: "Other Session" });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => fakeRunningSession(
-        options,
-        Promise.resolve({
-          success: true,
-          lastText: "done",
-          messages: [],
-          sessionId: owner.id,
-        }),
-      ),
-    );
-    const run = await first.runs.start({
-      sessionId: owner.id,
-      prompt: "empty replay validation",
-    });
-    await run.result;
-    await first.close();
-    await fs.writeFile(runtimeEventLogPath(tempRoot, run.runId), "", "utf8");
-
-    const second = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    try {
-      expect(() => second.events.subscribe({
-        sessionId: other.id,
-        runId: run.runId,
-      }, () => undefined)).toThrow("different Session");
-      await expect(second.events.replay({
-        sessionId: other.id,
-        runId: run.runId,
-      })).rejects.toMatchObject({ code: "invalid_argument" });
-    } finally {
-      await second.close();
-    }
   });
 
   it("emits one canonical post-commit compaction event with stable context ownership", async () => {
@@ -4623,6 +3968,16 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const finishedCollector = collectEvents(
+      runtime,
+      session.id,
+      "context.compaction.finished",
+    );
+    const messagesCollector = collectEvents(
+      runtime,
+      session.id,
+      "context.compaction.messages",
+    );
     const handle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "compact",
@@ -4630,10 +3985,8 @@ describe("createKodaXRuntime", () => {
     });
     await handle.result;
     await flushMicrotasks();
-    const events = await runtime.events.replay({
-      runId: handle.runId,
-      type: "context.compaction.finished",
-    });
+    const events = finishedCollector.events;
+    const messageEvents = messagesCollector.events;
 
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({
@@ -4645,10 +3998,6 @@ describe("createKodaXRuntime", () => {
       tokensBefore: 1_000,
       tokensAfter: 400,
       committed: true,
-    });
-    const messageEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: "context.compaction.messages",
     });
     expect(messageEvents).toHaveLength(1);
     expect(messageEvents[0]?.payload).toMatchObject({
@@ -4725,6 +4074,16 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const skippedCollector = collectEvents(
+      runtime,
+      session.id,
+      "context.compaction.skipped",
+    );
+    const endedCollector = collectEvents(
+      runtime,
+      session.id,
+      "context.compaction.ended",
+    );
     const handle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "observe compaction outcomes",
@@ -4732,14 +4091,8 @@ describe("createKodaXRuntime", () => {
     await handle.result;
     await flushMicrotasks();
 
-    const skipped = await runtime.events.replay({
-      runId: handle.runId,
-      type: "context.compaction.skipped",
-    });
-    const ended = await runtime.events.replay({
-      runId: handle.runId,
-      type: "context.compaction.ended",
-    });
+    const skipped = skippedCollector.events;
+    const ended = endedCollector.events;
     expect(skipped[0]?.payload).toMatchObject({
       reason: "compactable_below_threshold",
       compactableTokens: 255_999,
@@ -4862,6 +4215,7 @@ describe("createKodaXRuntime", () => {
       return fakeRunningSession(options, result);
     });
 
+    const lifecycleCollector = collectEvents(runtime, session.id);
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "FIRST_MANAGED_PROMPT",
@@ -4882,7 +4236,7 @@ describe("createKodaXRuntime", () => {
     expect(canonicalJson).toContain("FIRST_MANAGED_PROMPT");
     expect(canonicalJson).toContain("FIRST_MANAGED_ANSWER");
     expect(canonicalJson).toContain("SECOND_MANAGED_PROMPT");
-    const lifecycle = await runtime.events.replay({ runId: run.runId });
+    const lifecycle = lifecycleCollector.events;
     const completedIndex = lifecycle.findIndex((event) => event.type === "turn.completed");
     const deliveredIndex = lifecycle.findIndex((event) => event.type === "run.input.delivered");
     expect(completedIndex).toBeGreaterThanOrEqual(0);
@@ -4950,14 +4304,6 @@ describe("createKodaXRuntime", () => {
       sessionsDir,
       defaultProvider: "mock-provider",
     });
-    const resumedDelivery = await resumedRuntime.events.replay({
-      runId: run.runId,
-      type: "run.input.delivered",
-    });
-    const resumedDeliveryPayload = resumedDelivery[0]?.payload as
-      | RuntimeRunInputDeliveredEventPayload
-      | undefined;
-    expect(resumedDeliveryPayload?.inputs[0]?.entryId).toBe(deliveredEntryId);
     await expect(resumedRuntime.runs.get(run.runId)).resolves.toMatchObject({
       interruptInputs: [expect.objectContaining({
         state: "delivered",
@@ -5060,7 +4406,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("keeps active live projection complete after durable event history is trimmed", async () => {
+  it("keeps the active live projection complete during a large active run", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -5114,43 +4460,7 @@ describe("createKodaXRuntime", () => {
     expect(
       observation.snapshot.live.assistantTextByRun[run.runId],
     ).toHaveLength(chunk.length * 9);
-    await expect(
-      runtime.events.replay({
-        runId: run.runId,
-        after: { ...observation.snapshot.cursor, seq: 0 },
-      }),
-    ).rejects.toMatchObject({ code: "resync_required" });
     observation.close();
-    await runtime.close();
-  });
-
-  it("requires resync for trimmed Session events without a Run status", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-    });
-    const session = await runtime.sessions.create({
-      sessionId: "session%retention",
-      title: "Session Event Retention",
-    });
-    const [createdEvent] = await runtime.events.replay({ sessionId: session.id });
-    const largeNotice = "n".repeat(9 * 1024 * 1024);
-    await runtime.sessions.appendNotice({
-      sessionId: session.id,
-      source: "retention",
-      content: largeNotice,
-    });
-    await runtime.sessions.appendNotice({
-      sessionId: session.id,
-      source: "retention",
-      content: largeNotice,
-    });
-
-    await expect(runtime.events.replay({
-      sessionId: session.id,
-      after: { ...createdEvent!.cursor, seq: 0 },
-    })).rejects.toMatchObject({ code: "resync_required" });
     await runtime.close();
   });
 
@@ -5783,7 +5093,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("keeps read-only Session APIs out of durable Runtime event persistence", async () => {
+  it("keeps read-only Session APIs from emitting Runtime events", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const sessionsDir = path.join(tempRoot, "readonly-session-api-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
@@ -5796,9 +5106,7 @@ describe("createKodaXRuntime", () => {
       source: "readonly",
       content: "read only history",
     });
-    const sequencePath = runtimeSessionEventSequencePath(tempRoot, session.id);
-    const beforeEvents = await runtime.events.replay({ sessionId: session.id });
-    const beforeSequence = await fs.readFile(sequencePath);
+    const collector = collectEvents(runtime, session.id);
     replMock.loadSessionCalls = 0;
 
     await runtime.sessions.load(session.id);
@@ -5825,8 +5133,7 @@ describe("createKodaXRuntime", () => {
     await runtime.sessions.diagnostics({ sessionId: session.id });
     await runtime.sessions.getSettings(session.id);
 
-    expect(await runtime.events.replay({ sessionId: session.id })).toEqual(beforeEvents);
-    expect(await fs.readFile(sequencePath)).toEqual(beforeSequence);
+    expect(collector.events).toEqual([]);
     expect(replMock.loadSessionCalls).toBe(0);
     await runtime.close();
   });
@@ -7587,7 +6894,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("flushes coalesced streaming events before replay without dropping deltas", async () => {
+  it("flushes coalesced streaming events without dropping deltas", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -7597,6 +6904,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Buffered Replay Test",
     });
+    const collector = collectEvents(
+      runtime,
+      session.id,
+      "assistant.delta",
+    );
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession => {
         queueMicrotask(() => {
@@ -7616,32 +6928,16 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "stream",
     });
-    await flushMicrotasks();
-    const replay = await runtime.events.replay({
-      runId: run.runId,
-      type: "assistant.delta",
-    });
-    const eventLog = await fs.readFile(
-      path.join(
-        tempRoot,
-        ".kodax",
-        "runtime",
-        "runs",
-        encodeURIComponent(run.runId),
-        "events.jsonl",
-      ),
-      "utf-8",
-    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-    expect(replay).toEqual([
+    expect(collector.events).toEqual([
       expect.objectContaining({ type: "assistant.delta" }),
     ]);
-    expect(eventLog).toContain("buffered delta");
     await runtime.runs.abort(run.runId);
     await runtime.close();
   });
 
-  it("keeps another Session's scheduled flush after a targeted durable boundary", async () => {
+  it("keeps another Session's pending deltas when another Session flushes", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -7683,92 +6979,14 @@ describe("createKodaXRuntime", () => {
 
     firstEvents?.onTextDelta?.("scheduled A");
     secondEvents?.onToolUseStart?.({ id: "boundary-b", name: "read" });
+    firstEvents?.onTextDelta?.("scheduled B");
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-    expect(seen.map(runtimeTextPayload)).toEqual(["scheduled A"]);
+    expect(seen.map(runtimeTextPayload)).toEqual(["scheduled Ascheduled B"]);
     subscription.close();
     await runtime.runs.abort(firstRun.runId);
     await runtime.runs.abort(secondRun.runId);
     await runtime.close();
-  });
-
-  it("reschedules healthy Session work after another Session has an indeterminate commit", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const poisonedSession = await runtime.sessions.create({ title: "Poison A" });
-    const healthySession = await runtime.sessions.create({ title: "Healthy B" });
-    let poisonedEvents: KodaXOptions["events"];
-    let healthyEvents: KodaXOptions["events"];
-    codingMock.startKodaX
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        poisonedEvents = options.events;
-        return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
-      })
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        healthyEvents = options.events;
-        return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
-      });
-    const poisonedRun = await runtime.runs.start({
-      sessionId: poisonedSession.id,
-      prompt: "poison",
-    });
-    const healthyRun = await runtime.runs.start({
-      sessionId: healthySession.id,
-      prompt: "remain scheduled",
-    });
-    healthyEvents?.onTextDelta?.("healthy scheduled delta");
-    poisonedEvents?.onTextDelta?.("poisoned pending delta");
-
-    const poisonedFile = runtimeEventLogPath(tempRoot, poisonedRun.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    const rmSync = mutableNodeFs.rmSync;
-    const truncateSync = mutableNodeFs.truncateSync;
-    let appendFailed = false;
-    let cleanupFailed = false;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (!appendFailed && String(file) === poisonedFile) {
-        appendFailed = true;
-        const content = String(data);
-        appendFileSync(file, content.slice(0, content.length / 2), options);
-        throw new Error("synthetic append failure after partial write");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    mutableNodeFs.truncateSync = ((file, length) => {
-      if (String(file) === poisonedFile) {
-        throw new Error("synthetic rollback failure");
-      }
-      return truncateSync(file, length);
-    }) as typeof nodeFs.truncateSync;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (!cleanupFailed && String(file) === `${poisonedFile}.lock`) {
-        cleanupFailed = true;
-        throw new Error("synthetic event lock cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-    try {
-      poisonedEvents?.onToolUseStart?.({ id: "poison-boundary", name: "read" });
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      mutableNodeFs.rmSync = rmSync;
-      mutableNodeFs.truncateSync = truncateSync;
-      syncBuiltinESMExports();
-    }
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    expect(appendFailed).toBe(true);
-    expect(cleanupFailed).toBe(true);
-    expect(await fs.readFile(
-      runtimeEventLogPath(tempRoot, healthyRun.runId),
-      "utf8",
-    )).toContain("healthy scheduled delta");
-    await expect(runtime.close()).rejects.toThrow("indeterminate");
   });
 
   it("flushes pending deltas when a client subscription disconnects", async () => {
@@ -7810,7 +7028,7 @@ describe("createKodaXRuntime", () => {
 
     activeEvents?.onTextDelta?.("flush on disconnect");
     disconnected.close();
-    await flushMicrotasks();
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
     expect(
       disconnectedEvents.filter((event) => event.type === "assistant.delta"),
@@ -7819,13 +7037,11 @@ describe("createKodaXRuntime", () => {
       remainingEvents.filter((event) => event.type === "assistant.delta")
         .map(runtimeTextPayload),
     ).toEqual(["flush on disconnect"]);
-    expect(await fs.readFile(runtimeEventLogPath(tempRoot, run.runId), "utf-8"))
-      .toContain("flush on disconnect");
     await runtime.runs.abort(run.runId);
     await runtime.close();
   });
 
-  it("removes all synchronously closed subscribers before disconnect flush", async () => {
+  it("removes all synchronously closed subscribers before the coalesced flush", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -7847,6 +7063,7 @@ describe("createKodaXRuntime", () => {
     );
     const firstEvents: RuntimeEvent[] = [];
     const secondEvents: RuntimeEvent[] = [];
+    const survivingEvents: RuntimeEvent[] = [];
     const first = runtime.events.subscribe(
       { sessionId: session.id },
       (event) => firstEvents.push(event),
@@ -7855,6 +7072,10 @@ describe("createKodaXRuntime", () => {
       { sessionId: session.id },
       (event) => secondEvents.push(event),
     );
+    const surviving = runtime.events.subscribe(
+      { sessionId: session.id },
+      (event) => survivingEvents.push(event),
+    );
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "disconnect a shared client",
@@ -7862,6 +7083,7 @@ describe("createKodaXRuntime", () => {
     startTestOutputSegment(activeEvents, "request-disconnect-shared");
     firstEvents.length = 0;
     secondEvents.length = 0;
+    survivingEvents.length = 0;
 
     emitTestTextDelta(
       activeEvents,
@@ -7870,18 +7092,21 @@ describe("createKodaXRuntime", () => {
     );
     first.close();
     second.close();
-    await flushMicrotasks();
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
     expect(firstEvents).toHaveLength(0);
     expect(secondEvents).toHaveLength(0);
-    expect(await replayRuntimeText(runtime, run.runId)).toBe(
-      "persist without notifying dead connection",
-    );
+    expect(
+      survivingEvents
+        .filter((event) => event.type === "assistant.delta")
+        .map(runtimeTextPayload).join(""),
+    ).toBe("persist without notifying dead connection");
+    surviving.close();
     await runtime.runs.abort(run.runId);
     await runtime.close();
   });
 
-  it("coalesces 25k thinking deltas and long text before sequence allocation and replay", async () => {
+  it("coalesces 25k thinking deltas and long text", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
@@ -7897,20 +7122,11 @@ describe("createKodaXRuntime", () => {
     const thinkingCount = 25_000;
     const textCount = 10_000;
     const seen: RuntimeEvent[] = [];
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    let eventAppendCount = 0;
     runtime.events.subscribe({ sessionId: session.id }, (event) => {
       seen.push(event);
     });
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession => {
-        mutableNodeFs.appendFileSync = ((file, data, writeOptions) => {
-          if (String(file).endsWith(`${path.sep}events.jsonl`)) {
-            eventAppendCount += 1;
-          }
-          return appendFileSync(file, data, writeOptions);
-        }) as typeof nodeFs.appendFileSync;
-        syncBuiltinESMExports();
         queueMicrotask(() => {
           for (let index = 0; index < thinkingCount; index += 1) {
             options.events?.onThinkingDelta?.(thinkingChunk, {
@@ -7944,23 +7160,10 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "stress streaming",
     });
-    try {
-      await run.result;
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-    const replay = await runtime.events.replay({ runId: run.runId });
-    const thinking = replay.filter((event) => event.type === "thinking.delta");
-    const text = replay.filter((event) => event.type === "assistant.delta");
-    const logLines = (await fs.readFile(path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(run.runId),
-      "events.jsonl",
-    ), "utf-8")).trim().split(/\r?\n/);
+    await run.result;
+    await flushMicrotasks();
+    const thinking = seen.filter((event) => event.type === "thinking.delta");
+    const text = seen.filter((event) => event.type === "assistant.delta");
 
     expect(thinking).toHaveLength(13);
     expect(text).toHaveLength(3);
@@ -7975,31 +7178,11 @@ describe("createKodaXRuntime", () => {
         (event) => Buffer.byteLength(runtimeTextPayload(event), "utf8") <= 8 * 1024,
       ),
     ).toBe(true);
-    expect(seen.filter((event) => event.type === "thinking.delta")).toHaveLength(
-      thinking.length,
-    );
-    expect(eventAppendCount).toBeLessThan(100);
-    expect(logLines).toHaveLength(replay.length);
-    expect(replay.map((event) => event.seq)).toEqual(
-      [...replay.map((event) => event.seq)].sort((left, right) => left - right),
+    expect(seen.map((event) => event.seq)).toEqual(
+      [...seen.map((event) => event.seq)].sort((left, right) => left - right),
     );
 
     await runtime.close();
-    const recreated = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const restored = await recreated.events.replay({ runId: run.runId });
-    expect(
-      restored.filter((event) => event.type === "thinking.delta")
-        .map(runtimeTextPayload).join(""),
-    ).toBe(thinkingChunk.repeat(thinkingCount));
-    expect(
-      restored.filter((event) => event.type === "assistant.delta")
-        .map(runtimeTextPayload).join(""),
-    ).toBe(textChunk.repeat(textCount));
-    await recreated.close();
   });
 
   it("keeps legacy flat-message search revision and citations stable across Runtime restarts", async () => {
@@ -8139,15 +7322,17 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const collector = collectEvents(
+      runtime,
+      session.id,
+      "assistant.delta",
+    );
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "stream two large fragments",
     });
     await run.result;
-    const replay = await runtime.events.replay({
-      runId: run.runId,
-      type: "assistant.delta",
-    });
+    const replay = collector.events;
 
     expect(replay.map(runtimeTextPayload)).toEqual([
       firstFragment,
@@ -8161,125 +7346,6 @@ describe("createKodaXRuntime", () => {
     expect(replay.map(runtimeTextPayload).join("")).toBe(
       firstFragment + secondFragment,
     );
-    await runtime.close();
-  });
-
-  it("does not retain the fragment that crosses a failed coalescing boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "coalescing-backpressure-sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Coalescing Backpressure",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
-      activeEvents = options.events;
-      return fakeRunningSession(
-        options,
-        new Promise<KodaXResult>(() => undefined),
-      );
-    });
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "fail while crossing a coalescing boundary",
-    });
-    const firstFragment = "a".repeat(7 * 1024);
-    const rejectedFragment = "b".repeat(7 * 1024);
-    startTestOutputSegment(activeEvents, "request-coalescing-boundary");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) {
-        throw new Error("coalescing boundary persistence failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      expect(() => emitTestTextDelta(
-        activeEvents,
-        "request-coalescing-boundary",
-        firstFragment,
-      )).not.toThrow();
-      expect(() => emitTestTextDelta(
-        activeEvents,
-        "request-coalescing-boundary",
-        rejectedFragment,
-      ))
-        .toThrow("coalescing boundary persistence failure");
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(await replayRuntimeText(runtime, run.runId)).toBe(firstFragment);
-    await runtime.runs.abort(run.runId);
-    await runtime.close();
-  });
-
-  it("does not retain an oversized provider event when direct persistence fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "oversized-event-sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({ title: "Oversized Event" });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
-      activeEvents = options.events;
-      return fakeRunningSession(
-        options,
-        new Promise<KodaXResult>(() => undefined),
-      );
-    });
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "oversized provider fragment",
-    });
-    startTestOutputSegment(activeEvents, "request-oversized");
-
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) {
-        throw new Error("oversized persistence failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      expect(() => emitTestTextDelta(
-        activeEvents,
-        "request-oversized",
-        "x".repeat(1024 * 1024),
-      ))
-        .toThrow("oversized persistence failure");
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(() => emitTestTextDelta(
-      activeEvents,
-      "request-oversized",
-      "recovered",
-    )).not.toThrow();
-    await expect(runtime.events.replay({
-      runId: run.runId,
-      type: "assistant.delta",
-    })).resolves.toEqual([
-      expect.objectContaining({
-        payload: expect.objectContaining({ text: "recovered" }),
-      }),
-    ]);
-
-    await runtime.runs.abort(run.runId);
     await runtime.close();
   });
 
@@ -8334,15 +7400,13 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const collector = collectEvents(runtime, session.id, "tool.progress");
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "stream tool arguments",
     });
     await run.result;
-    const toolInputs = (await runtime.events.replay({
-      runId: run.runId,
-      type: "tool.progress",
-    })).filter(isRuntimeToolInputEvent);
+    const toolInputs = collector.events.filter(isRuntimeToolInputEvent);
 
     expect(toolInputs.map((event) => ({
       toolId: runtimeToolInputId(event),
@@ -8393,15 +7457,13 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const collector = collectEvents(runtime, session.id, "tool.progress");
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "report progress",
     });
     await run.result;
-    const progress = (await runtime.events.replay({
-      runId: run.runId,
-      type: "tool.progress",
-    })).filter(isRuntimeToolProgressEvent);
+    const progress = collector.events.filter(isRuntimeToolProgressEvent);
 
     expect(progress.map(runtimeToolProgressMessage)).toEqual([
       "step 0",
@@ -8410,7 +7472,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("snapshots caller-owned progress before deferred persistence", async () => {
+  it("snapshots caller-owned progress before deferred delivery", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -8418,6 +7480,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Payload Snapshot" });
+    const collector = collectEvents(runtime, session.id, "tool.progress");
     let activeEvents: KodaXOptions["events"];
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
       activeEvents = options.events;
@@ -8440,11 +7503,9 @@ describe("createKodaXRuntime", () => {
     };
     activeEvents?.onToolProgress?.(mutableUpdate);
     mutableUpdate.message = "x".repeat(2 * 1024 * 1024);
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-    const progress = (await runtime.events.replay({
-      runId: run.runId,
-      type: "tool.progress",
-    })).filter(isRuntimeToolProgressEvent);
+    const progress = collector.events.filter(isRuntimeToolProgressEvent);
     expect(progress.map(runtimeToolProgressMessage)).toEqual([
       "first",
       "second-before-mutation",
@@ -8604,6 +7665,7 @@ describe("createKodaXRuntime", () => {
         );
       },
     );
+    const collector = collectEvents(runtime, session.id, "workflow.updated");
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "parallel workflow progress",
@@ -8618,10 +7680,8 @@ describe("createKodaXRuntime", () => {
     activeEvents?.onWorkflowProcessEvent?.(
       workflowProgressUpdate("workflow-a", "a 2"),
     );
-    const replay = await runtime.events.replay({
-      runId: run.runId,
-      type: "workflow.updated",
-    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    const replay = collector.events;
 
     expect(replay.map(runtimeWorkflowProgress)).toEqual([
       { runId: "workflow-b", message: "b 1" },
@@ -8631,566 +7691,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("retries a failed run batch without losing or duplicating another run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const firstSession = await runtime.sessions.create({
-      title: "Persistence Retry A",
-    });
-    const secondSession = await runtime.sessions.create({
-      title: "Persistence Retry B",
-    });
-    let firstEvents: KodaXOptions["events"];
-    let secondEvents: KodaXOptions["events"];
-    codingMock.startKodaX
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        firstEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      })
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        secondEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      });
-    const firstRun = await runtime.runs.start({
-      sessionId: firstSession.id,
-      prompt: "first run",
-    });
-    const secondRun = await runtime.runs.start({
-      sessionId: secondSession.id,
-      prompt: "second run",
-    });
-    startTestOutputSegment(firstEvents, "request-retry-first-run");
-    startTestOutputSegment(secondEvents, "request-retry-second-run");
-    const secondEventFile = runtimeEventLogPath(tempRoot, secondRun.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    let failed = false;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (!failed && String(file) === secondEventFile) {
-        failed = true;
-        throw new Error("transient event append failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        firstEvents,
-        "request-retry-first-run",
-        "first durable delta",
-      );
-      emitTestTextDelta(
-        secondEvents,
-        "request-retry-second-run",
-        "second durable delta",
-      );
-      firstEvents?.onToolUseStart?.({ id: "first-boundary", name: "read" });
-      expect(() => secondEvents?.onToolUseStart?.({
-        id: "second-boundary",
-        name: "read",
-      })).not.toThrow();
-      await runtime.events.replay({ runId: secondRun.runId });
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-    expect(failed).toBe(true);
-    await runtime.runs.abort(firstRun.runId);
-    await runtime.runs.abort(secondRun.runId);
-    await runtime.close();
-
-    const recreated = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    expect(await replayRuntimeText(recreated, firstRun.runId)).toBe(
-      "first durable delta",
-    );
-    expect(await replayRuntimeText(recreated, secondRun.runId)).toBe(
-      "second durable delta",
-    );
-    await recreated.close();
-  });
-
-  it("retries a failed Session batch independently of another Session's watermark", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const firstRuntime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const secondRuntime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const firstSession = await firstRuntime.sessions.create({
-      title: "Shared Sequence Retry A",
-    });
-    const secondSession = await secondRuntime.sessions.create({
-      title: "Shared Sequence Retry B",
-    });
-    let firstEvents: KodaXOptions["events"];
-    let secondEvents: KodaXOptions["events"];
-    codingMock.startKodaX
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        firstEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      })
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
-        secondEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      });
-    const firstRun = await firstRuntime.runs.start({
-      sessionId: firstSession.id,
-      prompt: "first shared Runtime",
-    });
-    const secondRun = await secondRuntime.runs.start({
-      sessionId: secondSession.id,
-      prompt: "second shared Runtime",
-    });
-    startTestOutputSegment(firstEvents, "request-shared-first");
-    startTestOutputSegment(secondEvents, "request-shared-second");
-    const firstEventFile = runtimeEventLogPath(tempRoot, firstRun.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    let failed = false;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (!failed && String(file) === firstEventFile) {
-        failed = true;
-        throw new Error("first Runtime append failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    const firstReplay = await firstRuntime.events.replay({ runId: firstRun.runId });
-    const firstCursor = firstReplay.at(-1)!.cursor;
-    try {
-      emitTestTextDelta(
-        firstEvents,
-        "request-shared-first",
-        "retry above watermark",
-      );
-      firstEvents?.onToolUseStart?.({ id: "first-shared-boundary", name: "read" });
-      emitTestTextDelta(
-        secondEvents,
-        "request-shared-second",
-        "committed between attempts",
-      );
-      secondEvents?.onToolUseStart?.({
-        id: "second-shared-boundary",
-        name: "read",
-      });
-      await secondRuntime.events.replay({
-        runId: secondRun.runId,
-      });
-      await firstRuntime.events.replay({ runId: firstRun.runId });
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(failed).toBe(true);
-    const retried = await firstRuntime.events.replay({
-      runId: firstRun.runId,
-      after: firstCursor,
-    });
-    expect(
-      retried.filter((event) => event.runId === firstRun.runId)
-        .map((event) => event.seq),
-    ).toEqual(expect.arrayContaining([
-      expect.any(Number),
-    ]));
-    expect(
-      retried.filter((event) => event.runId === firstRun.runId)
-        .every((event) => event.seq > firstCursor.seq),
-    ).toBe(true);
-
-    await firstRuntime.runs.abort(firstRun.runId);
-    await secondRuntime.runs.abort(secondRun.runId);
-    await firstRuntime.close();
-    await secondRuntime.close();
-  });
-
-  it("rolls back a partially appended batch before retrying it", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Partial Event Batch Rollback",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "partial append",
-    });
-    startTestOutputSegment(activeEvents, "request-partial-append");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    let failed = false;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (!failed && String(file) === eventFile) {
-        failed = true;
-        const content = String(data);
-        appendFileSync(
-          file,
-          content.slice(0, Math.max(1, Math.floor(content.length / 2))),
-          options,
-        );
-        throw new Error("partial event batch append failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-partial-append",
-        "exactly once after partial append",
-      );
-      activeEvents?.onToolUseStart?.({
-        id: "partial-append-boundary",
-        name: "read",
-      });
-      await runtime.events.replay({ runId: run.runId });
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(failed).toBe(true);
-    expect(await replayRuntimeText(runtime, run.runId)).toBe(
-      "exactly once after partial append",
-    );
-    const records = (await fs.readFile(eventFile, "utf-8"))
-      .trim()
-      .split(/\r?\n/);
-    expect(() => records.map((record) => JSON.parse(record))).not.toThrow();
-    await fs.appendFile(eventFile, '{"id":"crash-interrupted-tail"');
-    emitTestTextDelta(
-      activeEvents,
-      "request-partial-append",
-      " and after reconnect repair",
-    );
-    activeEvents?.onToolUseStart?.({
-      id: "reconnect-repair-boundary",
-      name: "read",
-    });
-    expect(await replayRuntimeText(runtime, run.runId)).toBe(
-      "exactly once after partial append and after reconnect repair",
-    );
-    expect(() => (nodeFs.readFileSync(eventFile, "utf-8"))
-      .trim()
-      .split(/\r?\n/)
-      .map((record) => JSON.parse(record))).not.toThrow();
-    await runtime.runs.abort(run.runId);
-    await runtime.close();
-
-    const recreated = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    expect(await replayRuntimeText(recreated, run.runId)).toBe(
-      "exactly once after partial append and after reconnect repair",
-    );
-    await recreated.close();
-  });
-
-  it.each(["event", "sequence"] as const)(
-    "fails closed when partial append, rollback, and %s lock cleanup all fail",
-    async (cleanupTarget) => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Indeterminate Event Batch Commit",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "append and rollback both fail",
-    });
-    startTestOutputSegment(activeEvents, "request-indeterminate-commit");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const cleanupLockFile = cleanupTarget === "event"
-      ? `${eventFile}.lock`
-      : runtimeSessionEventLockPath(tempRoot, session.id);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    const rmSync = mutableNodeFs.rmSync;
-    const truncateSync = mutableNodeFs.truncateSync;
-    let appendFailed = false;
-    let cleanupFailed = false;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (!appendFailed && String(file) === eventFile) {
-        appendFailed = true;
-        const content = String(data);
-        appendFileSync(file, content.slice(0, content.length / 2), options);
-        throw new Error("synthetic append failure after partial write");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    mutableNodeFs.truncateSync = ((file, length) => {
-      if (String(file) === eventFile) {
-        throw new Error("synthetic rollback failure");
-      }
-      return truncateSync(file, length);
-    }) as typeof nodeFs.truncateSync;
-    mutableNodeFs.rmSync = ((file, options) => {
-      if (!cleanupFailed && String(file) === cleanupLockFile) {
-        cleanupFailed = true;
-        throw new Error("synthetic lock cleanup failure");
-      }
-      return rmSync(file, options);
-    }) as typeof nodeFs.rmSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-indeterminate-commit",
-        "must not be retried",
-      );
-      activeEvents?.onToolUseStart?.({
-        id: "indeterminate-commit-boundary",
-        name: "read",
-      });
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      mutableNodeFs.rmSync = rmSync;
-      mutableNodeFs.truncateSync = truncateSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(appendFailed).toBe(true);
-    expect(cleanupFailed).toBe(true);
-    const partialContent = await fs.readFile(eventFile, "utf-8");
-    await expect(runtime.events.replay({ runId: run.runId })).rejects.toThrow(
-      "indeterminate",
-    );
-    expect(() => emitTestTextDelta(
-      activeEvents,
-      "request-indeterminate-commit",
-      "must be rejected after poison",
-    ))
-      .toThrow("indeterminate");
-    expect(await fs.readFile(eventFile, "utf-8")).toBe(partialContent);
-    await expect(runtime.close()).rejects.toThrow("indeterminate");
-    await expect(runtime.close()).rejects.toThrow("indeterminate");
-    },
-  );
-
-  it.each(["event", "sequence"] as const)(
-    "does not retry a committed batch when %s lock cleanup fails",
-    async (cleanupTarget) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-      const runtime = await createKodaXRuntime({
-        homeDir: tempRoot,
-        sessionsDir: path.join(tempRoot, "sessions"),
-        defaultProvider: "mock-provider",
-      });
-      const session = await runtime.sessions.create({
-        title: "Committed Event Lock Cleanup Failure",
-      });
-      let activeEvents: KodaXOptions["events"];
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession => {
-          activeEvents = options.events;
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>(() => undefined),
-          );
-        },
-      );
-      const run = await runtime.runs.start({
-        sessionId: session.id,
-        prompt: "commit before lock cleanup failure",
-      });
-      startTestOutputSegment(activeEvents, "request-cleanup-failure");
-      const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-      const cleanupLockFile = cleanupTarget === "event"
-        ? `${eventFile}.lock`
-        : runtimeSessionEventLockPath(tempRoot, session.id);
-      const appendFileSync = mutableNodeFs.appendFileSync;
-      const rmSync = mutableNodeFs.rmSync;
-      let eventAppendCalls = 0;
-      let cleanupFailed = false;
-      mutableNodeFs.appendFileSync = ((file, data, options) => {
-        if (String(file) === eventFile) eventAppendCalls += 1;
-        return appendFileSync(file, data, options);
-      }) as typeof nodeFs.appendFileSync;
-      mutableNodeFs.rmSync = ((file, options) => {
-        if (!cleanupFailed && String(file) === cleanupLockFile) {
-          cleanupFailed = true;
-          throw new Error("synthetic committed lock cleanup failure");
-        }
-        return rmSync(file, options);
-      }) as typeof nodeFs.rmSync;
-      syncBuiltinESMExports();
-
-      try {
-        emitTestTextDelta(
-          activeEvents,
-          "request-cleanup-failure",
-          "persisted once after cleanup failure",
-        );
-        activeEvents?.onToolUseStart?.({
-          id: "committed-cleanup-boundary",
-          name: "read",
-        });
-      } finally {
-        mutableNodeFs.appendFileSync = appendFileSync;
-        mutableNodeFs.rmSync = rmSync;
-        syncBuiltinESMExports();
-      }
-
-      expect(cleanupFailed).toBe(true);
-      expect(eventAppendCalls).toBe(1);
-      const replay = await runtime.events.replay({
-        runId: run.runId,
-        type: "assistant.delta",
-      });
-      expect(replay.map(runtimeTextPayload)).toEqual([
-        "persisted once after cleanup failure",
-      ]);
-      await runtime.runs.abort(run.runId);
-      await runtime.close();
-    },
-  );
-
-  it("does not publish or advance a snapshot cursor before a failed batch is durable", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Persistence Watermark Fence",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "persistence watermark",
-    });
-    startTestOutputSegment(activeEvents, "request-watermark");
-    const seen: RuntimeEvent[] = [];
-    runtime.events.subscribe({ sessionId: session.id }, (event) => {
-      seen.push(event);
-    });
-    seen.length = 0;
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    let appendAttempts = 0;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) {
-        appendAttempts += 1;
-        throw new Error("persistent event append failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-watermark",
-        "durable before visible",
-      );
-      activeEvents?.onToolUseStart?.({ id: "watermark-boundary", name: "read" });
-      expect(seen).toHaveLength(0);
-      await expect(runtime.events.replay({ runId: run.runId })).rejects.toThrow(
-        "persistent event append failure",
-      );
-      const attemptsAfterExplicitFlush = appendAttempts;
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      expect(appendAttempts).toBe(attemptsAfterExplicitFlush);
-      expect(() => emitTestTextDelta(
-        activeEvents,
-        "request-watermark",
-        "must not enter the failed queue",
-      ))
-        .toThrow("persistent event append failure");
-      expect(appendAttempts).toBe(attemptsAfterExplicitFlush);
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    const replay = await runtime.events.replay({ runId: run.runId });
-    expect(replay.filter((event) => event.type === "assistant.delta")
-      .map(runtimeTextPayload)).toEqual(["durable before visible"]);
-    expect(seen.map((event) => event.type)).toEqual([
-      "assistant.delta",
-      "tool.started",
-    ]);
-    const observation = await runtime.sessions.observe(
-      session.id,
-      () => undefined,
-    );
-    expect(observation.snapshot.live.assistantTextByRun[run.runId]).toBe(
-      "durable before visible",
-    );
-    expect(observation.snapshot.cursor.seq).toBeGreaterThanOrEqual(replay.at(-1)!.seq);
-    observation.close();
-    await runtime.runs.abort(run.runId);
-    await runtime.close();
-  });
-
-  it("settles a failed Run as unknown when its terminal event cannot be persisted", async () => {
+  it("settles a failed Run as unknown when its terminal status cannot be persisted", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -9200,49 +7701,21 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Run Settlement Persistence Fence",
     });
-    let activeEvents: KodaXOptions["events"];
     let rejectRun: ((error: Error) => void) | undefined;
     codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
+      (options: KodaXOptions): RunningSession =>
+        fakeRunningSession(
           options,
           new Promise<KodaXResult>((_resolve, reject) => {
             rejectRun = reject;
           }),
-        );
-      },
+        ),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
-      prompt: "fail after the Session journal is fenced",
+      prompt: "fail while the terminal status write fails",
     });
     const observation = await runtime.sessions.observe(session.id, () => undefined);
-    startTestOutputSegment(activeEvents, "request-run-settlement-fence");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) {
-        throw new Error("terminal settlement append failure");
-      }
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-run-settlement-fence",
-        "not durable",
-      );
-      activeEvents?.onToolUseStart?.({ id: "settlement-boundary", name: "read" });
-      await expect(runtime.events.replay({ runId: run.runId })).rejects.toThrow(
-        "terminal settlement append failure",
-      );
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
 
     const statusFile = path.join(
       tempRoot,
@@ -9284,16 +7757,12 @@ describe("createKodaXRuntime", () => {
         retryable: false,
       },
     });
-    await expect(observation.invalidated).resolves.toMatchObject({
-      code: "observation_invalidated",
-      reason: "delivery_failed",
-      runtimeId: expect.any(String),
-    });
     await expect(runtime.status.preflight()).resolves.toMatchObject({
       canStop: false,
       blockers: expect.arrayContaining(["active_runs"]),
       activeRuns: [expect.objectContaining({ runId: run.runId, phase: "unknown" })],
     });
+    observation.close();
     await runtime.close().catch(() => undefined);
   });
 
@@ -9352,115 +7821,6 @@ describe("createKodaXRuntime", () => {
       lifecycleError: { code: "run_settlement_not_persisted" },
     });
     await runtime.close().catch(() => undefined);
-  });
-
-  it("keeps a durable terminal status authoritative when only its event journal is fenced", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "durable-terminal-fenced-events-sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({ title: "Durable Terminal" });
-    let activeEvents: KodaXOptions["events"];
-    let rejectRun: ((error: Error) => void) | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
-      activeEvents = options.events;
-      return fakeRunningSession(options, new Promise<KodaXResult>((_resolve, reject) => {
-        rejectRun = reject;
-      }));
-    });
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "keep the durable terminal authoritative",
-    });
-    startTestOutputSegment(activeEvents, "request-durable-terminal");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) throw new Error("event journal unavailable");
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-    try {
-      emitTestTextDelta(activeEvents, "request-durable-terminal", "not durable");
-      activeEvents?.onToolUseStart?.({ id: "durable-boundary", name: "read" });
-      await expect(runtime.events.replay({ runId: run.runId })).rejects.toThrow(
-        "event journal unavailable",
-      );
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    rejectRun?.(new Error("provider failed after event fence"));
-    await expect(run.result).resolves.toMatchObject({
-      phase: "failed",
-      terminal: { kind: "failed", code: "run_failed" },
-    });
-    await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "failed",
-      terminal: { kind: "failed", code: "run_failed" },
-    });
-    await runtime.close();
-  });
-
-  it("keeps a successful durable terminal free of a synthetic provider failure", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "durable-completion-fenced-events-sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({ title: "Durable Completion" });
-    let activeEvents: KodaXOptions["events"];
-    let resolveRun: ((result: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
-      activeEvents = options.events;
-      return fakeRunningSession(options, new Promise<KodaXResult>((resolve) => {
-        resolveRun = resolve;
-      }));
-    });
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "complete after the event journal is fenced",
-    });
-    startTestOutputSegment(activeEvents, "request-durable-completion");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const appendFileSync = mutableNodeFs.appendFileSync;
-    mutableNodeFs.appendFileSync = ((file, data, options) => {
-      if (String(file) === eventFile) throw new Error("event journal unavailable");
-      return appendFileSync(file, data, options);
-    }) as typeof nodeFs.appendFileSync;
-    syncBuiltinESMExports();
-    try {
-      emitTestTextDelta(activeEvents, "request-durable-completion", "not durable");
-      activeEvents?.onToolUseStart?.({ id: "completion-boundary", name: "read" });
-      await expect(runtime.events.replay({ runId: run.runId })).rejects.toThrow(
-        "event journal unavailable",
-      );
-    } finally {
-      mutableNodeFs.appendFileSync = appendFileSync;
-      syncBuiltinESMExports();
-    }
-
-    resolveRun?.({
-      success: true,
-      lastText: "completed",
-      messages: [],
-      sessionId: session.id,
-    });
-    await expect(run.result).resolves.toMatchObject({
-      phase: "completed",
-      result: { success: true },
-      terminal: { kind: "completed", code: "completed" },
-    });
-    expect((await run.result).error).toBeUndefined();
-    await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "completed",
-      terminal: { kind: "completed", code: "completed" },
-    });
-    await runtime.close();
   });
 
   it("emits one terminal event when status-lock cleanup fails after commit", async () => {
@@ -9542,173 +7902,6 @@ describe("createKodaXRuntime", () => {
       terminal: { kind: "completed", code: "completed" },
     });
     expect(delivered).toHaveLength(1);
-    const replay = await runtime.events.replay({
-      runId: run.runId,
-      type: "run.completed",
-    });
-    expect(replay).toHaveLength(1);
-    await runtime.close();
-  });
-
-  it("does not retry an appended batch when only event-log trimming fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Trim Failure Is Not Append Failure",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "trim failure",
-    });
-    startTestOutputSegment(activeEvents, "request-trim-failure");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const readFileSync = mutableNodeFs.readFileSync;
-    const statSync = mutableNodeFs.statSync;
-    mutableNodeFs.statSync = ((file) => {
-      const value = statSync(file);
-      return String(file) === eventFile
-        ? { ...value, size: 17 * 1024 * 1024 }
-        : value;
-    }) as typeof nodeFs.statSync;
-    let trimFailed = false;
-    mutableNodeFs.readFileSync = ((file, options) => {
-      if (!trimFailed && String(file) === eventFile) {
-        trimFailed = true;
-        throw new Error("synthetic trim failure");
-      }
-      return readFileSync(file, options);
-    }) as typeof nodeFs.readFileSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-trim-failure",
-        "persisted once",
-      );
-      activeEvents?.onToolUseStart?.({ id: "trim-boundary", name: "read" });
-    } finally {
-      mutableNodeFs.readFileSync = readFileSync;
-      mutableNodeFs.statSync = statSync;
-      syncBuiltinESMExports();
-    }
-    expect(trimFailed).toBe(true);
-    await runtime.events.replay({ runId: run.runId });
-    const persistedEvents = (await fs.readFile(eventFile, "utf-8"))
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => JSON.parse(line) as RuntimeEvent);
-    expect(
-      persistedEvents.filter((event) => event.type === "assistant.delta"),
-    ).toHaveLength(1);
-    await runtime.runs.abort(run.runId);
-    await runtime.close();
-
-    const recreated = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir,
-      defaultProvider: "mock-provider",
-    });
-    const replay = await recreated.events.replay({
-      runId: run.runId,
-      type: "assistant.delta",
-    });
-    expect(replay.map(runtimeTextPayload)).toEqual(["persisted once"]);
-    await recreated.close();
-  });
-
-  it("does not retry a committed batch when trim-warning persistence also fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Post-Commit Warning Failure",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "warning failure after commit",
-    });
-    startTestOutputSegment(activeEvents, "request-warning-failure");
-    const eventFile = runtimeEventLogPath(tempRoot, run.runId);
-    const linkSync = mutableNodeFs.linkSync;
-    const readFileSync = mutableNodeFs.readFileSync;
-    const statSync = mutableNodeFs.statSync;
-    let sequenceLockCount = 0;
-    mutableNodeFs.statSync = ((file) => {
-      const value = statSync(file);
-      return String(file) === eventFile
-        ? { ...value, size: 17 * 1024 * 1024 }
-        : value;
-    }) as typeof nodeFs.statSync;
-    mutableNodeFs.readFileSync = ((file, options) => {
-      if (String(file) === eventFile) {
-        throw new Error("synthetic trim failure before warning failure");
-      }
-      return readFileSync(file, options);
-    }) as typeof nodeFs.readFileSync;
-    mutableNodeFs.linkSync = ((existingPath, newPath) => {
-      if (String(newPath).endsWith("sequence.lock")) {
-        sequenceLockCount += 1;
-        if (sequenceLockCount === 2) {
-          throw new Error("synthetic trim-warning sequence failure");
-        }
-      }
-      return linkSync(existingPath, newPath);
-    }) as typeof nodeFs.linkSync;
-    syncBuiltinESMExports();
-
-    try {
-      emitTestTextDelta(
-        activeEvents,
-        "request-warning-failure",
-        "committed exactly once",
-      );
-      activeEvents?.onToolUseStart?.({
-        id: "post-commit-warning-boundary",
-        name: "read",
-      });
-    } finally {
-      mutableNodeFs.linkSync = linkSync;
-      mutableNodeFs.readFileSync = readFileSync;
-      mutableNodeFs.statSync = statSync;
-      syncBuiltinESMExports();
-    }
-
-    expect(sequenceLockCount).toBe(2);
-    const replay = await runtime.events.replay({ runId: run.runId });
-    expect(
-      replay.filter((event) => event.type === "assistant.delta")
-        .map(runtimeTextPayload),
-    ).toEqual(["committed exactly once"]);
-    await runtime.runs.abort(run.runId);
     await runtime.close();
   });
 
@@ -9732,6 +7925,7 @@ describe("createKodaXRuntime", () => {
         );
       },
     );
+    const failedCollector = collectEvents(runtime, errorSession.id);
     const failed = await runtime.runs.start({
       sessionId: errorSession.id,
       prompt: "fail after deltas",
@@ -9748,7 +7942,7 @@ describe("createKodaXRuntime", () => {
     });
     errorEvents?.onError?.(new Error("stream failed"));
     await expectSettles(failed.result, "delta error boundary");
-    const failedReplay = await runtime.events.replay({ runId: failed.runId });
+    const failedReplay = failedCollector.events;
 
     expect(runtimeEventIndex(failedReplay, "assistant.delta")).toBeLessThan(
       runtimeEventIndex(failedReplay, "runtime.warning"),
@@ -9774,6 +7968,7 @@ describe("createKodaXRuntime", () => {
         );
       },
     );
+    const cancelledCollector = collectEvents(runtime, cancelSession.id);
     const cancelled = await runtime.runs.start({
       sessionId: cancelSession.id,
       prompt: "cancel after delta",
@@ -9788,9 +7983,7 @@ describe("createKodaXRuntime", () => {
       message: "cancel progress last",
     });
     await runtime.runs.abort(cancelled.runId);
-    const cancelledReplay = await runtime.events.replay({
-      runId: cancelled.runId,
-    });
+    const cancelledReplay = cancelledCollector.events;
     expect(runtimeEventIndex(cancelledReplay, "assistant.delta")).toBeLessThan(
       runtimeEventIndex(cancelledReplay, "run.updated"),
     );
@@ -9821,6 +8014,7 @@ describe("createKodaXRuntime", () => {
         );
       },
     );
+    const allDeltas = collectEvents(runtime, session.id, "assistant.delta");
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "observe streaming",
@@ -9836,14 +8030,6 @@ describe("createKodaXRuntime", () => {
     expect(observation.snapshot.live.assistantTextByRun[run.runId]).toBe(
       "before snapshot",
     );
-    expect(await fs.readFile(path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(run.runId),
-      "events.jsonl",
-    ), "utf-8")).toContain("before snapshot");
     activeEvents?.onTextDelta?.(" after");
     activeEvents?.onToolUseStart?.(
       { id: "handoff-boundary", name: "read" },
@@ -9854,13 +8040,9 @@ describe("createKodaXRuntime", () => {
         .map(runtimeTextPayload).join(""),
     ).toBe(" after");
     expect(
-      delivered.every((event) => event.seq > observation.snapshot.cursor.seq),
+      delivered.every((event) => event.seq > observation.snapshot.seq),
     ).toBe(true);
-    const replay = await runtime.events.replay({
-      runId: run.runId,
-      type: "assistant.delta",
-    });
-    expect(replay.map(runtimeTextPayload).join("")).toBe(
+    expect(allDeltas.events.map(runtimeTextPayload).join("")).toBe(
       "before snapshot after",
     );
 
@@ -9869,7 +8051,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("projects replacement output segments without losing the raw journal", async () => {
+  it("projects replacement output segments without losing raw deltas", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -9888,6 +8070,12 @@ describe("createKodaXRuntime", () => {
           new Promise<KodaXResult>(() => undefined),
         );
       },
+    );
+    const rawCollector = collectEvents(
+      runtime,
+      session.id,
+      "assistant.delta",
+      "output.segment.started",
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -9932,7 +8120,7 @@ describe("createKodaXRuntime", () => {
         ?.providerRequestId,
     ).toBe("request-replacement");
 
-    const replay = await runtime.events.replay({ runId: run.runId });
+    const replay = rawCollector.events;
     expect(
       replay.filter((event) => event.type === "assistant.delta")
         .map(runtimeTextPayload).join(""),
@@ -10201,52 +8389,6 @@ describe("createKodaXRuntime", () => {
     });
     await handle.result;
     await flushMicrotasks();
-    const replay = await runtime.events.replay({ runId: handle.runId });
-    const latestBudget = await runtime.diagnostics.latestContextBudget({
-      runId: handle.runId,
-    });
-    const latestExposure = await runtime.diagnostics.latestToolExposure({
-      runId: handle.runId,
-    });
-    const latestCache = await runtime.diagnostics.latestProviderCacheDiagnostic(
-      {
-        runId: handle.runId,
-      },
-    );
-    const latestChildBudget = await runtime.diagnostics.latestContextBudget({
-      runId: handle.runId,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-    });
-    const latestChildExposure = await runtime.diagnostics.latestToolExposure({
-      runId: handle.runId,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-    });
-    const latestChildBudgetByRootSession =
-      await runtime.diagnostics.latestContextBudget({
-        sessionId: session.id,
-        contextKind: "child",
-        agentId: "/root/reviewer",
-      });
-    const latestChildCacheByRootSession =
-      await runtime.diagnostics.latestProviderCacheDiagnostic({
-        sessionId: session.id,
-        contextKind: "child",
-        agentId: "/root/reviewer",
-      });
-    const unrelatedRootChildBudget =
-      await runtime.diagnostics.latestContextBudget({
-        sessionId: "unrelated-root-session",
-        contextKind: "child",
-        agentId: "/root/reviewer",
-      });
-    const unrelatedRootChildCache =
-      await runtime.diagnostics.latestProviderCacheDiagnostic({
-        sessionId: "unrelated-root-session",
-        contextKind: "child",
-        agentId: "/root/reviewer",
-      });
 
     expect(seen).toEqual([
       "context.budget.snapshot",
@@ -10267,57 +8409,6 @@ describe("createKodaXRuntime", () => {
       reason: "low_savings_cooldown",
       cooldownTurnsRemaining: 1,
     });
-    expect(replay.map((event) => event.type)).toContain(
-      "context.budget.snapshot",
-    );
-    expect(replay.map((event) => event.type)).toContain(
-      "provider.cache.diagnostics",
-    );
-    expect(replay.map((event) => event.type)).toContain(
-      "tool.exposure.planned",
-    );
-    expect(replay.map((event) => event.type)).toContain(
-      "context.compaction.skipped",
-    );
-    expect(latestBudget).toMatchObject({ pressure: "low", usedTokens: 6 });
-    expect(latestExposure).toMatchObject({
-      reportOnly: true,
-      modelVisibleToolNames: ["read", "tool_search"],
-    });
-    expect(latestCache).toMatchObject({
-      contextId: session.id,
-      contextKind: "root",
-      requestId: "cache-request-1",
-      phase: "response",
-      cachedReadTokens: 80,
-    });
-    expect(latestChildBudget).toMatchObject({
-      contextKind: "child",
-      agentId: "/root/reviewer",
-      usedTokens: 110,
-    });
-    expect(latestChildExposure).toMatchObject({
-      contextKind: "child",
-      agentId: "/root/reviewer",
-      modelVisibleToolNames: ["read"],
-    });
-    expect(latestChildBudgetByRootSession).toMatchObject({
-      sessionId: `${session.id}-child-worker`,
-      contextId: `${session.id}/agent/${encodeURIComponent("/root/reviewer")}`,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-      usedTokens: 110,
-    });
-    expect(latestChildCacheByRootSession).toMatchObject({
-      contextId: `${session.id}/agent/${encodeURIComponent("/root/reviewer")}`,
-      parentContextId: session.id,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-      requestId: "cache-request-child",
-      cachedReadTokens: 96,
-    });
-    expect(unrelatedRootChildBudget).toBeNull();
-    expect(unrelatedRootChildCache).toBeNull();
     expect(
       callbackCacheDiagnostics.find(
         (event) => event.requestId === "cache-request-child",
@@ -10328,43 +8419,6 @@ describe("createKodaXRuntime", () => {
       contextKind: "child",
       agentId: "/root/reviewer",
     });
-
-    const diagnosticRunFile = path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(handle.runId),
-      "events.jsonl",
-    );
-    const childOnlyRows = (await fs.readFile(diagnosticRunFile, "utf8"))
-      .split(/\r?\n/)
-      .filter((line) => {
-        if (!line) return false;
-        const value: unknown = JSON.parse(line);
-        return value !== null
-          && typeof value === "object"
-          && !Array.isArray(value)
-          && (value as { readonly sessionId?: unknown }).sessionId !== session.id;
-      });
-    await fs.writeFile(
-      diagnosticRunFile,
-      `${childOnlyRows.join("\n")}\n`,
-      "utf8",
-    );
-    await expect(runtime.diagnostics.latestContextBudget({
-      sessionId: session.id,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-    })).resolves.toMatchObject({ usedTokens: 110 });
-
-    await runtime.sessions.delete(session.id);
-    await runtime.sessions.create({ sessionId: session.id });
-    await expect(runtime.diagnostics.latestContextBudget({
-      sessionId: session.id,
-      contextKind: "child",
-      agentId: "/root/reviewer",
-    })).resolves.toBeNull();
 
     await runtime.close();
   });
@@ -10847,6 +8901,11 @@ describe("createKodaXRuntime", () => {
       });
     });
 
+    const queuedInputCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.input.queued",
+    );
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "managed",
@@ -10892,12 +8951,7 @@ describe("createKodaXRuntime", () => {
       reason: "interrupt_window_closed",
     });
     expect(getMessageQueue().size()).toBe(0);
-    await expect(
-      runtime.events.replay({
-        runId: run.runId,
-        type: "run.input.queued",
-      }),
-    ).resolves.toEqual([]);
+    expect(queuedInputCollector.events).toEqual([]);
 
     finishManaged?.({
       success: true,
@@ -11785,6 +9839,7 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Automatically recover an unknown Actor settlement",
       });
+      const fencedCollector = collectEvents(runtime, session.id);
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "self-fence after Actor durability becomes unknown",
@@ -11844,10 +9899,9 @@ describe("createKodaXRuntime", () => {
       expect(externalExitPlanMode).not.toHaveBeenCalled();
       await expect(lateAskUser).resolves.toBe("");
       await expect(lateExitPlanMode).resolves.toBe(false);
-      await expect(runtime.events.replay({
-        runId: run.runId,
-        type: "turn.completed",
-      })).resolves.toEqual([]);
+      expect(
+        fencedCollector.events.filter((event) => event.type === "turn.completed"),
+      ).toEqual([]);
       releaseLateSettlement?.();
       vi.useRealTimers();
       await vi.waitFor(async () => {
@@ -11884,10 +9938,9 @@ describe("createKodaXRuntime", () => {
         terminal: { code: "actor_settlement_not_persisted" },
       });
       expect(terminal).not.toHaveProperty("stop");
-      const lateDeltas = await runtime.events.replay({
-        runId: run.runId,
-        type: "assistant.delta",
-      });
+      const lateDeltas = fencedCollector.events.filter(
+        (event) => event.type === "assistant.delta",
+      );
       expect(lateDeltas).not.toEqual(expect.arrayContaining([
         expect.objectContaining({
           payload: expect.objectContaining({
@@ -12079,6 +10132,13 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Keep local terminal fact",
       });
+      const terminalCollector = collectEvents(
+        runtime,
+        session.id,
+        "run.completed",
+        "run.failed",
+        "run.interrupted",
+      );
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "complete after Stop",
@@ -12128,10 +10188,7 @@ describe("createKodaXRuntime", () => {
         state: "confirmed",
         outcome: "completed",
       });
-      await expect(runtime.events.replay({
-        runId: run.runId,
-        type: ["run.completed", "run.failed", "run.interrupted"],
-      })).resolves.toHaveLength(1);
+      expect(terminalCollector.events).toHaveLength(1);
     } finally {
       if (restoreRename) {
         mutableNodeFs.renameSync = renameSync;
@@ -12163,6 +10220,11 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Persistent Stop terminal failure",
       });
+      const runUpdatesCollector = collectEvents(
+        runtime,
+        session.id,
+        "run.updated",
+      );
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "remain unknown after terminal writes stay fenced",
@@ -12201,10 +10263,7 @@ describe("createKodaXRuntime", () => {
       mutableNodeFs.renameSync = renameSync;
       syncBuiltinESMExports();
       restoreRename = false;
-      await expect(runtime.events.replay({
-        runId: run.runId,
-        type: "run.updated",
-      })).resolves.toEqual(expect.arrayContaining([
+      expect(runUpdatesCollector.events).toEqual(expect.arrayContaining([
         expect.objectContaining({
           payload: expect.objectContaining({
             phase: "unknown",
@@ -12735,10 +10794,10 @@ describe("createKodaXRuntime", () => {
     const emptySession = await runtime.sessions.create({
       title: "No Run Control Record",
     });
-    const noRun = await captureRuntimeSessionDiagnostics(runtime, {
+    const noRun = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: emptySession.id,
       timeoutMs: 5_000,
-    });
+    }));
     expect(noRun).toMatchObject({
       schemaVersion: 1,
       runtimeId: runtime.identity.runtimeId,
@@ -12746,11 +10805,7 @@ describe("createKodaXRuntime", () => {
       daemonVersion: null,
       sessionId: emptySession.id,
       observation: {
-        cursor: {
-          sessionId: emptySession.id,
-          journalEpoch: expect.any(String),
-          seq: expect.any(Number),
-        },
+        seq: expect.any(Number),
         transcriptRevision: expect.any(String),
       },
       run: {
@@ -12786,10 +10841,10 @@ describe("createKodaXRuntime", () => {
       phase: "verifying",
       idleWaiting: false,
     });
-    const verifying = await captureRuntimeSessionDiagnostics(runtime, {
+    const verifying = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: activeSession.id,
       runId: run.runId,
-    });
+    }));
     expect(verifying.run).toMatchObject({
       controlRecord: "present",
       runId: run.runId,
@@ -12802,10 +10857,10 @@ describe("createKodaXRuntime", () => {
     });
 
     await runtime.runs.abort(run.runId);
-    const stopping = await captureRuntimeSessionDiagnostics(runtime, {
+    const stopping = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: activeSession.id,
       runId: run.runId,
-    });
+    }));
     expect(stopping.run).toMatchObject({
       state: "unknown",
       phase: "unknown",
@@ -12827,10 +10882,10 @@ describe("createKodaXRuntime", () => {
       sessionId: activeSession.id,
     });
     await expect(run.result).resolves.toMatchObject({ phase: "completed" });
-    const terminal = await captureRuntimeSessionDiagnostics(runtime, {
+    const terminal = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: activeSession.id,
       runId: run.runId,
-    });
+    }));
     expect(terminal.run).toMatchObject({
       state: "terminal",
       phase: "completed",
@@ -12857,10 +10912,10 @@ describe("createKodaXRuntime", () => {
       mode: "managed_task",
     });
     await expect(failedRun.result).resolves.toMatchObject({ phase: "failed" });
-    const failed = await captureRuntimeSessionDiagnostics(runtime, {
+    const failed = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: failedSession.id,
       runId: failedRun.runId,
-    });
+    }));
     expect(failed.run).toMatchObject({
       state: "terminal",
       phase: "failed",
@@ -13945,6 +12000,12 @@ describe("createKodaXRuntime", () => {
       },
     );
 
+    const terminalCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.failed",
+      "run.completed",
+    );
     const run = await runtime.runs.start({
       sessionId: session.id,
       prompt: "race terminal callbacks",
@@ -13955,10 +12016,7 @@ describe("createKodaXRuntime", () => {
     await expectSettles(run.result, "terminal callback race").then((result) => {
       expect(result).toMatchObject({ phase: "failed" });
     });
-    const terminalEvents = await runtime.events.replay({
-      runId: run.runId,
-      type: ["run.failed", "run.completed"],
-    });
+    const terminalEvents = terminalCollector.events;
     expect(terminalEvents.map((event) => event.type)).toEqual(["run.failed"]);
     await runtime.close();
   });
@@ -14130,6 +12188,12 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Interrupt Test" });
+    const deliveryCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.input.queued",
+      "run.input.delivered",
+    );
     const starts: string[] = [];
     let activeEvents: KodaXOptions["events"];
     let activeInterruptInput: NonNullable<
@@ -14264,10 +12328,9 @@ describe("createKodaXRuntime", () => {
         expect.objectContaining({ state: "queued" }),
       ],
     });
-    await expect(runtime.events.replay({
-      runId: first.runId,
-      type: "run.input.delivered",
-    })).resolves.toEqual([]);
+    expect(deliveryCollector.events.filter(
+      (event) => event.type === "run.input.delivered",
+    )).toEqual([]);
     activeEvents?.onMidTurnUserMessages?.(
       drained.map((message) => message.content),
       {
@@ -14291,7 +12354,7 @@ describe("createKodaXRuntime", () => {
         }),
       ],
     });
-    const replay = await runtime.events.replay({ runId: first.runId });
+    const replay = deliveryCollector.events;
     expect(
       replay.filter((event) => event.type === "run.input.queued"),
     ).toHaveLength(2);
@@ -14399,6 +12462,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Interrupt Race Test",
     });
+    const deliveryCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.input.delivered",
+    );
     let activeEvents: KodaXOptions["events"];
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
       activeEvents = options.events;
@@ -14448,10 +12516,7 @@ describe("createKodaXRuntime", () => {
         expect.objectContaining({ state: "queued" }),
       ],
     });
-    const deliveryEvents = await runtime.events.replay({
-      runId: run.runId,
-      type: "run.input.delivered",
-    });
+    const deliveryEvents = deliveryCollector.events;
     expect(deliveryEvents).toHaveLength(1);
     expect(deliveryEvents[0]?.payload).toMatchObject({
       inputs: [
@@ -14464,98 +12529,6 @@ describe("createKodaXRuntime", () => {
 
     await runtime.runs.abort(run.runId);
     expect(getMessageQueue().size()).toBe(0);
-    await runtime.close();
-    await expect(run.result).resolves.toMatchObject({ phase: "unknown" });
-  });
-
-  it("does not publish delivered state when the durable batch event cannot be written", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Interrupt Persistence Failure Test",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
-      activeEvents = options.events;
-      return fakeRunningSession(
-        options,
-        new Promise<KodaXResult>(() => undefined),
-      );
-    });
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "first",
-    });
-    await runtime.runs.submitInput({
-      sessionId: session.id,
-      afterRunId: run.runId,
-      delivery: "interrupt",
-      input: { type: "text", text: "must remain unconfirmed" },
-    });
-    const consumed = getMessageQueue().dequeue({
-      agentId: actorQueueId(session.id, "/root"),
-      maxPriority: "user",
-      mode: "prompt",
-    });
-    const eventsFile = path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(run.runId),
-      "events.jsonl",
-    );
-    const eventsBackup = `${eventsFile}.bak`;
-    await fs.rename(eventsFile, eventsBackup);
-    await fs.mkdir(eventsFile);
-
-    let deliveryError: unknown;
-    try {
-      activeEvents?.onMidTurnUserMessages?.(
-        consumed.map((message) => message.content),
-        {
-          queuedMessageIds: consumed.map((message) => message.id),
-          queuedMessageEntryIds: Object.fromEntries(
-            consumed.map((message) => [message.id, "entry_unconfirmed"]),
-          ),
-        },
-      );
-    } catch (error: unknown) {
-      deliveryError = error;
-    } finally {
-      await fs.rm(eventsFile, { recursive: true, force: true });
-      await fs.rename(eventsBackup, eventsFile);
-    }
-
-    expect(deliveryError).toBeInstanceOf(Error);
-    const failedDeliveryStatus = await runtime.runs.get(run.runId);
-    expect(failedDeliveryStatus).toMatchObject({
-      interruptInputs: [expect.objectContaining({ state: "queued" })],
-    });
-    expect(failedDeliveryStatus?.interruptInputs?.[0]).not.toHaveProperty("entryId");
-    await expect(
-      runtime.events.replay({
-        runId: run.runId,
-        type: "run.input.delivered",
-      }),
-    ).resolves.toEqual([]);
-    const warnings = await runtime.events.replay({
-      runId: run.runId,
-      type: "runtime.warning",
-    });
-    expect(
-      warnings.some(
-        (event) =>
-          (event.payload as Record<string, unknown>).source ===
-          "run.input.delivered",
-      ),
-    ).toBe(true);
-
-    await runtime.runs.abort(run.runId);
     await runtime.close();
     await expect(run.result).resolves.toMatchObject({ phase: "unknown" });
   });
@@ -14650,6 +12623,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Interrupt Cleanup Test",
     });
+    const deliveryCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.input.delivered",
+    );
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
       fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
     );
@@ -14674,12 +12652,7 @@ describe("createKodaXRuntime", () => {
       phase: "unknown",
       interruptInputs: [expect.objectContaining({ state: "terminal" })],
     });
-    await expect(
-      runtime.events.replay({
-        runId: first.runId,
-        type: "run.input.delivered",
-      }),
-    ).resolves.toEqual([]);
+    expect(deliveryCollector.events).toEqual([]);
     await expect(
       runtime.runs.submitInput({
         sessionId: session.id,
@@ -14775,6 +12748,7 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Credential Error Redaction",
     });
+    const collector = collectEvents(runtime, session.id);
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
       options.events?.onRetry?.(`provider echoed ${secret}`, 1, 1);
       options.events?.onError?.(new Error(`provider emitted ${secret}`));
@@ -14818,9 +12792,7 @@ describe("createKodaXRuntime", () => {
     expect(JSON.stringify(await runtime.runs.get(handle.runId))).not.toContain(
       secret,
     );
-    expect(
-      JSON.stringify(await runtime.events.replay({ runId: handle.runId })),
-    ).not.toContain(secret);
+    expect(JSON.stringify(collector.events)).not.toContain(secret);
     await runtime.close();
     expect(await readDirectoryText(tempRoot)).not.toContain(secret);
   });
@@ -14840,6 +12812,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Provider Failure Detail",
     });
+    const failedCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.failed",
+    );
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
       const error = Object.assign(
         new Error(
@@ -14873,14 +12850,11 @@ describe("createKodaXRuntime", () => {
     const handle = await runtime.runs.start(trustedInput);
     const result = await handle.result;
     const status = await runtime.runs.get(handle.runId);
-    const [failedEvent] = await runtime.events.replay({
-      runId: handle.runId,
-      type: "run.failed",
-    });
-    const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+    const [failedEvent] = failedCollector.events;
+    const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: session.id,
       runId: handle.runId,
-    });
+    }));
     const expectedDetail = {
       failureKind: "not_found",
       stage: "transport",
@@ -15382,6 +13356,11 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Coding cancellation" });
+    const interruptedCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.interrupted",
+    );
     codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
       let settleInterrupted: (() => void) | undefined;
       const result = new Promise<KodaXResult>((resolve) => {
@@ -15418,14 +13397,11 @@ describe("createKodaXRuntime", () => {
     });
     const result = await handle.result;
     const status = await runtime.runs.get(handle.runId);
-    const [interruptedEvent] = await runtime.events.replay({
-      runId: handle.runId,
-      type: "run.interrupted",
-    });
-    const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+    const [interruptedEvent] = interruptedCollector.events;
+    const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
       sessionId: session.id,
       runId: handle.runId,
-    });
+    }));
     const expectedDetail = {
       failureKind: "cancelled",
       stage: "runtime_control",
@@ -15457,6 +13433,12 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Managed Abort Credential Causality",
     });
+    const terminalCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.interrupted",
+      "run.failed",
+    );
     codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       managedOptions = options;
       return new Promise<KodaXResult>((_resolve, reject) => {
@@ -15515,10 +13497,7 @@ describe("createKodaXRuntime", () => {
       terminal: { kind: "interrupted", code: "interrupted" },
       stop: { state: "confirmed", outcome: "interrupted" },
     });
-    const terminalEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: ["run.interrupted", "run.failed"],
-    });
+    const terminalEvents = terminalCollector.events;
     expect(terminalEvents.map((event) => event.type)).toEqual(["run.interrupted"]);
     expect(JSON.stringify({ result, terminalEvents })).not.toContain(secret);
 
@@ -15729,6 +13708,11 @@ describe("createKodaXRuntime", () => {
       title: "Concurrent B",
     });
     const starts: string[] = [];
+    const queuedCollector = collectEvents(
+      runtime,
+      firstSession.id,
+      "run.queued",
+    );
     let finishFirst: ((value: KodaXResult) => void) | undefined;
     let finishSecond: ((value: KodaXResult) => void) | undefined;
 
@@ -15767,9 +13751,7 @@ describe("createKodaXRuntime", () => {
     ]);
     expect((await runtime.runs.get(first.runId)).phase).toBe("running");
     expect((await runtime.runs.get(second.runId)).phase).toBe("running");
-    await expect(
-      runtime.events.replay({ sessionId: firstSession.id, type: "run.queued" }),
-    ).resolves.toEqual([]);
+    expect(queuedCollector.events).toEqual([]);
 
     finishFirst?.({
       success: true,
@@ -15796,7 +13778,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("persists runtime replay and terminal run status across runtime recreation", async () => {
+  it("persists terminal run status across runtime recreation", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
@@ -15807,6 +13789,7 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Persistence Test",
     });
+    const lifecycleCollector = collectEvents(runtime, session.id);
 
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession => {
@@ -15839,6 +13822,13 @@ describe("createKodaXRuntime", () => {
       prompt: "persist",
     });
     await handle.result;
+    expect(lifecycleCollector.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "config.effective",
+      "output.segment.started",
+      "assistant.delta",
+      "run.completed",
+    ]);
     const snapshot = await runtime.status.snapshot();
     expect(snapshot.runs).toContainEqual(
       expect.objectContaining({
@@ -15853,16 +13843,8 @@ describe("createKodaXRuntime", () => {
       sessionsDir,
       defaultProvider: "mock-provider",
     });
-    const replay = await recreated.events.replay({ runId: handle.runId });
     const restoredStatus = await recreated.runs.get(handle.runId);
 
-    expect(replay.map((event) => event.type)).toEqual([
-      "run.started",
-      "config.effective",
-      "output.segment.started",
-      "assistant.delta",
-      "run.completed",
-    ]);
     expect(restoredStatus).toMatchObject({
       runId: handle.runId,
       sessionId: session.id,
@@ -15870,392 +13852,6 @@ describe("createKodaXRuntime", () => {
     });
 
     await recreated.close();
-  });
-
-  it("keeps one Session cursor monotonic across Runtime recreation", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const first = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const firstSession = await first.sessions.create({
-      sessionId: "sequence-first",
-    });
-    const firstEvents = await first.events.replay({
-      sessionId: firstSession.id,
-    });
-    const firstCursor = firstEvents.at(-1)?.cursor;
-    expect(firstCursor).toBeDefined();
-    await first.close();
-
-    const second = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    await second.sessions.updateSettings(firstSession.id, {
-      permissionMode: "plan",
-    });
-    const allEvents = await second.events.replay({ sessionId: firstSession.id });
-    const afterFirst = await second.events.replay({
-      sessionId: firstSession.id,
-      after: firstCursor,
-    });
-
-    expect(allEvents.map((event) => event.seq)).toEqual(
-      [...allEvents.map((event) => event.seq)].sort((a, b) => a - b),
-    );
-    expect(new Set(allEvents.map((event) => event.seq)).size).toBe(
-      allEvents.length,
-    );
-    expect(afterFirst).toEqual([
-      expect.objectContaining({
-        sessionId: firstSession.id,
-        type: "session.settings.updated",
-      }),
-    ]);
-    expect(afterFirst[0]?.seq).toBeGreaterThan(firstCursor!.seq);
-    expect(afterFirst[0]?.cursor.journalEpoch).toBe(firstCursor?.journalEpoch);
-    await second.close();
-  });
-
-  it("trusts a valid Session sequence cursor without rescanning Run logs", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const first = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const session = await first.sessions.create({
-      sessionId: "sequence-no-rescan",
-    });
-    await first.close();
-
-    const second = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const openSync = mutableNodeFs.openSync;
-    let eventLogTailReads = 0;
-    mutableNodeFs.openSync = ((file, flags, mode) => {
-      if (String(file).endsWith(`${path.sep}events.jsonl`) && flags === "r") {
-        eventLogTailReads += 1;
-      }
-      return openSync(file, flags, mode);
-    }) as typeof nodeFs.openSync;
-    syncBuiltinESMExports();
-    try {
-      await second.events.replay({ sessionId: session.id });
-    } finally {
-      mutableNodeFs.openSync = openSync;
-      syncBuiltinESMExports();
-      await second.close();
-    }
-    expect(eventLogTailReads).toBe(0);
-  });
-
-  it("recovers from a sequence cursor with trailing garbage", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const first = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const session = await first.sessions.create({ sessionId: "sequence-garbage" });
-    await first.sessions.appendNotice({
-      sessionId: session.id,
-      source: "sequence-test",
-      content: "before corruption",
-    });
-    const prior = await first.events.replay({ sessionId: session.id });
-    const priorMax = Math.max(...prior.map((event) => event.seq));
-    await first.close();
-
-    await fs.writeFile(
-      runtimeSessionEventSequencePath(tempRoot, session.id),
-      "1garbage\n",
-      "utf8",
-    );
-    const second = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    try {
-      await second.sessions.updateSettings(session.id, { permissionMode: "plan" });
-      const replay = await second.events.replay({ sessionId: session.id });
-      const updated = replay.find((event) => event.type === "session.settings.updated");
-      expect(updated?.seq).toBeGreaterThan(priorMax);
-      expect(new Set(replay.map((event) => event.seq)).size).toBe(replay.length);
-    } finally {
-      await second.close();
-    }
-  });
-
-  it("ignores legacy watermarks that are not bound to a journal epoch", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-    });
-    const session = await runtime.sessions.create({
-      sessionId: "legacy-watermark-session",
-    });
-    const [created] = await runtime.events.replay({ sessionId: session.id });
-    const watermarkFile = path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(session.id),
-      "events.watermark",
-    );
-
-    for (const watermark of [
-      "999\n",
-      `${JSON.stringify({ droppedThrough: 999, sessionId: session.id })}\n`,
-    ]) {
-      await fs.writeFile(watermarkFile, watermark, "utf8");
-      await expect(runtime.events.replay({
-        sessionId: session.id,
-        after: { ...created!.cursor, seq: 0 },
-      })).resolves.toEqual([
-        expect.objectContaining({ id: created!.id }),
-      ]);
-    }
-    await runtime.close();
-  });
-
-  it("fails closed when a v2 retention watermark is malformed", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-    });
-    const session = await runtime.sessions.create({
-      sessionId: "invalid-watermark-session",
-    });
-    const [created] = await runtime.events.replay({ sessionId: session.id });
-    const unaffected = await runtime.sessions.create({
-      sessionId: "valid-watermark-session",
-    });
-    const [unaffectedCreated] = await runtime.events.replay({
-      sessionId: unaffected.id,
-    });
-    const watermarkFile = path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(session.id),
-      "events.watermark",
-    );
-
-    for (const watermark of [
-      "{not-json\n",
-      JSON.stringify({
-        version: 2,
-        journals: [{
-          sessionId: session.id,
-          journalEpoch: created!.cursor.journalEpoch,
-          droppedThrough: "invalid",
-        }],
-      }),
-      JSON.stringify({ version: 2, droppedThrough: 100 }),
-      JSON.stringify({
-        version: 2,
-        journals: [0, 1].map(() => ({
-          sessionId: session.id,
-          journalEpoch: created!.cursor.journalEpoch,
-          droppedThrough: 1,
-        })),
-      }),
-    ]) {
-      await fs.writeFile(watermarkFile, watermark, "utf8");
-      await expect(runtime.events.replay({
-        sessionId: session.id,
-        after: { ...created!.cursor, seq: 0 },
-      })).rejects.toMatchObject({ code: "resync_required" });
-      await expect(runtime.events.replay({
-        sessionId: unaffected.id,
-        after: { ...unaffectedCreated!.cursor, seq: 0 },
-      })).resolves.toEqual([
-        expect.objectContaining({ id: unaffectedCreated!.id }),
-      ]);
-    }
-    await runtime.close();
-  });
-
-  it("fails closed for a trimmed child journal when its Run watermark is unreadable", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      sessionId: "child-watermark-root",
-    });
-    const childSessionId = `${session.id}-child`;
-    let restarted: KodaXRuntime | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        queueMicrotask(() => {
-          options.events?.onTextDelta?.("child event", {
-            sessionId: childSessionId,
-            seq: 1,
-            timestamp: "2026-08-08T00:00:00.000Z",
-          });
-        });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
-            success: true,
-            lastText: "done",
-            messages: [],
-            sessionId: session.id,
-          }),
-        );
-      },
-    );
-
-    try {
-      const handle = await runtime.runs.start({
-        sessionId: session.id,
-        prompt: "emit child event",
-      });
-      await handle.result;
-      await flushMicrotasks();
-      const [childEvent] = await runtime.events.replay({
-        sessionId: childSessionId,
-      });
-      expect(childEvent).toMatchObject({
-        sessionId: childSessionId,
-        runId: handle.runId,
-      });
-
-      const runDirectory = path.join(
-        tempRoot,
-        ".kodax",
-        "runtime",
-        "runs",
-        encodeURIComponent(handle.runId),
-      );
-      expect(JSON.parse(await fs.readFile(
-        path.join(runDirectory, "event-journals.json"),
-        "utf8",
-      ))).toEqual({
-        version: 1,
-        journals: expect.arrayContaining([{
-          sessionId: childSessionId,
-          journalEpoch: childEvent!.cursor.journalEpoch,
-        }]),
-      });
-      const eventFile = path.join(runDirectory, "events.jsonl");
-      const rootRows = (await fs.readFile(eventFile, "utf8"))
-        .split(/\r?\n/)
-        .filter((line) => {
-          if (!line) return false;
-          const value: unknown = JSON.parse(line);
-          return value !== null
-            && typeof value === "object"
-            && !Array.isArray(value)
-            && (value as { readonly sessionId?: unknown }).sessionId
-              === session.id;
-        });
-      await fs.writeFile(eventFile, `${rootRows.join("\n")}\n`, "utf8");
-      await fs.writeFile(
-        path.join(runDirectory, "events.watermark"),
-        "{not-json\n",
-        "utf8",
-      );
-
-      await runtime.close();
-      restarted = await createKodaXRuntime({
-        homeDir: tempRoot,
-        sessionsDir: path.join(tempRoot, "sessions"),
-      });
-      await expect(restarted.events.replay({
-        sessionId: childSessionId,
-        after: { ...childEvent!.cursor, seq: 0 },
-      })).rejects.toMatchObject({ code: "resync_required" });
-      await fs.rm(path.join(runDirectory, "event-journals.json"));
-      await expect(restarted.events.replay({
-        sessionId: childSessionId,
-        after: { ...childEvent!.cursor, seq: 0 },
-      })).rejects.toMatchObject({ code: "resync_required" });
-      await fs.writeFile(
-        path.join(runDirectory, "event-journals.json"),
-        "{not-json\n",
-        "utf8",
-      );
-      await expect(restarted.events.replay({
-        sessionId: childSessionId,
-        after: { ...childEvent!.cursor, seq: 0 },
-      })).rejects.toMatchObject({ code: "resync_required" });
-    } finally {
-      await restarted?.close();
-      await runtime.close();
-    }
-  });
-
-  it("does not derive a new journal watermark from trimmed legacy events", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionId = "legacy-trim-session";
-    const runDir = path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      encodeURIComponent(sessionId),
-    );
-    await fs.mkdir(runDir, { recursive: true });
-    await fs.writeFile(
-      path.join(runDir, "events.jsonl"),
-      `${JSON.stringify({
-        id: "legacy-large-event",
-        seq: 900,
-        time: new Date(0).toISOString(),
-        sessionId,
-        runId: sessionId,
-        type: "run.progress",
-        payload: { text: "x".repeat(17 * 1024 * 1024) },
-      })}\n`,
-      "utf8",
-    );
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-    });
-    const session = await runtime.sessions.create({ sessionId });
-    const [created] = await runtime.events.replay({ sessionId });
-
-    await expect(runtime.events.replay({
-      sessionId,
-      after: { ...created!.cursor, seq: 0 },
-    })).resolves.toEqual([
-      expect.objectContaining({ id: created!.id }),
-    ]);
-    expect(JSON.parse(await fs.readFile(
-      path.join(runDir, "events.watermark"),
-      "utf8",
-    ))).toEqual({ version: 2, journals: [] });
-    expect(session.id).toBe(sessionId);
-    await runtime.close();
-  });
-
-  it("recovers event sequence after cursor loss when the last event exceeds the tail window", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
-    const sessionsDir = path.join(tempRoot, "sessions");
-    const first = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const source = await first.sessions.create({
-      sessionId: "large-sequence-source",
-    });
-    await first.sessions.appendNotice({
-      sessionId: source.id,
-      source: "sequence-recovery",
-      content: "n".repeat(256 * 1024),
-    });
-    const priorEvents = await first.events.replay({ sessionId: source.id });
-    const priorMax = Math.max(...priorEvents.map((event) => event.seq));
-    await first.close();
-
-    await fs.rm(runtimeSessionEventSequencePath(tempRoot, source.id));
-    const second = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
-    const observation = await second.sessions.observe(
-      source.id,
-      () => undefined,
-    );
-    expect(observation.snapshot.cursor.seq).toBeGreaterThanOrEqual(priorMax);
-    observation.close();
-    await second.sessions.updateSettings(source.id, { permissionMode: "plan" });
-    const updatedEvent = (await second.events.replay({
-      sessionId: source.id,
-    })).find((event) => event.type === "session.settings.updated");
-
-    expect(updatedEvent?.seq).toBeGreaterThan(priorMax);
-    await second.close();
   });
 
   it("caps in-memory terminal run records while keeping persisted run lookup available", async () => {
@@ -16347,6 +13943,12 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Abort Race Test" });
+    const terminalCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.completed",
+      "run.cancelled",
+    );
     let finishRun: ((value: KodaXResult) => void) | undefined;
 
     codingMock.startKodaX.mockImplementation(
@@ -16386,10 +13988,7 @@ describe("createKodaXRuntime", () => {
 
     const result = await handle.result;
     const status = await runtime.runs.get(handle.runId);
-    const terminalEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: ["run.completed", "run.cancelled"],
-    });
+    const terminalEvents = terminalCollector.events;
 
     expect(result.phase).toBe("completed");
     expect(status).toMatchObject({
@@ -16495,6 +14094,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Queued Stop Receipt",
     });
+    const cancelledCollector = collectEvents(
+      runtime,
+      session.id,
+      "run.cancelled",
+    );
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession =>
         fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
@@ -16525,14 +14129,11 @@ describe("createKodaXRuntime", () => {
     await expect(queued.result).resolves.toMatchObject({ phase: "cancelled" });
     const cancelledStatus = await runtime.runs.get(queued.runId);
     const cancelledResult = await queued.result;
-    const [cancelledEvent] = await runtime.events.replay({
-      runId: queued.runId,
-      type: "run.cancelled",
-    });
-    const cancelledDiagnostics = await runtime.sessions.diagnostics({
+    const [cancelledEvent] = cancelledCollector.events;
+    const cancelledDiagnostics = await vi.waitFor(() => runtime.sessions.diagnostics({
       sessionId: session.id,
       runId: queued.runId,
-    });
+    }));
     const cancellationDetail = {
       failureKind: "cancelled",
       stage: "runtime_control",
@@ -17349,10 +14950,10 @@ describe("createKodaXRuntime", () => {
     });
     expect(codingMock.runManagedTask).toHaveBeenCalledOnce();
     expect(codingMock.startKodaX).not.toHaveBeenCalled();
-    const observation = await runtime.sessions.observe(
+    const observation = await vi.waitFor(() => runtime.sessions.observe(
       session.id,
       () => undefined,
-    );
+    ));
     expect(observation.snapshot.live.managedTasks).toEqual([
       expect.objectContaining({
         runId: handle.runId,
@@ -17507,7 +15108,7 @@ describe("createKodaXRuntime", () => {
     expect(affinityKeys[1]).not.toBe(affinityKeys[0]);
   });
 
-  it("retains the latest managed_task context budget and cache diagnostics", async () => {
+  it("emits managed_task context budget and cache diagnostics", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17517,6 +15118,16 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Managed Diagnostics Test",
     });
+    const budgetCollector = collectEvents(
+      runtime,
+      session.id,
+      "context.budget.snapshot",
+    );
+    const cacheCollector = collectEvents(
+      runtime,
+      session.id,
+      "provider.cache.diagnostics",
+    );
 
     codingMock.runManagedTask.mockImplementation(
       async (options: KodaXOptions) => {
@@ -17600,30 +15211,13 @@ describe("createKodaXRuntime", () => {
       options: { context: { contextDiagnostics: true } },
     });
     await handle.result;
-    const latestBudget = await runtime.diagnostics.latestContextBudget({
-      runId: handle.runId,
-    });
-    const latestCache = await runtime.diagnostics.latestProviderCacheDiagnostic(
-      {
-        runId: handle.runId,
-      },
-    );
-    const cacheEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: "provider.cache.diagnostics",
-    });
+    const latestBudget = budgetCollector.events.at(-1);
+    const cacheEvents = cacheCollector.events;
 
-    expect(latestBudget).toMatchObject({
+    expect(latestBudget?.payload).toMatchObject({
       turnId: "turn-managed-diagnostics",
       usedTokens: 1_065,
     });
-    expect(latestBudget?.tokenBreakdown.total).toBe(latestBudget?.usedTokens);
-    expect(latestCache).toMatchObject({
-      contextId: session.id,
-      contextKind: "root",
-      requestId: "managed-cache-unreported",
-    });
-    expect(latestCache).not.toHaveProperty("cachedReadTokens");
     expect(cacheEvents).toHaveLength(2);
     expect(cacheEvents[0]?.payload).toMatchObject({
       requestId: "managed-cache-zero",
@@ -17635,27 +15229,6 @@ describe("createKodaXRuntime", () => {
     expect(cacheEvents[1]?.payload).not.toHaveProperty("cachedReadTokens");
 
     await runtime.close();
-
-    const reconnectedRuntime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    await expect(
-      reconnectedRuntime.diagnostics.latestProviderCacheDiagnostic({
-        sessionId: session.id,
-      }),
-    ).resolves.toMatchObject({
-      contextId: session.id,
-      contextKind: "root",
-      requestId: "managed-cache-unreported",
-    });
-    const reconnectedLatest =
-      await reconnectedRuntime.diagnostics.latestProviderCacheDiagnostic({
-        sessionId: session.id,
-      });
-    expect(reconnectedLatest).not.toHaveProperty("cachedReadTokens");
-    await reconnectedRuntime.close();
   });
 
   it("reports failed run status when the coding layer rejects", async () => {
@@ -17666,6 +15239,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Failure Test" });
+    const failedCollector = collectEvents(runtime, session.id, "run.failed");
 
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession =>
@@ -17681,10 +15255,7 @@ describe("createKodaXRuntime", () => {
     });
     const result = await handle.result;
     const status = await runtime.runs.get(handle.runId);
-    const failedEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: "run.failed",
-    });
+    const failedEvents = failedCollector.events;
 
     expect(result.phase).toBe("failed");
     expect(result.error?.message).toBe("Provider request failed.");
@@ -17713,6 +15284,11 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: `Resolved Failure ${mode}`,
       });
+      const failedCollector = collectEvents(
+        runtime,
+        session.id,
+        "run.failed",
+      );
       const executionFailure: NonNullable<KodaXResult["failure"]> = {
         message: "Provider rejected the request. (KodaXProviderError; HTTP 400)",
         safeMessage: "Provider rejected the request.",
@@ -17761,14 +15337,11 @@ describe("createKodaXRuntime", () => {
       });
       const result = await handle.result;
       const status = await runtime.runs.get(handle.runId);
-      const [failedEvent] = await runtime.events.replay({
-        runId: handle.runId,
-        type: "run.failed",
-      });
-      const diagnostics = await captureRuntimeSessionDiagnostics(runtime, {
+      const [failedEvent] = failedCollector.events;
+      const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
         sessionId: session.id,
         runId: handle.runId,
-      });
+      }));
       const expectedDetail = {
         failureKind: "upstream",
         stage: "transport",
@@ -17822,6 +15395,7 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Blocked Task Test",
     });
+    const failedCollector = collectEvents(runtime, session.id, "run.failed");
     codingMock.runManagedTask.mockResolvedValue({
       success: false,
       lastText: "I need the target API version before continuing.",
@@ -17838,10 +15412,7 @@ describe("createKodaXRuntime", () => {
     });
     const result = await handle.result;
     const status = await runtime.runs.get(handle.runId);
-    const failedEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: "run.failed",
-    });
+    const failedEvents = failedCollector.events;
 
     expect(result).toMatchObject({
       phase: "failed",
@@ -17897,6 +15468,7 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Successful Task Test",
     });
+    const failedCollector = collectEvents(runtime, session.id, "run.failed");
     codingMock.runManagedTask.mockResolvedValue({
       success: true,
       lastText: "The requested analysis is complete.",
@@ -17912,10 +15484,7 @@ describe("createKodaXRuntime", () => {
       mode: "managed_task",
     });
     const result = await handle.result;
-    const failedEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: "run.failed",
-    });
+    const failedEvents = failedCollector.events;
 
     expect(result).toMatchObject({
       phase: "completed",
@@ -19825,6 +17394,12 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Permission Test" });
+    const permissionCollector = collectEvents(
+      runtime,
+      session.id,
+      "permission.requested",
+      "permission.resolved",
+    );
     let releaseApproval: ((value: boolean) => void) | undefined;
     let approvalDone: Promise<boolean | string> | undefined;
 
@@ -19876,11 +17451,7 @@ describe("createKodaXRuntime", () => {
     expect(
       await runtime.permissions.listPending({ runId: handle.runId }),
     ).toEqual([]);
-    const permissionEvents = await runtime.events.replay({
-      runId: handle.runId,
-      type: ["permission.requested", "permission.resolved"],
-    });
-    expect(permissionEvents).toEqual([]);
+    expect(permissionCollector.events).toEqual([]);
 
     await runtime.runs.abort(handle.runId);
     await runtime.close();
@@ -20513,6 +18084,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Redacted Permission Grant",
     });
+    const grantAuditCollector = collectEvents(
+      runtime,
+      session.id,
+      "permission.grant.changed",
+    );
     const command =
       "TOKEN=private-grant-secret npm test -- --token=private-grant-secret";
     const decision = runtime.permissions.request({
@@ -20554,10 +18130,7 @@ describe("createKodaXRuntime", () => {
     expect(
       JSON.stringify(await runtime.permissions.listGrants()),
     ).not.toContain("private-grant-secret");
-    const grantAudit = await runtime.events.replay({
-      type: "permission.grant.changed",
-      sessionId: session.id,
-    });
+    const grantAudit = grantAuditCollector.events;
     expect(grantAudit.map((event) => event.payload)).toEqual([
       expect.objectContaining({
         action: "created",
@@ -20635,6 +18208,11 @@ describe("createKodaXRuntime", () => {
       "utf-8",
     );
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const grantAuditCollector = collectEvents(
+      runtime,
+      "legacy-session",
+      "permission.grant.changed",
+    );
 
     const listed = await runtime.permissions.listGrants();
     expect(listed).toEqual({
@@ -20672,12 +18250,7 @@ describe("createKodaXRuntime", () => {
       ),
     ).toBe(true);
     expect((await runtime.permissions.listGrants()).value).toEqual([]);
-    await expect(
-      runtime.events.replay({
-        sessionId: "legacy-session",
-        type: "permission.grant.changed",
-      }),
-    ).resolves.toEqual([
+    expect(grantAuditCollector.events).toEqual([
       expect.objectContaining({
         payload: expect.objectContaining({
           action: "revoked",
@@ -20745,6 +18318,11 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Session Grant Lifecycle",
     });
+    const grantAuditCollector = collectEvents(
+      runtime,
+      session.id,
+      "permission.grant.changed",
+    );
     const decision = runtime.permissions.request({
       sessionId: session.id,
       runId: "run-session-grant-lifecycle",
@@ -20772,10 +18350,7 @@ describe("createKodaXRuntime", () => {
     const afterDelete = await runtime.permissions.listGrants();
     expect(afterDelete.value).toEqual([]);
     expect(afterDelete.revision).toBeGreaterThan(beforeDelete.revision);
-    const grantAudit = await runtime.events.replay({
-      type: "permission.grant.changed",
-      sessionId: session.id,
-    });
+    const grantAudit = grantAuditCollector.events;
     expect(
       grantAudit.map((event) => (event.payload as { action?: string }).action),
     ).toEqual(["created", "expired"]);
@@ -21225,13 +18800,9 @@ describe("createKodaXRuntime", () => {
       sessionId: second.id,
       prompt: "second",
     });
-    await flushMicrotasks();
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
     await runtime.runs.abort(firstRun.runId);
-    const firstReplay = await runtime.events.replay({ runId: firstRun.runId });
-    const secondReplay = await runtime.events.replay({
-      runId: secondRun.runId,
-    });
 
     expect(aborts.get(first.id)).toBe(1);
     expect(aborts.get(second.id)).toBeUndefined();
@@ -21248,12 +18819,6 @@ describe("createKodaXRuntime", () => {
     expect(firstEvents).not.toContain("run.completed");
     expect(secondEvents).toContain("assistant.delta");
     expect(secondEvents).not.toContain("run.cancelled");
-    expect(firstReplay.every((event) => event.sessionId === first.id)).toBe(
-      true,
-    );
-    expect(secondReplay.every((event) => event.sessionId === second.id)).toBe(
-      true,
-    );
 
     await runtime.close();
   });
@@ -21606,16 +19171,6 @@ function runtimeWorkflowProgress(
   };
 }
 
-function runtimeEventLogPath(root: string, runId: string): string {
-  return path.join(
-    root,
-    ".kodax",
-    "runtime",
-    "runs",
-    encodeURIComponent(runId),
-    "events.jsonl",
-  );
-}
 
 type TestTextDeltaMeta = Parameters<
   NonNullable<NonNullable<KodaXOptions["events"]>["onTextDelta"]>
@@ -21645,57 +19200,7 @@ function emitTestTextDelta(
   events?.onTextDelta?.(text, { ...meta, providerRequestId });
 }
 
-function runtimeSessionEventDir(root: string, sessionId: string): string {
-  return path.join(
-    root,
-    ".kodax",
-    "runtime",
-    "session-events",
-    Buffer.from(sessionId, "utf8").toString("base64url") || "_",
-  );
-}
 
-function runtimeSessionEventSequencePath(
-  root: string,
-  sessionId: string,
-): string {
-  return path.join(runtimeSessionEventDir(root, sessionId), "sequence");
-}
-
-function runtimeSessionEventLockPath(root: string, sessionId: string): string {
-  return `${runtimeSessionEventSequencePath(root, sessionId)}.lock`;
-}
-
-async function seedRuntimeSessionEventJournal(
-  root: string,
-  sessionId: string,
-  journalEpoch: string,
-  seq: number,
-): Promise<void> {
-  const directory = runtimeSessionEventDir(root, sessionId);
-  await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(
-    path.join(directory, "journal.json"),
-    JSON.stringify({ version: 1, sessionId, journalEpoch }),
-    "utf-8",
-  );
-  await fs.writeFile(
-    runtimeSessionEventSequencePath(root, sessionId),
-    `${seq}\n`,
-    "utf-8",
-  );
-}
-
-async function replayRuntimeText(
-  runtime: KodaXRuntime,
-  runId: string,
-): Promise<string> {
-  const replay = await runtime.events.replay({
-    runId,
-    type: "assistant.delta",
-  });
-  return replay.map(runtimeTextPayload).join("");
-}
 
 function runtimeEventIndex(
   events: readonly RuntimeEvent[],

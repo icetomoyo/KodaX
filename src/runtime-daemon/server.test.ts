@@ -16,6 +16,7 @@ import {
 } from '@kodax-ai/coding';
 
 import type {
+  RuntimeMemoryPlane,
   KodaXRuntime,
   RuntimeClientCapabilities,
   RuntimeCompactSessionInput,
@@ -23,7 +24,6 @@ import type {
   RuntimeEvent,
   RuntimeEventFilter,
   RuntimeEventListener,
-  RuntimeEventReplayFilter,
   RuntimeObservationInvalidation,
   RuntimePermissionDecision,
   RuntimeRunResult,
@@ -206,28 +206,27 @@ describe('runtime daemon dispatcher', () => {
 
   it('applies session admission to event, interaction, and diagnostic side paths', async () => {
     const runtime = makeRuntime();
+    const notAdmitted = () => {
+      throw Object.assign(new Error('Partner session is not admitted.'), {
+        code: 'session_not_admitted' as const,
+      });
+    };
     vi.spyOn(runtime.sessions, 'transcript').mockImplementation(async (sessionId) => {
-      if (sessionId === 'partner-session') {
-        throw Object.assign(new Error('Partner session is not admitted.'), {
-          code: 'session_not_admitted' as const,
-        });
-      }
+      if (sessionId === 'partner-session') notAdmitted();
       return null;
+    });
+    vi.spyOn(runtime.sessions, 'observe').mockImplementation(async (sessionId, _listener) => {
+      if (sessionId === 'partner-session') notAdmitted();
+      return createTestObservation(sessionId);
     });
     const dispatcher = createRuntimeDaemonDispatcher({ runtime });
     await initializeDispatcher(dispatcher);
 
     const requests = [
-      createRuntimeDaemonRequest('req-event-subscribe', 'event.subscribe', {
-        filter: { sessionId: 'partner-session' },
-      }),
-      createRuntimeDaemonRequest('req-event-replay', 'event.replay', {
+      createRuntimeDaemonRequest('req-observe', 'session.observe', {
         sessionId: 'partner-session',
       }),
       createRuntimeDaemonRequest('req-interaction-list', 'interaction.list', {
-        sessionId: 'partner-session',
-      }),
-      createRuntimeDaemonRequest('req-diagnostic', 'context.budget.get', {
         sessionId: 'partner-session',
       }),
     ];
@@ -2353,79 +2352,12 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('forwards runtime event subscriptions as daemon notifications', async () => {
-    const runtime = makeRuntime();
-    const notifications: RuntimeDaemonNotification[] = [];
-    const dispatcher = createRuntimeDaemonDispatcher({
-      runtime,
-      notify: (notification) => notifications.push(notification),
-    });
-    await initializeDispatcher(dispatcher);
-
-    const subscribed = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'event.subscribe', {
-      filter: { sessionId: 'session-1' },
-    }));
-    expect(isRuntimeDaemonSuccessResponse(subscribed)).toBe(true);
-
-    const event: RuntimeEvent = {
-      id: 'evt-1',
-      seq: 1,
-      time: '2026-07-09T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'run.completed',
-      payload: { ok: true },
-    };
-    runtime.emit(event);
-
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]?.method).toBe('event');
-    expect(notifications[0]?.params).toMatchObject({ event });
-  });
-
-  it('admits a run-only event scope from persisted events when Run status is absent', async () => {
-    const runtime = makeRuntime();
-    runtime.emit({
-      id: 'evt-synthetic-run',
-      seq: 1,
-      cursor: {
-        sessionId: 'session-1',
-        journalEpoch: 'epoch-session-1',
-        seq: 1,
-      },
-      time: '2026-07-09T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'synthetic-run',
-      type: 'session.created',
-      payload: {},
-    });
-    vi.spyOn(runtime.runs, 'get').mockRejectedValue(
-      Object.assign(new Error('Run not found'), { code: 'not_found' as const }),
-    );
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
-    await initializeDispatcher(dispatcher);
-
-    const replay = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-synthetic-run',
-      'event.replay',
-      { runId: 'synthetic-run' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(replay)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(replay)) {
-      expect(replay.result).toEqual([
-        expect.objectContaining({ id: 'evt-synthetic-run' }),
-      ]);
-    }
-    dispatcher.close();
-  });
-
   it('forwards session observation invalidation as a daemon notification', async () => {
     const runtime = makeRuntime();
     let invalidateObservation:
       | ((value: RuntimeObservationInvalidation) => void)
       | undefined;
-    runtime.sessions.observe = async (sessionId) => ({
+    runtime.sessions.observe = async (sessionId, _listener) => ({
       ...createTestObservation(sessionId),
       invalidated: new Promise<RuntimeObservationInvalidation>((resolve) => {
         invalidateObservation = resolve;
@@ -2478,7 +2410,7 @@ describe('runtime daemon dispatcher', () => {
       | ((value: RuntimeObservationInvalidation) => void)
       | undefined;
     const close = vi.fn();
-    runtime.sessions.observe = async (sessionId) => ({
+    runtime.sessions.observe = async (sessionId, _listener) => ({
       ...createTestObservation(sessionId),
       close,
       invalidated: new Promise<RuntimeObservationInvalidation>((resolve) => {
@@ -2562,325 +2494,6 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('assigns a subscription id before synchronous runtime notifications', async () => {
-    const runtime = makeRuntime();
-    const event: RuntimeEvent = {
-      id: 'evt-sync',
-      seq: 1,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 1 },
-      time: '2026-07-09T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'run.started',
-      payload: {},
-    };
-    runtime.events.subscribe = (_filter, listener) => {
-      listener(event);
-      return { close() {} };
-    };
-    const notifications: RuntimeDaemonNotification[] = [];
-    const dispatcher = createRuntimeDaemonDispatcher({
-      runtime,
-      notify: (notification) => notifications.push(notification),
-    });
-    await initializeDispatcher(dispatcher);
-
-    const subscribed = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-sub-sync',
-      'event.subscribe',
-      { filter: { sessionId: 'session-1' } },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(subscribed)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(subscribed)) {
-      expect(notifications).toHaveLength(1);
-      expect(notifications[0]?.params).toMatchObject({
-        subscriptionId: (subscribed.result as { subscriptionId: string }).subscriptionId,
-        event,
-      });
-    }
-  });
-
-  it('returns latest context diagnostic payloads from runtime event replay', async () => {
-    const runtime = makeRuntime();
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
-    await initializeDispatcher(dispatcher);
-
-    runtime.emit({
-      id: 'evt-budget-1',
-      seq: 1,
-      time: '2026-07-09T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'context.budget.snapshot',
-      payload: { usedTokens: 100 },
-    });
-    runtime.emit({
-      id: 'evt-budget-2',
-      seq: 2,
-      time: '2026-07-09T00:00:01.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'context.budget.snapshot',
-      payload: { usedTokens: 80 },
-    });
-    runtime.emit({
-      id: 'evt-budget-child',
-      seq: 3,
-      time: '2026-07-09T00:00:02.000Z',
-      sessionId: 'child-worker-session',
-      runId: 'run-1',
-      type: 'context.budget.snapshot',
-      payload: {
-        contextId: `session-1/agent/${encodeURIComponent('/root/reviewer')}`,
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-        usedTokens: 120,
-      },
-    });
-    for (let index = 0; index < 101; index += 1) {
-      runtime.emit({
-        id: `evt-budget-child-${index}`,
-        seq: 4 + index,
-        time: '2026-07-09T00:00:02.000Z',
-        sessionId: 'child-worker-session',
-        runId: 'run-1',
-        type: 'context.budget.snapshot',
-        payload: {
-          contextId: `session-1/agent/${encodeURIComponent('/root/reviewer')}`,
-          contextKind: 'child',
-          agentId: '/root/reviewer',
-          usedTokens: 121 + index,
-        },
-      });
-    }
-    runtime.emit({
-      id: 'evt-budget-unrelated-child',
-      seq: 105,
-      time: '2026-07-09T00:00:03.000Z',
-      sessionId: 'unrelated-child-worker-session',
-      runId: 'run-2',
-      type: 'context.budget.snapshot',
-      payload: {
-        contextId: `unrelated-root-session/agent/${encodeURIComponent('/root/reviewer')}`,
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-        usedTokens: 999,
-      },
-    });
-    runtime.emit({
-      id: 'evt-exposure-1',
-      seq: 106,
-      time: '2026-07-09T00:00:04.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'tool.exposure.planned',
-      payload: { profile: 'bridge_non_core', bridgedCount: 4 },
-    });
-    runtime.emit({
-      id: 'evt-cache-root',
-      seq: 107,
-      time: '2026-07-09T00:00:05.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'provider.cache.diagnostics',
-      payload: {
-        contextId: 'session-1',
-        contextKind: 'root',
-        requestId: 'cache-root',
-        phase: 'response',
-        cachedReadTokens: 0,
-      },
-    });
-    runtime.emit({
-      id: 'evt-cache-child',
-      seq: 108,
-      time: '2026-07-09T00:00:06.000Z',
-      sessionId: 'child-worker-session',
-      runId: 'run-1',
-      type: 'provider.cache.diagnostics',
-      payload: {
-        contextId: `session-1/agent/${encodeURIComponent('/root/reviewer')}`,
-        parentContextId: 'session-1',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-        requestId: 'cache-child',
-        phase: 'response',
-        cachedReadTokens: 96,
-      },
-    });
-    runtime.emit({
-      id: 'evt-cache-other-agent',
-      seq: 109,
-      time: '2026-07-09T00:00:07.000Z',
-      sessionId: 'other-child-worker-session',
-      runId: 'run-1',
-      type: 'provider.cache.diagnostics',
-      payload: {
-        contextId: `session-1/agent/${encodeURIComponent('/root/other')}`,
-        parentContextId: 'session-1',
-        contextKind: 'child',
-        agentId: '/root/other',
-        requestId: 'cache-other-agent',
-        phase: 'response',
-        cachedReadTokens: 12,
-      },
-    });
-    runtime.emit({
-      id: 'evt-cache-unrelated-session',
-      seq: 110,
-      time: '2026-07-09T00:00:08.000Z',
-      sessionId: 'unrelated-child-worker-session',
-      runId: 'run-2',
-      type: 'provider.cache.diagnostics',
-      payload: {
-        contextId: `unrelated-root-session/agent/${encodeURIComponent('/root/reviewer')}`,
-        parentContextId: 'unrelated-root-session',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-        requestId: 'cache-unrelated-session',
-        phase: 'response',
-        cachedReadTokens: 999,
-      },
-    });
-    runtime.emit({
-      id: 'evt-cache-unreported',
-      seq: 111,
-      time: '2026-07-09T00:00:09.000Z',
-      sessionId: 'session-unreported',
-      runId: 'run-unreported',
-      type: 'provider.cache.diagnostics',
-      payload: {
-        contextId: 'session-unreported',
-        contextKind: 'root',
-        requestId: 'cache-unreported',
-        phase: 'response',
-      },
-    });
-
-    const budget = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'context.budget.get', {
-      sessionId: 'session-1',
-      runId: 'run-1',
-    }));
-    const exposure = await dispatcher.handle(createRuntimeDaemonRequest('req-2', 'tool.exposure.preview', {
-      sessionId: 'session-1',
-    }));
-    const childBudget = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-child-budget',
-      'context.budget.get',
-      {
-        sessionId: 'session-1',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-      },
-    ));
-    const unrelatedRootChildBudget = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-unrelated-child-budget',
-      'context.budget.get',
-      {
-        sessionId: 'unrelated-root-session-2',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-      },
-    ));
-    const rootCache = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-root-cache',
-      'provider.cache.diagnostics.get',
-      { sessionId: 'session-1' },
-    ));
-    const childCache = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-child-cache',
-      'provider.cache.diagnostics.get',
-      {
-        sessionId: 'session-1',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-      },
-    ));
-    const unrelatedChildCache = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-unrelated-child-cache',
-      'provider.cache.diagnostics.get',
-      {
-        sessionId: 'unrelated-root-session',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-      },
-    ));
-    const unknownChildCache = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-unknown-child-cache',
-      'provider.cache.diagnostics.get',
-      {
-        sessionId: 'unknown-root-session',
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-      },
-    ));
-    const unreportedRootCache = await dispatcher.handle(createRuntimeDaemonRequest(
-      'req-unreported-root-cache',
-      'provider.cache.diagnostics.get',
-      { sessionId: 'session-unreported' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(budget)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(exposure)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(childBudget)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(unrelatedRootChildBudget)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(rootCache)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(childCache)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(unrelatedChildCache)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(unknownChildCache)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(unreportedRootCache)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(budget)) {
-      expect(budget.result).toEqual({ usedTokens: 80 });
-    }
-    if (isRuntimeDaemonSuccessResponse(exposure)) {
-      expect(exposure.result).toEqual({ profile: 'bridge_non_core', bridgedCount: 4 });
-    }
-    if (isRuntimeDaemonSuccessResponse(childBudget)) {
-      expect(childBudget.result).toEqual({
-        contextId: `session-1/agent/${encodeURIComponent('/root/reviewer')}`,
-        contextKind: 'child',
-        agentId: '/root/reviewer',
-        usedTokens: 221,
-      });
-    }
-    if (isRuntimeDaemonSuccessResponse(unrelatedRootChildBudget)) {
-      expect(unrelatedRootChildBudget.result).toBeNull();
-    }
-    if (isRuntimeDaemonSuccessResponse(rootCache)) {
-      expect(rootCache.result).toMatchObject({
-        contextId: 'session-1',
-        requestId: 'cache-root',
-        cachedReadTokens: 0,
-      });
-    }
-    if (isRuntimeDaemonSuccessResponse(childCache)) {
-      expect(childCache.result).toMatchObject({
-        contextId: `session-1/agent/${encodeURIComponent('/root/reviewer')}`,
-        agentId: '/root/reviewer',
-        requestId: 'cache-child',
-        cachedReadTokens: 96,
-      });
-    }
-    if (isRuntimeDaemonSuccessResponse(unrelatedChildCache)) {
-      expect(unrelatedChildCache.result).toMatchObject({
-        contextId: `unrelated-root-session/agent/${encodeURIComponent('/root/reviewer')}`,
-        requestId: 'cache-unrelated-session',
-        cachedReadTokens: 999,
-      });
-    }
-    if (isRuntimeDaemonSuccessResponse(unknownChildCache)) {
-      expect(unknownChildCache.result).toBeNull();
-    }
-    if (isRuntimeDaemonSuccessResponse(unreportedRootCache)) {
-      expect(unreportedRootCache.result).toMatchObject({
-        contextId: 'session-unreported',
-        requestId: 'cache-unreported',
-      });
-      expect(unreportedRootCache.result).not.toHaveProperty('cachedReadTokens');
-    }
-  });
-
   it('accepts only explicit user-scope learned Skill promotion over the daemon boundary', async () => {
     const runtime = makeRuntime();
     const promote = vi.spyOn(runtime.learning, 'promote');
@@ -2917,8 +2530,20 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('gates context diagnostics by negotiated client capability', async () => {
+  it('gates context diagnostic events in live notifications by negotiated capability', async () => {
     const runtime = makeRuntime();
+    const basicNotifications: RuntimeDaemonNotification[] = [];
+    const basic = createRuntimeDaemonDispatcher({
+      runtime,
+      notify: (notification) => basicNotifications.push(notification),
+    });
+    await initializeDispatcher(basic, {});
+    await basic.handle(createRuntimeDaemonRequest(
+      'req-basic-subscribe',
+      'session.observe',
+      { sessionId: 'session-1' },
+    ));
+
     runtime.emit({
       id: 'evt-normal',
       seq: 1,
@@ -2937,97 +2562,50 @@ describe('runtime daemon dispatcher', () => {
       type: 'context.budget.snapshot',
       payload: { usedTokens: 42 },
     });
+
+    const emittedTypes = basicNotifications
+      .map((notification) => (notification.params as { readonly event?: { readonly type: string } }).event?.type)
+      .filter((type) => type !== undefined);
+    expect(emittedTypes).toEqual(['run.completed']);
+    basic.close();
+
+    const diagnosticNotifications: RuntimeDaemonNotification[] = [];
+    const diagnostic = createRuntimeDaemonDispatcher({
+      runtime,
+      notify: (notification) => diagnosticNotifications.push(notification),
+    });
+    await initializeDispatcher(diagnostic, { contextDiagnostics: true });
+    await diagnostic.handle(createRuntimeDaemonRequest(
+      'req-diagnostic-subscribe',
+      'session.observe',
+      { sessionId: 'session-1' },
+    ));
+
     runtime.emit({
-      id: 'evt-compaction-skipped',
+      id: 'evt-normal-2',
       seq: 3,
       time: '2026-07-09T00:00:02.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
-      type: 'context.compaction.skipped',
-      payload: { reason: 'cooldown' },
+      type: 'run.completed',
+      payload: { ok: true },
     });
     runtime.emit({
-      id: 'evt-cache-diagnostics',
+      id: 'evt-budget-2',
       seq: 4,
       time: '2026-07-09T00:00:03.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
-      type: 'provider.cache.diagnostics',
-      payload: { phase: 'response', cachedReadTokens: 80 },
+      type: 'context.budget.snapshot',
+      payload: { usedTokens: 43 },
     });
 
-    const basic = createRuntimeDaemonDispatcher({ runtime });
-    await initializeDispatcher(basic, {});
-    const basicReplay = await basic.handle(createRuntimeDaemonRequest(
-      'req-basic-replay',
-      'event.replay',
-      { sessionId: 'session-1' },
-    ));
-    const basicBudget = await basic.handle(createRuntimeDaemonRequest('req-basic-budget', 'context.budget.get', {
-      sessionId: 'session-1',
-      runId: 'run-1',
-    }));
-    const basicCache = await basic.handle(createRuntimeDaemonRequest(
-      'req-basic-cache',
-      'provider.cache.diagnostics.get',
-      { sessionId: 'session-1', runId: 'run-1' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(basicReplay)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(basicReplay)) {
-      expect(basicReplay.result).toEqual([
-        expect.objectContaining({ type: 'run.completed' }),
-      ]);
-    }
-    expect(isRuntimeDaemonSuccessResponse(basicBudget)).toBe(false);
-    expect(isRuntimeDaemonSuccessResponse(basicCache)).toBe(false);
-    if (!isRuntimeDaemonSuccessResponse(basicBudget)) {
-      expect(basicBudget.error.code).toBe('unauthorized');
-    }
-    if (!isRuntimeDaemonSuccessResponse(basicCache)) {
-      expect(basicCache.error.code).toBe('unauthorized');
-    }
-
-    const diagnostic = createRuntimeDaemonDispatcher({ runtime });
-    await initializeDispatcher(diagnostic, { contextDiagnostics: true });
-    const diagnosticReplay = await diagnostic.handle(createRuntimeDaemonRequest(
-      'req-diagnostic-replay',
-      'event.replay',
-      { sessionId: 'session-1' },
-    ));
-    const diagnosticBudget = await diagnostic.handle(createRuntimeDaemonRequest(
-      'req-diagnostic-budget',
-      'context.budget.get',
-      { sessionId: 'session-1', runId: 'run-1' },
-    ));
-    const diagnosticCache = await diagnostic.handle(createRuntimeDaemonRequest(
-      'req-diagnostic-cache',
-      'provider.cache.diagnostics.get',
-      { sessionId: 'session-1', runId: 'run-1' },
-    ));
-
-    expect(isRuntimeDaemonSuccessResponse(diagnosticReplay)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(diagnosticReplay)) {
-      expect(diagnosticReplay.result).toEqual([
-        expect.objectContaining({ type: 'run.completed' }),
-        expect.objectContaining({ type: 'context.budget.snapshot' }),
-        expect.objectContaining({ type: 'context.compaction.skipped' }),
-        expect.objectContaining({ type: 'provider.cache.diagnostics' }),
-      ]);
-    }
-    expect(isRuntimeDaemonSuccessResponse(diagnosticBudget)).toBe(true);
-    expect(isRuntimeDaemonSuccessResponse(diagnosticCache)).toBe(true);
-    if (isRuntimeDaemonSuccessResponse(diagnosticBudget)) {
-      expect(diagnosticBudget.result).toEqual({ usedTokens: 42 });
-    }
-    if (isRuntimeDaemonSuccessResponse(diagnosticCache)) {
-      expect(diagnosticCache.result).toEqual({
-        phase: 'response',
-        cachedReadTokens: 80,
-      });
-    }
+    const diagnosticTypes = diagnosticNotifications
+      .map((notification) => (notification.params as { readonly event?: { readonly type: string } }).event?.type)
+      .filter((type) => type !== undefined);
+    expect(diagnosticTypes).toEqual(['run.completed', 'context.budget.snapshot']);
+    diagnostic.close();
   });
-
   it('serves redacted config and provider/model catalogs through admin methods', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
       runtime: makeRuntime(),
@@ -3361,9 +2939,7 @@ const METHOD_SMOKE_PARAMS = {
   'run.setReasoning': { runId: 'run-1', reasoning: 'off' },
   'request.cancel': { requestId: 'request-missing' },
   'request.ack': { requestId: 'request-missing' },
-  'event.subscribe': { filter: { sessionId: 'session-1' } },
-  'event.unsubscribe': { subscriptionId: 'sub-missing' },
-  'event.replay': { sessionId: 'session-1', limit: 5 },
+  'subscription.close': { subscriptionId: 'sub-1' },
   'permission.grants.list': {},
   'permission.grants.revoke': { grantId: 'grant-1', expectedRevision: 0 },
   'interaction.list': { sessionId: 'session-1' },
@@ -3497,9 +3073,7 @@ const METHOD_SMOKE_PARAMS = {
   'agents.output': { sessionId: 'session-1', actorPath: '/root/smoke' },
   'agents.events': { sessionId: 'session-1', afterSequence: 0 },
   'agents.wait': { sessionId: 'session-1', afterSequence: 0, timeoutMs: 1 },
-  'context.budget.get': { sessionId: 'session-1', runId: 'run-1' },
-  'tool.exposure.preview': { sessionId: 'session-1', runId: 'run-1' },
-  'provider.cache.diagnostics.get': { sessionId: 'session-1', runId: 'run-1' },
+
 } satisfies Record<RuntimeDaemonMethod, unknown>;
 
 function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
@@ -3508,7 +3082,6 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
     readonly listener: RuntimeEventListener;
   }> = [];
   const runs = new Map<string, RuntimeRunResult>();
-  const eventLog: RuntimeEvent[] = [];
   const externalCapabilities = {
     streaming: 'supported',
     durableTasks: 'supported',
@@ -3601,8 +3174,16 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async conversationEntryChunk() {
         return null;
       },
-      async observe(sessionId) {
-        return createTestObservation(sessionId);
+      async observe(sessionId, listener) {
+        const entry = { filter: { sessionId } as RuntimeEventFilter, listener };
+        listeners.push(entry);
+        return {
+          ...createTestObservation(sessionId),
+          close() {
+            const index = listeners.indexOf(entry);
+            if (index >= 0) listeners.splice(index, 1);
+          },
+        };
       },
       async observeView(sessionId, listener) {
         listener({ session: { id: sessionId, title: 'Test' }, items: [], settings: {}, runs: [], queue: [], interactions: [] });
@@ -3663,11 +3244,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
           runtimeMode: 'embedded',
           sessionId: input.sessionId,
           observation: {
-            cursor: {
-              sessionId: input.sessionId,
-              journalEpoch: `epoch-${input.sessionId}`,
-              seq: 0,
-            },
+            seq: 0,
             transcriptRevision: 'sha256:test',
           },
           run: {
@@ -3819,10 +3396,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
           },
         };
       },
-      async replay(filter) {
-        const matched = eventLog.filter((event) => eventMatchesReplayFilter(event, filter));
-        return filter?.limit !== undefined ? matched.slice(-filter.limit) : matched;
-      },
+
     },
     permissions: {
       async request() {
@@ -3862,6 +3436,11 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
       async stop() {
         return false;
+      },
+    },
+    memory: {
+      forProject() {
+        return createTestMemoryPlane();
       },
     },
     learning: {
@@ -4192,38 +3771,21 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         };
       },
     },
-    diagnostics: {
-      async latestContextBudget(filter) {
-        return latestTestDiagnostic(eventLog, 'context.budget.snapshot', filter);
-      },
-      async latestToolExposure(filter) {
-        return latestTestDiagnostic(eventLog, 'tool.exposure.planned', filter);
-      },
-      async latestProviderCacheDiagnostic(filter) {
-        return latestTestDiagnostic(eventLog, 'provider.cache.diagnostics', filter);
-      },
-    },
+
     async close() {},
     emit(event) {
-      const normalized = event.cursor === undefined
-        ? {
-            ...event,
-            cursor: {
-              sessionId: event.sessionId,
-              journalEpoch: `epoch-${event.sessionId}`,
-              seq: event.seq,
-            },
-          }
-        : event;
-      eventLog.push(normalized);
       for (const entry of listeners) {
-        if (entry.filter.sessionId && entry.filter.sessionId !== normalized.sessionId) continue;
-        entry.listener(normalized);
+        if (entry.filter.sessionId && entry.filter.sessionId !== event.sessionId) continue;
+        entry.listener(event);
       }
     },
   };
 
   return runtime;
+}
+
+function createTestMemoryPlane(): RuntimeMemoryPlane {
+  return {} as RuntimeMemoryPlane;
 }
 
 function createTestUserInputs(): KodaXRuntime['userInputs'] {
@@ -4271,11 +3833,11 @@ function createTestHostToolService(): KodaXRuntime['hostTools'] {
   };
 }
 
-function createTestObservation(sessionId: string) {
+function createTestObservation(sessionId: string): RuntimeSessionObservation {
   return {
     snapshot: {
       runtimeId: 'runtime-test',
-      cursor: { sessionId, journalEpoch: `epoch-${sessionId}`, seq: 0 },
+      seq: 0,
       transcriptRevision: 'sha256:test',
       session: { id: sessionId, title: 'Test Session' },
       transcript: null,
@@ -4285,73 +3847,19 @@ function createTestObservation(sessionId: string) {
       live: {
         assistantTextByRun: {},
         thinkingTextByRun: {},
+        outputSegmentsByRun: {},
         activeTools: [],
         pendingUserInputs: [],
         managedTasks: [],
       },
     },
-    invalidated: new Promise(() => undefined),
+    invalidated: new Promise<RuntimeObservationInvalidation>(() => undefined),
     close() {},
   };
 }
 
-function latestTestDiagnostic(
-  events: readonly RuntimeEvent[],
-  type: RuntimeEvent['type'],
-  filter: {
-    readonly sessionId?: string;
-    readonly runId?: string;
-    readonly contextKind?: 'root' | 'child';
-    readonly agentId?: string;
-  } | undefined,
-): unknown {
-  const requestedContextKind = filter?.contextKind
-    ?? (filter?.agentId === undefined ? 'root' : undefined);
-  const requestsChildContext = requestedContextKind === 'child'
-    || filter?.agentId !== undefined;
-  const matching = [...events].reverse().find((event) => {
-    if (event.type !== type) return false;
-    if (filter?.runId !== undefined && event.runId !== filter.runId) return false;
-    if (
-      !requestsChildContext
-      && filter?.sessionId !== undefined
-      && event.sessionId !== filter.sessionId
-    ) return false;
-    if (!isTestRecord(event.payload)) {
-      return filter?.contextKind === undefined && filter?.agentId === undefined;
-    }
-    const actualContextKind = event.payload.contextKind === 'child' ? 'child' : 'root';
-    if (requestedContextKind !== undefined && actualContextKind !== requestedContextKind) {
-      return false;
-    }
-    if (filter?.agentId !== undefined && event.payload.agentId !== filter.agentId) {
-      return false;
-    }
-    if (!requestsChildContext || filter?.sessionId === undefined) return true;
-    const expectedPrefix = `${filter.sessionId}/agent/`;
-    if (typeof event.payload.contextId !== 'string') return false;
-    return filter.agentId === undefined
-      ? event.payload.contextId.startsWith(expectedPrefix)
-      : event.payload.contextId === `${expectedPrefix}${encodeURIComponent(filter.agentId)}`;
-  });
-  return matching?.payload ?? null;
-}
 
 function isTestRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function eventMatchesReplayFilter(
-  event: RuntimeEvent,
-  filter: RuntimeEventReplayFilter | undefined,
-): boolean {
-  if (!filter) return true;
-  if (filter.sessionId !== undefined && event.sessionId !== filter.sessionId) return false;
-  if (filter.runId !== undefined && event.runId !== filter.runId) return false;
-  if (filter.type !== undefined) {
-    const types = Array.isArray(filter.type) ? filter.type : [filter.type];
-    if (!types.includes(event.type)) return false;
-  }
-  if (filter.after !== undefined && event.seq <= filter.after.seq) return false;
-  return true;
-}

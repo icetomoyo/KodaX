@@ -365,14 +365,13 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('same-owner Stop');
   });
 
-  it('documents the v0.7.85 journal, startup, Worker, and Memory boundaries', () => {
+  it('documents the v0.7.97 live-event, startup, Worker, and Memory boundaries', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const memory = resolveKodaXManual({ topic: 'memory' }).content;
 
-    expect(sdk).toContain('Session journal');
-    expect(sdk).toContain('journalEpoch');
-    expect(sdk).toContain('sessionEventJournal:1');
-    expect(sdk).toContain('without replaying its complete event journal');
+    expect(sdk).toContain('live in-process stream');
+    expect(sdk).toContain('no durable journal, replay, or cursor epoch');
+    expect(sdk).toContain('from its status record alone');
     expect(sdk).toContain('retires after its idle warm-cache window');
     expect(memory).toContain('conversation-first');
     expect(sdk).toContain('F289/F290');

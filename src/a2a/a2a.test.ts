@@ -101,11 +101,6 @@ function fakeRuntime(
               entry.listener({
                 id: `event-${runId}`,
                 seq: 1,
-                cursor: {
-                  sessionId: input.sessionId,
-                  journalEpoch: `epoch-${input.sessionId}`,
-                  seq: 1,
-                },
                 time: new Date().toISOString(),
                 sessionId: input.sessionId,
                 runId,
@@ -177,11 +172,6 @@ function interactiveRuntime(): {
           for (const listener of listeners) {
             listener({
               id: 'event-input', seq: 1, time: new Date().toISOString(),
-              cursor: {
-                sessionId: 'session-interactive',
-                journalEpoch: 'epoch-interactive',
-                seq: 1,
-              },
               sessionId: 'session-interactive', runId: 'run-interactive',
               type: 'user_input.requested',
               payload: {
@@ -346,7 +336,6 @@ function pendingRuntime(): {
       for (const listener of [...listeners]) {
         listener({
           id: `event-progress-${seq}`, seq, time,
-          cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq },
           sessionId: 'session-pending', runId: 'run-pending', type: 'run.progress', payload: {},
         });
       }
@@ -362,7 +351,6 @@ function pendingRuntime(): {
         listener({
           id: `event-started-${seq}`,
           seq,
-          cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq },
           time,
           sessionId: 'session-pending',
           runId: 'run-pending',
@@ -376,7 +364,6 @@ function pendingRuntime(): {
       for (const listener of listeners) {
         listener({
           id: 'event-complete', seq: 1, time: new Date().toISOString(),
-          cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq: 1 },
           sessionId: 'session-pending', runId: 'run-pending', type: 'run.completed', payload: {},
         });
       }
@@ -403,7 +390,6 @@ function pendingRuntime(): {
       for (const listener of [...listeners]) {
         listener({
           id: `event-resolved-${seq}`, seq, time: new Date().toISOString(),
-          cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq },
           sessionId: 'session-pending', runId: 'run-pending',
           type: 'user_input.resolved', payload: { id: `input-${seq}` },
         });
@@ -416,7 +402,6 @@ function pendingInputEvent(seq = 1): RuntimeEvent {
   return {
     id: `event-input-${seq}`,
     seq,
-    cursor: { sessionId: 'session-pending', journalEpoch: 'epoch-pending', seq },
     time: new Date(seq * 1_000).toISOString(),
     sessionId: 'session-pending',
     runId: 'run-pending',

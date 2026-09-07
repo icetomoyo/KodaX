@@ -254,7 +254,7 @@ describe('F269 shared Runtime contracts', () => {
     await daemon.close();
   });
 
-  it('joins with an atomic snapshot cursor and emits each later event once', async () => {
+  it('joins with an atomic snapshot and emits each later event once', async () => {
     const runtime = await createKodaXRuntime({ homeDir: makeHome() });
     const session = await runtime.sessions.create({ title: 'Observe' });
     const received: string[] = [];
@@ -275,10 +275,6 @@ describe('F269 shared Runtime contracts', () => {
     expect(observation.snapshot.pendingPermissions).toEqual([]);
     expect(received).toHaveLength(1);
     expect(new Set(received).size).toBe(received.length);
-    expect((await runtime.events.replay({
-      sessionId: session.id,
-      after: observation.snapshot.cursor,
-    })).map((event) => event.id)).toEqual(received);
 
     observation.close();
     await runtime.close();

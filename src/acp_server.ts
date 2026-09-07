@@ -371,7 +371,7 @@ function watchRuntimePermissionSettlement(
   let closeSubscription: (() => void) | undefined;
   const settled = new Promise<boolean>((resolve) => {
     const subscription = runtime.events.subscribe(
-      { runId: request.runId, type: 'permission.resolved' },
+      { sessionId: request.sessionId, runId: request.runId, type: 'permission.resolved' },
       (event) => {
         const payload = event.payload as { requestId?: string } | undefined;
         if (payload?.requestId !== request.id) return;

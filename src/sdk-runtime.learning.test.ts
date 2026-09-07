@@ -275,7 +275,6 @@ describe('runtime.learning inline facade', () => {
             },
             capabilities: {
               learningCenter: { version: 1 },
-              sessionEventJournal: { version: 1 },
               liveOutputSegments: { version: 1 },
               sandboxRuntime: { version: 11 },
               runtimeAutoModeGuardrail: { version: 5 },

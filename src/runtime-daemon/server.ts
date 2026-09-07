@@ -29,10 +29,8 @@ import type {
   RuntimeDaemonClientSnapshot,
   RuntimeDaemonClientType,
   RuntimeDaemonPreflight,
-  RuntimeDiagnosticFilter,
   RuntimeEvent,
   RuntimeEventFilter,
-  RuntimeEventReplayFilter,
   RuntimeEventType,
   RuntimeForkSessionInput,
   RuntimeRecoverSessionInput,
@@ -214,9 +212,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "run.await",
     "request.cancel",
     "request.ack",
-    "event.subscribe",
-    "event.unsubscribe",
-    "event.replay",
+    "subscription.close",
     "permission.grants.list",
     "interaction.list",
     "session.goal.get",
@@ -225,9 +221,6 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "workflow.get",
     "workflow.subscribe",
     "workflow.unsubscribe",
-    "context.budget.get",
-    "tool.exposure.preview",
-    "provider.cache.diagnostics.get",
     "config.read",
     "model.list",
     "provider.list",
@@ -1875,42 +1868,12 @@ async function dispatchRuntimeDaemonRequest(
       return setRunReasoning(runtime, request.params);
     }
 
-    case "event.subscribe": {
-      const params = optionalRecord(request.params) ?? {};
-      const filter = optionalRecord(params.filter) as
-        RuntimeEventFilter | undefined;
-      await assertAdmittedEventScope(runtime, filter);
-      const subscriptionId = createSubscriptionId();
-      const subscription = runtime.events.subscribe(
-        filter as RuntimeEventFilter,
-        (event: RuntimeEvent) => {
-          notify(
-            subscriptionId,
-            augmentRuntimeEventRequirements(event, runRequirementSource),
-          );
-        },
-      );
-      rememberSubscription(subscriptionId, subscription);
-      return { subscriptionId };
-    }
-    case "event.unsubscribe":
+    case "subscription.close":
       return {
         ok: closeSubscription(
           requireStringParam(request.params, "subscriptionId"),
         ),
       };
-    case "event.replay": {
-      const filter = optionalRecord(request.params) as
-        RuntimeEventReplayFilter | undefined;
-      await assertAdmittedEventScope(runtime, filter);
-      return filterReplayForClientCapabilities(
-        await runtime.events.replay(filter as RuntimeEventReplayFilter),
-        getClientCapabilities(),
-      ).map((event) =>
-        augmentRuntimeEventRequirements(event, runRequirementSource),
-      );
-    }
-
     case "permission.grants.list":
       return runtime.permissions.listGrants();
     case "permission.grants.revoke": {
@@ -2149,40 +2112,6 @@ async function dispatchRuntimeDaemonRequest(
       return { ok: true };
     }
 
-    case "context.budget.get":
-      requireContextDiagnosticsCapability(getClientCapabilities());
-      await assertAdmittedSessionId(
-        runtime,
-        optionalStringField(optionalRecord(request.params) ?? {}, "sessionId"),
-      );
-      return latestRuntimeDiagnosticPayload(
-        runtime,
-        "context.budget.snapshot",
-        optionalRecord(request.params),
-      );
-    case "tool.exposure.preview":
-      requireContextDiagnosticsCapability(getClientCapabilities());
-      await assertAdmittedSessionId(
-        runtime,
-        optionalStringField(optionalRecord(request.params) ?? {}, "sessionId"),
-      );
-      return latestRuntimeDiagnosticPayload(
-        runtime,
-        "tool.exposure.planned",
-        optionalRecord(request.params),
-      );
-    case "provider.cache.diagnostics.get":
-      requireContextDiagnosticsCapability(getClientCapabilities());
-      await assertAdmittedSessionId(
-        runtime,
-        optionalStringField(optionalRecord(request.params) ?? {}, "sessionId"),
-      );
-      return latestRuntimeDiagnosticPayload(
-        runtime,
-        "provider.cache.diagnostics",
-        optionalRecord(request.params),
-      );
-
     default:
       throw daemonError(
         "method_not_found",
@@ -2358,7 +2287,6 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.integrationConfigResilience;
   delete safeOverrides.managedRunDurability;
   delete safeOverrides.actorSettlementConvergence;
-  delete safeOverrides.sessionEventJournal;
   delete safeOverrides.daemonClientInventory;
   delete safeOverrides.daemonOrphanExit;
   delete safeOverrides.daemonShutdownVerification;
@@ -2403,17 +2331,10 @@ function runtimeDaemonCapabilities(
       unknownAfterTurnQueue: true,
       terminal: "failed",
     },
-    sessionEventJournal: {
-      version: 1,
-      sequenceScope: "session",
-      cursor: "session_epoch_sequence",
-      scopedAccessRequired: true,
-    },
     liveOutputSegments: {
       version: 1,
       segmentIdentity: "provider_request",
       replacement: "explicit",
-      rawJournal: "complete",
     },
     ...(runtimeEventCoalescing
       ? { runtimeEventCoalescing: { version: 1 } }
@@ -2649,13 +2570,6 @@ function requireAgentRegistrationAdmin(
   }
 }
 
-function filterReplayForClientCapabilities(
-  events: readonly RuntimeEvent[],
-  capabilities: RuntimeClientCapabilities,
-): readonly RuntimeEvent[] {
-  if (capabilities.contextDiagnostics === true) return events;
-  return events.filter((event) => !isContextDiagnosticRuntimeEvent(event));
-}
 
 async function assertAdmittedSessionId(
   runtime: KodaXRuntime,
@@ -2666,23 +2580,23 @@ async function assertAdmittedSessionId(
 
 async function assertAdmittedEventScope(
   runtime: KodaXRuntime,
-  filter: RuntimeEventFilter | RuntimeEventReplayFilter | undefined,
+  filter: RuntimeEventFilter | undefined,
 ): Promise<void> {
   if (filter?.sessionId !== undefined) {
-    await assertAdmittedSessionId(runtime, filter.sessionId);
     if (filter.runId !== undefined) {
-      await runtime.events.replay({
-        sessionId: filter.sessionId,
-        runId: filter.runId,
-        limit: 1,
-      });
+      const run = await runtime.runs.get(filter.runId);
+      if (run.sessionId !== filter.sessionId) {
+        throw daemonError(
+          "invalid_request",
+          "Runtime event Run belongs to a different Session.",
+        );
+      }
     }
+    await assertAdmittedSessionId(runtime, filter.sessionId);
     return;
   }
   if (filter?.runId !== undefined) {
-    const [event] = await runtime.events.replay({ runId: filter.runId, limit: 1 });
-    const sessionId = event?.sessionId
-      ?? (await runtime.runs.get(filter.runId)).sessionId;
+    const sessionId = (await runtime.runs.get(filter.runId)).sessionId;
     await assertAdmittedSessionId(runtime, sessionId);
     return;
   }
@@ -2787,16 +2701,6 @@ function isTerminalRuntimeRunPhase(phase: RuntimeRunStatus["phase"]): boolean {
   );
 }
 
-function requireContextDiagnosticsCapability(
-  capabilities: RuntimeClientCapabilities,
-): void {
-  if (capabilities.contextDiagnostics === true) return;
-  throw daemonError(
-    "unauthorized",
-    "Runtime daemon client did not negotiate contextDiagnostics capability.",
-  );
-}
-
 function isContextDiagnosticRuntimeEvent(
   value: unknown,
 ): value is RuntimeEvent {
@@ -2807,24 +2711,6 @@ function isContextDiagnosticRuntimeEvent(
     value.type === "tool.exposure.planned" ||
     value.type === "context.compaction.skipped"
   );
-}
-
-async function latestRuntimeDiagnosticPayload(
-  runtime: KodaXRuntime,
-  type: RuntimeEventType,
-  params: Record<string, unknown> | undefined,
-): Promise<unknown> {
-  const filter = (params ?? {}) as RuntimeDiagnosticFilter;
-  if (type === "context.budget.snapshot") {
-    return runtime.diagnostics.latestContextBudget(filter);
-  }
-  if (type === "tool.exposure.planned") {
-    return runtime.diagnostics.latestToolExposure(filter);
-  }
-  if (type === "provider.cache.diagnostics") {
-    return runtime.diagnostics.latestProviderCacheDiagnostic(filter);
-  }
-  return null;
 }
 
 async function setRunModel(

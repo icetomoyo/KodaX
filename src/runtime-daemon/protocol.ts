@@ -69,9 +69,7 @@ export type RuntimeDaemonMethod =
   | 'run.setReasoning'
   | 'request.cancel'
   | 'request.ack'
-  | 'event.subscribe'
-  | 'event.unsubscribe'
-  | 'event.replay'
+  | 'subscription.close'
   | 'permission.grants.list'
   | 'permission.grants.revoke'
   | 'interaction.list'
@@ -154,10 +152,7 @@ export type RuntimeDaemonMethod =
   | 'agents.interrupt'
   | 'agents.output'
   | 'agents.events'
-  | 'agents.wait'
-  | 'context.budget.get'
-  | 'tool.exposure.preview'
-  | 'provider.cache.diagnostics.get';
+  | 'agents.wait';
 
 export type RuntimeDaemonRetiredMethod =
   | 'permission.request'
@@ -386,9 +381,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'run.setReasoning',
   'request.cancel',
   'request.ack',
-  'event.subscribe',
-  'event.unsubscribe',
-  'event.replay',
+  'subscription.close',
   'permission.grants.list',
   'permission.grants.revoke',
   'interaction.list',
@@ -472,9 +465,6 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'agents.output',
   'agents.events',
   'agents.wait',
-  'context.budget.get',
-  'tool.exposure.preview',
-  'provider.cache.diagnostics.get',
 ];
 
 export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMethod[] = [

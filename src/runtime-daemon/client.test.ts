@@ -476,17 +476,11 @@ describe('runtime daemon client proxy', () => {
       connectionId: 'connection-2',
       reconnectable: false,
     });
-    await expect(client.diagnostics.latestProviderCacheDiagnostic({
-      sessionId: 'session-1',
-    })).resolves.toMatchObject({
-      requestId: 'cache-latest',
-      cachedReadTokens: 80,
-    });
+    await client.sessions.list({});
     expect(calls.at(-1)).toEqual({
-      method: 'provider.cache.diagnostics.get',
-      params: { sessionId: 'session-1' },
-    });
-    subscription?.close();
+      method: 'session.list',
+      params: {},
+    });    subscription?.close();
     await client.close();
   });
 
@@ -590,7 +584,6 @@ describe('runtime daemon client proxy', () => {
     const event: RuntimeEvent = {
       id: 'evt-1',
       seq: 1,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 1 },
       time: '2026-07-09T00:00:00.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -598,14 +591,14 @@ describe('runtime daemon client proxy', () => {
       payload: { text: 'done' },
     };
     transport.emit(createRuntimeDaemonNotification('event', {
-      subscriptionId: 'sub-1',
+      subscriptionId: 'observe-sub-1',
       event,
     }));
     subscription.close();
 
     expect(seen).toEqual([event]);
-    expect(calls.map((call) => call.method)).toContain('event.subscribe');
-    expect(calls.map((call) => call.method)).toContain('event.unsubscribe');
+    expect(calls.map((call) => call.method)).toContain('session.observe');
+    expect(calls.map((call) => call.method)).toContain('subscription.close');
   });
 
   it('drops one malformed event without terminating the observation stream', async () => {
@@ -626,13 +619,12 @@ describe('runtime daemon client proxy', () => {
     await Promise.resolve();
 
     transport.emit(createRuntimeDaemonNotification('event', {
-      subscriptionId: 'sub-1',
+      subscriptionId: 'observe-sub-1',
       event: { type: 'assistant.delta', payload: { text: 42 } },
     }));
     const valid: RuntimeEvent = {
       id: 'evt-valid',
       seq: 2,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 2 },
       time: '2026-07-09T00:00:00.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -640,41 +632,11 @@ describe('runtime daemon client proxy', () => {
       payload: { text: 'continued' },
     };
     transport.emit(createRuntimeDaemonNotification('event', {
-      subscriptionId: 'sub-1',
+      subscriptionId: 'observe-sub-1',
       event: valid,
     }));
 
     expect(seen).toEqual([valid]);
-    await client.close();
-  });
-
-  it('drops malformed replay entries while retaining valid events', async () => {
-    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
-    const valid: RuntimeEvent = {
-      id: 'evt-replay-valid',
-      seq: 2,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 2 },
-      time: '2026-07-09T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'assistant.delta',
-      payload: { text: 'continued' },
-    };
-    const transport = fakeTransport(calls, {
-      eventReplayResult: [{ type: 'assistant.delta', payload: { text: 42 } }, valid],
-    });
-    const client = createRuntimeDaemonClient({
-      identity: {
-        runtimeId: 'runtime-client',
-        mode: 'daemon',
-        profile: 'default',
-        startedAt: '2026-07-09T00:00:00.000Z',
-        version: '0.7.69',
-      },
-      transport,
-    });
-
-    await expect(client.events.replay({ sessionId: 'session-1' })).resolves.toEqual([valid]);
     await client.close();
   });
 
@@ -683,7 +645,6 @@ describe('runtime daemon client proxy', () => {
     const event: RuntimeEvent = {
       id: 'evt-early',
       seq: 1,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 1 },
       time: '2026-07-09T00:00:00.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -692,7 +653,7 @@ describe('runtime daemon client proxy', () => {
     };
     const transport = fakeTransport(calls, {
       notificationBeforeEventSubscribeResult: createRuntimeDaemonNotification('event', {
-        subscriptionId: 'sub-1',
+        subscriptionId: 'observe-sub-1',
         event,
       }),
     });
@@ -738,11 +699,6 @@ describe('runtime daemon client proxy', () => {
         event: {
           id: `evt-unrelated-${seq}`,
           seq,
-          cursor: {
-            sessionId: 'session-unrelated',
-            journalEpoch: 'epoch-session-unrelated',
-            seq,
-          },
           time: '2026-07-09T00:00:00.000Z',
           sessionId: 'session-unrelated',
           runId: 'run-unrelated',
@@ -755,7 +711,6 @@ describe('runtime daemon client proxy', () => {
       subscriptionId: 'observe-target',
       snapshot: {
         runtimeId: 'runtime-client',
-        cursor: { sessionId: 'session-target', journalEpoch: 'epoch-session-target', seq: 0 },
         transcriptRevision: 'sha256:test',
         session: { id: 'session-target', title: 'Target' },
         transcript: null,
@@ -799,7 +754,6 @@ describe('runtime daemon client proxy', () => {
     const event: RuntimeEvent = {
       id: 'evt-after-snapshot',
       seq: 1,
-      cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 1 },
       time: '2026-07-09T00:00:01.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -864,7 +818,7 @@ describe('runtime daemon client proxy', () => {
       subscriptionId: 'observe-sub-invalidated',
       snapshot: {
         runtimeId: 'runtime-daemon',
-        cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 0 },
+        seq: 0,
         transcriptRevision: 'sha256:test',
         session: { id: 'session-1', title: 'Session' },
         transcript: null,
@@ -934,7 +888,7 @@ describe('runtime daemon client proxy', () => {
       subscriptionId: 'observe-sub-1',
       snapshot: {
         runtimeId: 'runtime-daemon',
-        cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 0 },
+        seq: 0,
         transcriptRevision: 'sha256:test',
         session: { id: 'session-1', title: 'Session' },
         transcript: null,
@@ -981,12 +935,7 @@ describe('runtime daemon client proxy', () => {
       subscriptionId: 'observe-sub-1',
       event: {
         id: 'evt-terminal-listener-failure',
-        seq: observation.snapshot.cursor.seq + 1,
-        cursor: {
-          sessionId: 'session-1',
-          journalEpoch: observation.snapshot.cursor.journalEpoch,
-          seq: observation.snapshot.cursor.seq + 1,
-        },
+        seq: observation.snapshot.seq + 1,
         time: '2026-07-09T00:00:01.000Z',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -1007,7 +956,7 @@ describe('runtime daemon client proxy', () => {
     });
     await flushAsyncNotifications();
     expect(calls).toContainEqual({
-      method: 'event.unsubscribe',
+      method: 'subscription.close',
       params: { subscriptionId: 'observe-sub-1' },
     });
     expect(transport.listenerCount()).toBe(baselineListenerCount);
@@ -1155,7 +1104,7 @@ describe('runtime daemon client proxy', () => {
     await flushAsyncNotifications();
 
     expect(calls).toContainEqual({
-      method: 'event.unsubscribe',
+      method: 'subscription.close',
       params: { subscriptionId: 'observe-sub-late' },
     });
     await client.close();
@@ -1258,7 +1207,7 @@ describe('runtime daemon client proxy', () => {
     await flushAsyncNotifications();
 
     expect(calls.some((call) => (
-      call.method === 'event.unsubscribe'
+      call.method === 'subscription.close'
       && isRecord(call.params)
       && call.params.subscriptionId === 'late-event-sub'
     ))).toBe(true);
@@ -1351,13 +1300,7 @@ describe('runtime daemon client proxy', () => {
     await client.mcp.upsertServer('local', { type: 'stdio', command: 'echo' });
     await client.mcp.listTools({ server: 'local' });
     await client.artifacts.create({ kind: 'file', path: '/tmp/a.txt' });
-    await client.diagnostics.latestContextBudget({ sessionId: 'session-1' });
-    await client.diagnostics.latestToolExposure({ runId: 'run-1' });
-    await client.diagnostics.latestProviderCacheDiagnostic({
-      sessionId: 'session-1',
-      contextKind: 'child',
-      agentId: '/root/reviewer',
-    });
+
 
     expect(calls.map((call) => call.method)).toEqual([
       'config.patch',
@@ -1371,9 +1314,6 @@ describe('runtime daemon client proxy', () => {
       'mcp.server.upsert',
       'mcp.tool.list',
       'artifact.create',
-      'context.budget.get',
-      'tool.exposure.preview',
-      'provider.cache.diagnostics.get',
     ]);
   });
 
@@ -1447,7 +1387,6 @@ describe('runtime daemon client proxy', () => {
     await client.runs.setModel('run-1', 'm2');
     await client.runs.setProvider('run-1', 'openai');
     await client.runs.setReasoning('run-1', 'balanced');
-    await client.events.replay({ sessionId: 'session-1' });
     await expect(client.permissions.request({
       sessionId: 'session-1',
       runId: 'run-1',
@@ -1486,7 +1425,7 @@ describe('runtime daemon client proxy', () => {
       'session.conversation.page',
       'session.conversation.entryChunk',
       'session.observe',
-      'event.unsubscribe',
+      'subscription.close',
       'session.diagnostics',
       'session.fork',
       'session.settings.get',
@@ -1505,7 +1444,6 @@ describe('runtime daemon client proxy', () => {
       'run.model.set',
       'run.provider.set',
       'run.reasoning.set',
-      'event.replay',
       'interaction.list',
       'permission.grants.list',
       'permission.grants.revoke',
@@ -1968,7 +1906,6 @@ function fakeTransport(
   calls: Array<{ readonly method: string; readonly params: unknown }>,
   options: {
     readonly eventSubscribeResult?: Promise<unknown>;
-    readonly eventReplayResult?: unknown;
     readonly workflowSubscribeResult?: Promise<unknown>;
     readonly notificationBeforeEventSubscribeResult?: RuntimeDaemonNotification;
     readonly runAwaitResult?: unknown;
@@ -2115,12 +2052,16 @@ function fakeTransport(
         return true;
       }
       if (method === 'session.observe') {
+        if (options.notificationBeforeEventSubscribeResult) {
+          transport.emit(options.notificationBeforeEventSubscribeResult);
+        }
+        if (options.eventSubscribeResult) return options.eventSubscribeResult;
         if (options.sessionObserveResult) return options.sessionObserveResult;
         return {
           subscriptionId: 'observe-sub-1',
           snapshot: {
             runtimeId: 'runtime-client',
-            cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 0 },
+            seq: 0,
             transcriptRevision: 'sha256:test',
             session: { id: 'session-1', title: 'Session' },
             transcript: null,
@@ -2158,17 +2099,7 @@ function fakeTransport(
           revision: 3,
         };
       }
-      if (method === 'event.subscribe') {
-        if (options.notificationBeforeEventSubscribeResult) {
-          transport.emit(options.notificationBeforeEventSubscribeResult);
-        }
-        if (options.eventSubscribeResult) return options.eventSubscribeResult;
-        return { subscriptionId: 'sub-1' };
-      }
-      if (method === 'event.replay') {
-        return options.eventReplayResult ?? [];
-      }
-      if (method === 'event.unsubscribe') {
+      if (method === 'subscription.close') {
         return { ok: true };
       }
       if (method === 'workflow.subscribe') {
@@ -2240,12 +2171,6 @@ function fakeTransport(
       if (method === 'agentRegistrations.setEnabled') {
         return null;
       }
-      if (method === 'context.budget.get') {
-        return { usedTokens: 42 };
-      }
-      if (method === 'tool.exposure.preview') {
-        return { reportOnly: true };
-      }
       if (method === 'session.status') {
         return {
           sessionId: 'session-1',
@@ -2266,7 +2191,6 @@ function fakeTransport(
           runtimeMode: 'embedded',
           sessionId: 'session-1',
           observation: {
-            cursor: { sessionId: 'session-1', journalEpoch: 'epoch-session-1', seq: 0 },
             transcriptRevision: 'sha256:test',
           },
           run: {
@@ -2281,13 +2205,6 @@ function fakeTransport(
               message: 'No Run control record is available.',
             }],
           },
-        };
-      }
-      if (method === 'provider.cache.diagnostics.get') {
-        return {
-          requestId: 'cache-latest',
-          phase: 'response',
-          cachedReadTokens: 80,
         };
       }
       return {};

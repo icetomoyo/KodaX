@@ -66,7 +66,6 @@ export type {
   RuntimeEventFilter,
   RuntimeEventListener,
   RuntimeTypedEventListener,
-  RuntimeEventReplayFilter,
   RuntimeEventService,
   RuntimeEventType,
   RuntimeTypedEvent,

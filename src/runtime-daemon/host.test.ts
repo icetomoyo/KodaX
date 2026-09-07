@@ -8,6 +8,8 @@ import { emitKodaXDiagnostic } from "@kodax-ai/agent";
 import type { ManagedWorkflowSnapshot } from "@kodax-ai/agent";
 
 import type {
+  RuntimeObservationInvalidation,
+  RuntimeSessionObservation,
   KodaXRuntime,
   RuntimeCompactSessionResult,
   RuntimeActiveAgentTurn,
@@ -891,14 +893,10 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
     });
 
     await expect(
-      replClient.request("event.subscribe", {
-        filter: { sessionId: "session-1", type: "run.completed" },
-      }),
+      replClient.request("session.observe", { sessionId: "session-1" }),
     ).resolves.toMatchObject({ subscriptionId: expect.any(String) });
     await expect(
-      spaceClient.request("event.subscribe", {
-        filter: { sessionId: "session-1", type: "run.completed" },
-      }),
+      spaceClient.request("session.observe", { sessionId: "session-1" }),
     ).resolves.toMatchObject({ subscriptionId: expect.any(String) });
     await expect(
       replClient.request("run.start", {
@@ -1164,8 +1162,16 @@ function makeRuntime(
       async transcriptSearch() {
         return null;
       },
-      async observe(sessionId) {
-        return createTestObservation(sessionId);
+      async observe(sessionId, listener) {
+        const subscriber = { filter: { sessionId } as RuntimeEventFilter, listener };
+        eventSubscribers.push(subscriber);
+        return {
+          ...createTestObservation(sessionId),
+          close() {
+            const index = eventSubscribers.indexOf(subscriber);
+            if (index >= 0) eventSubscribers.splice(index, 1);
+          },
+        };
       },
       async fork() {
         return { id: "fork-1", title: "Forked Session" };
@@ -1275,9 +1281,6 @@ function makeRuntime(
             if (index >= 0) eventSubscribers.splice(index, 1);
           },
         };
-      },
-      async replay() {
-        return [];
       },
     },
     permissions: {
@@ -1601,11 +1604,11 @@ function createTestHostToolService(): KodaXRuntime["hostTools"] {
   };
 }
 
-function createTestObservation(sessionId: string) {
+function createTestObservation(sessionId: string): RuntimeSessionObservation {
   return {
     snapshot: {
       runtimeId: "runtime-test",
-      cursor: 0,
+      seq: 0,
       transcriptRevision: "sha256:test",
       session: { id: sessionId, title: "Test Session" },
       transcript: null,
@@ -1615,11 +1618,13 @@ function createTestObservation(sessionId: string) {
       live: {
         assistantTextByRun: {},
         thinkingTextByRun: {},
+        outputSegmentsByRun: {},
         activeTools: [],
         pendingUserInputs: [],
         managedTasks: [],
       },
     },
+    invalidated: new Promise<RuntimeObservationInvalidation>(() => undefined),
     close() {},
   };
 }

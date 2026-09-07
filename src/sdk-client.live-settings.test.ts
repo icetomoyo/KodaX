@@ -92,6 +92,11 @@ it.each([
           permissionMode: 'full-access', agentMode,
           ...(compact ? { compactionTriggerTokens: 120_000 } : {}),
         });
+        let compactionStartedCount = 0;
+        const compactionStarted = runtime.events.subscribe(
+          { sessionId: session.id, type: 'context.compaction.started' },
+          () => { compactionStartedCount += 1; },
+        );
         const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'read-input', text: 'Read sample-0.txt, sample-1.txt and sample-2.txt and briefly report their content. Do not modify files.' });
         if (accepted.runId === undefined) throw new Error('An idle Session must start the submitted input.');
         expect((await runtime.runs.get(accepted.runId)).mode).toBe(agentMode === 'ama' ? 'managed_task' : 'coding');
@@ -104,12 +109,13 @@ it.each([
         await entered[1]!.promise;
         expect(requests[1]).toEqual({ provider: 'live-settings-next', model: 'next-model', reasoning: { enabled: false, effort: 'none' } });
         if (compact) {
-          expect(await runtime.events.replay({ sessionId: session.id, type: 'context.compaction.started' })).not.toHaveLength(0);
+          expect(compactionStartedCount).toBeGreaterThan(0);
           release[1]!.resolve();
           await entered[2]!.promise;
           expect(requests[2]).toEqual({ provider: 'live-settings-next', model: 'next-model', reasoning: { enabled: false, effort: 'none' } });
           release[2]!.resolve();
           expect((await runtime.runs.await(accepted.runId)).phase).toBe('completed');
+          compactionStarted.close();
           return;
         }
         await client.sessions.updateSettings(session.id, { effort: null, reasoningMode: 'quick' });

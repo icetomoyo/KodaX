@@ -538,9 +538,7 @@ function makeRuntime(
       subscribe() {
         return { close() {} };
       },
-      async replay() {
-        return [];
-      },
+
     },
     permissions: {
       async request() {
