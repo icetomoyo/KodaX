@@ -24,6 +24,7 @@ import {
   type AskUserQuestionOptions,
   type KodaXResult,
 } from '@kodax-ai/coding';
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { resolveReplRuntimePermissionDecision } from '../runtime-permission.js';
 import type { ConfirmResult } from '../permission/types.js';
 import type { HistoryItem, ToolCall, ToolCallStatus } from './types.js';
@@ -37,13 +38,21 @@ export interface ClientRoundOutcome {
 }
 
 export interface InkClientPlane {
-  /** Submit user text; immediate delivery starts the run, after_turn queues Host-side. */
+  /**
+   * Submit user text. 'immediate' starts the run, 'after_turn' queues
+   * Host-side, 'redirect' queues and cancels the target run (FEATURE_149
+   * fast-redirect parity; requires targetRunId).
+   */
   submit(input: {
     readonly sessionId: string;
     readonly text: string;
     readonly inputId: string;
-    readonly delivery?: 'immediate' | 'after_turn';
-  }): Promise<{ readonly runId?: string }>;
+    readonly delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
+    readonly targetRunId?: string;
+  }): Promise<{
+    readonly runId?: string;
+    readonly state?: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
+  }>;
   /** Withdraw a queued input; returns the original text when this caller owned it. */
   withdraw(sessionId: string, inputId: string): Promise<string | undefined>;
   /** Resolve when the run reaches a terminal phase. */
@@ -99,7 +108,7 @@ export function mintInkInputId(): string {
   return `ink-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const CHAIN_POLL_INTERVAL_MS = 25;
+const CHAIN_POLL_INTERVAL_MS = 100;
 /** How long a queued input waits for its run before the round gives up. */
 const QUEUED_RUN_WAIT_MS = 10_000;
 /** Grace window after a terminal run for the Host to start a continuation. */
@@ -143,7 +152,25 @@ export async function runClientPlaneRound(input: {
   const aborted = (): boolean => input.abortSignal?.aborted === true;
   const stopRun = (runId: string | undefined): void => {
     if (runId !== undefined) {
-      void input.plane.stop(runId).catch(() => undefined);
+      void input.plane.stop(runId).then(
+        (receipt) => {
+          if (receipt?.accepted === false) {
+            emitKodaXDiagnostic({
+              source: 'client.plane',
+              level: 'warn',
+              message: `The Host did not accept the stop request for run ${runId}.`,
+            });
+          }
+        },
+        (error: unknown) => {
+          emitKodaXDiagnostic({
+            source: 'client.plane',
+            level: 'warn',
+            message: `The stop request for run ${runId} failed.`,
+            detail: error,
+          });
+        },
+      );
     } else {
       void input.plane.withdraw(input.sessionId, inputId).catch(() => undefined);
     }
@@ -153,6 +180,11 @@ export async function runClientPlaneRound(input: {
     text: input.prompt,
     inputId,
   });
+  if (accepted.state === 'dropped' || accepted.state === 'withdrawn') {
+    throw new Error(
+      `The Host ${accepted.state} the input; resubmit with a new input id.`,
+    );
+  }
   if (aborted()) {
     stopRun(accepted.runId);
     return interruptedPlaneResult(input.sessionId);
@@ -173,6 +205,9 @@ export async function runClientPlaneRound(input: {
         );
         if (currentRunId === undefined) {
           if (aborted()) return interruptedPlaneResult(input.sessionId);
+          // The input never started; take it back so it cannot run later
+          // after the caller has already surfaced the failure.
+          void input.plane.withdraw(input.sessionId, inputId).catch(() => undefined);
           throw new Error('The queued input did not start a run within the wait window.');
         }
       }
@@ -226,57 +261,114 @@ export function viewRunsActive(
   return firstActiveRunId(view.runs);
 }
 
-/** Map the Host's display items onto the Ink render model (types align by design). */
+/** Adapter-side memo entry: reuse the mapped item while the fingerprint holds. */
+export interface ClientViewItemMemo {
+  readonly entries: Map<string, { fingerprint: string; item: HistoryItem }>;
+}
+
+function itemFingerprint(item: ClientViewItem): string {
+  return [
+    item.type,
+    item.text.length,
+    item.compactText?.length ?? -1,
+    item.icon ?? '',
+    item.tool?.status ?? '',
+    item.tool?.progress ?? '',
+    item.tool?.endedAt ?? 0,
+    item.totalTextLength ?? -1,
+  ].join('|');
+}
+
+/** Suffix the Host adds when a bounded item was sliced; readItem pages the rest. */
+const TRUNCATED_SUFFIX = '\n[truncated]';
+
+function boundedText(item: ClientViewItem): string {
+  return item.totalTextLength !== undefined && item.totalTextLength > item.text.length
+    ? `${item.text}${TRUNCATED_SUFFIX}`
+    : item.text;
+}
+
+/**
+ * Map the Host's display items onto the Ink render model (types align by
+ * design). Streaming marks only the TRAILING assistant item — the item the
+ * active run is appending to. Pass a `memo` (kept across calls by the
+ * observer) so unchanged items keep their HistoryItem identity and the
+ * memoized renderers skip re-rendering the whole transcript per delta.
+ */
 export function clientViewToHistoryItems(
   items: readonly ClientViewItem[],
-  options: { readonly activeRunId?: string } = {},
+  options: {
+    readonly activeRunId?: string;
+    readonly memo?: ClientViewItemMemo;
+  } = {},
 ): HistoryItem[] {
-  return items.map((item) => {
-    const base = {
-      id: item.id,
-      timestamp: item.timestamp ?? 0,
-      isSessionUiOnly: true,
+  const trailingAssistantIndex = options.activeRunId === undefined
+    ? -1
+    : findLastIndex(items, (item) => item.type === 'assistant');
+  return items.map((item, index) => {
+    const memoized = options.memo?.entries.get(item.id);
+    const fingerprint = itemFingerprint(item);
+    const streamingThisItem = index === trailingAssistantIndex;
+    if (
+      memoized !== undefined
+      && memoized.fingerprint === fingerprint
+      && !streamingThisItem
+    ) {
+      return memoized.item;
+    }
+    const mapped = mapViewItem(item, streamingThisItem);
+    options.memo?.entries.set(item.id, { fingerprint, item: mapped });
+    return mapped;
+  });
+}
+
+function findLastIndex(
+  items: readonly ClientViewItem[],
+  predicate: (item: ClientViewItem) => boolean,
+): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index]!)) return index;
+  }
+  return -1;
+}
+
+function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
+  const base = {
+    id: item.id,
+    timestamp: item.timestamp ?? 0,
+    isSessionUiOnly: true,
+  };
+  if (item.type === 'tool' && item.tool) {
+    const tool: ToolCall = {
+      id: item.tool.callId,
+      name: item.tool.name,
+      status: TOOL_STATUS_MAP[item.tool.status],
+      ...(item.tool.inputText !== undefined ? { preview: item.tool.inputText } : {}),
+      ...(item.text.length > 0 ? { output: boundedText(item) } : {}),
+      ...(item.tool.progress !== undefined
+        ? { progressLines: [item.tool.progress] }
+        : {}),
+      startTime: item.tool.startedAt ?? item.timestamp ?? 0,
+      ...(item.tool.endedAt !== undefined ? { endTime: item.tool.endedAt } : {}),
     };
-    if (item.type === 'tool' && item.tool) {
-      const tool: ToolCall = {
-        id: item.tool.callId,
-        name: item.tool.name,
-        status: TOOL_STATUS_MAP[item.tool.status],
-        ...(item.tool.inputText !== undefined ? { preview: item.tool.inputText } : {}),
-        ...(item.text.length > 0 ? { output: item.text } : {}),
-        ...(item.tool.progress !== undefined
-          ? { progressLines: [item.tool.progress] }
-          : {}),
-        startTime: item.tool.startedAt ?? item.timestamp ?? 0,
-        ...(item.tool.endedAt !== undefined ? { endTime: item.tool.endedAt } : {}),
-      };
-      return { ...base, type: 'tool_group' as const, tools: [tool] };
-    }
-    if (item.type === 'assistant') {
-      return {
-        ...base,
-        type: 'assistant' as const,
-        text: item.text,
-        ...(item.compactText !== undefined ? { compactText: item.compactText } : {}),
-        ...(options.activeRunId !== undefined ? { isStreaming: true } : {}),
-      };
-    }
-    const textKind = item.type as Exclude<
-      ClientViewItem['type'],
-      'tool' | 'assistant'
-    >;
-    const common = {
+    return { ...base, type: 'tool_group' as const, tools: [tool] };
+  }
+  if (item.type === 'assistant') {
+    return {
       ...base,
-      type: textKind,
+      type: 'assistant' as const,
       text: item.text,
       ...(item.compactText !== undefined ? { compactText: item.compactText } : {}),
-      ...(item.icon !== undefined ? { icon: item.icon } : {}),
+      ...(streaming ? { isStreaming: true } : {}),
     };
-    if (item.type === 'event' || item.type === 'info') return common;
-    if (item.type === 'hint') return common;
-    if (item.type === 'sidecar') return common;
-    return common;
-  });
+  }
+  return {
+    ...base,
+    type: item.type as Exclude<ClientViewItem['type'], 'tool' | 'assistant'>,
+    text: item.text,
+    ...(item.compactText !== undefined ? { compactText: item.compactText } : {}),
+    ...(item.icon !== undefined ? { icon: item.icon } : {}),
+  };
 }
 
 /**

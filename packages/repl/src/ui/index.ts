@@ -31,6 +31,7 @@ export {
 export type {
   ClientPlaneDialogSurface,
   ClientRoundOutcome,
+  ClientViewItemMemo,
   InkClientPlane,
 } from "./client-plane.js";
 export { createJsonEvents } from "./json-events.js";

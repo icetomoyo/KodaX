@@ -111,11 +111,13 @@ describe('clientViewToHistoryItems (T17)', () => {
     expect(group?.type === 'tool_group' && group.tools[0]?.status).toBe(ToolCallStatus.AwaitingApproval);
   });
 
-  it('marks streaming text on the trailing assistant item while a run is active', () => {
+  it('marks streaming only on the trailing assistant item while a run is active', () => {
     const view: ClientSessionView = {
       session: { id: 's1', title: 't' },
       items: [
-        viewItem({ id: 'a1', type: 'assistant', text: 'partial answer' }),
+        viewItem({ id: 'a1', type: 'assistant', text: 'earlier answer' }),
+        viewItem({ id: 'u1', type: 'user', text: 'again?' }),
+        viewItem({ id: 'a2', type: 'assistant', text: 'partial answer' }),
       ],
       settings: {},
       queue: [],
@@ -123,7 +125,43 @@ describe('clientViewToHistoryItems (T17)', () => {
       runs: [{ runId: 'r1', phase: 'running' }],
     } as unknown as ClientSessionView;
     const items = clientViewToHistoryItems(view.items, { activeRunId: 'r1' });
-    expect(items[0]).toMatchObject({ type: 'assistant', isStreaming: true });
+    expect(items[0]).not.toHaveProperty('isStreaming');
+    expect(items[2]).toMatchObject({ type: 'assistant', isStreaming: true });
+  });
+
+  it('marks bounded suffix text so truncation is visible', () => {
+    const [group] = clientViewToHistoryItems([
+      viewItem({
+        id: 'tool-9',
+        type: 'tool',
+        text: 'tail of a long output',
+        totalTextLength: 9_999,
+        tool: { callId: 'call-9', name: 'bash', status: 'success', inputText: 'npm run build' },
+      }),
+    ]);
+    expect(group?.type === 'tool_group' && group.tools[0]?.output).toBe(
+      'tail of a long output' + String.fromCharCode(10) + '[truncated]',
+    );
+  });
+
+  it('reuses mapped items while their fingerprint is unchanged', () => {
+    const memo = { entries: new Map() };
+    const source = [
+      viewItem({ id: 'a1', type: 'assistant', text: 'answer' }),
+      viewItem({ id: 'e1', type: 'error', text: 'boom' }),
+    ];
+    const first = clientViewToHistoryItems(source, { memo });
+    // Structurally equal clones (fresh identities, same content) reuse the
+    // mapped HistoryItem references instead of allocating new ones.
+    const cloned = source.map((item) => ({ ...item, tool: item.tool ? { ...item.tool } : undefined }));
+    const second = clientViewToHistoryItems(cloned, { memo });
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+    // A changed item remaps.
+    const grown = [{ ...source[0]!, text: 'answer grows' }, source[1]!];
+    const third = clientViewToHistoryItems(grown, { memo });
+    expect(third[0]).not.toBe(first[0]);
+    expect(third[1]).toBe(first[1]);
   });
 });
 

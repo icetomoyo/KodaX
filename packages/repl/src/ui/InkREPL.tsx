@@ -205,12 +205,10 @@ import {
 } from "../permission/standalone-shell-boundary.js";
 import {
   RUNTIME_PERMISSION_PENDING_NOTICE,
-  resolveReplRuntimePermissionDecision,
   toReplRuntimeAutoModeSettings,
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
   type ReplRuntimePermissionGrantSuggestion,
-  type ReplRuntimePermissionPrompt,
 } from "../runtime-permission.js";
 import {
   InteractiveContext,
@@ -533,6 +531,7 @@ import {
   runClientPlaneRound,
   viewRunsActive,
   type ClientPlaneDialogSurface,
+  type ClientViewItemMemo,
   type InkClientPlane,
 } from "./client-plane.js";
 import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
@@ -1799,7 +1798,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // the display authority (items replace wholesale) and rounds travel the
   // Host input/run faces instead of the in-process runner.
   const [clientView, setClientView] = useState<ClientSessionView | null>(null);
-  const clientPlaneActiveRunRef = useRef<string | undefined>(undefined);
+  const clientViewRef = useRef<ClientSessionView | null>(null);
+  const clientViewItemMemoRef = useRef<ClientViewItemMemo>({ entries: new Map() });
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
@@ -1810,10 +1810,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const observe = (): void => {
       void plane.observe(context.sessionId, (view) => {
         if (closed) return;
+        clientViewRef.current = view;
         setClientView(view);
-        clientPlaneActiveRunRef.current = viewRunsActive(view);
         replaceHistoryItems(
-          clientViewToHistoryItems(view.items, { activeRunId: viewRunsActive(view) }),
+          clientViewToHistoryItems(view.items, {
+            activeRunId: viewRunsActive(view),
+            memo: clientViewItemMemoRef.current,
+          }),
         );
       }).then((close) => {
         if (closed) {
@@ -1836,17 +1839,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       closed = true;
       closer?.();
       if (retry !== undefined) clearTimeout(retry);
+      clientViewRef.current = null;
       setClientView(null);
-      clientPlaneActiveRunRef.current = undefined;
     };
   }, [options.clientPlane, context.sessionId, replaceHistoryItems]);
   // FEATURE_298 T17 — pending Host interactions drive the Ink dialogs; the
   // answers travel back through respondInteraction (first valid answer wins
   // Host-side, so a late dialog result resolves as not accepted). An entry
   // stays until the interaction leaves the view, which also aborts a dialog
-  // the Host has already resolved elsewhere.
+  // the Host has already resolved elsewhere. When the answer delivery itself
+  // fails (transport drop) the entry is released immediately, so the next
+  // view re-opens the dialog while the interaction is still pending.
   const clientPlaneDialogsRef = useRef<ClientPlaneDialogSurface | null>(null);
   const clientPlaneOpenInteractionsRef = useRef(new Map<string, AbortController>());
+  const [clientPlaneNotices, setClientPlaneNotices] = useState<readonly {
+    readonly id: string;
+    readonly text: string;
+  }[]>([]);
+  const pushClientPlaneNotice = useCallback((id: string, text: string): void => {
+    setClientPlaneNotices((prev) => (prev.some((notice) => notice.id === id) ? prev : [...prev, { id, text }]));
+  }, []);
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
@@ -1857,6 +1869,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clientPlaneOpenInteractionsRef.current.delete(requestId);
       controller.abort();
     }
+    if (pending.length === 0 && clientPlaneNotices.length > 0) setClientPlaneNotices([]);
     for (const interaction of pending) {
       if (clientPlaneOpenInteractionsRef.current.has(interaction.requestId)) continue;
       const dialogs = clientPlaneDialogsRef.current;
@@ -1864,9 +1877,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const controller = new AbortController();
       clientPlaneOpenInteractionsRef.current.set(interaction.requestId, controller);
       void answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal)
-        .catch(() => undefined);
+        .then((accepted) => {
+          if (accepted) return;
+          clientPlaneOpenInteractionsRef.current.delete(interaction.requestId);
+          controller.abort();
+        })
+        .catch(() => {
+          clientPlaneOpenInteractionsRef.current.delete(interaction.requestId);
+          controller.abort();
+          pushClientPlaneNotice(
+            `interaction-${interaction.requestId}`,
+            'Answer delivery failed — the question will re-open or resolve Host-side.',
+          );
+        });
     }
-  }, [clientView, options.clientPlane]);
+  }, [clientView, options.clientPlane, clientPlaneNotices.length, pushClientPlaneNotice]);
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
     serializeUiHistorySnapshot(history),
@@ -1896,9 +1921,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const streamingState = useStreamingState();
 
   // FEATURE_298 T17 — when the plane owns the queue, the Host view is the
-  // queue display source (local pendingInputs stays empty in that mode).
+  // queue display source. Locally-queued Skill references stay in
+  // pendingInputs (the trusted resolver expands them after the round), so
+  // both sources render and both count toward the pop/interrupt gates.
   const displayPendingInputs = options.clientPlane
-    ? (clientView?.queue.map((entry) => entry.text) ?? [])
+    ? [
+        ...(clientView?.queue.map((entry) => entry.text) ?? []),
+        ...streamingState.pendingInputs,
+      ]
     : streamingState.pendingInputs;
 
   // Mirror live streaming state into a ref so memDiagSnapshot can read it
@@ -4511,24 +4541,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const baseFooterNotices = useMemo(() => {
     return buildBaseFooterNotices({
       historySearchQuery,
-      pendingInputCount: streamingState.pendingInputs.length,
+      pendingInputCount: displayPendingInputs.length,
     });
-  }, [historySearchQuery, streamingState.pendingInputs.length]);
+  }, [historySearchQuery, displayPendingInputs.length]);
   const footerNotifications = useMemo(() => {
     const base = buildFooterNotifications({
       historySearchQuery,
       isHistorySearchActive,
       historySearchMatchCount: historySearchMatches.length,
-      pendingInputCount: streamingState.pendingInputs.length,
+      pendingInputCount: displayPendingInputs.length,
       maxPendingInputs: MAX_PENDING_INPUTS,
     });
-    return [...base, ...learningNotices];
+    // FEATURE_298 T17 — plane notices (lost interaction answers, failed
+    // queue withdrawals) live here because plane mode replaces history
+    // items wholesale; history-routed notices would be wiped by the next view.
+    return [...base, ...learningNotices, ...clientPlaneNotices];
   }, [
     historySearchMatches.length,
     historySearchQuery,
     isHistorySearchActive,
     learningNotices,
-    streamingState.pendingInputs.length,
+    clientPlaneNotices,
+    displayPendingInputs.length,
   ]);
   const footerNotificationSummary = useMemo(
     () => footerNotifications.map((notification) => notification.text).join(" | "),
@@ -5738,7 +5772,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         && !isTranscriptMode
         && !isAwaitingUserInteraction
         && isInputEmpty
-        && streamingState.pendingInputs.length === 0
+        && displayPendingInputs.length === 0
         && (isLoading || workflowLiveViewModel.shouldRender);
       const isDoubleEscape = canEscapeInterrupt && (
         key.meta === true ||
@@ -5754,7 +5788,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         isAwaitingUserInteraction,
         isInputEmpty,
         isDoubleEscape,
-        pendingInputCount: streamingState.pendingInputs.length,
+        pendingInputCount: displayPendingInputs.length,
         hasTranscriptTextSelection: Boolean(transcriptModeTextSelection),
         hasActiveWorkflow: workflowLiveViewModel.shouldRender,
       })) {
@@ -5794,7 +5828,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           const newest = hostQueue[hostQueue.length - 1];
           if (newest !== undefined) {
             void options.clientPlane?.withdraw(context.sessionId, newest.inputId)
-              .catch(() => undefined);
+              .then((text) => {
+                if (text !== undefined) clientPlaneQueuedTextsRef.current.delete(newest.inputId);
+              })
+              .catch(() => {
+                pushClientPlaneNotice(
+                  `withdraw-${newest.inputId}`,
+                  'Withdraw failed — the queued input may still run.',
+                );
+              });
           }
           return true;
         case "none":
@@ -5814,6 +5856,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clientView,
       options.clientPlane,
       context.sessionId,
+      pushClientPlaneNotice,
       removeLastPendingInput,
       queueInterruptedPersistence,
       resetInterruptedPromptState,
@@ -8136,6 +8179,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       : context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
+    // FEATURE_298 T17 — client plane: the round travels the Host input/run
+    // faces and display comes from the live session view, so none of the
+    // in-process event/run-option assembly below applies.
+    if (options.clientPlane) {
+      return await runClientPlaneRound({
+        plane: options.clientPlane,
+        sessionId: context.sessionId,
+        prompt,
+        abortSignal: getSignal(),
+      });
+    }
     autoModeBootstrap.resetTurn();
     outputSegmentProjectionRef.current = createOutputSegmentProjection();
     managedOutputSegmentItemsRef.current = {};
@@ -8211,53 +8265,52 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
 
     const standaloneShellBoundary = createStandaloneShellPermissionBoundary({
-          getPermissionMode: () => permissionModeRef.current,
-          getAutoGuardrail: autoModeBootstrap.getGuardrail,
-          shellSandbox: managedRunContext.shellSandbox,
-          trustedTextMutationHost: managedRunContext.trustedTextMutationHost,
-          userConfigDir: managedRunContext.configHome,
-          projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(),
-          execPolicy: options.execPolicy,
-          resolvePlanHostExecution: (request) => (
-            isBashReadCommandAutoAllowed(
-              request.command,
-              context.gitRoot ?? process.cwd(),
-              context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
-            )
-              ? true
-              : '[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.'
-          ),
-          requestUserPermission: async (request, reason) => {
-            const input = { ...request.toolInput, command: request.command };
-            const mode = permissionModeRef.current;
-            if (
-              reason === 'mode_boundary'
-              && mode === 'accept-edits'
-              && await isToolCallAllowed(
-                'bash',
-                input,
-                alwaysAllowToolsRef.current,
-                bashPrefixExtractorRef.current ?? undefined,
-              )
-            ) return true;
-            const result = await showConfirmDialog('bash', input, undefined, getSignal());
-            if (
-              result.confirmed
-              && result.always
-              && reason === 'mode_boundary'
-              && permissionModeRef.current === 'accept-edits'
-            ) {
-              saveAlwaysAllowToolPattern('bash', input, false);
-              alwaysAllowToolsRef.current = loadAlwaysAllowTools();
-            }
-            return result.confirmed;
-          },
-        });
+      getPermissionMode: () => permissionModeRef.current,
+      getAutoGuardrail: autoModeBootstrap.getGuardrail,
+      shellSandbox: managedRunContext.shellSandbox,
+      trustedTextMutationHost: managedRunContext.trustedTextMutationHost,
+      userConfigDir: managedRunContext.configHome,
+      projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(),
+      execPolicy: options.execPolicy,
+      resolvePlanHostExecution: (request) => (
+        isBashReadCommandAutoAllowed(
+          request.command,
+          context.gitRoot ?? process.cwd(),
+          context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
+        )
+          ? true
+          : '[Blocked] Plan mode cannot escalate this command to unsandboxed host execution.'
+      ),
+      requestUserPermission: async (request, reason) => {
+        const input = { ...request.toolInput, command: request.command };
+        const mode = permissionModeRef.current;
+        if (
+          reason === 'mode_boundary'
+          && mode === 'accept-edits'
+          && await isToolCallAllowed(
+            'bash',
+            input,
+            alwaysAllowToolsRef.current,
+            bashPrefixExtractorRef.current ?? undefined,
+          )
+        ) return true;
+        const result = await showConfirmDialog('bash', input, undefined, getSignal());
+        if (
+          result.confirmed
+          && result.always
+          && reason === 'mode_boundary'
+          && permissionModeRef.current === 'accept-edits'
+        ) {
+          saveAlwaysAllowToolPattern('bash', input, false);
+          alwaysAllowToolsRef.current = loadAlwaysAllowTools();
+        }
+        return result.confirmed;
+      },
+    });
 
     const runOptions: KodaXOptions = {
       ...opts,
-      guardrails: standaloneShellBoundary !== undefined
-        && isAutoMode(permissionModeRef.current)
+      guardrails: isAutoMode(permissionModeRef.current)
         ? [standaloneShellBoundary.autoGuardrail]
         : undefined,
       session: {
@@ -8281,16 +8334,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
 
     try {
-      // FEATURE_298 T17 — client plane: the round travels the Host input/run
-      // faces; display comes from the live session view (no in-band events).
-      if (options.clientPlane) {
-        return await runClientPlaneRound({
-          plane: options.clientPlane,
-          sessionId: context.sessionId,
-          prompt,
-          abortSignal: runOptions.abortSignal,
-        });
-      }
       return await runManagedTask(runOptions, prompt);
     } finally {
       // FEATURE_090 (v0.7.32) — drain self-modify pending resolver swaps
@@ -9028,23 +9071,50 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     teamModeHandle,
   ]);
 
+  // FEATURE_298 T17 — the live view's newest running tool; plane mode has
+  // no in-band tool events, so FEATURE_149's cancel-class redirect decision
+  // reads the same fact from the session view.
+  const newestRunningViewToolName = useCallback((): string | undefined => {
+    const items = clientViewRef.current?.items ?? [];
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]!;
+      if (item.type !== 'tool') continue;
+      if (item.tool?.status === 'running') return item.tool.name;
+      return undefined;
+    }
+    return undefined;
+  }, []);
+
   // FEATURE_298 T17 — submit a streaming-time follow-up into the Host
-  // queue; capacity conflicts surface as a visible error item.
-  const submitHostQueuedFollowUp = useCallback((text: string): Promise<void> => {
+  // queue; capacity conflicts surface as a visible footer notice. The
+  // full text is cached per inputId because the view only carries a
+  // bounded preview — pull-all needs the complete text back.
+  const clientPlaneQueuedTextsRef = useRef(new Map<string, string>());
+  const submitHostQueuedFollowUp = useCallback((
+    text: string,
+    delivery: 'after_turn' | 'redirect' = 'after_turn',
+  ): Promise<void> => {
     const plane = options.clientPlane;
     if (!plane) return Promise.resolve();
+    const inputId = mintInkInputId();
+    const targetRunId = delivery === 'redirect'
+      ? (clientViewRef.current === null ? undefined : viewRunsActive(clientViewRef.current))
+      : undefined;
     return plane.submit({
       sessionId: context.sessionId,
       text,
-      inputId: mintInkInputId(),
-      delivery: 'after_turn',
-    }).then(() => undefined, (error: unknown) => {
-      addHistoryItem({
-        type: "error",
-        text: `Queued follow-up rejected: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      inputId,
+      delivery,
+      ...(targetRunId !== undefined ? { targetRunId } : {}),
+    }).then(() => {
+      clientPlaneQueuedTextsRef.current.set(inputId, text);
+    }, (error: unknown) => {
+      pushClientPlaneNotice(
+        `queue-reject-${Date.now()}`,
+        `Queued follow-up rejected: ${error instanceof Error ? error.message : String(error)}`,
+      );
     });
-  }, [options.clientPlane, context.sessionId, addHistoryItem]);
+  }, [options.clientPlane, context.sessionId, clientViewRef, pushClientPlaneNotice]);
 
   // Issue 120: drain pending inputs left over from skill / plan-mode rounds.
   // Hands the first queued prompt to `runQueueableAgentSequence`, which then
@@ -9337,6 +9407,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         dismissLearningRecovery();
 
+        // FEATURE_298 T17 — plane-bound follow-ups join the Host queue.
+        // Skill references keep the local queue (the trusted resolver
+        // expands them after the round). FEATURE_149 parity: when the view
+        // shows a cancel-class tool running, 'redirect' delivery queues the
+        // follow-up AND cancels the old run Host-side (queue-then-cancel).
+        if (options.clientPlane && !queuedSkillReference) {
+          const activeToolName = newestRunningViewToolName();
+          const redirect = activeToolName !== undefined
+            && getRegisteredToolDefinition(activeToolName)?.interruptBehavior === 'cancel';
+          void submitHostQueuedFollowUp(fullText, redirect ? 'redirect' : 'after_turn');
+          setInputText("");
+          setIsInputEmpty(true);
+          setSubmitCounter(prev => prev + 1);
+          touchContext(context);
+          return;
+        }
+
         // FEATURE_149 Phase B1b (v0.7.38) — fast-abort path.
         //
         // When the in-flight tool is tagged `interruptBehavior: 'cancel'`
@@ -9357,11 +9444,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (activeToolName) {
           const def = getRegisteredToolDefinition(activeToolName);
           if (def?.interruptBehavior === 'cancel') {
-            if (options.clientPlane && !queuedSkillReference) {
-              void submitHostQueuedFollowUp(fullText);
-            } else {
-              addPendingInput(fullText, pendingInputOptions);
-            }
+            addPendingInput(fullText, pendingInputOptions);
             abort({ preservePendingInputs: true });
             setInputText("");
             setIsInputEmpty(true);
@@ -9372,15 +9455,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         // Queue the EXPANDED text — downstream drain path feeds the agent.
-        // FEATURE_298 T17 — with the plane bound, plain follow-ups join the
-        // Host queue (the Host batches them into continuation runs); Skill
-        // references keep the local queue so the trusted resolver expands
-        // them after the round yields.
-        if (options.clientPlane && !queuedSkillReference) {
-          void submitHostQueuedFollowUp(fullText);
-        } else {
-          addPendingInput(fullText, pendingInputOptions);
-        }
+        addPendingInput(fullText, pendingInputOptions);
         setInputText("");
         setIsInputEmpty(true);
         setSubmitCounter(prev => prev + 1);
@@ -10958,9 +11033,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             const hostQueue = clientView?.queue ?? [];
             if (!plane || hostQueue.length === 0) return undefined;
             for (const entry of hostQueue) {
-              void plane.withdraw(context.sessionId, entry.inputId).catch(() => undefined);
+              void plane.withdraw(context.sessionId, entry.inputId)
+                .then((text) => {
+                  if (text !== undefined) clientPlaneQueuedTextsRef.current.delete(entry.inputId);
+                })
+                .catch(() => {
+                  pushClientPlaneNotice(
+                    `withdraw-${entry.inputId}`,
+                    'Withdraw failed — the queued input may still run.',
+                  );
+                });
             }
-            return hostQueue.map((entry) => entry.text).join("\n---\n");
+            return hostQueue.map((entry) =>
+              clientPlaneQueuedTextsRef.current.get(entry.inputId) ?? entry.text,
+            ).join("\n---\n");
           }}
           prompt=">"
           placeholder={buildPromptPlaceholderText({

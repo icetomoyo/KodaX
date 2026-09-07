@@ -1587,6 +1587,7 @@ async function observeDaemonSessionView(
   let connectionId: string | undefined;
   let lifecycle: RuntimeSubscription | undefined;
   let resubscribing: Promise<void> | undefined;
+  let resubscribeAttempts = 0;
   const deliver = (view: ClientSessionView): void => {
     const previousItems = new Map(previous?.items.map((item) => [item.id, item]));
     const items = view.items.map((item) => {
@@ -1621,6 +1622,7 @@ async function observeDaemonSessionView(
     deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
     latest = undefined;
     ready = true;
+    resubscribeAttempts = 0;
   };
   lifecycle = transport.subscribeLifecycle?.((state) => {
     if (state.state === 'connected') {
@@ -1633,9 +1635,12 @@ async function observeDaemonSessionView(
       // so a reconnected transport reopens the view; the fresh snapshot is a
       // full current-state replacement, which is exactly what the listener
       // expects (reconnect must not lose pending answers or queued inputs).
+      // A failed reopen retries a few times before the observation detaches.
       if (closed || ready || resubscribing !== undefined) return;
+      resubscribeAttempts += 1;
       resubscribing = openRemoteView().catch((error: unknown) => {
-        if (!closed) {
+        if (closed) return;
+        if (resubscribeAttempts >= 3) {
           emitKodaXDiagnostic({
             source: 'session.view',
             level: 'warn',
@@ -1649,9 +1654,14 @@ async function observeDaemonSessionView(
       });
       return;
     }
-    // Disconnected: hold deliveries until the transport reconnects.
+    // Disconnected: hold deliveries until the transport reconnects. A
+    // terminal disconnect (never reconnectable) detaches instead of
+    // holding the subscription and lifecycle listener open forever.
     ready = false;
     latest = undefined;
+    if (state.reconnectable === false) {
+      close();
+    }
   });
   const close = (): void => {
     if (closed) { lifecycle?.close(); return; }

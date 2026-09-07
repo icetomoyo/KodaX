@@ -5885,18 +5885,31 @@ complete -c kodax -l version -d 'Show version'`);
               sessionId: string;
               text: string;
               inputId: string;
-              delivery?: 'immediate' | 'after_turn';
+              delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
+              targetRunId?: string;
             }) =>
               interactiveRuntime.runs.acceptInput({
                 sessionId: input.sessionId,
                 text: input.text,
                 inputId: input.inputId,
                 ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+                ...(input.targetRunId !== undefined
+                  ? { targetRunId: input.targetRunId }
+                  : {}),
               }),
             withdraw: (sessionId: string, inputId: string) =>
               interactiveRuntime.runs.withdrawInput(sessionId, inputId)
                 .then((withdrawn) => withdrawn.text)
-                .catch(() => undefined),
+                .catch((error: unknown) => {
+                  // 'conflict' means the input is no longer queued (already
+                  // delivered or withdrawn) — legitimately absent. Any other
+                  // failure must reach the caller; a swallow would mask an
+                  // input that still runs later.
+                  if ((error as { readonly code?: string }).code === 'conflict') {
+                    return undefined;
+                  }
+                  throw error;
+                }),
             awaitRun: async (sessionId: string, runId: string) => {
               void sessionId;
               const outcome = await interactiveRuntime.runs.await(runId);
@@ -5906,8 +5919,7 @@ complete -c kodax -l version -d 'Show version'`);
                 ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
               };
             },
-            stop: (runId: string) =>
-              interactiveRuntime.runs.abort(runId).catch(() => undefined),
+            stop: (runId: string) => interactiveRuntime.runs.abort(runId),
             activeRun: (sessionId: string) =>
               interactiveRuntime.runs
                 .list({ sessionId })
