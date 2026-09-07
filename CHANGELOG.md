@@ -37,6 +37,11 @@ maintainer action.
   credential authority, include credential acquisition in the timeout, fail
   closed for denied scopes, and redact opaque scoped credentials from returned
   diagnostics (Issue 331).
+- Keep the cap-006 post-tool-result failure contract off the full-workspace
+  repo-intelligence indexing path (`repoIntelligenceMode: 'off'`, matching the
+  cap-057/cap-091/cap-095 precedent). The contract test previously indexed the
+  whole workspace before `onSessionStart` and exceeded its 30-second budget
+  under CI parallelism; the failure-shape contract is unchanged.
 
 ## [0.7.96-beta.1] - 2026-09-03
 
