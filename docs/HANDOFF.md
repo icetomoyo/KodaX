@@ -686,3 +686,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **T30 切片计划**：S1=daemon 侧 agent 族（agents.*/agentRegistrations.* mutation）加入 envelope 豁免清单（server.ts:862-866 同 session.settings.update 先例）+ client 侧 spawn/followup 停止透传 operation + RuntimeAgentOperationOptions 删 operation 字段（查 consumers）+ S1 测试（daemon 模式 spawn/send/followup/interrupt/注册 CRUD 无 envelope 可用）；S2=product client face：client-contract 增 agents 面（tree/detail/output/wait 只读 + spawn/send/followup/interrupt）+ registrations（list/upsert/setEnabled/remove）+ sdk-client 投影；S3=S1 证据：本地 Actor 授权/消息/取消过面；配置远端 Agent→dispatch→setEnabled(false) 阻新 admission→Host 退出关 watcher（a2a server 注册表+watcher 生命周期）。粒度边界：不改调度算法、不新增跨根 durable inbox、不把 A2A prepared 绑定（T21）或 workflow 重写装进来。
 
 **门禁基线提醒**：root tsc 唯一错误集当前 415（/tmp/base-errors.txt 为旧 419，需重新生成基线或继续用 comm 容差）；daemon 套件改动后必跑；build gate 先行。
+
+---
+
+## 2026-09-07 T30 Done (30/35) — Agent 注册/协作控制走产品面、退出 envelope
+
+**四代码提交**：`c4ee043f`（agent 族退出 operation envelope：protocol 共享豁免集 + server dispatch 豁免 + client facade 停附 + RuntimeAgentOperationOptions 删 operation（零生产调用者=死重）+ server.test S1）、`cbdc1ffb`（client-contract registrations+agents 双面 + toKodaXProductClient 投影 + sdk-runtime.external-agents S1 + sdk-client.agents 路由钉死）、`9bc0cadc`（评审修复）。票据 89c986f（submodule）+父指针 9c0d0707。
+
+**关键设计裁决**：(1) envelope 豁免集放 protocol.ts 共享（server/client/transport 三处同源）；(2) followup 只 expectedRevision 跨界、credential 绑定留 Host 内（产品面无铸 credential 能力）；(3) 读面（tree/detail/output/wait）领域对象 passthrough 不投影；(4) envelope 删除即不透明重试删除——transport 本无重发（断连拒绝 pending），journal replay 是唯一 opaque 路径；(5) 管理命令不新增：既有 kodax a2a add/remove/enable/disable CLI + Host watcher（a2a/runtime-config 域 CAS 调和）即"管理命令"腿。
+
+**双轴**：PASS/PASS 0C/0H。修复：M1 socket transport 兜底层仍自动铸 envelope（与"neither require nor carry"注释矛盾→transport 同样豁免；mock-transport 测试测不到该层）；interrupt 断言收紧为确定性 'interrupted'。Spec 确认要点：豁免发生在 controlJournal.execute 之前=无 journal 条目/重放；executor-plane 预检拒绝 disabled registration=admission 阻断非空转；reference executor=生产代码全管线（idempotency-key 去重）。
+
+**坑**：AgentTurnState 枚举无 canceled/cancelled（interrupt 终态=interrupted）；setEnabled 服务端第三参总是传 {expectedConfigurationRevision: undefined, expectedManagementOwner: undefined}（断言要带显式 undefined）；ExternalAgentRegistration 字面量需全字段（enabled/capabilities/effects/endpointIdentityHash）；clientFaceTerminal/waitForActorTerminal 双helper 并存（2 例不抽象，第 3 例再参数化）。
+
+**门禁终态**：build 绿、daemon 全套 354 过（1 skip 预存）、sdk-runtime.external-agents 7、sdk-client.agents 2、actors 12、tsc 唯一集 415。
+
+**残留**（票内已记）：S1 授权腿靠既有域测试（executor-plane 策略拒绝/controller 消息授权）；A2A 配置 watcher 的 Host 退出关闭为既有接线未单独断言。
+
+**下一步（30/35）**：T21（A2A prepared serving Host 持有，前置 T20✓T30✓）→解锁 T26（还差 T15/T21）；然后 T25（control journal 全退役，agent 族已先行）→T26→T27；T15 验收（需 T25）。可选 T28/T29 未选。建议顺序 T21→T25→T26→T27→T15。
