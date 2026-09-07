@@ -56,6 +56,10 @@ describe('low-level package independence and export boundary', () => {
     };
     for (const subpath of [
       '.',
+      './agent',
+      './llm',
+      './coding',
+      './repl',
       './client',
       './runtime',
       './sandbox',
@@ -64,10 +68,10 @@ describe('low-level package independence and export boundary', () => {
       './session',
       './media',
       './a2a',
+      './experimental-memory',
     ]) {
       expect(manifest.exports[subpath], `exports["${subpath}"]`).toBeDefined();
     }
-    expect(manifest.exports['./experimental-memory']).toBeDefined();
     // The Worker-facade sidecar is retired (T27); the constructed-handler and
     // semantic workers stay.
     expect(manifest.files).not.toContain('dist/runtime-worker.js');

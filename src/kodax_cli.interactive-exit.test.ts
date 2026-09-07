@@ -1096,7 +1096,11 @@ describe('CLI interactive exit lifecycle', () => {
     });
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
     expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeStarts[0]).toMatchObject({ sessionId: 'session-1' });
+    expect(harness.runtimeStarts[0]).toMatchObject({
+      sessionId: 'session-1',
+      text: 'inspect the repo',
+      delivery: 'immediate',
+    });
     expect(harness.runManagedTask).not.toHaveBeenCalled();
     expect(harness.calls).toContain('runtime-close');
   });
@@ -1110,7 +1114,11 @@ describe('CLI interactive exit lifecycle', () => {
     await main();
 
     expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeStarts[0]).toMatchObject({ sessionId: 'session-1' });
+    expect(harness.runtimeStarts[0]).toMatchObject({
+      sessionId: 'session-1',
+      text: 'stateless task',
+      delivery: 'immediate',
+    });
     // Temporary sessions are deleted by the Host at settlement, not client-side.
     expect(harness.runtimeDeletes).toEqual([]);
     expect(harness.runManagedTask).not.toHaveBeenCalled();
@@ -1144,7 +1152,10 @@ describe('CLI interactive exit lifecycle', () => {
   it('ignores the retired worker.configuredA2A key and keeps the inline A2A plane', async () => {
     process.argv = ['node', 'kodax', '-p', 'inline A2A task'];
     const { main, harness } = await importMainWithMocks({
-      config: { provider: 'mock-provider', worker: { configuredA2A: true } } as never,
+      config: {
+        provider: 'mock-provider',
+        ...({ worker: { configuredA2A: true } } as Record<string, unknown>),
+      },
     });
 
     await main();

@@ -2306,7 +2306,6 @@ function runtimeDaemonCapabilities(
     skillCatalog: true,
     artifactUpload: true,
     contextDiagnostics: true,
-    hardDispose: false,
     externalAgents,
     actorControlPlane: {
       version: 1,

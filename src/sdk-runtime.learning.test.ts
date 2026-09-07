@@ -189,46 +189,45 @@ describe('runtime.learning inline facade', () => {
   });
 
   it('promotes the exact learned Skill through the public inline Runtime learning facade', async () => {
-      const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-promote-'));
-      tempDirs.push(homeDir);
-      const seeded = await seedPromotableCapability(homeDir);
-      const runtime = await createKodaXRuntime({ homeDir });
-      const publicLearning: RuntimeLearningService = runtime.learning;
+    const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-promote-'));
+    tempDirs.push(homeDir);
+    const seeded = await seedPromotableCapability(homeDir);
+    const runtime = await createKodaXRuntime({ homeDir });
+    const publicLearning: RuntimeLearningService = runtime.learning;
 
-      await publicLearning.promote(seeded.capabilityId, 'user');
+    await publicLearning.promote(seeded.capabilityId, 'user');
 
-      expect(await publicLearning.get(seeded.capabilityId)).toMatchObject({
-        lifecycle: 'promoted_user',
-        slug: seeded.slug,
-      });
-      expect(await readFile(
-        join(homeDir, '.kodax', 'skills', seeded.slug, 'SKILL.md'),
-        'utf8',
-      )).toContain(seeded.contentNeedle);
-      await runtime.close();
+    expect(await publicLearning.get(seeded.capabilityId)).toMatchObject({
+      lifecycle: 'promoted_user',
+      slug: seeded.slug,
+    });
+    expect(await readFile(
+      join(homeDir, '.kodax', 'skills', seeded.slug, 'SKILL.md'),
+      'utf8',
+    )).toContain(seeded.contentNeedle);
+    await runtime.close();
   });
 
   it('rejects an unsupported promotion scope without side effects in inline mode', async () => {
-      const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-scope-'));
-      tempDirs.push(homeDir);
-      const seeded = await seedPromotableCapability(homeDir);
-      const runtime = await createKodaXRuntime({ homeDir });
-      try {
-        await expect(runtime.learning.promote(
-          seeded.capabilityId,
-          'project' as unknown as 'user',
-        )).rejects.toThrow();
-        expect(await runtime.learning.get(seeded.capabilityId)).toMatchObject({
-          lifecycle: 'ready',
-        });
-        await expect(access(
-          join(homeDir, '.kodax', 'skills', seeded.slug, 'SKILL.md'),
-        )).rejects.toMatchObject({ code: 'ENOENT' });
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
+    const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-scope-'));
+    tempDirs.push(homeDir);
+    const seeded = await seedPromotableCapability(homeDir);
+    const runtime = await createKodaXRuntime({ homeDir });
+    try {
+      await expect(runtime.learning.promote(
+        seeded.capabilityId,
+        'project' as unknown as 'user',
+      )).rejects.toThrow();
+      expect(await runtime.learning.get(seeded.capabilityId)).toMatchObject({
+        lifecycle: 'ready',
+      });
+      await expect(access(
+        join(homeDir, '.kodax', 'skills', seeded.slug, 'SKILL.md'),
+      )).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await runtime.close();
+    }
+  });
 
   it('forwards user-scope promotion through the public daemon Runtime facade', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];

@@ -775,25 +775,6 @@ describe('Runtime conversation history', () => {
     }
   });
 
-  it('keeps the conversation contract through Worker-hosted embedded transport', async () => {
-    const { runtime, sessionId } = await fixture('third answer');
-    try {
-      const direct = await runtime.sessions.conversation(sessionId);
-      const page = await runtime.sessions.conversationPage({
-        sessionId,
-        limit: 20,
-      });
-      expect(page?.entries.map((entry) => entry.entry)).toEqual(direct?.entries);
-      expect(page).toMatchObject({
-        revision: direct?.revision,
-        sourceRevision: direct?.sourceRevision,
-        status: 'resolved',
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it('keeps ambiguous candidates and issues identical across direct and pages', async () => {
     const { runtime, sessionId } = await fixture('unused', true);
     try {

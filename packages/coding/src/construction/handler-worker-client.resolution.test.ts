@@ -23,7 +23,7 @@ describe('resolveHandlerWorkerUrl', () => {
   it('uses the published sidecar beside a root distribution bundle', () => {
     const distDir = path.resolve('fixtures', 'dist');
 
-    expect(resolveFrom(path.join(distDir, 'runtime-worker.js')))
+    expect(resolveFrom(path.join(distDir, 'root-bundle.js')))
       .toBe(path.join(distDir, 'constructed-handler-worker.js'));
   });
 
@@ -59,7 +59,7 @@ describe('resolveHandlerWorkerUrl', () => {
     expect(resolved).toBe(path.join(path.dirname(executablePath), 'constructed-handler-worker.js'));
   });
 
-  it('spawns the sidecar selected for a root runtime-worker bundle', async () => {
+  it('spawns the sidecar selected for a root distribution bundle', async () => {
     const distDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-handler-sidecar-'));
     const workerPath = path.join(distDir, 'constructed-handler-worker.js');
     await fs.writeFile(
@@ -76,7 +76,7 @@ describe('resolveHandlerWorkerUrl', () => {
       'utf8',
     );
     const workerUrl = resolveHandlerWorkerUrl({
-      moduleUrl: pathToFileURL(path.join(distDir, 'runtime-worker.js')).href,
+      moduleUrl: pathToFileURL(path.join(distDir, 'root-bundle.js')).href,
       bundled: false,
       executablePath,
     });

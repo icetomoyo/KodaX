@@ -369,9 +369,9 @@ npm run build
 ```
 
 The bundle build also emits `dist/semantic-worker.js`,
-`dist/runtime-worker.js`, and `dist/constructed-handler-worker.js`. These are
-explicit npm/binary sidecars; CI builds them before tests so clean checkouts do
-not depend on source-only Worker fallback resolution.
+and `dist/constructed-handler-worker.js`. These are explicit npm/binary
+sidecars; CI builds them before tests so clean checkouts do not depend on
+source-only Worker fallback resolution.
 
 Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 
@@ -383,12 +383,11 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 | Coding SDK | `packages/coding/src/agent.ts` | `runKodaX(options, prompt)` delegates through `Runner.run`. |
 | Coding preset | `packages/coding/src/coding-preset.ts` | Declares the default coding agent and substrate executor. |
 | Continuous SDK | `packages/coding/src/client.ts`, `running-session.ts` | `KodaXClient` and non-blocking session handle. |
-| Runtime SDK | `src/sdk-runtime.ts` | One service facade for inline, Worker-hosted, and daemon ownership. Managed `onComplete` is not terminal authority. |
+| Runtime SDK | `src/sdk-runtime.ts` | One service facade for inline and daemon ownership. Managed `onComplete` is not terminal authority. |
 | Durable state lock primitive | `packages/agent/src/learning/store-lock.ts` | Exact state-file ownership where a subsystem still needs it; not part of shell/write/worktree admission. |
 | File mutation ordering | `packages/coding/src/tools/_internal/file-mutation-queue.ts` | Same-path process-local ordering and inert compatibility lease exports; no cross-process command-lifetime fence. |
 | Managed terminal commit | `packages/coding/src/task-engine/runner-driven.ts` | Session snapshot before completion; repo/task projection is asynchronous. |
 | Runtime daemon | `src/runtime-daemon/` | Versioned protocol/schema, socket transport, owner state/lock, host, client, and process launcher. |
-| Runtime Worker | `src/runtime-worker/` | MessagePort host that reuses the daemon dispatcher/client and supports hard termination. |
 | Generic agent | `packages/agent/src/primitives/runner.ts`, `agent.ts` | Layer-A Runner and Agent primitives. |
 | REPL | `packages/repl/src/index.ts` | `runInkInteractiveMode`, classic mode, config/session exports. |
 | First-run setup | `packages/repl/src/common/provider-setup.ts`, `packages/repl/src/interactive/provider-setup.ts`, `src/provider-setup-cli.ts` | Catalog-backed readiness inspection + revision-checked non-secret persistence, standalone pre-Runtime terminal flow, and CLI eligibility gate. |
@@ -396,10 +395,9 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 
 ### 3.1 Runtime Host Facade
 
-`createKodaXRuntime()` defaults to `{ mode: 'embedded', isolation: 'inline' }`.
-`isolation: 'worker'` starts `dist/runtime-worker.js`, initializes the normal
-runtime protocol over `MessagePort`, and always calls `Worker.terminate()` after
-the shutdown grace period. `mode: 'daemon'` starts or attaches to a detached
+`createKodaXRuntime()` defaults to an inline embedded runtime in the caller's
+process (the v0.7.96 Worker-hosted isolation form was removed in v0.7.97).
+`mode: 'daemon'` starts or attaches to a detached
 `kodax daemon serve` owner at the profile-default endpoint. Custom daemon
 endpoints are attach-only.
 
@@ -410,21 +408,17 @@ path requires Electron's `RunAsNode` fuse; disabling it requires an ordinary
 Node/CLI-started daemon and attach-only SDK mode.
 
 All forms expose `identity`, `sessions`, `runs`, `events`, `permissions`,
-`workflows`, `config`, `catalog`, `mcp`, `artifacts`, `status`, and
-`diagnostics`. The deployment-specific close contract is intentional:
+`workflows`, `config`, `catalog`, `mcp`, `artifacts`, and `status`. The
+deployment-specific close contract is intentional:
 
-| Form | `close()` | Sharing | `hardDispose` |
-|---|---|---|---|
-| inline embedded | closes private Runtime state cooperatively | no | false |
-| Worker embedded | requests shutdown, then terminates Worker | no | true |
-| daemon client | closes only that transport | yes | false |
+| Form | `close()` | Sharing |
+|---|---|---|
+| inline embedded | closes private Runtime state cooperatively | no |
+| daemon client | closes only that transport | yes |
 
-`requirements.hardDispose` is checked for all three forms. Worker-only options
-without `isolation: 'worker'`, or any explicit embedded isolation combined with
-daemon mode, are rejected rather than ignored.
 
 `CreateKodaXRuntimeOptions.execPolicy` and `.autoReview` are trusted host-owner
-inputs in every ownership form. Inline and Worker hosts receive them through
+inputs in every ownership form. Inline hosts receive them through
 their owner bootstrap. A detached daemon receives them only while a new owner
 is auto-started, through a bounded one-shot file under its daemon state root;
 the daemon consumes and deletes the file before extension loading. The client
@@ -489,7 +483,8 @@ the same coordinator explicitly, while `setup --help` returns before side
 effects. Writers use SHA-256 revisions, same-directory temporary files,
 restrictive modes, and atomic rename while preserving unrelated keys.
 
-The Worker and daemon facades reuse `runtime-daemon/server.ts` and
+The embedded and daemon-owner hosts reuse the same service implementation in
+`src/sdk-runtime.ts` behind `runtime-daemon/server.ts` and
 `runtime-daemon/client.ts`; there is no duplicate service implementation.
 Protocol methods are schema-validated, run results preserve serialized errors,
 and pending event notifications are bounded while a remote subscription id is
@@ -599,7 +594,7 @@ surface and cancels after the five-minute interaction bound instead of leaving
 an untracked host Promise alive. SDK user-input timeout overrides must be
 positive integers no greater than 2,147,483,647; permission timeout overrides
 use the same upper bound and retain `0` as the existing timer-disable value.
-Invalid values are rejected before embedded, Worker, or daemon startup.
+Invalid values are rejected before embedded or daemon startup.
 Persistent permission grants have one daemon-owned revisioned store. A concrete
 permission request may expose opaque
 Runtime-issued Session and persistent grant suggestions. Clients can select a
@@ -645,7 +640,7 @@ reused its PID. A refused or completed mismatched challenge proves stale;
 timeouts, unknown failures, and legacy owners without challenge evidence remain
 fail-closed.
 
-`runs.start({ options })` is transport-safe data in Worker/daemon forms. The
+`runs.start({ options })` is transport-safe data across the daemon transport. The
 client rejects functions, symbols, bigint, cycles, non-finite numbers, and
 class instances. CLI integration additionally rejects known process-local host
 bindings rather than deleting them. Host-specific callbacks/extensions must be

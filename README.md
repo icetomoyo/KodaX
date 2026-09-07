@@ -422,19 +422,15 @@ const result = await runKodaX(
 
 ## Runtime SDK and daemon
 
-SDK hosts can use `@kodax-ai/kodax/runtime` in three forms: inline embedded for
-lowest latency, Worker-hosted embedded for private state plus hard V8 disposal,
-or a local daemon shared by REPL, Space, IDE adapters, and custom SDK clients.
-All three expose the same `KodaXRuntime` services.
+SDK hosts can use `@kodax-ai/kodax/runtime` in two forms: inline embedded for
+lowest latency, or a local daemon shared by REPL, Space, IDE adapters, and
+custom SDK clients. Both expose the same `KodaXRuntime` services. (The
+v0.7.96 Worker-hosted embedded form was removed in v0.7.97.)
 
 ```ts
 import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';
 
-const isolated = await createKodaXRuntime({
-  mode: 'embedded',
-  isolation: 'worker',
-  requirements: { hardDispose: true },
-});
+const runtime = await createKodaXRuntime({ mode: 'embedded' });
 ```
 
 ### Structured Runtime failures
@@ -614,7 +610,7 @@ FEATURE_280 was explicitly rescheduled to v0.7.81 (then to v0.7.86 on
 Issue 256 was explicitly rescheduled to v0.7.84 and is likewise not represented
 as shipped by this release.
 
-**v0.7.80 hardening release:** The CLI honors `worker.configuredA2A` in
+**v0.7.80 hardening release:** The CLI honored `worker.configuredA2A` in
 `~/.kodax/config.json`: the embedded Runtime becomes Worker-hosted and loads
 the configured A2A plane inside the Worker owner, so configured outbound
 Agents appear as `external:<name>` in `list_dispatchable_agents` and can be
@@ -1322,10 +1318,11 @@ later re-enable. Private-address access and non-loopback plaintext HTTP are
 independent, persisted, default-deny permissions (`--allow-private` and
 `--allow-insecure-http`); exact loopback HTTP remains available without either.
 OAuth token endpoints retain their stricter HTTPS-or-exact-loopback rule.
-Worker-hosted SDK Runtimes can load this same configured plane inside the Worker
-owner with `worker: { configuredA2A: true }`. The CLI honors the same opt-in
-from `~/.kodax/config.json` (`"worker": { "configuredA2A": true }`) by creating
-a Worker-hosted embedded Runtime that loads the configured A2A plane. `a2a serve` loads
+SDK hosts load this same configured plane by wiring
+`createConfiguredA2ARuntimeIntegration({ configHome })` and passing its
+`runtimeOptions` as `externalAgents` — the CLI does this for its embedded
+sessions and the daemon Host it launches, and the `worker.configuredA2A` opt-in
+was removed with the Worker facade in v0.7.97. `a2a serve` loads
 its configured MCP/Extension capability surface before listening and pins that
 execution authority; it hot-reloads publication, authentication, and limits.
 
@@ -1413,7 +1410,6 @@ dist/binary/linux-x64/
 ├── builtin/                       # Sidecar built-in skills
 ├── provider-capabilities.json
 ├── semantic-worker.js             # Repo-intelligence Worker
-├── runtime-worker.js              # SDK Runtime Worker
 └── constructed-handler-worker.js  # Constructed-tool Worker
 ```
 

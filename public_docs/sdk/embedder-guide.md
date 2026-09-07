@@ -2673,9 +2673,11 @@ one interface in two deployment shapes:
 
 The v0.7.96 Worker-hosted embedded runtime (`isolation: 'worker'`, the
 `dist/runtime-worker.js` sidecar, and the `requirements.hardDispose` gate) was
-removed in v0.7.97; an embedded inline Runtime loads the configured A2A plane
-(`<homeDir>/.kodax/integrations/a2a.json`) automatically, exactly as the CLI
-and daemon owners do.
+removed in v0.7.97. Loading the configured A2A plane is owner wiring, not
+Runtime magic: call `createConfiguredA2ARuntimeIntegration({ configHome })`
+(exported from `@kodax-ai/kodax/a2a`) and pass its `runtimeOptions` as
+`externalAgents` — exactly what the CLI does for both its embedded sessions
+and the daemon Host it launches.
 
 The daemon is not a separate product engine. It hosts the embedded runtime behind
 a process boundary, so REPL, Space, IDE adapters, ACP, and custom SDK clients can
@@ -3695,7 +3697,7 @@ boundary. Install factories where the Runtime owner executes:
 | Private in-process owner | `createKodaXRuntime({ mode: 'embedded', externalAgents })` |
 | New locally hosted daemon owner | `createKodaXRuntime({ mode: 'daemon', profile: '<unique>', externalAgents })` |
 | Existing daemon | Configure its owner, then attach with `connectKodaXRuntime({ requirements: { externalAgents: true } })`; a client cannot inject factories. |
-| Built-in configured A2A plane | Load it in the owner: the daemon reconciles `<homeDir>/.kodax/integrations/a2a.json` automatically, and an embedded inline Runtime loads the same document by default. The former `worker: { configuredA2A: true }` opt-in was removed with the Worker facade in v0.7.97. |
+| Built-in configured A2A plane | Wire it in the owner: `createConfiguredA2ARuntimeIntegration({ configHome })` → pass `runtimeOptions` as `externalAgents` (the KodaX CLI does this for its embedded sessions and the daemon Host it launches; an SDK-created runtime never reads `integrations/a2a.json` on its own). The former `worker: { configuredA2A: true }` opt-in was removed with the Worker facade in v0.7.97. |
 
 When `mode: 'daemon'` and `externalAgents` are supplied, the caller must win a
 new in-process daemon lease. KodaX rejects an already-running profile instead of
@@ -5093,9 +5095,10 @@ restart changes `runtimeId`. The observation's `invalidated` promise reports
 `transport_disconnected`; after it resolves, no state derived from that
 observation remains authoritative. Restart recovery interrupts only a Run
 whose owner is definitely gone; uncertain external execution is `unknown`.
-Timeout or cancellation removes the daemon request immediately. If a
-third-party transport ignores cancellation and later returns an observation,
-the client compensates by unsubscribing that late observation.
+Timeout or cancellation removes the daemon request immediately. A result that
+arrives after its reader abandoned the request is dropped — the transport
+sends a hygiene `request.cancel` so the Host frees the in-flight record and
+any subscription it created, but no late delivery reaches the caller.
 
 ### Durable mutations, stable ordering, and settings CAS
 
@@ -6002,11 +6005,10 @@ commands, and PTY sessions remain interactive. POSIX-only `ps`, `tmux`, and
 sandbox branches are reviewed bundle-audit exceptions rather than Windows
 visibility paths.
 
-`npm run build:bundle` audits every statically identifiable child-process call
-reachable from the bundled runtime entry points, including the
-`dist/semantic-worker.js` and `dist/handler-worker.js` sidecars (the former
-`dist/runtime-worker.js` sidecar was removed with the Worker facade in
-v0.7.97). The packaged Electron daemon smoke then
+The bundled runtime entry points ship with the `dist/semantic-worker.js` and
+`dist/constructed-handler-worker.js` sidecars (the former
+`dist/runtime-worker.js` sidecar and its build-time child-process audit were
+removed with the Worker facade in v0.7.97). The packaged Electron daemon smoke then
 runs 20 ordinary queries with a Win32 probe and checks that the expected Git
 children never own a visible console window. These checks validate the SDK
 boundary, but they do not replace product-level validation in the packaged host.
@@ -6633,7 +6635,7 @@ replacement:
 | `settleKodaXRuntimeExit()` SDK export, `daemon.rollbackToInline`, client `stopForInline`, and the `runtimeExitSettlement:2` capability | `runtime.shutdown` / `runtime.daemon.shutdown()` is a real idle shutdown (busy → structured `conflict`). Daemon→inline ownership changes are explicit: `setKodaXRuntimeOwnerMode({ mode, expectedRevision })`, or owner-lock release plus `acquireKodaXInlineOwner()`. The owner mode never changes implicitly. |
 | `event.subscribe`/`event.replay` RPCs, the `{ sessionId, journalEpoch, seq }` cursor, `journalEpoch` fields, and the `sessionEventJournal:1` capability | Events are a live in-process stream (`{ id, seq, time, sessionId, runId, turnId?, type, payload }`). Remote consumption reuses `session.observe` notifications; observation snapshots carry a `seq` high-water, live listener events are strictly greater, and `seq` never persists across restarts. Deleting/recreating a Session invalidates observations with `runtime_changed`. |
 | Diagnostics RPCs `context.budget.get`, `tool.exposure.preview`, `provider.cache.diagnostics.get` (and the `runtime.diagnostics.latest*` facade) | Removed. `capabilities.contextDiagnostics: true` only gates diagnostic event notifications (`context.budget.snapshot`, `tool.exposure.planned`, `provider.cache.diagnostics`, `context.compaction.skipped`) on the live stream. |
-| `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Use inline embedded or daemon mode; an embedded inline Runtime loads the configured A2A plane (`<homeDir>/.kodax/integrations/a2a.json`) automatically, exactly as the CLI and daemon owners do. |
+| `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Use inline embedded or daemon mode. For the configured A2A plane, wire `createConfiguredA2ARuntimeIntegration({ configHome })` in the owner and pass its `runtimeOptions` as `externalAgents` — the Runtime itself never reads `integrations/a2a.json`. |
 | Late-result redelivery after an abandoned read | Removed. `request.cancel`/`request.ack` remain daemon transport-control frames only; an abandoned read gets no late delivery. |
 | `setThinking` REPL callback | Removed. Use `setReasoningMode` (the shared settings key is `reasoningMode`). |
 | `getKodaXRuntimeOwnerPolicy` export | Removed. `getKodaXRuntimeOwnerState()` remains and reports policy, owner status, and the current owner in one call. |

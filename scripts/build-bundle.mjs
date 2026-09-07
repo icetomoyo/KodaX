@@ -586,7 +586,7 @@ log(`  ✓ helper depth contract: ${distRelativeDepth} levels (matches HELPER_SC
 // still be useful — generate them via tsc separately if needed (out of scope
 // for this script).
 
-// ---- write metafile for audit (opt-in) ----------------------------------
+// ---- write esbuild metafile (opt-in) -----------------------------------
 
 if (writeMetafile) {
   const meta = {

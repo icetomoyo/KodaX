@@ -17,7 +17,6 @@ following side-by-side files. Extract it into a dedicated directory:
 │   └── ...
 ├── provider-capabilities.json     # Provider metadata
 ├── semantic-worker.js             # Repo-intelligence Worker
-├── runtime-worker.js              # SDK Runtime Worker
 ├── constructed-handler-worker.js  # Constructed-tool Worker
 └── vendor/kodax-native/<platform-arch>/
     ├── manifest.json               # Protocol and SHA-256 manifest
@@ -1921,8 +1920,8 @@ directory is missing next to the executable. Verify the archive was extracted
 intact; the binary alone is not enough.
 
 **Worker, trusted text, or sandbox mode fails in a compiled binary** - verify
-`semantic-worker.js`, `runtime-worker.js`, and
-`constructed-handler-worker.js` are next to the executable, and verify the
+`semantic-worker.js` and `constructed-handler-worker.js` are next to the
+executable, and verify the
 matching `vendor/kodax-native/<platform-arch>` directory. Windows also requires
 the pinned `vendor/srt-win/<arch>/srt-win.exe`.
 `scripts/build-binary.mjs` fails the build when any source sidecar is missing,

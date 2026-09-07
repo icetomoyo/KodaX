@@ -294,11 +294,30 @@ describe("createKodaXRuntime", () => {
     });
   });
 
-  it("advertises the SDK capability floor constants", async () => {
-    const { KODAX_RUNTIME_SDK_CAPABILITIES } = await import("./sdk-runtime.js");
+  it("advertises the SDK capability floor constants on the embedded facade", async () => {
+    const { createKodaXRuntime, KODAX_RUNTIME_SDK_CAPABILITIES } = await import(
+      "./sdk-runtime.js"
+    );
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.conversationHistory).toBe(2);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(5);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.sharedSessionSettings).toBe(2);
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    try {
+      expect(runtime.capabilities.conversationHistory).toEqual({
+        version: 2,
+        immutablePaging: true,
+        revisionedBoundaries: true,
+        ambiguityReporting: true,
+        topologyTransparentManagedContext: true,
+        directCloneProvenance: true,
+      });
+      expect(runtime.capabilities.sandboxRuntime).toMatchObject({ version: 11 });
+      expect(runtime.capabilities.runtimeEventCoalescing).toMatchObject({
+        version: 1,
+      });
+    } finally {
+      await runtime.close();
+    }
   });
 
 

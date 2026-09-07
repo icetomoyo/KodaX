@@ -915,11 +915,7 @@ await runKodaX({ provider: 'my-openai-compatible' }, '解释这个仓库');
 ```ts
 import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';
 
-const isolated = await createKodaXRuntime({
-  mode: 'embedded',
-  isolation: 'worker',
-  requirements: { hardDispose: true },
-});
+const runtime = await createKodaXRuntime({ mode: 'embedded' });
 ```
 
 inline 形态由调用方私有且开销最低；Worker 形态仍然私有，但可硬销毁；
@@ -980,7 +976,6 @@ dist/binary/linux-x64/
 ├── builtin/                       # 内置 skills sidecar
 ├── provider-capabilities.json
 ├── semantic-worker.js             # Repo intelligence Worker
-├── runtime-worker.js              # SDK Runtime Worker
 └── constructed-handler-worker.js  # Constructed tool Worker
 ```
 
@@ -1218,10 +1213,10 @@ MCP、A2A、Extension 分别使用 `~/.kodax/integrations/` 下的一个用户�
 停用条目可随时重新启用。私网地址访问与非 loopback 明文 HTTP 是两项独立、
 持久化且默认拒绝的权限（`--allow-private` 与 `--allow-insecure-http`）；精确
 loopback HTTP 无需这两项授权。OAuth token endpoint 仍保持更严格的
-HTTPS 或精确 loopback 规则。Worker-hosted SDK Runtime 可通过
-`worker: { configuredA2A: true }` 让 Worker owner 装载同一配置执行平面。
-CLI 同样支持在 `~/.kodax/config.json` 中配置 `"worker": { "configuredA2A": true }`，
-将嵌入式运行时改为 Worker 托管并装载配置的 A2A 执行平面。
+HTTPS 或精确 loopback 规则。SDK 宿主通过 `createConfiguredA2ARuntimeIntegration({ configHome })` 装载同一
+配置执行平面，并把其 `runtimeOptions` 作为 `externalAgents` 传入——CLI 为其嵌入式
+会话和它启动的 daemon Host 完成同样的接线；`worker.configuredA2A` 选项已随
+Worker facade 在 v0.7.97 移除。
 `a2a serve` 会在监听前装载已配置的 MCP/Extension 能力并固定执行权威，同时热加载
 公开信息、鉴权和限额。Agent、Skill、Extension 工具权威、工作区、tool policy
 或任务存储变更必须显式重启服务。

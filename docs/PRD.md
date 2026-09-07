@@ -451,10 +451,10 @@ daemon-owned user processes. Disabling Electron's `RunAsNode` fuse requires an
 ordinary Node/CLI-started daemon and attach-only SDK mode; no silent inline
 fallback is allowed.
 
-Worker resource limits and termination are fault-isolation features, not an
-untrusted-code sandbox. A caller that requires deterministic V8 disposal must
-be able to request `hardDispose` and receive an error from inline or daemon
-forms rather than a silent downgrade.
+The v0.7.96 Worker-hosted isolation form (and its `hardDispose` requirement)
+was removed in v0.7.97: Worker resource limits were fault-isolation features,
+not an untrusted-code sandbox. Callers needing deterministic disposal run the
+runtime in a child process they own (the daemon form) instead.
 
 Windows process cleanup must never equate an incomplete observation with
 verified descendant termination. Identity-checked snapshots prevent PID-reuse
