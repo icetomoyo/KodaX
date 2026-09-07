@@ -628,3 +628,13 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留**：worktree FEATURE_219 项目列表空（建议后续 issue：createSession 持久化 canonicalRepoRoot 或查询侧按入参 root 落桶）；嵌入 delta 50ms 总线合并（=daemon 粒度，文本不变）；worker-hosted 输出静默（预存）；onScoutSuspiciousCompletion 死回调面；真实安装入口子进程 E2E 未做（模块级真实 Host harness 等价覆盖）。
 
 **下一步（27/35）**：DAG 前沿=T19（ACP，Blocked by T08✓T09✓T12✓T16✓）、T20（A2A，T08✓T16✓）、T30；T26 前置仅剩 T19/T21（T17✓T18✓T35✓）；收尾 T25/T26/T27→T15 收尾。建议 T19（解锁 T26 链）。
+
+---
+
+## 2026-09-07 T19 refined 调研地图（实施中）
+
+**现状**（src/acp_server.ts 1371 行，已大量用 runtime 面）：运行时=进程内 createKodaXRuntime({profile:'acp', sessionsDir, defaultProvider/Model})（embedded）；会话=ACP id 即 runtime id（ensureRuntimeSession 经 storage 建）、setSessionMode→sessions.updateSettings（已是 Host 写权）；prompt→runs.start({permissionBroker:'client', options:buildKodaXOptions})——options 携带 provider/model/**per-prompt effort override**/thinking/reasoningMode/**extensionRuntime 进程内实例（全局+per-session client MCP 合成）**/session.storage/context{gitRoot,executionCwd,contextTokenSnapshot}/events{onTextDelta→sendTextChunk(agent_message_chunk append 适配)、onThinkingDelta、onToolUseStart→tool_call、onToolProgress→tool_call_update、onRepoIntelligenceTrace、onError}；权限=自建桥（events.subscribe permission.requested→buffer 到 runId→handleRuntimePermissionRequest→ACP requestPermission→decision 映射 allow_once/allow_session(remember+session suggestion)/allow_always(remember+persistent)/reject）；取消=逐 activeRunId runs.abort；流式=进程内直回调（embedded 无跨界问题）。
+
+**T19 目标映射**：(1) 权限+form/url→既有 Interaction 面（client.interactions 或 view.interactions——替换自建桥；ACP decision→ClientInteractionResponse(permission) 映射参照 T17 answerClientPlaneInteraction 但 ACP 决策模型不同：allowed/remember/override）；(2) append 文本通知适配保留（连接内、声明无法表达输出替换的边界=票面要求，写注释/文档）；(3) 会话/提交经产品 face 在 extensionRuntime 实例不可跨界约束下保留 runs.start 窄接缝（同 T35 裁决）；(4) storage/extension 实例/callback 不过 IPC=维持 embedded 进程内（不强制 daemon）；(5) S1=真实 ACP 协议会话转换（先查 src/acp_server.test.ts 现有覆盖再补：创建/继续/提交/流式/权限应答/取消）。
+
+**切入点 Slice 1**：权限桥→Interaction 面（票面明确"权限与 form/url 请求交既有 Interaction"）。查 interactions face 形状（runtime.interactions.list({sessionId})/respond(requestId,response)——T17 用过；form/url=question_input/question 交互 kind？查 ClientInteraction kinds）。
