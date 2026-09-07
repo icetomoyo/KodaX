@@ -658,3 +658,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留**（票内已记）：interactions.respond spy 无法区分 client 投影 vs runtime 直连（进程内投影固有）；loadExtensions mock 修复或为防御性；良性 already-answered 记 error（无 warn 级）。
 
 **下一步（28/35）**：DAG 前沿=T20（A2A，T08✓T16✓）、T30；T26 前置剩 T21（T19✓T17✓T18✓T35✓）；T21 前置 T20+T30。建议顺序 T30→T20→T21→T26（T26 还差 T25？查票面：T26 Blocked by T15/T17/T18/T19/T21/T35→还差 T15/T21）。收尾链 T25→T26→T27、T15 收尾。
+
+---
+
+## 2026-09-07 T20 Done (29/35) — A2A 任务态从当前 Run/Interaction 映射
+
+**三代码提交**：`ae5de2c0`（删 subscribe+replay 合并与 cursor/epoch checkpoint；attachRuntimeEvents=live 订阅→缓冲事件按序→当前态快照最后落盘；task-store 删 runtimeSessionCursor/checkpoint 文件/load 合并，遗留剥离+runtime-cursors 目录尽力 GC）、`f6efdc5e`（重连 S1×2）、`8f5c292e`（评审修复）。票据 98e6743（submodule）+父指针随后。
+
+**关键设计裁决**：(1) 快照数据源=runs.get(phase)+userInputs.listPending({sessionId}) 按 runId 过滤——INPUT_REQUIRED 的 requestId/revision/kind 从当前注册表重建，不依赖事件 journal；(2) 顺序=缓冲事件先应用、快照最后落盘（快照有 change-guard 不会重复写，且不会把已 resolved 的对回退成瞬态 INPUT_REQUIRED）；(3) 终态归 finishRun（runs.await/handle.result），TERMINAL_RUN_PHASES 只列 4 个真终态；(4) unknown phase=断线≠成功→FAILED（statusState 补全全部 phase，顺带消除 1 条预存基线 tsc 错误，parity 419→415）；(5) cursor 目录 GC 在独占锁后尽力而为（Windows EPERM 不再泄漏锁）。
+
+**双轴**：Standards 初判 FAIL 1H（applyCurrentRunState await 间隙 stale record 覆盖终态——修复=await 后重读，终态或 eventSeq 变更即弃，mutation 红→绿验证）+3M（M2 缓冲后置产生瞬态回退→改快照前 drain；M3 unknown/waiting_agent/recovering phase 缺口→statusState 补全+isLiveRunPhase 统一；M4 rmSync 构造期异常泄漏锁→best-effort）；Spec PASS 0C/0H 带 M1（附件无测试证据→补 S1：data part→artifact_ref/file/user-inline/保留 filename）。
+
+**坑**：SendMessage 响应在 returnImmediately=false 时阻塞到终态（默认 maxTaskWaitMs）——mock runtime 不结算就 rpc→死锁（continuation 加 returnImmediately）；门控快照时 SendMessage 会等 runtimeEventsAttached→必须先放行再 await 响应；tasks.json 记录的 status 在 task.status 下不在根；-t 过滤匹配测试全名；mock 覆写 userInputs 必须实现完整接口（respond/dismiss 必需，否则直连 cast TS2352）；events 覆写同理要带 replay 桩。
+
+**门禁终态**：build 绿、a2a 模块 222/222、integration-cli.a2a-serve+sdk-a2a 7/7、tsc 唯一集 415（≤基线 419）。
+
+**残留**（票内已记）：continuation 消息 file part 被 continuationAnswer 丢弃（预存）；SSE 在 INPUT_REQUIRED 关闭为既有设计；restore 测试部分持久化背书（独特推导证据在 pre-attach 测试）。
+
+**下一步（29/35）**：前沿=T30（Agent 注册/协作 mutation，T12✓T16✓）；T30✓后 T21（A2A prepared serving Host 持有，T20✓+T30）→T26（还差 T15/T21）；收尾 T25→T26→T27、T15 验收（需 T25）。建议 T30→T21→T25→T26→T27→T15。
