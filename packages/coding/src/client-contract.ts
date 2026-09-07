@@ -1,5 +1,6 @@
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
 import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions, KodaXGoalState, KodaXSessionEntry } from '@kodax-ai/agent';
+import type { KodaXResult } from './types.js';
 
 export interface ClientSession {
   readonly id: string;
@@ -91,6 +92,8 @@ export interface KodaXProductClient {
     read(runId: string): Promise<ClientRunStatus>;
     /** Request a stop; accepted only means the durable Stop request was created. */
     stop(runId: string): Promise<ClientRunStopReceipt>;
+    /** Resolve when the Run reaches a terminal phase; `phase: 'unknown'` is disconnect, never success. */
+    await(runId: string): Promise<ClientRunOutcome>;
   };
   /**
    * FEATURE_298 T22 — Host-owned workflow control. `start` takes a declarative
@@ -477,6 +480,19 @@ export interface ClientRunStopReceipt {
   readonly phase: string;
 }
 
+/**
+ * Terminal facts of one Run. `result` is present only for settled runs the
+ * Host could observe; `phase: 'unknown'` means the connection ended before
+ * settlement and must never be read as success or cancellation.
+ */
+export interface ClientRunOutcome {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly phase: string;
+  readonly result?: KodaXResult;
+  readonly error?: string;
+}
+
 /** Facts of one concrete operation awaiting an approval decision. */
 export interface ClientPermissionInteractionOptions {
   readonly toolName: string;
@@ -554,6 +570,8 @@ export interface ClientSessionSettings {
   readonly autoModeClassifierModel?: string;
   readonly compactionTriggerPercent?: number;
   readonly compactionTriggerTokens?: number;
+  /** Per-run iteration fuse; unset falls back to the engine default. */
+  readonly maxIter?: number;
 }
 
 export type ClientSessionSettingsPatch = {

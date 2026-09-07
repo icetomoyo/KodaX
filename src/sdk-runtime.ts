@@ -1610,6 +1610,8 @@ export interface RuntimeSessionSettings {
   readonly compactionTriggerPercent?: number;
   /** Optional absolute auto-compaction threshold. Missing or zero is inactive. */
   readonly compactionTriggerTokens?: number;
+  /** Per-run iteration fuse; unset falls back to the engine default. */
+  readonly maxIter?: number;
 }
 
 export interface RuntimeSessionSettingsPatch {
@@ -1625,6 +1627,7 @@ export interface RuntimeSessionSettingsPatch {
   readonly autoModeClassifierModel?: string | null;
   readonly compactionTriggerPercent?: number | null;
   readonly compactionTriggerTokens?: number | null;
+  readonly maxIter?: number | null;
 }
 
 export interface RuntimeAppendNoticeInput {
@@ -20936,6 +20939,7 @@ function buildEffectiveRuntimeOptions(
   const reasoningMode = options.reasoningMode ?? settings.reasoningMode;
   const requestedAgentMode = options.agentMode ?? settings.agentMode;
   const agentMode = requestedAgentMode === "amaw" ? "ama" : requestedAgentMode;
+  const maxIter = options.maxIter ?? settings.maxIter;
   const compaction =
     options.compaction !== undefined ||
     settings.compactionTriggerPercent !== undefined ||
@@ -20958,6 +20962,7 @@ function buildEffectiveRuntimeOptions(
     ...(thinking !== undefined ? { thinking } : {}),
     ...(reasoningMode !== undefined ? { reasoningMode } : {}),
     ...(agentMode !== undefined ? { agentMode } : {}),
+    ...(maxIter !== undefined ? { maxIter } : {}),
     ...(compaction !== undefined ? { compaction } : {}),
     ...(Object.keys(context).length > 0 ? { context } : {}),
   };
@@ -21872,12 +21877,20 @@ function applySessionSettingsPatch(
   applyNullablePatch(next, "agentMode", patch.agentMode);
   applyNullableCompactionPercentPatch(next, patch.compactionTriggerPercent);
   applyNullableCompactionTokensPatch(next, patch.compactionTriggerTokens);
+  applyNullablePatch(next, "maxIter", patch.maxIter);
   return next;
 }
 
 function canonicalizeRuntimeSessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettingsPatch {
+  if (
+    patch.maxIter !== undefined &&
+    patch.maxIter !== null &&
+    !(Number.isSafeInteger(patch.maxIter) && patch.maxIter > 0)
+  ) {
+    throw new Error("maxIter must be a positive integer");
+  }
   if (
     patch.permissionMode === undefined
     || patch.permissionMode === null
@@ -22109,6 +22122,12 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
       "compactionTriggerTokens",
       Number(value.compactionTriggerTokens),
     );
+  }
+  if (
+    Number.isSafeInteger(value.maxIter) &&
+    Number(value.maxIter) > 0
+  ) {
+    setMutableSetting(settings, "maxIter", Number(value.maxIter));
   }
   return settings;
 }
@@ -22850,6 +22869,9 @@ function serializeSessionSettings(
       "compactionTriggerTokens",
       settings.compactionTriggerTokens,
     );
+  }
+  if (settings.maxIter !== undefined) {
+    setMutableSetting(result, "maxIter", settings.maxIter);
   }
   return result;
 }

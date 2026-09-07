@@ -4,11 +4,11 @@ import type { ClientConfig, ClientSessionSettings } from '@kodax-ai/coding/clien
 export function toClientSessionSettings(settings: ClientSessionSettings): ClientSessionSettings {
   const {
     provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
-    autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens,
+    autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
   } = settings;
   return {
     provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
-    autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens,
+    autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
   };
 }
 

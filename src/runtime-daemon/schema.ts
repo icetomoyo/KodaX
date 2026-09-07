@@ -1586,6 +1586,10 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
     upstreamErrorCode: { type: 'string', maxLength: 200 },
     requestId: { type: 'string', maxLength: 200 },
     retryAfterMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+    provider: { type: 'string', maxLength: 200 },
+    model: { type: 'string', maxLength: 200 },
+    requestPhase: { type: 'string', maxLength: 100 },
+    elapsedMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
     contextTokens: {
       type: 'object',
       properties: {

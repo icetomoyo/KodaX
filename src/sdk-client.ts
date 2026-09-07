@@ -118,6 +118,16 @@ export async function connectKodaXClient(
     runs: {
       read: (runId) => runtime.runs.get(runId),
       stop: (runId) => runtime.runs.abort(runId),
+      await: async (runId) => {
+        const outcome = await runtime.runs.await(runId);
+        return {
+          runId: outcome.runId,
+          sessionId: outcome.sessionId,
+          phase: outcome.phase,
+          ...(outcome.result !== undefined ? { result: outcome.result } : {}),
+          ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
+        };
+      },
     },
     interactions: {
       list: (filter) => runtime.interactions.list(filter),
