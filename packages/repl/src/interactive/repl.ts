@@ -1303,12 +1303,6 @@ Keyboard Shortcuts:
         console.log(chalk.yellow(`\n[${effortResolution.diagnostic}]`));
       }
     },
-    setThinking: (enabled: boolean) => {
-      currentConfig.thinking = enabled;
-      currentOptions.thinking = enabled;
-      currentConfig.reasoningMode = enabled ? 'auto' : 'off';
-      currentOptions.reasoningMode = currentConfig.reasoningMode;
-    },
     setEffort: (effort?: string) => {
       currentConfig.effort = effort;
       currentConfig.effortOverride = effort !== undefined;

@@ -8,7 +8,6 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import * as net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { Worker } from "node:worker_threads";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -295,292 +294,13 @@ describe("createKodaXRuntime", () => {
     });
   });
 
-  it("hosts an embedded Runtime in a disposable Worker without changing the service API", async () => {
-    const { createKodaXRuntime, KODAX_RUNTIME_SDK_CAPABILITIES } = await import(
-      "./sdk-runtime.js"
-    );
+  it("advertises the SDK capability floor constants", async () => {
+    const { KODAX_RUNTIME_SDK_CAPABILITIES } = await import("./sdk-runtime.js");
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.conversationHistory).toBe(2);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(5);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.sharedSessionSettings).toBe(2);
-    const runtime = await createKodaXRuntime({
-      mode: "embedded",
-      isolation: "worker",
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "worker-sessions"),
-      requirements: {
-        runtimeAutoModeGuardrail: 5,
-        sharedSessionSettings: 2,
-      },
-    });
+  });
 
-    expect(runtime.identity).toMatchObject({
-      mode: "embedded",
-      isolation: "worker",
-      workerThreadId: expect.any(Number),
-    });
-    expect(runtime.capabilities.skillLearningLoop).toEqual({
-      version: 1,
-      activation: "project_scoped_canary",
-      immutableDecisions: true,
-      recordGatedDiscovery: true,
-      exactUseAttribution: true,
-      rollback: true,
-    });
-    expect(runtime.capabilities.sandboxRuntime).toMatchObject({
-      version: 11,
-      genericCommandExecution: true,
-      ordinaryCallsTriggerSetup: false,
-      unavailableBehavior: "structured-no-execution",
-      permissionFallback: "normal-permission-policy",
-      delayedEffectDrainRecovery: "automatic",
-      sameBootAclRecovery: "sandbox-user-process-probe",
-      trustedTextAuthority: "host-transaction",
-      windowsShellAuthority: "native-token-job-v2",
-      commandLifetimeFilesystemLease: false,
-    });
-    expect(runtime.capabilities.runtimeAutoModeGuardrail).toMatchObject({
-      version: 5,
-      sandboxFirst: true,
-      sandboxCompletionAuthority: true,
-      hostBoundaryReviewOnly: true,
-      escalationCreatesPermission: false,
-      automaticUserPromptOnDeny: false,
-      defaultClassifierTimeoutMs: 90_000,
-      retryClassifierTimeoutMs: 180_000,
-      maxClassifierAttempts: 2,
-    });
-    expect(runtime.capabilities.runtimeAutoModeGuardrail)
-      .not.toHaveProperty("defaultSpeculativeWindowMs");
-    expect(runtime.capabilities.sharedSessionSettings).toEqual({
-      version: 2,
-      permissionModes: ["plan", "accept-edits", "auto", "full-access"],
-      legacyPermissionModeAliases: { "auto-in-project": "auto" },
-      keys: expect.arrayContaining([
-        "permissionMode",
-        "autoModeClassifierModel",
-      ]),
-    });
-    expect(runtime.capabilities.runtimeEventCoalescing).toEqual({
-      version: 1,
-    });
-    expect(runtime.capabilities.managedRunDurability).toMatchObject({
-      version: 1,
-      initialInputBeforeExecution: true,
-      completedTurnBeforeEvent: true,
-      deliveredInputBeforeEvent: true,
-      persistenceFailure: "fail_closed",
-    });
-    expect(runtime.capabilities.actorSettlementConvergence).toEqual({
-      version: 2,
-      rootFence: "fail_closed",
-      sameOwnerRepair: "automatic",
-      unknownAfterTurnQueue: true,
-      terminal: "failed",
-    });
-    expect(runtime.capabilities.conversationHistory).toEqual({
-      version: 2,
-      immutablePaging: true,
-      revisionedBoundaries: true,
-      ambiguityReporting: true,
-      topologyTransparentManagedContext: true,
-      directCloneProvenance: true,
-    });
-    const session = await runtime.sessions.create({ title: "Worker Session" });
-    await expect(runtime.sessions.list()).resolves.toEqual([
-      expect.objectContaining({ id: session.id, title: "Worker Session" }),
-    ]);
-
-    await runtime.close();
-    await expect(runtime.status.snapshot()).rejects.toThrow(
-      /Worker transport is closed/i,
-    );
-  }, 60_000);
-
-  it("cancels a Worker-owned Agent waiter at the remote dispatcher", async () => {
-    const postMessage = vi.spyOn(Worker.prototype, "postMessage");
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
-    const runtime = await createKodaXRuntime({
-      mode: "embedded",
-      isolation: "worker",
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "worker-cancel-sessions"),
-    });
-    try {
-      const session = await runtime.sessions.create({
-        sessionId: "worker-cancel-session",
-      });
-      const controller = new AbortController();
-      const waiting = runtime.agents.wait(session.id, 999_999, 30_000, {
-        signal: controller.signal,
-      });
-      controller.abort();
-
-      await expect(waiting).rejects.toMatchObject({ code: "read_cancelled" });
-      const frames = postMessage.mock.calls.map(([frame]) => frame).filter(
-        (frame): frame is {
-          readonly id: string;
-          readonly method: string;
-          readonly params?: Readonly<Record<string, unknown>>;
-        } => typeof frame === "object" && frame !== null && "method" in frame,
-      );
-      const waitFrame = frames.find((frame) => frame.method === "agents.wait");
-      expect(waitFrame).toBeDefined();
-      expect(frames).toContainEqual(expect.objectContaining({
-        method: "request.cancel",
-        params: { requestId: waitFrame?.id },
-      }));
-    } finally {
-      postMessage.mockRestore();
-      await runtime.close();
-    }
-  }, 60_000);
-
-  it("loads configured A2A inside the Worker owner for listing and dispatch", async () => {
-    let baseUrl = "";
-    const methods: string[] = [];
-    const server = createServer(async (request, response) => {
-      response.setHeader("content-type", "application/json");
-      if (request.url === "/card") {
-        response.end(
-          JSON.stringify({
-            name: "Worker A2A Agent",
-            description: "A configured Agent owned by the Runtime Worker.",
-            version: "1.0.0",
-            supportedInterfaces: [
-              {
-                url: `${baseUrl}/rpc`,
-                protocolBinding: "JSONRPC",
-                protocolVersion: "1.0",
-              },
-            ],
-            capabilities: { streaming: false },
-            defaultInputModes: ["text/plain"],
-            defaultOutputModes: ["text/plain"],
-            skills: [
-              {
-                id: "general",
-                name: "General",
-                description: "General tasks",
-                tags: [],
-              },
-            ],
-          }),
-        );
-        return;
-      }
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-        readonly id: string;
-        readonly method: string;
-      };
-      methods.push(payload.method);
-      response.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: payload.id,
-          result: {
-            message: {
-              messageId: "worker-result",
-              role: "ROLE_AGENT",
-              parts: [
-                {
-                  text: "worker A2A completed",
-                  mediaType: "text/plain",
-                },
-              ],
-            },
-          },
-        }),
-      );
-    });
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected Worker A2A test server address.");
-    }
-    baseUrl = `http://127.0.0.1:${address.port}`;
-    const configDir = path.join(tempRoot, ".kodax", "integrations");
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(
-      path.join(configDir, "a2a.json"),
-      `${JSON.stringify({
-        version: 2,
-        agents: {
-          "worker-a2a": {
-            cardUrl: `${baseUrl}/card`,
-            enabled: true,
-            effect: "read",
-          },
-        },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-
-    let runtime: KodaXRuntime | undefined;
-    try {
-      const { createKodaXRuntime } = await import("./sdk-runtime.js");
-      runtime = await createKodaXRuntime({
-        mode: "embedded",
-        isolation: "worker",
-        homeDir: tempRoot,
-        sessionsDir: path.join(tempRoot, "worker-a2a-sessions"),
-        worker: { configuredA2A: true },
-        requirements: { externalAgents: true },
-      });
-      await expect(
-        runtime.agents.listDispatchable({ actorId: "worker-a2a-test" }),
-      ).resolves.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            descriptor: expect.objectContaining({
-              agentId: "external:worker-a2a",
-            }),
-          }),
-        ]),
-      );
-
-      const session = await runtime.sessions.create({
-        sessionId: "worker-a2a-session",
-        title: "Worker A2A dispatch",
-      });
-      const started = await runtime.agents.spawn(session.id, {
-        taskName: "worker-a2a",
-        kind: "external",
-        objective: "Complete through the Worker-owned A2A plane.",
-        metadata: { agentId: "external:worker-a2a" },
-      });
-      const deadline = Date.now() + 5_000;
-      let completed = await runtime.agents.output(
-        session.id,
-        "/root/worker-a2a",
-        started.turnId,
-      );
-      while (completed.state === "accepted" || completed.state === "running") {
-        if (Date.now() >= deadline) {
-          throw new Error(`Timed out waiting for ${started.turnId}.`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        completed = await runtime.agents.output(
-          session.id,
-          "/root/worker-a2a",
-          started.turnId,
-        );
-      }
-      expect(completed).toMatchObject({
-        state: "completed",
-        output: "worker A2A completed",
-      });
-      expect(methods).toContain("SendMessage");
-    } finally {
-      await runtime?.close();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  }, 60_000);
 
   it("fails closed when a connected Runtime lacks a required capability", async () => {
     const { createKodaXRuntime } = await import("./sdk-runtime.js");
@@ -597,7 +317,6 @@ describe("createKodaXRuntime", () => {
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            hardDispose: false,
           },
         };
       },
@@ -610,9 +329,9 @@ describe("createKodaXRuntime", () => {
       createKodaXRuntime({
         mode: "daemon",
         daemonTransport: transport,
-        requirements: { hardDispose: true },
+        requirements: { externalAgents: true },
       }),
-    ).rejects.toThrow(/does not support.*hardDispose/i);
+    ).rejects.toThrow(/does not support.*externalAgents/i);
   });
 
   it("rejects a daemon with the legacy conversation history contract when v2 is required", async () => {
@@ -651,17 +370,6 @@ describe("createKodaXRuntime", () => {
         requirements: { conversationHistory: 2 },
       }),
     ).rejects.toThrow(/does not support.*conversationHistory/i);
-  });
-
-  it("fails closed when inline embedded Runtime cannot satisfy hard disposal", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
-
-    await expect(
-      createKodaXRuntime({
-        mode: "embedded",
-        requirements: { hardDispose: true },
-      }),
-    ).rejects.toThrow(/does not support.*hardDispose/i);
   });
 
   it("fails closed when a daemon lacks the required safe management contract", async () => {
@@ -1006,49 +714,6 @@ describe("createKodaXRuntime", () => {
         requirements: { runtimeAutoModeGuardrail: 2 },
       }),
     ).rejects.toThrow(/does not support.*runtimeAutoModeGuardrail/i);
-  });
-
-  it("rejects Worker-only options unless Worker isolation is selected", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
-
-    await expect(
-      createKodaXRuntime({
-        mode: "embedded",
-        worker: { shutdownTimeoutMs: 100 },
-      }),
-    ).rejects.toThrow(/worker options require.*isolation.*worker/i);
-  });
-
-  it("rejects an explicit embedded isolation mode for daemon ownership", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
-    const transport: RuntimeDaemonClientTransport = {
-      async request() {
-        return {
-          identity: {
-            runtimeId: "unused-daemon-runtime",
-            mode: "daemon",
-            profile: "default",
-            startedAt: "2026-07-10T00:00:00.000Z",
-            version: "0.7.66",
-          },
-          capabilities: {
-            ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            hardDispose: false,
-          },
-        };
-      },
-      subscribe() {
-        return { close() {} };
-      },
-    };
-
-    await expect(
-      createKodaXRuntime({
-        mode: "daemon",
-        isolation: "inline",
-        daemonTransport: transport,
-      }),
-    ).rejects.toThrow(/daemon mode.*isolation/i);
   });
 
   it("exports daemon protocol schema artifacts from the runtime SDK entrypoint", async () => {

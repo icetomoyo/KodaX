@@ -13,7 +13,6 @@ interface RuntimeConfig {
   readonly sessionRetentionDays?: number;
   readonly extensions?: readonly string[];
   readonly mcpServers?: Record<string, { readonly connect?: string }>;
-  readonly worker?: { readonly configuredA2A?: boolean };
 }
 
 interface InteractiveMainHarness {
@@ -221,11 +220,27 @@ async function importMainWithMocks(options: {
         async updateSettings() {
           return {};
         },
+        async getSettings() {
+          return { revision: 0, value: {} };
+        },
         async delete(sessionId: string) {
           runtimeDeletes.push(sessionId);
         },
       },
       runs: {
+        async acceptInput(input: unknown) {
+          runtimeStarts.push(input);
+          return { inputId: 'input-1', runId: 'run-1', sessionId: 'session-1' };
+        },
+        async getInput() {
+          return { inputId: 'input-1', state: 'delivered' };
+        },
+        async get() {
+          return { runId: 'run-1', sessionId: 'session-1', phase: 'completed' };
+        },
+        async abort() {
+          return { accepted: true };
+        },
         async start(input: unknown) {
           runtimeStarts.push(input);
           return {
@@ -317,6 +332,7 @@ async function importMainWithMocks(options: {
     })),
     dedupeExtensionPathsByEntrypoint: vi.fn(async (paths: readonly string[]) => [...paths]),
     discoverDefaultExtensions: vi.fn(async () => []),
+    discoverExtensionsInDirectory: vi.fn(async () => []),
     excludeExtensionPathsByEntrypoint: vi.fn(async (paths: readonly string[]) => [...paths]),
     registerConfiguredMcpCapabilityProvider: vi.fn(async () => {
       calls.push('register-mcp');
@@ -1080,12 +1096,7 @@ describe('CLI interactive exit lifecycle', () => {
     });
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
     expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeStarts[0]).toMatchObject({
-      sessionId: 'cli-session-1',
-      prompt: 'inspect the repo',
-      mode: 'managed_task',
-      permissionBroker: 'runtime',
-    });
+    expect(harness.runtimeStarts[0]).toMatchObject({ sessionId: 'session-1' });
     expect(harness.runManagedTask).not.toHaveBeenCalled();
     expect(harness.calls).toContain('runtime-close');
   });
@@ -1099,7 +1110,9 @@ describe('CLI interactive exit lifecycle', () => {
     await main();
 
     expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeDeletes).toEqual(['cli-session-1']);
+    expect(harness.runtimeStarts[0]).toMatchObject({ sessionId: 'session-1' });
+    // Temporary sessions are deleted by the Host at settlement, not client-side.
+    expect(harness.runtimeDeletes).toEqual([]);
     expect(harness.runManagedTask).not.toHaveBeenCalled();
   });
 
@@ -1128,61 +1141,15 @@ describe('CLI interactive exit lifecycle', () => {
     });
   });
 
-  it('creates a Worker-hosted runtime with the configured A2A plane when worker.configuredA2A is set', async () => {
-    process.argv = ['node', 'kodax', '-p', 'configured A2A task'];
+  it('ignores the retired worker.configuredA2A key and keeps the inline A2A plane', async () => {
+    process.argv = ['node', 'kodax', '-p', 'inline A2A task'];
     const { main, harness } = await importMainWithMocks({
-      config: { provider: 'mock-provider', worker: { configuredA2A: true } },
+      config: { provider: 'mock-provider', worker: { configuredA2A: true } } as never,
     });
 
     await main();
 
     expect(harness.createKodaXRuntime).toHaveBeenCalledOnce();
-    expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'embedded',
-      profile: 'default',
-      isolation: 'worker',
-      worker: { configuredA2A: true },
-    });
-    // Function-valued externalAgents cannot cross the Worker boundary; the
-    // Worker owner installs the configured A2A plane itself.
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
-  });
-
-  it.each([
-    {
-      label: 'configured MCP servers',
-      config: {
-        provider: 'mock-provider',
-        worker: { configuredA2A: true },
-        mcpServers: { reporting: { connect: 'lazy' } },
-      },
-    },
-    {
-      label: 'configured extensions',
-      config: {
-        provider: 'mock-provider',
-        worker: { configuredA2A: true },
-        extensions: ['C:/extensions/reviewer.mjs'],
-      },
-    },
-  ])('rejects Worker-hosted A2A when $label would be lost at the transport boundary', async ({
-    config,
-  }) => {
-    process.argv = ['node', 'kodax', '-p', 'preserve all configured capabilities'];
-    const { main, harness } = await importMainWithMocks({ config });
-
-    await expect(main()).rejects.toThrow(/worker\.configuredA2A.*MCP.*Extensions.*inline/i);
-    expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
-  });
-
-  it('keeps the inline external-agents plane when worker.configuredA2A is unset', async () => {
-    process.argv = ['node', 'kodax', '-p', 'inline A2A task'];
-    const { main, harness } = await importMainWithMocks({
-      config: { provider: 'mock-provider' },
-    });
-
-    await main();
-
     expect(harness.runtimeOptions[0]).toMatchObject({
       mode: 'embedded',
       externalAgents: expect.objectContaining({ factories: [] }),

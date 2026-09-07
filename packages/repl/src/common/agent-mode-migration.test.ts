@@ -29,15 +29,13 @@ afterEach(() => {
 });
 
 describe('v0.7.72 agent-mode config migration', () => {
-  it('surfaces the worker.configuredA2A opt-in from config.json', async () => {
+  it('loads config.json with only the documented keys', async () => {
     const { utils } = await loadWithConfig({
       provider: 'openai',
-      worker: { configuredA2A: true },
     });
 
     expect(utils.loadConfig()).toMatchObject({
       provider: 'openai',
-      worker: { configuredA2A: true },
     });
   });
 

@@ -9977,16 +9977,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               console.log(chalk.yellow(`\n[${effortResolution.diagnostic}]`));
             }
           },
-          setThinking: (enabled: boolean) => {
-            const reasoningMode: KodaXReasoningMode = enabled ? 'auto' : 'off';
-            setCurrentConfig((prev) => ({
-              ...prev,
-              thinking: enabled,
-              reasoningMode,
-            }));
-            currentOptionsRef.current.thinking = enabled;
-            currentOptionsRef.current.reasoningMode = reasoningMode;
-          },
           setEffort: (effort?: string) => {
             setCurrentConfig((prev) => ({
               ...prev,

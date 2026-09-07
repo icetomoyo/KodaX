@@ -188,37 +188,11 @@ describe('runtime.learning inline facade', () => {
     }
   });
 
-  it('persists notification state before a Runtime Worker hard stop', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'kodax-worker-learning-'));
-    tempDirs.push(homeDir);
-    await seedReadyCapability(homeDir);
-
-    const worker = await createKodaXRuntime({
-      homeDir,
-      isolation: 'worker',
-      clientInfo: { name: 'test', instanceId: 'worker-client' },
-    });
-    expect(worker.identity.isolation).toBe('worker');
-    expect((await worker.learning.getSnapshot()).ready).toBe(1);
-    await worker.learning.acknowledge('runtime-test-skill');
-    await worker.close();
-
-    const restarted = await createKodaXRuntime({
-      homeDir,
-      isolation: 'worker',
-      clientInfo: { name: 'test', instanceId: 'worker-client' },
-    });
-    expect((await restarted.learning.getSnapshot()).ready).toBe(0);
-    await restarted.close();
-  });
-
-  it.each(['inline', 'worker'] as const)(
-    'promotes the exact learned Skill through the public %s Runtime learning facade',
-    async (isolation) => {
-      const homeDir = await mkdtemp(join(tmpdir(), `kodax-${isolation}-learning-promote-`));
+  it('promotes the exact learned Skill through the public inline Runtime learning facade', async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-promote-'));
       tempDirs.push(homeDir);
       const seeded = await seedPromotableCapability(homeDir);
-      const runtime = await createKodaXRuntime({ homeDir, isolation });
+      const runtime = await createKodaXRuntime({ homeDir });
       const publicLearning: RuntimeLearningService = runtime.learning;
 
       await publicLearning.promote(seeded.capabilityId, 'user');
@@ -232,16 +206,13 @@ describe('runtime.learning inline facade', () => {
         'utf8',
       )).toContain(seeded.contentNeedle);
       await runtime.close();
-    },
-  );
+  });
 
-  it.each(['inline', 'worker'] as const)(
-    'rejects an unsupported promotion scope without side effects in %s mode',
-    async (isolation) => {
-      const homeDir = await mkdtemp(join(tmpdir(), `kodax-${isolation}-learning-scope-`));
+  it('rejects an unsupported promotion scope without side effects in inline mode', async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kodax-inline-learning-scope-'));
       tempDirs.push(homeDir);
       const seeded = await seedPromotableCapability(homeDir);
-      const runtime = await createKodaXRuntime({ homeDir, isolation });
+      const runtime = await createKodaXRuntime({ homeDir });
       try {
         await expect(runtime.learning.promote(
           seeded.capabilityId,

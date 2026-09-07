@@ -1061,9 +1061,11 @@ describe('runtime daemon client proxy', () => {
     await client.close();
   });
 
-  it('unsubscribes a Session observation whose response arrives after timeout', async () => {
+  it('aborts the observe handshake when its read deadline expires', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const base = fakeTransport(calls);
+    let observeSignal: AbortSignal | undefined;
+    const observeRejects: Array<{ readonly reason: unknown }> = [];
     const transport: RuntimeDaemonClientTransport = {
       ...base,
       request(method, params, control) {
@@ -1071,15 +1073,12 @@ describe('runtime daemon client proxy', () => {
           return base.request(method, params, control);
         }
         calls.push({ method, params });
+        observeSignal = control?.signal;
         return new Promise((_resolve, reject) => {
           control?.signal?.addEventListener('abort', () => {
-            reject(control.signal?.reason);
-            queueMicrotask(() => {
-              control.onLateResult?.({
-                subscriptionId: 'observe-sub-late',
-                snapshot: {},
-              });
-            });
+            const reason = control.signal?.reason;
+            observeRejects.push({ reason });
+            reject(reason);
           }, { once: true });
         });
       },
@@ -1096,6 +1095,10 @@ describe('runtime daemon client proxy', () => {
       capabilities: RUN_LIFECYCLE_CAPABILITIES,
     });
 
+    // FEATURE_298 T27 — a timed-out observe handshake aborts the underlying
+    // request (the transport turns that abort into a request.cancel so the
+    // Host frees any subscription it already created). No late-result
+    // delivery channel exists for the abandoned response.
     await expect(client.sessions.observe(
       'session-1',
       () => undefined,
@@ -1103,10 +1106,9 @@ describe('runtime daemon client proxy', () => {
     )).rejects.toMatchObject({ code: 'read_timeout' });
     await flushAsyncNotifications();
 
-    expect(calls).toContainEqual({
-      method: 'subscription.close',
-      params: { subscriptionId: 'observe-sub-late' },
-    });
+    expect(observeSignal?.aborted).toBe(true);
+    expect(observeRejects).toHaveLength(1);
+    expect(observeRejects[0]?.reason).toMatchObject({ code: 'read_timeout' });
     await client.close();
   });
 

@@ -55,7 +55,6 @@ import { build } from 'esbuild';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditRuntimeWorkerWindowsHide } from './audit-runtime-windows-hide.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -485,25 +484,6 @@ const workerResult = await build({
 const workerBytes = statSync(path.join(distDir, 'semantic-worker.js')).size;
 log(`  OK dist/semantic-worker.js (${(workerBytes / 1024).toFixed(0)} kB)`);
 
-log('Building dist/runtime-worker.js (SDK Runtime worker sidecar)...');
-const runtimeWorkerResult = await build({
-  ...commonOptions,
-  entryPoints: [path.join(repoRoot, 'src/runtime-worker/entry.ts')],
-  outfile: path.join(distDir, 'runtime-worker.js'),
-  metafile: true,
-});
-const runtimeWorkerBytes = statSync(path.join(distDir, 'runtime-worker.js')).size;
-log(`  OK dist/runtime-worker.js (${(runtimeWorkerBytes / 1024).toFixed(0)} kB)`);
-const runtimeWindowsAudit = auditRuntimeWorkerWindowsHide({
-  repoRoot,
-  metafile: runtimeWorkerResult.metafile,
-  bundlePath: path.join(distDir, 'runtime-worker.js'),
-});
-log(
-  `  OK Runtime Worker child-process audit: ${runtimeWindowsAudit.calls.length} calls, `
-  + `${runtimeWindowsAudit.exceptions.length} intentional exceptions`,
-);
-
 log('Building dist/sandbox-network-broker.js (Windows ASRT network sidecar)...');
 await build({
   ...commonOptions,
@@ -615,7 +595,6 @@ if (writeMetafile) {
     cli: cliResult.metafile,
     sdk: sdkResult.metafile,
     worker: workerResult.metafile,
-    runtimeWorker: runtimeWorkerResult.metafile,
     constructedHandlerWorker: constructedHandlerWorkerResult.metafile,
     generatedAt: new Date().toISOString(),
   };
@@ -631,10 +610,6 @@ assertNoRawAgentDynamicImport(distDir);
 log(`  OK bundle import guard: no raw ./agent.js dynamic import`);
 assertSemanticWorkerSidecar(distDir);
 log(`  OK worker sidecar guard: dist/semantic-worker.js present`);
-if (!existsSync(path.join(distDir, 'runtime-worker.js'))) {
-  throw new Error('[build-bundle] runtime-worker.js sidecar is missing.');
-}
-log(`  OK worker sidecar guard: dist/runtime-worker.js present`);
 if (!existsSync(path.join(distDir, 'sandbox-network-broker.js'))) {
   throw new Error('[build-bundle] sandbox-network-broker.js sidecar is missing.');
 }
@@ -657,7 +632,6 @@ for (const name of sdkEntryNames) {
 }
 log(`  Builtin skills: dist/builtin/`);
 log(`  Worker:         dist/semantic-worker.js`);
-log(`  Runtime worker: dist/runtime-worker.js`);
 log(`  Handler worker: dist/constructed-handler-worker.js`);
 log(`  Shared chunks:  dist/chunks/`);
 log('');

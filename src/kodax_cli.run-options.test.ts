@@ -350,60 +350,6 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
     expect(serialized).not.toContain('beforeToolExecute');
   });
 
-  it('transport-sanitizes run options for a Worker-hosted embedded runtime', () => {
-    const shaped = toPreparedRunStartOptions(
-      { mode: 'embedded', isolation: 'worker' },
-      {
-        provider: 'mock-provider',
-        extensionRuntime: { activate: async () => undefined },
-        events: {
-          beforeToolExecute: async () => true,
-          onTextDelta: () => undefined,
-          workflowCorrelation: { runId: 'workflow-1' },
-        },
-        session: {
-          id: 'session-1',
-          storage: { load: async () => null },
-          initialMessages: [{ role: 'user', content: 'hello' }],
-        },
-        context: {
-          executionCwd: 'C:/workspace',
-          skillInvocation: {
-            name: 'transport-skill',
-            path: 'C:/skills/transport-skill/SKILL.md',
-            expandedContent: '<skill name="transport-skill">test</skill>',
-            runtimePolicy: {},
-          },
-          memoryIdentity: {
-            configHome: 'C:/host-home',
-            tenantId: 'host-tenant',
-            agentId: 'host-agent',
-            projectId: 'host-project',
-            sessionId: 'host-session',
-          },
-        },
-      } as unknown as KodaXOptions,
-    );
-
-    expect(shaped).toMatchObject({
-      provider: 'mock-provider',
-      session: { id: 'session-1' },
-      context: {
-        executionCwd: 'C:/workspace',
-        skillInvocation: {
-          runtimePolicy: { enforceAtRuntime: true },
-        },
-      },
-      events: { workflowCorrelation: { runId: 'workflow-1' } },
-    });
-    const serialized = JSON.stringify(shaped);
-    expect(serialized).not.toContain('beforeToolExecute');
-    expect(serialized).not.toContain('onTextDelta');
-    expect(serialized).not.toContain('storage');
-    expect(serialized).not.toContain('memoryIdentity');
-    expect((shaped as { extensionRuntime?: unknown }).extensionRuntime).toBeUndefined();
-  });
-
   it('keeps run options intact for an inline embedded runtime', () => {
     const beforeToolExecute = vi.fn(async () => true);
     const extensionRuntime = { activate: async () => undefined };

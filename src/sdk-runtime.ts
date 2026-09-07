@@ -347,8 +347,6 @@ export type {
   RuntimeDaemonShutdownVerificationInput,
   RuntimeDaemonShutdownVerificationOwner,
 } from "./runtime-daemon/shutdown-verifier.js";
-import { createRuntimeWorkerTransport } from "./runtime-worker/transport.js";
-import type { RuntimeWorkerOptions } from "./runtime-worker/protocol.js";
 import {
   createRuntimeDaemonSocketClientTransport,
   defaultRuntimeDaemonEndpoint,
@@ -458,11 +456,7 @@ export type {
 } from "@kodax-ai/coding";
 
 export type KodaXRuntimeMode = "embedded" | "daemon";
-export type KodaXRuntimeIsolation = "inline" | "worker" | "process";
-export type {
-  RuntimeWorkerOptions,
-  RuntimeWorkerResourceLimits,
-} from "./runtime-worker/protocol.js";
+export type KodaXRuntimeIsolation = "inline" | "process";
 
 export interface RuntimeInlineOwnerHandle {
   readonly profile: string;
@@ -568,17 +562,6 @@ export function acquireKodaXInlineOwner(
       closed = true;
     },
   };
-}
-
-export function getKodaXRuntimeOwnerPolicy(
-  input: {
-    readonly homeDir?: string;
-    readonly profile?: string;
-  } = {},
-): RuntimeOwnerPolicyState {
-  return readRuntimeOwnerPolicy(
-    resolveRuntimeDaemonClientPaths(input.homeDir, input.profile).paths,
-  );
 }
 
 export function getKodaXRuntimeOwnerState(
@@ -712,7 +695,6 @@ export interface RuntimeIdentity {
   readonly startedAt: string;
   readonly version: string;
   readonly isolation?: KodaXRuntimeIsolation;
-  readonly workerThreadId?: number;
 }
 
 /** Client-supplied metadata; display fields are not authenticated identity. */
@@ -792,10 +774,6 @@ export interface RuntimeExternalAgentsOptions {
 export interface CreateKodaXRuntimeOptions {
   /** Runtime ownership form. Defaults to a caller-owned embedded Runtime. */
   readonly mode?: KodaXRuntimeMode;
-  /** Embedded-only execution location. Daemon mode selects host isolation internally. */
-  readonly isolation?: "inline" | "worker";
-  /** Requires `isolation: 'worker'`; rejected instead of being silently ignored. */
-  readonly worker?: RuntimeWorkerOptions;
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
   readonly homeDir?: string;
   readonly profile?: string;
@@ -825,7 +803,7 @@ export interface CreateKodaXRuntimeOptions {
   readonly clientInfo?: RuntimeClientInfo;
   readonly capabilities?: RuntimeClientCapabilities;
   readonly requirements?: RuntimeCapabilityRequirements;
-  /** Inline host injection. Functions never cross daemon or Worker transport. */
+  /** Inline host injection. Functions never cross the daemon transport. */
   readonly externalAgents?: RuntimeExternalAgentsOptions;
   /** Trusted host-owned Exec Policy inputs. Detached daemon mode accepts them only for a new auto-started owner. */
   readonly execPolicy?: RuntimeExecPolicyOptions;
@@ -912,8 +890,6 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
 } as const);
 
 export interface RuntimeCapabilityRequirements {
-  /** Reject inline and shared daemon hosts; only a Worker-hosted Runtime satisfies this. */
-  readonly hardDispose?: boolean;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
   readonly externalAgents?: boolean;
   /** Require owner/revision-fenced external Agent registration administration. */
@@ -1022,8 +998,8 @@ export interface KodaXRuntime {
   readonly admin: RuntimeAdminService;
   readonly agents: RuntimeAgentService;
   /**
-   * Release this facade. Inline closes its private Runtime, Worker mode shuts
-   * down and terminates its Worker, and daemon mode only detaches this client.
+   * Release this facade. Inline closes its private Runtime and daemon mode
+   * only detaches this client.
    */
   close(): Promise<void>;
 }
@@ -4012,24 +3988,7 @@ async function createKodaXRuntimeInternal(
   ) {
     throw new Error("Invalid shared daemon Runtime owner identity.");
   }
-  if (
-    options.isolation !== undefined &&
-    options.isolation !== "inline" &&
-    options.isolation !== "worker"
-  ) {
-    throw new Error(
-      `Unsupported KodaX Runtime isolation: ${String(options.isolation)}`,
-    );
-  }
   if (options.mode === "daemon") {
-    if (options.isolation !== undefined) {
-      throw new Error(
-        "Daemon mode selects its isolation internally and does not accept an isolation option.",
-      );
-    }
-    if (options.worker !== undefined) {
-      throw new Error("Runtime Worker options require isolation: 'worker'.");
-    }
     if (options.externalAgents !== undefined) {
       return createInProcessExternalAgentDaemon(options);
     }
@@ -4093,22 +4052,10 @@ async function createKodaXRuntimeInternal(
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
   }
-  if (options.worker !== undefined && options.isolation !== "worker") {
-    throw new Error("Runtime Worker options require isolation: 'worker'.");
-  }
-  if (options.isolation === "worker" && options.externalAgents !== undefined) {
-    throw new Error(
-      "External agent factories must be installed inside the Runtime Worker host; function injection cannot cross the Worker boundary.",
-    );
-  }
-  if (options.isolation === "worker") {
-    return createWorkerHostedKodaXRuntime(options);
-  }
   // Single capability source for both the requirement gate and the public facade
   // metadata: what the embedded Runtime asserts it can satisfy is exactly what it
   // advertises on `runtime.capabilities`.
   const embeddedCapabilities: Record<string, unknown> = {
-    hardDispose: false,
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
     interruptInput: { version: 1, availability: "per_run" },
@@ -5176,108 +5123,11 @@ async function createInProcessExternalAgentDaemon(
   }
 }
 
-async function createWorkerHostedKodaXRuntime(
-  options: CreateKodaXRuntimeOptions,
-): Promise<KodaXRuntime> {
-  const shutdownTimeoutMs = options.worker?.shutdownTimeoutMs ?? 2_000;
-  if (!Number.isFinite(shutdownTimeoutMs) || shutdownTimeoutMs <= 0) {
-    throw new Error(
-      "Runtime Worker shutdownTimeoutMs must be a positive finite number.",
-    );
-  }
-  const handle = createRuntimeWorkerTransport(
-    {
-      homeDir: options.homeDir,
-      profile: options.profile,
-      sessionsDir: options.sessionsDir,
-      defaultProvider: options.defaultProvider,
-      defaultModel: options.defaultModel,
-      permissionTimeoutMs: options.permissionTimeoutMs,
-      userInputTimeoutMs: options.userInputTimeoutMs,
-      configuredA2A: options.worker?.configuredA2A,
-      execPolicy: options.execPolicy,
-      autoReview: options.autoReview,
-    },
-    options.worker,
-  );
-  try {
-    const initialized = requireRuntimeRecord(
-      await handle.transport.request("initialize", {
-        profile: options.profile ?? "default",
-        ...(options.clientInfo !== undefined
-          ? { clientInfo: options.clientInfo }
-          : {}),
-        ...(options.capabilities !== undefined
-          ? { capabilities: options.capabilities }
-          : {}),
-      }),
-    );
-    const identity = parseRuntimeIdentity(initialized.identity);
-    assertRuntimeCapabilities(initialized.capabilities, {
-      ...options.requirements,
-      hardDispose: true,
-    });
-    const client = createRuntimeDaemonClient({
-      identity: {
-        ...identity,
-        mode: "embedded",
-        isolation: "worker",
-        workerThreadId: handle.threadId,
-      },
-      transport: handle.transport,
-      capabilities: requireRuntimeRecord(initialized.capabilities),
-    });
-    let terminated = false;
-    let closeAttempt: Promise<void> | undefined;
-    const closeWorkerRuntime = (): Promise<void> => {
-      if (terminated) return Promise.resolve();
-      if (closeAttempt) return closeAttempt;
-      const attempt = (async (): Promise<void> => {
-        let shutdownError: unknown;
-        try {
-          await settleWithin(
-            handle.transport.request("runtime.shutdown"),
-            shutdownTimeoutMs,
-          );
-        } catch (error: unknown) {
-          shutdownError = error;
-        }
-        try {
-          await handle.terminate();
-          terminated = true;
-        } catch (terminationError: unknown) {
-          if (shutdownError !== undefined) {
-            throw new AggregateError(
-              [shutdownError, terminationError],
-              "Runtime Worker shutdown and forced termination both failed.",
-            );
-          }
-          throw terminationError;
-        }
-        if (shutdownError !== undefined) throw shutdownError;
-      })();
-      closeAttempt = attempt;
-      void attempt.finally(() => {
-        if (closeAttempt === attempt) closeAttempt = undefined;
-      }).catch(() => undefined);
-      return attempt;
-    };
-    return {
-      ...client,
-      close: closeWorkerRuntime,
-    };
-  } catch (error: unknown) {
-    await handle.terminate();
-    throw error;
-  }
-}
-
 function assertRuntimeCapabilities(
   value: unknown,
   requirements: RuntimeCapabilityRequirements | undefined,
 ): void {
   if (
-    !requirements?.hardDispose &&
     !requirements?.externalAgents &&
     requirements?.externalAgentAdmin === undefined &&
     requirements?.a2aConfigReconciler === undefined &&
@@ -5320,11 +5170,6 @@ function assertRuntimeCapabilities(
   )
     return;
   const capabilities = requireRuntimeRecord(value);
-  if (requirements.hardDispose && capabilities.hardDispose !== true) {
-    throw new Error(
-      "Runtime does not support the required hardDispose capability.",
-    );
-  }
   if (requirements.externalAgents && capabilities.externalAgents !== true) {
     throw new Error(
       "Runtime does not support the required externalAgents capability.",
@@ -5390,32 +5235,6 @@ function assertVersionedRuntimeCapability(
     throw new Error(
       `Runtime does not support the required ${name} capability.`,
     );
-  }
-}
-
-async function settleWithin(
-  promise: Promise<unknown>,
-  timeoutMs: number,
-): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `Runtime Worker shutdown timed out after ${timeoutMs}ms.`,
-              ),
-            ),
-          timeoutMs,
-        );
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -20821,12 +20640,8 @@ function parseRuntimeIdentity(value: unknown): RuntimeIdentity {
     startedAt: record.startedAt,
     version: record.version,
     ...(record.isolation === "inline" ||
-    record.isolation === "worker" ||
     record.isolation === "process"
       ? { isolation: record.isolation }
-      : {}),
-    ...(typeof record.workerThreadId === "number"
-      ? { workerThreadId: record.workerThreadId }
       : {}),
   };
 }

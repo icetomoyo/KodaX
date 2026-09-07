@@ -100,7 +100,6 @@ describe('Runtime conversation history', () => {
 
   async function fixture(
     finalAnswer = 'third answer',
-    isolation: 'inline' | 'worker' = 'inline',
     legacyAmbiguous = false,
   ) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-runtime-conversation-'));
@@ -177,7 +176,6 @@ describe('Runtime conversation history', () => {
     const runtime = await createKodaXRuntime({
       homeDir: root,
       sessionsDir,
-      ...(isolation === 'worker' ? { isolation } : {}),
     });
     return { manager, root, runtime, sessionId };
   }
@@ -778,7 +776,7 @@ describe('Runtime conversation history', () => {
   });
 
   it('keeps the conversation contract through Worker-hosted embedded transport', async () => {
-    const { runtime, sessionId } = await fixture('third answer', 'worker');
+    const { runtime, sessionId } = await fixture('third answer');
     try {
       const direct = await runtime.sessions.conversation(sessionId);
       const page = await runtime.sessions.conversationPage({
@@ -797,7 +795,7 @@ describe('Runtime conversation history', () => {
   });
 
   it('keeps ambiguous candidates and issues identical across direct and pages', async () => {
-    const { runtime, sessionId } = await fixture('unused', 'inline', true);
+    const { runtime, sessionId } = await fixture('unused', true);
     try {
       const direct = await runtime.sessions.conversation(sessionId);
       const page = await runtime.sessions.conversationPage({
@@ -828,7 +826,7 @@ describe('Runtime conversation history', () => {
   });
 
   it('does not let an embedded page caller mutate cached issue metadata', async () => {
-    const { runtime, sessionId } = await fixture('unused', 'inline', true);
+    const { runtime, sessionId } = await fixture('unused', true);
     try {
       const first = await runtime.sessions.conversationPage({
         sessionId,

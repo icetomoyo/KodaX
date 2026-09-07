@@ -16,17 +16,6 @@
   // Interactive Runtime hosting: "embedded" (this process) or "daemon".
   // "runtimeMode": "embedded",
 
-  // Worker-hosted embedded Runtime options. `configuredA2A` lets a
-  // Worker-hosted embedded Runtime load and reconcile
-  // ~/.kodax/integrations/a2a.json inside the Worker owner, so configured
-  // outbound A2A Agents appear as `external:<name>` and can be dispatched
-  // with spawn_agent. Default inline (non-Worker) CLI sessions already load
-  // the configured A2A plane automatically; this key switches the embedded
-  // session to a Worker-hosted Runtime and loads the plane in that mode.
-  // "worker": {
-  //   "configuredA2A": true
-  // },
-
   // Native model reasoning. `effort` is the preferred explicit depth;
   // `reasoningCeiling` is the session ceiling. `reasoningMode` and `thinking`
   // remain accepted for backward compatibility.

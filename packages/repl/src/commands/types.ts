@@ -189,7 +189,6 @@ export interface CommandCallbacks {
   printHistory: () => void;
   switchProvider?: (provider: string, model?: string) => void;
   setEffort?: (effort?: string) => void;
-  setThinking?: (enabled: boolean) => void;
   setReasoningMode?: (mode: KodaXReasoningMode) => void;
   setAgentMode?: (mode: KodaXAgentMode) => void;
   setPermissionMode?: (mode: PermissionMode) => void | Promise<void>;

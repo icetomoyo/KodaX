@@ -658,7 +658,6 @@ export function toRuntimeOwnedInteractiveOptions(
   options: KodaXOptions,
   sanitization: {
     readonly omitLegacyBeforeToolExecute?: boolean;
-    readonly omitExtensionRuntime?: boolean;
   } = {},
 ): KodaXOptions {
   const guardrails = options.guardrails?.filter(
@@ -669,9 +668,6 @@ export function toRuntimeOwnedInteractiveOptions(
     : options.events;
   return {
     ...options,
-    ...(sanitization.omitExtensionRuntime
-      ? { extensionRuntime: undefined }
-      : {}),
     ...(guardrails !== undefined
       ? { guardrails: guardrails.length > 0 ? guardrails : undefined }
       : {}),
@@ -747,9 +743,7 @@ export function toPreparedRunStartOptions(
   identity: Pick<KodaXRuntime['identity'], 'mode' | 'isolation'>,
   options: KodaXOptions,
 ): RuntimeKodaXOptions | KodaXOptions {
-  const transportIsolated =
-    identity.mode === 'daemon' || identity.isolation === 'worker';
-  const workerHosted = identity.isolation === 'worker';
+  const transportIsolated = identity.mode === 'daemon';
   const invocationPolicy = options.context?.skillInvocation?.runtimePolicy;
   const policyOptions: KodaXOptions = transportIsolated && invocationPolicy
     ? {
@@ -764,11 +758,9 @@ export function toPreparedRunStartOptions(
       }
     : options;
   const runtimeOptions = toRuntimeOwnedInteractiveOptions(policyOptions, {
-    // Worker isolation strips callbacks the outer CLI has already
-    // rejected; daemon mode keeps them for loud validation below.
+    // Daemon transport keeps callbacks for loud validation below.
     omitLegacyBeforeToolExecute:
-      workerHosted || (transportIsolated && invocationPolicy !== undefined),
-    omitExtensionRuntime: workerHosted,
+      transportIsolated && invocationPolicy !== undefined,
   });
   return transportIsolated
     ? toDaemonRuntimeRunOptions(runtimeOptions)
@@ -4913,9 +4905,6 @@ complete -c kodax -l version -d 'Show version'`);
     process.env.KODAX_RUNTIME_MODE,
     configWithExtensions.runtimeMode,
   );
-  const workerHostedEmbedded =
-    selectedRuntimeMode === 'embedded'
-    && config.worker?.configuredA2A === true;
   const sessionFlags = normalizeCliSessionFlags(opts);
   // -y/--auto is kept for backward compatibility but has no effect in CLI.
   const options: CliOptions = {
@@ -4949,14 +4938,11 @@ complete -c kodax -l version -d 'Show version'`);
   const getCliRuntime = async (): Promise<KodaXRuntime> => {
     if (cliRuntime !== undefined) return cliRuntime;
     const mode = options.runtimeMode ?? 'embedded';
-    // `worker.configuredA2A` opts a Worker-hosted embedded Runtime into the
-    // configured A2A plane: the Worker owner loads and reconciles
-    // ~/.kodax/integrations/a2a.json inside the Worker, installing the full
-    // list/describe/preflight and external Actor dispatch surface there.
-    // Function-valued externalAgents cannot cross the Worker boundary, so the
-    // inline parent-side integration is skipped in that mode.
+    // Embedded CLI sessions load and reconcile
+    // ~/.kodax/integrations/a2a.json in this process, installing the full
+    // list/describe/preflight and external Actor dispatch surface.
     const a2aIntegration =
-      mode === 'embedded' && !workerHostedEmbedded
+      mode === 'embedded'
         ? createConfiguredA2ARuntimeIntegration({
             configHome: KODAX_DIR,
             onEvent: integrationEvents.onEvent,
@@ -4978,9 +4964,6 @@ complete -c kodax -l version -d 'Show version'`);
         : {}),
       defaultProvider: options.provider,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-      ...(workerHostedEmbedded
-        ? { isolation: 'worker', worker: { configuredA2A: true } }
-        : {}),
       ...(a2aIntegration
         ? { externalAgents: a2aIntegration.runtimeOptions }
         : {}),
@@ -5157,20 +5140,7 @@ complete -c kodax -l version -d 'Show version'`);
           'Add the extension to the daemon profile config or use --runtime-mode embedded.',
       );
     }
-    if (
-      workerHostedEmbedded
-      && (
-        activeExtensions.length > 0
-        || Object.keys(configWithExtensions.mcpServers ?? {}).length > 0
-      )
-    ) {
-      throw new Error(
-        'worker.configuredA2A cannot preserve configured MCP servers or Extensions ' +
-          'across the Runtime Worker boundary. Remove worker.configuredA2A to use ' +
-          'the default inline Runtime, which already loads the configured A2A plane.',
-      );
-    }
-    if (selectedRuntimeMode !== 'daemon' && !workerHostedEmbedded) {
+    if (selectedRuntimeMode !== 'daemon') {
       extensionRuntime = createExtensionRuntime({ config });
       // FEATURE_222 — expose the workspace as MCP roots, and (interactive mode)
       // serve elicitation through the REPL's live ask-user dialogs. In print /

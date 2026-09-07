@@ -128,7 +128,6 @@ export interface RuntimeDaemonClientTransport {
 
 export interface RuntimeDaemonRequestControl {
   readonly signal?: AbortSignal;
-  readonly onLateResult?: (value: unknown) => void;
 }
 
 /** Factual state for one daemon connection; disconnected does not imply daemon crash. */
@@ -266,7 +265,6 @@ export function createRuntimeDaemonClient(
     method: RuntimeDaemonMethod,
     params: Readonly<Record<string, unknown>>,
     readOptions?: RuntimeReadOptions,
-    onLateResult?: (value: unknown) => void,
   ): Promise<unknown> => {
     try {
       validateRuntimeDaemonReadOptions(readOptions);
@@ -280,22 +278,6 @@ export function createRuntimeDaemonClient(
       return Promise.reject(error);
     }
     const controller = new AbortController();
-    let abandoned = false;
-    let lateResultDelivered = false;
-    const deliverLateResult = (value: unknown): void => {
-      if (lateResultDelivered) return;
-      lateResultDelivered = true;
-      try {
-        onLateResult?.(value);
-      } catch (error: unknown) {
-        emitKodaXDiagnostic({
-          source: 'runtime.daemon.client',
-          level: 'warn',
-          message: 'Runtime daemon late-result cleanup failed.',
-          detail: error,
-        });
-      }
-    };
     const operation = request(method, {
       ...params,
       ...(readOptions?.timeoutMs !== undefined
@@ -303,20 +285,8 @@ export function createRuntimeDaemonClient(
         : {}),
     }, {
       signal: controller.signal,
-      ...(onLateResult !== undefined
-        ? { onLateResult: deliverLateResult }
-        : {}),
     });
-    if (onLateResult !== undefined) {
-      void operation.then(
-        (value) => {
-          if (abandoned) deliverLateResult(value);
-        },
-        () => undefined,
-      );
-    }
     return raceRuntimeDaemonRead(operation, readOptions, (error) => {
-      abandoned = true;
       controller.abort(error);
     });
   };
@@ -1693,7 +1663,6 @@ async function observeDaemonSession(
     method: RuntimeDaemonMethod,
     params: Readonly<Record<string, unknown>>,
     options?: RuntimeReadOptions,
-    onLateResult?: (value: unknown) => void,
   ) => Promise<unknown>,
   sessionId: string,
   listener: RuntimeEventListener,
@@ -1872,37 +1841,11 @@ async function observeDaemonSession(
       'daemon',
     );
   });
-  const unsubscribeLateObservation = (value: unknown): void => {
-    try {
-      const subscriptionId = requireStringField(
-        requireRecord(value),
-        'subscriptionId',
-      );
-      void request('subscription.close', { subscriptionId }).catch(
-        (error: unknown) => {
-          emitKodaXDiagnostic({
-            source: 'runtime.daemon.client',
-            level: 'warn',
-            message: 'Failed to unsubscribe a late Session observation.',
-            detail: error,
-          });
-        },
-      );
-    } catch (error: unknown) {
-      emitKodaXDiagnostic({
-        source: 'runtime.daemon.client',
-        level: 'warn',
-        message: 'Ignored an invalid late Session observation response.',
-        detail: error,
-      });
-    }
-  };
   try {
     const result = requireRecord(await request(
       'session.observe',
       { sessionId },
       readOptions,
-      unsubscribeLateObservation,
     ));
     remoteSubscriptionId = requireStringField(result, 'subscriptionId');
     if (bufferOverflowed) {

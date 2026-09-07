@@ -62,7 +62,6 @@ export interface RuntimeDaemonSocketClientTransportOptions {
 }
 
 export const RUNTIME_DAEMON_MAX_FRAME_BYTES = 8 * 1024 * 1024;
-const RUNTIME_DAEMON_LATE_RESULT_RETENTION_MS = 30_000;
 
 export class RuntimeDaemonTransportError extends Error {
   constructor(
@@ -245,23 +244,6 @@ export async function createRuntimeDaemonSocketClientTransport(
     readonly reject: (error: Error) => void;
     readonly cleanup: () => void;
   }>();
-  const lateResults = new Map<string, {
-    readonly deliver: (value: unknown) => void;
-    readonly expiry: ReturnType<typeof setTimeout>;
-  }>();
-  const removeLateResult = (id: string): ((value: unknown) => void) | undefined => {
-    const retained = lateResults.get(id);
-    if (retained === undefined) return undefined;
-    lateResults.delete(id);
-    clearTimeout(retained.expiry);
-    return retained.deliver;
-  };
-  const clearLateResults = (): void => {
-    for (const retained of lateResults.values()) {
-      clearTimeout(retained.expiry);
-    }
-    lateResults.clear();
-  };
   let supportsRequestLifecycle = false;
   const sendRequestLifecycleFrame = (
     method: 'request.cancel' | 'request.ack',
@@ -289,20 +271,12 @@ export async function createRuntimeDaemonSocketClientTransport(
         item.resolve(frame.result);
         return;
       }
-      const deliverLateResult = removeLateResult(frame.id);
+      // A result for a request this side no longer tracks means its reader
+      // already abandoned it; the hygiene cancel lets the server free the
+      // in-flight record and any subscriptions it created. The result itself
+      // is dropped — request lifecycle frames are transport control only.
       if (frame.id.startsWith('req_')) {
         sendRequestLifecycleFrame('request.cancel', frame.id);
-      }
-      if (deliverLateResult === undefined) return;
-      try {
-        deliverLateResult(frame.result);
-      } catch (error: unknown) {
-        emitKodaXDiagnostic({
-          source: 'runtime.daemon.transport',
-          level: 'warn',
-          message: 'Runtime daemon late-result handler failed.',
-          detail: error,
-        });
       }
       return;
     }
@@ -317,9 +291,7 @@ export async function createRuntimeDaemonSocketClientTransport(
           frame.error.code,
           frame.error.data,
         ));
-        return;
       }
-      removeLateResult(frame.id);
       return;
     }
     if (isRuntimeDaemonNotification(frame)) {
@@ -350,7 +322,6 @@ export async function createRuntimeDaemonSocketClientTransport(
         normalized,
       );
       rejectPending(pending, disconnected);
-      clearLateResults();
       socket.destroy(normalized);
     }
   });
@@ -362,13 +333,11 @@ export async function createRuntimeDaemonSocketClientTransport(
       true,
     );
     rejectPending(pending, error);
-    clearLateResults();
   });
   socket.on('error', (error) => {
     closed = true;
     const disconnected = disconnect('transport_error', error.message, true, error);
     rejectPending(pending, disconnected);
-    clearLateResults();
   });
 
   return {
@@ -414,16 +383,6 @@ export async function createRuntimeDaemonSocketClientTransport(
             cleanup();
             if (sent && !socket.destroyed) {
               sendRequestLifecycleFrame('request.cancel', id);
-            }
-            if (control.onLateResult !== undefined) {
-              const expiry = setTimeout(() => {
-                lateResults.delete(id);
-              }, RUNTIME_DAEMON_LATE_RESULT_RETENTION_MS);
-              expiry.unref?.();
-              lateResults.set(id, {
-                deliver: control.onLateResult,
-                expiry,
-              });
             }
             reject(normalizeTransportAbortReason(control.signal?.reason));
           };
@@ -471,7 +430,6 @@ export async function createRuntimeDaemonSocketClientTransport(
         socket.end();
         socket.destroy();
         rejectPending(pending, error);
-        clearLateResults();
       }
       await socketClosed;
       lifecycleListeners.clear();

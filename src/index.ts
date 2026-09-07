@@ -32,7 +32,6 @@ export {
   acquireKodaXInlineOwner,
   connectKodaXRuntime,
   enableKodaXDaemonOwner,
-  getKodaXRuntimeOwnerPolicy,
   getKodaXRuntimeOwnerState,
   handleRuntimePermissionRequest,
   KODAX_RUNTIME_SDK_CAPABILITIES,

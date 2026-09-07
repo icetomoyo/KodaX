@@ -95,7 +95,6 @@ describe('GitHub release workflow', () => {
     for (const required of [
       'provider-capabilities.json',
       'semantic-worker.js',
-      'runtime-worker.js',
       'constructed-handler-worker.js',
     ]) {
       expect(packageScript).toContain(required);

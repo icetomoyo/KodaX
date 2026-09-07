@@ -144,7 +144,7 @@ describe('runtime daemon transport', () => {
     expect(notifications[0]).toMatchObject({ method: 'event' });
   });
 
-  it('removes cancelled request ids while still handling a bounded late result', async () => {
+  it('sends request.cancel for aborted requests and drops their late results', async () => {
     const endpoint = await makeTestEndpoint();
     let requestId: string | undefined;
     const cancelledRequestIds: string[] = [];
@@ -199,15 +199,9 @@ describe('runtime daemon transport', () => {
     });
     await transport.request('initialize', {});
     const controller = new AbortController();
-    const lateResults: unknown[] = [];
-    const pending = transport.request(
-      'daemon.status',
-      undefined,
-      {
-        signal: controller.signal,
-        onLateResult: (value: unknown) => lateResults.push(value),
-      },
-    );
+    const pending = transport.request('daemon.status', undefined, {
+      signal: controller.signal,
+    });
     await waitFor(() => requestId !== undefined && accepted !== undefined);
 
     const cancelled = Object.assign(new Error('cancelled by test'), {
@@ -217,47 +211,17 @@ describe('runtime daemon transport', () => {
     await expect(pending).rejects.toBe(cancelled);
     await waitFor(() => cancelledRequestIds.length === 1);
     expect(cancelledRequestIds).toEqual([requestId]);
+
+    // A success response that arrives after its reader abandoned the request
+    // is transport noise: the hygiene request.cancel lets the server free the
+    // in-flight record, and the result itself is dropped — there is no
+    // retained delivery and no pending-read rejection.
     accepted!.write(`${JSON.stringify(createRuntimeDaemonSuccessResponse(
       requestId!,
       { status: 'late' },
     ))}\n`);
-    await waitFor(() => lateResults.length === 1);
-
-    expect(lateResults).toEqual([{ status: 'late' }]);
-
-    requestId = undefined;
-    const expiredController = new AbortController();
-    const expiredPending = transport.request(
-      'daemon.status',
-      undefined,
-      {
-        signal: expiredController.signal,
-        onLateResult: (value: unknown) => lateResults.push(value),
-      },
-    );
-    await waitFor(() => requestId !== undefined);
-    const expiredRequestId = requestId!;
-    const cancellationsBeforeExpiry = cancelledRequestIds.length;
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      expiredController.abort(cancelled);
-      await expect(expiredPending).rejects.toBe(cancelled);
-      await vi.advanceTimersByTimeAsync(30_001);
-    } finally {
-      vi.useRealTimers();
-    }
-    accepted!.write(`${JSON.stringify(createRuntimeDaemonSuccessResponse(
-      expiredRequestId,
-      { status: 'expired-late' },
-    ))}\n`);
-    await waitFor(
-      () => cancelledRequestIds.length >= cancellationsBeforeExpiry + 2,
-    );
-
-    expect(lateResults).toEqual([{ status: 'late' }]);
-    expect(
-      cancelledRequestIds.filter((id) => id === expiredRequestId),
-    ).toHaveLength(2);
+    await waitFor(() => cancelledRequestIds.length === 2);
+    expect(cancelledRequestIds[1]).toBe(requestId);
   });
 
   it('rejects daemon error responses and pending requests when closed', async () => {

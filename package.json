@@ -210,7 +210,6 @@
     "dist/chunks",
     "dist/provider-capabilities.json",
     "dist/semantic-worker.js",
-    "dist/runtime-worker.js",
     "dist/constructed-handler-worker.js",
     "dist/types-chunks",
     "dist/native",

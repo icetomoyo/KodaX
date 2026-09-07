@@ -351,10 +351,9 @@ describe("handleRuntimePermissionRequest", () => {
 });
 
 describe("Runtime user-input timeout validation", () => {
-  it("rejects invalid values before embedded, worker, or daemon startup", async () => {
+  it("rejects invalid values before embedded or daemon startup", async () => {
     const modes: readonly CreateKodaXRuntimeOptions[] = [
       {},
-      { isolation: "worker" },
       { mode: "daemon", autoStartDaemon: false },
     ];
     const invalidTimeouts = [

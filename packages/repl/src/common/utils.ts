@@ -1067,16 +1067,6 @@ export function loadConfig(): {
   workflow?: {
     maxConcurrency?: number;
   };
-  /**
-   * Worker-hosted embedded Runtime options. `configuredA2A` lets a
-   * Worker-hosted embedded Runtime load and reconcile
-   * `<homeDir>/.kodax/integrations/a2a.json` inside the Worker owner,
-   * installing the full list/describe/preflight and external Actor dispatch
-   * surface so configured A2A Agents appear as `external:<name>`.
-   */
-  worker?: {
-    configuredA2A?: boolean;
-  };
 } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
@@ -1124,9 +1114,6 @@ export function loadConfig(): {
           maxConcurrency?: number;
         };
         sandbox?: unknown;
-        worker?: {
-          configuredA2A?: boolean;
-        };
       };
       const migrated = migrateLegacyAgentModeConfig(parsed);
       // FEATURE_078: collapse `reasoningCeiling` (preferred) onto

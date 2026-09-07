@@ -10,7 +10,6 @@
  *                          packages/agent/dist/capabilities/skills/builtin/)
  *     provider-capabilities.json
  *     semantic-worker.js
- *     runtime-worker.js
  *     constructed-handler-worker.js
  *
  * Usage:
@@ -52,7 +51,6 @@ import { parseArgs } from 'node:util';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY = join(ROOT, 'dist', 'kodax_bootstrap.js');
 const WORKER_SIDECAR = join(ROOT, 'dist', 'semantic-worker.js');
-const RUNTIME_WORKER_SIDECAR = join(ROOT, 'dist', 'runtime-worker.js');
 const HANDLER_WORKER_SIDECAR = join(ROOT, 'dist', 'constructed-handler-worker.js');
 // Post-FEATURE_194 (v0.7.43) — `@kodax-ai/skills` was inlined into
 // `packages/agent/src/capabilities/skills/`; `copy:builtin` workspace
@@ -365,7 +363,6 @@ function buildOne(target, version) {
   }
   cpSync(WORKER_SIDECAR, join(outDir, 'semantic-worker.js'));
   for (const [source, filename] of [
-    [RUNTIME_WORKER_SIDECAR, 'runtime-worker.js'],
     [HANDLER_WORKER_SIDECAR, 'constructed-handler-worker.js'],
   ]) {
     if (!existsSync(source)) {
