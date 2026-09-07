@@ -748,3 +748,19 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **钉住现状的测试**（删或改写）：control-journal.test.ts 整文件；server.test.ts :264（envelope+dedup+operation.get 回执断言）、:376（dispatched unknown-safe）、:417（legacy client read-only）、:544/:604（after-turn/interrupt exact-retry 恰好一次）、:1075（compact v2 operation 不泄密）、:1851（capability 广告 pin）、operation.get legacy fallback fixture :3496；client.test.ts :30（compact envelope）、:456、:505；protocol.test.ts :28；exit-settlement.test.ts :136。runtime.operations stub：host.test:1330、manager.test:561、server.test:4049。
 
 **切片计划**：S1=server/protocol/schema/client/transport/sdk-runtime 的 envelope+journal+operations.get+capability 全删（host.ts 停止构造；control-journal.ts 删；钉住测试删/改写为无 envelope 契约；S1=真实 dispatcher 矩阵：各域 mutation 无 envelope 直接可用+capability 不再广告）；S2=exit 协议删除（exit-settlement.ts+stopForInline/rollbackToInline+prepared-exit 消费删，T15 条款）；S3=run-origin operationId 镜像清理+goal 类型清理+矩阵/非 RPC 入口表核对收尾。
+
+## 2026-09-07 T25 完成（32/35）：control journal 与退出协议全退役
+
+**提交**：S1 `b19b675`（control-journal.ts/.test 删、envelope 类型/帧字段/guard/自动生成站点、operations.get 全链（protocol/schema/server/client face/SDK Service）、operationDeduplication capability+journalEpoch、transport fallback envelope、6 个 operation 错误码、RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS；durableRecoveryQueries 保留去门）→ S2 `（后续）`（exit-settlement.ts/.test、settleKodaXRuntimeExit、daemon.rollbackToInline×4 处、client stopForInline、prepared-exit connect 契约参数折叠、commitRuntimeDaemonRollbackPolicy、runtimeExitSettlement:2；新契约 shutdown=真实 idle runtime.shutdown，owner mode 永不改变）→ S3 `（同批）`（run-origin operationId 镜像清理、goal 类型清出 mutation union、self-knowledge 历史段落保留+退役注记）→ 评审修复 `44f40269`。docs/features `1a7cd6f` + 父仓指针 `39e4a028`。
+
+**新契约要点**：(1) mutation 直接 dispatchMutation（4 行：management draining fence 经 isManagedRuntimeMutation→runMutation 保留）；(2) 无 receipt/无 operations.get（帧级 invalid_frame）；(3) journalEpoch/operationDeduplication 不再协商；(4) run-origin 不再镜像 operationId——bindTrustedRunInput/origin parse-back/scoped run-target 全删，compact_<uuid> Host 铸造身份（T31）保留；(5) daemon→inline 仅显式 setKodaXRuntimeOwnerMode 或锁释放后 acquireKodaXInlineOwner({enableRollback:true})；(6) transport request 签名折叠 (method, params, control)，withDurableOperationCapability→withClientInstanceIdentity（仅 initialize 注入 clientInfo instanceId/Secret）。
+
+**S1 证据**：server.test 无 envelope mutation 成功 + operations.get invalid_frame + 59 方法矩阵测试（RUNTIME_DAEMON_MUTATION_METHODS 全循环零例外）；daemon-smoke 管理流改 daemon.shutdown() + owner 循环 revision 0→1→2→3→4；goal 4、derive、actors、external-agents 等触面全绿。
+
+**双轴评审**：Spec PASS（7 残留均非契约破坏）；Standards 1H+2M+L——修复 `44f40269`：孤儿 import×2（RuntimeDaemonRollbackInput、readRuntimeDaemonState）、management 死 CAS 参数、control_history_untrusted 终态码三处（类型/parser/schema）、TS2206 陷阱（`type X,` 在 import type 块内抑制成员检查）、scope 缩进、6 死错误码分支、stale 注释×3、签名折叠+测试 fake 全改。
+
+**回归**：build 绿；runtime-daemon 全套+upgrade+client+self-knowledge 254 绿；daemon-smoke 25/25（"binds foreground daemon A2A config" 满载首跑超时=已记录负载 flake，隔离 5.7s 绿、路径不受本票影响）；repl 2669 绿；parity 403（基线 419，-16，零新增漂移）。
+
+**残留（票内记录）**：public_docs/sdk/embedder-guide.md v0.7.96 快照的 operation/settlement 章节退役顺延 T27；goal/notice 写入绕过 draining fence 为票前既有（Spec 建议独立票）；daemon-smoke 首跑负载 flake 已知。
+
+**下一步（32/35）**：T26（Runtime 事件不再承担 UI 恢复与业务权威——阻塞 T17/T18/T19/T21/T35 全清；注意 session event journalEpoch（RuntimeSessionCursor）属 T26 地盘）；T27（收缩产品模式与 SDK 出口+发布验收，含 embedder-guide 快照退役）；T15 验收（T25 条款已交付）。
