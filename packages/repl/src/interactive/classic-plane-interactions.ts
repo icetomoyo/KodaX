@@ -38,9 +38,12 @@ export function parseClassicChoice(
 ): { kind: 'value'; value: string } | { kind: 'custom'; value: string } | { kind: 'cancel' } {
   const trimmed = (input ?? '').trim();
   if (trimmed.length === 0) return { kind: 'cancel' };
-  const numeric = Number(trimmed);
-  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= options.length) {
-    return { kind: 'value', value: options[numeric - 1]!.value };
+  // Decimal digits only — '0x2' must stay free text, not select option 2.
+  if (/^[1-9][0-9]*$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (numeric <= options.length) {
+      return { kind: 'value', value: options[numeric - 1]!.value };
+    }
   }
   const matched = options.find(
     (option) => option.value === trimmed || option.label === trimmed,

@@ -69,6 +69,47 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
     ]);
   });
 
+  it('keeps awaiting_approval live and prints cancelled with a neutral mark', () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line));
+    differ([]);
+    differ([
+      item({
+        id: 't3', type: 'tool', text: '',
+        tool: { callId: 'c3', name: 'bash', status: 'awaiting_approval', inputText: 'rm -rf x' },
+      }),
+    ]);
+    differ([
+      item({
+        id: 't3', type: 'tool', text: '',
+        tool: { callId: 'c3', name: 'bash', status: 'running', inputText: 'rm -rf x' },
+      }),
+    ]);
+    differ([
+      item({
+        id: 't3', type: 'tool', text: 'gone',
+        tool: { callId: 'c3', name: 'bash', status: 'cancelled', inputText: 'rm -rf x', endedAt: 1 },
+      }),
+    ]);
+    expect(lines).toEqual([
+      'tool:▶ bash rm -rf x',
+      'tool:• bash gone',
+    ]);
+  });
+
+  it('does not reprint restored completed tools after the baseline', () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line));
+    differ([
+      item({
+        id: 't-old', type: 'tool', text: 'past output',
+        tool: { callId: 'c-old', name: 'bash', status: 'success', inputText: 'npm test' },
+      }),
+    ]);
+    differ([item({ id: 'a9', type: 'assistant', text: 'new' })]);
+    expect(lines).toEqual(['assistant:new']);
+  });
+
   it('prints tool error status with its output', () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line));

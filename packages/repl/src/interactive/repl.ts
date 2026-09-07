@@ -60,11 +60,10 @@ import type {
 } from '@kodax-ai/agent';
 import type { AgentsFile, KodaXWorkflowAgentDigestEvent } from '@kodax-ai/coding';
 import type { CompactionUpdate, KodaXActivityEventMeta } from '@kodax-ai/coding';
-import type { PermissionMode, ConfirmResult } from '../permission/types.js';
+import type { PermissionMode } from '../permission/types.js';
 import {
   toReplRuntimeAutoModeSettings,
   type ReplRuntimeAutoModeControl,
-  type ReplRuntimeAutoModeSettings,
 } from '../runtime-permission.js';
 import {
   computeConfirmTools,
@@ -753,32 +752,110 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     extraCollectors: [replBashPathSignalCollector],
   });
 
+  // FEATURE_298 T18 — plane display + interaction dialogs: the live Host
+  // session view prints to the console (baseline view primes the differ
+  // so restored history does not reprint) and pending interactions are
+  // answered through the readline surface. The attach retries with
+  // backoff and re-subscribes whenever the session id changes (/new,
+  // /load, /fork, /recover) — rounds always submit to the live id.
+  let detachPlaneDisplay: (() => void) | undefined;
+  let planeDisplayClosed = false;
+  let planeDisplaySessionId: string | undefined;
+  let pendingAssistantNewline = false;
+  const planeDisplayWrite = (line: string): void => {
+    const separator = line.indexOf(':');
+    const kind = separator >= 0 ? line.slice(0, separator) : '';
+    const text = separator >= 0 ? line.slice(separator + 1) : line;
+    if (kind === 'assistant') {
+      process.stdout.write(text);
+      pendingAssistantNewline = true;
+      return;
+    }
+    if (pendingAssistantNewline) {
+      process.stdout.write('\n');
+      pendingAssistantNewline = false;
+    }
+    if (kind === 'thinking' || kind === 'info') console.log(chalk.dim(text));
+    else if (kind === 'tool') console.log(chalk.cyan(text));
+    else if (kind === 'error') console.log(chalk.red(text));
+    else console.log(text);
+  };
+  const attachPlaneDisplayFor = (sessionId: string, attempt = 0): void => {
+    const plane = options.clientPlane;
+    if (plane === undefined || planeDisplayClosed) return;
+    if (planeDisplaySessionId === sessionId && detachPlaneDisplay !== undefined) return;
+    detachPlaneDisplay?.();
+    detachPlaneDisplay = undefined;
+    planeDisplaySessionId = sessionId;
+    void attachClassicPlaneDisplay(plane, sessionId, {
+      write: planeDisplayWrite,
+      dialogs: createClassicPlaneDialogSurface({
+        rl,
+        permissionMode: () => currentPermissionMode,
+      }),
+      onNotice: (text) => console.log(chalk.yellow(`\n${text}\n`)),
+    }).then((detach) => {
+      if (planeDisplayClosed || planeDisplaySessionId !== sessionId) {
+        detach();
+        return;
+      }
+      detachPlaneDisplay = detach;
+    }).catch((error: unknown) => {
+      if (planeDisplayClosed) return;
+      const nextAttempt = attempt + 1;
+      if (nextAttempt > 5) {
+        emitKodaXDiagnostic({
+          source: 'classic.plane',
+          level: 'error',
+          message: 'Session view display could not attach; output and Host questions will not be shown.',
+          detail: error,
+        });
+        return;
+      }
+      setTimeout(
+        () => attachPlaneDisplayFor(sessionId, nextAttempt),
+        Math.min(1000 * nextAttempt, 5000),
+      );
+    });
+  };
+  const setContextSessionId = (nextId: string): void => {
+    context.sessionId = nextId;
+    attachPlaneDisplayFor(nextId);
+  };
+  attachPlaneDisplayFor(context.sessionId);
+
   // FEATURE_298 T18 — plane-bound rounds travel the Host input/run faces;
   // display authority is the live session view (the plane display
   // subscription prints it). Unbound rounds keep the in-process path.
   // Ctrl+C during a plane round requests a Host stop (the run is not in
   // this process, so the embedded SIGINT machinery cannot see it).
   let activePlaneAbort: AbortController | undefined;
+  const runPlaneRoundWithStop = async (prompt: string): Promise<KodaXResult> => {
+    const plane = options.clientPlane;
+    if (plane === undefined) {
+      throw new Error('runPlaneRoundWithStop requires a bound client plane.');
+    }
+    const controller = new AbortController();
+    activePlaneAbort = controller;
+    try {
+      return await runClientPlaneRound({
+        plane,
+        sessionId: context.sessionId,
+        prompt,
+        abortSignal: controller.signal,
+      });
+    } finally {
+      if (activePlaneAbort === controller) activePlaneAbort = undefined;
+    }
+  };
   const runAgentRoundWithPlane = async (
     prompt: string,
     roundOptions: KodaXOptions,
     initialMessages: KodaXMessage[],
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
-    const plane = options.clientPlane;
-    if (plane !== undefined) {
-      const controller = new AbortController();
-      activePlaneAbort = controller;
-      try {
-        return await runClientPlaneRound({
-          plane,
-          sessionId: context.sessionId,
-          prompt,
-          abortSignal: controller.signal,
-        });
-      } finally {
-        if (activePlaneAbort === controller) activePlaneAbort = undefined;
-      }
+    if (options.clientPlane !== undefined) {
+      return runPlaneRoundWithStop(prompt);
     }
     return runAgentRound(roundOptions, context, prompt, initialMessages, inputArtifacts);
   };
@@ -911,7 +988,7 @@ Keyboard Shortcuts:
       if (!loaded) {
         return 'failed';
       }
-      context.sessionId = recoveredId;
+      setContextSessionId(recoveredId);
       context.messages = loaded.messages;
       context.title = loaded.title;
       context.lineage = loaded.lineage;
@@ -968,7 +1045,7 @@ Keyboard Shortcuts:
     });
 
     const now = new Date().toISOString();
-    context.sessionId = nextSessionId;
+    setContextSessionId(nextSessionId);
     context.messages = seed.messages;
     context.title = seed.title;
     context.contextTokenSnapshot = undefined;
@@ -1080,7 +1157,7 @@ Keyboard Shortcuts:
       }
     },
     startNewSession: () => {
-      context.sessionId = generateInteractiveSessionId();
+      setContextSessionId(generateInteractiveSessionId());
       context.title = '';
       context.contextTokenSnapshot = undefined;
       context.artifactLedger = undefined;
@@ -1137,7 +1214,7 @@ Keyboard Shortcuts:
 
         context.messages = loaded.messages;
         context.title = loaded.title;
-        context.sessionId = id;
+        setContextSessionId(id);
         context.contextTokenSnapshot = undefined;
         context.artifactLedger = loaded.artifactLedger;
         context.extensionState = loaded.extensionState
@@ -1396,7 +1473,7 @@ Keyboard Shortcuts:
         if (!loaded) {
           return 'failed';
         }
-        context.sessionId = forkedId;
+        setContextSessionId(forkedId);
         context.messages = loaded.messages;
         context.title = loaded.title;
         context.lineage = loaded.lineage;
@@ -1418,7 +1495,7 @@ Keyboard Shortcuts:
         return 'failed';
       }
 
-      context.sessionId = forked.sessionId;
+      setContextSessionId(forked.sessionId);
       context.messages = forked.data.messages;
       context.title = forked.data.title;
       context.contextTokenSnapshot = undefined;
@@ -1804,47 +1881,11 @@ Keyboard Shortcuts:
     rl.prompt();
   });
 
-  // FEATURE_298 T18 — plane display + interaction dialogs: the live Host
-  // session view prints to the console (baseline view primes the differ so
-  // restored history does not reprint) and pending interactions are
-  // answered through the readline surface.
-  let detachPlaneDisplay: (() => void) | undefined;
-  if (options.clientPlane !== undefined) {
-    let pendingAssistantNewline = false;
-    const planeDisplayWrite = (line: string): void => {
-      const separator = line.indexOf(':');
-      const kind = separator >= 0 ? line.slice(0, separator) : '';
-      const text = separator >= 0 ? line.slice(separator + 1) : line;
-      if (kind === 'assistant') {
-        process.stdout.write(text);
-        pendingAssistantNewline = true;
-        return;
-      }
-      if (pendingAssistantNewline) {
-        process.stdout.write('\n');
-        pendingAssistantNewline = false;
-      }
-      if (kind === 'thinking' || kind === 'info') console.log(chalk.dim(text));
-      else if (kind === 'tool') console.log(chalk.cyan(text));
-      else if (kind === 'error') console.log(chalk.red(text));
-      else console.log(text);
-    };
-    void attachClassicPlaneDisplay(options.clientPlane, context.sessionId, {
-      write: planeDisplayWrite,
-      dialogs: createClassicPlaneDialogSurface({
-        rl,
-        permissionMode: () => currentPermissionMode,
-      }),
-      onNotice: (text) => console.log(chalk.yellow(`
-${text}
-`)),
-    }).then((detach) => {
-      detachPlaneDisplay = detach;
-    }).catch(() => undefined);
-  }
+  // Handle cleanup on exit
 
   // Handle cleanup on exit
   const cleanup = () => {
+    planeDisplayClosed = true;
     detachPlaneDisplay?.();
     // FEATURE_125 — fire-and-forget Team Mode shutdown. The
     // state-writer's shutdown() does its work synchronously
@@ -2161,11 +2202,7 @@ ${text}
           // the session-command binding); the direct runManagedTask below
           // remains only for the standalone surface.
           const result = options.clientPlane
-            ? await runClientPlaneRound({
-              plane: options.clientPlane,
-              sessionId: context.sessionId,
-              prompt: processed,
-            })
+            ? await runPlaneRoundWithStop(processed)
             : await runManagedTask(
             {
               ...currentOptions,

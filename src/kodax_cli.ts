@@ -5751,7 +5751,15 @@ complete -c kodax -l version -d 'Show version'`);
         // (newest-first); the resolved id keeps the same-file local load.
         let interactiveKodaXOptions = kodaXOptions;
         if (kodaXOptions.session?.resume === true) {
-          const candidates = await interactiveRuntime.sessions.list({ scope: 'user', limit: 1000 });
+          // Project-scoped like the storage scan it replaces (FEATURE_219
+          // per-project layout): without projectRoot, -c in project B could
+          // resume project A's newest session.
+          const projectRoot = (await getGitRoot()) ?? undefined;
+          const candidates = await interactiveRuntime.sessions.list({
+            ...(projectRoot !== undefined ? { projectRoot } : {}),
+            scope: 'user',
+            limit: 1000,
+          });
           const recent = candidates.find((session) => session.msgCount > 0);
           if (recent !== undefined) {
             interactiveKodaXOptions = {

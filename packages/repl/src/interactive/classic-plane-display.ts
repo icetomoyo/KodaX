@@ -47,9 +47,23 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
       baselined = true;
       for (const item of items) {
         printedText.set(item.id, item.text.length);
-        if (item.type === 'tool') printedToolStages.add(`${item.id}:start`);
+        if (item.type === 'tool') {
+          printedToolStages.add(`${item.id}:start`);
+          if (item.tool !== undefined && item.tool.status !== 'running'
+            && item.tool.status !== 'awaiting_approval') {
+            printedToolStages.add(`${item.id}:done`);
+          }
+        }
       }
       return;
+    }
+    const liveIds = new Set(items.map((item) => item.id));
+    for (const id of printedText.keys()) {
+      if (!liveIds.has(id)) printedText.delete(id);
+    }
+    for (const stage of printedToolStages) {
+      const id = stage.slice(0, stage.lastIndexOf(':'));
+      if (!liveIds.has(id)) printedToolStages.delete(stage);
     }
     for (const item of items) {
       if (item.type === 'assistant') {
@@ -61,7 +75,9 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
         continue;
       }
       if (item.type === 'tool' && item.tool) {
-        if (item.tool.status === 'running') {
+        // awaiting_approval stays live: the permission dialog comes from
+        // view.interactions, not from this printer.
+        if (item.tool.status === 'running' || item.tool.status === 'awaiting_approval') {
           if (!printedToolStages.has(`${item.id}:start`)) {
             printedToolStages.add(`${item.id}:start`);
             printOnce(item, `tool:▶ ${item.tool.name} ${item.tool.inputText ?? ''}`.trimEnd());
@@ -71,7 +87,8 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
         printedToolStages.add(`${item.id}:start`);
         if (!printedToolStages.has(`${item.id}:done`)) {
           printedToolStages.add(`${item.id}:done`);
-          const mark = item.tool.status === 'error' ? '✗' : '✓';
+          const mark = item.tool.status === 'error' ? '✗'
+            : item.tool.status === 'cancelled' ? '•' : '✓';
           printOnce(item, `tool:${mark} ${item.tool.name} ${item.text}`.trimEnd());
         }
         continue;
