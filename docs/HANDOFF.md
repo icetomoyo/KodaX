@@ -676,3 +676,13 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留**（票内已记）：continuation 消息 file part 被 continuationAnswer 丢弃（预存）；SSE 在 INPUT_REQUIRED 关闭为既有设计；restore 测试部分持久化背书（独特推导证据在 pre-attach 测试）。
 
 **下一步（29/35）**：前沿=T30（Agent 注册/协作 mutation，T12✓T16✓）；T30✓后 T21（A2A prepared serving Host 持有，T20✓+T30）→T26（还差 T15/T21）；收尾 T25→T26→T27、T15 验收（需 T25）。建议 T30→T21→T25→T26→T27→T15。
+
+---
+
+## 2026-09-07 T30 调研地图（实施中）
+
+**现状**：(1) Host 已有 RuntimeAgentService（tree/detail/spawn/send/followup/interrupt/output/events/wait，sdk-runtime.ts:1108，实现 13700-13743 全走真实 actor root）+ RuntimeAdminService.agentRegistrations（list/upsert/setEnabled/remove，13750-13769，无消费者）；(2) daemon wire 已有全部 RPC（protocol.ts:148-159 查询族 + 244-246 mutation 列表含 agentRegistrations.*/agents.spawn|send|followup|interrupt；client.ts 1194-1332 已投影，spawn/followup 透传 options?.operation 作 request 第三参）；(3) 通用 operation envelope 机制：client createRuntimeDaemonClient 的 request() 对所有 mutation RPC（除 session.settings.update）自动生成 envelope（operationId+journalEpoch，client.ts:273-275、1552-1562）；server dispatch 对 mutation 强制 envelope+controlJournal.execute（server.ts:861-906，requireOperationEnvelope capability）——**T25 才删整个 control journal，T30 只让 agent 族先退出 envelope 要求**；(4) 消费者：runtime.agents 仅 src/a2a/server.ts（prepared execution 用 runtime.agents.execution）；product client face（client-contract.ts）**无** agents/registrations 面；integration-cli.ts:393 的 plane.registrations.upsert 是本地 outbound executor plane（agent-as-client），与 Host registry 无关；(5) packages/agent controller 的 retry 是 settlement 等待重试，非 mutation 重试；"不透明重试"=controlJournal 的 envelope replay 语义。
+
+**T30 切片计划**：S1=daemon 侧 agent 族（agents.*/agentRegistrations.* mutation）加入 envelope 豁免清单（server.ts:862-866 同 session.settings.update 先例）+ client 侧 spawn/followup 停止透传 operation + RuntimeAgentOperationOptions 删 operation 字段（查 consumers）+ S1 测试（daemon 模式 spawn/send/followup/interrupt/注册 CRUD 无 envelope 可用）；S2=product client face：client-contract 增 agents 面（tree/detail/output/wait 只读 + spawn/send/followup/interrupt）+ registrations（list/upsert/setEnabled/remove）+ sdk-client 投影；S3=S1 证据：本地 Actor 授权/消息/取消过面；配置远端 Agent→dispatch→setEnabled(false) 阻新 admission→Host 退出关 watcher（a2a server 注册表+watcher 生命周期）。粒度边界：不改调度算法、不新增跨根 durable inbox、不把 A2A prepared 绑定（T21）或 workflow 重写装进来。
+
+**门禁基线提醒**：root tsc 唯一错误集当前 415（/tmp/base-errors.txt 为旧 419，需重新生成基线或继续用 comm 容差）；daemon 套件改动后必跑；build gate 先行。
