@@ -466,7 +466,7 @@ describe('FEATURE_258 Embedded Runtime agent services', () => {
       await client.agents.send(session.id, '/root/controlled', 'status update', 'internal');
       await client.agents.interrupt(session.id, '/root/controlled', 'operator cancelled');
       const cancelled = await clientFaceTerminal(client, session.id, '/root/controlled', active.turnId);
-      expect(cancelled.state).toMatch(/failed|canceled|cancelled|interrupted/);
+      expect(cancelled.state).toBe('interrupted');
 
       // Host 退出关 watcher: executor resources dispose with the Host.
       await runtime.close();

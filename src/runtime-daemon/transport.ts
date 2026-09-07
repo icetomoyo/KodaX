@@ -20,6 +20,7 @@ import {
   isRuntimeDaemonNotification,
   isRuntimeDaemonSuccessResponse,
   isRuntimeDaemonMutationMethod,
+  RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS,
   parseRuntimeDaemonFrame,
   type RuntimeDaemonFrame,
   type RuntimeDaemonNotification,
@@ -388,7 +389,9 @@ export async function createRuntimeDaemonSocketClientTransport(
         ? withDurableOperationCapability(params, clientInstanceId, clientInstanceSecret)
         : params;
       const requestOperation = operation ?? (
-        journalEpoch !== undefined && isRuntimeDaemonMutationMethod(method)
+        journalEpoch !== undefined
+          && isRuntimeDaemonMutationMethod(method)
+          && !RUNTIME_DAEMON_AGENT_FAMILY_MUTATIONS.has(method)
           ? {
               operationId: `op_${randomUUID().replace(/-/g, '')}`,
               journalEpoch,
