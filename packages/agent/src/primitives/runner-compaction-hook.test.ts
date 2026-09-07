@@ -20,8 +20,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createAgent, type Agent } from './agent.js';
-import { readRunnerRecoveryTranscript, Runner } from './runner.js';
+import { attachRunnerRecoveryTranscript, readRunnerRecoveryTranscript, Runner } from './runner.js';
 import { ContextCapacityError } from '../context-capacity.js';
+import { KodaXContextOverflowError } from '@kodax-ai/llm';
 import type {
   RunnableTool,
   RunnerLlmResult,
@@ -47,6 +48,42 @@ const agentNoTools: Agent = createAgent({
 });
 
 describe('Runner compactionHook — FEATURE_179 trigger parity', () => {
+  it('retries a rejected generation once after replacing history without reexecuting tools', async () => {
+    let toolExecutions = 0;
+    let calls = 0;
+    const agent = createAgent({ name: 'capacity-recovery', instructions: 'sys', tools: [{
+      ...noopTool, execute: async () => { toolExecutions += 1; return { content: 'evidence '.repeat(1000) }; },
+    }] });
+    const result = await Runner.run(agent, 'inspect', { tracer: null,
+      llm: async (): Promise<RunnerLlmResult> => {
+        calls += 1;
+        if (calls === 1) return { text: '', toolCalls: [{ id: 'one', name: 'noop', input: {} }] };
+        if (calls === 2) throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' });
+        return { text: 'recovered', toolCalls: [] };
+      },
+      compactionHook: async (messages, rejection) => rejection ? messages.map((message) => (
+        message.role === 'user' && Array.isArray(message.content)
+          ? { ...message, content: message.content.map((block) => block.type === 'tool_result'
+            ? { ...block, content: 'saved evidence' } : block) } : message
+      )) : undefined,
+    });
+    expect(result.output).toBe('recovered');
+    expect(calls).toBe(3);
+    expect(toolExecutions).toBe(1);
+  });
+
+  it('does not retry an unchanged context or loop on a second capacity rejection', async () => {
+    for (const shrink of [false, true]) {
+      let calls = 0;
+      await expect(Runner.run(agentNoTools, 'evidence '.repeat(100), { tracer: null,
+        llm: async () => { calls += 1; throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' }); },
+        compactionHook: async (messages, error) => error && shrink
+          ? messages.map((message) => message.role === 'user' ? { ...message, content: 'short' } : message)
+          : undefined,
+      })).rejects.toBeInstanceOf(KodaXContextOverflowError);
+      expect(calls).toBe(shrink ? 2 : 1);
+    }
+  });
   it('fires the hook even on a text-only iteration (no tool calls)', async () => {
     // Before FEATURE_179 this case silently skipped the hook — Runner exited
     // at the no-tool-call branch without invoking it. With the new top-of-loop
@@ -169,6 +206,18 @@ describe('Runner compactionHook — FEATURE_179 trigger parity', () => {
     await expect(
       Runner.run(agentNoTools, 'hi', { llm, compactionHook: hook, tracer: null }),
     ).resolves.toMatchObject({ output: 'ok' });
+  });
+
+  it('preserves a committed replacement if a later recovery step fails', async () => {
+    const committed: AgentMessage[] = [{ role: 'user', content: 'committed summary' }];
+    const failure = new Error('artifact unavailable');
+    attachRunnerRecoveryTranscript(failure, committed);
+    const llm = vi.fn(async () => 'must not run with stale history');
+    await expect(Runner.run(agentNoTools, 'old history', {
+      llm, tracer: null, compactionHook: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect(readRunnerRecoveryTranscript(failure)).toEqual(committed);
+    expect(llm).not.toHaveBeenCalled();
   });
 
   it('carries the latest canonical transcript on a hard-capacity error', async () => {

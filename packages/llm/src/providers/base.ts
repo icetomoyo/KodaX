@@ -20,7 +20,8 @@ import {
   KodaXWireReasoningEffort,
 } from '../types.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXReasoningEffortRejectedError } from '../errors.js';
+import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
+import { parseContextOverflowFacts } from './context-overflow.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import {
@@ -877,46 +878,15 @@ export abstract class KodaXBaseProvider {
    * overflow error.
    */
   protected parseContextOverflow(error: unknown): number | undefined {
-    const msg = getErrorMessage(error);
-    // Anthropic: "prompt is too long: 180000 tokens > 200000 maximum"
-    // OpenAI:    "maximum context length is 128000 tokens. However, you requested 150000 tokens"
-    // Zhipu/Kimi variants with Chinese messages
-    const patterns: Array<{
-      readonly regex: RegExp;
-      readonly inputGroup: number;
-      readonly limitGroup: number;
-    }> = [
-      {
-        regex: /(\d[\d,]*)\s*tokens?.*?(\d[\d,]*)\s*(?:maximum|limit|context)/i,
-        inputGroup: 1,
-        limitGroup: 2,
-      },
-      {
-        regex: /maximum.*?(\d[\d,]*)\s*tokens?.*?requested.*?(\d[\d,]*)/i,
-        inputGroup: 2,
-        limitGroup: 1,
-      },
-      {
-        regex: /exceeds?\s+.*?(\d[\d,]*)\s*.*?(?:limit|max|context|上限).*?(\d[\d,]*)/i,
-        inputGroup: 1,
-        limitGroup: 2,
-      },
-    ];
-    for (const pattern of patterns) {
-      const m = msg.match(pattern.regex);
-      if (m) {
-        const inputTokens = Number(m[pattern.inputGroup]!.replace(/,/g, ''));
-        const contextLimit = Number(m[pattern.limitGroup]!.replace(/,/g, ''));
-        const safetyBuffer = 1000;
-        const available = Math.max(3000, contextLimit - inputTokens - safetyBuffer);
-        return available;
-      }
-    }
-    return undefined;
+    const facts = parseContextOverflowFacts(getErrorMessage(error));
+    if (facts.inputTokensKind !== 'exact' || facts.inputTokens === undefined
+      || facts.contextWindow === undefined) return undefined;
+    const available = facts.contextWindow - facts.inputTokens - 1000;
+    return available >= 3000 ? available : undefined;
   }
 
   protected isContextOverflowError(error: unknown): boolean {
-    const msg = getErrorMessage(error);
+    const msg = getErrorMessage(error).toLowerCase();
     return msg.includes('prompt is too long')
       || msg.includes('prompt too long')
       || msg.includes('context length')
@@ -961,6 +931,13 @@ export abstract class KodaXBaseProvider {
             onRateLimit?.(i + 1, retries, 0);
             continue; // Retry immediately with reduced max_tokens
           }
+        }
+
+        if (e instanceof KodaXContextOverflowError) throw e;
+        if (this.isContextOverflowError(e)) {
+          throw new KodaXContextOverflowError(
+            parseContextOverflowFacts(getErrorMessage(e)), this.name, this.providerErrorMetadata(e),
+          );
         }
 
         if (this.isRateLimitError(e)) {

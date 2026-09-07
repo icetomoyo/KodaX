@@ -11,6 +11,19 @@ import {
   resolveContextTokenCount,
 } from './token-accounting.js';
 import * as tokenizer from './tokenizer.js';
+import { KodaXContextOverflowError } from '@kodax-ai/llm';
+import { createOverflowContextTokenSnapshot } from './token-accounting.js';
+
+it('anchors rejected wire input back to canonical history without calling it API usage', () => {
+  const messages: KodaXMessage[] = [{ role: 'user', content: 'canonical input' }];
+  const exact = new KodaXContextOverflowError({ contextWindow: 131_072, inputTokens: 125_541, inputTokensKind: 'exact' });
+  exact.requestInputReliefTokens = 200_000;
+  const snapshot = createOverflowContextTokenSnapshot(messages, exact, 140_000);
+  expect(snapshot).toMatchObject({ currentTokens: 325_541, capacityWindow: 131_072, source: 'estimate' });
+  expect(snapshot.usage).toBeUndefined();
+  const bound = new KodaXContextOverflowError({ contextWindow: 131_072, inputTokens: 80_000, inputTokensKind: 'lower_bound' });
+  expect(createOverflowContextTokenSnapshot(messages, bound, 140_000).currentTokens).toBe(131_072);
+});
 
 describe('token accounting', () => {
   const messages: KodaXMessage[] = [

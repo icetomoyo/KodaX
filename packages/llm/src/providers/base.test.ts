@@ -3,7 +3,7 @@ import { APIUserAbortError as AnthropicAPIUserAbortError } from '@anthropic-ai/s
 import { APIUserAbortError as OpenAIAPIUserAbortError } from 'openai';
 import { KodaXBaseProvider } from './base.js';
 import type { KodaXOnRetryAfterCallback, ProviderRequestRetryState } from './base.js';
-import { KodaXProviderError, KodaXRateLimitError } from '../errors.js';
+import { KodaXProviderError, KodaXRateLimitError, KodaXContextOverflowError } from '../errors.js';
 import { runWithScopedConfig } from '../run-scoped-config.js';
 import type {
   KodaXMessage,
@@ -664,6 +664,24 @@ describe('KodaXBaseProvider', () => {
     });
   });
 
+  it.each([
+    ["This model's maximum context length is 131072 tokens. However, you requested 32768 output tokens and your prompt contains at least 98305 input tokens.", 'lower_bound', 98_305],
+    ["This model's maximum context length is 131072 tokens. However, you requested 32768 output tokens and your prompt contains 1200000 characters (more than 983040 characters, which is the upper bound for 98304 input tokens).", 'unknown', undefined],
+    ["Input length (140000) exceeds model's maximum context length (131072).", 'exact', 140_000],
+    ["This model's maximum context length is 131072 tokens. However, you requested 32768 output tokens and your prompt contains 130000 input tokens.", 'exact', 130_000],
+  ])('routes unrecoverable or inexact overflow to the runtime: %s', async (message, kind, count) => {
+    const provider = new TestProvider();
+    const task = vi.fn(async (state: ProviderRequestRetryState) => {
+      state.maxOutputTokensLimit = 32_768;
+      throw new Error(message);
+    });
+    const failure: unknown = await provider.exposeWithRateLimit(task).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ capacity: { contextWindow: 131_072, inputTokensKind: kind,
+      ...(count === undefined ? {} : { inputTokens: count }) } });
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
   it('retries Chinese context-overflow errors immediately', async () => {
     const provider = new TestProvider();
     const onRateLimit = vi.fn();
@@ -676,7 +694,7 @@ describe('KodaXBaseProvider', () => {
         retryState.maxOutputTokensOverride ?? provider.getEffectiveMaxOutputTokens(),
       );
       if (attempt === 1) {
-        throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
+        throw new Error('上下文长度 exceeds 110000 tokens 上限 128000');
       }
       return 'ok';
       },
@@ -687,7 +705,7 @@ describe('KodaXBaseProvider', () => {
     ).resolves.toBe('ok');
     expect(task).toHaveBeenCalledTimes(2);
     expect(onRateLimit).toHaveBeenCalledWith(1, 2, 0);
-    expect(observedMaxTokens).toEqual([32_000, 3_000]);
+    expect(observedMaxTokens).toEqual([32_000, 17_000]);
   });
 
   it('isolates context-overflow retry state across concurrent requests', async () => {
@@ -709,7 +727,7 @@ describe('KodaXBaseProvider', () => {
         retryState.maxOutputTokensOverride ?? provider.getEffectiveMaxOutputTokens(),
       );
       if (firstAttempt === 1) {
-        throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
+        throw new Error('上下文长度 exceeds 110000 tokens 上限 128000');
       }
       markRetryStarted();
       await retryGate;
@@ -730,7 +748,7 @@ describe('KodaXBaseProvider', () => {
       'first',
       'second',
     ]);
-    expect(firstRequestTokens).toEqual([32_000, 3_000]);
+    expect(firstRequestTokens).toEqual([32_000, 17_000]);
     expect(secondRequestTokens).toEqual([32_000]);
   });
 
@@ -739,7 +757,7 @@ describe('KodaXBaseProvider', () => {
     const task = vi.fn<(retryState: ProviderRequestRetryState) => Promise<string>>(
       async (retryState) => {
         retryState.maxOutputTokensLimit ??= 1_024;
-        throw new Error('上下文长度 exceeds 150000 tokens 上限 128000');
+        throw new Error('上下文长度 exceeds 110000 tokens 上限 128000');
       },
     );
 

@@ -10,8 +10,8 @@
  * - `applyContextCapacityReserveOverride`: while the assembled request is
  *   over capacity, shrink the wire-level output reserve (floor-bounded) so
  *   the request the provider actually receives is legal. The provider remains
- *   the authoritative judge: a rejection routes to classification instead of
- *   a speculative resend.
+ *   the authoritative judge: confirmed overflow enters the bounded history
+ *   recovery path, which retries only after actual context reduction.
  */
 
 import {

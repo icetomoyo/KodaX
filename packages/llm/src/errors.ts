@@ -38,6 +38,26 @@ export class KodaXProviderError extends KodaXError {
   }
 }
 
+export interface KodaXContextOverflowFacts {
+  readonly contextWindow?: number;
+  readonly inputTokens?: number;
+  readonly inputTokensKind: 'exact' | 'lower_bound' | 'unknown';
+}
+
+/** Numeric, request-local capacity evidence; never a successful usage sample. */
+export class KodaXContextOverflowError extends KodaXProviderError {
+  /** Host-measured estimate removed only from the request copy, not canonical history. */
+  requestInputReliefTokens = 0;
+  constructor(
+    public readonly capacity: KodaXContextOverflowFacts,
+    provider?: string,
+    metadata?: KodaXProviderErrorMetadata,
+  ) {
+    super('Provider request exceeded its context capacity.', provider, metadata);
+    this.name = 'KodaXContextOverflowError';
+  }
+}
+
 /** API 速率限制错误 */
 export class KodaXRateLimitError extends KodaXError {
   constructor(

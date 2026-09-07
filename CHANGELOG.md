@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Recover long coding sessions at context boundaries: parse vLLM prompt counts
+  without confusing output tokens or bounds, reclaim response reserve before
+  terminal checks, and persist recoverable tool-output previews when protected
+  recent history cannot fit. SA and AMA retry a rejected generation once after
+  actual history reduction without replaying tools. Capacity diagnostics include
+  safety margin and distinguish upstream bounds from exact token counts.
 - Keep bundled Provider credential scopes shared across SDK, Agent summaries,
   CLI, and Runtime Worker requests, restoring keychain-only manual and managed
   compaction. Add bundle identity checks and real daemon broker regressions

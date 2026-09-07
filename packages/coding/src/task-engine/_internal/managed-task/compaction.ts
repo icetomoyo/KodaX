@@ -2,6 +2,7 @@
 
 import {
   buildFileContentMessages,
+  attachRunnerRecoveryTranscript,
   buildPostCompactAttachments,
   ContextCapacityError,
   compact as intelligentCompact,
@@ -22,6 +23,7 @@ import {
 } from '@kodax-ai/agent';
 import {
   resolvePromptCacheDisabled,
+  type KodaXContextOverflowError,
   type KodaXReasoningRequest,
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
@@ -40,7 +42,7 @@ import type {
   KodaXOptions,
 } from '../../../types.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
-import { resolveContextTokenCount } from '../../../token-accounting.js';
+import { resolveContextTokenCount, createOverflowContextTokenSnapshot } from '../../../token-accounting.js';
 import { estimateToolSchemaTokens } from '../../../agent-runtime/context-budget.js';
 import { createCompactionPromptCacheObserver } from '../../../agent-runtime/prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from '../../../agent-runtime/prompt-cache-affinity.js';
@@ -57,12 +59,15 @@ import {
   type CompactionSkipReason,
 } from '../../../agent-runtime/middleware/compaction-pressure.js';
 import { hasIrreducibleUserInput } from '../../../capacity-recovery.js';
+import { recoverContextHistory, needsHistoryCapacityRelief } from '../../../history-capacity-recovery.js';
+import type { KodaXToolExecutionContext } from '../../../types.js';
 
 const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
 const COMPACT_FAILURE_COOLDOWN_TURNS = 2;
 
 export type RunnerCompactionHook = (
   transcript: readonly AgentMessage[],
+  rejection?: KodaXContextOverflowError,
 ) => Promise<readonly AgentMessage[] | undefined>;
 
 export interface ContextTokenSnapshotRef {
@@ -70,6 +75,7 @@ export interface ContextTokenSnapshotRef {
 }
 
 export interface BuildManagedTaskCompactionHookOptions {
+  readonly executionContext?: KodaXToolExecutionContext;
   readonly resolvedContextCapacity?: Awaited<
     ReturnType<typeof resolveManagedTaskContextCapacity>
   >;
@@ -291,6 +297,7 @@ function updateSnapshot(
 ): void {
   if (!ref) return;
   ref.current = {
+    ...(ref.current?.capacityWindow !== undefined ? { capacityWindow: ref.current.capacityWindow } : {}),
     currentTokens,
     baselineEstimatedTokens: estimateTokens(messages),
     source: ref.current?.source ?? 'estimate',
@@ -369,6 +376,7 @@ function resolveManagedCompactionInput(
 }
 
 function admitManagedCompactionAttempt(input: {
+  readonly force?: boolean;
   readonly messages: KodaXMessage[];
   readonly currentTokens: number;
   readonly compactionConfig: CompactionConfig;
@@ -377,7 +385,7 @@ function admitManagedCompactionAttempt(input: {
   readonly stripManagedContext: boolean;
   readonly state: ManagedCompactionState;
 }): ManagedCompactionAdmission {
-  if (!needsCompaction(
+  if (!input.force && !needsCompaction(
     input.messages,
     input.compactionConfig,
     input.contextWindow,
@@ -385,7 +393,7 @@ function admitManagedCompactionAttempt(input: {
     input.reservedResponseTokens,
   )) return { kind: 'none' };
 
-  const hardPressure = exceedsContextCapacity({
+  const hardPressure = input.force === true || exceedsContextCapacity({
     contextWindow: input.contextWindow,
     currentTokens: input.currentTokens,
     reservedResponseTokens: input.reservedResponseTokens,
@@ -718,7 +726,11 @@ function noCompactablePrefixOutcome(
 ): ManagedTerminalOutcome {
   const { attempt, state } = input;
   if (
-    attempt.hardPressure
+    exceedsContextCapacity({ contextWindow: input.contextWindow,
+      currentTokens: attempt.currentTokens,
+      reservedResponseTokens: reclaimReservedResponseTokens({ contextWindow: input.contextWindow,
+        currentTokens: attempt.currentTokens, reservedResponseTokens: input.reservedResponseTokens }),
+    })
     && !hasIrreducibleUserInput(attempt.messages, input.contextWindow)
   ) {
     return {
@@ -829,7 +841,7 @@ function persistenceFailureOutcome(
   };
   emitCompactionFailure('Managed history compaction persistence failed.', error);
   return attempt.hardPressure
-    ? { kind: 'capacity', endResult, error: capacityError(input) }
+    ? { kind: 'capacity', endResult, error: capacityError(input, 'Compaction persistence') }
     : { kind: 'stopped', endResult };
 }
 
@@ -888,12 +900,12 @@ function capacityEndResult(
   };
 }
 
-function capacityError(input: ManagedCompactionExecutionInput): ContextCapacityError {
+function capacityError(input: ManagedCompactionExecutionInput, operation = 'Managed history compaction'): ContextCapacityError {
   return new ContextCapacityError({
     contextWindow: input.contextWindow,
     currentTokens: input.attempt.currentTokens,
     reservedResponseTokens: input.reservedResponseTokens,
-  }, 'Managed history compaction');
+  }, operation);
 }
 
 function emitCompactionFailure(message: string, error: unknown): void {
@@ -937,10 +949,11 @@ export async function buildManagedTaskCompactionHook(
 ): Promise<RunnerCompactionHook | undefined> {
   const resolved = hookOptions.resolvedContextCapacity
     ?? await resolveManagedTaskContextCapacity(options);
-  const { provider, activeModel, compactionConfig, contextWindow } = resolved;
+  const { provider, activeModel, compactionConfig } = resolved;
+  let contextWindow = resolved.contextWindow;
 
   const events = options.events;
-  const snapshotRef = hookOptions.contextTokenSnapshotRef;
+  const snapshotRef: ContextTokenSnapshotRef = hookOptions.contextTokenSnapshotRef ?? { current: undefined };
   const reservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel);
   const diagnosticSessionId = options.context?.contextIdentitySessionId
     ?? options.session?.id;
@@ -982,7 +995,7 @@ export async function buildManagedTaskCompactionHook(
     antiThrash: createCompactionAntiThrashState(),
   };
 
-  return async (transcript) => {
+  const semanticHook: RunnerCompactionHook = async (transcript, rejection) => {
     const messages = transcript as unknown as KodaXMessage[];
     const snapshot = initializeEnvelopeEstimate(
       snapshotRef,
@@ -993,6 +1006,7 @@ export async function buildManagedTaskCompactionHook(
       ? resolveContextTokenCount(messages, snapshot)
       : estimateTokens(messages);
     const admission = admitManagedCompactionAttempt({
+      force: rejection !== undefined,
       messages,
       currentTokens,
       compactionConfig,
@@ -1035,5 +1049,39 @@ export async function buildManagedTaskCompactionHook(
       ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
       ...(snapshotRef !== undefined ? { snapshotRef } : {}),
     });
+  };
+  return async (transcript, rejection) => {
+    const original = transcript as KodaXMessage[];
+    if (rejection) {
+      snapshotRef.current = createOverflowContextTokenSnapshot(original, rejection, contextWindow, snapshotRef.current);
+      contextWindow = snapshotRef.current.capacityWindow!;
+    }
+    const before = initializeEnvelopeEstimate(snapshotRef, original, hookOptions.activeToolDefinitions ?? []);
+    const beforeTokens = resolveContextTokenCount(original, before);
+    let result: readonly AgentMessage[] | undefined;
+    try {
+      result = await semanticHook(transcript, rejection);
+    } catch (error) {
+      if (!(error instanceof ContextCapacityError) || ![
+        'History compaction', 'Managed history compaction', 'Compaction summary request',
+      ].includes(error.operation)) throw error;
+    }
+    const messages = (result ?? original) as KodaXMessage[];
+    const currentTokens = result ? resolveContextTokenCount(messages, snapshotRef?.current)
+      : beforeTokens;
+    const capacity = { contextWindow, currentTokens, reservedResponseTokens };
+    if (!needsHistoryCapacityRelief(capacity)) return result;
+    const recovered = await recoverContextHistory({ ...capacity, messages,
+      executionContext: hookOptions.executionContext, persist: events?.onCompactedMessages }).catch((error: unknown) => {
+      if (result && error instanceof Error) {
+        attachRunnerRecoveryTranscript(error, messages[0]?.role === 'system' ? messages.slice(1) : messages);
+      }
+      throw error;
+    });
+    if (!recovered.changed) return result;
+    state.breaker = createSummaryCircuitBreaker();
+    updateSnapshot(snapshotRef, recovered.messages, recovered.currentTokens);
+    notifyPostCompact(hookOptions.onPostCompact);
+    return recovered.messages;
   };
 }

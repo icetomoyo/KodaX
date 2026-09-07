@@ -99,12 +99,13 @@ export type {
 export {
   KodaXError,
   KodaXProviderError,
+  KodaXContextOverflowError,
   KodaXRateLimitError,
   KodaXNetworkError,
   KodaXReasoningEffortRejectedError,
   KodaXToolCallIdError,
 } from './errors.js';
-export type { KodaXProviderErrorMetadata } from './errors.js';
+export type { KodaXProviderErrorMetadata, KodaXContextOverflowFacts } from './errors.js';
 
 // ============== Constants ==============
 export {

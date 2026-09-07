@@ -27,6 +27,7 @@ import type {
 } from '@kodax-ai/llm';
 import {
   classifyStopReason,
+  KodaXContextOverflowError,
   createCostTracker,
   recordUsage,
   recordRetry,
@@ -38,6 +39,7 @@ import {
   type CostTracker,
 } from '@kodax-ai/llm';
 import path from 'path';
+import { estimateTokens } from '../tokenizer.js';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
 // for backward compatibility. Importing it here creates a cycle
 // (agent ↔ client, since client imports `runKodaX` from this file). The
@@ -99,6 +101,7 @@ import {
 } from '../repo-intelligence/runtime.js';
 import {
   createCompletedTurnTokenSnapshot,
+  createOverflowContextTokenSnapshot,
   createContextTokenSnapshot,
   rebaseContextTokenSnapshot,
   resolveContextTokenCount,
@@ -122,6 +125,7 @@ import {
   collectGuardrails,
   createAgent,
   ContextCapacityError,
+  readRunnerRecoveryTranscript,
   createRuntimeDeliveryPredicate,
   emitKodaXDiagnostic,
   getSessionMessageEntryId,
@@ -1446,6 +1450,8 @@ export async function runSubstrate(
   const finalizeCaughtError = async (cause: unknown): Promise<KodaXResult> => {
     options.context?.interruptInput?.closeInputWindow();
     const error = cause instanceof Error ? cause : new Error(String(cause));
+    const committed = readRunnerRecoveryTranscript(error);
+    if (committed) messages = [...committed];
     const cleanup = await runCatchCleanup({
       error,
       ...(terminalExecutionFailure === undefined
@@ -1461,7 +1467,7 @@ export async function runSubstrate(
     const updatedErrorMetadata = cleanup.updatedErrorMetadata;
     contextTokenSnapshot = cleanup.contextTokenSnapshot;
 
-    if (error instanceof ContextCapacityError) {
+    if (error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError) {
       throw error;
     }
     if (error.name === 'AbortError') {
@@ -1753,7 +1759,8 @@ export async function runSubstrate(
         currentTokens,
         reservedResponseTokens: physicalReserveTokens,
       });
-      const compactionLifecycle = await runCompactionLifecycle({
+      const compactionInput = {
+        executionContext: ctx,
         messages,
         needsCompact,
         compactConsecutiveFailures: turnState.compactConsecutiveFailures,
@@ -1772,7 +1779,8 @@ export async function runSubstrate(
         emitCompactionDiagnostics: options.context?.contextDiagnostics === true,
         disablePromptCache: options.disablePromptCache,
         promptCacheKey,
-      });
+      };
+      const compactionLifecycle = await runCompactionLifecycle(compactionInput);
       messages = compactionLifecycle.messages;
       providerMessages = messages;
       turnState.compactConsecutiveFailures = compactionLifecycle.nextCompactConsecutiveFailures;
@@ -1915,13 +1923,14 @@ export async function runSubstrate(
         contextWindow,
         userInputDegradationCache,
       );
-      const requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
+      let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
         ...(turnState.currentModelOverride !== undefined
           ? { model: turnState.currentModelOverride }
           : {}),
         contextWindow,
         currentTokens: resolveContextTokenCount(wireMessages, contextTokenSnapshot),
       });
+      let capacityRecoveryUsed = false;
       while (true) {
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
@@ -2040,6 +2049,29 @@ export async function runSubstrate(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (error instanceof KodaXContextOverflowError && !capacityRecoveryUsed && !options.abortSignal?.aborted) {
+            capacityRecoveryUsed = true;
+            error.requestInputReliefTokens = Math.max(0, estimateTokens(providerMessages) - estimateTokens(wireMessages));
+            const rejected = createOverflowContextTokenSnapshot(providerMessages, error, contextWindow, contextTokenSnapshot);
+            contextWindow = rejected.capacityWindow!;
+            const recovered = await runCompactionLifecycle({ ...compactionInput, messages: providerMessages,
+              currentTokens: rejected.currentTokens, contextWindow, needsCompact: true });
+            const previousEstimate = estimateTokens(providerMessages);
+            providerMessages = recovered.messages;
+            messages = providerMessages;
+            if (estimateTokens(recovered.messages) >= previousEstimate) throw error;
+            contextTokenSnapshot = recovered.contextTokenSnapshot ?? rebaseContextTokenSnapshot(providerMessages, rejected);
+            estimatedRequestTokenSnapshot = recovered.contextTokenSnapshot ?? rejected;
+            turnState.compactConsecutiveFailures = recovered.nextCompactConsecutiveFailures;
+            turnState.compactAntiThrash = recovered.nextCompactionAntiThrash;
+            wireMessages = await degradeIrreducibleUserInputs(providerMessages, ctx, contextWindow, userInputDegradationCache);
+            requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
+              model: turnState.currentModelOverride, maxOutputTokens: requestMaxOutputTokens, contextWindow,
+              currentTokens: resolveContextTokenCount(wireMessages, estimatedRequestTokenSnapshot),
+            });
+            continue;
+          }
+          if (error instanceof KodaXContextOverflowError) throw error;
           // CAP-070: translate timer-driven AbortError into KodaXNetworkError
           // so the recovery pipeline treats it as a stalled-stream rather
           // than a clean user-cancel. User-driven aborts pass through.

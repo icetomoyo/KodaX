@@ -26,6 +26,7 @@ import { preserveToolResultRecovery } from './result-extractors.js';
 import {
   calculateMaxContextInputTokens,
   ContextCapacityError,
+  reclaimReservedResponseTokens,
   exceedsContextCapacity,
 } from '../../context-capacity.js';
 import { resolveCompactionPolicy } from './policy.js';
@@ -336,7 +337,9 @@ export async function compact(
     if (exceedsContextCapacity({
       contextWindow,
       currentTokens: tokensBefore,
-      reservedResponseTokens,
+      reservedResponseTokens: reclaimReservedResponseTokens({
+        contextWindow, currentTokens: tokensBefore, reservedResponseTokens,
+      }),
     })) {
       throw new ContextCapacityError({
         contextWindow,
@@ -402,17 +405,8 @@ export async function compact(
   const entriesRemoved = toProcess.length;
   const compactedMessages = buildCompactedMessages(finalSummary, [], toProtect);
   const tokensAfter = physicalTokensFor(compactedMessages);
-  if (exceedsContextCapacity({
-    contextWindow,
-    currentTokens: tokensAfter,
-    reservedResponseTokens,
-  })) {
-    throw new ContextCapacityError({
-      contextWindow,
-      currentTokens: tokensAfter,
-      reservedResponseTokens,
-    }, 'History compaction');
-  }
+  // Return the usable candidate even under remaining pressure. The host owns
+  // response-reserve recovery, artifact relief and the durable commit.
   const memorySeed = extractCompactMemorySeed(finalSummary, totalFileOps);
 
   return {

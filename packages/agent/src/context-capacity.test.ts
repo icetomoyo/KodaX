@@ -10,6 +10,18 @@ import {
 } from './context-capacity.js';
 
 describe('physical context capacity', () => {
+  it('reports the same complete token requirement that triggered rejection', () => {
+    expect(new capacityApi.ContextCapacityError({ contextWindow: 131_072,
+      currentTokens: 125_541, reservedResponseTokens: 3_000 }, 'History compaction')).toMatchObject({
+      requiredTokens: 132_308, availableTokens: 131_072, safetyMarginTokens: 3_767,
+      operation: 'History compaction',
+    });
+  });
+
+  it('does not raise an explicit output cap below the recovery floor', () => {
+    expect(reclaimReservedResponseTokens({ contextWindow: 100_000,
+      currentTokens: 97_000, reservedResponseTokens: 1_024 })).toBe(1_024);
+  });
   it('uses the 2048-token safety floor for smaller requests', () => {
     expect(calculateContextSafetyMargin(20_000)).toBe(2_048);
   });

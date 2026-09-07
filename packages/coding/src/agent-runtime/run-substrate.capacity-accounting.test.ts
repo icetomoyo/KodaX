@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearRuntimeModelProviders,
   KodaXBaseProvider,
+  KodaXContextOverflowError,
   registerModelProvider,
 } from '@kodax-ai/llm';
 import type {
@@ -17,6 +18,10 @@ import { createRuntimeContextBudgetSnapshot } from './context-budget.js';
 import type { RuntimeContextBudgetSnapshot } from './context-budget.js';
 import { runSubstrate } from './run-substrate.js';
 import type { ToolGuardrail } from '@kodax-ai/agent';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 
 const PROVIDER_NAME = 'sa-capacity-accounting-test';
 const API_KEY_ENV = 'SA_CAPACITY_ACCOUNTING_TEST_API_KEY';
@@ -30,7 +35,7 @@ interface CapturedRequest {
 
 class CapacityAccountingProvider extends KodaXBaseProvider {
   static requests: CapturedRequest[] = [];
-  static mode: 'text' | 'tool' = 'text';
+  static mode: 'text' | 'tool' | 'reject_once' = 'text';
   static usage: KodaXStreamResult['usage'] = undefined;
 
   readonly name = PROVIDER_NAME;
@@ -54,6 +59,9 @@ class CapacityAccountingProvider extends KodaXBaseProvider {
       tools: [...tools],
       systemPrompt,
     });
+    if (CapacityAccountingProvider.mode === 'reject_once' && CapacityAccountingProvider.requests.length === 1) {
+      throw new KodaXContextOverflowError({ contextWindow: CONTEXT_WINDOW, inputTokensKind: 'unknown' });
+    }
     if (CapacityAccountingProvider.mode === 'tool') {
       return {
         textBlocks: [],
@@ -88,6 +96,33 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
   afterEach(() => {
     delete process.env[API_KEY_ENV];
     clearRuntimeModelProviders();
+  });
+
+  it('recovers a rejected SA generation after persisting reduced tool history', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-sa-rejection-'));
+    const previous = process.env[TOOL_OUTPUT_DIR_ENV];
+    process.env[TOOL_OUTPUT_DIR_ENV] = directory;
+    CapacityAccountingProvider.mode = 'reject_once';
+    let commits = 0;
+    try {
+      const result = await runSubstrate({ provider: PROVIDER_NAME, model: 'capacity-model', maxIter: 1,
+        reasoningMode: 'off', context: { systemPromptOverride: 'sys' },
+        session: { initialMessages: [
+          { role: 'assistant', content: [{ type: 'tool_use', id: 'old', name: 'bash', input: { command: 'cat file' } }] },
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: "print('x')\n".repeat(17_000) }] },
+        ] },
+        events: { onCompactedMessages: async () => { commits += 1; } },
+      }, 'continue');
+      expect(result.success).toBe(true);
+      expect(commits).toBeGreaterThan(0);
+      expect(CapacityAccountingProvider.requests.length).toBeGreaterThanOrEqual(2);
+      expect(estimateTokens(CapacityAccountingProvider.requests.at(-1)!.messages))
+        .toBeLessThan(estimateTokens(CapacityAccountingProvider.requests[0]!.messages));
+    } finally {
+      if (previous === undefined) delete process.env[TOOL_OUTPUT_DIR_ENV];
+      else process.env[TOOL_OUTPUT_DIR_ENV] = previous;
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('does not count skills separately when systemPromptOverride is the complete wire prompt', async () => {

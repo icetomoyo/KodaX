@@ -35,6 +35,7 @@ import type {
 import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
+  KodaXContextOverflowError,
   resolvePromptCacheDisabled,
   withProviderRequestCredential,
 } from '@kodax-ai/llm';
@@ -715,8 +716,10 @@ export function buildRunnerLlmAdapter(
       // inputs on the request copy, then shrink the wire-level output reserve
       // while the assembled request is still over capacity so the request
       // the provider receives is legal. The provider stays the authoritative
-      // judge; a rejection routes to classification, not a resend.
-      const recoveryContextWindow = contextBudgetCatalogs?.contextWindow;
+      // judge; Runner owns bounded history recovery after a confirmed rejection.
+      const recoveryContextWindow = contextTokenSnapshotRef?.current?.capacityWindow
+        ?? contextBudgetCatalogs?.contextWindow;
+      const canonicalInputEstimate = estimateTokens(providerMessages);
       let requestMaxOutputTokens = provider.getEffectiveMaxOutputTokens(activeModel);
       if (recoveryContextWindow !== undefined) {
         providerMessages = await degradeIrreducibleUserInputs(
@@ -971,6 +974,11 @@ export function buildRunnerLlmAdapter(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          // Runner owns canonical history and the single post-compaction retry.
+          if (error instanceof KodaXContextOverflowError) {
+            error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
+            throw error;
+          }
           if (
             error.name === 'AbortError'
               && retryTimeoutController.signal.aborted

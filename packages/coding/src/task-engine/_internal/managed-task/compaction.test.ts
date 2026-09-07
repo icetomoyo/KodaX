@@ -8,6 +8,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
 import {
   ContextCapacityError,
   Runner,
+  readRunnerRecoveryTranscript,
   compact as mockedCompact,
   createAgent,
   type AgentMessage,
@@ -396,10 +397,9 @@ describe('managed history compaction', () => {
 
     // FEATURE_296 (ADR-067): a still-over compaction is committed best-effort
     // instead of aborting the run; the ladder owns the next request.
-    const compacted = await hook?.(messages);
-
-    expect(compacted).toBeDefined();
-    expect(compacted).toEqual(overSized.messages);
+    const error = await hook?.(messages).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ContextCapacityError);
+    expect(readRunnerRecoveryTranscript(error)).toEqual(oversizedMessages);
     expect(onCompactEnd).toHaveBeenCalledWith(undefined, expect.objectContaining({
       outcome: 'compacted',
       stillOverCapacity: true,
@@ -702,7 +702,7 @@ describe('managed history compaction', () => {
     }));
   });
 
-  it('terminates at an open breaker under physical context pressure', async () => {
+  it('allows reserve reclamation at an open summarizer breaker', async () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, messages) };
     compactMock.mockRejectedValue(new Error('temporary summary failure'));
@@ -718,7 +718,7 @@ describe('managed history compaction', () => {
 
     ref.current = snapshot(88_000, messages);
     compactMock.mockResolvedValueOnce(compactedResult(messages));
-    await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+    await expect(hook?.(messages)).resolves.toBeUndefined();
     expect(compactMock).toHaveBeenCalledTimes(3);
   });
 
@@ -767,9 +767,9 @@ describe('managed history compaction', () => {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       ref.current = snapshot(88_000, messages);
-      await expect(hook?.(messages)).resolves.toBeDefined();
+      await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
     }
-    ref.current = snapshot(88_000, messages);
+    ref.current = snapshot(98_000, messages);
     await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
     expect(compactMock).toHaveBeenCalledTimes(3);
   });

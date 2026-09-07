@@ -4,6 +4,21 @@ import type {
   KodaXTokenUsage,
 } from './types.js';
 import { estimateTokens } from './tokenizer.js';
+import type { KodaXContextOverflowError } from '@kodax-ai/llm';
+
+/** Rejection pressure is never recorded as a successful usage sample. */
+export function createOverflowContextTokenSnapshot(
+  messages: KodaXMessage[], error: KodaXContextOverflowError,
+  contextWindow: number, snapshot?: KodaXContextTokenSnapshot,
+): KodaXContextTokenSnapshot {
+  const capacityWindow = Math.min(contextWindow, error.capacity.contextWindow ?? contextWindow);
+  const input = error.capacity.inputTokens;
+  const relief = Math.max(0, error.requestInputReliefTokens);
+  const currentTokens = error.capacity.inputTokensKind === 'exact' && input !== undefined
+    ? input + relief : Math.max(capacityWindow + relief, (input ?? 0) + relief, resolveContextTokenCount(messages, snapshot));
+  return { currentTokens, baselineEstimatedTokens: estimateTokens(messages),
+    source: 'estimate', capacityWindow };
+}
 
 function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;

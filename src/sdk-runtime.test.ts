@@ -15244,7 +15244,7 @@ describe("createKodaXRuntime", () => {
     expect(result.failureDetail?.safeMessage).not.toBe("Provider request failed.");
     expect(JSON.stringify(result)).not.toContain("capacity-cred-secret");
 
-    // ContextCapacityError token shape: required = current + reserved,
+    // ContextCapacityError token shape: required = current + reserved + safety,
     // available = window.
     const contextError = Object.assign(new Error("request cannot fit"), {
       code: "KODAX_CONTEXT_CAPACITY_EXCEEDED",
@@ -15266,8 +15266,22 @@ describe("createKodaXRuntime", () => {
     const contextResult = await contextHandle.result;
     expect(contextResult.failureDetail).toMatchObject({
       failureKind: "context_capacity",
-      contextTokens: { required: 98_000, available: 100_000 },
+      contextTokens: { required: 100_640, available: 100_000 },
     });
+    const { KodaXContextOverflowError } = await import('@kodax-ai/llm');
+    const overflow = new KodaXContextOverflowError({ contextWindow: 131_072,
+      inputTokens: 140_000, inputTokensKind: 'lower_bound' }, 'mock-provider', { httpStatus: 400 });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(overflow)));
+    const overflowHandle = await runtime.runs.start({ sessionId: session.id, prompt: 'terminal overflow',
+      providerCredential: 'capacity-cred-secret', providerCredentialProvider: 'mock-provider',
+    } as RuntimeStartRunInput & { readonly providerCredential: string; readonly providerCredentialProvider: string });
+    const overflowResult = await overflowHandle.result;
+    expect(overflowResult.failureDetail).toMatchObject({ failureKind: 'context_capacity', stage: 'transport',
+      providerErrorCode: 'context_capacity_exceeded',
+      contextOverflow: { contextWindow: 131_072, inputTokens: 140_000, inputTokensKind: 'lower_bound' } });
+    expect(overflowResult.failureDetail?.contextTokens).toBeUndefined();
+    expect(JSON.stringify(overflowResult)).not.toContain('capacity-cred-secret');
     await runtime.close();
   });
 

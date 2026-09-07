@@ -52,6 +52,7 @@ import {
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
+  KodaXContextOverflowError,
   getProviderCredentialEnvironmentNames,
   redactScopedProviderCredential,
   runWithProviderCredentialLeaseScope,
@@ -59,6 +60,7 @@ import {
 } from "@kodax-ai/llm";
 import type {
   ProviderCredentialLeaseAccess,
+  KodaXContextOverflowFacts,
   ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
@@ -173,6 +175,7 @@ import {
   getDefaultWorkflowRunManager,
   initializeSkillRegistry,
   ContextCapacityError,
+  calculateContextSafetyMargin,
   actorQueueId,
   enqueueWithArtifacts,
   getMessageQueue,
@@ -2232,6 +2235,8 @@ export interface RuntimeFailureDetail {
     readonly required: number;
     readonly available: number;
   };
+  /** Upstream token evidence; bounds are never presented as exact required totals. */
+  readonly contextOverflow?: KodaXContextOverflowFacts;
 }
 
 export interface RuntimeTerminalFact {
@@ -17263,6 +17268,8 @@ function parseRuntimeFailureDetail(
     ...(isRuntimeContextTokens(value.contextTokens)
       ? { contextTokens: value.contextTokens }
       : {}),
+    ...(readRuntimeContextOverflow(value.contextOverflow)
+      ? { contextOverflow: readRuntimeContextOverflow(value.contextOverflow) } : {}),
   };
 }
 
@@ -22379,6 +22386,8 @@ function buildRuntimeFailureDetail(
   const contextTokens = classification.failureKind === "context_capacity"
     ? readRuntimeContextTokens(source)
     : undefined;
+  const contextOverflow = source instanceof KodaXContextOverflowError
+    ? readRuntimeContextOverflow(source.capacity) : undefined;
   return {
     ...classification,
     safeMessage: runtimeFailurePublicMessage(classification),
@@ -22391,6 +22400,7 @@ function buildRuntimeFailureDetail(
     ...(requestPhase !== undefined ? { requestPhase } : {}),
     ...(isRuntimeElapsedMs(elapsedMs) ? { elapsedMs } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(contextOverflow !== undefined ? { contextOverflow } : {}),
   };
 }
 
@@ -22419,10 +22429,23 @@ function readRuntimeContextTokens(
   if (reservedResponseTokens !== undefined && !isNonNegativeSafeInteger(reservedResponseTokens)) {
     return undefined;
   }
-  const derivedRequired = currentTokens + (reservedResponseTokens ?? 0);
+  const derivedRequired = currentTokens + (reservedResponseTokens ?? 0)
+    + calculateContextSafetyMargin(currentTokens);
   return Number.isSafeInteger(derivedRequired)
     ? { required: derivedRequired, available: contextWindow }
     : undefined;
+}
+
+function readRuntimeContextOverflow(value: unknown): KodaXContextOverflowFacts | undefined {
+  if (!isRecord(value) || typeof value.inputTokensKind !== 'string'
+    || !['exact', 'lower_bound', 'unknown'].includes(value.inputTokensKind)) return undefined;
+  const contextWindow = typeof value.contextWindow === 'number' ? value.contextWindow : undefined;
+  const inputTokens = typeof value.inputTokens === 'number' ? value.inputTokens : undefined;
+  return {
+    inputTokensKind: value.inputTokensKind as KodaXContextOverflowFacts['inputTokensKind'],
+    ...(isNonNegativeSafeInteger(contextWindow) ? { contextWindow } : {}),
+    ...(isNonNegativeSafeInteger(inputTokens) ? { inputTokens } : {}),
+  };
 }
 
 function isNonNegativeSafeInteger(value: number | undefined): value is number {
@@ -22432,6 +22455,9 @@ function isNonNegativeSafeInteger(value: number | undefined): value is number {
 function classifyRuntimeFailureDetail(
   error: unknown,
 ): RuntimeFailureClassification {
+  if (error instanceof KodaXContextOverflowError) {
+    return runtimeFailure("context_capacity", "transport", "context_capacity_exceeded");
+  }
   // FEATURE_296 (ADR-067): local capacity failures are classified by isolated
   // class identity first, so a provider-derived error that merely shares the
   // class name or message cannot be misclassified into context_capacity.

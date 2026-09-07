@@ -930,6 +930,8 @@ export interface KodaXSessionOptions {
 }
 
 export interface KodaXContextTokenSnapshot {
+  /** Request-local ceiling learned from rejection; cleared by new usage. */
+  capacityWindow?: number;
   /** Current best-known token count for the full conversation context. */
   currentTokens: number;
   /** Local estimate for the same message set, used to adjust later message deltas. */
