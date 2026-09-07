@@ -822,3 +822,19 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **S4 embedder-guide 退役 + 迁移**：删/改 guide 中：头部能力句（runtimeExitSettlement:2、v0.7.92 operation-token coordinator、v0.7.91 crash-resumable exit settlement）；ch.17 journal cursor/epoch 段（:2867-2870/:3427）+ stopForInline（:3065）+ runtime-worker 面；ch.23 settleKodaXRuntimeExit 章（:4824-4841）、journalEpoch（:5137）、operation envelope 章（:5202-5322+）、stopForInline 回滚章（:5590-5633）；ch.25 compact operationId 客户端侧（:5879——compact_<uuid> Host 铸身份保留）；T26 live 事件流改写；新增 v0.7.97 迁移章节（破坏性变更清单：operation envelope/operations.get/exit settlement/event.*/diagnostics RPC/sessionEventJournal/worker facade/isolation options/late-result delivery/setThinking）。
 
 **门与坑**：config 模板由 sync-config-templates.mjs 生成需重跑；build-bundle/build-binary 引用 runtime-worker 需同步；sdk-runtime.test/interactions/learning 中 worker-isolation 用例删除或改 inline；kodax_cli.run-options.test worker 分支；transport.test.ts:208,235 + client.test.ts:1078 late-result 断言改写为丢弃语义；daemon-smoke 若引 runtime-worker 需查。TDD 顺序：S2 先行（transport RED：abort 后 late result 丢弃不补投）；S1（worker 选项从类型消失+配置键忽略）；S3/S4 收尾。
+
+## 2026-09-07 T27 完成 + T15 验收（35/35 全部完成）
+
+**T27 提交**：`e8cf11af`（实现）→ `a8e1d870`（双轴评审修复）→ 翻牌子模块 `fbb6f3f` + 父指针 `607262ea`。设计与实施严格按上节裁决——无过度删除：14 个 SDK subpath 全保留（guide 有文档化外部消费者）、mode 选项保留（embedded|daemon 产品模式对）、owner-mode 家族导出保留（T02/T25 契约）。
+
+**关键事实（复验基线）**：
+- late-result 机器删除的安全性依据：server 端 request.cancel 对 completed-but-unacked in-flight 同样 abort+关订阅（server.ts:615-647 + server.test:1994 钉死），客户端补投是冗余保险带；全仓无生产 onLateResult 消费者。
+- hardDispose 是 worker-facade 专属契约（唯一满足者是已删的 Worker runtime）——requirement、embedded/daemon 广告、相关测试一并退役；能力门测试改用 externalAgents 真实 fail-closed 路径。
+- kodax_cli.interactive-exit.test 在 T26 提交时点已 10 败（host-integrations 引入 discoverExtensionsInDirectory 后 mock 未跟上 + one-shot T35 改走 acceptInput 后断言漂移）——T27 顺带修复：mock 补 discoverExtensionsInDirectory/getSettings/acceptInput 族、断言改真实 payload（sessionId/text/delivery）、--no-session 改 Host 端删除语义（runtimeDeletes 空）。
+- 评审 High：guide 三处声称"embedded inline Runtime 自动装载 configured A2A 平面"为虚假（Runtime 自身不读 a2a.json；CLI 是显式接线 createConfiguredA2ARuntimeIntegration→externalAgents）——三处改写为 owner 接线指引；README/README_CN/release.md/DD/PRD 同步退役（历史 changelog 段保留不动）。
+
+**门禁（评审修复后复验）**：build 绿；parity 378 唯一 vs T26 门 376 零新增；runtime-daemon 288、repl 2669、sdk-runtime 283+3 预存、client+a2a+acp+one-shot 306+1（workflow 环境漂移）、self-knowledge 78、release-workflow 17、independence 5、learning/interactions/conversation/transport/client/interactive-exit/run-options 全绿、daemon-smoke 24-25/25（隔离绿）。
+
+**T15 验收（翻牌 `fbb6f3f`）**：lifecycle 3 S1 全绿（idle shutdown/owner mode 不变、busy 上报+他人观察、Host 拥有 helper 清理）+ crash 3/3 隔离绿；两依赖条款由 T17/T18（Ink/classic 资源所有权）与 T25 S2（旧 exit 协议删除）交付，T27 复核 guide 迁移表同步。未新增 force/完成账本/可恢复退出协议。
+
+**最终残留（全版本汇总）**：sdk-client.workflow.test.ts 本机环境漂移（T22 起停不下来，干净 bisect 证据在 T26 记录——独立跟进）；permission-analyzer 222 败=merge-base 预存（Windows 路径归一化）；daemon-spawn 满载轮转 flake；sdk-runtime 3 预存败；goal/notice 写入绕 draining fence（票前既有，建议独立票）；REPL parity 人工终端回归待发布执行。发布动作（版本 bump/CHANGELOG/push）按票面归既有发布流程，本次未执行。
