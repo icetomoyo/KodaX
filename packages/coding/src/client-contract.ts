@@ -1,5 +1,23 @@
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
-import type { AskUserAnswer, AskUserMultiOptions, AskUserQuestionOptions, KodaXGoalState, KodaXSessionEntry } from '@kodax-ai/agent';
+import type {
+  AgentDataClassification,
+  AgentDetail,
+  AgentEvent,
+  AgentFollowupResult,
+  AgentOutput,
+  AgentRegistrationEnabledMutationOptions,
+  AgentRegistrationMutationOptions,
+  AgentSpawnInput,
+  AgentTreeSnapshot,
+  AgentTurnRef,
+  AskUserAnswer,
+  AskUserMultiOptions,
+  AskUserQuestionOptions,
+  ExternalAgentRegistration,
+  ExternalAgentRegistrationSummary,
+  KodaXGoalState,
+  KodaXSessionEntry,
+} from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
 
 export interface ClientSession {
@@ -119,6 +137,31 @@ export interface KodaXProductClient {
     listGrants(): Promise<ClientPermissionGrants>;
     /** Revoke exactly one grant by its domain identity; the revision must match. */
     revokeGrant(grantId: string, expectedRevision: number): Promise<boolean>;
+  };
+  /**
+   * FEATURE_298 T30 — Host-owned external Agent registry. Mutations use the
+   * registry's own domain identity (configuration revision CAS, management
+   * ownership), never a generic operation envelope.
+   */
+  readonly registrations: {
+    list(): Promise<readonly ExternalAgentRegistrationSummary[]>;
+    upsert(registration: ExternalAgentRegistration, options?: AgentRegistrationMutationOptions): Promise<ExternalAgentRegistrationSummary>;
+    setEnabled(agentId: string, enabled: boolean, options?: AgentRegistrationEnabledMutationOptions): Promise<ExternalAgentRegistrationSummary | undefined>;
+    remove(agentId: string, options?: AgentRegistrationMutationOptions): Promise<boolean>;
+  };
+  /**
+   * FEATURE_298 T30 — collaboration control over the Host's Session Actors.
+   * Reads return the actual domain objects; `wait` resolves one Agent event.
+   */
+  readonly agents: {
+    tree(sessionId: string): Promise<AgentTreeSnapshot>;
+    detail(sessionId: string, actorPath: string): Promise<AgentDetail>;
+    spawn(sessionId: string, input: AgentSpawnInput): Promise<AgentTurnRef>;
+    send(sessionId: string, actorPath: string, content: string, classification?: AgentDataClassification): Promise<void>;
+    followup(sessionId: string, actorPath: string, objective: string, options?: { readonly expectedRevision?: number }): Promise<AgentFollowupResult>;
+    interrupt(sessionId: string, actorPath: string, reason?: string): Promise<void>;
+    output(sessionId: string, actorPath: string, turnId?: string): Promise<AgentOutput>;
+    wait(sessionId: string, afterSequence?: number, timeoutMs?: number, options?: { readonly signal?: AbortSignal }): Promise<AgentEvent | undefined>;
   };
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */

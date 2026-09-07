@@ -162,6 +162,28 @@ export function toKodaXProductClient(
       },
       revokeGrant: (grantId, expectedRevision) => runtime.permissions.revokeGrant(grantId, expectedRevision),
     },
+    registrations: {
+      list: () => runtime.admin.agentRegistrations.list(),
+      upsert: (registration, options) => runtime.admin.agentRegistrations.upsert(registration, options),
+      setEnabled: (agentId, enabled, options) =>
+        runtime.admin.agentRegistrations.setEnabled(agentId, enabled, options),
+      remove: (agentId, options) => runtime.admin.agentRegistrations.remove(agentId, options),
+    },
+    agents: {
+      tree: (sessionId) => runtime.agents.tree(sessionId),
+      detail: (sessionId, actorPath) => runtime.agents.detail(sessionId, actorPath),
+      spawn: (sessionId, input) => runtime.agents.spawn(sessionId, input),
+      send: (sessionId, actorPath, content, classification) =>
+        runtime.agents.send(sessionId, actorPath, content, classification),
+      followup: (sessionId, actorPath, objective, options) =>
+        runtime.agents.followup(sessionId, actorPath, objective,
+          options?.expectedRevision === undefined ? undefined : { expectedRevision: options.expectedRevision }),
+      interrupt: (sessionId, actorPath, reason) => runtime.agents.interrupt(sessionId, actorPath, reason),
+      output: (sessionId, actorPath, turnId) => runtime.agents.output(sessionId, actorPath, turnId),
+      wait: (sessionId, afterSequence, timeoutMs, options) =>
+        runtime.agents.wait(sessionId, afterSequence, timeoutMs,
+          options?.signal === undefined ? undefined : { signal: options.signal }),
+    },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),
       patch: async (patch) => toClientConfig(await runtime.config.patch(patch)),

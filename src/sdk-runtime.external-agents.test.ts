@@ -14,6 +14,7 @@ import {
   createKodaXRuntime,
   type KodaXRuntime,
 } from './sdk-runtime.js';
+import { toKodaXProductClient } from './sdk-client.js';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
 import {
   createRuntimeDaemonRequest,
@@ -374,6 +375,110 @@ describe('FEATURE_258 Embedded Runtime agent services', () => {
     await daemon.close();
     await host.close();
   });
+
+  it('drives registration lifecycle and Actor collaboration through the product client face (T30)', async () => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-product-agents-'));
+    let disposed = false;
+    const factory: AgentExecutorFactory = {
+      executorId: 'product-face-http',
+      protocol: 'http',
+      async create() {
+        return {
+          async start(input) {
+            return { idempotencyKey: input.idempotencyKey ?? 'product-face-task' };
+          },
+          async *events() {
+            yield { state: 'unknown' as const };
+          },
+          async get() { return { state: 'unknown' as const }; },
+          async sendInput() {},
+          async cancel() { return { state: 'canceled' as const }; },
+          async reconcile() { return { state: 'unknown' as const }; },
+          async dispose() { disposed = true; },
+        };
+      },
+    };
+    const runtime = await createKodaXRuntime({
+      homeDir,
+      externalAgents: {
+        factories: [createReferenceAgentExecutorFactory({
+          executorId: 'reference-http',
+          protocol: 'http' as const,
+        }), factory],
+        policy: async () => ({ allowed: true }),
+        defaultContext: { actorId: 'runtime-host' },
+      },
+    });
+    const client = toKodaXProductClient(runtime);
+    const session = await runtime.sessions.create({
+      sessionId: 'product-face', title: 'Product face agents',
+    });
+    try {
+      // 配置远端 Agent through the product face.
+      const summary = await client.registrations.upsert(registration());
+      expect(summary.agentId).toBe('external:runtime-reference');
+      expect((await client.registrations.list()).map((entry) => entry.agentId))
+        .toContain('external:runtime-reference');
+
+      // 实际 dispatch: the reference executor completes in-process.
+      const started = await client.agents.spawn(session.id, {
+        taskName: 'reference',
+        kind: 'external',
+        objective: 'Dispatch through the product client face',
+        metadata: { agentId: 'external:runtime-reference' },
+      });
+      const output = await clientFaceTerminal(client, session.id, '/root/reference', started.turnId);
+      expect(output).toMatchObject({ state: 'completed', output: 'runtime-ok' });
+      expect((await client.agents.tree(session.id)).actors.map((actor) => actor.path))
+        .toContain('/root/reference');
+      expect(await client.agents.detail(session.id, '/root/reference'))
+        .toMatchObject({ actor: { path: '/root/reference' } });
+
+      // 停用阻止新 admission.
+      await client.registrations.setEnabled('external:runtime-reference', false);
+      expect((await runtime.agents.listDispatchable({ actorId: 'runtime-host' }))
+        .map((entry) => entry.descriptor.agentId))
+        .not.toContain('external:runtime-reference');
+      const blocked = await client.agents.spawn(session.id, {
+        taskName: 'blocked',
+        kind: 'external',
+        objective: 'Must not admit while disabled',
+        metadata: { agentId: 'external:runtime-reference' },
+      });
+      const blockedOutput = await clientFaceTerminal(client, session.id, '/root/blocked', blocked.turnId);
+      expect(blockedOutput).toMatchObject({ state: 'failed' });
+
+      // Local Actor messages and cancellation stay Host-controlled.
+      await client.registrations.upsert({
+        ...registration(),
+        agentId: 'external:product-face',
+        displayName: 'Product Face Agent',
+        executorId: factory.executorId,
+        configurationRevision: 'product-face-rev-1',
+        endpointIdentityHash: 'sha256:product-face',
+      });
+      const active = await client.agents.spawn(session.id, {
+        taskName: 'controlled',
+        kind: 'external',
+        objective: 'Stay active until cancelled',
+        metadata: { agentId: 'external:product-face' },
+      });
+      await client.agents.send(session.id, '/root/controlled', 'status update', 'internal');
+      await client.agents.interrupt(session.id, '/root/controlled', 'operator cancelled');
+      const cancelled = await clientFaceTerminal(client, session.id, '/root/controlled', active.turnId);
+      expect(cancelled.state).toMatch(/failed|canceled|cancelled|interrupted/);
+
+      // Host 退出关 watcher: executor resources dispose with the Host.
+      await runtime.close();
+      const disposeDeadline = Date.now() + 2_000;
+      while (!disposed && Date.now() < disposeDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(disposed).toBe(true);
+    } finally {
+      await runtime.close();
+    }
+  });
 });
 
 function initializedCapabilities(result: unknown): Readonly<Record<string, unknown>> {
@@ -396,6 +501,21 @@ async function waitForActorTerminal(
   const deadline = Date.now() + 2_000;
   for (;;) {
     const output = await runtime.agents.output(sessionId, actorPath, turnId);
+    if (output.state !== 'accepted' && output.state !== 'running') return output;
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for Actor turn ${turnId}.`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function clientFaceTerminal(
+  client: ReturnType<typeof toKodaXProductClient>,
+  sessionId: string,
+  actorPath: string,
+  turnId: string,
+): Promise<Awaited<ReturnType<typeof client.agents.output>>> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    const output = await client.agents.output(sessionId, actorPath, turnId);
     if (output.state !== 'accepted' && output.state !== 'running') return output;
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for Actor turn ${turnId}.`);
     await new Promise((resolve) => setTimeout(resolve, 10));
