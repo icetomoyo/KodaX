@@ -82,8 +82,7 @@ function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
     respondInteraction: (requestId, response) =>
       runtime.interactions
         .respond(requestId, response)
-        .then((result) => result.accepted)
-        .catch(() => false),
+        .then((result) => result.accepted),
   };
 }
 

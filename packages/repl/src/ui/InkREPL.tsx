@@ -861,6 +861,9 @@ type StreamingEvents = import("@kodax-ai/coding").KodaXEvents & {
 
 const CHILD_ACTIVITY_MAX_RECORDS = 12;
 
+/** FEATURE_298 T17 — plane notices survive view pushes; pure time-based expiry. */
+const CLIENT_PLANE_NOTICE_TTL_MS = 8000;
+
 interface TranscriptMouseSelectionState {
   anchor: TranscriptScreenPoint;
   focus: TranscriptScreenPoint;
@@ -1855,9 +1858,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [clientPlaneNotices, setClientPlaneNotices] = useState<readonly {
     readonly id: string;
     readonly text: string;
+    readonly at: number;
   }[]>([]);
   const pushClientPlaneNotice = useCallback((id: string, text: string): void => {
-    setClientPlaneNotices((prev) => (prev.some((notice) => notice.id === id) ? prev : [...prev, { id, text }]));
+    const expire = (): void => {
+      setClientPlaneNotices((prev) => (prev.length === 0 ? prev : prev.filter((notice) => Date.now() - notice.at < CLIENT_PLANE_NOTICE_TTL_MS)));
+    };
+    setClientPlaneNotices((prev) => (prev.some((notice) => notice.id === id)
+      ? prev
+      : [...prev.filter((notice) => Date.now() - notice.at < CLIENT_PLANE_NOTICE_TTL_MS), { id, text, at: Date.now() }]));
+    // Notices must outlive the next view push (which re-runs the effects
+    // below), so expiry is time-based; the timer's setState is a no-op once
+    // the list is empty.
+    setTimeout(expire, CLIENT_PLANE_NOTICE_TTL_MS + 250);
   }, []);
   useEffect(() => {
     const plane = options.clientPlane;
@@ -1869,7 +1882,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clientPlaneOpenInteractionsRef.current.delete(requestId);
       controller.abort();
     }
-    if (pending.length === 0 && clientPlaneNotices.length > 0) setClientPlaneNotices([]);
+    if (clientPlaneNotices.some((notice) => Date.now() - notice.at >= CLIENT_PLANE_NOTICE_TTL_MS)) {
+      setClientPlaneNotices((prev) => prev.filter((notice) => Date.now() - notice.at < CLIENT_PLANE_NOTICE_TTL_MS));
+    }
     for (const interaction of pending) {
       if (clientPlaneOpenInteractionsRef.current.has(interaction.requestId)) continue;
       const dialogs = clientPlaneDialogsRef.current;
@@ -4531,7 +4546,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isHistorySearchActive,
       isTranscriptMode,
       pendingTranscriptUpdateCount,
-      streamingState.pendingInputs.length,
+      displayPendingInputs.length,
       transcriptDisplayState.buffering,
     ],
   );
@@ -9089,7 +9104,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // queue; capacity conflicts surface as a visible footer notice. The
   // full text is cached per inputId because the view only carries a
   // bounded preview — pull-all needs the complete text back.
-  const clientPlaneQueuedTextsRef = useRef(new Map<string, string>());
+  const clientPlaneQueuedTextsRef = useRef(new Map<string, { text: string; at: number }>());
   const submitHostQueuedFollowUp = useCallback((
     text: string,
     delivery: 'after_turn' | 'redirect' = 'after_turn',
@@ -9106,8 +9121,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       inputId,
       delivery,
       ...(targetRunId !== undefined ? { targetRunId } : {}),
-    }).then(() => {
-      clientPlaneQueuedTextsRef.current.set(inputId, text);
+    }).then((acceptance) => {
+      if (acceptance.state === 'dropped' || acceptance.state === 'withdrawn') return;
+      // Prune consumed entries: keep the current queue plus entries young
+      // enough that the view may not reflect them yet.
+      const queueIds = new Set((clientViewRef.current?.queue ?? []).map((entry) => entry.inputId));
+      const now = Date.now();
+      for (const [id, entry] of clientPlaneQueuedTextsRef.current) {
+        if (!queueIds.has(id) && now - entry.at > 30_000) {
+          clientPlaneQueuedTextsRef.current.delete(id);
+        }
+      }
+      clientPlaneQueuedTextsRef.current.set(inputId, { text, at: now });
     }, (error: unknown) => {
       pushClientPlaneNotice(
         `queue-reject-${Date.now()}`,
@@ -11045,7 +11070,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 });
             }
             return hostQueue.map((entry) =>
-              clientPlaneQueuedTextsRef.current.get(entry.inputId) ?? entry.text,
+              clientPlaneQueuedTextsRef.current.get(entry.inputId)?.text ?? entry.text,
             ).join("\n---\n");
           }}
           prompt=">"

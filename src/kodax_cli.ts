@@ -5938,8 +5938,7 @@ complete -c kodax -l version -d 'Show version'`);
             respondInteraction: (requestId: string, response: ClientInteractionResponse) =>
               interactiveRuntime.interactions
                 .respond(requestId, response)
-                .then((result) => result.accepted)
-                .catch(() => false),
+                .then((result) => result.accepted),
           },
           // FEATURE_298 T34 — manual /compact replays the Host journal
           // through the compaction domain and persists there.

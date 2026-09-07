@@ -305,6 +305,14 @@ export function clientViewToHistoryItems(
   const trailingAssistantIndex = options.activeRunId === undefined
     ? -1
     : findLastIndex(items, (item) => item.type === 'assistant');
+  if (options.memo !== undefined) {
+    // Prune entries whose items left the bounded view window (this also
+    // clears the cache across session switches).
+    const ids = new Set(items.map((item) => item.id));
+    for (const id of options.memo.entries.keys()) {
+      if (!ids.has(id)) options.memo.entries.delete(id);
+    }
+  }
   return items.map((item, index) => {
     const memoized = options.memo?.entries.get(item.id);
     const fingerprint = itemFingerprint(item);
