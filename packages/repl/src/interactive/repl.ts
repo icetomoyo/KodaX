@@ -761,6 +761,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let detachPlaneDisplay: (() => void) | undefined;
   let planeDisplayClosed = false;
   let planeDisplaySessionId: string | undefined;
+  let attachInFlightSessionId: string | undefined;
   let pendingAssistantNewline = false;
   const planeDisplayWrite = (line: string): void => {
     const separator = line.indexOf(':');
@@ -783,10 +784,15 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const attachPlaneDisplayFor = (sessionId: string, attempt = 0): void => {
     const plane = options.clientPlane;
     if (plane === undefined || planeDisplayClosed) return;
-    if (planeDisplaySessionId === sessionId && detachPlaneDisplay !== undefined) return;
+    if (planeDisplaySessionId === sessionId
+      && (detachPlaneDisplay !== undefined || attachInFlightSessionId === sessionId)) return;
+    // A backoff retry for a session we switched away from must not detach
+    // and hijack the new session's display.
+    if (attempt > 0 && planeDisplaySessionId !== sessionId) return;
     detachPlaneDisplay?.();
     detachPlaneDisplay = undefined;
     planeDisplaySessionId = sessionId;
+    attachInFlightSessionId = sessionId;
     void attachClassicPlaneDisplay(plane, sessionId, {
       write: planeDisplayWrite,
       dialogs: createClassicPlaneDialogSurface({
@@ -795,12 +801,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       }),
       onNotice: (text) => console.log(chalk.yellow(`\n${text}\n`)),
     }).then((detach) => {
+      if (attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
       if (planeDisplayClosed || planeDisplaySessionId !== sessionId) {
         detach();
         return;
       }
       detachPlaneDisplay = detach;
     }).catch((error: unknown) => {
+      if (attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
       if (planeDisplayClosed) return;
       const nextAttempt = attempt + 1;
       if (nextAttempt > 5) {

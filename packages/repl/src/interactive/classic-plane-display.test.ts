@@ -100,13 +100,17 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
   it('does not reprint restored completed tools after the baseline', () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line));
+    const restored = item({
+      id: 't-old', type: 'tool', text: 'past output',
+      tool: { callId: 'c-old', name: 'bash', status: 'success', inputText: 'npm test', endedAt: 1 },
+    });
+    differ([restored]);
+    // Production observe pushes keep restored items in the window; the
+    // baseline :done priming must suppress the terminal line reprint.
     differ([
-      item({
-        id: 't-old', type: 'tool', text: 'past output',
-        tool: { callId: 'c-old', name: 'bash', status: 'success', inputText: 'npm test' },
-      }),
+      restored,
+      item({ id: 'a9', type: 'assistant', text: 'new' }),
     ]);
-    differ([item({ id: 'a9', type: 'assistant', text: 'new' })]);
     expect(lines).toEqual(['assistant:new']);
   });
 
