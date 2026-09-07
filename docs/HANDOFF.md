@@ -610,3 +610,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **残留(票面已记)**:plane 提交丢 inputArtifacts(承 T17,待 Host input face 工件通道);classic differ 假定增长前缀——有界 [truncated] 与 readItem 分页 classic 未做(Low);REPL parity classic/编辑器人工回归归发布验收。
 
 **下一步 T35(单发 CLI→Client;四缺口图见上)**:(1) KodaXProductClient 增 runs.await(client-contract+sdk-client 投影,现有 runs.read/stop);(2) kodax_cli runCliTaskWithRuntime 改 connectKodaXClient+sessions.create({temporary:--no-session})+inputs.submit+runs.await,删 CLI 侧 resolveCliTaskSessionId+finally delete(Host 临时会话已自删,T09 S1 已证);(3) SIGINT→client.runs.stop+退出码映射,断连≠完成(phase unknown 不当成功);(4) 一次性专用非持久进度适配器替代 createRuntimeReplEventBridge daemon 链(iteration/retry/provider.recovery/tool input delta 进 JSONL),emitJsonRunResultIfNeeded 字节不变。RED 骨架:json --no-session 退出 0+JSONL+无会话文件;中途 kill→终端无 completed;注入 retry/recovery 事件在 JSONL 有、events.replay 无。之后 T19/T20/T30→收尾 T25/T26/T27→T15。
+
+---
+
+## 2026-09-07 T35 Done (27/35) — 单发 CLI 走产品 Client、runner 退役
+
+**五提交**：`a679b61d`（产品面 runs.await+ClientRunOutcome、会话设置 maxIter 全链、run.await failureDetail schema 预存缺口修复——provider/model/requestPhase/elapsedMs 此前被服务端校验拒收）、`f24d42ce`（runOneShotClientTask+toKodaXProductClient+转发器迁 run-progress-events.ts+attachRunProgressAdapter+plain//command 接线）、`db3cc176`（SIGINT→stop/退出码 0/130/1/断线 unknown≠完成）、`3a9b35d4`（runner/bridge/权限响应器/CLI 会话助手删除 −894 行；prepared+repo-intelligence 走窄 runs.start 接缝 toPreparedRunStartOptions）、`11c9a178`（评审修复）。票据 377c5b1（submodule）+父指针 bf0b1e2a。
+
+**关键设计裁决**：(1) maxIter 无产品归宿→扩会话设置（--max-iter help 本就写 "per session"）；(2) prepared skill 调用的 promptOverlay/modelOverride/skillInvocation policy 无输入面承载→保留 runs.start 窄接缝（runner 本体仍删，接缝与产品路径共享会话解析/SIGINT/退出码/投影）；(3) --repo-intelligence 旗标同因无设置归宿→带此 context 的 plain 路由到接缝（env KODAX_REPO_INTELLIGENCE 时 Host 自读 env，仅旗标需接缝）；(4) 旗标→设置 patch 为 per-invocation：finally 恢复覆盖新建持久会话（与迁移前 per-run 语义一致），临时会话不恢复（Host 结算即删），恢复失败→events.onError；(5) embedded prepared 不挂适配器（startOptions 直收回调，挂了会双打印）；plain 两种模式都挂（embedded 产品 run 无回调可传，适配器是唯一输出来源）。
+
+**双轴**：Standards FAIL 3M（死导入×4+forwardRunProgressEvent、恢复失败静默吞、断线测试 unhandled rejection——`expect(pending).rejects` 必须在 close 前附着）+Spec PASS 带 2M（F1 repo-intelligence plain 失效、F2 设置粘滞+吞错）→ 全修→复验 PASS 无新问题。Spec 另证：JSON 事件四族（iteration/retry/recovery/tool input delta）全模式存活；附件无既有单发通道=无回归；decline 语义原样。
+
+**坑**：python 删块用过期行号=误删好代码（先 checkout 重置再按签名动态定位重做）；`git stash push` 不含 untracked，parity 对照要先把新文件移开；worktree 检出下 sessions.list({projectRoot}) 为空（FEATURE_219 建桶用入参 root、查询用 canonical-root 重探，git-common-dir 指向主仓）——预存缺口，interactive 同行为，测试改用确定性 session.id 路径；runManagedTask 与 startKodaX 是两个 mock 面（managed_task 模式走前者，漏 mock 即真实 provider 目录报错）；agentMode:'sa' 会把 run 路由到 SA executor（测试用 model 做设置保留断言）。
+
+**门禁终态**：build 绿、daemon 344、sdk-runtime 10败=预存（320过）、one-shot 6+run-options 12+runs-await 1、CLI/client 套件绿、tsc 唯一集 416≤481（3 条随删除消失、TS2352/union 顺序噪声随迁）。
+
+**残留**：worktree FEATURE_219 项目列表空（建议后续 issue：createSession 持久化 canonicalRepoRoot 或查询侧按入参 root 落桶）；嵌入 delta 50ms 总线合并（=daemon 粒度，文本不变）；worker-hosted 输出静默（预存）；onScoutSuspiciousCompletion 死回调面；真实安装入口子进程 E2E 未做（模块级真实 Host harness 等价覆盖）。
+
+**下一步（27/35）**：DAG 前沿=T19（ACP，Blocked by T08✓T09✓T12✓T16✓）、T20（A2A，T08✓T16✓）、T30；T26 前置仅剩 T19/T21（T17✓T18✓T35✓）；收尾 T25/T26/T27→T15 收尾。建议 T19（解锁 T26 链）。
