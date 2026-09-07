@@ -352,19 +352,9 @@ function pendingRuntime(): {
       }
     },
     emitInputRequired(seq: number, time = new Date().toISOString()) {
-      const event = pendingInputEvent(seq);
-      pendingInputs.set(`input-${seq}`, {
-        id: `input-${seq}`,
-        revision: 0,
-        sessionId: 'session-pending',
-        runId: 'run-pending',
-        kind: 'askUserInput',
-        options: { question: 'Continue?' },
-        createdAt: event.time,
-        expiresAt: new Date(Date.parse(event.time) + 60_000).toISOString(),
-      });
+      this.setPendingInput(seq);
       for (const listener of [...listeners]) {
-        listener({ ...event, time });
+        listener({ ...pendingInputEvent(seq), time });
       }
     },
     emitRunStarted(seq: number, time = new Date().toISOString()) {
@@ -1204,16 +1194,134 @@ describe('FEATURE_267 bidirectional A2A', () => {
       // Another client of the same Host answers the pending input directly.
       controlled.answerExternally(1);
       controlled.complete('answered-elsewhere');
-      let converged: Record<string, unknown> | undefined;
+      let converged: { readonly status: { readonly state: string } } | undefined;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        converged = (await rpc(baseUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
-        if (JSON.stringify(converged).includes('TASK_STATE_COMPLETED')) break;
+        converged = (await rpc(baseUrl, 'GetTask', { id: taskId })).body.result as {
+          readonly status: { readonly state: string };
+        };
+        if (converged.status.state === 'TASK_STATE_COMPLETED') break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      expect(JSON.stringify(converged)).toContain('TASK_STATE_COMPLETED');
+      expect(converged?.status.state).toBe('TASK_STATE_COMPLETED');
       expect(JSON.stringify(converged)).toContain('answered-elsewhere');
-      expect(JSON.stringify(converged)).not.toContain('TASK_STATE_INPUT_REQUIRED');
     } finally {
+      await server.close();
+    }
+  });
+
+  it('materializes inbound attachment parts as Runtime artifact inputs (T20)', async () => {
+    const controlled = pendingRuntime();
+    const createdArtifacts: Array<Record<string, unknown>> = [];
+    const runtime = {
+      ...controlled.runtime,
+      artifacts: {
+        async create(input: Record<string, unknown>) {
+          createdArtifacts.push(input);
+          return { id: `artifact-${createdArtifacts.length}`, ...input };
+        },
+      },
+    } as unknown as KodaXRuntime;
+    const base = serverOptions(runtime, temporaryRoot());
+    const server = createKodaXA2AServer({
+      ...base,
+      agent: { ...base.agent, inputModes: ['text/plain', 'application/json'] },
+    });
+    const baseUrl = await server.listen({ hostname: '127.0.0.1', port: 0 });
+    try {
+      const sent = await rpc(baseUrl, 'SendMessage', {
+        message: {
+          messageId: 'attachment-start', role: 'ROLE_USER',
+          parts: [
+            { text: 'check this data' },
+            { data: { rows: [1, 2, 3] }, mediaType: 'application/json', filename: 'rows.json' },
+          ],
+        },
+        configuration: { returnImmediately: true },
+      });
+      expect(sent.body.error).toBeUndefined();
+      const taskId = (sent.body.result as { readonly task: { readonly id: string } }).task.id;
+      controlled.complete('attachment-done');
+      let finished: { readonly status: { readonly state: string } } | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        finished = (await rpc(baseUrl, 'GetTask', { id: taskId })).body.result as {
+          readonly status: { readonly state: string };
+        };
+        if (finished.status.state === 'TASK_STATE_COMPLETED') break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(finished?.status.state).toBe('TASK_STATE_COMPLETED');
+      expect(createdArtifacts).toHaveLength(1);
+      expect(createdArtifacts[0]).toMatchObject({
+        kind: 'file',
+        mediaType: 'application/json',
+        source: 'user-inline',
+        name: 'rows.json',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not resurrect pre-terminal state when the Run settles during the snapshot (T20)', async () => {
+    const controlled = pendingRuntime();
+    let markListPending!: () => void;
+    let releaseListPending!: () => void;
+    const listPendingEntered = new Promise<void>((resolve) => { markListPending = resolve; });
+    const listPendingGate = new Promise<void>((resolve) => { releaseListPending = resolve; });
+    let gated = true;
+    const runtime = {
+      ...controlled.runtime,
+      userInputs: {
+        async listPending() {
+          if (gated) {
+            gated = false;
+            markListPending();
+            await listPendingGate;
+          }
+          return [];
+        },
+        async respond(requestId: string) {
+          return { requestId, accepted: true, status: 'answered' as const };
+        },
+        async dismiss(requestId: string) {
+          return { requestId, accepted: true, status: 'dismissed' as const };
+        },
+      },
+    } as unknown as KodaXRuntime;
+    const dataDir = temporaryRoot();
+    const base = serverOptions(runtime, dataDir);
+    const server = createKodaXA2AServer({
+      ...base,
+      limits: { ...base.limits, maxTaskWaitMs: 1 },
+    });
+    try {
+      const sendPromise = server.handle(directRpcRequest('SendMessage', {
+        message: { messageId: 'settled-during-snapshot', role: 'ROLE_USER', parts: [{ text: 'work' }] },
+      }, 'start-settled-during-snapshot'));
+      await listPendingEntered;
+      // The Run result settles and finishRun commits the terminal state while
+      // the snapshot is still between its reads and its save.
+      controlled.complete('settled-during-snapshot-result');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      releaseListPending();
+      const response = await sendPromise;
+      expect(response.status).toBe(200);
+      const taskId = ((await response.json()) as {
+        readonly result: { readonly task: { readonly id: string } };
+      }).result.task.id;
+
+      const fetchResponse = await server.handle(directRpcRequest('GetTask', { id: taskId }));
+      const body = await fetchResponse.json() as {
+        readonly result: { readonly status: { readonly state: string } };
+      };
+      expect(body.result.status.state).toBe('TASK_STATE_COMPLETED');
+      const persisted = JSON.parse(readFileSync(path.join(dataDir, 'tasks.json'), 'utf8')) as Array<{
+        readonly task: { readonly status: { readonly state: string } };
+      }>;
+      expect(persisted).toHaveLength(1);
+      expect(persisted[0]?.task.status.state).toBe('TASK_STATE_COMPLETED');
+    } finally {
+      releaseListPending();
       await server.close();
     }
   });
@@ -1253,13 +1361,15 @@ describe('FEATURE_267 bidirectional A2A', () => {
       expect(continued.body.error).toBeUndefined();
       expect(JSON.stringify(continued.body)).toContain('TASK_STATE_WORKING');
       controlled.complete('resumed-after-restart');
-      let finished: Record<string, unknown> | undefined;
+      let finished: { readonly status: { readonly state: string } } | undefined;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
-        if (JSON.stringify(finished).includes('TASK_STATE_COMPLETED')) break;
+        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as {
+          readonly status: { readonly state: string };
+        };
+        if (finished.status.state === 'TASK_STATE_COMPLETED') break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      expect(JSON.stringify(finished)).toContain('TASK_STATE_COMPLETED');
+      expect(finished?.status.state).toBe('TASK_STATE_COMPLETED');
       expect(JSON.stringify(finished)).toContain('resumed-after-restart');
     } finally {
       await second.close();
@@ -1287,17 +1397,19 @@ describe('FEATURE_267 bidirectional A2A', () => {
     try {
       await second.whenReady();
       const refetched = await rpc(secondUrl, 'GetTask', { id: taskId });
-      expect(JSON.stringify(refetched.body.result)).toContain('TASK_STATE_WORKING');
-      expect(JSON.stringify(refetched.body.result)).not.toContain('TASK_STATE_INPUT_REQUIRED');
+      expect(((refetched.body.result as { readonly status: { readonly state: string } }).status.state))
+        .toBe('TASK_STATE_WORKING');
 
       controlled.complete('answered-while-away');
-      let finished: Record<string, unknown> | undefined;
+      let finished: { readonly status: { readonly state: string } } | undefined;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as Record<string, unknown>;
-        if (JSON.stringify(finished).includes('TASK_STATE_COMPLETED')) break;
+        finished = (await rpc(secondUrl, 'GetTask', { id: taskId })).body.result as {
+          readonly status: { readonly state: string };
+        };
+        if (finished.status.state === 'TASK_STATE_COMPLETED') break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      expect(JSON.stringify(finished)).toContain('TASK_STATE_COMPLETED');
+      expect(finished?.status.state).toBe('TASK_STATE_COMPLETED');
     } finally {
       await second.close();
     }

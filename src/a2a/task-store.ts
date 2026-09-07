@@ -130,7 +130,13 @@ export class A2AFileTaskStore {
     }
     // FEATURE_298 T20 — the store exclusively owns its dataDir (lock above),
     // so retired Runtime cursor checkpoints are garbage-collected on open.
-    fs.rmSync(path.join(resolved, 'runtime-cursors'), { recursive: true, force: true });
+    // Best effort: a directory held busy by another handle must not break
+    // store construction.
+    try {
+      fs.rmSync(path.join(resolved, 'runtime-cursors'), { recursive: true, force: true });
+    } catch {
+      // Leftover checkpoint files are inert; the next open retries the GC.
+    }
   }
 
   get(taskId: string): A2AServerTaskRecord | undefined {

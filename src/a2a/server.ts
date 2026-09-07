@@ -176,14 +176,23 @@ function statusState(phase: RuntimeRunPhase): A2ATaskState {
   const states: Record<RuntimeRunPhase, A2ATaskState> = {
     queued: 'TASK_STATE_SUBMITTED',
     running: 'TASK_STATE_WORKING',
+    waiting_agent: 'TASK_STATE_WORKING',
+    recovering: 'TASK_STATE_WORKING',
     waiting_permission: 'TASK_STATE_WORKING',
     waiting_user_input: 'TASK_STATE_INPUT_REQUIRED',
+    // A disconnected Run is never mapped to success.
+    unknown: 'TASK_STATE_FAILED',
     completed: 'TASK_STATE_COMPLETED',
     failed: 'TASK_STATE_FAILED',
     cancelled: 'TASK_STATE_CANCELED',
     interrupted: 'TASK_STATE_FAILED',
   };
   return states[phase];
+}
+
+/** Live phases re-attach to their Run; only disconnect (`unknown`) does not. */
+function isLiveRunPhase(phase: RuntimeRunPhase): boolean {
+  return !TERMINAL_RUN_PHASES.has(phase) && phase !== 'unknown';
 }
 
 function agentMessage(taskId: string, contextId: string, text: string): A2AMessage {
@@ -1180,10 +1189,11 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
   /**
    * FEATURE_298 T20 — task state maps from the CURRENT Run and pending
    * Runtime inputs, not from a Runtime event journal fold. The live
-   * subscription attaches before the current-state snapshot is read so no
-   * transition between snapshot and attach is lost; buffered live events
-   * drain after the snapshot in arrival order. Terminal transitions stay
-   * owned by the Run result path (finishRun).
+   * subscription attaches first; events observed before the snapshot is read
+   * are applied first (chronological order), the snapshot lands last so it
+   * cannot regress them, and events arriving during the snapshot drain
+   * afterwards. Terminal transitions stay owned by the Run result path
+   * (finishRun).
    */
   private async attachRuntimeEvents(
     record: A2AServerTaskRecord,
@@ -1193,21 +1203,26 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     this.#runtimeSubscriptions.get(record.taskId)?.close();
     this.#runtimeSubscriptions.delete(record.taskId);
     const buffered: RuntimeEvent[] = [];
-    let snapshotting = true;
+    let buffering = true;
     const subscription = options.runtime.events.subscribe(
       { sessionId: record.sessionId, runId },
       (event) => {
-        if (snapshotting) buffered.push(event);
+        if (buffering) buffered.push(event);
         else this.onRuntimeEvent(record.taskId, event, options);
       },
     );
     this.#runtimeSubscriptions.set(record.taskId, subscription);
     try {
+      for (const event of buffered.splice(0)) {
+        this.onRuntimeEvent(record.taskId, event, options);
+      }
       await this.applyCurrentRunState(record.taskId, runId, options);
-      snapshotting = false;
-      for (const event of buffered) this.onRuntimeEvent(record.taskId, event, options);
+      buffering = false;
+      for (const event of buffered.splice(0)) {
+        this.onRuntimeEvent(record.taskId, event, options);
+      }
     } catch (error: unknown) {
-      snapshotting = false;
+      buffering = false;
       if (this.#runtimeSubscriptions.get(record.taskId) === subscription) {
         subscription.close();
         this.#runtimeSubscriptions.delete(record.taskId);
@@ -1222,12 +1237,22 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     options: PreparedA2AServerOptions,
   ): Promise<void> {
     if (this.#closed) return;
-    const record = this.#store.get(taskId);
+    let record = this.#store.get(taskId);
     if (!record || TERMINAL_STATES.has(record.task.status.state)) return;
+    const baselineEventSeq = record.eventSeq;
     const status = await options.runtime.runs.get(runId);
     if (TERMINAL_RUN_PHASES.has(status.phase)) return;
     const pending = (await options.runtime.userInputs.listPending({ sessionId: record.sessionId }))
       .find((request) => request.runId === runId);
+    // The awaits above can race a Run result (finishRun/failTask) or another
+    // task write; the snapshot must never resurrect pre-terminal state over a
+    // newer record.
+    record = this.#store.get(taskId);
+    if (
+      !record
+      || TERMINAL_STATES.has(record.task.status.state)
+      || record.eventSeq !== baselineEventSeq
+    ) return;
     const state: A2ATaskState = pending !== undefined
       ? 'TASK_STATE_INPUT_REQUIRED'
       : 'TASK_STATE_WORKING';
@@ -1661,7 +1686,7 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
       }
       try {
         const status = await options.runtime.runs.get(runId);
-        if (status.phase === 'running' || status.phase === 'queued' || status.phase === 'waiting_permission' || status.phase === 'waiting_user_input') {
+        if (isLiveRunPhase(status.phase)) {
           await this.attachRuntimeEvents(record, runId, options);
           void options.runtime.runs.await(runId).then((result) => this.finishRun(record.taskId, result, options)).catch(() => {
             this.failTask(record.taskId, 'Runtime execution failed during A2A recovery.', options);
