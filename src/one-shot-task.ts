@@ -119,6 +119,18 @@ export interface OneShotClientTaskInput {
   readonly runtime: KodaXRuntime;
   readonly options: KodaXOptions;
   readonly prompt: string;
+  /** Abort requests a durable Host stop; settlement still decides the result. */
+  readonly abortSignal?: AbortSignal;
+}
+
+/**
+ * Exit-code contract for the one-shot CLI: success 0, interrupted 130
+ * (SIGINT convention), anything else — limit reached or failed — 1.
+ */
+export function exitCodeForOneShotResult(result: KodaXResult): number {
+  if (result.success) return 0;
+  if (result.interrupted) return 130;
+  return 1;
 }
 
 export async function runOneShotClientTask(
@@ -154,7 +166,14 @@ export async function runOneShotClientTask(
     }
     progress.setRunId(accepted.runId);
 
+    const requestStop = (): void => {
+      void client.runs.stop(accepted.runId!).catch(() => undefined);
+    };
+    input.abortSignal?.addEventListener('abort', requestStop, { once: true });
+    if (input.abortSignal?.aborted) requestStop();
+
     const outcome = await client.runs.await(accepted.runId);
+    input.abortSignal?.removeEventListener('abort', requestStop);
     if (outcome.error !== undefined) {
       throw new Error(outcome.error);
     }

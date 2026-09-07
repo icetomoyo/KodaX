@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
 import { forwardRunProgressEvent } from './run-progress-events.js';
-import { runOneShotClientTask } from './one-shot-task.js';
+import { exitCodeForOneShotResult, runOneShotClientTask } from './one-shot-task.js';
 import { toKodaXProductClient } from './sdk-client.js';
 
 // ── Runtime environment defaults ──
@@ -847,19 +847,34 @@ async function runCliTaskWithRuntime(
 /**
  * FEATURE_298 T35 — plain one-shot runs (no prepared Skill/command overlay)
  * travel the product client face: the Host owns session lifecycle, input
- * acceptance, and settlement; CLI flags become session settings.
+ * acceptance, and settlement; CLI flags become session settings. SIGINT
+ * requests a durable Host stop (a second SIGINT forces the conventional
+ * 130 exit) and the settled result maps to the process exit code.
  */
 async function runCliTaskViaClient(
   runtime: KodaXRuntime,
   options: KodaXOptions,
   prompt: string,
 ): Promise<Awaited<ReturnType<typeof runManagedTask>>> {
-  return runOneShotClientTask({
-    client: toKodaXProductClient(runtime),
-    runtime,
-    options,
-    prompt,
-  });
+  const controller = new AbortController();
+  const onSigint = (): void => {
+    if (controller.signal.aborted) process.exit(130);
+    controller.abort();
+  };
+  process.on('SIGINT', onSigint);
+  try {
+    const result = await runOneShotClientTask({
+      client: toKodaXProductClient(runtime),
+      runtime,
+      options,
+      prompt,
+      abortSignal: controller.signal,
+    });
+    process.exitCode = exitCodeForOneShotResult(result);
+    return result;
+  } finally {
+    process.removeListener('SIGINT', onSigint);
+  }
 }
 
 export async function prepareCliSkillInvocation(

@@ -207,3 +207,51 @@ it('FEATURE_298 T35 — a cancelled run projects the interrupted legacy result',
     await harness.close();
   }
 }, 120_000);
+
+it('FEATURE_298 T35 — abort requests a Host stop and settles as interrupted', async () => {
+  const harness = await startHarness('kodax-one-shot-abort-');
+  const client = toKodaXProductClient(harness.runtime);
+  const stopSpy = vi.fn(client.runs.stop.bind(client.runs));
+  client.runs.stop = stopSpy;
+  let release: ((result: KodaXResult) => void) | undefined;
+  executor.managed.mockImplementation((runOptions: KodaXOptions) => {
+    executor.options.push(runOptions);
+    return new Promise<KodaXResult>((resolve) => { release = resolve; });
+  });
+  const controller = new AbortController();
+  try {
+    const pending = runOneShotClientTask({
+      client, runtime: harness.runtime,
+      options: { provider: 'abort-provider' },
+      prompt: 'Stop on request.',
+      abortSignal: controller.signal,
+    });
+    await expect.poll(() => executor.options.length).toBeGreaterThan(0);
+    controller.abort();
+    await expect.poll(() => stopSpy.mock.calls.length).toBe(1);
+    release!({
+      success: false, lastText: '', messages: [], sessionId: 'host-assigned',
+      interrupted: true, signal: 'BLOCKED',
+    });
+    await expect(pending).resolves.toMatchObject({ interrupted: true });
+  } finally {
+    await harness.close();
+  }
+}, 120_000);
+
+it('FEATURE_298 T35 — maps one-shot results to process exit codes', async () => {
+  const { exitCodeForOneShotResult } = await import('./one-shot-task.js');
+  expect(exitCodeForOneShotResult({
+    success: true, lastText: 'ok', messages: [], sessionId: 's',
+  })).toBe(0);
+  expect(exitCodeForOneShotResult({
+    success: false, lastText: '', messages: [], sessionId: 's',
+    interrupted: true, signal: 'BLOCKED', signalReason: 'Runtime run cancelled.',
+  })).toBe(130);
+  expect(exitCodeForOneShotResult({
+    success: false, lastText: '', messages: [], sessionId: 's', limitReached: true,
+  })).toBe(1);
+  expect(exitCodeForOneShotResult({
+    success: false, lastText: 'err', messages: [], sessionId: 's',
+  })).toBe(1);
+});
