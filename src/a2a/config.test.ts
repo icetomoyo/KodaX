@@ -650,4 +650,48 @@ describe('FEATURE_267/268 A2A integration config', () => {
       fields: ['execution'],
     });
   });
+
+  it('parses bootstrap listen addresses and requires a Host restart when they change (T21)', () => {
+    const server = parseA2AIntegrationDocument({
+      version: 2,
+      agents: {},
+      server: {
+        execution: { kind: 'runtime-default' },
+        published: published(),
+        listen: { hostname: '127.0.0.1', port: 7311 },
+        authentication: authentication(),
+        dataDir: '~/.kodax/a2a/tasks',
+      },
+    }).server!;
+    expect(server.listen).toEqual({ hostname: '127.0.0.1', port: 7311 });
+
+    expect(() => parseA2AIntegrationDocument({
+      version: 2,
+      agents: {},
+      server: {
+        execution: { kind: 'runtime-default' },
+        published: published(),
+        listen: { hostname: '0.0.0.0', port: 7311 },
+        authentication: authentication(),
+        dataDir: '~/.kodax/a2a/tasks',
+      },
+    })).toThrow(/listen\.hostname must be a loopback/i);
+    expect(() => parseA2AIntegrationDocument({
+      version: 2,
+      agents: {},
+      server: {
+        execution: { kind: 'runtime-default' },
+        published: published(),
+        listen: { hostname: '127.0.0.1', port: 70_000 },
+        authentication: authentication(),
+        dataDir: '~/.kodax/a2a/tasks',
+      },
+    })).toThrow(/listen\.port/i);
+
+    const moved = { ...server, listen: { hostname: '127.0.0.1', port: 7312 } };
+    expect(classifyA2AServerChange(server, moved)).toEqual({
+      kind: 'restart-required',
+      fields: ['listen'],
+    });
+  });
 });

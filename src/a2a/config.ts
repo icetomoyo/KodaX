@@ -134,10 +134,21 @@ export interface A2AServerLimitsConfig {
   readonly maxWorkspaceBytesPerContext: number;
 }
 
+export interface A2AServerListenConfig {
+  readonly hostname: string;
+  readonly port: number;
+}
+
 export interface A2AServerConfig {
   readonly execution: A2AServerExecutionConfig;
   readonly published: A2APublishedAgentConfig;
   readonly publicBaseUrl?: string;
+  /**
+   * FEATURE_298 T21 — bootstrap-only Host-owned serving address. Present
+   * means the Runtime daemon Host serves A2A itself; changing it requires an
+   * explicit Host restart.
+   */
+  readonly listen?: A2AServerListenConfig;
   readonly authentication: A2AServerAuthenticationConfig;
   readonly limits: A2AServerLimitsConfig;
   readonly dataDir: string;
@@ -613,17 +624,31 @@ function parseLimits(value: unknown, execution: A2AServerExecutionConfig): A2ASe
   return limits;
 }
 
+function parseListen(value: unknown): A2AServerListenConfig {
+  const source = record(value, 'A2A server.listen');
+  noUnknown(source, ['hostname', 'port'], 'A2A server.listen');
+  const hostname = text(source.hostname, 'A2A server.listen.hostname');
+  if (!isExactLoopback(hostname)) {
+    throw new Error('A2A server.listen.hostname must be a loopback address.');
+  }
+  const port = positiveInteger(source.port, 'A2A server.listen.port');
+  if (port > 65_535) throw new Error('A2A server.listen.port must be at most 65535.');
+  return { hostname, port };
+}
+
 function parseServer(value: unknown, version: 1 | 2): A2AServerConfig {
   const source = record(value, 'A2A server');
-  noUnknown(source, ['execution', 'published', 'publicBaseUrl', 'authentication', 'limits', 'dataDir'], 'A2A server');
+  noUnknown(source, ['execution', 'published', 'publicBaseUrl', 'listen', 'authentication', 'limits', 'dataDir'], 'A2A server');
   const execution = parseExecution(source.execution);
   const publicBaseUrl = source.publicBaseUrl === undefined
     ? undefined
     : parseHttpUrl(source.publicBaseUrl, 'A2A server.publicBaseUrl', true);
+  const listen = source.listen === undefined ? undefined : parseListen(source.listen);
   return {
     execution,
     published: parsePublished(source.published),
     ...(publicBaseUrl ? { publicBaseUrl } : {}),
+    ...(listen ? { listen } : {}),
     authentication: parseAuthentication(source.authentication, version),
     limits: parseLimits(source.limits, execution),
     dataDir: text(source.dataDir, 'A2A server.dataDir'),
@@ -827,8 +852,8 @@ export function classifyA2AServerChange(
   if (current === undefined || next === undefined) {
     return { kind: 'restart-required', fields: ['server'] };
   }
-  const restartFields = ['execution', 'dataDir'].filter((field) => (
-    !isDeepStrictEqual(current[field as 'execution' | 'dataDir'], next[field as 'execution' | 'dataDir'])
+  const restartFields = ['execution', 'dataDir', 'listen'].filter((field) => (
+    !isDeepStrictEqual(current[field as 'execution' | 'dataDir' | 'listen'], next[field as 'execution' | 'dataDir' | 'listen'])
   ));
   const hotFields = ['published', 'publicBaseUrl', 'authentication', 'limits'].filter((field) => (
     !isDeepStrictEqual(

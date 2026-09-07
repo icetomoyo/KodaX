@@ -230,7 +230,9 @@ import {
   createConfiguredA2ARuntimeIntegration,
   type ConfiguredA2ARuntimeHandle,
 } from './a2a/runtime-config.js';
-import { parseA2AIntegrationDocument } from './a2a/config.js';
+import { parseA2AIntegrationDocument, readA2AIntegration } from './a2a/config.js';
+import { createA2AServerOptionsFromConfig } from './a2a/product.js';
+import { prepareKodaXA2AServer } from './a2a/server.js';
 import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
   hasProviderCredentialEnvironment,
@@ -1113,6 +1115,7 @@ async function serveDaemonCommand(input: {
   });
   let ownedRuntime: KodaXRuntime | undefined;
   let a2aHandle: ConfiguredA2ARuntimeHandle | undefined;
+  let hostedA2AServer: Awaited<ReturnType<typeof prepareKodaXA2AServer>> | undefined;
   let completedNormally = false;
   let ownedRuntimeId: string | undefined;
   let primaryError: Error | undefined;
@@ -1153,8 +1156,45 @@ async function serveDaemonCommand(input: {
         ownedRuntime = runtime;
         try {
           a2aHandle = await a2aIntegration.start(runtime);
+          // FEATURE_298 T21 — restricted local-Agent preparation, workspace
+          // binding, and A2A serving all execute in this Host process when
+          // the bootstrap config names a listen address; live config changes
+          // to serving require an explicit Host restart. An invalid config
+          // keeps the Host's existing degraded-domain behavior — serving
+          // simply does not start.
+          let serverConfig: ReturnType<typeof readA2AIntegration>['document']['server'];
+          try {
+            serverConfig = readA2AIntegration(daemonConfigHome).document.server;
+          } catch {
+            serverConfig = undefined;
+          }
+          if (serverConfig?.listen) {
+            const { hostname, port } = serverConfig.listen;
+            hostedA2AServer = await prepareKodaXA2AServer(
+              createA2AServerOptionsFromConfig({
+                runtime,
+                config: serverConfig,
+                listenBaseUrl: `http://${hostname.includes(':') ? `[${hostname}]` : hostname}:${port}`,
+              }),
+            );
+            const baseUrl = await hostedA2AServer.listen({
+              hostname,
+              port,
+              ...(serverConfig.publicBaseUrl
+                ? { publicBaseUrl: serverConfig.publicBaseUrl }
+                : {}),
+            });
+            console.error(chalk.dim(`[integrations] A2A serving on ${baseUrl}`));
+          }
           return runtime;
         } catch (error: unknown) {
+          try {
+            await hostedA2AServer?.close();
+          } catch {
+            // Server cleanup is best effort; the runtime close below is the
+            // authoritative teardown path.
+          }
+          hostedA2AServer = undefined;
           try {
             await runtime.close();
           } catch (cleanupError: unknown) {
@@ -1205,6 +1245,8 @@ async function serveDaemonCommand(input: {
       await waitForShutdownSignal(shutdown, externallyClosed);
     } finally {
       testParentWatch?.close();
+      await hostedA2AServer?.close().catch(() => undefined);
+      hostedA2AServer = undefined;
       a2aHandle?.close();
       a2aHandle = undefined;
       await shutdown();
@@ -1220,6 +1262,8 @@ async function serveDaemonCommand(input: {
   try {
     await cleanupDaemonServeProcessResources({
       closeA2A: () => {
+        void hostedA2AServer?.close().catch(() => undefined);
+        hostedA2AServer = undefined;
         a2aHandle?.close();
         a2aHandle = undefined;
       },

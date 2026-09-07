@@ -677,6 +677,19 @@ function configureExtensionCommands(program: Command): void {
     });
 }
 
+function parseListenPort(raw: string | undefined): number {
+  if (raw === undefined) {
+    throw new Error(
+      "--listen-port is required when Host-owned A2A serving is configured.",
+    );
+  }
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("--listen-port must be an integer between 1 and 65535.");
+  }
+  return port;
+}
+
 function groupPairs(
   values: readonly string[],
   label: string,
@@ -762,6 +775,14 @@ function configureA2AExpose(command: Command, version: string): void {
       "--public-base-url <url>",
       "HTTPS public URL when served behind a reverse proxy",
     )
+    .option(
+      "--listen-hostname <host>",
+      "Loopback hostname the Runtime daemon Host serves A2A on",
+    )
+    .option(
+      "--listen-port <port>",
+      "Port the Runtime daemon Host serves A2A on",
+    )
     .option("--data-dir <dir>", "Durable task store", "~/.kodax/a2a/tasks")
     .action(
       async (
@@ -787,6 +808,8 @@ function configureA2AExpose(command: Command, version: string): void {
           skillScript: string[];
           networkOrigin: string[];
           publicBaseUrl?: string;
+          listenHostname?: string;
+          listenPort?: string;
           dataDir: string;
         },
       ) => {
@@ -895,6 +918,14 @@ function configureA2AExpose(command: Command, version: string): void {
             },
             ...(options.publicBaseUrl
               ? { publicBaseUrl: options.publicBaseUrl }
+              : {}),
+            ...(options.listenHostname !== undefined || options.listenPort !== undefined
+              ? {
+                  listen: {
+                    hostname: options.listenHostname ?? "127.0.0.1",
+                    port: parseListenPort(options.listenPort),
+                  },
+                }
               : {}),
             authentication,
             dataDir: options.dataDir,

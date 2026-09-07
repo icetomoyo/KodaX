@@ -377,6 +377,124 @@ describe('daemon CLI smoke', () => {
     expect(fs.existsSync(paths.lockFile)).toBe(false);
   }, 90_000);
 
+  it('hosts A2A serving inside the Runtime daemon Host from bootstrap listen config (T21)', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-a2a-hosted-'));
+    tempRoots.push(homeDir);
+    const profile = `a2a-hosted-${process.pid}-${Date.now()}`;
+    const probe = createServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', resolve);
+    });
+    const address = probe.address();
+    if (address === null || typeof address === 'string') throw new Error('Probe address unavailable.');
+    const listenPort = address.port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const configDir = path.join(homeDir, '.kodax', 'integrations');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'a2a.json'), JSON.stringify({
+      version: 2,
+      agents: {},
+      server: {
+        execution: { kind: 'runtime-default' },
+        published: {
+          name: 'Hosted KodaX Agent',
+          description: 'Served by the daemon Host itself.',
+          version: '1.0.0',
+          skills: [],
+          inputModes: ['text/plain'],
+          outputModes: ['text/plain'],
+        },
+        listen: { hostname: '127.0.0.1', port: listenPort },
+        authentication: {
+          type: 'bearer-env',
+          tokenEnv: 'KODAX_TEST_HOSTED_A2A_TOKEN',
+          principalId: 'hosted-caller',
+        },
+        dataDir: path.join(homeDir, '.kodax', 'a2a-tasks'),
+      },
+    }), 'utf8');
+
+    const child = spawn(process.execPath, [
+      '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
+      'daemon', 'serve', '--home', homeDir, '--profile', profile,
+      '--provider', 'mock-provider',
+    ], {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+      env: {
+        ...process.env,
+        KODAX_TEST_HOSTED_A2A_TOKEN: 'hosted-secret',
+        KODAX_TRACING: '0',
+      },
+    });
+    const baseUrl = `http://127.0.0.1:${listenPort}`;
+    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    try {
+      await waitForHealthyDaemonStatus(paths, 'ready');
+
+      const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+      expect(card.status).toBe(200);
+      const cardBody = await card.json() as { readonly name: string };
+      expect(cardBody.name).toBe('Hosted KodaX Agent');
+
+      const unauthenticated = await fetch(`${baseUrl}/a2a`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 'hosted-auth', method: 'SendMessage',
+          params: {
+            message: {
+              messageId: 'hosted-message', role: 'ROLE_USER', parts: [{ text: 'hello' }],
+            },
+            configuration: { returnImmediately: true },
+          },
+        }),
+      });
+      expect(unauthenticated.status).toBe(401);
+
+      const admitted = await fetch(`${baseUrl}/a2a`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer hosted-secret',
+          'content-type': 'application/json',
+          'a2a-version': '1.0',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 'hosted-send', method: 'SendMessage',
+          params: {
+            message: {
+              messageId: 'hosted-message', role: 'ROLE_USER', parts: [{ text: 'hello' }],
+            },
+            configuration: { returnImmediately: true },
+          },
+        }),
+      });
+      expect(admitted.status).toBe(200);
+      const admittedBody = await admitted.json() as {
+        readonly result?: { readonly task?: { readonly id: string; readonly status?: { readonly state: string } } };
+      };
+      expect(admittedBody.result?.task?.id).toBeDefined();
+
+      await runDaemonCommand([
+        'stop', '--home', homeDir, '--profile', profile,
+        '--timeout-ms', '30000', '--json',
+      ]).catch(() => undefined);
+      if (child.exitCode === null && child.signalCode === null) {
+        await killChildProcessTree(child, { forceMs: 2_000, taskkillMs: 5_000 });
+      }
+
+      // Serving lives and dies with the Host process.
+      await expect(fetch(`${baseUrl}/.well-known/agent-card.json`)).rejects.toThrow();
+    } finally {
+      if (isRuntimeDaemonPidAlive(child.pid ?? -1)) {
+        await killChildProcessTree(child, { forceMs: 2_000, taskkillMs: 5_000 });
+      }
+    }
+  }, 120_000);
+
   it('SDK auto-start owns a daemon process outside the embedding process', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-sdk-smoke-'));
     tempRoots.push(homeDir);
