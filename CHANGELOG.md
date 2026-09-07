@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.96-beta.2] - 2026-09-07
+
+Second beta pre-release of the v0.7.96 line: it retains the beta.1 sandbox-
+first, trusted-text, and permission-profile feature set plus the Linux glibc
+2.28 native build fix, and adds long-session context-boundary recovery and
+Provider correctness fixes below. npm publication remains a separate manual
+maintainer action.
+
 ### Fixed
 
 - Recover long coding sessions at context boundaries: parse vLLM prompt counts

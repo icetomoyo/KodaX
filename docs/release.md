@@ -137,27 +137,35 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-beta.1 release preparation
+## v0.7.96-beta.2 release preparation
 
-Release state: `v0.7.96-beta.1` is the GitHub pre-release for the exact tagged
+Release state: `v0.7.96-beta.2` is the GitHub pre-release for the exact tagged
 commit. The tag-triggered Release workflow builds every platform archive and
 the universal npm tarball, publishes checksums, and creates the GitHub Release.
 npm registry publication remains a separate manual maintainer action.
 
-This is the first beta pre-release of the v0.7.96 line. Compared with alpha.7,
-beta.1 additionally includes:
+This is the second beta pre-release of the v0.7.96 line. Compared with beta.1,
+beta.2 additionally includes:
 
-- Issue 328: Linux x64/arm64 FEATURE_295 native text authorities compile with
-  Rust 1.98.0 inside architecture-matched, digest-pinned `manylinux_2_28`
-  builders; the normal staging path hashes and packages those prebuilt bytes
-  without recompiling on the Ubuntu host. CI and release lanes scan every
-  staged Linux addon and fail if any required symbol exceeds `GLIBC_2.28`,
-  restoring private Kylin V10 / glibc 2.28 deployments. No text-transaction,
-  CAS, lock, atomic-replace, receipt, or fail-closed runtime path changed.
+- long-session context-boundary recovery: vLLM prompt counts parse without
+  confusing output tokens or bounds, the response reserve is reclaimed before
+  terminal checks, recoverable tool-output previews persist as durable
+  artifacts when protected recent history cannot fit, and a confirmed upstream
+  overflow permits one generation retry after persisted history reduction
+  without replaying tools (ADR-067 correction);
+- Issue 332: bundled Provider credential scopes stay shared across SDK, Agent
+  summaries, CLI, and Runtime Worker requests, restoring keychain-only manual
+  and managed compaction; production build graphs reject duplicated credential
+  modules;
+- Issue 330: structured, credential-safe Child Agent Provider failures survive
+  Actor settlement and SDK Runtime diagnostics; Issue 331: custom Provider
+  credential verification honors exact and lazy run-scoped authority, fails
+  closed for denied scopes, and redacts opaque scoped credentials; Issue 329:
+  tool-free side queries omit empty `tools` arrays for strict vLLM gateways.
 
 Release gates:
 
-1. Every root/workspace package and lockfile entry is `0.7.96-beta.1`; public
+1. Every root/workspace package and lockfile entry is `0.7.96-beta.2`; public
    declarations, README/README_CN, PRD/HLD/DD/ADR, feature/release records,
    SDK/configuration guides, regression guides, changelog, known-issue records,
    and `kodax_manual` describe the same sandbox-first contract.
@@ -171,10 +179,16 @@ Release gates:
 4. Linux release lanes build the native text authority in `manylinux_2_28`
    builders and pass the ELF glibc 2.28 ABI gate; Windows and macOS native
    lanes are unchanged.
-5. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
+5. Capacity-boundary recovery never replays tool execution: a rejected
+   generation retries once only after actual, persisted history reduction, and
+   committed summaries survive a later relief failure.
+6. Bundled production build graphs reject duplicated credential modules; the
+   keychain-only manual and managed compaction paths pass in CI and release
+   gates with a real daemon broker.
+7. Real Windows dual-Runtime, background-shell-plus-foreground, large-tree cold
    start, target-start, terminal-proof, and host-fallback gates overlap without
    a machine-global admission boundary.
-6. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
+8. Typecheck, native fmt/test/clippy, focused and full Vitest suites, build,
    declaration generation, package-independence checks, documentation links,
    and `git diff --check` pass on the exact commit. GitHub CI must be green before
    tagging or publishing.
@@ -183,6 +197,15 @@ The release commit is tagged only after these gates and branch CI pass. Pushing
 the tag starts the Release workflow; that workflow must finish green and create
 the GitHub pre-release before handoff. npm publication is intentionally left to
 the maintainer.
+
+## v0.7.96-beta.1 release preparation
+
+Release state: `v0.7.96-beta.1` is the GitHub pre-release at `2bb3ac47`.
+It is the first beta pre-release of the v0.7.96 line and adds the Issue 328
+Linux glibc 2.28 native build fix (`manylinux_2_28` builders plus the
+`GLIBC_2.28` ABI gate) on top of the alpha.7 sandbox-first contract. It
+predates beta.2's context-boundary recovery and Provider correctness fixes.
+npm publication remained a manual maintainer action.
 
 ## v0.7.96-alpha.7 release preparation
 

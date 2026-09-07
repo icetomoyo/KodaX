@@ -2,8 +2,12 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-beta.1`; npm publication remains a separate
-manual maintainer action. Beta.1 carries
+The current release is `v0.7.96-beta.2`; npm publication remains a separate
+manual maintainer action. Beta.2 adds long-session context-boundary recovery,
+keeps bundled Provider credential scopes shared across SDK/CLI/Worker
+requests, and closes Issues 329-332 (structured Child Agent Provider failures,
+exact run-scoped credential verification, and strict-vLLM empty-tools
+compatibility). Beta.1 carries
 the alpha.4 permission profiles, sandbox-first routing, JSONC Exec Policy,
 Auto[LLM] host-boundary review, and Full Access, and completes Windows sandbox
 concurrency/self-healing without adding a command lock, queue, or permission restriction.
@@ -16,7 +20,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-   restricted-token runner (beta.1 native shell protocol version 10/setup
+   restricted-token runner (beta.2 native shell protocol version 10/setup
    generation 10, Windows `sandboxRuntime:11`, interactive startup recovery
    through the setup-only boundary, and no command-lifetime global admission
 lock). It replaces the

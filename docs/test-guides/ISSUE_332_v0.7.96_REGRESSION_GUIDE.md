@@ -1,6 +1,6 @@
 # Issue 332 — Bundled compaction credential scope regression guide
 
-**Version:** v0.7.96 development (not yet released)
+**Version:** v0.7.96-beta.2
 
 **Date:** 2026-09-07
 

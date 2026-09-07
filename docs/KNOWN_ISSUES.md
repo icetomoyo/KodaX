@@ -7,6 +7,29 @@ _Last Updated: 2026-09-07_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## v0.7.96-beta.2 Release Corrections
+
+The beta.2 corrections close the remaining v0.7.96 Provider and long-session
+gaps without changing the beta.1 sandbox, trusted-text, or permission
+contracts. Long coding sessions now recover at context capacity boundaries:
+vLLM prompt counts are parsed without confusing output tokens or bounds, the
+response reserve is reclaimed before terminal checks, recoverable tool-output
+previews persist as durable artifacts when protected recent history cannot
+fit, and a confirmed upstream overflow permits one generation retry after
+persisted history reduction without replaying tools (ADR-067 correction).
+
+Issue 332: bundled Provider credential scopes are again shared across SDK,
+Agent summaries, CLI, and Runtime Worker requests, restoring keychain-only
+manual and managed compaction; production build graphs reject duplicated
+credential modules. Issue 330: structured, credential-safe Child Agent
+Provider failures survive Actor settlement and SDK Runtime diagnostics instead
+of collapsing to `failed without output`. Issue 331: custom Provider
+credential verification honors exact and lazy run-scoped authority, includes
+credential acquisition in the timeout, fails closed for denied scopes, and
+redacts opaque scoped credentials from diagnostics. Issue 329: tool-free side
+queries omit empty `tools` arrays on OpenAI- and Anthropic-compatible wire
+requests, remaining compatible with strict vLLM gateways.
+
 ## v0.7.96-beta.1 Release Corrections
 
 The beta.1 Linux correction (Issue 328) restores the FEATURE_295 native text
@@ -315,10 +338,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96 development | 2026-09-07 | 2026-09-07 |
-| 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96 development | 2026-09-04 | 2026-09-04 |
-| 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
-| 329 | High | Resolved | Provider adapters serialize empty tool arrays for tool-free requests | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
+| 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
+| 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
+| 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
+| 329 | High | Resolved | Provider adapters serialize empty tool arrays for tool-free requests | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
 | 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96-beta.1 | 2026-09-03 | 2026-09-03 |
 | 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96-alpha.6 | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.6 | 2026-08-30 | 2026-09-01 |
@@ -541,7 +564,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: scoped lease bundle path (confirmed v0.7.96-beta.1)
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-07
 - **Resolved**: 2026-09-07
 
@@ -602,7 +625,7 @@ passed against the unpacked npm package. Space and cross-platform checks are in
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: run-scoped credential verification path (confirmed v0.7.95)
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
@@ -633,7 +656,7 @@ verification errors. Ambient-environment behavior without a scope is unchanged.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.95 and earlier
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
@@ -681,7 +704,7 @@ tool executes exactly once before the second Provider request fails.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.95 and earlier
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
