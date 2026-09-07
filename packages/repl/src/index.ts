@@ -14,6 +14,15 @@ export { formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from './comma
 export { buildManagedLiveEventDrafts } from './ui/InkREPL-live-event-drafts.js';
 export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot } from './ui/utils/restore-history.js';
 export { runInkInteractiveMode } from "./ui/index.js";
+// FEATURE_298 T18 — classic plane display/dialog adapters.
+export {
+  attachClassicPlaneDisplay,
+  createClassicPlaneDisplayDiffer,
+} from "./interactive/classic-plane-display.js";
+export {
+  createClassicPlaneDialogSurface,
+  parseClassicChoice,
+} from "./interactive/classic-plane-interactions.js";
 export type {
   InkREPLOptions,
   InkRuntimeStatusProvider,
@@ -25,8 +34,6 @@ export {
   runInteractiveMode,
   processSpecialSyntax,
   type RepLOptions,
-  type ReplRuntimeRunner,
-  type ReplRuntimeRunnerInput,
   type ReplRuntimeStatusProvider,
 } from "./interactive/repl.js";
 

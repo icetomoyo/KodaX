@@ -62,11 +62,9 @@ import type { AgentsFile, KodaXWorkflowAgentDigestEvent } from '@kodax-ai/coding
 import type { CompactionUpdate, KodaXActivityEventMeta } from '@kodax-ai/coding';
 import type { PermissionMode, ConfirmResult } from '../permission/types.js';
 import {
-  resolveReplRuntimePermissionDecision,
   toReplRuntimeAutoModeSettings,
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
-  type ReplRuntimePermissionPrompt,
 } from '../runtime-permission.js';
 import {
   computeConfirmTools,
@@ -461,25 +459,13 @@ function markExtensionSessionPersisted(context: InteractiveContext): void {
   context.extensionRecordsDirty = false;
 }
 
-// REPL options - REPL 选项
-export interface ReplRuntimeRunnerInput {
-  readonly options: KodaXOptions;
-  readonly prompt: string;
-  readonly sessionId: string;
-  readonly permissionMode: PermissionMode;
-  readonly autoModeSettings?: ReplRuntimeAutoModeSettings;
-  readonly requestPermission?: ReplRuntimePermissionPrompt;
-  /** Marks the callback installed by the REPL's legacy permission UI. */
-  readonly legacyPermissionHook?: true;
-}
-
-export type ReplRuntimeRunner = (input: ReplRuntimeRunnerInput) => Promise<KodaXResult>;
 export type ReplRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | undefined>;
 
 export interface RepLOptions extends KodaXOptions {
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
-  runtimeRunner?: ReplRuntimeRunner;
+  /** FEATURE_298 T18 — bound rounds travel the Host input/run faces. */
+  clientPlane?: InkClientPlane;
   runtimeAutoModeControl?: ReplRuntimeAutoModeControl;
   getRuntimeStatus?: ReplRuntimeStatusProvider;
   validateSetupA2AConfig?: (value: unknown) => unknown;
@@ -739,24 +725,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     },
   });
 
-  const requestRuntimePermission: ReplRuntimePermissionPrompt = async (request, promptContext) => {
-    const result = await confirmToolExecution(
-      rl,
-      request.toolName,
-      {
-        ...request.input,
-        ...(request.reason !== undefined ? { _reason: request.reason } : {}),
-        ...(request.executionCwd !== undefined ? { _executionCwd: request.executionCwd } : {}),
-        ...(request.risk !== undefined ? { _runtimeRisk: request.risk } : {}),
-      },
-      {
-        permissionMode: currentPermissionMode,
-        runtimeGrantSuggestions: request.grantSuggestions ?? [],
-        signal: promptContext.signal,
-      },
-    );
-    return resolveReplRuntimePermissionDecision(request, result);
-  };
 
   // FEATURE_092 phase 2b.7b: bootstrap auto-mode guardrail (factory only;
   // the guardrail is constructed lazily on first 'auto' tool call so the
@@ -784,6 +752,36 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     // FEATURE_158: inject the REPL-side path-aware bash signal collector.
     extraCollectors: [replBashPathSignalCollector],
   });
+
+  // FEATURE_298 T18 — plane-bound rounds travel the Host input/run faces;
+  // display authority is the live session view (the plane display
+  // subscription prints it). Unbound rounds keep the in-process path.
+  // Ctrl+C during a plane round requests a Host stop (the run is not in
+  // this process, so the embedded SIGINT machinery cannot see it).
+  let activePlaneAbort: AbortController | undefined;
+  const runAgentRoundWithPlane = async (
+    prompt: string,
+    roundOptions: KodaXOptions,
+    initialMessages: KodaXMessage[],
+    inputArtifacts?: readonly KodaXInputArtifact[],
+  ): Promise<KodaXResult> => {
+    const plane = options.clientPlane;
+    if (plane !== undefined) {
+      const controller = new AbortController();
+      activePlaneAbort = controller;
+      try {
+        return await runClientPlaneRound({
+          plane,
+          sessionId: context.sessionId,
+          prompt,
+          abortSignal: controller.signal,
+        });
+      } finally {
+        if (activePlaneAbort === controller) activePlaneAbort = undefined;
+      }
+    }
+    return runAgentRound(roundOptions, context, prompt, initialMessages, inputArtifacts);
+  };
 
   // FEATURE_153 (v0.7.38): build the LLM-backed bash prefix extractor used by
   // `isToolCallAllowed`. Live getters re-resolve provider + model on every
@@ -994,16 +992,10 @@ Keyboard Shortcuts:
 
     let result: KodaXResult;
     try {
-      result = await runAgentRound(
-        currentOptions,
-        context,
+      result = await runAgentRoundWithPlane(
         normalizeRecoveryPrompt(prompt),
+        currentOptions,
         context.messages,
-        undefined,
-        options.runtimeRunner,
-        currentPermissionMode,
-        requestRuntimePermission,
-        runtimeAutoModeSettings,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1502,9 +1494,7 @@ Keyboard Shortcuts:
         if (currentPermissionMode !== 'plan') return null;
         return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
       };
-      const standaloneShellBoundary = options.runtimeRunner
-        ? undefined
-        : createStandaloneShellPermissionBoundary({
+      const standaloneShellBoundary = createStandaloneShellPermissionBoundary({
             getPermissionMode: () => currentPermissionMode,
             getAutoGuardrail: autoModeBootstrap.getGuardrail,
             shellSandbox: currentOptions.context?.shellSandbox,
@@ -1646,7 +1636,7 @@ Keyboard Shortcuts:
 
             // Standalone Bash always enters the Coding-owned sandbox/host
             // boundary. Mode review and Edits prompts happen there.
-            if (!options.runtimeRunner && tool === 'bash') return true;
+            if (tool === 'bash') return true;
 
             // All modes: safe read-only bash commands are auto-allowed BEFORE protected path check
             // 所有模式：安全的只读 bash 命令在受保护路径检查之前就自动放行
@@ -1805,12 +1795,57 @@ Keyboard Shortcuts:
 
   // Handle Ctrl+C - 处理 Ctrl+C
   rl.on('SIGINT', async () => {
+    if (activePlaneAbort !== undefined) {
+      activePlaneAbort.abort();
+      console.log(chalk.dim('\n[Stopping the Host run...]'));
+      return;
+    }
     console.log(chalk.dim('\n\n[Press /exit to quit]'));
     rl.prompt();
   });
 
+  // FEATURE_298 T18 — plane display + interaction dialogs: the live Host
+  // session view prints to the console (baseline view primes the differ so
+  // restored history does not reprint) and pending interactions are
+  // answered through the readline surface.
+  let detachPlaneDisplay: (() => void) | undefined;
+  if (options.clientPlane !== undefined) {
+    let pendingAssistantNewline = false;
+    const planeDisplayWrite = (line: string): void => {
+      const separator = line.indexOf(':');
+      const kind = separator >= 0 ? line.slice(0, separator) : '';
+      const text = separator >= 0 ? line.slice(separator + 1) : line;
+      if (kind === 'assistant') {
+        process.stdout.write(text);
+        pendingAssistantNewline = true;
+        return;
+      }
+      if (pendingAssistantNewline) {
+        process.stdout.write('\n');
+        pendingAssistantNewline = false;
+      }
+      if (kind === 'thinking' || kind === 'info') console.log(chalk.dim(text));
+      else if (kind === 'tool') console.log(chalk.cyan(text));
+      else if (kind === 'error') console.log(chalk.red(text));
+      else console.log(text);
+    };
+    void attachClassicPlaneDisplay(options.clientPlane, context.sessionId, {
+      write: planeDisplayWrite,
+      dialogs: createClassicPlaneDialogSurface({
+        rl,
+        permissionMode: () => currentPermissionMode,
+      }),
+      onNotice: (text) => console.log(chalk.yellow(`
+${text}
+`)),
+    }).then((detach) => {
+      detachPlaneDisplay = detach;
+    }).catch(() => undefined);
+  }
+
   // Handle cleanup on exit
   const cleanup = () => {
+    detachPlaneDisplay?.();
     // FEATURE_125 — fire-and-forget Team Mode shutdown. The
     // state-writer's shutdown() does its work synchronously
     // (clearInterval + fs.rmSync) before the trailing
@@ -1946,16 +1981,10 @@ Keyboard Shortcuts:
 
     try {
       const initialMessages = prepared.mode === 'fork' ? [] : context.messages;
-      const runResult = await runAgentRound(
-        prepared.options,
-        context,
+      const runResult = await runAgentRoundWithPlane(
         prepared.prompt,
+        prepared.options,
         initialMessages,
-        undefined,
-        options.runtimeRunner,
-        currentPermissionMode,
-        requestRuntimePermission,
-        runtimeAutoModeSettings,
       );
 
       if (prepared.mode === 'fork') {
@@ -2127,7 +2156,17 @@ Keyboard Shortcuts:
             : undefined;
 
         try {
-          const result = await runManagedTask(
+          // FEATURE_298 T18 — plane-bound editor returns travel the Host
+          // faces like every other round (the Host owns the goal plane via
+          // the session-command binding); the direct runManagedTask below
+          // remains only for the standalone surface.
+          const result = options.clientPlane
+            ? await runClientPlaneRound({
+              plane: options.clientPlane,
+              sessionId: context.sessionId,
+              prompt: processed,
+            })
+            : await runManagedTask(
             {
               ...currentOptions,
               provider: currentConfig.provider,
@@ -2271,16 +2310,11 @@ Keyboard Shortcuts:
 
     // Run Agent - 运行 Agent
     try {
-      const result = await runAgentRound(
-        currentOptions,
-        context,
+      const result = await runAgentRoundWithPlane(
         processed,
+        currentOptions,
         context.messages,
         preparedArtifacts.inputArtifacts,
-        options.runtimeRunner,
-        currentPermissionMode,
-        requestRuntimePermission,
-        runtimeAutoModeSettings,
       );
 
       // Update context messages (runKodaX returns complete message list) - 更新上下文中的消息（runKodaX 返回完整的消息列表）
@@ -2397,10 +2431,6 @@ async function runAgentRound(
   prompt: string,
   initialMessages: KodaXMessage[] = context.messages,
   inputArtifacts?: readonly KodaXInputArtifact[],
-  runtimeRunner?: ReplRuntimeRunner,
-  permissionMode: PermissionMode = 'accept-edits',
-  requestPermission?: ReplRuntimePermissionPrompt,
-  autoModeSettings?: ReplRuntimeAutoModeSettings,
 ): Promise<KodaXResult> {
   // Create event callbacks - 创建事件回调
   const events = {
@@ -2444,40 +2474,33 @@ async function runAgentRound(
           update.artifactLedger,
         );
       }
-      if (runtimeRunner) {
-        // Runtime-owned runs commit exact lineage before invoking this local
-        // projection. Do not re-enter Session storage through a second writer.
+      const storage = options.session?.storage;
+      if (!storage) {
+        throw new Error('Classic REPL compaction requires Session storage.');
+      }
+      try {
+        // FEATURE_298 T18 — with the runner retired, this is the standalone
+        // path only; plane rounds never invoke this local projection (the
+        // Host owns the durable commit for bound sessions).
+        await storage.save(context.sessionId, {
+          messages,
+          title: extractTitle(messages),
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
+          lineage: durableLineage,
+          artifactLedger: context.artifactLedger,
+          ...contextExtensionSessionData(context),
+          ...(options.session?.tag !== undefined ? { tag: options.session.tag } : {}),
+        });
         context.lineage = evictOldIslandMessageContent(durableLineage);
-      } else {
-        const storage = options.session?.storage;
-        if (!storage) {
-          throw new Error('Classic REPL compaction requires Session storage.');
-        }
-        try {
-          // FEATURE_298 T34 — this else-branch is the standalone path: in
-          // product mode the session-command binding is always wired
-          // together with runtimeRunner, whose branch above already owns
-          // the durable commit; no second writer reaches this save.
-          await storage.save(context.sessionId, {
-            messages,
-            title: extractTitle(messages),
-            gitRoot: context.gitRoot ?? '',
-            runtimeInfo: context.runtimeInfo,
-            lineage: durableLineage,
-            artifactLedger: context.artifactLedger,
-            ...contextExtensionSessionData(context),
-            ...(options.session?.tag !== undefined ? { tag: options.session.tag } : {}),
-          });
-          context.lineage = evictOldIslandMessageContent(durableLineage);
-        } catch (error: unknown) {
-          emitKodaXDiagnostic({
-            source: 'repl:compaction',
-            level: 'error',
-            message: 'Failed to durably persist compacted session history.',
-            detail: error,
-          });
-          throw error;
-        }
+      } catch (error: unknown) {
+        emitKodaXDiagnostic({
+          source: 'repl:compaction',
+          level: 'error',
+          message: 'Failed to durably persist compacted session history.',
+          detail: error,
+        });
+        throw error;
       }
       await options.events?.onCompactedMessages?.(messages, update, meta);
     },
@@ -2503,17 +2526,6 @@ async function runAgentRound(
         : {}),
     },
   };
-  if (runtimeRunner) {
-    return runtimeRunner({
-      options: runOptions,
-      prompt,
-      sessionId: context.sessionId,
-      permissionMode,
-      ...(autoModeSettings !== undefined ? { autoModeSettings } : {}),
-      ...(requestPermission !== undefined ? { requestPermission } : {}),
-      legacyPermissionHook: true,
-    });
-  }
   return runManagedTask(runOptions, prompt);
 }
 
@@ -2525,6 +2537,9 @@ function extractTitle(messages: KodaXMessage[]): string {
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
 import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
+import { runClientPlaneRound, type InkClientPlane } from '../ui/client-plane.js';
+import { attachClassicPlaneDisplay } from './classic-plane-display.js';
+import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 
 // FEATURE_200 Phase E: startup banner extracted to ./startup-banner.ts.
 import { printStartupBanner, printWorkspaceEntryNotice } from './startup-banner.js';

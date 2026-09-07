@@ -5747,26 +5747,34 @@ complete -c kodax -l version -d 'Show version'`);
 
         const runtimeProfile = 'default';
         const interactiveRuntime = await getCliRuntime();
+        // FEATURE_298 T18 — resume selection reads the Host sessions face
+        // (newest-first); the resolved id keeps the same-file local load.
+        let interactiveKodaXOptions = kodaXOptions;
+        if (kodaXOptions.session?.resume === true) {
+          const candidates = await interactiveRuntime.sessions.list({ scope: 'user', limit: 1000 });
+          const recent = candidates.find((session) => session.msgCount > 0);
+          if (recent !== undefined) {
+            interactiveKodaXOptions = {
+              ...kodaXOptions,
+              session: { ...kodaXOptions.session, id: recent.id, resume: undefined },
+            };
+          }
+        }
         const runtimeAutoModeControl =
           createReplRuntimeAutoModeControl(interactiveRuntime);
-        const runtimeRunner = createInteractiveRuntimeRunner(
-          interactiveRuntime,
-          runtimeAutoModeControl,
-        );
 
         const interactiveOptions = {
-          provider: kodaXOptions.provider,
-          model: kodaXOptions.model,
-          effort: kodaXOptions.effort,
-          thinking: kodaXOptions.thinking,
-          reasoningMode: kodaXOptions.reasoningMode,
-          agentMode: kodaXOptions.agentMode,
-          maxIter: kodaXOptions.maxIter,
-          sandbox: kodaXOptions.sandbox,
-          extensionRuntime: kodaXOptions.extensionRuntime,
-          session: kodaXOptions.session,
+          provider: interactiveKodaXOptions.provider,
+          model: interactiveKodaXOptions.model,
+          effort: interactiveKodaXOptions.effort,
+          thinking: interactiveKodaXOptions.thinking,
+          reasoningMode: interactiveKodaXOptions.reasoningMode,
+          agentMode: interactiveKodaXOptions.agentMode,
+          maxIter: interactiveKodaXOptions.maxIter,
+          sandbox: interactiveKodaXOptions.sandbox,
+          extensionRuntime: interactiveKodaXOptions.extensionRuntime,
+          session: interactiveKodaXOptions.session,
           storage: new FileSessionStorage({ cwd: process.cwd() }),
-          runtimeRunner,
           runtimeAutoModeControl,
           getRuntimeStatus: () =>
             getInteractiveRuntimeStatus({
@@ -5971,11 +5979,7 @@ complete -c kodax -l version -d 'Show version'`);
         if (useClassicInteractiveMode) {
           await runInteractiveMode(interactiveOptions);
         } else {
-          // FEATURE_298 T17 — Ink runs/renders through the client plane; the
-          // legacy runtimeRunner (and its KodaXEvents reverse bridge) stays
-          // classic-only until T18 retires it there.
-          const { runtimeRunner: _classicOnlyRunner, ...inkOptions } = interactiveOptions;
-          await runInkInteractiveMode(inkOptions);
+          await runInkInteractiveMode(interactiveOptions);
         }
         shouldHardExitAfterInteractiveCleanup = true;
       } catch (error) {
