@@ -84,7 +84,6 @@ import {
   type RuntimePermissionGrantSuggestion,
   type RuntimePermissionRequest,
   type RuntimeRunHandle,
-  type RuntimeRunPhase,
 } from './sdk-runtime.js';
 import { toKodaXProductClient } from './sdk-client.js';
 import type {
@@ -500,7 +499,8 @@ function isAbortLikeError(error: unknown): boolean {
   );
 }
 
-function acpAbortPhaseRank(phase: RuntimeRunPhase): number {
+/** Client run status carries the phase as a plain string; unknown phases rank as terminal. */
+function acpAbortPhaseRank(phase: string): number {
   if (phase === 'queued') return 0;
   if (phase === 'running' || phase === 'waiting_permission' || phase === 'waiting_user_input') return 1;
   return 2;
@@ -812,8 +812,8 @@ export class KodaXAcpServer implements Agent {
     session.permissionMode = nextMode;
     if (session.runtimeSessionReady) {
       await session.runtimeSessionReady;
-      const runtime = await this.runtimeReady;
-      await runtime.sessions.updateSettings(session.sessionId, {
+      const client = await this.clientReady;
+      await client.sessions.updateSettings(session.sessionId, {
         permissionMode: nextMode,
       });
     }
@@ -869,7 +869,7 @@ export class KodaXAcpServer implements Agent {
           await this.extensionRuntimeReady;
         }
         const runtime = await this.runtimeReady;
-        await this.ensureRuntimeSession(runtime, session, promptText);
+        await this.ensureRuntimeSession(session, promptText);
         permissionBridge = this.createRuntimePermissionBridge(runtime, session);
         handle = await runtime.runs.start({
           sessionId: session.sessionId,
@@ -952,19 +952,19 @@ export class KodaXAcpServer implements Agent {
   }
 
   private async ensureRuntimeSession(
-    runtime: KodaXRuntime,
     session: KodaXAcpSessionState,
     prompt: string,
   ): Promise<void> {
     if (!session.runtimeSessionReady) {
-      session.runtimeSessionReady = runtime.sessions.create({
+      const client = await this.clientReady;
+      session.runtimeSessionReady = client.sessions.create({
         sessionId: session.sessionId,
         title: buildAcpSessionTitle(prompt),
         projectPath: session.cwd,
         gitRoot: session.cwd,
         surface: 'acp',
       }).then(async () => {
-        await runtime.sessions.updateSettings(session.sessionId, {
+        await client.sessions.updateSettings(session.sessionId, {
           permissionMode: session.permissionMode,
         });
       });
@@ -992,12 +992,12 @@ export class KodaXAcpServer implements Agent {
   private async abortSessionRuns(session: KodaXAcpSessionState): Promise<void> {
     if (session.activeRunIds.size === 0) return;
 
-    const runtime = await this.runtimeReady;
+    const client = await this.clientReady;
     const runIds = [...session.activeRunIds];
     const abortTargets = await Promise.all(
       runIds.map(async (runId) => {
         try {
-          const status = await runtime.runs.get(runId);
+          const status = await client.runs.read(runId);
           return { runId, rank: acpAbortPhaseRank(status.phase) };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1009,7 +1009,7 @@ export class KodaXAcpServer implements Agent {
 
     abortTargets.sort((left, right) => left.rank - right.rank);
     await Promise.all(
-      abortTargets.map(({ runId }) => runtime.runs.abort(runId).catch((error: unknown) => {
+      abortTargets.map(({ runId }) => client.runs.stop(runId).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`ACP runtime run abort failed for ${runId}: ${message}`);
       })),
