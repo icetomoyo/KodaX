@@ -26,6 +26,8 @@ independent Runtime processes, trusted text writes, and proxy port pressure.
 
 ## Dependency delivery
 
+The build/pack CLI resolves real paths when identifying its entry point, so linked workspaces and macOS temporary-directory aliases execute the same patch and validation checks.
+
 The ASRT fix is now applied during SDK bundle/standalone-binary builds and
 before npm packing by `scripts/prepare-asrt-wfp.mjs`. The build accepts only
 ASRT 0.0.65 with the audited original or patched SHA-256 (after newline

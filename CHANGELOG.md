@@ -20,6 +20,8 @@ and Provider fixes. npm publication remains a manual maintainer action.
   listeners alive through verification. SDK bundles, standalone binaries, and
   npm tarballs ship the audited dependency patch, including installs with
   `--ignore-scripts`. Build/pack rejects unexpected dependency source bytes.
+  Build/pack CLI entry detection resolves real paths so linked workspaces and
+  macOS temporary-directory aliases execute the patch and validation checks.
   Windows allocation, installed-package, and packaged Electron gates cover
   delivery and behavior; native protocol/setup and permission contracts stay unchanged.
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,4 +72,18 @@ test('ASRT build verifies patch output before replacing dependency source', (t) 
   writeFileSync(patch, readFileSync(patch, 'utf8').replace('Modified by KodaX:', 'Changed by KodaX:'));
   assert.match(runBuild(f).stderr, /patch output does not match the audited source/);
   assert.equal(readFileSync(f.target, 'utf8'), original);
+});
+
+test('ASRT build CLI patches dependencies through a linked directory', (t) => {
+  const f = fixture(t);
+  restoreOriginal(f);
+  const alias = path.join(f.directory, 'linked-root');
+  symlinkSync(f.directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    const result = runBuild({ ...f, directory: alias });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(f.target, 'utf8'), patched);
+  } finally {
+    unlinkSync(alias);
+  }
 });
