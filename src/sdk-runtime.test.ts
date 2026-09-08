@@ -18949,8 +18949,13 @@ describe("createKodaXRuntime", () => {
     const { getAgentConfigHome, setAgentConfigHome } = await import("@kodax-ai/agent");
     const previousHome = getAgentConfigHome();
     const configHome = path.join(tempRoot, ".kodax");
-    const projectRoot = path.join(tempRoot, "workspace");
+    let projectRoot = path.join(tempRoot, "project", "workspace");
     await fs.mkdir(projectRoot, { recursive: true });
+    if (route === "full-access") {
+      const alias = path.join(tempRoot, "project-alias");
+      await fs.symlink(path.dirname(projectRoot), alias, process.platform === "win32" ? "junction" : "dir");
+      projectRoot = path.join(alias, "workspace");
+    }
     let runOptions: KodaXOptions | undefined;
     codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
       runOptions = options;
@@ -19016,6 +19021,16 @@ describe("createKodaXRuntime", () => {
       }
       await expect(result).resolves.toContain("File created");
       await expect(fs.readFile(target, "utf8")).resolves.toBe("# Example");
+      if (route === "full-access") {
+        const policyPath = path.join(projectRoot, ".kodax", "exec-policy.jsonc");
+        await expect(executeToolCall(
+          runOptions.events ?? {},
+          { id: "protected_policy_write", name: "write", input: { path: policyPath, content: "{}" } },
+          { backups: new Map(), ...runOptions.context },
+          buildRuntimeSessionState({ activeTools: ["write"], modelSelection: {} }),
+        )).resolves.toContain("protected KodaX state");
+        await expect(fs.stat(policyPath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
       expect(runOptions.context?.workspaceSandboxRoots?.list()).toEqual(rootsBefore);
       await expect(runtime.permissions.listPending({ runId })).resolves.toEqual([]);
     } finally {

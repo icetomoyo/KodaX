@@ -156,4 +156,12 @@ describe('approved text targets outside workspace roots', () => {
       content: 'denied', createParentDirectories: true })).rejects.toMatchObject({ code: 'text_mutation_identity_changed' });
     await expect(fs.stat(path.join(second, 'nested', 'note.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  it('fails closed when a protected policy path has an unresolved ancestor', async () => {
+    const alias = path.join(root, 'broken-policy-root');
+    await fs.symlink(path.join(root, 'missing'), alias, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(() => assertTrustedTextMutationPolicy(path.join(workspace, 'ordinary.txt'), workspace, [
+      path.join(alias, '.kodax', 'exec-policy.jsonc'),
+    ])).toThrow(/protected KodaX state/);
+  });
 });

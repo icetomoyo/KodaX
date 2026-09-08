@@ -48,6 +48,9 @@ shell setup; approved text writes still work. An unapproved sibling write,
 Git metadata, trusted project Exec Policy, and native artifact/coordination
 state must remain protected. Retargeting a path alias between snapshot and
 commit must fail before writing to the new location.
+Use an ancestor directory alias for the Runtime workspace and verify that
+Full Access still cannot write its Exec Policy, even when the policy file does
+not exist yet. An unresolved protected-policy ancestor must fail closed.
 
 Run `src/trusted-text-permissions.test.ts` and the `writes user configuration`
 cases in `src/sdk-runtime.test.ts`, together with the existing native text,

@@ -5476,6 +5476,10 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    native traversal for an approved external file; it is not a shell write
    root. Native state checks include the exact target. No persistent approval
    state, new lock, native protocol change, or Bash execution change is needed.
+   Protected Exec Policy paths are compared using both their lexical and
+   canonical identities, including missing suffixes under an existing ancestor;
+   unresolved protected paths fail closed. This preserves protection for
+   workspaces reached through directory aliases, including macOS `/var`.
 2. **Cross-platform in-process filesystem primitive**: strict platform path
    and commit guarantees are provided by a narrow native binding loaded into
    the trusted Runtime on Windows, Linux, and macOS. The transaction itself

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { KodaXToolExecutionContext, KodaXTrustedTextFileSnapshot } from './types.js';
 import { resolveExecutionPath } from './runtime-paths.js';
+import { canonicalizeAgentHomePolicyPath } from './permissions/agent-home-policy.js';
 
 /** Called by trusted dispatchers only after the concrete tool passed permission checks. */
 export function withApprovedTextMutationTarget(
@@ -93,9 +94,13 @@ export function assertTrustedTextMutationPolicy(
   );
   if (
     components.some((component) => component.toLowerCase() === '.git')
-    || protectedPaths.some((candidate) => (
-      caseFold(path.resolve(candidate)) === caseFold(canonicalTarget)
-    ))
+    || protectedPaths.some((candidate) => {
+      const canonicalProtectedPath = canonicalizeAgentHomePolicyPath(candidate);
+      return canonicalProtectedPath === undefined
+        || [candidate, canonicalProtectedPath].some((protectedPath) => (
+          caseFold(path.resolve(protectedPath)) === caseFold(canonicalTarget)
+        ));
+    })
   ) {
     throw new KodaXTrustedTextMutationError({
       code: 'text_mutation_policy_denied',
