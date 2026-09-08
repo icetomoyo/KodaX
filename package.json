@@ -84,6 +84,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
+    "prepack": "node scripts/prepare-asrt-wfp.mjs",
     "build": "npm run config:templates:check && npm run build:packages && npm run build:native && npm run build:bundle && npm run build:dts",
     "config:templates:sync": "node scripts/sync-config-templates.mjs",
     "config:templates:check": "node scripts/sync-config-templates.mjs --check",
@@ -102,7 +103,7 @@
     "build:binary": "node scripts/build-binary.mjs",
     "build:binary:all": "node scripts/build-binary.mjs --all",
     "test": "vitest run",
-    "test:bundle": "node --test tests/bundled-provider-credentials.test.mjs tests/bundled-daemon-compaction.test.mjs",
+    "test:bundle": "node --test tests/bundled-provider-credentials.test.mjs tests/bundled-daemon-compaction.test.mjs tests/asrt-wfp-probe.test.mjs tests/asrt-wfp-build.test.mjs",
     "test:native": "node scripts/test-native.mjs",
     "test:packed-native": "node scripts/test-packed-native.mjs",
     "test:fast": "vitest run -c vitest.fast.config.ts",
@@ -185,6 +186,9 @@
     "yoga-layout": "^3.2.1",
     "zod": "^3.25.0"
   },
+  "bundleDependencies": [
+    "@anthropic-ai/sandbox-runtime"
+  ],
   "devDependencies": {
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.0",
@@ -217,6 +221,8 @@
     "config-templates",
     "scripts/kodax-bin.cjs",
     "scripts/production-env.cjs",
+    "scripts/prepare-asrt-wfp.mjs",
+    "docs/patches/asrt-0.0.65-wfp-probe.patch",
     "README.md",
     "README_CN.md",
     "public_docs/README.md",

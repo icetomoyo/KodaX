@@ -7,9 +7,14 @@
  import * as path from 'node:path';
  import { spawnSync } from 'node:child_process';
  import { once } from 'node:events';
-@@ -303,22 +304,36 @@
-         // loopback-permit range (a port in-range would be PERMITted
-         // even with the fence active → false `connected`).
+@@ -299,26 +300,38 @@
+     let target = opts.target;
+     let server;
+     if (!target) {
+-        // Bind ephemeral; retry if it lands inside the WFP
+-        // loopback-permit range (a port in-range would be PERMITted
+-        // even with the fence active → false `connected`).
++        // Modified by KodaX: bind only outside the WFP permit range.
          const [lo, hi] = opts.proxyPortRange ?? DEFAULT_WINDOWS_PROXY_PORT_RANGE;
 -        for (let i = 0; i < 5; i++) {
 +        // Choose the larger unprivileged interval outside the WFP permit.

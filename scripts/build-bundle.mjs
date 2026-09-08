@@ -56,6 +56,9 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditRuntimeWorkerWindowsHide } from './audit-runtime-windows-hide.mjs';
+import { prepareAsrtWfp } from './prepare-asrt-wfp.mjs';
+
+prepareAsrtWfp();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -56,6 +56,14 @@ try {
     throw new Error(`Packed KodaX install failed: ${installed.stderr.trim()}`);
   }
 
+  const asrt = spawnSync(process.execPath, ['--test', path.join(root, 'tests/asrt-wfp-probe.test.mjs')], {
+    cwd: installation, encoding: 'utf8', windowsHide: true, timeout: 60_000,
+  });
+  if (asrt.error) throw asrt.error;
+  if (asrt.status !== 0) {
+    throw new Error(`Installed ASRT WFP regression failed: ${asrt.stdout}\n${asrt.stderr}`);
+  }
+
   const bin = path.join(
     installation,
     'node_modules',

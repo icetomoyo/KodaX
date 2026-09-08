@@ -48,6 +48,9 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { prepareAsrtWfp } from './prepare-asrt-wfp.mjs';
+
+prepareAsrtWfp();
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY = join(ROOT, 'dist', 'kodax_bootstrap.js');
