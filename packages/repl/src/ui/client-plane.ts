@@ -25,6 +25,7 @@ import {
   type KodaXInputArtifact,
   type KodaXResult,
 } from '@kodax-ai/coding';
+import type { ClientItemReadOptions } from '@kodax-ai/coding/client-contract';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { resolveReplRuntimePermissionDecision } from '../runtime-permission.js';
 import type { ConfirmResult } from '../permission/types.js';
@@ -72,7 +73,7 @@ export interface InkClientPlane {
   readItem(
     sessionId: string,
     itemId: string,
-    offset?: number,
+    options?: ClientItemReadOptions | number,
   ): Promise<ClientItemContent | null>;
   /** Answer a pending Host question/permission; first valid answer wins. */
   respondInteraction(

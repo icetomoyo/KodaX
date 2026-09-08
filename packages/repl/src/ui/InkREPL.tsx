@@ -5118,7 +5118,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     let offset = 0;
     let parts = "";
     for (;;) {
-      const content = await plane.readItem(context.sessionId, itemId, { offset, part });
+      const content = await plane.readItem(
+        context.sessionId,
+        itemId,
+        part === 'input' ? { offset, part } : offset,
+      );
       if (content === null || content.text.length === 0) break;
       parts += content.text;
       if (content.nextOffset === undefined || content.nextOffset <= offset) break;
@@ -11160,9 +11164,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // hand (mirrors Claude Code's `popAllEditable`).
           onPopPendingInputs={() => {
             const inputs = consumePendingInputs();
-            if (inputs.length > 0) return inputs.join("
----
-");
+            if (inputs.length > 0) return inputs.join("\n---\n");
             // FEATURE_298 T17 -- plane-bound follow-ups live in the Host
             // queue. Review fix: the pull is atomic per entry — only
             // inputs the Host actually took back (withdraw resolved with
@@ -11194,9 +11196,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                     : `${stuck.length} of ${hostQueue.length} queued inputs could not be withdrawn (already delivered?) and stay queued.`,
                 );
               }
-              const text = pulled.join("
----
-");
+              const text = pulled.join("\n---\n");
               return text.length > 0 ? text : undefined;
             })();
           }}

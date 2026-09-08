@@ -108,7 +108,6 @@ import {
   parsePermissionModeOption,
   parseReasoningModeOption,
   parseRepoIntelligenceModeOption,
-  parseRuntimeModeOption,
   mergeCommandOptionsWithGlobals,
   normalizeCliSessionFlags,
   resolveCliAgentMode,
@@ -116,7 +115,6 @@ import {
   resolveCliModelSelection,
   resolveCliProviderSelection,
   resolveCliReasoningMode,
-  resolveCliRuntimeMode,
   findSessionTitleMatches,
   type CliOutputMode,
   type CliOptions,
@@ -259,7 +257,6 @@ export {
   parsePermissionModeOption,
   parseReasoningModeOption,
   parseRepoIntelligenceModeOption,
-  parseRuntimeModeOption,
   processCommandCall,
   resolveCliAgentMode,
 };
@@ -1432,10 +1429,10 @@ function interactiveFinalCleanupTimeoutMs(): number {
 }
 
 async function cleanupInteractiveProcessResources(input: {
-  readonly closeA2A: () => void;
+  readonly closeA2A?: () => void;
   readonly closeRuntime: () => Promise<void>;
-  readonly closeHotReload: () => void;
-  readonly disposeExtensions: () => Promise<void>;
+  readonly closeHotReload?: () => void;
+  readonly disposeExtensions?: () => Promise<void>;
 }): Promise<void> {
   const errors: Error[] = [];
   // FEATURE_289: preserve the independent durability window before closing
@@ -1446,7 +1443,7 @@ async function cleanupInteractiveProcessResources(input: {
   const phaseTimeoutMs = Math.max(1, Math.min(1_000, Math.floor(totalTimeoutMs / 5)));
   const attempt = async (
     label: string,
-    operation: () => void | Promise<void>,
+    operation: (() => void | Promise<void>) | undefined,
     maximumMs = phaseTimeoutMs,
     reserveMs = 0,
   ): Promise<void> => {
@@ -1507,7 +1504,7 @@ async function cleanupDaemonServeProcessResources(input: {
   const phaseTimeoutMs = Math.max(1, Math.min(2_000, Math.floor(totalTimeoutMs / 4)));
   const attempt = async (
     label: string,
-    operation: () => void | Promise<void>,
+    operation: (() => void | Promise<void>) | undefined,
     maximumMs = phaseTimeoutMs,
   ): Promise<void> => {
     const remainingMs = Math.max(0, deadline - Date.now());
@@ -2678,11 +2675,6 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option('-p, --print <text>', 'Print mode: run single task and exit')
       .option('--mode <mode>', 'Output mode: json', parseOutputModeOption)
       .option(
-        '--runtime-mode <mode>',
-        'Interactive runtime mode: embedded, daemon',
-        parseRuntimeModeOption,
-      )
-      .option(
         '-c, --continue',
         'Continue most recent non-empty conversation in current directory',
       )
@@ -3718,7 +3710,6 @@ async function main() {
         '--help',
         '--print',
         '--mode',
-        '--runtime-mode',
         '--continue',
         '--resume',
         '--new',
@@ -3778,7 +3769,6 @@ _kodax_complete() {
   case "\${prev}" in
     --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
     --mode) COMPREPLY=( $(compgen -W "json" -- "\${cur}") ); return 0 ;;
-    --runtime-mode) COMPREPLY=( $(compgen -W "embedded daemon" -- "\${cur}") ); return 0 ;;
     --effort) COMPREPLY=( $(compgen -W "${effortModes}" -- "\${cur}") ); return 0 ;;
     --reasoning) COMPREPLY=( $(compgen -W "${reasoningModes}" -- "\${cur}") ); return 0 ;;
     --agent-mode) COMPREPLY=( $(compgen -W "${agentModes}" -- "\${cur}") ); return 0 ;;
@@ -3823,7 +3813,6 @@ _kodax() {
     '-p[Print mode]+:text:' \\
     '--print+[Print mode]:text:' \\
     '--mode+[Output mode]:mode:(json)' \\
-    '--runtime-mode+[Interactive runtime mode]:mode:(embedded daemon)' \\
     '-c[Continue most recent non-empty conversation]' \\
     '--continue[Continue most recent non-empty conversation]' \\
     '-n[Start fresh session]' \\
@@ -3873,7 +3862,6 @@ complete -c kodax -n '__fish_seen_subcommand_from execpolicy' -a '${execPolicySu
 complete -c kodax -s h -l help -d 'Show help'
 complete -c kodax -s p -l print -d 'Print mode' -r
 complete -c kodax -l mode -d 'Output mode' -xa 'json'
-complete -c kodax -l runtime-mode -d 'Interactive runtime mode' -xa 'embedded daemon'
 complete -c kodax -s c -l continue -d 'Continue most recent conversation'
 complete -c kodax -s n -l new -d 'Start fresh session'
 complete -c kodax -s r -l resume -d 'Resume session by ID or exact title' -r
@@ -4834,7 +4822,6 @@ complete -c kodax -l version -d 'Show version'`);
   }
   const configWithExtensions = config as typeof config & {
     extensions?: string[];
-    runtimeMode?: 'embedded' | 'daemon';
   };
   if (
     typeof opts.repoIntelligence === 'string' &&
@@ -4901,11 +4888,6 @@ complete -c kodax -l version -d 'Show version'`);
     config.provider,
     config.model,
   );
-  const selectedRuntimeMode = resolveCliRuntimeMode(
-    opts.runtimeMode,
-    process.env.KODAX_RUNTIME_MODE,
-    configWithExtensions.runtimeMode,
-  );
   const sessionFlags = normalizeCliSessionFlags(opts);
   // -y/--auto is kept for backward compatibility but has no effect in CLI.
   const options: CliOptions = {
@@ -4917,7 +4899,6 @@ complete -c kodax -l version -d 'Show version'`);
     reasoningMode,
     agentMode,
     outputMode,
-    runtimeMode: selectedRuntimeMode,
     extensions: activeExtensions,
     session: sessionFlags.session,
     maxIter: parseOptionalNonNegativeInt(opts.maxIter),
@@ -4927,9 +4908,8 @@ complete -c kodax -l version -d 'Show version'`);
     noSession: sessionFlags.noSession,
     print: opts.print ? true : false,
   };
-  let extensionRuntime: ReturnType<typeof createExtensionRuntime> | undefined;
-  let integrationHotReload: IntegrationHotReloadHandle | undefined;
-  let a2aRuntimeHandle: ConfiguredA2ARuntimeHandle | undefined;
+  // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
+  // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
   let shouldHardExitAfterInteractiveCleanup = false;
   const integrationEvents = createIntegrationEventBridge((message) =>
@@ -4938,39 +4918,24 @@ complete -c kodax -l version -d 'Show version'`);
 
   const getCliRuntime = async (): Promise<KodaXRuntime> => {
     if (cliRuntime !== undefined) return cliRuntime;
-    const mode = options.runtimeMode ?? 'embedded';
-    // Embedded CLI sessions load and reconcile
-    // ~/.kodax/integrations/a2a.json in this process, installing the full
-    // list/describe/preflight and external Actor dispatch surface.
-    const a2aIntegration =
-      mode === 'embedded'
-        ? createConfiguredA2ARuntimeIntegration({
-            configHome: KODAX_DIR,
-            onEvent: integrationEvents.onEvent,
-          })
-        : undefined;
+    // FEATURE_298 T27 — the product is fixed to the independent Host
+    // (D01): interactive and print flows always start-or-attach the shared
+    // daemon owner. The Host process owns extensions, configured MCP, and
+    // the A2A plane; embedded construction remains a low-level SDK path
+    // and is never a product fallback.
     cliRuntime = await createKodaXRuntime({
-      mode,
+      mode: 'daemon',
       profile: 'default',
-      autoStartDaemon: mode === 'daemon',
-      ...(mode === 'daemon'
-        ? {
-            clientInfo: {
-              name: 'kodax-cli',
-              title: 'KodaX CLI',
-              version,
-              clientType: 'cli',
-            },
-          }
-        : {}),
+      autoStartDaemon: true,
+      clientInfo: {
+        name: 'kodax-cli',
+        title: 'KodaX CLI',
+        version,
+        clientType: 'cli',
+      },
       defaultProvider: options.provider,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-      ...(a2aIntegration
-        ? { externalAgents: a2aIntegration.runtimeOptions }
-        : {}),
     });
-    if (a2aIntegration)
-      a2aRuntimeHandle = await a2aIntegration.start(cliRuntime);
     return cliRuntime;
   };
 
@@ -5135,61 +5100,15 @@ complete -c kodax -l version -d 'Show version'`);
       }
     }
 
-    if (selectedRuntimeMode === 'daemon' && dedupedCliExtensions.length > 0) {
+    // FEATURE_298 T27 — fixed to the independent Host: the client never
+    // constructs an embedded Runtime, so CLI --extension paths have no
+    // embedded fallback. The Host owns the extension runtime, configured
+    // MCP servers (with elicitation), and integration hot reload.
+    if (dedupedCliExtensions.length > 0) {
       throw new Error(
         'CLI --extension paths cannot cross the daemon process boundary. ' +
-          'Add the extension to the daemon profile config or use --runtime-mode embedded.',
+          'Add the extension to the daemon profile config for this profile.',
       );
-    }
-    if (selectedRuntimeMode !== 'daemon') {
-      extensionRuntime = createExtensionRuntime({ config });
-      // FEATURE_222 — expose the workspace as MCP roots, and (interactive mode)
-      // serve elicitation through the REPL's live ask-user dialogs. In print /
-      // non-interactive mode no interaction surface registers, so elicitation
-      // requests safely decline.
-      await registerConfiguredMcpCapabilityProvider(
-        extensionRuntime,
-        configWithExtensions.mcpServers,
-        {
-          reverse: buildMcpReverseCapabilities({
-            cwd: process.cwd(),
-            enableElicitation: true,
-          }),
-        },
-      );
-      const extensionLoader = extensionRuntime as typeof extensionRuntime & {
-        loadExtensions: (
-          paths: string[],
-          options?: {
-            continueOnError?: boolean;
-            loadSource?: 'discovery' | 'config' | 'cli' | 'api';
-          },
-        ) => Promise<void>;
-      };
-      await extensionLoader.loadExtensions(discoveredOnlyExtensions, {
-        continueOnError: true,
-        loadSource: 'discovery',
-      });
-      await extensionLoader.loadExtensions(configuredOnlyExtensions, {
-        continueOnError: true,
-        loadSource: 'config',
-      });
-      await extensionLoader.loadExtensions(dedupedCliExtensions, {
-        continueOnError: true,
-        loadSource: 'cli',
-      });
-      options.extensionRuntime = extensionRuntime;
-      extensionRuntime.activate();
-      integrationHotReload = await startIntegrationHotReload({
-        runtime: extensionRuntime,
-        mcpOptions: {
-          reverse: buildMcpReverseCapabilities({
-            cwd: process.cwd(),
-            enableElicitation: true,
-          }),
-        },
-        onEvent: integrationEvents.onEvent,
-      });
     }
 
     // Command dispatch for /command-style invocations.
@@ -5593,35 +5512,20 @@ complete -c kodax -l version -d 'Show version'`);
   } finally {
     if (shouldHardExitAfterInteractiveCleanup) {
       const runtime = cliRuntime;
-      const hotReload = integrationHotReload;
-      const extensions = extensionRuntime;
-      const a2a = a2aRuntimeHandle;
       cliRuntime = undefined;
-      integrationHotReload = undefined;
-      extensionRuntime = undefined;
-      a2aRuntimeHandle = undefined;
       await cleanupInteractiveProcessResources({
-        closeA2A: () => a2a?.close(),
         closeRuntime: async () => runtime?.close(),
-        closeHotReload: () => hotReload?.close(),
-        disposeExtensions: async () => extensions?.dispose(),
       });
     } else {
       // Non-interactive callers own their process and receive cleanup errors.
       await awaitLatestCodingMemoryReviewDrain(15_000);
       let runtimeCloseError: unknown;
-      a2aRuntimeHandle?.close();
-      a2aRuntimeHandle = undefined;
       try {
         await cliRuntime?.close();
       } catch (error: unknown) {
         runtimeCloseError = error;
       }
       cliRuntime = undefined;
-      integrationHotReload?.close();
-      integrationHotReload = undefined;
-      await extensionRuntime?.dispose();
-      extensionRuntime = undefined;
       await shutdownDefaultLspService();
       await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
       await shutdownTracing();

@@ -79,11 +79,13 @@ function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
       runtime.sessions
         .observeView(sessionId, onView)
         .then((observation) => () => observation.close()),
-    readItem: (sessionId, itemId, offset) =>
+    readItem: (sessionId, itemId, readOptions) =>
       runtime.sessions.readViewItem(
         sessionId,
         itemId,
-        offset !== undefined ? { offset } : undefined,
+        typeof readOptions === 'number'
+          ? { offset: readOptions }
+          : readOptions,
       ),
     respondInteraction: (requestId, response) =>
       runtime.interactions

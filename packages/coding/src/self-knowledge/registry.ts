@@ -333,7 +333,7 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "KodaX config is JSON + env vars — there is no YAML and no single loader entry.",
       "Core file: ~/.kodax/config.json. Common keys: provider, model, effort,",
       "planModeEffort, permissionMode, customProviders, repoIntelligenceMode, compaction,",
-      "fallbackProviders, autoMode, verifierLog, stallLog, runtimeMode, and workflow.",
+      "fallbackProviders, autoMode, verifierLog, stallLog, and workflow.",
       "`autoReview.policy` configures only the Runtime-owned Auto[LLM] review policy body;",
       "`autoMode.classifierModel` may select its reviewer model. Reviewer deadlines are fixed",
       "at 90 seconds plus one 180-second retry. If no effective reviewer model exists,",

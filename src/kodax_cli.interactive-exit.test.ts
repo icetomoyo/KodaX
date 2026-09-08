@@ -9,7 +9,6 @@ type InteractiveSurface = 'ink' | 'classic';
 interface RuntimeConfig {
   readonly provider?: string;
   readonly model?: string;
-  readonly runtimeMode?: 'embedded' | 'daemon';
   readonly sessionRetentionDays?: number;
   readonly extensions?: readonly string[];
   readonly mcpServers?: Record<string, { readonly connect?: string }>;
@@ -527,14 +526,12 @@ describe('CLI interactive exit lifecycle', () => {
     expect(harness.daemonShutdown).toHaveBeenCalledTimes(1);
     const completed = harness.calls.filter((call) => [
       'runtime-close',
-      'runtime-dispose',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
     ].includes(call));
     expect(completed).toEqual([
       'runtime-close',
-      'runtime-dispose',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -897,22 +894,20 @@ describe('CLI interactive exit lifecycle', () => {
     expect(harness.runInkInteractiveMode).toHaveBeenCalledWith(expect.objectContaining({
       hardExitOnClose: false,
     }));
-    expect(harness.runtimeDispose).toHaveBeenCalledTimes(1);
     expect(harness.shutdownDefaultLspService).toHaveBeenCalledTimes(1);
     expect(harness.cleanupRegisteredManagedChildren).toHaveBeenNthCalledWith(1);
     expect(harness.cleanupRegisteredManagedChildren).toHaveBeenNthCalledWith(2, { includeCurrentOwner: true });
     expect(harness.shutdownTracing).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledTimes(1);
+    // FEATURE_298 T27 — fixed Host: no client-side extension runtime, MCP
+    // provider registration, or extension dispose (the Host owns those).
     expect(harness.calls).toEqual([
       'hardening',
       'cleanup-children-startup',
       'bootstrap-tracing',
       'session-retention',
-      'register-mcp',
-      'runtime-activate',
       'run-ink',
       'runtime-close',
-      'runtime-dispose',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -930,7 +925,7 @@ describe('CLI interactive exit lifecycle', () => {
     await vi.waitFor(() => expect(harness.shutdownDefaultLspService).toHaveBeenCalledTimes(1));
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(harness.calls).toContain('runtime-dispose');
+    expect(harness.calls).toContain('shutdown-lsp');
     expect(harness.calls).not.toContain('cleanup-children-final');
 
     lspDeferred.resolve();
@@ -1009,7 +1004,6 @@ describe('CLI interactive exit lifecycle', () => {
 
     expect(harness.calls).toEqual(expect.arrayContaining([
       'runtime-close',
-      'runtime-dispose',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -1026,7 +1020,6 @@ describe('CLI interactive exit lifecycle', () => {
     expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
     expect(harness.calls).toEqual(expect.arrayContaining([
       'run-classic',
-      'runtime-dispose',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -1034,7 +1027,7 @@ describe('CLI interactive exit lifecycle', () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('can opt the interactive REPL into daemon runtime mode', async () => {
+  it('runs the interactive REPL on the fixed Host regardless of the retired KODAX_RUNTIME_MODE env', async () => {
     const previousRuntimeMode = process.env.KODAX_RUNTIME_MODE;
     process.env.KODAX_RUNTIME_MODE = 'daemon';
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
@@ -1083,7 +1076,7 @@ describe('CLI interactive exit lifecycle', () => {
   it('routes print mode through the configured daemon runtime', async () => {
     process.argv = ['node', 'kodax', '-p', 'inspect the repo'];
     const { main, harness } = await importMainWithMocks({
-      config: { provider: 'mock-provider', runtimeMode: 'daemon' },
+      config: { provider: 'mock-provider' },
     });
 
     await main();
@@ -1108,7 +1101,7 @@ describe('CLI interactive exit lifecycle', () => {
   it('removes the transient runtime session for --no-session runs', async () => {
     process.argv = ['node', 'kodax', '-p', 'stateless task', '--no-session'];
     const { main, harness } = await importMainWithMocks({
-      config: { provider: 'mock-provider', runtimeMode: 'embedded' },
+      config: { provider: 'mock-provider' },
     });
 
     await main();
@@ -1124,32 +1117,26 @@ describe('CLI interactive exit lifecycle', () => {
     expect(harness.runManagedTask).not.toHaveBeenCalled();
   });
 
-  it('applies CLI > env > config precedence to runtime mode and provider', async () => {
-    process.env.KODAX_RUNTIME_MODE = 'daemon';
+  it('applies CLI > env > config precedence to the provider on the fixed Host', async () => {
     process.env.KODAX_PROVIDER = 'env-provider';
-    process.argv = [
-      'node',
-      'kodax',
-      '-p',
-      'precedence task',
-      '--runtime-mode',
-      'embedded',
-    ];
+    process.argv = ['node', 'kodax', '-p', 'precedence task'];
     const { main, harness } = await importMainWithMocks({
-      config: { provider: 'config-provider', runtimeMode: 'daemon' },
+      config: { provider: 'config-provider' },
     });
 
     await main();
 
+    // FEATURE_298 T27 — the product is fixed to the independent Host:
+    // env still wins over config for the provider, and the runtime is
+    // always the started-or-attached daemon owner.
     expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'embedded',
+      mode: 'daemon',
       defaultProvider: 'env-provider',
-      autoStartDaemon: false,
-      externalAgents: expect.objectContaining({ factories: [] }),
+      autoStartDaemon: true,
     });
   });
 
-  it('ignores the retired worker.configuredA2A key and keeps the inline A2A plane', async () => {
+  it('ignores the retired worker.configuredA2A key and stays on the fixed Host', async () => {
     process.argv = ['node', 'kodax', '-p', 'inline A2A task'];
     const { main, harness } = await importMainWithMocks({
       config: {
@@ -1162,11 +1149,12 @@ describe('CLI interactive exit lifecycle', () => {
 
     expect(harness.createKodaXRuntime).toHaveBeenCalledOnce();
     expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'embedded',
-      externalAgents: expect.objectContaining({ factories: [] }),
+      mode: 'daemon',
+      autoStartDaemon: true,
     });
     expect(harness.runtimeOptions[0]).not.toHaveProperty('isolation');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('worker');
+    expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
   });
 
   it('does not fall through to interactive mode after daemon subcommands', async () => {

@@ -13,7 +13,6 @@ import {
   resolveCliEffort,
   resolveCliModelSelection,
   resolveCliProviderSelection,
-  resolveCliRuntimeMode,
   findSessionTitleMatches,
   validateCliModeSelection,
   parsePermissionModeOption,
@@ -299,24 +298,6 @@ describe('resolveCliProviderSelection', () => {
       undefined,
       'default-provider',
     )).toBe('default-provider');
-  });
-});
-
-describe('resolveCliRuntimeMode', () => {
-  it('uses CLI > env > config > embedded precedence', () => {
-    expect(resolveCliRuntimeMode('daemon', 'embedded', 'embedded')).toBe('daemon');
-    expect(resolveCliRuntimeMode(undefined, 'daemon', 'embedded')).toBe('daemon');
-    expect(resolveCliRuntimeMode(undefined, undefined, 'daemon')).toBe('daemon');
-    expect(resolveCliRuntimeMode(undefined, undefined, undefined)).toBe('embedded');
-  });
-
-  it('validates environment and config values', () => {
-    expect(() => resolveCliRuntimeMode(undefined, 'remote', undefined)).toThrow(
-      'Expected one of: embedded, daemon.',
-    );
-    expect(() => resolveCliRuntimeMode(undefined, undefined, 'remote')).toThrow(
-      'Expected one of: embedded, daemon.',
-    );
   });
 });
 

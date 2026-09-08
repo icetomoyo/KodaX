@@ -317,7 +317,7 @@ describe('CLI Entry Point', () => {
   it('should pass resolved CLI effort into interactive mode startup options', async () => {
     const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
     expect(source).toContain('const interactiveOptions = {');
-    expect(source).toContain('effort: kodaXOptions.effort');
+    expect(source).toContain('effort: interactiveKodaXOptions.effort');
   });
 
   it('should keep the root command executable when subcommands are registered', () => {

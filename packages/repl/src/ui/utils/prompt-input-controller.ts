@@ -59,7 +59,7 @@ export interface PromptInputControllerOptions {
    * consumer atomically clears its queue), or `undefined` to fall through
    * to normal history navigation when the queue is empty.
    */
-  onPopPendingInputs?: () => string | undefined;
+  onPopPendingInputs?: () => string | undefined | Promise<string | undefined>;
 }
 
 export interface PromptInputControllerResult {

@@ -23,7 +23,6 @@ export const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
   'full-access',
 ];
 export const CLI_OUTPUT_MODES = ['text', 'json'] as const;
-export const CLI_RUNTIME_MODES = ['embedded', 'daemon'] as const;
 export const KODAX_AGENT_MODES = ['ama', 'sa'] as const;
 export const KODAX_REPO_INTELLIGENCE_MODES: KodaXRepoIntelligenceMode[] = [
   'auto',
@@ -33,7 +32,6 @@ export const KODAX_REPO_INTELLIGENCE_MODES: KodaXRepoIntelligenceMode[] = [
 ];
 export const KODAX_REPO_INTELLIGENCE_PUBLIC_MODES = ['auto', 'full', 'light', 'off'] as const;
 export type CliOutputMode = typeof CLI_OUTPUT_MODES[number];
-export type CliRuntimeMode = typeof CLI_RUNTIME_MODES[number];
 
 export interface CliOptions {
   provider: string;
@@ -43,7 +41,6 @@ export interface CliOptions {
   reasoningMode: KodaXReasoningMode;
   agentMode: KodaXAgentMode;
   outputMode: CliOutputMode;
-  runtimeMode?: CliRuntimeMode;
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
   session?: string;
@@ -108,16 +105,6 @@ export function parseOutputModeOption(value: string): CliOutputMode {
   );
 }
 
-export function parseRuntimeModeOption(value: string): CliRuntimeMode {
-  const normalized = value.trim().toLowerCase();
-  if ((CLI_RUNTIME_MODES as readonly string[]).includes(normalized)) {
-    return normalized as CliRuntimeMode;
-  }
-  throw new InvalidArgumentError(
-    `Expected one of: ${CLI_RUNTIME_MODES.join(', ')}.`,
-  );
-}
-
 export function resolveCliProviderSelection(
   cliValue: string | undefined,
   envValue: string | undefined,
@@ -125,15 +112,6 @@ export function resolveCliProviderSelection(
   defaultValue: string,
 ): string {
   return firstNonEmpty(cliValue, envValue, configValue) ?? defaultValue;
-}
-
-export function resolveCliRuntimeMode(
-  cliValue: string | undefined,
-  envValue: string | undefined,
-  configValue: string | undefined,
-): CliRuntimeMode {
-  const value = firstNonEmpty(cliValue, envValue, configValue);
-  return value === undefined ? 'embedded' : parseRuntimeModeOption(value);
 }
 
 function firstNonEmpty(...values: ReadonlyArray<string | undefined>): string | undefined {

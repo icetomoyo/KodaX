@@ -985,7 +985,6 @@ function migrateLegacyAgentModeConfig<
 export function loadConfig(): {
   provider?: string;
   model?: string;
-  runtimeMode?: 'embedded' | 'daemon';
   effort?: string;
   planModeEffort?: string;
   thinking?: boolean;
@@ -1073,7 +1072,6 @@ export function loadConfig(): {
       const parsed = JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8')) as {
         provider?: string;
         model?: string;
-        runtimeMode?: 'embedded' | 'daemon';
         effort?: string;
         planModeEffort?: string;
         thinking?: boolean;
@@ -1287,7 +1285,6 @@ const CONFIG_ENV_BRIDGES: ReadonlyArray<{
   { configPath: 'deepModel', env: 'KODAX_DEEP_MODEL', value: (c) => normalizedConfigString(c.deepModel) },
   { configPath: 'provider', env: 'KODAX_PROVIDER', value: (c) => normalizedConfigString(c.provider) },
   { configPath: 'effort', env: 'KODAX_EFFORT', value: (c) => normalizedConfigString(c.effort) },
-  { configPath: 'runtimeMode', env: 'KODAX_RUNTIME_MODE', value: (c) => c.runtimeMode },
   { configPath: 'sessionRetentionDays', env: 'KODAX_SESSION_RETENTION_DAYS', value: (c) => configNumberString(c.sessionRetentionDays) },
   { configPath: 'maxOutputTokens', env: 'KODAX_MAX_OUTPUT_TOKENS', value: (c) => configNumberString(c.maxOutputTokens) },
   { configPath: 'disablePromptCache', env: 'KODAX_DISABLE_PROMPT_CACHE', value: (c) => configBooleanString(c.disablePromptCache) },
@@ -1349,7 +1346,6 @@ export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {
 export function saveConfig(config: {
   provider?: string;
   model?: string;
-  runtimeMode?: 'embedded' | 'daemon';
   effort?: string;
   planModeEffort?: string;
   thinking?: boolean;

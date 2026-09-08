@@ -24,7 +24,6 @@ describe('config.json environment bindings', () => {
     expect(KODAX_CONFIG_ENV_BINDINGS).toEqual(expect.arrayContaining([
       { configPath: 'provider', env: 'KODAX_PROVIDER' },
       { configPath: 'effort', env: 'KODAX_EFFORT' },
-      { configPath: 'runtimeMode', env: 'KODAX_RUNTIME_MODE' },
       { configPath: 'sessionRetentionDays', env: 'KODAX_SESSION_RETENTION_DAYS' },
       { configPath: 'lspAutoDownload', env: 'KODAX_LSP_DOWNLOAD' },
       { configPath: 'repoIntelligenceMode', env: 'KODAX_REPO_INTELLIGENCE' },
@@ -38,7 +37,6 @@ describe('config.json environment bindings', () => {
     applyConfigEnvironment({
       provider: 'config-provider',
       effort: 'high',
-      runtimeMode: 'daemon',
       verifierLog: false,
       sessionRetentionDays: 14,
       lspAutoDownload: true,
@@ -49,7 +47,6 @@ describe('config.json environment bindings', () => {
 
     expect(process.env.KODAX_PROVIDER).toBe('shell-provider');
     expect(process.env.KODAX_EFFORT).toBe('high');
-    expect(process.env.KODAX_RUNTIME_MODE).toBe('daemon');
     expect(process.env.KODAX_VERIFIER_LOG).toBe('0');
     expect(process.env.KODAX_SESSION_RETENTION_DAYS).toBe('14');
     expect(process.env.KODAX_LSP_DOWNLOAD).toBe('1');
