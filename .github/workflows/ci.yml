@@ -248,6 +248,9 @@ jobs:
       - name: Windows trusted text integration and dependency boundary
         run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
 
+      - name: Windows WFP probe allocation regression
+        run: node node_modules/vitest/vitest.mjs run src/sandbox-runtime.test.ts -t "Windows WFP probe allocation"
+
       - name: Activate Windows v2 sandbox for packaged Electron gate
         env:
           KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
