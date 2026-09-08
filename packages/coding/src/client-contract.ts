@@ -16,6 +16,7 @@ import type {
   ExternalAgentRegistration,
   ExternalAgentRegistrationSummary,
   KodaXGoalState,
+  KodaXInputArtifact,
   KodaXSessionEntry,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
@@ -473,6 +474,12 @@ export interface ClientSubmitInput {
   readonly text: string;
   /** The only Run a 'steer' or 'redirect' delivery may act on. */
   readonly targetRunId?: string;
+  /**
+   * Image/file/video references anchored by the prompt (@path syntax,
+   * clipboard, drag-drop). Part of the input's intent: resubmitting the same
+   * inputId with a different artifact set is a conflict.
+   */
+  readonly inputArtifacts?: readonly KodaXInputArtifact[];
 }
 
 /** Identity of an accepted input in the current Host, not a completion receipt. */

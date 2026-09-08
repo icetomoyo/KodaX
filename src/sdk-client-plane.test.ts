@@ -51,6 +51,9 @@ function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
       text: input.text,
       inputId: input.inputId,
       ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+      ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
+        ? { inputArtifacts: input.inputArtifacts }
+        : {}),
     }),
     withdraw: (sessionId, inputId) =>
       runtime.runs.withdrawInput(sessionId, inputId)

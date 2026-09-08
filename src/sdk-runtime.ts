@@ -10891,15 +10891,23 @@ function createRuntimeRunService(deps: {
     const preparedSkill = first.skill
       ? await prepareQueuedSkillInput(sessionId, first.input.text)
       : undefined;
+    const batchArtifacts = batch.flatMap(({ input }) => input.inputArtifacts ?? []);
     await startRun({
       sessionId,
       prompt: preparedSkill !== undefined
         ? preparedSkill.prompt
         : batch.map(({ input }) => input.text.trim()).join("\n\n---\n\n"),
-      ...(preparedSkill !== undefined
+      ...(preparedSkill !== undefined || batchArtifacts.length > 0
         ? {
           options: {
-            context: { skillInvocation: preparedSkill.skillInvocation },
+            context: {
+              ...(preparedSkill !== undefined
+                ? { skillInvocation: preparedSkill.skillInvocation }
+                : {}),
+              ...(batchArtifacts.length > 0
+                ? { inputArtifacts: batchArtifacts }
+                : {}),
+            },
           } as RuntimeKodaXOptions,
         }
         : {}),
@@ -11231,6 +11239,9 @@ function createRuntimeRunService(deps: {
         sessionId: input.sessionId, inputId: input.inputId, text: input.text,
         ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
         ...(input.targetRunId !== undefined ? { targetRunId: input.targetRunId } : {}),
+        ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
+          ? { inputArtifacts: input.inputArtifacts }
+          : {}),
       };
       return deps.sessionOperations.run(input.sessionId, async () => {
         deps.ensureOpen();
@@ -11255,7 +11266,11 @@ function createRuntimeRunService(deps: {
           return productQueue.enqueue(productInput);
         }
         const handle = await startRun({
-          sessionId: productInput.sessionId, prompt: productInput.text, productInput, permissionBroker: "runtime",
+          sessionId: productInput.sessionId, prompt: productInput.text,
+          ...(productInput.inputArtifacts !== undefined && productInput.inputArtifacts.length > 0
+            ? { options: { context: { inputArtifacts: productInput.inputArtifacts } } as RuntimeKodaXOptions }
+            : {}),
+          productInput, permissionBroker: "runtime",
         } as RuntimeTrustedStartRunInput, "runtime.runs.start");
         return { sessionId: handle.sessionId, inputId: productInput.inputId, runId: handle.runId, state: "submitted" as const };
       });

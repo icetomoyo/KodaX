@@ -390,7 +390,11 @@ describe('runClientPlaneRound queue chain (T17)', () => {
       withdraws,
       submissions,
       submit: (input) => {
-        submissions.push({ inputId: input.inputId, ...(input.delivery !== undefined ? { delivery: input.delivery } : {}) });
+        submissions.push({
+          inputId: input.inputId,
+          ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+          ...(input.inputArtifacts !== undefined ? { inputArtifacts: input.inputArtifacts } : {}),
+        });
         return Promise.resolve(script.firstAcceptance);
       },
       withdraw: (_sessionId, inputId) => {
@@ -427,6 +431,32 @@ describe('runClientPlaneRound queue chain (T17)', () => {
     const result = await runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Later.' });
     expect(plane.submissions[0]).toMatchObject({ inputId: expect.stringMatching(/^ink-/) });
     expect(result.lastText).toBe('queued answer');
+  });
+
+  it('forwards prompt input artifacts with the submission (T27 review)', async () => {
+    const plane = scriptedPlane({
+      firstAcceptance: { runId: 'r1' },
+      activeRun: [],
+      outcomes: { r1: { phase: 'completed', result: { success: true, lastText: 'ok', messages: [], sessionId: 's1' } } },
+    });
+    await runClientPlaneRound({
+      plane,
+      sessionId: 's1',
+      prompt: 'describe the screenshot',
+      inputArtifacts: [{
+        kind: 'image',
+        path: 'C:/shots/screen.png',
+        mediaType: 'image/png',
+        source: 'clipboard',
+      }],
+    });
+    expect(plane.submissions[0]).toMatchObject({ inputId: expect.stringMatching(/^ink-/) });
+    expect((plane.submissions[0] as { inputArtifacts?: unknown }).inputArtifacts).toEqual([{
+      kind: 'image',
+      path: 'C:/shots/screen.png',
+      mediaType: 'image/png',
+      source: 'clipboard',
+    }]);
   });
 
   it('follows the continuation run the Host starts for queued batches', async () => {

@@ -2896,6 +2896,64 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("carries product-queue input artifacts into the drained run and digests them (T27 review)", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({
+      title: "Queued Artifact Test",
+    });
+    let capturedOptions: KodaXOptions | undefined;
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
+      capturedOptions = options;
+      return Promise.resolve({
+        success: true,
+        lastText: "artifact done",
+        messages: [],
+        sessionId: session.id,
+      });
+    });
+
+    const accepted = await runtime.runs.acceptInput({
+      sessionId: session.id,
+      inputId: "cli-artifact-1",
+      text: "describe the screenshot",
+      inputArtifacts: [{
+        kind: "image",
+        path: path.join(tempRoot, "screen.png"),
+        mediaType: "image/png",
+        source: "clipboard",
+        description: "screenshot",
+      }],
+    });
+    expect(accepted).toMatchObject({ sessionId: session.id, inputId: "cli-artifact-1" });
+    await vi.waitFor(() => expect(capturedOptions).toBeDefined());
+    expect(capturedOptions?.context?.inputArtifacts).toEqual([{
+      kind: "image",
+      path: path.join(tempRoot, "screen.png"),
+      mediaType: "image/png",
+      source: "clipboard",
+      description: "screenshot",
+    }]);
+
+    // Same inputId with a different artifact set is a different intent.
+    await expect(runtime.runs.acceptInput({
+      sessionId: session.id,
+      inputId: "cli-artifact-1",
+      text: "describe the screenshot",
+      inputArtifacts: [{
+        kind: "image",
+        path: path.join(tempRoot, "other.png"),
+        mediaType: "image/png",
+      }],
+    })).rejects.toThrow(/different intent/i);
+
+    await runtime.close();
+  });
+
   it("rejects unsupported runtime artifacts before queueing a run", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({

@@ -1711,6 +1711,9 @@ async function dispatchRuntimeDaemonRequest(
         ...(params.targetRunId !== undefined
           ? { targetRunId: requireStringField(params, "targetRunId") }
           : {}),
+        ...(Array.isArray(params.inputArtifacts)
+          ? { inputArtifacts: params.inputArtifacts }
+          : {}),
       });
     }
     case "input.withdraw": {

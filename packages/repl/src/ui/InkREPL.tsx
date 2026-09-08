@@ -8203,6 +8203,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         sessionId: context.sessionId,
         prompt,
         abortSignal: getSignal(),
+        ...(inputArtifacts !== undefined && inputArtifacts.length > 0
+          ? { inputArtifacts }
+          : {}),
       });
     }
     autoModeBootstrap.resetTurn();

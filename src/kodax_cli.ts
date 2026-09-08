@@ -148,6 +148,7 @@ const version =
 
 import {
   KodaXEvents,
+  type KodaXInputArtifact,
   type KodaXResult,
   type KodaXOptions,
   KodaXReasoningMode,
@@ -5424,6 +5425,7 @@ complete -c kodax -l version -d 'Show version'`);
               inputId: string;
               delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
               targetRunId?: string;
+              inputArtifacts?: readonly KodaXInputArtifact[];
             }) =>
               interactiveRuntime.runs.acceptInput({
                 sessionId: input.sessionId,
@@ -5432,6 +5434,9 @@ complete -c kodax -l version -d 'Show version'`);
                 ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
                 ...(input.targetRunId !== undefined
                   ? { targetRunId: input.targetRunId }
+                  : {}),
+                ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
+                  ? { inputArtifacts: input.inputArtifacts }
                   : {}),
               }),
             withdraw: (sessionId: string, inputId: string) =>

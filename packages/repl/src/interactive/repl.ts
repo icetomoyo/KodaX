@@ -838,7 +838,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Ctrl+C during a plane round requests a Host stop (the run is not in
   // this process, so the embedded SIGINT machinery cannot see it).
   let activePlaneAbort: AbortController | undefined;
-  const runPlaneRoundWithStop = async (prompt: string): Promise<KodaXResult> => {
+  const runPlaneRoundWithStop = async (
+    prompt: string,
+    inputArtifacts?: readonly KodaXInputArtifact[],
+  ): Promise<KodaXResult> => {
     const plane = options.clientPlane;
     if (plane === undefined) {
       throw new Error('runPlaneRoundWithStop requires a bound client plane.');
@@ -851,6 +854,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         sessionId: context.sessionId,
         prompt,
         abortSignal: controller.signal,
+        ...(inputArtifacts !== undefined && inputArtifacts.length > 0
+          ? { inputArtifacts }
+          : {}),
       });
     } finally {
       if (activePlaneAbort === controller) activePlaneAbort = undefined;
@@ -863,7 +869,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
     if (options.clientPlane !== undefined) {
-      return runPlaneRoundWithStop(prompt);
+      return runPlaneRoundWithStop(prompt, inputArtifacts);
     }
     return runAgentRound(roundOptions, context, prompt, initialMessages, inputArtifacts);
   };

@@ -22,6 +22,7 @@ import {
   type AskUserAnswer,
   type AskUserMultiOptions,
   type AskUserQuestionOptions,
+  type KodaXInputArtifact,
   type KodaXResult,
 } from '@kodax-ai/coding';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
@@ -49,6 +50,7 @@ export interface InkClientPlane {
     readonly inputId: string;
     readonly delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
     readonly targetRunId?: string;
+    readonly inputArtifacts?: readonly KodaXInputArtifact[];
   }): Promise<{
     readonly runId?: string;
     readonly state?: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
@@ -147,6 +149,7 @@ export async function runClientPlaneRound(input: {
   readonly sessionId: string;
   readonly prompt: string;
   readonly abortSignal?: AbortSignal;
+  readonly inputArtifacts?: readonly KodaXInputArtifact[];
 }): Promise<KodaXResult> {
   const inputId = mintInkInputId();
   const aborted = (): boolean => input.abortSignal?.aborted === true;
@@ -186,6 +189,9 @@ export async function runClientPlaneRound(input: {
     sessionId: input.sessionId,
     text: input.prompt,
     inputId,
+    ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
+      ? { inputArtifacts: input.inputArtifacts }
+      : {}),
   });
   if (accepted.state === 'dropped' || accepted.state === 'withdrawn') {
     throw new Error(

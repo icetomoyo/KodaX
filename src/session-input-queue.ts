@@ -26,11 +26,13 @@ function isSkillInvocationText(text: string): boolean {
 }
 
 export function inputIntentDigest(input: ClientSubmitInput): string {
-  // targetRunId is appended only when present so targetless inputs keep the
-  // digest formula that earlier Host builds persisted in Run statuses.
+  // targetRunId and inputArtifacts are appended only when present so
+  // targetless artifact-free inputs keep the digest formula that earlier
+  // Host builds persisted in Run statuses.
   return createHash('sha256').update(JSON.stringify([
     input.text, input.delivery ?? 'immediate',
     ...(input.targetRunId !== undefined ? [input.targetRunId] : []),
+    ...(input.inputArtifacts !== undefined ? [input.inputArtifacts] : []),
   ])).digest('hex');
 }
 

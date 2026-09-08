@@ -278,7 +278,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 
   'input.submit': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] } }, ['sessionId', 'inputId', 'text']),
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] }, inputArtifacts: arraySchema(objectSchema({ kind: { type: 'string', enum: ['image', 'file', 'video'] }, path: stringSchema, mediaType: stringSchema, mimeType: stringSchema, name: stringSchema, source: { type: 'string', enum: ['user-inline', 'clipboard', 'drag-drop', 'file-picker'] }, description: stringSchema }, ['kind', 'path'])) }, ['sessionId', 'inputId', 'text']),
     result: objectSchema({ sessionId: stringSchema, inputId: stringSchema, runId: stringSchema, state: { type: 'string', enum: ['submitted', 'queued', 'withdrawn', 'dropped'] } }, ['sessionId', 'inputId', 'state']),
   },
   'input.withdraw': {
