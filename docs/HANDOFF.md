@@ -838,3 +838,21 @@ callbacks.workflows Host 控制 binding（types.ts WorkflowHostControl，kodax_c
 **T15 验收（翻牌 `fbb6f3f`）**：lifecycle 3 S1 全绿（idle shutdown/owner mode 不变、busy 上报+他人观察、Host 拥有 helper 清理）+ crash 3/3 隔离绿；两依赖条款由 T17/T18（Ink/classic 资源所有权）与 T25 S2（旧 exit 协议删除）交付，T27 复核 guide 迁移表同步。未新增 force/完成账本/可恢复退出协议。
 
 **最终残留（全版本汇总）**：sdk-client.workflow.test.ts 本机环境漂移（T22 起停不下来，干净 bisect 证据在 T26 记录——独立跟进）；permission-analyzer 222 败=merge-base 预存（Windows 路径归一化）；daemon-spawn 满载轮转 flake；sdk-runtime 3 预存败；goal/notice 写入绕 draining fence（票前既有，建议独立票）；REPL parity 人工终端回归待发布执行。发布动作（版本 bump/CHANGELOG/push）按票面归既有发布流程，本次未执行。
+
+## 2026-09-08 外部复查响应：三层修复完成（T27 复开切片）
+
+GPT 独立复查（docs/REVIEW_v0.7.97_FINAL.md，按范围 e6eb7292...150e64e3）否决 35/35 验收。核实结论：成立。其中最关键的一点是归因更正——sdk-client.workflow.test.ts 失败是断言漏 'cancelled'（Host stop 将 WorkflowProcess 置为 cancelled，视图投影如实反映），此前 T26/T27/HANDOFF 记录的“T22 起环境漂移”是错误归因，现予撤回；断言已修（completed | cancelled | failed + 注释说明投影语义）。
+
+**L1 `99ada31a`（客观缺陷）**：四处静默吞错改显式——client-plane withdraw×2 与 kodax_cli activeRun 查询失败 emitKodaXDiagnostic warn（来源 @kodax-ai/agent）、one-shot stop 失败告警；view memo 指纹纳入内容哈希（djb2 textHash + itemFingerprint 覆盖 text/compactText/tool.inputText）与流式位前缀（live|done|指纹），长轮次文本增长不再被 memo 吞帧；workflow S1 断言修复（归因更正项）。
+
+**L2 `3e9cbb2e`（inputArtifacts 贯通）**：ClientSubmitInput 增 inputArtifacts 并纳入 input intent digest（同 inputId 异 artifacts = conflict）；acceptInput 校验透传；immediate 与队列 drain（batch 合并）均写入 run options.context.inputArtifacts；wire schema input.submit 增参数，daemon dispatch 透传；CLI plane 绑定、Ink 与 classic round 全链路转发。测试：plane 转发、Host drain+digest 冲突。
+
+**L2 `ee581a80`（队列保留/原子拉回/续跑/全文复制）**：submitHostQueuedFollowUp 提交前缓存全文、返回 submitted|rejected，拒绝时清缓存并把草稿回填空编辑器（排队提交不再丢原文）；↑ 拉回改按条原子——仅 withdraw 成功返回全文的条目进编辑器，conflict/失败留队并给出明确通知（promised pop prop 接受 Promise）；/recover <prompt> bound 分支（Ink + classic）把续跑提示词作为恢复会话首个输入执行，与 unbound 语义及命令帮助一致；transcript 复制经 readItem 分页（text/input parts，hasBoundedItemText 门控）取全文，复制不再截断于视图预览。
+
+**L3 `0f6ee47f`（T27 复开：固定独立 Host，D01/US01）**：复查 P1“产品仍默认 embedded”成立，补齐迁移——getCliRuntime 恒 daemon（autoStartDaemon+clientInfo），CLI 不再构造 embedded Runtime、extension runtime、configured MCP、integration hot-reload、A2A handle（Host 全权拥有）；删 --runtime-mode flag 与 4 处 completions、KODAX_RUNTIME_MODE env 绑定、config runtimeMode 键（load/save/env 映射/示例模板/self-knowledge）；--extension 遇 CLI 路径 fail-closed 并指向 daemon profile config；interactive-exit 测试全面翻转 fixed-Host。SDK createKodaXRuntime 的 mode 选项保留（低层路径，非产品回退）。embedder-guide 迁移表新增行、删过时 daemon 示例行。
+
+**门禁（0f6ee47f 时点）**：build 绿；parity 对 T26 门零新增（host/manager readEffective = 既录噪音）；repl 2672 绿；daemon-smoke 25/25；src 套件 946 passed + 3 预存（sdk-runtime，T27 记录既有）。其后 aa8be68/17362e23/e6b1af82 均 docs-only，门禁不变。
+
+**复查 old-12 未修项处置（记录在案，不因本票翻牌豁免）**：刻意边界——dynamic-context hard-disable（策略）、prepareReview 写域（边界即设计）。跨票跟进（归属票不变）——memory daemon 路径（T36）；workflow 会话设置继承；排队 Skill 元数据；MCP 配置重建失败删配置（MCP 票）；工具状态硬编码 success 映射（执行票）；跨页 call/result 配对；rewind 分支缓存/过期 intent 防护；compact 期间重交去重顺序；全历史搜索分页 UI（复制/全文已接，搜索仍限已加载窗口）。会话快照三重复（P3）留待抽象时机，未在本轮扩面。
+
+**票据**：T27 复开切片已录 docs/features/v0.7.97.md（子模块 aa8be68，父指针 17362e23），含错误归因更正与上述遗留清单。
