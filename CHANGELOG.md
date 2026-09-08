@@ -6,7 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-beta.3] - 2026-09-08
+
+Third beta pre-release of the v0.7.96 line, retaining beta.2 context recovery
+and Provider fixes. npm publication remains a manual maintainer action.
+
 ### Fixed
+
+- Repair Windows WFP probe allocation in KodaX doctor and ASRT 0.0.65: bind
+  bounded distinct candidates below the proxy permit range and keep successful
+  listeners alive through verification. SDK bundles, standalone binaries, and
+  npm tarballs ship the audited dependency patch, including installs with
+  `--ignore-scripts`. Build/pack rejects unexpected dependency source bytes.
+  Windows allocation, installed-package, and packaged Electron gates cover
+  delivery and behavior; native protocol/setup and permission contracts stay unchanged.
 
 - Separate production and source-test TypeScript checks while retaining SDK
   packaging and public entry points. Correct stale test contracts, await the
@@ -5172,7 +5187,7 @@ repl            → coding, skills
 ### Tests
 - Added / expanded tests for `task-engine`, `reasoning`, `tool-display`, `live-streaming`, `StatusBar`, `invocation-runtime`, `types-legacy`, and `InkREPL.interrupted`
 
-<!-- last-sync: dfce6cd5 -->
+<!-- last-sync: 173418a417899899cb3757309f72d9066efd6f56 -->
 
 ### Added
 - **Repository intelligence substrate (FEATURE_018)**: Task-aware repository intelligence layer under `.agent/repo-intelligence/` with durable artifacts — `repo-overview.json`, `changed-scope.json`, `module-index.json`, `symbol-index.json`, `process-index.json`, `repo-intelligence-manifest.json` — supporting incremental refresh, freshness metadata, and language-tiered extraction (TS/JS via AST, Python, Go, Rust, Java, C++)

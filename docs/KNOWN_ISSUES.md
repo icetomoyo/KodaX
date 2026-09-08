@@ -1,11 +1,17 @@
 # Known Issues
 
-_Last Updated: 2026-09-07_
+_Last Updated: 2026-09-08_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## v0.7.96-beta.3 Release Corrections
+
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
+See [WFP probe delivery and validation](patches/asrt-0.0.65-wfp-probe.md).
 
 ## v0.7.96-beta.2 Release Corrections
 

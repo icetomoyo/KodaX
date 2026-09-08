@@ -1,11 +1,13 @@
 # KodaX SDK — Embedder Integration Guide
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Audience: host applications embedding `@kodax-ai/kodax` (and its
 > subpaths) as a substrate — e.g. KodaX Space's desktop wrapper, IDE
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the `v0.7.96-beta.2` release; npm publication remains a
+This guide tracks the `v0.7.96-beta.3` release; npm publication remains a
 separate manual maintainer step. The SDK
 advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:5`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
@@ -4796,7 +4798,7 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-beta.2
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-beta.3
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
 `sandboxRuntime:11`, so an idle v10-or-older daemon is replaced. Concurrent
 authenticated upgrade clients converge on one fenced replacement, including

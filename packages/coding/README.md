@@ -1,5 +1,7 @@
 # @kodax-ai/coding
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 KodaX Coding Agent 的核心实现，包含 coding preset、tool registry、role prompts、repo intelligence、session/runtime middleware、extension runtime 和 workflow integration。源码开发时可从 `@kodax-ai/coding` 引入；npm SDK 用户通常从 `@kodax-ai/kodax/coding` 引入。
 
 ## 概述
@@ -193,7 +195,7 @@ hook crashes or returns malformed JSON. The coding runtime finalizes its
 authoritative `KodaXResult` before emitting the public completion signal, so
 A2A responses cannot publish an empty successful answer (Issue 302).
 
-The v0.7.96-beta.2 Windows shell path removes the old command-lifetime filesystem-
+The v0.7.96-beta.3 Windows shell path removes the old command-lifetime filesystem-
 effect coordinator. Bash commands, trusted text tools, and different worktree
 paths no longer share a KodaX global lock; same-file text CAS and same-path
 worktree ordering remain narrow. Native protocol 10 gives every command its own

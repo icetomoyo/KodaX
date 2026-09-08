@@ -1,9 +1,11 @@
 # KodaX High-Level Design
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Last updated: 2026-09-03
 >
-> Current release: `v0.7.96-beta.2`
-> (`@kodax-ai/kodax@0.7.96-beta.2`; Windows `sandboxRuntime:11`,
+> Current release: `v0.7.96-beta.3`
+> (`@kodax-ai/kodax@0.7.96-beta.3`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
 >

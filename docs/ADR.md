@@ -1,8 +1,10 @@
 # KodaX Architecture Decision Records
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Last updated: 2026-09-03
 >
-> **v0.7.96-beta.2 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-beta.3 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with

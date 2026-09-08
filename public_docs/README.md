@@ -2,8 +2,10 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-beta.2`; npm publication remains a separate
-manual maintainer action. Beta.2 adds long-session context-boundary recovery,
+The current release is `v0.7.96-beta.3`; npm publication remains a separate
+manual maintainer action. Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
+Beta.2 adds long-session context-boundary recovery,
 keeps bundled Provider credential scopes shared across SDK/CLI/Worker
 requests, and closes Issues 329-332 (structured Child Agent Provider failures,
 exact run-scoped credential verification, and strict-vLLM empty-tools
@@ -20,7 +22,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-   restricted-token runner (beta.2 native shell protocol version 10/setup
+   restricted-token runner (beta.3 native shell protocol version 10/setup
    generation 10, Windows `sandboxRuntime:11`, interactive startup recovery
    through the setup-only boundary, and no command-lifetime global admission
 lock). It replaces the

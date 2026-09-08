@@ -1,9 +1,11 @@
 # KodaX Detailed Design
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Last updated: 2026-09-03
 >
-> Current release: `v0.7.96-beta.2`
-> (`@kodax-ai/kodax@0.7.96-beta.2`; Windows `sandboxRuntime:11`,
+> Current release: `v0.7.96-beta.3`
+> (`@kodax-ai/kodax@0.7.96-beta.3`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
 >
@@ -22,7 +24,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The package release is `@kodax-ai/kodax@0.7.96-beta.2`, which includes the v2
+The package release is `@kodax-ai/kodax@0.7.96-beta.3`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1

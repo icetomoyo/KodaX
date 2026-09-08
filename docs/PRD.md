@@ -1,8 +1,10 @@
 # KodaX Product Requirements
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-beta.2`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-beta.3`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -203,7 +205,7 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-beta.2 release carries FEATURE_297 and completes the Windows
+The v0.7.96-beta.3 release carries FEATURE_297 and completes the Windows
 sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
 does not run setup, legacy ACL migration, synchronous provisioning, or a
 command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;
