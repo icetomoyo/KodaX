@@ -3116,7 +3116,6 @@ kodax daemon status --profile default --json
 kodax daemon logs --profile default --lines 100
 kodax daemon stop --profile default --json
 kodax daemon restart --profile default
-kodax --runtime-mode daemon
 ```
 
 Inside the REPL, `/status runtime` reports embedded/daemon mode, profile,
@@ -6637,6 +6636,7 @@ replacement:
 | Diagnostics RPCs `context.budget.get`, `tool.exposure.preview`, `provider.cache.diagnostics.get` (and the `runtime.diagnostics.latest*` facade) | Removed. `capabilities.contextDiagnostics: true` only gates diagnostic event notifications (`context.budget.snapshot`, `tool.exposure.planned`, `provider.cache.diagnostics`, `context.compaction.skipped`) on the live stream. |
 | `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Use inline embedded or daemon mode. For the configured A2A plane, wire `createConfiguredA2ARuntimeIntegration({ configHome })` in the owner and pass its `runtimeOptions` as `externalAgents` — the Runtime itself never reads `integrations/a2a.json`. |
 | Late-result redelivery after an abandoned read | Removed. `request.cancel`/`request.ack` remain daemon transport-control frames only; an abandoned read gets no late delivery. |
+| The product mode surfaces: the CLI `--runtime-mode` flag, the `KODAX_RUNTIME_MODE` environment variable, and the `runtimeMode` key in `~/.kodax/config.json` | Removed in the fixed-Host release. The `kodax` CLI always starts-or-attaches the daemon owner; SDK callers keep the `mode: 'embedded' | 'daemon'` option on `createKodaXRuntime` (embedded stays a low-level path, never a product fallback). |
 | `setThinking` REPL callback | Removed. Use `setReasoningMode` (the shared settings key is `reasoningMode`). |
 | `getKodaXRuntimeOwnerPolicy` export | Removed. `getKodaXRuntimeOwnerState()` remains and reports policy, owner status, and the current owner in one call. |
 
