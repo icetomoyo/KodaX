@@ -713,6 +713,7 @@ export {
   CODING_SUMMARY_PROMPT,
   CODING_UPDATE_SUMMARY_PROMPT,
 } from './agent-runtime/coding-compaction-prompts.js';
+export { applyPostCompactAttachments } from './agent-runtime/middleware/post-compact-attachments.js';
 
 // FEATURE_101 (v0.7.31): admission contract — capability-coupled
 // invariants (budgetCeiling / toolPermission / boundedRevise) plus

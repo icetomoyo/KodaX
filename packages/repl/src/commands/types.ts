@@ -4,6 +4,7 @@
 
 import type {
   WorkflowProcessSource,
+  KodaXSessionLineage,
 } from '@kodax-ai/agent';
 import type {
   AgentsFile,
@@ -91,10 +92,12 @@ export type SessionRecoverStatus = 'recovered' | 'empty' | 'failed' | 'blocked';
 
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
-  saveSession: () => Promise<void>;
+  /** Compaction supplies authoritative lineage; ordinary saves may omit it. */
+  saveSession: (compactionLineage?: KodaXSessionLineage) => Promise<void>;
   startNewSession?: () => void;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;
+  /** Clear presentation only. Commands own changes to messages/token state. */
   clearHistory: () => void;
   printHistory: () => void;
   switchProvider?: (provider: string, model?: string) => void;

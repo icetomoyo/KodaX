@@ -460,6 +460,28 @@ function markExtensionSessionPersisted(context: InteractiveContext): void {
   context.extensionRecordsDirty = false;
 }
 
+export async function saveClassicSession(
+  context: InteractiveContext,
+  storage: SessionStorage,
+  tag?: string,
+  compactionLineage?: InteractiveContext['lineage'],
+): Promise<void> {
+  if (context.messages.length === 0) return;
+  const title = extractTitle(context.messages);
+  context.title = title;
+  await storage.save(context.sessionId, {
+    messages: context.messages,
+    title,
+    gitRoot: context.gitRoot ?? '',
+    runtimeInfo: context.runtimeInfo,
+    artifactLedger: context.artifactLedger,
+    ...(compactionLineage ? { lineage: compactionLineage } : {}),
+    ...contextExtensionSessionData(context),
+    ...(tag !== undefined ? { tag } : {}),
+  });
+  markExtensionSessionPersisted(context);
+}
+
 // REPL options - REPL 选项
 export interface ReplRuntimeRunnerInput {
   readonly options: KodaXOptions;
@@ -1003,24 +1025,8 @@ Keyboard Shortcuts:
       void teamModeHandle?.shutdown();
       rl.close();
     },
-    saveSession: async () => {
-      if (context.messages.length > 0) {
-        const title = extractTitle(context.messages);
-        context.title = title;
-        await storage.save(context.sessionId, {
-          messages: context.messages,
-          title,
-          gitRoot: context.gitRoot ?? '',
-          runtimeInfo: context.runtimeInfo,
-          artifactLedger: context.artifactLedger,
-          ...contextExtensionSessionData(context),
-          // FEATURE_226: carry the session tag so a brand-new session's first
-          // save persists it (storage merges `data.tag ?? existing` otherwise).
-          ...(currentOptions.session?.tag !== undefined ? { tag: currentOptions.session.tag } : {}),
-        });
-        markExtensionSessionPersisted(context);
-      }
-    },
+    saveSession: (compactionLineage) => saveClassicSession(
+      context, storage, currentOptions.session?.tag, compactionLineage),
     startNewSession: () => {
       context.sessionId = generateInteractiveSessionId();
       context.title = '';
@@ -1115,8 +1121,8 @@ Keyboard Shortcuts:
         console.log();
       },
     clearHistory: () => {
-      context.messages = [];
-      context.contextTokenSnapshot = undefined;
+      // Classic readline has no separate presentation history to clear.
+      // /clear owns context resets; /compact must retain its committed context.
     },
     printHistory: () => {
       if (context.messages.length === 0) {

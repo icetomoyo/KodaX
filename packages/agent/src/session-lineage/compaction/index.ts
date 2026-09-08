@@ -10,6 +10,7 @@ export type {
   CompactionConfig,
   CompactionDetails,
   CompactionReport,
+  CompactionRequestMetrics,
   CompactionUpdate,
   CompactionResult,
   FileOperations,

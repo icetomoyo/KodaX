@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Share manual and automatic compaction summary policy: `compaction.reasoning`
+  applies to both summary paths independent of the main turn's effort. The
+  default disables thinking where supported; always-thinking models use the
+  existing side-query low-effort resolver. In-process callers set
+  `KodaXOptions.compaction.reasoning`; Runtime hosts persist the same policy
+  for `runs.start()` and `sessions.compact()` through `compactionReasoning`
+  (`false` requests disabled thinking, `null` removes the Session override).
+  Message/tool/system prefixes and routing affinity stay stable.
+- Record bounded summary request metrics: successful compaction reports and
+  `context.compaction.finished` optionally carry `summaryRequests` (one record
+  per physical summary call, including map/reduce) and `commitMs` (durable
+  save/callback duration). Each request records provider, model, requested
+  reasoning, prepare/credential/provider timings, an optional first-delta
+  offset, adapter-reported retries and wait, usage, and stop reason, and never
+  includes prompt or output text.
+- Manual compaction uses the effective Session provider/model unless
+  explicitly overridden, never carries the previous provider's model into a
+  switched request, restores the same budgeted ledger/file attachments, and
+  records lineage `reason: 'manual'`. REPL `/compact` publishes success and
+  clears the UI only after a durable save; a failed save restores the previous
+  live context. Eligible-prefix coverage, protected atomic groups, the query
+  ledger, and the summary prompt text remain unchanged.
+
 ---
 
 ## [0.7.96-beta.3] - 2026-09-08

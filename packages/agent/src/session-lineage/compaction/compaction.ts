@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { KodaXBaseProvider, KodaXContentBlock, KodaXMessage } from '@kodax-ai/llm';
-import type { CompactionAnchor, CompactionConfig, CompactionResult } from './types.js';
+import type { CompactionAnchor, CompactionConfig, CompactionResult, CompactionRequestMetrics } from './types.js';
 import { countTokens, estimateTokens } from '../../tokenizer.js';
 import { extractArtifactLedger, extractFileOps } from './file-tracker.js';
 import {
@@ -382,12 +382,21 @@ export async function compact(
     && tokensBefore + cacheInstructionTokens <= maxPhysicalInputTokens
     ? { ...cacheContext, protectedTailMessageCount: toProtect.length }
     : undefined;
+  const summaryRequests: CompactionRequestMetrics[] = [];
+  const externalObserver = cacheContext?.observer ?? observer;
+  const requestObserver: CompactionProviderObserver = {
+    ...externalObserver,
+    onMetrics: (metrics) => {
+      summaryRequests.push(metrics);
+      externalObserver?.onMetrics?.(metrics);
+    },
+  };
   const generated = await summarizeCompletePrefix({
     messages: toProcess,
     cacheMessages: effectiveCacheContext ? messages : undefined,
-    cacheContext: effectiveCacheContext,
-    observer: observer ?? cacheContext?.observer,
-    routing,
+    cacheContext: effectiveCacheContext ? { ...effectiveCacheContext, observer: requestObserver } : undefined,
+    observer: requestObserver,
+    routing: { ...routing, reasoning: config.reasoning },
     provider,
     customInstructions,
     systemPrompt,
@@ -420,6 +429,7 @@ export async function compact(
     artifactLedger,
     memorySeed,
     report: {
+      summaryRequests,
       strategy: generated.strategy,
       triggerSource: policy.triggerSource,
       effectiveTriggerTokens: policy.triggerTokens,

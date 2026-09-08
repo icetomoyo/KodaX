@@ -277,7 +277,7 @@ export type {
 } from './cost-tracker.js';
 
 // ============== Side Query (independent one-shot LLM invocation) ==============
-export { sideQuery } from './side-query.js';
+export { sideQuery, resolveDefaultSideQueryReasoning } from './side-query.js';
 export type {
   SideQueryRequest,
   SideQueryResult,

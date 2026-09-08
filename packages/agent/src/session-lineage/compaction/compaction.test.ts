@@ -4,6 +4,7 @@ import type {
   KodaXMessage,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
+  KodaXReasoningRequest,
   KodaXStreamResult,
   KodaXToolDefinition,
   KodaXToolResultBlock,
@@ -33,6 +34,7 @@ class FakeSummaryProvider extends KodaXBaseProvider {
   public modelOverrides: Array<string | undefined> = [];
   public ephemeralSuffixes: Array<string | undefined> = [];
   public promptCacheKeys: Array<string | undefined> = [];
+  public reasoningRequests: Array<boolean | KodaXReasoningRequest | undefined> = [];
   public callCount = 0;
 
   constructor(
@@ -72,10 +74,11 @@ class FakeSummaryProvider extends KodaXBaseProvider {
     messages: KodaXMessage[],
     _tools: KodaXToolDefinition[],
     system: string,
-    _thinking?: boolean,
+    reasoning?: boolean | KodaXReasoningRequest,
     streamOptions?: KodaXProviderStreamOptions,
   ): Promise<KodaXStreamResult> {
     this.callCount += 1;
+    this.reasoningRequests.push(reasoning);
     if (this.failOnCall && this.callCount === this.failOnCall) {
       throw new Error('summary failed');
     }
@@ -408,7 +411,7 @@ describe('compaction', () => {
     expect(messages).toEqual(buildLongConversation(3, 30000));
   });
 
-  it('keeps routing affinity on every map/reduce summary request', { timeout: 15_000 }, async () => {
+  it('keeps routing affinity, summary policy and metrics on every map/reduce request', { timeout: 15_000 }, async () => {
     const provider = new FakeSummaryProvider(undefined, undefined, true);
     const promptCacheKey = 'f'.repeat(64);
     const messages = buildLongConversation(3, 15_000).map((message, index) =>
@@ -423,6 +426,7 @@ describe('compaction', () => {
         triggerPercent: 10,
         protectionPercent: 0,
         rollingSummaryPercent: 20,
+        reasoning: { effort: 'low' },
       },
       provider,
       60_000,
@@ -444,6 +448,10 @@ describe('compaction', () => {
     expect(provider.promptCacheKeys).toHaveLength(provider.callCount);
     expect(provider.promptCacheKeys.every((key) => key === promptCacheKey)).toBe(true);
     expect(provider.ephemeralSuffixes.every((suffix) => suffix === undefined)).toBe(true);
+    expect(provider.reasoningRequests).toEqual(Array.from({ length: provider.callCount }, () => ({ effort: 'low' })));
+    expect(result.report?.strategy).toBe('map_reduce');
+    expect(result.report?.summaryRequests).toHaveLength(provider.callCount);
+    expect(result.report?.summaryRequests?.every(request => request.outcome === 'succeeded')).toBe(true);
   });
 
   it('does not consume a chunk when its summary is empty-like', async () => {

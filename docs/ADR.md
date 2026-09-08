@@ -4855,6 +4855,11 @@ large compaction is always present and defaults to an earlier bounded trigger.
 5. The normal summary call reuses the exact cache-affecting main-request prefix
    and appends a text-only ephemeral instruction. A synthetic user checkpoint,
    not an inline system message, represents compacted history.
+   Summary reasoning is an explicit exception: manual and automatic compaction
+   share `compaction.reasoning`, independent of main-turn effort. The default
+   disables thinking where supported, otherwise uses the existing side-query
+   low-effort resolver. Message/tool/system prefixes and routing affinity remain
+   stable; cache hits still depend on provider behavior when reasoning changes.
 6. The structured checkpoint is installed only by a successful major compact;
    v0.7.74 does not add a second background memory owner.
 7. Token state, query ledger, checkpoint, generations, and canonical compact

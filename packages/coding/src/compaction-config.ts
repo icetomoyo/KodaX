@@ -35,7 +35,7 @@ const BASE_CONFIG: Pick<CompactionConfig, 'enabled'> = {
  * an in-process caller (`KodaXOptions.compaction`) is allowed to pin.
  */
 export type CompactionConfigOverride = Partial<
-  Pick<CompactionConfig, 'contextWindow' | 'triggerPercent' | 'triggerTokens' | 'enabled'>
+  Pick<CompactionConfig, 'contextWindow' | 'triggerPercent' | 'triggerTokens' | 'enabled' | 'reasoning'>
 >;
 
 /**
@@ -78,6 +78,7 @@ export async function loadCompactionConfig(
   // SDK overrides win over the user config file — only for fields the
   // caller actually set.
   if (overrides?.enabled !== undefined) merged.enabled = overrides.enabled;
+  if (overrides?.reasoning !== undefined) merged.reasoning = overrides.reasoning;
   if (overrides?.contextWindow !== undefined) {
     merged.contextWindow = overrides.contextWindow;
   }

@@ -14,7 +14,6 @@
 
 import {
   applySessionCompaction,
-  buildPostCompactAttachments,
   compact,
   createSessionLineage,
   estimateTokens,
@@ -22,11 +21,13 @@ import {
   normalizeCompactionConfig,
   type KodaXMessage,
   type CompactionReport,
+  type CompactionConfig,
 } from '@kodax-ai/agent';
 import {
   CODING_SUMMARY_PROMPT,
   CODING_UPDATE_SUMMARY_PROMPT,
   resolveProvider,
+  applyPostCompactAttachments,
 } from '@kodax-ai/coding';
 
 import { FileSessionStorage } from '../interactive/storage.js';
@@ -34,6 +35,8 @@ import { loadCompactionConfig } from '../common/compaction-config.js';
 import type { SessionData } from '../ui/utils/session-storage.js';
 
 export interface CompactSessionOptions {
+  /** Summary policy, normally supplied by the Runtime Session settings. */
+  readonly reasoning?: CompactionConfig['reasoning'];
   /** Provider alias for the summarizer. Defaults to the session's persisted provider, then 'anthropic'. */
   readonly provider?: string;
   /** Model override forwarded to the summarizer. */
@@ -76,7 +79,7 @@ function resolveStorage(options?: CompactSessionOptions): FileSessionStorage {
 
 /**
  * Compact a session by id, writing the result (lineage + messages) back to
- * storage. Never throws.
+ * storage. Returns failures unless `propagateErrors` is explicitly enabled.
  */
 export async function compactSession(
   sessionId: string,
@@ -97,6 +100,8 @@ export async function compactSession(
 
     const messages = data.messages;
     const providerName = options?.provider ?? data.runtimeInfo?.provider ?? 'anthropic';
+    const model = options?.model
+      ?? (providerName === data.runtimeInfo?.provider ? data.runtimeInfo.model : undefined);
     const provider = resolveProvider(providerName);
     if (!provider) {
       return { ...empty, messages, reason: `provider not found: ${providerName}` };
@@ -104,13 +109,14 @@ export async function compactSession(
 
     const contextWindow =
       options?.contextWindow
-      ?? provider.getEffectiveContextWindow?.(options?.model)
+      ?? provider.getEffectiveContextWindow?.(model)
       ?? provider.getContextWindow?.()
       ?? 200_000;
     const currentTokens = estimateTokens(messages);
     const loadedCompactionConfig = await loadCompactionConfig();
     const compactionConfig = normalizeCompactionConfig({
       ...loadedCompactionConfig,
+      ...(options?.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
       contextWindow,
       triggerPercent: options?.triggerPercent ?? loadedCompactionConfig.triggerPercent,
       triggerTokens: options?.triggerTokens ?? loadedCompactionConfig.triggerTokens,
@@ -126,9 +132,9 @@ export async function compactSession(
       currentTokens,
       CODING_SUMMARY_PROMPT,
       CODING_UPDATE_SUMMARY_PROMPT,
-      options?.model,
+      model,
       true,
-      provider.getEffectiveMaxOutputTokens(options?.model),
+      provider.getEffectiveMaxOutputTokens(model),
     );
 
     if (!result.compacted) {
@@ -143,28 +149,26 @@ export async function compactSession(
 
     // Persist lineage-correctly so loadFullTranscript / resume see the
     // compaction entry (not just a flat message-list swap).
-    const anchor = result.anchor ?? {
+    const anchor = {
       summary: result.summary ?? '',
       tokensBefore: result.tokensBefore,
       tokensAfter: result.tokensAfter,
+      ...result.anchor,
       reason: 'manual',
     };
-    // Attach a "recent operations" ledger summary so the resumed session keeps
-    // the post-compact context the /compact middleware path injects. Without it,
-    // an SDK-initiated compaction drops that context and the next turn may
-    // re-read files it had already touched. File-content messages stay out of
-    // this lightweight path (they need async reads); the ledger summary is
-    // synchronous and covers the common case.
-    const ledger = result.artifactLedger ?? data.artifactLedger ?? [];
-    const freedTokens = Math.max(0, (result.tokensBefore ?? 0) - (result.tokensAfter ?? 0));
-    const { ledgerMessage } = buildPostCompactAttachments(ledger, freedTokens);
-    const postCompactAttachments = ledgerMessage ? [ledgerMessage] : [];
+    const attached = await applyPostCompactAttachments({
+      compacted: result.messages,
+      artifactLedger: result.artifactLedger ?? data.artifactLedger ?? [],
+      tokensBefore: result.tokensBefore,
+      tokensAfter: result.tokensAfter,
+      capacity: { contextWindow, reservedResponseTokens: provider.getEffectiveMaxOutputTokens(model) },
+    });
     const exactBase = createSessionLineage(messages, data.lineage);
     const preliminaryLineage = applySessionCompaction(
       exactBase,
-      result.messages,
+      attached.compacted,
       anchor,
-      postCompactAttachments,
+      attached.postCompactAttachmentsForLineage,
     );
     const finalMessages = getSessionMessagesFromLineage(preliminaryLineage);
     const finalTokensAfter = estimateTokens(finalMessages);
@@ -188,14 +192,16 @@ export async function compactSession(
       lineage: newLineage,
       artifactLedger: result.artifactLedger ?? data.artifactLedger,
     };
+    const commitStartedAt = performance.now();
     await storage.save(sessionId, updated);
+    const commitMs = performance.now() - commitStartedAt;
 
     return {
       compacted: true,
       tokensBefore: result.tokensBefore,
       tokensAfter: finalTokensAfter,
       messages: finalMessages,
-      report: result.report,
+      report: result.report ? { ...result.report, commitMs } : undefined,
     };
   } catch (error) {
     if (options?.propagateErrors === true) throw error;

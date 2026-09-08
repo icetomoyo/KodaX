@@ -28,7 +28,7 @@
 
 import type { KodaXMessage } from '@kodax-ai/llm';
 import type { CompactionResult } from '@kodax-ai/agent';
-import { buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET } from '@kodax-ai/agent';
+import { buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, exceedsContextCapacity } from '@kodax-ai/agent';
 import { estimateTokens } from '../../tokenizer.js';
 
 export interface ApplyPostCompactAttachmentsInput {
@@ -44,6 +44,11 @@ export interface ApplyPostCompactAttachmentsInput {
   readonly tokensBefore: number;
   /** `result.tokensAfter` from `intelligentCompact`. */
   readonly tokensAfter: number;
+  readonly capacity?: {
+    readonly contextWindow: number;
+    readonly reservedResponseTokens: number;
+    readonly fixedInputTokens?: number;
+  };
 }
 
 export interface ApplyPostCompactAttachmentsOutput {
@@ -93,6 +98,12 @@ export async function applyPostCompactAttachments(
   }
 
   const compacted = injectPostCompactAttachments(input.compacted, fullAttachments);
+  if (input.capacity && exceedsContextCapacity({
+    ...input.capacity,
+    currentTokens: (input.capacity.fixedInputTokens ?? 0) + estimateTokens(compacted),
+  })) {
+    return { compacted: input.compacted, postCompactAttachmentsForLineage: [] };
+  }
   // Flat list for compactionUpdate: preserves [ledgerMessage, ...fileMessages] order.
   const postCompactAttachmentsForLineage: readonly KodaXMessage[] = [
     ...(fullAttachments.ledgerMessage ? [fullAttachments.ledgerMessage] : []),

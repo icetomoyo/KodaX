@@ -29,6 +29,7 @@ import {
   normalizeReasoningEffortValue,
   CODING_SUMMARY_PROMPT,
   CODING_UPDATE_SUMMARY_PROMPT,
+  applyPostCompactAttachments,
   resolveKodaXManual,
 } from '@kodax-ai/coding';
 import type { AgentsFile } from '@kodax-ai/coding';
@@ -70,6 +71,9 @@ import { nextAgentMode } from '../common/agent-mode.js';
 import {
   clearCapabilityCache,
   compact,
+  applySessionCompaction,
+  createSessionLineage,
+  getSessionMessagesFromLineage,
   emitKodaXDiagnostic,
   getAgentConfigHome,
   getCachedRejectedEfforts,
@@ -552,7 +556,11 @@ export const BUILTIN_COMMANDS: Command[] = [
     handler: async (args, context, callbacks, currentConfig) => {
       try {
         // Load compaction config
-        const config = await loadCompactionConfig(context.gitRoot);
+        const config = {
+          ...await loadCompactionConfig(context.gitRoot),
+          ...Object.fromEntries(Object.entries(callbacks.createKodaXOptions?.().compaction ?? {})
+            .filter(([, value]) => value !== undefined)),
+        };
 
         // Get provider instance
         const providerName = currentConfig.provider;
@@ -606,13 +614,40 @@ export const BUILTIN_COMMANDS: Command[] = [
             return;
           }
 
-          // Update context with compacted messages
-          context.messages = result.messages;
+          const attached = await applyPostCompactAttachments({
+            compacted: result.messages, artifactLedger: result.artifactLedger ?? [],
+            tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter,
+            capacity: { contextWindow, reservedResponseTokens: provider.getEffectiveMaxOutputTokens(currentConfig.model),
+              fixedInputTokens: Math.max(0, currentTokens - estimateTokens(context.messages)) },
+          });
+          const previous = { messages: context.messages, lineage: context.lineage, title: context.title,
+            artifactLedger: context.artifactLedger, contextTokenSnapshot: context.contextTokenSnapshot,
+            sessionSnapshotDirty: context.sessionSnapshotDirty };
+          const anchor = { summary: result.summary ?? '', tokensBefore: result.tokensBefore,
+            tokensAfter: result.tokensAfter, ...result.anchor, reason: 'manual' };
+          const exactBase = createSessionLineage(context.messages, context.lineage);
+          const lineage = applySessionCompaction(exactBase, attached.compacted, anchor,
+            attached.postCompactAttachmentsForLineage);
+          const messages = getSessionMessagesFromLineage(lineage);
+          const tokensAfter = Math.max(0, currentTokens - estimateTokens(context.messages)) + estimateTokens(messages);
+          const latestCompaction = [...lineage.entries].reverse().find(entry => entry.type === 'compaction');
+          context.lineage = { ...lineage, entries: lineage.entries.map(entry =>
+            entry.type === 'compaction' && entry.id === latestCompaction?.id
+              ? { ...entry, tokensAfter } : entry) };
+          context.messages = messages;
+          context.artifactLedger = result.artifactLedger ?? context.artifactLedger;
+          context.sessionSnapshotDirty = true;
           context.contextTokenSnapshot = {
-            currentTokens: result.tokensAfter,
-            baselineEstimatedTokens: estimateTokens(result.messages),
+            currentTokens: tokensAfter,
+            baselineEstimatedTokens: estimateTokens(context.messages),
             source: context.contextTokenSnapshot?.source ?? 'estimate',
           };
+          try {
+            await callbacks.saveSession(context.lineage);
+          } catch (error) {
+            Object.assign(context, previous);
+            throw error;
+          }
 
           // Push the post-compact token count into the UI layer's live
           // counter. `contextUsage` in InkREPL reads `liveTokenCount`
@@ -621,20 +656,15 @@ export const BUILTIN_COMMANDS: Command[] = [
           // value despite the snapshot above being up to date.
           callbacks.onCompactStats?.({
             tokensBefore: result.tokensBefore,
-            tokensAfter: result.tokensAfter,
+            tokensAfter,
           });
 
-          // Clear UI history - it will be re-created from the new context.messages
-          // This ensures the UI shows the summary + protected recent context.
           // Clear UI history so it can be rebuilt from the compacted messages.
           // This keeps the summary and protected recent context visible.
           callbacks.clearHistory?.();
 
-          // Save compacted messages to session storage
-          await callbacks.saveSession();
-
           // Display statistics
-          console.log(chalk.green(`\n[Compaction complete: ${Math.round(result.tokensBefore / 1000)}k -> ${Math.round(result.tokensAfter / 1000)}k tokens, ${Math.round((1 - result.tokensAfter / result.tokensBefore) * 100)}% reduced]`));
+          console.log(chalk.green(`\n[Compaction complete: ${Math.round(result.tokensBefore / 1000)}k -> ${Math.round(tokensAfter / 1000)}k tokens, ${Math.round((1 - tokensAfter / result.tokensBefore) * 100)}% reduced]`));
           console.log();
         } finally {
           // Stop compacting indicator

@@ -363,6 +363,8 @@ export interface KodaXContextCompactionFinishedEvent
   readonly rawTailTokens?: number;
   readonly summaryTokens?: number;
   readonly queryLedgerTokens?: number;
+  readonly summaryRequests?: import('@kodax-ai/agent').CompactionReport['summaryRequests'];
+  readonly commitMs?: number;
 }
 
 export type KodaXCompactionFailureReason =
@@ -2157,6 +2159,8 @@ export interface KodaXSelfManualConfig {
  * fall through to the normal resolution cascade.
  */
 export interface KodaXCompactionOverride {
+  /** Summary reasoning shared by manual/automatic compaction; defaults to false. */
+  reasoning?: boolean | KodaXReasoningRequest;
   /** Override the resolved provider context window, in tokens. */
   contextWindow?: number;
   /** Override the auto-compaction trigger percentage (normalized to 15-90). */

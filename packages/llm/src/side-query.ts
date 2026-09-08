@@ -116,7 +116,7 @@ const EMPTY_USAGE: KodaXTokenUsage = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const SIDE_QUERY_LOW_THINKING_TOKENS = 1024;
 
-function resolveDefaultSideQueryReasoning(
+export function resolveDefaultSideQueryReasoning(
   profile: KodaXReasoningProfile | undefined,
 ): KodaXReasoningRequest | undefined {
   if (!profile) return { effort: 'none' };

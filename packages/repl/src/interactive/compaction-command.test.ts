@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const mocks = vi.hoisted(() => ({
   compact: vi.fn(),
@@ -31,6 +34,9 @@ vi.mock('@kodax-ai/coding', async () => {
 
 import { BUILTIN_COMMANDS, type CommandCallbacks, type CurrentConfig } from './commands.js';
 import { createInteractiveContext, type InteractiveContext } from './context.js';
+import { FileSessionStorage } from './storage.js';
+import { saveClassicSession } from './repl.js';
+import { COMPACTION_SUMMARY_PREFIX } from '@kodax-ai/agent';
 
 describe('/compact command', () => {
   let context: InteractiveContext;
@@ -119,5 +125,97 @@ describe('/compact command', () => {
     expect(output).toContain('deprecated and ignored');
 
     logSpy.mockRestore();
+  });
+
+  it('keeps the previous context and UI when the durable save fails', async () => {
+    context.messages = [{ role: 'user', content: 'EXACT_HISTORY' }];
+    const previous = context.messages;
+    const snapshot = context.contextTokenSnapshot;
+    mocks.compact.mockResolvedValue({ compacted: true, summary: 'Summary',
+      messages: [{ role: 'user', _source: 'compaction-checkpoint', content: 'Summary' }],
+      tokensBefore: 50000, tokensAfter: 100, entriesRemoved: 1 });
+    context.title = 'Original title';
+    callbacks.saveSession = vi.fn(async () => {
+      context.title = 'Derived title';
+      throw new Error('disk full');
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'compact')!
+        .handler([], context, callbacks, currentConfig);
+      expect(context.messages).toBe(previous);
+      expect(context.contextTokenSnapshot).toBe(snapshot);
+      expect(context.title).toBe('Original title');
+      expect(callbacks.clearHistory).not.toHaveBeenCalled();
+      expect(log.mock.calls.flat().join('\n')).toContain('disk full');
+    } finally { log.mockRestore(); }
+  });
+
+  it('persists manual lineage and attachments through the real classic save callback', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'kodax-classic-compact-'));
+    const storage = new FileSessionStorage({ sessionsDir: directory });
+    context.messages = [{ role: 'user', content: 'EXACT_PRE_COMPACT_QUERY' },
+      { role: 'assistant', content: 'EXACT_PRE_COMPACT_RESPONSE' }];
+    callbacks.saveSession = (lineage) => saveClassicSession(context, storage, 'partner', lineage);
+    mocks.compact.mockResolvedValue({ compacted: true, summary: 'Summary',
+      messages: [{ role: 'user', _source: 'compaction-checkpoint', _synthetic: true,
+        content: `${COMPACTION_SUMMARY_PREFIX}Summary` }],
+      tokensBefore: 50000, tokensAfter: 100, entriesRemoved: 2,
+      anchor: { summary: 'Summary', reason: 'automatic_compaction' },
+      artifactLedger: [{ id: 'read', kind: 'file_read', target: 'src/example.ts',
+        action: 'read', timestamp: '2026-09-08T00:00:00.000Z' }],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'compact')!
+        .handler([], context, callbacks, currentConfig);
+      const loaded = await storage.load(context.sessionId);
+      const entry = loaded?.lineage?.entries.find(item => item.type === 'compaction');
+      expect(entry).toMatchObject({ type: 'compaction', reason: 'manual',
+        tokensAfter: context.contextTokenSnapshot?.currentTokens });
+      expect(loaded?.messages).toEqual(context.messages);
+      expect(JSON.stringify(await storage.loadFullLineage(context.sessionId)))
+        .toContain('EXACT_PRE_COMPACT_RESPONSE');
+      expect(JSON.stringify(loaded?.messages)).toContain('src/example.ts');
+      expect(loaded?.tag).toBe('partner');
+      expect(callbacks.clearHistory).toHaveBeenCalledOnce();
+
+      // Classic session switches can leave the previous session's lineage in memory.
+      context.sessionId = 'different-session';
+      context.messages = [{ role: 'user', content: 'SESSION_B_HISTORY' }];
+      await saveClassicSession(context, storage);
+      const other = await storage.load(context.sessionId);
+      expect(other?.messages).toEqual(context.messages);
+      expect(JSON.stringify(await storage.loadFullLineage(context.sessionId)))
+        .not.toContain('EXACT_PRE_COMPACT_RESPONSE');
+    } finally {
+      log.mockRestore();
+      if (path.dirname(directory) === path.resolve(tmpdir())) await rm(directory, { recursive: true });
+    }
+  });
+
+  it('clears conversation state in /clear even when the host has no presentation history', async () => {
+    context.messages = [{ role: 'user', content: 'clear this' }];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'clear')!
+        .handler([], context, callbacks, currentConfig);
+      expect(context.messages).toEqual([]);
+      expect(context.contextTokenSnapshot).toBeUndefined();
+    } finally { log.mockRestore(); }
+  });
+
+  it('uses the same explicit compaction policy as the automatic run options', async () => {
+    callbacks.createKodaXOptions = () => ({
+      compaction: { reasoning: { effort: 'low' }, triggerPercent: 60 },
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'compact')!
+        .handler([], context, callbacks, currentConfig);
+      expect(mocks.compact.mock.lastCall?.[1]).toMatchObject({
+        reasoning: { effort: 'low' }, triggerPercent: 60, enabled: true,
+      });
+    } finally { log.mockRestore(); }
   });
 });

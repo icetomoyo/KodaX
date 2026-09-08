@@ -2,13 +2,15 @@
  * ../../index.js Compaction Types
  */
 
-import type { KodaXMessage } from '@kodax-ai/llm';
+import type { KodaXMessage, KodaXReasoningRequest, KodaXTokenUsage } from '@kodax-ai/llm';
 import type {
   KodaXCompactMemorySeed,
   KodaXSessionArtifactLedgerEntry,
 } from '../../types.js';
 
 export interface CompactionConfig {
+  /** Independent of the main turn; defaults off, or to a low supported effort on always-on models. */
+  reasoning?: boolean | KodaXReasoningRequest;
   /** @deprecated Automatic large compaction is always enabled. */
   enabled: boolean;
   /**
@@ -94,6 +96,10 @@ export interface CompactionUpdate {
 }
 
 export interface CompactionReport {
+  /** Physical summary calls, including map/reduce; never contains prompt or output text. */
+  readonly summaryRequests?: readonly CompactionRequestMetrics[];
+  /** Durable history commit only; excludes summary generation. */
+  readonly commitMs?: number;
   readonly strategy: 'full_prefix' | 'map_reduce';
   readonly triggerSource: 'percentage' | 'absolute' | 'physical_capacity';
   readonly effectiveTriggerTokens: number;
@@ -103,6 +109,24 @@ export interface CompactionReport {
   readonly rawTailTokens: number;
   readonly summaryTokens: number;
   readonly queryLedgerTokens: number;
+}
+
+export interface CompactionRequestMetrics {
+  readonly provider: string;
+  readonly model: string;
+  /** Requested summary policy; the provider may adapt it to its capabilities. */
+  readonly reasoning: boolean | KodaXReasoningRequest;
+  readonly prepareMs: number;
+  readonly credentialMs: number;
+  /** Includes retries and their waits. firstDeltaMs is an offset within this duration. */
+  readonly providerMs: number;
+  readonly firstDeltaMs?: number;
+  /** Retries reported by the provider adapter; excludes opaque upstream retries. */
+  readonly retryCount: number;
+  readonly retryWaitMs: number;
+  readonly usage?: KodaXTokenUsage;
+  readonly stopReason?: string;
+  readonly outcome: 'succeeded' | 'failed';
 }
 
 export interface CompactionResult {

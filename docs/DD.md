@@ -1538,6 +1538,43 @@ canonical post-commit callback increments `contextRevision`; Runtime projects it
 as `context.compaction.finished`. KodaX Space updates its Session meter only for
 root facts.
 
+Manual and automatic summary requests share `compaction.reasoning`; main-turn
+`effort`/`reasoningMode` never implicitly selects summary effort. The default
+disables thinking where supported; always-on models use the existing side-query
+low-effort resolver. In-process callers can set
+`KodaXOptions.compaction.reasoning`. Runtime hosts persist the same policy for
+both `runs.start()` and `sessions.compact()`:
+
+```ts
+await runtime.sessions.updateSettings(sessionId, {
+  compactionReasoning: { effort: 'low' },
+});
+```
+
+`compactionReasoning: false` explicitly requests disabled thinking (subject to
+provider capability); `null` removes the Session override. Manual compaction
+uses the effective Session provider/model unless explicitly overridden, restores
+the same budgeted ledger/file attachments, and records lineage `reason: 'manual'`.
+Switching provider does not carry the previous provider's model into the request.
+REPL `/compact` publishes success and clears the UI only after saving; a failed
+save restores the previous live context. Complete eligible-prefix coverage,
+protected atomic groups, query ledger and summary prompt text remain unchanged.
+
+Successful compaction reports and `context.compaction.finished` optionally carry
+`summaryRequests` (one record per physical summary call, including map/reduce)
+and `commitMs` (durable save/callback duration). Each request records provider,
+model, requested reasoning, `prepareMs`, `credentialMs`, `providerMs`, optional
+`firstDeltaMs`, adapter-reported retries/wait, usage and stop reason. `providerMs`
+includes retries and their waits; `firstDeltaMs` is the offset of the first
+non-empty text or thinking delta within it, not a separately additive duration.
+It is absent when the adapter exposes no deltas. These measurements do not
+separate network setup from remote queueing, and never include prompt/output
+text. `summaryTokens` remains the estimated retained summary size; actual
+completion usage, including text later stripped from the summary, belongs in
+the provider's `usage`. No asynchronous operation protocol or new rolling
+summary algorithm is introduced by this repair; real latency and summary
+quality still require provider-backed evaluation.
+
 Runtime observations carry a bounded `RuntimeTranscriptSlice`. Older pages use
 opaque revision-bound cursors; a single oversized entry uses bounded
 `base64-json` chunks. The legacy daemon full-transcript method is capped at 512

@@ -10,11 +10,13 @@ import type {
   KodaXEphemeralSuffix,
   KodaXMessage,
   KodaXReasoningRequest,
+  KodaXStreamResult,
   KodaXTokenUsage,
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { withProviderRequestCredential } from '@kodax-ai/llm';
-import type { CompactionDetails } from './types.js';
+import { withProviderRequestCredential, resolveDefaultSideQueryReasoning } from '@kodax-ai/llm';
+import { emitKodaXDiagnostic } from '../../diagnostics.js';
+import type { CompactionDetails, CompactionRequestMetrics } from './types.js';
 import type { KodaXCompactMemorySeed } from '../../index.js';
 import { serializeConversation } from './utils.js';
 
@@ -229,6 +231,7 @@ export interface KodaXCompactionPromptSnapshot {
 
 export interface CompactionCacheContext {
   readonly tools: readonly KodaXToolDefinition[];
+  /** @deprecated Main-turn reasoning is not a summary policy. Use compaction.reasoning. */
   readonly reasoning?: boolean | KodaXReasoningRequest;
   /** Opaque Provider cache-routing key inherited from the logical context. */
   readonly promptCacheKey?: string;
@@ -249,6 +252,7 @@ export interface CompactionProviderRequest {
 }
 
 export interface CompactionProviderObserver {
+  readonly onMetrics?: (metrics: CompactionRequestMetrics) => void;
   readonly onRequest?: (request: CompactionProviderRequest) => void;
   readonly onResponse?: (
     request: CompactionProviderRequest,
@@ -256,9 +260,10 @@ export interface CompactionProviderObserver {
   ) => void;
 }
 
-/** Routing-only metadata applied to every physical summary request. */
+/** Request policy and routing metadata applied to every physical summary request. */
 export interface CompactionProviderRouting {
   readonly promptCacheKey?: string;
+  readonly reasoning?: boolean | KodaXReasoningRequest;
 }
 
 export function buildCompactionCacheInstruction(
@@ -462,6 +467,7 @@ export async function generateSummary(
   observer?: CompactionProviderObserver,
   routing?: CompactionProviderRouting,
 ): Promise<string> {
+  const startedAt = performance.now();
   const promptSnapshot = buildCompactionPromptSnapshot({
     messages,
     details,
@@ -477,12 +483,17 @@ export async function generateSummary(
     cacheContext?.protectedTailMessageCount,
   );
   const promptCacheKey = routing?.promptCacheKey ?? cacheContext?.promptCacheKey;
+  const profile = provider.getReasoningProfile?.(modelOverride);
+  const defaultReasoning = profile?.supportsDisabledThinking === false
+    || profile?.localRejectEfforts?.includes('none')
+    ? resolveDefaultSideQueryReasoning(profile) : false;
+  const reasoning = routing?.reasoning ?? defaultReasoning ?? false;
   const request: CompactionProviderRequest = cacheContext
     ? {
         messages,
         tools: cacheContext.tools,
         system: promptSnapshot.systemPrompt,
-        reasoning: cacheContext.reasoning,
+        reasoning,
         ...(modelOverride ? { modelOverride } : {}),
         ...(promptCacheKey
           ? { promptCacheKey }
@@ -493,7 +504,7 @@ export async function generateSummary(
         messages: [{ role: 'user', content: promptSnapshot.userPrompt }],
         tools: [],
         system: promptSnapshot.systemPrompt,
-        reasoning: false,
+        reasoning,
         ...(modelOverride ? { modelOverride } : {}),
         ...(promptCacheKey ? { promptCacheKey } : {}),
       };
@@ -502,25 +513,8 @@ export async function generateSummary(
   } catch {
     // Diagnostics are fail-open and must never block compaction.
   }
-  const result = await withProviderRequestCredential(
-    provider.name,
-    'compaction',
-    undefined,
-    (credentialSignal) => provider.stream(
-      [...request.messages],
-      [...request.tools],
-      request.system,
-      request.reasoning,
-      request.modelOverride || request.ephemeralSuffix || request.promptCacheKey
-        ? {
-            ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
-            ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
-            ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
-          }
-        : undefined,
-      credentialSignal,
-    ),
-  );
+  const result = await streamSummary(provider, request, performance.now() - startedAt,
+    cacheContext?.observer ?? observer);
   try {
     (cacheContext?.observer ?? observer)?.onResponse?.(request, result.usage);
   } catch {
@@ -546,6 +540,56 @@ export async function generateSummary(
   }
 
   return cleaned;
+}
+
+async function streamSummary(
+  provider: KodaXBaseProvider,
+  request: CompactionProviderRequest,
+  prepareMs: number,
+  observer?: CompactionProviderObserver,
+): Promise<KodaXStreamResult> {
+  const credentialStart = performance.now();
+  let providerStart: number | undefined;
+  let firstDeltaMs: number | undefined;
+  let retryCount = 0;
+  let retryWaitMs = 0;
+  let result: KodaXStreamResult | undefined;
+  const onDelta = (text: string): void => {
+    if (text && providerStart !== undefined) firstDeltaMs ??= performance.now() - providerStart;
+  };
+  try {
+    result = await withProviderRequestCredential(provider.name, 'compaction', undefined,
+      (signal) => {
+        providerStart = performance.now();
+        return provider.stream([...request.messages], [...request.tools], request.system,
+          request.reasoning, {
+            ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
+            ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
+            ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
+            onTextDelta: onDelta, onThinkingDelta: onDelta,
+            onRateLimit: (_attempt, _max, delay) => { retryCount++; retryWaitMs += delay; },
+          }, signal);
+      });
+    return result;
+  } finally {
+    const endedAt = performance.now();
+    try {
+      observer?.onMetrics?.({
+        provider: provider.name, model: request.modelOverride ?? provider.getModel(),
+        reasoning: request.reasoning ?? false, prepareMs,
+        credentialMs: (providerStart ?? endedAt) - credentialStart,
+        providerMs: providerStart === undefined ? 0 : endedAt - providerStart,
+        ...(firstDeltaMs === undefined ? {} : { firstDeltaMs }), retryCount, retryWaitMs,
+        ...(result?.usage === undefined ? {} : { usage: result.usage }),
+        ...(result?.stopReason === undefined ? {} : { stopReason: result.stopReason }),
+        outcome: result === undefined ? 'failed' : 'succeeded',
+      });
+    } catch {
+      // An optional metrics observer cannot change the request outcome.
+      emitKodaXDiagnostic({ source: 'compaction', level: 'warn',
+        message: 'Compaction metrics observer failed' });
+    }
+  }
 }
 
 /**
