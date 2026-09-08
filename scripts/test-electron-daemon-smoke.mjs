@@ -546,7 +546,7 @@ async function verifyAttachDetachAndOwnerFence(
   const management = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
   assert.equal(management.identity.runtimeId, runtimeId, 'Electron close must detach without stopping the daemon.');
   await waitForClientCount(management, 1);
-  await stopForInline(management);
+  await management.daemon.shutdown();
   await management.close();
   await waitForUnowned(sdk);
   await assertNoAclPoisonMarkers('A clean packaged-daemon stop must remove every ACL owner marker.');
@@ -588,7 +588,7 @@ async function verifyAttachDetachAndOwnerFence(
 
   const restartManagement = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
   await waitForClientCount(restartManagement, 1);
-  await stopForInline(restartManagement);
+  await restartManagement.daemon.shutdown();
   await restartManagement.close();
   await waitForUnowned(sdk);
   await assertNoAclPoisonMarkers('The restarted daemon must also confirm clean ACL teardown.');
@@ -604,15 +604,6 @@ async function assertNoAclPoisonMarkers(message, legacyHomeDir = homeDir) {
     const entries = existsSync(directory) ? await readdir(directory) : [];
     assert.deepEqual(entries, [], `${message} Marker directory: ${directory}`);
   }
-}
-
-async function stopForInline(runtime) {
-  const state = await runtime.daemon.inspect();
-  await runtime.daemon.stopForInline({
-    expectedRuntimeId: state.runtimeId,
-    expectedRevision: state.revision,
-    expectedOwnerPolicyRevision: state.ownerPolicy.revision,
-  });
 }
 
 async function waitForClientCount(runtime, expected) {

@@ -1594,7 +1594,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           return;
         }
         saveConfig({ model: targetModel });
-        callbacks.switchProvider?.(currentConfig.provider, targetModel);
+        await callbacks.switchProvider?.(currentConfig.provider, targetModel);
         console.log(chalk.cyan(`\n[Switched to ${targetModel}] (saved)`));
         return;
       }
@@ -1620,7 +1620,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           return;
         }
         saveConfig({ provider: targetProvider, model: targetModel });
-        callbacks.switchProvider?.(targetProvider, targetModel);
+        await callbacks.switchProvider?.(targetProvider, targetModel);
         console.log(chalk.cyan(`\n[Switched to ${targetProvider}/${targetModel}] (saved)`));
         return;
       }
@@ -1629,7 +1629,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       const newProvider = input;
       if (isKnownProvider(newProvider)) {
         saveConfig({ provider: newProvider, model: undefined });
-        callbacks.switchProvider?.(newProvider);
+        await callbacks.switchProvider?.(newProvider);
         console.log(chalk.cyan(`\n[Switched to ${newProvider}] (saved)`));
       } else {
         console.log(chalk.red(`\n[Unknown provider: ${newProvider}]`));
@@ -1877,7 +1877,7 @@ export const BUILTIN_COMMANDS: Command[] = [
         return;
       }
 
-      const persistence = applyAgentMode(nextMode, callbacks, currentConfig);
+      const persistence = await applyAgentMode(nextMode, callbacks, currentConfig);
       printPersistedCommandStatus(`Agent mode: ${nextMode.toUpperCase()}`, persistence);
     },
     detailedHelp: () => {
@@ -2315,7 +2315,7 @@ async function handleReasoningEffortCommand(
   }
 
   const nextConfig = resolveConfigAfterReasoningEffort(effort, currentConfig);
-  const persistence = applyReasoningEffort(effort, callbacks, currentConfig);
+  const persistence = await applyReasoningEffort(effort, callbacks, currentConfig);
   printPersistedCommandStatus(
     `Reasoning effort: ${formatCurrentReasoningEffortStatus(nextConfig)}`,
     persistence,
@@ -2359,11 +2359,11 @@ function resolveConfigAfterReasoningEffort(
   };
 }
 
-function applyReasoningEffort(
+async function applyReasoningEffort(
   effort: string | undefined,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig,
-): ConfigPersistenceResult {
+): Promise<ConfigPersistenceResult> {
   const nextReasoningMode = resolveReasoningModeAfterEffort(effort);
   const thinking = reasoningModeToLegacyThinking(nextReasoningMode);
   const persistence = persistUserConfig({
@@ -2373,14 +2373,14 @@ function applyReasoningEffort(
   });
 
   if (callbacks.setEffort) {
-    callbacks.setEffort(effort);
+    await callbacks.setEffort(effort);
   } else {
     currentConfig.effort = effort;
     currentConfig.effortOverride = effort !== undefined;
   }
 
   if (callbacks.setReasoningMode) {
-    callbacks.setReasoningMode(nextReasoningMode);
+    await callbacks.setReasoningMode(nextReasoningMode);
   } else {
     currentConfig.reasoningMode = nextReasoningMode;
     currentConfig.thinking = thinking;
@@ -2389,15 +2389,15 @@ function applyReasoningEffort(
   return persistence;
 }
 
-function applyAgentMode(
+async function applyAgentMode(
   mode: KodaXAgentMode,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig,
-): ConfigPersistenceResult {
+): Promise<ConfigPersistenceResult> {
   const persistence = persistUserConfig({ agentMode: mode });
 
   if (callbacks.setAgentMode) {
-    callbacks.setAgentMode(mode);
+    await callbacks.setAgentMode(mode);
   } else {
     currentConfig.agentMode = mode;
   }

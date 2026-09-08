@@ -10,11 +10,13 @@ import {
   type KodaXProviderConfig,
   type KodaXProviderStreamOptions,
   type KodaXStreamResult,
+  type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { runClientPlaneRound } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { createCliClientPlane as wireClientPlane } from './cli-client-plane.js';
+import { changedClientSessionSettings, clientSessionSettings } from '../packages/repl/src/ui/client-session-settings.js';
 
 class ProbeProvider extends KodaXBaseProvider {
   readonly name = 't17-probe';
@@ -27,11 +29,18 @@ class ProbeProvider extends KodaXBaseProvider {
   }
   async stream(
     messages: KodaXMessage[],
-    _tools: never[],
+    tools: KodaXToolDefinition[],
     _system: string,
     _reasoning?: boolean,
     streamOptions?: KodaXProviderStreamOptions,
   ): Promise<KodaXStreamResult> {
+    // Episode learning is a separate background role, not another user round.
+    if (tools.some((tool) => tool.name === 'commit_episode_learning_review')) {
+      return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
+        type: 'tool_use', id: 'fixture-learning-review', name: 'commit_episode_learning_review',
+        input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+      }] };
+    }
     void messages;
     return new Promise<KodaXStreamResult>((resolve) => this.finish((result) => {
       // Real providers stream text through the callbacks before resolving;
@@ -62,8 +71,13 @@ it('runs one round over the client plane with view-driven display', async () => 
   const plane = wireClientPlane(runtime);
   try {
     const session = await runtime.sessions.create({ title: 'T17 plane', surface: 'repl' });
-    await runtime.sessions.updateSettings(session.id, {
-      agentMode: 'sa', permissionMode: 'full-access',
+    await plane.updateSettings?.(session.id, clientSessionSettings({
+      provider: 't17-probe', model: 't17-selected', agentMode: 'sa',
+      permissionMode: 'accept-edits', thinking: false, reasoningMode: 'off',
+    }, 7));
+    expect(await runtime.sessions.getSettings(session.id)).toMatchObject({
+      provider: 't17-probe', model: 't17-selected', agentMode: 'sa',
+      permissionMode: 'accept-edits', thinking: false, reasoningMode: 'off', maxIter: 7,
     });
 
     // The display subscription sees the live view before the run starts.
@@ -102,6 +116,26 @@ it('runs one round over the client plane with view-driven display', async () => 
     expect(result.success).toBe(true);
     expect(result.lastText).toContain('Repository summary.');
     expect(result.messages.length).toBeGreaterThan(0);
+    // A second client changes the model. A local mode switch must write only
+    // agentMode, preserving that independent Host-owned model selection.
+    await runtime.sessions.updateSettings(session.id, { model: 'external-model' });
+    await plane.updateSettings?.(session.id, changedClientSessionSettings(
+      { agentMode: 'sa', model: 't17-selected' },
+      { agentMode: 'ama', model: 't17-selected' },
+    ));
+    expect(await runtime.sessions.getSettings(session.id)).toMatchObject({
+      agentMode: 'ama', model: 'external-model', permissionMode: 'accept-edits',
+    });
+    // An explicit selection of the locally displayed model still reaches the
+    // Host when another client changed its value after the local snapshot.
+    await plane.updateSettings?.(session.id, changedClientSessionSettings(
+      { model: 't17-selected', permissionMode: 'accept-edits' },
+      { model: 't17-selected', permissionMode: 'accept-edits' },
+      ['model'],
+    ));
+    expect(await runtime.sessions.getSettings(session.id)).toMatchObject({
+      model: 't17-selected', agentMode: 'ama', permissionMode: 'accept-edits',
+    });
 
     // The assistant answer lands in the view for every client.
     await expect.poll(() =>

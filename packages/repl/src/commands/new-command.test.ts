@@ -51,4 +51,32 @@ describe('newCommand', () => {
     expect(callbacks.clearHistory).not.toHaveBeenCalled();
     expect(context.messages).toHaveLength(1);
   });
+
+  it('keeps the current conversation and UI until the new Host session is ready', async () => {
+    const context = createContext();
+    const callbacks = createCallbacks();
+    let finishCreate!: () => void;
+    callbacks.startNewSession.mockReturnValue(new Promise<void>((resolve) => { finishCreate = resolve; }));
+    const pending = newCommand.handler([], context as never, callbacks as never, {} as never);
+    try {
+      await vi.waitFor(() => expect(callbacks.startNewSession).toHaveBeenCalledOnce());
+      expect(context.messages).toEqual([{ role: 'user', content: 'hello' }]);
+      expect(callbacks.clearHistory).not.toHaveBeenCalled();
+    } finally {
+      finishCreate();
+      await pending;
+    }
+    expect(context.messages).toEqual([]);
+    expect(callbacks.clearHistory).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the conversation and UI when Host session creation fails', async () => {
+    const context = createContext();
+    const callbacks = createCallbacks();
+    callbacks.startNewSession.mockRejectedValue(new Error('Host session could not be persisted'));
+    await expect(newCommand.handler([], context as never, callbacks as never, {} as never))
+      .rejects.toThrow('Host session could not be persisted');
+    expect(context.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    expect(callbacks.clearHistory).not.toHaveBeenCalled();
+  });
 });

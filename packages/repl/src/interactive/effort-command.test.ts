@@ -44,6 +44,33 @@ describe('/effort command', () => {
     vi.restoreAllMocks();
   });
 
+  it('does not report success when the Host rejects the settings write', async () => {
+    const config = createConfig();
+    const callbacks = {
+      setEffort: vi.fn().mockRejectedValue(new Error('Host settings write failed')),
+      setReasoningMode: vi.fn(),
+    } as unknown as CommandCallbacks;
+    await expect(effortCmd.handler(['high'], ctx, callbacks, config))
+      .rejects.toThrow('Host settings write failed');
+    expect(callbacks.setReasoningMode).not.toHaveBeenCalled();
+    expect(getLoggedOutput()).not.toContain('Reasoning effort:');
+    expect(config.effort).toBeUndefined();
+  });
+
+  it('reports success only after the Host settings write has finished', async () => {
+    let finish!: () => void;
+    const callbacks = {
+      setEffort: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })),
+      setReasoningMode: vi.fn(),
+    } as unknown as CommandCallbacks;
+    const pending = effortCmd.handler(['high'], ctx, callbacks, createConfig());
+    await vi.waitFor(() => expect(callbacks.setEffort).toHaveBeenCalledOnce());
+    expect(getLoggedOutput()).not.toContain('Reasoning effort:');
+    finish();
+    await pending;
+    expect(getLoggedOutput()).toContain('Reasoning effort:');
+  });
+
   it('sets explicit effort and re-enables legacy reasoning when it was off', async () => {
     const setEffort = vi.fn();
     const setReasoningMode = vi.fn();

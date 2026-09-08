@@ -4,6 +4,7 @@ import type { KodaXRuntime } from './sdk-runtime.js';
 /** The production binding shared by Ink and its runtime integration tests. */
 export function createCliClientPlane(runtime: KodaXRuntime): InkClientPlane {
   return {
+    updateSettings: (sessionId, patch) => runtime.sessions.updateSettings(sessionId, patch).then(() => undefined),
     submit: input => runtime.runs.acceptInput(input),
     readInput: (sessionId, inputId) => runtime.runs.getInput(sessionId, inputId),
     withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId).then(result => result.text),

@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import chalk from 'chalk';
+import { changedClientSessionSettings, clientSessionSettings } from '../ui/client-session-settings.js';
 
 // Export Ink UI version entry point - 导出 Ink UI 版本的入口
 export { runInkInteractiveMode } from '../ui/index.js';
@@ -640,6 +641,22 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     existingExtensionRecords: startupSession?.data.extensionRecords,
   });
   context.title = startupSession?.data.title ?? '';
+  // Register a fresh Session before starting its Host view or accepting input.
+  if (startupSession === null && options.session?.id === undefined && options.sessionCommands) {
+    await options.sessionCommands.create({
+      sessionId: context.sessionId,
+      title: context.title,
+      gitRoot: context.gitRoot,
+      projectPath: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
+      surface: 'repl',
+    });
+  }
+  const syncClientSettings = (config = currentConfig,
+    explicit: readonly (keyof ReturnType<typeof clientSessionSettings>)[] = []) => options.clientPlane?.updateSettings?.(
+    context.sessionId, config === currentConfig ? clientSessionSettings(config, options.maxIter)
+      : changedClientSessionSettings(clientSessionSettings(currentConfig, options.maxIter),
+        clientSessionSettings(config, options.maxIter), explicit));
+  await syncClientSettings();
   if (startupSession) {
     const label = startupSession.kind === 'continue' ? 'Continuing session' : 'Session loaded';
     process.stdout.write(`${chalk.green(`[${label}: ${startupSession.id}]`)}\n`);
@@ -732,11 +749,13 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // of file-system I/O — env override layers feed the resolver chain.
   const autoModeSettings = loadAutoModeSettings();
   const runtimeAutoModeSettings = toReplRuntimeAutoModeSettings(autoModeSettings);
-  await options.runtimeAutoModeControl?.syncSettings?.(
-    context.sessionId,
-    currentPermissionMode,
-    runtimeAutoModeSettings,
-  );
+  if (options.clientPlane?.updateSettings) {
+    await options.clientPlane.updateSettings(context.sessionId, {
+      autoModeClassifierModel: runtimeAutoModeSettings.classifierModel ?? null,
+    });
+  } else {
+    await options.runtimeAutoModeControl?.syncSettings?.(context.sessionId, currentPermissionMode, runtimeAutoModeSettings);
+  }
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
     projectRoot: gitRoot ?? process.cwd(),
     executionCwd: activeRuntime.executionCwd ?? gitRoot ?? process.cwd(),
@@ -1183,8 +1202,22 @@ Keyboard Shortcuts:
         markExtensionSessionPersisted(context);
       }
     },
-    startNewSession: () => {
-      setContextSessionId(generateInteractiveSessionId());
+    startNewSession: async () => {
+      const nextSessionId = generateInteractiveSessionId();
+      if (options.sessionCommands) {
+        await options.sessionCommands.create({
+          sessionId: nextSessionId,
+          title: 'REPL Session',
+          gitRoot: startupRuntime.workspaceRoot ?? undefined,
+          projectPath: startupRuntime.executionCwd ?? startupRuntime.workspaceRoot ?? process.cwd(),
+          surface: 'repl',
+        });
+        await options.clientPlane?.updateSettings?.(nextSessionId, {
+          ...clientSessionSettings(currentConfig, options.maxIter),
+          autoModeClassifierModel: runtimeAutoModeSettings.classifierModel ?? null,
+        });
+      }
+      setContextSessionId(nextSessionId);
       context.title = '';
       context.contextTokenSnapshot = undefined;
       context.artifactLedger = undefined;
@@ -1200,20 +1233,6 @@ Keyboard Shortcuts:
         id: context.sessionId,
       };
       teamModeHandle?.writer.update({ sessionId: context.sessionId });
-      // FEATURE_298 T34 — the Host owns session creation; the local writer
-      // stays untouched for a brand-new session until the first run.
-      if (options.sessionCommands) {
-        void options.sessionCommands.create({
-          sessionId: context.sessionId,
-          title: 'REPL Session',
-          ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
-          surface: 'repl',
-        }).catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          console.log(chalk.yellow(`
-[New session could not be registered with the Host: ${message}]`));
-        });
-      }
     },
     loadSession: async (id: string) => {
       const loaded = await storage.load(id);
@@ -1239,6 +1258,10 @@ Keyboard Shortcuts:
           console.log(chalk.dim(`  Session workspace: ${formatWorkspaceTruth(savedRuntime)}`));
         }
 
+        await options.clientPlane?.updateSettings?.(id, {
+          ...clientSessionSettings(currentConfig, options.maxIter),
+          autoModeClassifierModel: runtimeAutoModeSettings.classifierModel ?? null,
+        });
         context.messages = loaded.messages;
         context.title = loaded.title;
         setContextSessionId(id);
@@ -1311,8 +1334,9 @@ Keyboard Shortcuts:
       }
       console.log();
     },
-    switchProvider: (provider: string, model?: string) => {
+    switchProvider: async (provider: string, model?: string) => {
       const effortResolution = resolveCurrentRuntimeEffort({ provider, model });
+      await syncClientSettings({ ...currentConfig, provider, model }, ['provider', 'model']);
       currentConfig.provider = provider;
       currentConfig.model = model;
       currentOptions.provider = provider;
@@ -1322,29 +1346,32 @@ Keyboard Shortcuts:
         console.log(chalk.yellow(`\n[${effortResolution.diagnostic}]`));
       }
     },
-    setEffort: (effort?: string) => {
+    setEffort: async (effort?: string) => {
+      await syncClientSettings({ ...currentConfig, effort, effortOverride: effort !== undefined }, ['effort']);
       currentConfig.effort = effort;
       currentConfig.effortOverride = effort !== undefined;
       refreshCurrentEffort();
     },
-    setReasoningMode: (mode: KodaXReasoningMode) => {
+    setReasoningMode: async (mode: KodaXReasoningMode) => {
       const thinking = mode !== 'off';
+      await syncClientSettings({ ...currentConfig, reasoningMode: mode, thinking }, ['reasoningMode', 'thinking']);
       currentConfig.reasoningMode = mode;
       currentConfig.thinking = thinking;
       currentOptions.reasoningMode = mode;
       currentOptions.thinking = thinking;
     },
-    setAgentMode: (mode: KodaXAgentMode) => {
+    setAgentMode: async (mode: KodaXAgentMode) => {
+      await syncClientSettings({ ...currentConfig, agentMode: mode }, ['agentMode']);
       currentConfig.agentMode = mode;
       currentOptions.agentMode = mode;
     },
     setPermissionMode: async (mode: PermissionMode) => {
       const canonicalMode = canonicalizePermissionMode(mode);
-      await options.runtimeAutoModeControl?.syncSettings?.(
-        context.sessionId,
-        canonicalMode,
-        runtimeAutoModeSettings,
-      );
+      if (options.clientPlane?.updateSettings) {
+        await syncClientSettings({ ...currentConfig, permissionMode: canonicalMode }, ['permissionMode']);
+      } else {
+        await options.runtimeAutoModeControl?.syncSettings?.(context.sessionId, canonicalMode, runtimeAutoModeSettings);
+      }
       currentConfig.permissionMode = canonicalMode;
       currentPermissionMode = canonicalMode; // Sync with local permission state
       refreshCurrentEffort();

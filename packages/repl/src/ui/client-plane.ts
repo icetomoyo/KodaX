@@ -17,6 +17,7 @@ import type {
   ClientPermissionInteractionOptions,
   ClientRunStopReceipt,
   ClientSessionView,
+  ClientSessionSettingsPatch,
   ClientViewItem,
 } from '@kodax-ai/coding/client-contract';
 import {
@@ -42,6 +43,8 @@ export interface ClientRoundOutcome {
 }
 
 export interface InkClientPlane {
+  /** Configure the Host-owned Session before starting or changing a round. */
+  updateSettings?(sessionId: string, patch: ClientSessionSettingsPatch): Promise<void>;
   /**
    * Submit user text. 'immediate' starts the run, 'after_turn' queues
    * Host-side, 'redirect' queues and cancels the target run (FEATURE_149

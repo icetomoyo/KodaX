@@ -119,6 +119,7 @@
     "test:eval": "vitest run -c vitest.eval.config.ts",
     "test:electron-daemon": "npm run build && node scripts/test-electron-daemon-smoke.mjs",
     "test:electron-daemon:built": "node scripts/test-electron-daemon-smoke.mjs",
+    "test:repl-pty:built": "node tests/repl-pty-acceptance.mjs",
     "bench:perf": "tsx benchmark/perf/repl-render-perf.bench.ts",
     "bench:perf:e2e": "tsx benchmark/perf/repl-render-engine-e2e.bench.ts",
     "bench:repo-intel": "tsx benchmark/perf/repo-intelligence-index.bench.ts",

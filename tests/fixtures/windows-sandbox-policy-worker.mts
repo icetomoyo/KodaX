@@ -6,7 +6,6 @@ import { toolBash } from '../../packages/coding/src/tools/bash.ts';
 import {
   createAsrtShellSandbox,
   doctorSandboxRuntime,
-  setupSandboxRuntime,
 } from '../../src/sandbox-runtime.ts';
 
 function requiredEnvironment(name: string): string {
@@ -31,14 +30,6 @@ function errorDiagnostic(value: unknown, depth = 0): string {
       )).join('\n')}`;
 }
 
-function hasOnlyRepairableAclGuardDiagnostics(diagnostics: readonly string[]): boolean {
-  const blocking = diagnostics.filter(
-    (diagnostic) => !diagnostic.startsWith('[legacy_acl_state_ignored]'),
-  );
-  return blocking.length > 0
-    && blocking.every((diagnostic) => diagnostic.startsWith('[acl_guards_missing]'));
-}
-
 const workspace = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_WORKSPACE'));
 const barrierScript = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_BARRIER'));
 const barrierDirectory = path.resolve(requiredEnvironment('KODAX_CROSS_PROCESS_BARRIER_DIR'));
@@ -57,13 +48,7 @@ const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.pu
 let result = '';
 let error: string | undefined;
 try {
-  let doctor = await doctorSandboxRuntime({ refresh: true });
-  if (
-    !doctor.ready
-    && hasOnlyRepairableAclGuardDiagnostics(doctor.diagnostics)
-  ) {
-    doctor = await setupSandboxRuntime();
-  }
+  const doctor = await doctorSandboxRuntime({ refresh: true });
   if (!doctor.ready) {
     throw new Error(`Windows sandbox is unavailable: ${JSON.stringify(doctor)}`);
   }

@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -538,7 +539,7 @@ import {
   type InkClientPlane,
 } from "./client-plane.js";
 import { createClientInputQueue } from "./client-input-queue.js";
-import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
+import type { ClientSessionView, ClientSessionSettingsPatch } from "@kodax-ai/coding/client-contract";
 import { SessionReadError } from "../interactive/storage.js";
 import type {
   PreparedSessionAppendBaseline,
@@ -4409,13 +4410,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isCompacting: effectivePromptStreamingState.isCompacting,
     };
   const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : effectivePromptIsLoading;
+  const settingsWriteRef = useRef<Promise<unknown>>(Promise.resolve());
+  const settingsSelectionRef = useRef({ sessionId: context.sessionId,
+    patch: clientSessionSettings(currentConfig, options.maxIter) });
   useEffect(() => {
-    void options.runtimeAutoModeControl?.syncSettings?.(
-      context.sessionId,
-      canonicalizePermissionMode(currentConfig.permissionMode),
-      autoModeSettings,
-    );
-  }, [autoModeSettings, context.sessionId, currentConfig.permissionMode, options.runtimeAutoModeControl]);
+    const sessionId = context.sessionId;
+    const patch = { ...clientSessionSettings(currentConfig, options.maxIter),
+      autoModeClassifierModel: autoModeSettings.classifierModel ?? null };
+    const previous = settingsSelectionRef.current;
+    const changes = previous.sessionId === sessionId
+      ? changedClientSessionSettings(previous.patch, patch)
+      : patch;
+    if (Object.keys(changes).length === 0) return;
+    const write = async (): Promise<void> => {
+      if (options.clientPlane?.updateSettings) await options.clientPlane.updateSettings(sessionId, changes);
+      else await options.runtimeAutoModeControl?.syncSettings?.(
+        sessionId, canonicalizePermissionMode(currentConfig.permissionMode), autoModeSettings);
+      settingsSelectionRef.current = { sessionId, patch };
+    };
+    settingsWriteRef.current = settingsWriteRef.current.then(write, write);
+    void settingsWriteRef.current.catch((error: unknown) => emitKodaXDiagnostic({
+      source: 'repl:settings', level: 'error', message: 'Session settings could not be synchronized.', detail: error,
+    }));
+  }, [autoModeSettings, context.sessionId, currentConfig.provider, currentConfig.model,
+    currentConfig.effort, currentConfig.effortOverride, currentConfig.planModeEffort,
+    currentConfig.thinking, currentConfig.reasoningMode, currentConfig.agentMode,
+    currentConfig.permissionMode, options.clientPlane, options.maxIter, options.runtimeAutoModeControl]);
   const statusBarProps = useMemo(
     () =>
       buildSurfaceStatusBarProps({
@@ -5713,17 +5733,40 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   }
 
+  const selectClientConfig = useCallback(async (next: CurrentConfig,
+    explicit: readonly (keyof ClientSessionSettingsPatch)[]): Promise<void> => {
+    const plane = options.clientPlane;
+    if (plane?.updateSettings) {
+      const sessionId = context.sessionId;
+      const patch = changedClientSessionSettings(clientSessionSettings(currentConfigRef.current, options.maxIter),
+        clientSessionSettings(next, options.maxIter), explicit);
+      const write = async () => {
+        await plane.updateSettings!(sessionId, patch);
+        settingsSelectionRef.current = { sessionId, patch: { ...settingsSelectionRef.current.patch, ...patch } };
+      };
+      settingsWriteRef.current = settingsWriteRef.current.then(write, write);
+      await settingsWriteRef.current;
+    }
+    currentConfigRef.current = next;
+    setCurrentConfig(next);
+  }, [context.sessionId, options.clientPlane, options.maxIter]);
+
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
     const canonicalMode = canonicalizePermissionMode(mode);
     const updateId = ++permissionModeUpdateRef.current;
+    if (options.clientPlane?.updateSettings) {
+      const plane = options.clientPlane;
+      const sessionId = context.sessionId;
+      const patch = { permissionMode: canonicalMode };
+      const write = () => plane.updateSettings!(sessionId, patch);
+      settingsWriteRef.current = settingsWriteRef.current.then(write, write);
+      await settingsWriteRef.current;
+    } else {
+      await options.runtimeAutoModeControl?.syncSettings?.(context.sessionId, canonicalMode, autoModeSettings);
+    }
+    if (updateId !== permissionModeUpdateRef.current) return;
     setCurrentConfig((prev) => ({ ...prev, permissionMode: canonicalMode }));
     permissionModeRef.current = canonicalMode;
-    await options.runtimeAutoModeControl?.syncSettings?.(
-      context.sessionId,
-      canonicalMode,
-      autoModeSettings,
-    );
-    if (updateId !== permissionModeUpdateRef.current) return;
     const modeEffortResolution = resolveProviderReasoningRuntimeEffort({
       provider: currentConfigRef.current.provider,
       model: currentConfigRef.current.model,
@@ -5742,7 +5785,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       effort: modeEffortResolution.runtimeEffort,
       guardrails: buildAutoModeGuardrails(canonicalMode, autoModeBootstrap),
     };
-  }, [autoModeBootstrap, autoModeSettings, context.sessionId, options.runtimeAutoModeControl]);
+  }, [autoModeBootstrap, autoModeSettings, context.sessionId, options.clientPlane, options.maxIter, options.runtimeAutoModeControl]);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
   const lastInterruptEscapeAtRef = useRef(0);
@@ -8322,6 +8365,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // faces and display comes from the live session view, so none of the
     // in-process event/run-option assembly below applies.
     if (options.clientPlane) {
+      await settingsWriteRef.current;
       return await runClientPlaneRound({
         plane: options.clientPlane,
         submit: clientInputQueue ? (input) => clientInputQueue.submit(input, originalPrompt) : undefined,
@@ -9281,6 +9325,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const targetRunId = delivery === 'redirect' && clientViewRef.current
       ? viewRunsActive(clientViewRef.current) : undefined;
     try {
+      await settingsWriteRef.current;
       const acceptance = await clientInputQueue.submitPrompt({
         sessionId, text, inputId: mintInkInputId(), delivery,
         ...(targetRunId !== undefined ? { targetRunId } : {}),
@@ -9961,8 +10006,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               context.sessionSnapshotDirty = false;
             }
           },
-          startNewSession: () => {
+          startNewSession: async () => {
             const nextSessionId = generateSessionId();
+            if (options.sessionCommands) {
+              await options.sessionCommands.create({
+                sessionId: nextSessionId,
+                title: 'REPL Session',
+                gitRoot: startupRuntimeInfo.workspaceRoot ?? undefined,
+                projectPath: startupRuntimeInfo.executionCwd ?? startupRuntimeInfo.workspaceRoot ?? process.cwd(),
+                surface: 'repl',
+              });
+              await options.clientPlane?.updateSettings?.(nextSessionId,
+                clientSessionSettings(currentConfigRef.current, options.maxIter));
+            }
             const now = new Date().toISOString();
             context.sessionId = nextSessionId;
             context.title = "";
@@ -9996,21 +10052,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             getActivePasteStore()?.reset();
             setSessionId(nextSessionId);
             teamModeHandle?.writer.update({ sessionId: nextSessionId });
-            // FEATURE_298 T34 — the Host owns session creation; the local
-            // writer stays untouched for a brand-new session until the
-            // first run.
-            if (options.sessionCommands) {
-              void options.sessionCommands.create({
-                sessionId: nextSessionId,
-                title: 'REPL Session',
-                ...(context.gitRoot !== undefined ? { gitRoot: context.gitRoot } : {}),
-                surface: 'repl',
-              }).catch((error: unknown) => {
-                const message = error instanceof Error ? error.message : String(error);
-                console.log(chalk.yellow(`
-[New session could not be registered with the Host: ${message}]`));
-              });
-            }
           },
           loadSession: async (id: string) => {
             const loaded = await storage.load(id);
@@ -10029,6 +10070,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               if (savedRuntime?.workspaceRoot && !workspaceExists(savedRuntime)) {
                 appliedRuntime = currentWorkspaceRuntime;
               }
+              await settingsWriteRef.current;
+              await options.clientPlane?.updateSettings?.(id, {
+                ...clientSessionSettings(currentConfigRef.current, options.maxIter),
+                autoModeClassifierModel: autoModeSettings.classifierModel ?? null,
+              });
               context.messages = loaded.messages;
               context.uiHistory = normalizePersistedUiHistory(loaded.uiHistory);
               context.lineage = loaded.lineage;
@@ -10113,7 +10159,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
             console.log();
           },
-          switchProvider: (provider: string, model?: string) => {
+          switchProvider: async (provider: string, model?: string) => {
             const effortResolution = resolveProviderReasoningRuntimeEffort({
               provider,
               model,
@@ -10124,7 +10170,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               thinking: currentConfigRef.current.thinking,
               reasoningMode: currentConfigRef.current.reasoningMode,
             });
-            setCurrentConfig((prev) => ({ ...prev, provider, model }));
+            await selectClientConfig({ ...currentConfigRef.current, provider, model }, ['provider', 'model']);
             currentOptionsRef.current.provider = provider;
             currentOptionsRef.current.model = model;
             currentOptionsRef.current.effort = effortResolution.runtimeEffort;
@@ -10132,28 +10178,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               console.log(chalk.yellow(`\n[${effortResolution.diagnostic}]`));
             }
           },
-          setEffort: (effort?: string) => {
-            setCurrentConfig((prev) => ({
-              ...prev,
+          setEffort: async (effort?: string) => {
+            await selectClientConfig({
+              ...currentConfigRef.current,
               effort,
               effortOverride: effort !== undefined,
-            }));
+            }, ['effort']);
           },
-          setReasoningMode: (mode: KodaXReasoningMode) => {
+          setReasoningMode: async (mode: KodaXReasoningMode) => {
             const thinking = mode !== 'off';
-            setCurrentConfig((prev) => ({
-              ...prev,
+            await selectClientConfig({
+              ...currentConfigRef.current,
               thinking,
               reasoningMode: mode,
-            }));
+            }, ['reasoningMode', 'thinking']);
             currentOptionsRef.current.thinking = thinking;
             currentOptionsRef.current.reasoningMode = mode;
           },
-          setAgentMode: (mode) => {
-            setCurrentConfig((prev) => ({
-              ...prev,
+          setAgentMode: async (mode) => {
+            await selectClientConfig({
+              ...currentConfigRef.current,
               agentMode: mode,
-            }));
+            }, ['agentMode']);
             currentOptionsRef.current.agentMode = mode;
           },
           setPermissionMode: setSessionPermissionMode,
@@ -11055,6 +11101,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       dismissLearningRecovery,
       replaceWorkflowLiveStatus,
       updateWorkflowLiveStatus,
+      selectClientConfig,
+      setSessionPermissionMode,
     ]
   );
 
@@ -11823,6 +11871,17 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     existingExtensionRecords,
   });
   context.title = sessionTitle;
+  // The first view and input both require a Session already owned by the Host.
+  if (sessionId === undefined && options.sessionCommands) {
+    await options.sessionCommands.create({
+      sessionId: context.sessionId,
+      title: context.title,
+      gitRoot: context.gitRoot,
+      projectPath: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
+      surface: 'repl',
+    });
+  }
+  await options.clientPlane?.updateSettings?.(context.sessionId, clientSessionSettings(currentConfig, options.maxIter));
   options = {
     ...options,
     context: {

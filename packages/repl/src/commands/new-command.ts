@@ -46,7 +46,7 @@ export const newCommand: Command = {
     }
 
     // Clear the history
-    callbacks.startNewSession?.();
+    await callbacks.startNewSession?.();
     context.messages = [];
     callbacks.clearHistory();
 

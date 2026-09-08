@@ -5331,6 +5331,7 @@ complete -c kodax -l version -d 'Show version'`);
               sessionId: string;
               title: string;
               gitRoot?: string;
+              projectPath?: string;
               surface: string;
             }) => interactiveRuntime.sessions.create(input).then(() => undefined),
           },

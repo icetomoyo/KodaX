@@ -61,11 +61,10 @@ async function run() {
   }
 
   prepareEnvironmentProbeExtension();
-  const { connectKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
-  const runtime = await connectKodaXRuntime({
+  const { ensureKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+  const runtime = await ensureKodaXRuntime({
     homeDir,
     profile,
-    autoStart: true,
     clientInfo: { name: 'packaged-electron-smoke', instanceId: 'packaged-electron-smoke' },
     requirements: { daemonManagement: 1 },
   });
@@ -200,7 +199,6 @@ async function run() {
           sessionId: session.id,
           prompt: `ordinary query ${index}`,
           options: { provider: 'windows-hide-smoke' },
-          operation: { operationId: `windows-hide-smoke-${sessionId}-${index}` },
         });
         const completed = await handle.result;
         if (completed.phase !== 'completed') {

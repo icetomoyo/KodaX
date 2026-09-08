@@ -2084,6 +2084,7 @@ export async function runSubstrate(
           // so the recovery pipeline treats it as a stalled-stream rather
           // than a clean user-cancel. User-driven aborts pass through.
           error = await translateAbortError(error, retryTimeoutController, options.abortSignal);
+          if (error.name === 'AbortError' && options.abortSignal?.aborted) throw error;
 
           // CAP-069: classify → decide → emit (onProviderRecovery + onRetry).
           const failureStage = boundarySession.inferFailureStage();

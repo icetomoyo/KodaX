@@ -148,6 +148,7 @@ export interface SessionCommandBinding {
     readonly sessionId: string;
     readonly title: string;
     readonly gitRoot?: string;
+    readonly projectPath?: string;
     readonly surface: string;
   }): Promise<void>;
 }
@@ -183,15 +184,15 @@ export interface CommandCallbacks {
   readonly refreshSessionLineage?: () => Promise<KodaXSessionLineage | undefined>;
   /** FEATURE_298 T34 — Host-owned manual compaction; unbound compacts locally. */
   readonly compactSession?: SessionCompactBinding;
-  startNewSession?: () => void;
+  startNewSession?: () => void | Promise<void>;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;
   clearHistory: () => void;
   printHistory: () => void;
-  switchProvider?: (provider: string, model?: string) => void;
-  setEffort?: (effort?: string) => void;
-  setReasoningMode?: (mode: KodaXReasoningMode) => void;
-  setAgentMode?: (mode: KodaXAgentMode) => void;
+  switchProvider?: (provider: string, model?: string) => void | Promise<void>;
+  setEffort?: (effort?: string) => void | Promise<void>;
+  setReasoningMode?: (mode: KodaXReasoningMode) => void | Promise<void>;
+  setAgentMode?: (mode: KodaXAgentMode) => void | Promise<void>;
   setPermissionMode?: (mode: PermissionMode) => void | Promise<void>;
   setRepoIntelligenceRuntime?: (update: {
     mode?: KodaXRepoIntelligenceMode;

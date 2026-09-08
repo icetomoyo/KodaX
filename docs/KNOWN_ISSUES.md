@@ -7,6 +7,13 @@ _Last Updated: 2026-09-08_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## v0.7.97 产品入口验收未关闭项
+
+- **多客户端设置显示同步**：另一 Client 修改 Session 的模型或权限后，Host/SDK 视图已更新，但当前 REPL 的本地配置和状态栏没有随之刷新。本轮修复了显式设置写入与确认顺序，并避免未修改字段覆盖其他客户端的设置；这不等于完成反向同步。需通过既有 Session 视图更新本地显示，并验证两个真实客户端的一致性。
+- **旧 legacy 渲染器历史跳转**：Windows 下强制 `KODAX_FORCE_INK=1` 时，搜索界面提示可以跳转，但非 viewport 路径可能把屏幕外历史误判为已可见，Enter 后仍看不到目标消息。当前 owned 渲染器的真实 PTY 搜索/冻结浏览已通过；该结果不覆盖 legacy 路径。
+
+证据与本轮已修复问题见 [真实产品入口自动化验收](REVIEW_v0.7.97_FINAL.md#真实产品入口自动化验收)。两项均保持未关闭，不以自动测试总数豁免。
+
 ## v0.7.96-beta.3 Release Corrections
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.

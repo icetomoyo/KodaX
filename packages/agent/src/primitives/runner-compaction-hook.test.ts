@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
 import { createAgent, type Agent } from './agent.js';
 import { attachRunnerRecoveryTranscript, readRunnerRecoveryTranscript, Runner } from './runner.js';
 import { ContextCapacityError } from '../context-capacity.js';
-import { KodaXContextOverflowError } from '@kodax-ai/llm';
+import { KodaXContextOverflowError, KodaXNetworkError } from '@kodax-ai/llm';
 import type {
   RunnableTool,
   RunnerLlmResult,
@@ -48,6 +48,25 @@ const agentNoTools: Agent = createAgent({
 });
 
 describe('Runner compactionHook — FEATURE_179 trigger parity', () => {
+  it('preserves an independent network failure when caller cancellation races its rejection', async () => {
+    const controller = new AbortController();
+    const failure = new KodaXNetworkError('Connection reset by remote peer.', true);
+    let recoveryAttempts = 0;
+    await expect(Runner.run(agentNoTools, 'continue', {
+      tracer: null,
+      abortSignal: controller.signal,
+      llm: async () => {
+        controller.abort(new Error('User cancelled.'));
+        throw failure;
+      },
+      compactionHook: async (_messages, rejection) => {
+        if (rejection) recoveryAttempts += 1;
+        return undefined;
+      },
+    })).rejects.toBe(failure);
+    expect(recoveryAttempts).toBe(0);
+  });
+
   it('retries a rejected generation once after replacing history without reexecuting tools', async () => {
     let toolExecutions = 0;
     let calls = 0;
