@@ -3503,7 +3503,7 @@ async function runMemoryReviewDrain(input: {
     config.model,
   );
   const cwd = process.cwd();
-  const sessionId = generateSessionId();
+  const sessionId = await generateSessionId();
   const baseOptions: KodaXOptions = {
     provider: providerName,
     ...(model === undefined ? {} : { model }),

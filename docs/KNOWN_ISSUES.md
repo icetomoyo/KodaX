@@ -1,11 +1,40 @@
 # Known Issues
 
-_Last Updated: 2026-09-03_
+_Last Updated: 2026-09-08_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## v0.7.96-beta.3 Release Corrections
+
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
+See [WFP probe delivery and validation](patches/asrt-0.0.65-wfp-probe.md).
+
+## v0.7.96-beta.2 Release Corrections
+
+The beta.2 corrections close the remaining v0.7.96 Provider and long-session
+gaps without changing the beta.1 sandbox, trusted-text, or permission
+contracts. Long coding sessions now recover at context capacity boundaries:
+vLLM prompt counts are parsed without confusing output tokens or bounds, the
+response reserve is reclaimed before terminal checks, recoverable tool-output
+previews persist as durable artifacts when protected recent history cannot
+fit, and a confirmed upstream overflow permits one generation retry after
+persisted history reduction without replaying tools (ADR-067 correction).
+
+Issue 332: bundled Provider credential scopes are again shared across SDK,
+Agent summaries, CLI, and Runtime Worker requests, restoring keychain-only
+manual and managed compaction; production build graphs reject duplicated
+credential modules. Issue 330: structured, credential-safe Child Agent
+Provider failures survive Actor settlement and SDK Runtime diagnostics instead
+of collapsing to `failed without output`. Issue 331: custom Provider
+credential verification honors exact and lazy run-scoped authority, includes
+credential acquisition in the timeout, fails closed for denied scopes, and
+redacts opaque scoped credentials from diagnostics. Issue 329: tool-free side
+queries omit empty `tools` arrays on OpenAI- and Anthropic-compatible wire
+requests, remaining compatible with strict vLLM gateways.
 
 ## v0.7.96-beta.1 Release Corrections
 
@@ -315,9 +344,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96 development | 2026-09-04 | 2026-09-04 |
-| 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
-| 329 | High | Resolved | Provider adapters serialize empty tool arrays for tool-free requests | v0.7.95 and earlier | v0.7.96 development | 2026-09-04 | 2026-09-04 |
+| 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
+| 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
+| 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
+| 329 | High | Resolved | Provider adapters serialize empty tool arrays for tool-free requests | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
 | 328 | High | Resolved | Linux FEATURE_295 native text authority requires glibc newer than the supported private-deployment floor | v0.7.96-alpha.1 Linux native release build | v0.7.96-beta.1 | 2026-09-03 | 2026-09-03 |
 | 327 | High | Resolved | Windows Bun release loses terminal input after selecting a session with bare `kodax -r` | Bun-compiled Windows release archive (confirmed v0.7.96-alpha.5) | v0.7.96-alpha.6 | 2026-09-01 | 2026-09-01 |
 | 326 | High | Resolved | Machine-global ACL admission and filesystem-effect coordination serialized independent sandbox Bash and trusted writes across KodaX processes | initial v0.7.96-alpha.4 source candidate (`fbbe3ca8`) | v0.7.96-alpha.6 | 2026-08-30 | 2026-09-01 |
@@ -535,12 +565,73 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
 
+### 332: Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: scoped lease bundle path (confirmed v0.7.96-beta.1)
+- **Fixed**: v0.7.96-beta.2
+- **Created**: 2026-09-07
+- **Resolved**: 2026-09-07
+
+#### Original Problem
+
+Space's v2 scoped `sessions.compact` binding reached the daemon, but the broker
+received zero credential requests and compaction failed with `<ENV> not set`.
+Managed compaction used the same broken summary path. The official npm beta.1
+artifact reproduces this with both built-in and custom OpenAI/Anthropic Providers.
+
+The summary generator already called `withProviderRequestCredential` with
+`purpose: 'compaction'`. However, esbuild discovered the Agent package's local
+TypeScript paths and resolved that import to `llm/src`, while Runtime and Provider
+imports resolved to `llm/dist`. Two credential AsyncLocalStorage instances were
+bundled. The summary wrapper saw no scope and skipped acquisition; the Provider
+saw the other instance's lease, correctly refused ambient fallback, and failed.
+Vitest's source aliases hid this production-only module identity mismatch.
+
+Credential-bound manual compaction already propagates errors; the legacy unbound
+session facade returns a skipped reason. Managed transient summary failures retain
+their existing fail-open/circuit-breaker behavior (ADR-067). Those semantics are
+outside this build correction.
+
+#### Resolution
+
+`scripts/build-bundle.mjs` explicitly selects the root TypeScript configuration,
+so all workspace imports use the existing compiled package exports. Package-local
+development paths, standalone package builds, external dependencies, startup
+budgets, lazy imports, and Worker layout are unchanged. CLI, SDK, Semantic Worker,
+and Runtime Worker builds now reject a missing or duplicated credential module
+using esbuild's actual input graph.
+
+#### Tests Added
+
+- `tests/bundled-provider-credentials.test.mjs`: built-in/custom OpenAI and
+  Anthropic summary requests with and without cached prefixes; exact/env legacy
+  compatibility; rejected allowlists, closed leases, and empty broker responses.
+- `tests/bundled-daemon-compaction.test.mjs`: real daemon and local HTTP Provider;
+  manual success and provider authentication rejection, exact operation target,
+  managed compaction committed event, normal primary request, and verified shutdown.
+- `npm run test:bundle`: executes with Node against actual `dist` imports, outside
+  Vitest aliases. CI runs it on Linux Node 20/22 and Windows; release gates run it
+  on all five native platform targets before binary packaging.
+
+#### Validation
+
+The original artifact failed all eight Provider summary cases with `<ENV> not set`.
+The corrected build passes all 13 artifact tests, including actual manual and
+managed daemon compaction. Workspace TypeScript build, complete bundle generation
+and its existing startup/sidecar/Windows child-process guards, and SDK declaration
+generation passed. The fast suite passed 1,659 tests (32 skipped), and the focused
+credential/compaction/daemon suite passed 261 tests. All 13 artifact tests also
+passed against the unpacked npm package. Space and cross-platform checks are in
+[the regression guide](test-guides/ISSUE_332_v0.7.96_REGRESSION_GUIDE.md).
+
 ### 331: Scoped custom Provider credential verification ignores active credential authority
 
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: run-scoped credential verification path (confirmed v0.7.95)
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
@@ -571,7 +662,7 @@ verification errors. Ambient-environment behavior without a scope is unchanged.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.95 and earlier
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
@@ -619,7 +710,7 @@ tool executes exactly once before the second Provider request fails.
 - **Priority**: High
 - **Status**: Resolved
 - **Introduced**: v0.7.95 and earlier
-- **Fixed**: v0.7.96 development
+- **Fixed**: v0.7.96-beta.2
 - **Created**: 2026-09-04
 - **Resolved**: 2026-09-04
 
@@ -14273,11 +14364,16 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 210 (34 Open, 176 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 211 (34 Open, 177 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-07: Issue 332 resolved (bundled Provider credential scope identity)
+
+- Unified esbuild workspace resolution and added production-graph checks plus
+  real daemon credential/compaction tests to the CI and release gates.
 
 ### 2026-09-03: Issue 328 resolved (Linux glibc 2.28 native ABI)
 

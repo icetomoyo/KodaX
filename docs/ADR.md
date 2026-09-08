@@ -1,8 +1,10 @@
 # KodaX Architecture Decision Records
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Last updated: 2026-09-03
 >
-> **v0.7.96-beta.1 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-beta.3 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with
@@ -5756,6 +5758,33 @@ and Job source at `2764e836`; independent architecture, security, and
 concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
+
+**2026-09-07 correction (long coding sessions)**: the ladder below now also
+relieves committed tool-result bodies when semantic compaction plus a reclaimed
+response reserve cannot fit. It scans oldest first, including the latest
+completed batch, while preserving tool IDs, pairing, protected control/skill
+results, and the original full evidence in durable artifacts. Existing trusted
+artifact metadata permits shrinking a preview without saving that preview as
+the full output. Replacement messages are immutable and committed through the
+existing compaction persistence event. If a summary was already committed before
+a later relief failure, terminal recovery carries that committed history.
+
+A confirmed upstream context rejection now permits one generation retry after
+actual, persisted context reduction; tool execution is never replayed. Exact
+prompt counts may lower the existing output cap once, but lower bounds and
+character prechecks are not usage samples and never justify that output retry.
+They force a bounded history-recovery attempt. Rejection snapshots are
+request-local estimates, replaced by successful API usage; request-only user
+relief is accounted separately from canonical history. Effective AMA history
+relief rearms the summary breaker. The fresh-user and tool-result rungs compose.
+There is no new estimator ratio, configuration knob, or unconditional resend.
+
+Local capacity errors carry `input + reserved output + safety` and the window
+from the actual failing operation. Trusted typed upstream overflow is classified
+as `context_capacity / transport`; its numeric `contextOverflow` evidence keeps
+`exact`, `lower_bound`, and `unknown` distinct and is not displayed as an invented
+exact required total. These corrections supersede the earlier one-request and
+classification-only rejection statements below.
 
 **Status**: Accepted and shipped in v0.7.96-alpha.1 (2026-08-27); supersedes
 the Issue 158 closure record's hard-gate defaults.

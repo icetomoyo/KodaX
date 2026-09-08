@@ -64,6 +64,37 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('retires the old RPC connection when the same stable identity takes over', async () => {
+    const hub = createRuntimeDaemonReverseBridgeHub();
+    const runtime = makeRuntime();
+    const first = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const second = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const params = { clientInfo: { instanceId: 'space', instanceSecret: 's'.repeat(32) } };
+    try {
+      expect(isRuntimeDaemonSuccessResponse(await first.handle(
+        createRuntimeDaemonRequest('init-a', 'initialize', params),
+      ))).toBe(true);
+      expect(isRuntimeDaemonSuccessResponse(await second.handle(
+        createRuntimeDaemonRequest('init-b', 'initialize', params),
+      ))).toBe(true);
+      second.close();
+      for (const request of [
+        createRuntimeDaemonRequest('ping-a', 'ping'),
+        createRuntimeDaemonRequest('lease-a', 'credential.register', {
+          leaseId: 'lease-a', providers: ['openai'], brokerVersion: 2,
+        }),
+      ]) {
+        expect(await first.handle(request)).toMatchObject({
+          kind: 'error', error: { code: 'read_cancelled', message: expect.stringMatching(/connection.*closed/i) },
+        });
+      }
+    } finally {
+      first.close();
+      second.close();
+      hub.close();
+    }
+  });
+
   it('passes Agent revision fences and maps stale follow-ups to conflict', async () => {
     const runtime = makeRuntime();
     const detail = vi.spyOn(runtime.agents, 'detail').mockRejectedValue(
@@ -669,7 +700,7 @@ describe('runtime daemon dispatcher', () => {
       startedAt: '2026-08-09T00:00:00.000Z',
       provider: 'mock',
       lifecycleError: {
-        code: 'run_control_unknown',
+        code: 'run_settlement_not_persisted',
         message: 'Run control is unknown.',
         retryable: false,
       },
@@ -1235,8 +1266,9 @@ describe('runtime daemon dispatcher', () => {
     const disposeCollidingTool = registerTool({
       name: 'space_colliding_tool',
       description: 'Registered before the host binding attempts the same name',
-      input_schema: { type: 'object' },
+      input_schema: { type: 'object', properties: {} },
       handler: async () => 'ok',
+      toClassifierInput: () => 'readonly test tool',
       sideEffect: 'readonly',
       planModeAllowed: true,
     });
@@ -1798,7 +1830,7 @@ describe('runtime daemon dispatcher', () => {
           },
         },
       });
-      const settingsCapability = initialized.capabilities.sharedSessionSettings;
+      const settingsCapability = (initialized as { capabilities: { sharedSessionSettings: { version: number; keys: string[] } } }).capabilities.sharedSessionSettings;
       expect(settingsCapability.version).toBe(2);
       expect(settingsCapability.keys).not.toContain('autoModeEngine');
       expect(settingsCapability.keys).not.toContain('autoModeTimeoutMs');
@@ -3860,6 +3892,8 @@ function createTestInteractions(
 
 function createTestCredentialService(): KodaXRuntime['credentials'] {
   return {
+    async registerScoped(input) { return { id: 'credential-test', ...input, brokerVersion: 2 }; },
+    async resumeScoped() { throw new Error('Missing credential lease.'); },
     async register(input) { return { id: 'credential-test', ...input }; },
     async resume() { throw new Error('Missing credential lease.'); },
     async revoke() { return false; },
@@ -3888,14 +3922,14 @@ function createTestObservation(sessionId: string): RuntimeSessionObservation {
       pendingPermissions: [],
       live: {
         assistantTextByRun: {},
-        thinkingTextByRun: {},
         outputSegmentsByRun: {},
+        thinkingTextByRun: {},
         activeTools: [],
         pendingUserInputs: [],
         managedTasks: [],
       },
     },
-    invalidated: new Promise<RuntimeObservationInvalidation>(() => undefined),
+    invalidated: new Promise<never>(() => undefined),
     close() {},
   };
 }
@@ -3904,4 +3938,3 @@ function createTestObservation(sessionId: string): RuntimeSessionObservation {
 function isTestRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-

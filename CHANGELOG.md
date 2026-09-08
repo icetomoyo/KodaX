@@ -6,8 +6,55 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-beta.3] - 2026-09-08
+
+Third beta pre-release of the v0.7.96 line, retaining beta.2 context recovery
+and Provider fixes. npm publication remains a manual maintainer action.
+
 ### Fixed
 
+- Repair Windows WFP probe allocation in KodaX doctor and ASRT 0.0.65: bind
+  bounded distinct candidates below the proxy permit range and keep successful
+  listeners alive through verification. SDK bundles, standalone binaries, and
+  npm tarballs ship the audited dependency patch, including installs with
+  `--ignore-scripts`. Build/pack rejects unexpected dependency source bytes.
+  Build/pack CLI entry detection resolves real paths so linked workspaces and
+  macOS temporary-directory aliases execute the patch and validation checks.
+  Windows allocation, installed-package, and packaged Electron gates cover
+  delivery and behavior; native protocol/setup and permission contracts stay unchanged.
+
+- Separate production and source-test TypeScript checks while retaining SDK
+  packaging and public entry points. Correct stale test contracts, await the
+  memory-review Session ID, complete A2A task-state projection, and return the
+  existing daemon-only error from embedded scoped credential methods.
+- Retire the old RPC connection and socket when the same authenticated client
+  identity takes over the credential/Host Tool reverse bridge. Clients now
+  observe a reconnectable disconnect instead of remaining RPC-connected with
+  an unusable credential channel. Reconnection can resume live scoped leases;
+  stale closes/replies cannot detach the successor or replay dispatched tools.
+
+## [0.7.96-beta.2] - 2026-09-07
+
+Second beta pre-release of the v0.7.96 line: it retains the beta.1 sandbox-
+first, trusted-text, and permission-profile feature set plus the Linux glibc
+2.28 native build fix, and adds long-session context-boundary recovery and
+Provider correctness fixes below. npm publication remains a separate manual
+maintainer action.
+
+### Fixed
+
+- Recover long coding sessions at context boundaries: parse vLLM prompt counts
+  without confusing output tokens or bounds, reclaim response reserve before
+  terminal checks, and persist recoverable tool-output previews when protected
+  recent history cannot fit. SA and AMA retry a rejected generation once after
+  actual history reduction without replaying tools. Capacity diagnostics include
+  safety margin and distinguish upstream bounds from exact token counts.
+- Keep bundled Provider credential scopes shared across SDK, Agent summaries,
+  CLI, and Runtime Worker requests, restoring keychain-only manual and managed
+  compaction. Add bundle identity checks and real daemon broker regressions
+  to CI and release gates (Issue 332).
 - Omit empty `tools` arrays from OpenAI- and Anthropic-compatible streaming and
   non-streaming wire requests, so tool-free side queries such as Auto[LLM]
   classification remain compatible with strict vLLM gateways (Issue 329).
@@ -19,6 +66,11 @@ All notable changes to this project will be documented in this file.
   credential authority, include credential acquisition in the timeout, fail
   closed for denied scopes, and redact opaque scoped credentials from returned
   diagnostics (Issue 331).
+- Keep the cap-006 post-tool-result failure contract off the full-workspace
+  repo-intelligence indexing path (`repoIntelligenceMode: 'off'`, matching the
+  cap-057/cap-091/cap-095 precedent). The contract test previously indexed the
+  whole workspace before `onSessionStart` and exceeded its 30-second budget
+  under CI parallelism; the failure-shape contract is unchanged.
 
 ## [0.7.96-beta.1] - 2026-09-03
 
@@ -5137,7 +5189,7 @@ repl            → coding, skills
 ### Tests
 - Added / expanded tests for `task-engine`, `reasoning`, `tool-display`, `live-streaming`, `StatusBar`, `invocation-runtime`, `types-legacy`, and `InkREPL.interrupted`
 
-<!-- last-sync: dfce6cd5 -->
+<!-- last-sync: 173418a417899899cb3757309f72d9066efd6f56 -->
 
 ### Added
 - **Repository intelligence substrate (FEATURE_018)**: Task-aware repository intelligence layer under `.agent/repo-intelligence/` with durable artifacts — `repo-overview.json`, `changed-scope.json`, `module-index.json`, `symbol-index.json`, `process-index.json`, `repo-intelligence-manifest.json` — supporting incremental refresh, freshness metadata, and language-tiered extraction (TS/JS via AST, Python, Go, Rust, Java, C++)

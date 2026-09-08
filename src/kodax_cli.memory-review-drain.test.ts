@@ -10,7 +10,37 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { configureKodaXMemoryCommand } from './kodax_cli.js';
 
+const drain = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
+  reviewed: 0, discarded: 0, failed: 0, deferred: 0,
+})));
+vi.mock('@kodax-ai/coding', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kodax-ai/coding')>(),
+  generateSessionId: async () => 'review-session',
+  resolveProvider: () => ({ isConfigured: () => true }),
+  installProductionLearningReviewer: (options: unknown) => options,
+  drainCodingMemoryReviewInbox: drain,
+}));
+vi.mock('@kodax-ai/agent', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kodax-ai/agent')>(),
+  createMemoryControlPlane: () => ({}),
+}));
+vi.mock('@kodax-ai/repl', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kodax-ai/repl')>(),
+  loadConfig: () => ({}),
+}));
+
 describe('FEATURE_289 §3.4 — kodax memory review-drain', () => {
+  it('passes a resolved session ID to the review drain', async () => {
+    const program = new Command().name('kodax').exitOverride();
+    configureKodaXMemoryCommand(program);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await program.parseAsync(['node', 'kodax', 'memory', 'review-drain', '--max', '1']);
+      expect(drain.mock.lastCall?.[3]).toBe('review-session');
+    } finally {
+      output.mockRestore();
+    }
+  });
   it('registers the memory command with a review-drain subcommand and --max option', () => {
     const program = new Command().name('kodax').exitOverride();
     const memory = configureKodaXMemoryCommand(program);

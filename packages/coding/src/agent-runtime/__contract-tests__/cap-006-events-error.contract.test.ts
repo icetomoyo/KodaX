@@ -157,7 +157,14 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
         model: 'tool-failure-model',
         reasoningMode: 'off',
         maxIter: 2,
-        context: { gitRoot: process.cwd(), executionCwd: process.cwd() },
+        // repoIntelligenceMode 'off' keeps this failure-shape contract off the
+        // full-workspace indexing path (cap-057/cap-091/cap-095 precedent); the
+        // read tool and the post-tool-result failure path are unaffected.
+        context: {
+          gitRoot: process.cwd(),
+          executionCwd: process.cwd(),
+          repoIntelligenceMode: 'off',
+        },
         events: { onTurnFailed },
       },
       'Read one line, then stop.',

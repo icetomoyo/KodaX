@@ -1482,5 +1482,5 @@ export {
   createExternalActorTurnExecutor,
   createLocalCodingActorControl,
 } from './agent-runtime/actor-runtime.js';
-export type { CodingActorSessionOptions } from './agent-runtime/actor-runtime.js';
+export type { CodingActorSessionOptions, CodingActorCredentialAccessFactory } from './agent-runtime/actor-runtime.js';
 export { resolveSkillModelOverride } from './skill-invocation-policy.js';

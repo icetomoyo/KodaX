@@ -54,6 +54,9 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
+      - name: Typecheck production source and source tests
+        run: npm run typecheck
+
       - name: Compile Linux native authority for glibc 2.28
         if: matrix.node == '22'
         run: node scripts/build-linux-native.mjs
@@ -69,6 +72,9 @@ jobs:
 
       - name: Build bundled SDK and Worker sidecars
         run: npm run build:bundle
+
+      - name: Bundled Provider credentials and daemon compaction
+        run: npm run test:bundle
 
       - name: Native trusted text transaction tests
         if: matrix.node == '22'
@@ -233,11 +239,17 @@ jobs:
       - name: Build packaged Electron gate inputs
         run: npm run build
 
+      - name: Bundled Provider credentials and daemon compaction
+        run: npm run test:bundle
+
       - name: Windows native transaction and runner tests
         run: npm run test:native
 
       - name: Windows trusted text integration and dependency boundary
         run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
+
+      - name: Windows WFP probe allocation regression
+        run: node node_modules/vitest/vitest.mjs run src/sandbox-runtime.test.ts -t "Windows WFP probe allocation"
 
       - name: Activate Windows v2 sandbox for packaged Electron gate
         env:

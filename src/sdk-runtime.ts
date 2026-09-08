@@ -97,6 +97,7 @@ import {
   createProviderCredentialLeaseScope,
   resolveProvider,
   getRuntimeModelProviderNames,
+  KodaXContextOverflowError,
   getProviderCredentialEnvironmentNames,
   redactScopedProviderCredential,
   runWithProviderCredentialLeaseScope,
@@ -105,6 +106,7 @@ import {
 import { appendGoalEntry, appendSessionLineageLabel, clearCapabilityCache, extractAssistantTextFromMessage, readLatestGoalState } from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
+  KodaXContextOverflowFacts,
   ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
@@ -228,6 +230,7 @@ import {
   type WorkflowModule,
   initializeSkillRegistry,
   ContextCapacityError,
+  calculateContextSafetyMargin,
   actorQueueId,
   enqueueWithArtifacts,
   getMessageQueue,
@@ -2227,6 +2230,8 @@ export interface RuntimeFailureDetail {
     readonly required: number;
     readonly available: number;
   };
+  /** Upstream token evidence; bounds are never presented as exact required totals. */
+  readonly contextOverflow?: KodaXContextOverflowFacts;
 }
 
 export interface RuntimeTerminalFact {
@@ -4576,7 +4581,7 @@ async function createKodaXRuntimeInternal(
       status.sessionId,
       Math.max(recoveredSessionOrders.get(status.sessionId) ?? 0, sessionOrder),
     );
-    const normalizedStatus = {
+    const normalizedStatus: RuntimeRunStatus = {
       ...status,
       acceptedAt: status.acceptedAt ?? status.startedAt,
       sessionOrder,
@@ -9168,7 +9173,9 @@ function createRuntimeRunService(deps: {
     return cancellation;
   };
 
-  const actorDurabilityFailureApplies = (record: RuntimeRunRecord): boolean =>
+  const actorDurabilityFailureApplies = (
+    record: RuntimeRunRecord,
+  ): record is RuntimeRunRecord & { actorDurabilityFailure: RuntimeRunFailureFact } =>
     record.actorDurabilityFailure !== undefined
     && record.actorDurabilityPreservesExecutorFact !== true;
   const executorPromiseSettled = (record: RuntimeRunRecord): boolean =>
@@ -9586,9 +9593,10 @@ function createRuntimeRunService(deps: {
     if (actorDurabilityFailureApplies(record)) {
       return record.actorDurabilityFailure;
     }
+    const stop = record.stop;
     const trustedManagedAbort =
       record.mode === "managed_task"
-      && record.stop !== undefined
+      && stop !== undefined
       && record.abortController?.signal.aborted === true
       && error instanceof Error
       && error.name === "AbortError";
@@ -9600,7 +9608,7 @@ function createRuntimeRunService(deps: {
         terminal: {
           code: "interrupted",
           effectOutcome: "unknown",
-          message: record.stop.reason,
+          message: stop.reason,
           failureKind: failureDetail.failureKind,
         },
       };
@@ -16532,6 +16540,8 @@ function parseRuntimeFailureDetail(
     ...(isRuntimeContextTokens(value.contextTokens)
       ? { contextTokens: value.contextTokens }
       : {}),
+    ...(readRuntimeContextOverflow(value.contextOverflow)
+      ? { contextOverflow: readRuntimeContextOverflow(value.contextOverflow) } : {}),
   };
 }
 
@@ -18480,17 +18490,18 @@ function wrapKodaXEvents(input: {
     onManagedTaskStatus(status) {
       if (actorDurabilityFenced()) return;
       input.display.onManagedTaskStatus?.(status);
-      if (record.mode === "managed_task" && status.phase === "completed") {
+      const phase = status.phase;
+      if (record.mode === "managed_task" && phase === "completed") {
         record.interruptInputOpen = false;
         onPhase("running");
         onStage("finalizing", 0);
-      } else if (record.mode === "managed_task") {
+      } else if (record.mode === "managed_task" && phase !== "completed") {
         onPhase(status.idleWaiting === true ? "waiting_agent" : "running");
         const activeSubtaskCount =
           status.idleWaitingPendingCount
           ?? (status.phase === "verifying" ? 0 : undefined);
         onStage(
-          status.phase
+          phase
             ?? (status.idleWaiting === true ? "waiting_agent" : "executing"),
           activeSubtaskCount,
         );
@@ -21544,6 +21555,8 @@ function buildRuntimeFailureDetail(
   const contextTokens = classification.failureKind === "context_capacity"
     ? readRuntimeContextTokens(source)
     : undefined;
+  const contextOverflow = source instanceof KodaXContextOverflowError
+    ? readRuntimeContextOverflow(source.capacity) : undefined;
   return {
     ...classification,
     safeMessage: runtimeFailurePublicMessage(classification),
@@ -21556,6 +21569,7 @@ function buildRuntimeFailureDetail(
     ...(requestPhase !== undefined ? { requestPhase } : {}),
     ...(isRuntimeElapsedMs(elapsedMs) ? { elapsedMs } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(contextOverflow !== undefined ? { contextOverflow } : {}),
   };
 }
 
@@ -21584,10 +21598,23 @@ function readRuntimeContextTokens(
   if (reservedResponseTokens !== undefined && !isNonNegativeSafeInteger(reservedResponseTokens)) {
     return undefined;
   }
-  const derivedRequired = currentTokens + (reservedResponseTokens ?? 0);
+  const derivedRequired = currentTokens + (reservedResponseTokens ?? 0)
+    + calculateContextSafetyMargin(currentTokens);
   return Number.isSafeInteger(derivedRequired)
     ? { required: derivedRequired, available: contextWindow }
     : undefined;
+}
+
+function readRuntimeContextOverflow(value: unknown): KodaXContextOverflowFacts | undefined {
+  if (!isRecord(value) || typeof value.inputTokensKind !== 'string'
+    || !['exact', 'lower_bound', 'unknown'].includes(value.inputTokensKind)) return undefined;
+  const contextWindow = typeof value.contextWindow === 'number' ? value.contextWindow : undefined;
+  const inputTokens = typeof value.inputTokens === 'number' ? value.inputTokens : undefined;
+  return {
+    inputTokensKind: value.inputTokensKind as KodaXContextOverflowFacts['inputTokensKind'],
+    ...(isNonNegativeSafeInteger(contextWindow) ? { contextWindow } : {}),
+    ...(isNonNegativeSafeInteger(inputTokens) ? { inputTokens } : {}),
+  };
 }
 
 function isNonNegativeSafeInteger(value: number | undefined): value is number {
@@ -21597,6 +21624,9 @@ function isNonNegativeSafeInteger(value: number | undefined): value is number {
 function classifyRuntimeFailureDetail(
   error: unknown,
 ): RuntimeFailureClassification {
+  if (error instanceof KodaXContextOverflowError) {
+    return runtimeFailure("context_capacity", "transport", "context_capacity_exceeded");
+  }
   // FEATURE_296 (ADR-067): local capacity failures are classified by isolated
   // class identity first, so a provider-derived error that merely shares the
   // class name or message cannot be misclassified into context_capacity.
@@ -22114,7 +22144,8 @@ function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boo
       return operation.kind === "read" || writable(operation.target.boundary);
     }
     if (operation.kind === "copy") return writable(operation.destination.boundary);
-    return writable(operation.source.boundary)
+    return "source" in operation
+      && writable(operation.source.boundary)
       && writable(operation.destination.boundary);
   });
 }
@@ -22681,7 +22712,11 @@ function normalizeRuntimeSnapshotMaterializationError(
   error: unknown,
   closing: boolean,
 ): Error {
-  if (isExpectedRuntimeReadTermination(error)) return error;
+  if (isExpectedRuntimeReadTermination(error) && isRecord(error)) {
+    return error instanceof Error
+      ? error
+      : Object.assign(new Error("Runtime read terminated"), error);
+  }
   if (
     isRecord(error)
     && (error.code === "overloaded" || error.code === "resync_required")
@@ -22728,6 +22763,12 @@ function createRuntimeCredentialUnavailableError(
 
 function createUnsupportedCredentialService(): RuntimeCredentialService {
   return {
+    async registerScoped() {
+      throw new Error("Credential broker registration requires a shared daemon client.");
+    },
+    async resumeScoped() {
+      throw new Error("Credential broker resume requires a shared daemon client.");
+    },
     async register() {
       throw new Error(
         "Credential broker registration requires a shared daemon client.",

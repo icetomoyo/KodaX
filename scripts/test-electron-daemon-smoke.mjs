@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -295,6 +296,7 @@ async function preparePackagedApplication(electronVersion) {
     'install', '--save-exact', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
     path.join(temporaryRoot, filename),
   ], appDir, 600_000);
+  await run(process.execPath, ['--test', path.join(repoRoot, 'tests/asrt-wfp-probe.test.mjs')], appDir, 60_000);
   await writeFile(
     path.join(appDir, 'electron-builder.json'),
     JSON.stringify(createBuilderConfig(electronVersion), null, 2),
@@ -305,6 +307,8 @@ async function preparePackagedApplication(electronVersion) {
 }
 
 function verifyPackagedNativeArtifacts() {
+  const sdkRequire = createRequire(path.join(appDir, 'node_modules', '@kodax-ai', 'kodax', 'package.json'));
+  const asrtDirectory = path.dirname(sdkRequire.resolve('@anthropic-ai/sandbox-runtime/package.json'));
   const unpackedModules = path.join(
     appDir,
     'release',
@@ -316,8 +320,7 @@ function verifyPackagedNativeArtifacts() {
   const required = [
     path.join(
       unpackedModules,
-      '@anthropic-ai',
-      'sandbox-runtime',
+      path.relative(path.join(appDir, 'node_modules'), asrtDirectory),
       'vendor',
       'srt-win',
       'x64',

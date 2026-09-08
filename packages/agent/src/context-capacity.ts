@@ -12,6 +12,10 @@ export class ContextCapacityError extends Error {
   readonly contextWindow: number;
   readonly currentTokens: number;
   readonly reservedResponseTokens: number;
+  readonly safetyMarginTokens: number;
+  readonly requiredTokens: number;
+  readonly availableTokens: number;
+  readonly operation: string;
 
   constructor(input: ContextCapacityInput, operation = 'LLM request') {
     const contextWindow = Math.max(0, Math.floor(input.contextWindow));
@@ -30,6 +34,10 @@ export class ContextCapacityError extends Error {
     this.contextWindow = contextWindow;
     this.currentTokens = currentTokens;
     this.reservedResponseTokens = reservedResponseTokens;
+    this.safetyMarginTokens = safetyMargin;
+    this.requiredTokens = currentTokens + reservedResponseTokens + safetyMargin;
+    this.availableTokens = contextWindow;
+    this.operation = operation;
   }
 }
 
@@ -94,10 +102,10 @@ export const RESERVE_SHRINK_FLOOR_TOKENS = 3_000;
 export function reclaimReservedResponseTokens(input: ContextCapacityInput): number {
   const window = Math.max(0, Math.floor(input.contextWindow));
   const current = Math.max(0, Math.floor(input.currentTokens));
-  const base = Math.max(RESERVE_SHRINK_FLOOR_TOKENS, Math.floor(input.reservedResponseTokens ?? 0));
+  const base = Math.max(0, Math.floor(input.reservedResponseTokens ?? 0));
   if (!exceedsContextCapacity({ ...input, contextWindow: window, currentTokens: current })) {
     return base;
   }
   const headroom = window - current - calculateContextSafetyMargin(current);
-  return Math.min(base, Math.max(RESERVE_SHRINK_FLOOR_TOKENS, headroom));
+  return Math.min(base, Math.max(Math.min(base, RESERVE_SHRINK_FLOOR_TOKENS), headroom));
 }

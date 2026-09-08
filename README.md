@@ -755,7 +755,9 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
-**v0.7.96-beta.1 release:** Windows shell admission now follows the
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
+**v0.7.96-beta.3 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -796,9 +798,15 @@ that sandbox doctor is a host control-plane operation (`/sandbox` in the REPL or
 `kodax sandbox doctor` directly in a user terminal). Linux x64/arm64 native
 text authorities compile in digest-pinned `manylinux_2_28` builders and are
 gated to `GLIBC_2.28`, restoring the supported private-deployment floor
-(Issue 328). npm publication remains a
+(Issue 328). Beta.2 also recovers long coding sessions at context capacity
+boundaries — a confirmed upstream overflow permits one generation retry after
+persisted history reduction without replaying tools — keeps bundled Provider
+credential scopes shared across SDK, Agent summaries, CLI, and Runtime Worker
+requests, preserves structured Child Agent Provider failures, honors exact
+run-scoped credential verification, and omits empty `tools` arrays for strict
+vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta1-release-preparation).
+[release checklist](docs/release.md#v0796-beta3-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

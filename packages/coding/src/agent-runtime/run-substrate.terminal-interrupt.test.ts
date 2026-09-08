@@ -256,6 +256,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     const queueAgentId = actorQueueId(sessionId, '/root');
     let turn = 0;
     let lineage: KodaXSessionData['lineage'];
+    let storedSession: KodaXSessionData = { messages: [], gitRoot: process.cwd() };
     let deliveredQueueId: string | undefined;
     let deliveredEntryId: string | undefined;
 
@@ -297,9 +298,10 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
         id: sessionId,
         persistedByHost: false,
         storage: {
-          load: async () => null,
+          load: async () => storedSession,
           save: async (_id: string, data: KodaXSessionData) => {
             lineage = createSessionLineage(data.messages, lineage);
+            storedSession = { ...data, lineage };
           },
         },
       },
@@ -324,6 +326,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
       },
     }, 'first prompt');
 
+    expect(result.success).toBe(true);
     expect(turn).toBe(2);
     expect(deliveredEntryId).toMatch(/^entry_/);
     expect(deliveredEntryId).toBe(getSessionMessageEntryId(result.messages.at(-2)!));

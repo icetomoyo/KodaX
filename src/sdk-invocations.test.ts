@@ -330,7 +330,7 @@ it.each(['sa', 'ama'] as const)('keeps a fork Skill settlement unknown in %s whe
   vi.stubEnv('KODAX_T37_PROBE_KEY', 'test-key');
   const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true, defaultProvider: 't37-probe' });
   const save = FileSessionStorage.prototype.save;
-  const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function (id, data) {
+  const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function (this: FileSessionStorage, id, data) {
     if (data.messages.at(-1)?.role === 'assistant'
       && data.messages.some(message => message.content === '/audit-helper fresh context')) {
       throw Object.assign(new Error('fork parent result write failed'), { code: 'EIO' });

@@ -61,6 +61,7 @@ import type {
 } from '@kodax-ai/llm';
 import {
   ContextCapacityError,
+  attachRunnerRecoveryTranscript,
   compact as intelligentCompact,
   emitKodaXDiagnostic,
   exceedsContextCapacity,
@@ -79,6 +80,8 @@ import { validateAndFixToolHistory } from '@kodax-ai/agent';
 import { gracefulCompactDegradation } from '@kodax-ai/agent';
 import { applyPostCompactAttachments } from './post-compact-attachments.js';
 import { createCompactionPromptCacheObserver } from '../prompt-cache-diagnostics.js';
+import { recoverContextHistory, needsHistoryCapacityRelief } from '../../history-capacity-recovery.js';
+import type { KodaXToolExecutionContext } from '../../types.js';
 import {
   consumeCompactionCooldown,
   createCompactionAntiThrashState,
@@ -233,7 +236,7 @@ export async function tryIntelligentCompact(
       CODING_SUMMARY_PROMPT,
       CODING_UPDATE_SUMMARY_PROMPT,
       input.model,
-      false,
+      true, // Admission already decided; provider rejection may force recovery below the trigger.
       input.reservedResponseTokens,
       input.toolDefinitions
         ? {
@@ -579,6 +582,7 @@ export async function commitCompactedHistory(
 // ---------------------------------------------------------------------------
 
 export interface CompactionLifecycleInput {
+  readonly executionContext?: KodaXToolExecutionContext;
   readonly messages: KodaXMessage[];
   readonly needsCompact: boolean;
   readonly compactConsecutiveFailures: number;
@@ -638,6 +642,37 @@ export interface CompactionLifecycleOutput {
  *   3. `commitCompactedHistory` — validate + commit + event emission
  */
 export async function runCompactionLifecycle(
+  input: CompactionLifecycleInput,
+): Promise<CompactionLifecycleOutput> {
+  let result: CompactionLifecycleOutput;
+  try {
+    result = await runSemanticCompactionLifecycle(input);
+  } catch (error) {
+    if (!(error instanceof ContextCapacityError)
+      || !['History compaction', 'Compaction summary request'].includes(error.operation)) throw error;
+    result = { messages: input.messages, compactionUpdate: undefined, didCompactMessages: false,
+      nextCompactConsecutiveFailures: input.compactConsecutiveFailures,
+      nextCompactionAntiThrash: input.compactionAntiThrash ?? createCompactionAntiThrashState(),
+      contextTokenSnapshot: undefined };
+  }
+  const currentTokens = result.contextTokenSnapshot?.currentTokens ?? input.currentTokens;
+  const capacity = { contextWindow: input.contextWindow, currentTokens,
+    reservedResponseTokens: input.reservedResponseTokens ?? 0 };
+  if (!needsHistoryCapacityRelief(capacity)) return result;
+  const recovered = await recoverContextHistory({ ...capacity, messages: result.messages,
+    executionContext: input.executionContext, persist: input.events.onCompactedMessages }).catch((error: unknown) => {
+    if (result.didCompactMessages && error instanceof Error) attachRunnerRecoveryTranscript(error, result.messages);
+    throw error;
+  });
+  if (!recovered.changed) return result;
+  return { ...result, messages: recovered.messages, didCompactMessages: true, stillOverCapacity: false,
+    compactionUpdate: { preCompactionMessages: result.messages },
+    nextCompactConsecutiveFailures: input.compactConsecutiveFailures,
+    contextTokenSnapshot: { currentTokens: recovered.currentTokens,
+      baselineEstimatedTokens: estimateTokens(recovered.messages), source: 'estimate' } };
+}
+
+async function runSemanticCompactionLifecycle(
   input: CompactionLifecycleInput,
 ): Promise<CompactionLifecycleOutput> {
   const startedAt = Date.now();

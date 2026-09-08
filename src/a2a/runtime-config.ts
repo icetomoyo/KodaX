@@ -213,7 +213,7 @@ function markConfiguredRegistration(
     ...registration,
     executorConfig: {
       ...registration.executorConfig,
-      network: config.network ?? DEFAULT_OUTBOUND_NETWORK,
+      network: { ...(config.network ?? DEFAULT_OUTBOUND_NETWORK) },
     },
     managementOwner: CONFIG_OWNER,
     configurationRevision: configuredRegistrationRevision(fingerprint, registration.configurationRevision),

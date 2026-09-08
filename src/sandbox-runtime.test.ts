@@ -15,10 +15,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createRequire } from 'node:module';
+import { Server } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { readProcessStartIdentity, SkillRegistry } from '@kodax-ai/agent';
+import { readProcessStartIdentity, SkillRegistry, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { build } from 'esbuild';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -206,7 +207,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   runnerSource: '',
   nullDeviceReady: true,
   deleteArtifactDuringControlVerification: undefined as string | undefined,
-  wfpOutcome: 'blocked' as 'blocked' | 'access_denied' | 'timeout',
+  wfpOutcome: 'blocked' as 'blocked' | 'connected' | 'access_denied' | 'timeout',
   aclRecoveryOutcome: 'success' as 'success' | 'failure' | 'malformed',
   aclRecoveryOutcomes: [] as Array<'success' | 'failure' | 'malformed'>,
   sidProcessesActive: true,
@@ -216,7 +217,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   guardReady: true,
   user: {
     provisioned: true,
-    sid: 'S-1-5-21-1000',
+    sid: 'S-1-5-21-1000' as string | undefined,
     groupExists: true,
     groupSid: 'S-1-5-21-1001',
     inBuiltinUsers: true,
@@ -432,10 +433,10 @@ vi.mock('node:child_process', async (importOriginal) => {
           };
         }
         return {
-          status: 0,
+          status: windowsSandboxMock.wfpOutcome === 'connected' ? 3 : 0,
           signal: null,
           stdout: JSON.stringify({
-            egress_probe: 'blocked',
+            egress_probe: windowsSandboxMock.wfpOutcome === 'connected' ? 'connected' : 'blocked',
             target: '127.0.0.1:49152',
             runner_exit: 0,
           }),
@@ -572,7 +573,7 @@ vi.mock('node:child_process', async (importOriginal) => {
           if (outcome === 'failure') {
             child.stderr.end('injected ACL recovery failure');
             child.stdout.end();
-            child.exitCode = 1;
+            Reflect.set(child, 'exitCode', 1);
             child.emit('close', 1, null);
             child.emit('exit', 1, null);
             return;
@@ -581,7 +582,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             ? 'not-json'
             : JSON.stringify({ deadBrokers: 1, acesRevoked: 2 }));
           child.stderr.end();
-          child.exitCode = 0;
+          Reflect.set(child, 'exitCode', 0);
           child.emit('close', 0, null);
           child.emit('exit', 0, null);
         });
@@ -612,7 +613,7 @@ vi.mock('node:child_process', async (importOriginal) => {
           capturedWindowsNetworkBrokerStops.count += 1;
           if (windowsNetworkBrokerMock.stopOutcome === 'unknown') return;
           queueMicrotask(() => {
-            child.exitCode = 0;
+            Reflect.set(child, 'exitCode', 0);
             control.end();
             child.emit('exit', 0, null);
             child.emit('close', 0, null);
@@ -686,7 +687,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             if (outcome === 'failure') {
               child.stderr.end('injected ACL recovery failure');
               child.stdout.end();
-              child.exitCode = 1;
+              Reflect.set(child, 'exitCode', 1);
               child.emit('close', 1, null);
               child.emit('exit', 1, null);
               return;
@@ -695,7 +696,7 @@ vi.mock('node:child_process', async (importOriginal) => {
               ? 'not-json'
               : JSON.stringify({ deadBrokers: 1, acesRevoked: 2 }));
             child.stderr.end();
-            child.exitCode = 0;
+            Reflect.set(child, 'exitCode', 0);
             child.emit('close', 0, null);
             child.emit('exit', 0, null);
           });
@@ -1041,8 +1042,8 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kodax-ai/agent')>();
   return {
     ...actual,
-    emitKodaXDiagnostic: (diagnostic: Readonly<Record<string, unknown>>) => {
-      capturedDiagnostics.push(diagnostic);
+    emitKodaXDiagnostic: (diagnostic: KodaXDiagnostic) => {
+      capturedDiagnostics.push({ ...diagnostic });
       actual.emitKodaXDiagnostic(diagnostic);
     },
     acquireKodaXFileLock: async (
@@ -1300,19 +1301,15 @@ vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
 import {
   KODAX_ASRT_VERSION,
   bundledSrtWinSidecarPath,
-  clearWindowsSandboxAclMarkersForRuntimeOwner,
   createAsrtShellSandbox,
   createAsrtSkillScriptRunner,
   doctorSandboxExecution,
   doctorSandboxRuntime,
   isWindowsSandboxV2SetupCurrent,
-  clearPreviousBootWindowsSandboxAclMarkers,
   overrideWindowsSandboxV2CutoverDirectoryForTest,
   overrideWindowsSetupCapabilityInstallerForTest,
   prepareSandboxRuntimeForSetup,
   readWindowsSandboxBootIdentity,
-  recoverPreviousBootWindowsSandboxAcls,
-  recoverWindowsSandboxAclsForRuntimeOwner,
   runKodaXSandboxed,
   runAsrtBrokerProcess,
   setupSandboxRuntime,
@@ -1553,7 +1550,7 @@ afterEach(async () => {
   windowsSandboxMock.guardReady = true;
   windowsSandboxMock.user = {
     provisioned: true,
-    sid: 'S-1-5-21-1000',
+    sid: 'S-1-5-21-1000' as string | undefined,
     groupExists: true,
     groupSid: 'S-1-5-21-1001',
     inBuiltinUsers: true,
@@ -3247,7 +3244,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       }), 'utf8');
       const host = windowsEffectJobMock.latestChild;
       if (host === undefined) throw new Error('expected a native sandbox host');
-      host.stdin.once('finish', () => {
+      host.stdio[0].once('finish', () => {
         setTimeout(() => {
           writeFileSync(request.terminalRecordPath, JSON.stringify({
             protocol: 10,
@@ -3258,7 +3255,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
             brokerRetirementRecommended: false,
             denyReadCleanupDeferred: false,
           }));
-          host.exitCode = 1;
+          Reflect.set(host, 'exitCode', 1);
           host.stdout.end();
           host.stderr.end();
           host.stdio[3].end();
@@ -3387,7 +3384,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       vi.useRealTimers();
     }
-    failedChild.exitCode = 1;
+    Reflect.set(failedChild, 'exitCode', 1);
     failedChild.stdout?.destroy();
     failedChild.stderr?.destroy();
     failedChild.emit('exit', 1, null);
@@ -3414,7 +3411,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       brokerRetirementRecommended: false,
       denyReadCleanupDeferred: false,
     }), 'utf8');
-    holderChild.exitCode = 0;
+    Reflect.set(holderChild, 'exitCode', 0);
     holderChild.stdout?.destroy();
     holderChild.stderr?.destroy();
     holderChild.emit('exit', 0, null);
@@ -3505,7 +3502,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       } finally {
         vi.useRealTimers();
       }
-      failedChild.exitCode = 1;
+      Reflect.set(failedChild, 'exitCode', 1);
       failedChild.stdout?.destroy();
       failedChild.stderr?.destroy();
       failedChild.emit('exit', 1, null);
@@ -3566,7 +3563,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await expect(
       aborted.processControl.attestStart?.(child, controller.signal, deadlineAt),
     ).rejects.toThrow(/caller cancelled/i);
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3611,7 +3608,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       'data',
       Buffer.from('Windows sandbox launch deadline expired during runner authentication'),
     );
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3686,7 +3683,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       Buffer.from('kodax-windows-sandbox protocol 10 failed: '
         + 'Windows sandbox runner disconnected before Exit'),
     );
-    child.exitCode = 2;
+    Reflect.set(child, 'exitCode', 2);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 2, null);
@@ -3735,7 +3732,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       vi.useRealTimers();
     }
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3782,7 +3779,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const deadlineAt = Date.now() + 120_000;
     await failed.processControl.closeInput?.(child, undefined, deadlineAt);
     const attestation = failed.processControl.attestStart?.(child, undefined, deadlineAt);
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -4694,6 +4691,138 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
   });
 });
 
+describe('Windows WFP probe allocation', () => {
+  it.runIf(process.platform === 'win32')(
+    'keeps Windows doctor ready when ephemeral allocation repeatedly selects proxy ports',
+    async () => {
+      const originalListen = Server.prototype.listen;
+      const originalAddress = Server.prototype.address;
+      const ephemeralListeners = new Set<Server>();
+      const listeners = new Set<Server>();
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        listeners.add(this);
+        if ((args as unknown[])[0] === 0) ephemeralListeners.add(this);
+        return Reflect.apply(originalListen, this, args);
+      });
+      const address = vi.spyOn(Server.prototype, 'address').mockImplementation(function (this: Server) {
+        return ephemeralListeners.has(this)
+          ? { address: '127.0.0.1', family: 'IPv4', port: 60080 }
+          : originalAddress.call(this);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+          ready: true,
+          setupRequired: false,
+          diagnostics: [],
+        });
+        expect(ephemeralListeners.size).toBe(0);
+        expect([...listeners].every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        address.mockRestore();
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each(['EADDRINUSE', 'EACCES'])(
+    'retries a different probe port after %s without entering the proxy range',
+    async (code) => {
+      const originalListen = Server.prototype.listen;
+      const ports: number[] = [];
+      const listeners: Server[] = [];
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        ports.push(Number((args as unknown[])[0]));
+        listeners.push(this);
+        if (ports.length === 1) {
+          queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
+          return this;
+        }
+        return Reflect.apply(originalListen, this, args);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({ ready: true });
+        expect(ports).toHaveLength(2);
+        expect(new Set(ports).size).toBe(2);
+        expect(ports.every((port) => port >= 1024 && port < 60080)).toBe(true);
+        expect(listeners.every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each([
+    ['EADDRINUSE', 5, '[wfp_probe_bind_failed]'],
+    ['EMFILE', 1, 'EMFILE'],
+  ] as const)('bounds probe binding failure %s and never launches verification', async (code, count, diagnostic) => {
+    const ports: number[] = [];
+    const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+      this: Server, ...args: Parameters<Server['listen']>
+    ) {
+      ports.push(Number((args as unknown[])[0]));
+      queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
+      return this;
+    });
+    const probesBefore = capturedSyncSpawns.filter(({ args }) => args.includes('wfp')).length;
+    try {
+      await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+        ready: false,
+        diagnostics: expect.arrayContaining([expect.stringContaining(diagnostic)]),
+      });
+      expect(ports).toHaveLength(count);
+      expect(new Set(ports).size).toBe(count);
+      expect(capturedSyncSpawns.filter(({ args }) => args.includes('wfp'))).toHaveLength(probesBefore);
+    } finally {
+      listen.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform === 'win32').each(['blocked', 'connected', 'access_denied', 'timeout'] as const)(
+    'keeps the probe listener live through verification and closes it after %s',
+    async (outcome) => {
+      windowsSandboxMock.wfpOutcome = outcome;
+      const listeners: Server[] = [];
+      const originalListen = Server.prototype.listen;
+      const originalSpawn = vi.mocked(spawnSync).getMockImplementation()!;
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        listeners.push(this);
+        return Reflect.apply(originalListen, this, args);
+      });
+      let verified = false;
+      vi.mocked(spawnSync).mockImplementation((...args) => {
+        if (Array.isArray(args[1]) && args[1].includes('wfp') && args[1].includes('verify')) {
+          verified = true;
+          expect(listeners.some((server) => server.listening)).toBe(true);
+          const target = args[1][args[1].indexOf('--target') + 1];
+          const activeAddress = listeners.find((server) => server.listening)?.address();
+          expect(activeAddress).toMatchObject({ port: Number(target?.split(':')[1]) });
+        }
+        return Reflect.apply(originalSpawn, undefined, args);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+          ready: outcome === 'blocked',
+        });
+        expect(verified).toBe(true);
+        expect(listeners.every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        vi.mocked(spawnSync).mockImplementation(originalSpawn);
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
+});
+
 describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter', () => {
   it.runIf(process.platform === 'win32')(
     'stages a user-installed Windows runner in a protected KodaX directory',
@@ -5544,3 +5673,22 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     await expect(running).rejects.toThrow(/cancelled by SDK caller/i);
   });
 });
+
+async function capturedSandboxReadRoots(workspaceRoot: string, toolCallId: string) {
+  const sandbox = createAsrtShellSandbox({ workspaceRoot, shouldSandbox: () => true });
+  const invocation = await sandbox.prepare({
+    toolCallId, toolInput: { command: 'git status' }, command: 'git status',
+    cwd: workspaceRoot, env: { PATH: process.env.PATH },
+  });
+  try {
+    const filesystem = capturedWorkspaceSessionConfigs.at(-1)?.filesystem;
+    if (!filesystem || typeof filesystem !== 'object') throw new Error('Expected sandbox policy.');
+    const roots: unknown = Reflect.get(filesystem, 'allowRead');
+    if (!Array.isArray(roots) || !roots.every((root): root is string => typeof root === 'string')) {
+      throw new Error('Expected sandbox read roots.');
+    }
+    return roots;
+  } finally {
+    await invocation?.cleanup();
+  }
+}

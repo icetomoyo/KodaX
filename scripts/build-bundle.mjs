@@ -55,6 +55,9 @@ import { build } from 'esbuild';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prepareAsrtWfp } from './prepare-asrt-wfp.mjs';
+
+prepareAsrtWfp();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -178,6 +181,15 @@ function assertBundleSize(label, bytes, maximumBytes) {
     `${label} bundle size ${Math.ceil(bytes / 1024)} kB exceeds the audited `
     + `${Math.ceil(maximumBytes / 1024)} kB startup budget`,
   );
+}
+
+function assertSingleProviderCredentialModule(label, result) {
+  const modules = Object.keys(result.metafile.inputs)
+    .map((input) => input.replaceAll('\\', '/'))
+    .filter((input) => /(?:^|\/)packages\/llm\/(?:src|dist)\/provider-credential-context\.(?:js|ts)$/.test(input));
+  if (modules.length !== 1) {
+    throw new Error(`${label} must contain one Provider credential context; found ${modules.length}: ${modules.join(', ')}`);
+  }
 }
 
 // ---- compute external list from root package.json ------------------------
@@ -309,6 +321,9 @@ const stubVendoredInkDevDepsPlugin = {
 // ---- esbuild common options ---------------------------------------------
 
 const commonOptions = {
+  // Package-local development paths (notably agent -> llm/src) must not
+  // override workspace exports to dist: that duplicates credential ALS.
+  tsconfig: path.join(repoRoot, 'tsconfig.json'),
   bundle: true,
   platform: 'node',
   format: 'esm',
@@ -387,6 +402,7 @@ const cliResult = await build({
   outfile: path.join(distDir, 'kodax_cli.js'),
 });
 assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
+assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024);
@@ -452,11 +468,13 @@ const sdkEntryPoints = sdkEntryNames.map((name) => {
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({
   ...commonOptions,
+  metafile: true,
   entryPoints: sdkEntryPoints,
   outdir: distDir,
   splitting: true,
   chunkNames: 'chunks/[name]-[hash]',
 });
+assertSingleProviderCredentialModule('SDK', sdkResult);
 
 const sdkBytesByEntry = Object.fromEntries(
   sdkEntryNames.map((name) => {
@@ -478,9 +496,11 @@ const sdkBytes = sdkBytesByEntry.index;
 log('Building dist/semantic-worker.js (repo-intelligence worker sidecar)...');
 const workerResult = await build({
   ...commonOptions,
+  metafile: true,
   entryPoints: [path.join(repoRoot, 'packages/coding/dist/repo-intelligence/semantic-worker.js')],
   outfile: path.join(distDir, 'semantic-worker.js'),
 });
+assertSingleProviderCredentialModule('Semantic Worker', workerResult);
 const workerBytes = statSync(path.join(distDir, 'semantic-worker.js')).size;
 log(`  OK dist/semantic-worker.js (${(workerBytes / 1024).toFixed(0)} kB)`);
 

@@ -65,6 +65,8 @@ import {
   replaceSystemMessage,
 } from './runner-handoff.js';
 import { ContextCapacityError } from '../context-capacity.js';
+import { KodaXContextOverflowError } from '@kodax-ai/llm';
+import { estimateTokens } from '../tokenizer.js';
 
 /**
  * Options accepted by `Runner.run` and `Runner.runStream`.
@@ -188,6 +190,7 @@ export interface RunOptions {
    */
   readonly compactionHook?: (
     transcript: readonly AgentMessage[],
+    rejection?: KodaXContextOverflowError,
   ) => Promise<readonly AgentMessage[] | undefined>;
   /**
    * FEATURE_101 (v0.7.31.1): callback fired once when the Runner has
@@ -711,6 +714,28 @@ async function runGenerationTurn(
   return { result: { text: reply, toolCalls: [] }, wasPlainString: true };
 }
 
+async function recoverRejectedGeneration(
+  agent: Agent, transcript: AgentMessage[], opts: RunOptions, span: Span | null,
+  error: unknown,
+): Promise<{ outcome: GenerationTurnOutcome; messages: AgentMessage[] }> {
+  opts.abortSignal?.throwIfAborted();
+  if (!(error instanceof KodaXContextOverflowError) || !opts.compactionHook) throw error;
+  let recovered = transcript;
+  try {
+    const replacement = await opts.compactionHook(transcript, error);
+    if (replacement) recovered = [...replacement];
+    if (!replacement || estimateTokens(replacement) >= estimateTokens(transcript)) throw error;
+    opts.abortSignal?.throwIfAborted();
+    // One retry per generation after durable reduction; no tools have run.
+    return { outcome: await runGenerationTurn(agent, recovered, opts.llm!, span), messages: recovered };
+  } catch (terminal) {
+    if (terminal instanceof Error && !readRunnerRecoveryTranscript(terminal)) {
+      attachRunnerRecoveryTranscript(terminal, recovered[0]?.role === 'system' ? recovered.slice(1) : recovered);
+    }
+    throw terminal;
+  }
+}
+
 async function genericRun<TData>(
   startAgent: Agent,
   input: string | readonly AgentMessage[],
@@ -915,6 +940,7 @@ async function genericRun<TData>(
           summaryLength: 0,
           error: error instanceof Error ? error.message : String(error),
         }).end();
+        if (readRunnerRecoveryTranscript(error)) throw error;
         if (error instanceof ContextCapacityError) {
           const recoverableTranscript = transcript[0]?.role === 'system'
             ? transcript.slice(1)
@@ -926,12 +952,15 @@ async function genericRun<TData>(
     }
     throwIfAborted();
 
-    const { result: turn, wasPlainString } = await runGenerationTurn(
-      currentAgent,
-      transcript,
-      opts.llm,
-      agentSpan,
-    );
+    let outcome: GenerationTurnOutcome;
+    try {
+      outcome = await runGenerationTurn(currentAgent, transcript, opts.llm, agentSpan);
+    } catch (error) {
+      const recovered = await recoverRejectedGeneration(currentAgent, transcript, opts, agentSpan, error);
+      transcript = recovered.messages;
+      outcome = recovered.outcome;
+    }
+    const { result: turn, wasPlainString } = outcome;
     throwIfAborted();
     for (const injectedInputMessage of turn.injectedInputMessages ?? []) {
       transcript.push(injectedInputMessage);

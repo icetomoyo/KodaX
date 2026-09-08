@@ -2160,6 +2160,7 @@ async function runManagedTaskViaRunnerInner(
   await persistManagedBoundary(runnerInput);
   liveTurnController.markInitialInputDurable();
   const compactionHook = await buildManagedTaskCompactionHook(options, {
+    executionContext: baseCtx,
     resolvedContextCapacity,
     contextTokenSnapshotRef,
     activeToolDefinitions: entryAgent.tools,

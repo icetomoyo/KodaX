@@ -422,6 +422,14 @@ function makeRuntime(
       version: '0.7.66',
     },
     sessions: {
+      async status(sessionId) {
+        return { sessionId, runtimeId: "runtime-test", phase: "idle",
+          observedAt: new Date(0).toISOString() };
+      },
+      async conversation() { return null; },
+      async conversationPage() { return null; },
+      async conversationEntryChunk() { return null; },
+      async diagnostics() { throw new Error("Session diagnostics are not used by this fixture."); },
       async create(input) {
         return { id: input?.sessionId ?? 'session-1', title: input?.title ?? 'Test Session' };
       },
@@ -448,6 +456,28 @@ function makeRuntime(
       },
       async fork() {
         return null;
+      },
+      async observeView(sessionId, listener) {
+        listener({ session: { id: sessionId, title: 'Test Session' }, items: [], settings: {}, runs: [], queue: [], interactions: [] });
+        return { close() {} };
+      },
+      async readViewItem() { return null; },
+      async readHistory() {
+        return { items: [], revision: 'sha256:' + '0'.repeat(64), oversized: [] };
+      },
+      async readHistoryEntry() { return null; },
+      async searchHistory() {
+        return { revision: 'sha256:' + '0'.repeat(64), hits: [] };
+      },
+      async readGoal() { return null; },
+      async createGoal() { throw new Error('Goals are not used by this fixture.'); },
+      async pauseGoal() { throw new Error('No goal exists in this fixture.'); },
+      async resumeGoal() { throw new Error('No goal exists in this fixture.'); },
+      async clearGoal() {},
+      async readLineage() { return null; },
+      async labelEntry() { throw new Error('No lineage exists in this fixture.'); },
+      async recover(input) {
+        return { id: input.sessionId, title: 'Recovered Session' };
       },
       async getSettings() {
         return {};
@@ -487,6 +517,9 @@ function makeRuntime(
       async delete() {},
     },
     runs: {
+      async acceptInput() { throw new Error('Product inputs are not used by this fixture.'); },
+      async getInput() { return null; },
+      async withdrawInput() { throw new Error('No queued input exists in this fixture.'); },
       async start(input: RuntimeStartRunInput) {
         const result: RuntimeRunResult = {
           runId: 'run-1',
@@ -529,7 +562,10 @@ function makeRuntime(
       async list() {
         return [];
       },
-      async abort() {},
+      async abort(runId) {
+        return { runId, sessionId: "session-1", accepted: false,
+          state: "confirmed", outcome: "completed", phase: "completed", revision: 0 };
+      },
       async setModel() {},
       async setProvider() {},
       async setReasoning() {},
@@ -554,6 +590,12 @@ function makeRuntime(
       async revokeGrant() { return false; },
     },
     userInputs: createTestUserInputs(),
+    interactions: {
+      async list() { return []; },
+      async respond(requestId) {
+        return { requestId, accepted: false, status: 'already_resolved' };
+      },
+    },
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
     workflows: {
@@ -579,8 +621,35 @@ function makeRuntime(
         return false;
       },
     },
-    learning: {} as KodaXRuntime['learning'],
+    learning: {
+      async list() { return { items: [], revision: 0 }; },
+      async get() { throw new Error('Learning is not used by this fixture.'); },
+      async getSnapshot() { return { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 0 }; },
+      async events() { return []; },
+      async *subscribe() {},
+      async acknowledge() {},
+      async snooze() {},
+      async reject() {},
+      async disable() {},
+      async rollback() {},
+      async promote() {},
+      async review() {},
+      async trust() {},
+    },
+    memory: {
+      forProject() { throw new Error('Memory is not used by this fixture.'); },
+    },
+    invocations: {
+      async prepareSkill() { return { kind: 'unknown' }; },
+      async prepareCommand() { return { kind: 'local' }; },
+      async prepareReview() { return { kind: 'empty' }; },
+      async prepareAgentsLean() { return { kind: 'missing' }; },
+    },
     config: {
+      async readEffective() {
+        return { schemaVersion: 1, capturedAt: new Date(0).toISOString(),
+          persistedConfig: { state: "missing" }, entries: {}, credentials: {} };
+      },
       async read() {
         return {};
       },
@@ -733,17 +802,6 @@ function makeRuntime(
         };
       },
     },
-    diagnostics: {
-      async latestContextBudget() {
-        return null;
-      },
-      async latestToolExposure() {
-        return null;
-      },
-      async latestProviderCacheDiagnostic() {
-        return null;
-      },
-    },
     async close() {
       runtime.closed = true;
     },
@@ -765,6 +823,8 @@ function createTestUserInputs(): KodaXRuntime['userInputs'] {
 
 function createTestCredentialService(): KodaXRuntime['credentials'] {
   return {
+    async registerScoped(input) { return { id: 'credential-test', ...input, brokerVersion: 2 }; },
+    async resumeScoped() { throw new Error('Missing credential lease.'); },
     async register(input) { return { id: 'credential-test', ...input }; },
     async resume() { throw new Error('Missing credential lease.'); },
     async revoke() { return false; },
@@ -782,6 +842,7 @@ function createTestHostToolService(): KodaXRuntime['hostTools'] {
 
 function createTestObservation(sessionId: string) {
   return {
+    invalidated: new Promise<never>(() => undefined),
     snapshot: {
       runtimeId: 'runtime-test',
       seq: 0,
@@ -793,6 +854,7 @@ function createTestObservation(sessionId: string) {
       pendingPermissions: [],
       live: {
         assistantTextByRun: {},
+        outputSegmentsByRun: {},
         thinkingTextByRun: {},
         activeTools: [],
         pendingUserInputs: [],

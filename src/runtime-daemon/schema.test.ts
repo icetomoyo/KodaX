@@ -323,6 +323,29 @@ describe('runtime daemon protocol schema', () => {
     )).toEqual([]);
   });
 
+  it.each(['run.get', 'run.await'] as const)('admits bounded context overflow facts in %s without inventing missing evidence', (method) => {
+    const result = (contextOverflow: unknown) => ({
+      runId: 'run-1', sessionId: 'session-1', phase: 'failed',
+      startedAt: '2026-08-27T00:00:00.000Z', provider: 'custom-provider',
+      failureDetail: { failureKind: 'context_capacity', stage: 'transport',
+        providerErrorCode: 'context_capacity_exceeded', safeMessage: 'Context capacity exceeded.', contextOverflow },
+    });
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS[method].result;
+    for (const facts of [
+      { inputTokensKind: 'exact', contextWindow: 131_072, inputTokens: 140_000 },
+      { inputTokensKind: 'lower_bound', inputTokens: 140_000 },
+      { inputTokensKind: 'unknown' },
+      { inputTokensKind: 'exact', contextWindow: 0, inputTokens: 0 },
+    ]) expect(validateRuntimeDaemonJsonSchema(schema, result(facts))).toEqual([]);
+    for (const facts of [
+      {}, { inputTokensKind: 'estimated' }, { inputTokensKind: 'unknown', extra: true },
+      ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '100'].flatMap(value => [
+        { inputTokensKind: 'exact', inputTokens: value },
+        { inputTokensKind: 'unknown', contextWindow: value },
+      ]),
+    ]) expect(validateRuntimeDaemonJsonSchema(schema, result(facts)).length).toBeGreaterThan(0);
+  });
+
   it('admits a Runtime-owned cancellation classification', () => {
     expect(validateRuntimeDaemonJsonSchema(
       RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result,

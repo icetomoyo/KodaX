@@ -77,7 +77,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
   });
 
   it('synchronizes Auto reviewer settings without writing an engine selector', async () => {
-    const updateSettings = vi.fn(async () => ({ permissionMode: 'auto' }));
+    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({ permissionMode: 'auto' }));
     const runtime = {
       sessions: {
         load: vi.fn(async () => ({ id: 'session-1' })),
@@ -105,7 +105,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
   });
 
   it('ignores a persisted legacy Rules engine when a fresh REPL control synchronizes', async () => {
-    const updateSettings = vi.fn(async () => ({
+    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({
       permissionMode: 'auto',
       autoModeEngine: 'rules' as const,
     }));

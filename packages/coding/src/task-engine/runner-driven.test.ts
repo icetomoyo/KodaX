@@ -163,7 +163,7 @@ describe('managed runner queue routing', () => {
 
   it('durably records the initial Runtime prompt before provider execution', async () => {
     const sessionId = 'runtime-initial-durable-boundary';
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     const crash = new Error('simulated daemon crash after provider start');
     const save = vi.fn(async (_id: string, data: KodaXSessionData) => {
       stored = structuredClone(data);
@@ -198,7 +198,7 @@ describe('managed runner queue routing', () => {
 
   it('does not report managed completion before the canonical Session commit', async () => {
     const sessionId = 'runtime-terminal-commit-order';
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     let releaseTerminalSave: (() => void) | undefined;
     let markTerminalSaveStarted: (() => void) | undefined;
     const terminalSaveStarted = new Promise<void>((resolve) => {
@@ -248,7 +248,7 @@ describe('managed runner queue routing', () => {
   it('persists a completed turn and delivered queued prompt before the next Runtime turn runs', async () => {
     const sessionId = 'runtime-queued-durable-boundaries';
     const queueAgentId = `actor:${sessionId}:/root`;
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     let providerCall = 0;
     const crash = new Error('simulated daemon crash in queued turn');
     const completedSnapshots: KodaXSessionData[] = [];
@@ -335,7 +335,7 @@ describe('managed runner queue routing', () => {
   it('persists the complete canonical transcript after a normal Runtime multi-turn run', async () => {
     const sessionId = 'runtime-normal-multi-turn-persistence';
     const queueAgentId = `actor:${sessionId}:/root`;
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     let providerCall = 0;
 
     try {
@@ -406,7 +406,9 @@ describe('managed runner queue routing', () => {
           id: 'runtime-required-save-failure',
           persistedByHost: false,
           storage: {
-            load: vi.fn(async () => null),
+            load: vi.fn(async () => ({
+              messages: [], title: 'runtime-required-save-failure', gitRoot: process.cwd(),
+            })),
             save: vi.fn().mockRejectedValue(failure),
           },
         },
@@ -428,7 +430,7 @@ describe('managed runner queue routing', () => {
     const sessionId = 'runtime-queued-save-failure';
     const queueAgentId = `actor:${sessionId}:/root`;
     const failure = new Error('queued canonical boundary unavailable');
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     let saveCount = 0;
     const started = vi.fn();
     const completed = vi.fn();
@@ -497,7 +499,7 @@ describe('managed runner queue routing', () => {
     const sessionId = 'runtime-delivery-journal-failure';
     const queueAgentId = `actor:${sessionId}:/root`;
     const failure = new Error('run.input.delivered journal unavailable');
-    let stored: KodaXSessionData | null = null;
+    let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };
     const started = vi.fn();
     const completed = vi.fn();
     const failed = vi.fn();

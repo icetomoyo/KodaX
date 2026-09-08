@@ -1,4 +1,5 @@
 import type { AgentSpawnInput } from '@kodax-ai/agent';
+import type { KodaXContextOverflowFacts } from '@kodax-ai/llm';
 
 import {
   KODAX_DAEMON_PROTOCOL,
@@ -1530,6 +1531,16 @@ function runtimeTerminalFactSchema(): RuntimeDaemonJsonSchema {
   }, ['revision', 'kind', 'code', 'effectOutcome']);
 }
 
+function contextOverflowFactsSchema(): RuntimeDaemonJsonSchema {
+  const properties = {
+    inputTokensKind: { enum: ['exact', 'lower_bound', 'unknown'] satisfies KodaXContextOverflowFacts['inputTokensKind'][] },
+    contextWindow: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    inputTokens: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+  } satisfies SchemaProperties<KodaXContextOverflowFacts>;
+  const required = { inputTokensKind: true } satisfies Record<RequiredKeys<KodaXContextOverflowFacts>, true>;
+  return objectSchema(properties, Object.keys(required));
+}
+
 function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     failureKind: runtimeFailureKindSchema(),
@@ -1577,6 +1588,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
     model: { type: 'string', maxLength: 200 },
     requestPhase: { type: 'string', maxLength: 100 },
     elapsedMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+    contextOverflow: contextOverflowFactsSchema(),
     contextTokens: {
       type: 'object',
       properties: {

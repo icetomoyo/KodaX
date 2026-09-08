@@ -229,7 +229,7 @@ it('delivers a busy queued image through the real Host to the next Provider requ
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'busy', text: 'Wait before the image.' });
     await expect.poll(() => wireRequests.length).toBe(1);
     const input = { sessionId: session.id, inputId: 'picture', text: 'Describe this image.', delivery: 'after_turn' as const,
-      inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png', source: 'clipboard' as const }] };
+      inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const, source: 'clipboard' as const }] };
     expect((await client.inputs.submit(input)).state).toBe('queued');
     await expect(client.inputs.submit({ ...input, inputArtifacts: [] })).rejects.toMatchObject({ code: 'conflict' });
     release();

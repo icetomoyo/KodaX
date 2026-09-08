@@ -1,5 +1,7 @@
 # KodaX SDK — Embedder Integration Guide
 
+Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
 > Audience: host applications embedding `@kodax-ai/kodax` (and its
 > subpaths) as a substrate — e.g. KodaX Space's desktop wrapper, IDE
 > extensions, custom CLIs. If you are an end-user running the `kodax`

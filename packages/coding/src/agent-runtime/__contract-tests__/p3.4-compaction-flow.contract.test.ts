@@ -11,6 +11,8 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
 
 import {
   compact as mockedCompact,
+  ContextCapacityError,
+  readRunnerRecoveryTranscript,
   gracefulCompactDegradation as mockedDegrade,
   type CompactionResult,
 } from '@kodax-ai/agent';
@@ -124,20 +126,20 @@ describe('P3.4 physical-capacity compaction lifecycle', () => {
     expect(degradeMock).not.toHaveBeenCalled();
   });
 
-  it('commits a still-over compaction best-effort with stillOverCapacity instead of throwing', async () => {
+  it('carries the committed summary when every remaining recovery rung is exhausted', async () => {
     const messages = history();
     const oversized = [{ role: 'system' as const, content: `summary\n${'detail '.repeat(40_000)}` }];
     compactMock.mockResolvedValue({
       ...successfulResult(messages),
       messages: oversized,
     });
-    const output = await runCompactionLifecycle(lifecycleInput(messages, 88_000, 100));
+    const error = await runCompactionLifecycle(lifecycleInput(messages, 88_000, 100))
+      .catch((cause: unknown) => cause);
 
-    // FEATURE_296 (ADR-067): an over-capacity compacted transcript commits
-    // best-effort; the recovery ladder owns the next request.
-    expect(output.messages).toEqual(oversized);
-    expect(output.didCompactMessages).toBe(true);
-    expect(output.stillOverCapacity).toBe(true);
+    // The summary commits best-effort, then the ladder exhausts its available
+    // rungs. Terminal persistence must retain that committed summary.
+    expect(error).toBeInstanceOf(ContextCapacityError);
+    expect(readRunnerRecoveryTranscript(error)).toEqual(oversized);
   });
 
   it('treats a reclaimable escalation reserve as relieved instead of still-over (FEATURE_296 T3)', async () => {

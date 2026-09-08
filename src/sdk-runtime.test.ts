@@ -9,7 +9,7 @@ import * as net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import {
   _resetActiveRootQueueRoutesForTests,
@@ -48,6 +48,8 @@ import type {
   AutoModePermissionReview,
   AutoModeToolGuardrail,
   KodaXMessage,
+  KodaXEvents,
+  KodaXShellSandboxObservation,
   KodaXOptions,
   KodaXResult,
   KodaXShellSandbox,
@@ -93,6 +95,8 @@ const mutableNodeFs = createRequire(import.meta.url)("node:fs") as {
   linkSync: typeof nodeFs.linkSync;
   openSync: typeof nodeFs.openSync;
   readFileSync: typeof nodeFs.readFileSync;
+  readSync: typeof nodeFs.readSync;
+  closeSync: typeof nodeFs.closeSync;
   readdirSync: typeof nodeFs.readdirSync;
   renameSync: typeof nodeFs.renameSync;
   rmSync: typeof nodeFs.rmSync;
@@ -303,6 +307,7 @@ describe("createKodaXRuntime", () => {
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.sharedSessionSettings).toBe(2);
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     try {
+      if (runtime.capabilities === undefined) throw new Error('Embedded runtime did not advertise its capabilities.');
       expect(runtime.capabilities.conversationHistory).toEqual({
         version: 2,
         immutablePaging: true,
@@ -1694,7 +1699,7 @@ describe("createKodaXRuntime", () => {
       options: { context: { shellExecution: undefined } },
     });
     await inheritedHandle.result;
-    expect(capturedOptions?.context?.shellExecution).toEqual(shellExecution);
+    expect(capturedOptions).toMatchObject({ context: { shellExecution } });
 
     expect(settingsEvents).toHaveLength(1);
     expect(effectiveConfigs[0]).toMatchObject({
@@ -2282,7 +2287,7 @@ describe("createKodaXRuntime", () => {
     } finally {
       finishRun?.({
         success: false,
-        error: "test cleanup",
+        lastText: "test cleanup",
         messages: [],
         sessionId: session.id,
       });
@@ -2302,7 +2307,7 @@ describe("createKodaXRuntime", () => {
     let runsDirectoryReads = 0;
     mutableNodeFs.readdirSync = ((directory, options) => {
       if (String(directory) === runsDir) runsDirectoryReads += 1;
-      return readdirSync(directory, options);
+      return Reflect.apply(readdirSync, mutableNodeFs, [directory, options]);
     }) as typeof nodeFs.readdirSync;
     syncBuiltinESMExports();
     let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
@@ -4628,6 +4633,7 @@ describe("createKodaXRuntime", () => {
       messages,
       lineage: createSessionLineage(messages),
       title: "Snapshot batched writes",
+      gitRoot: tempRoot,
     });
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const originalOpen = nodeFsPromises.open.bind(nodeFsPromises);
@@ -4647,7 +4653,7 @@ describe("createKodaXRuntime", () => {
     );
     try {
       const observation = await runtime.sessions.observe(sessionId, () => undefined);
-      expect(observation.snapshot.transcript.entries).toHaveLength(50);
+      expect(observation.snapshot.transcript?.entries).toHaveLength(50);
       expect(snapshotWrites).toBeLessThanOrEqual(8);
       observation.close();
     } finally {
@@ -4940,7 +4946,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-concurrent-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadBlocked: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -5004,7 +5010,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-reader-lease-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadBlocked: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -5751,7 +5757,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-chunk-timeout-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadStarted: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -6995,12 +7001,13 @@ describe("createKodaXRuntime", () => {
     await new FileSessionStorage({ sessionsDir }).save(sessionId, {
       messages: [{ role: "user", content: "stable after retry" }],
       title: "Capture retry",
+      gitRoot: tempRoot,
     });
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const original = FileSessionStorage.prototype.readFullSnapshot;
     let attempts = 0;
     const read = vi.spyOn(FileSessionStorage.prototype, "readFullSnapshot")
-      .mockImplementation(async function (id, options) {
+      .mockImplementation(async function (this: FileSessionStorage, id, options) {
         if (id === sessionId && attempts < 2) {
           attempts += 1;
           throw new SessionReadError("data_changed", "writer changed the session");
@@ -7015,7 +7022,7 @@ describe("createKodaXRuntime", () => {
       expect(attempts).toBe(3);
 
       attempts = 0;
-      read.mockImplementation(async function (id, options) {
+      read.mockImplementation(async function (this: FileSessionStorage, id, options) {
         if (id === sessionId) {
           attempts += 1;
           throw new SessionReadError("data_changed", "writer keeps changing the session");
@@ -8441,7 +8448,7 @@ describe("createKodaXRuntime", () => {
         success: true,
         lastText: "unexpected managed continuation",
         messages: [],
-        sessionId: options.session?.id,
+        sessionId: options.session?.id ?? "missing-session",
       });
     });
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => (
@@ -8449,7 +8456,7 @@ describe("createKodaXRuntime", () => {
         success: true,
         lastText: "coding continuation completed",
         messages: [],
-        sessionId: options.session?.id,
+        sessionId: options.session?.id ?? "missing-session",
       }))
     ));
 
@@ -9440,6 +9447,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails and drains after repair when the fenced root provider never settles", async () => {
+    let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
@@ -9449,7 +9457,7 @@ describe("createKodaXRuntime", () => {
     });
     let terminalSaveStarted = false;
     let rootAborted = false;
-    let lateAskUser: Promise<string> | undefined;
+    let lateAskUser: ReturnType<NonNullable<KodaXEvents["askUser"]>> | undefined;
     let lateExitPlanMode: Promise<boolean | "not-in-plan-mode"> | undefined;
     let resolveRoot: ((result: KodaXResult) => void) | undefined;
     let settleFirstInFlightTool: (() => void) | undefined;
@@ -9499,7 +9507,7 @@ describe("createKodaXRuntime", () => {
             success: true,
             lastText: "queued input ran after durability repair",
             messages: [],
-            sessionId: options.session?.id,
+            sessionId: options.session?.id ?? "missing-session",
           });
         }
         return new Promise<KodaXResult>((resolve) => {
@@ -9558,8 +9566,9 @@ describe("createKodaXRuntime", () => {
             lateExitPlanMode = options.events?.exitPlanMode?.('late plan');
             options.events?.onMidTurnUserMessages?.(['late input']);
             options.events?.onMemoryReview?.({
-              reviewKey: 'late-review',
-            } as Parameters<NonNullable<KodaXEvents["onMemoryReview"]>>[0]);
+              trigger: 'episode_completed', createdAt: new Date(0).toISOString(),
+              sourceRefs: [], candidateRefs: [], actions: [], warnings: [],
+            });
             options.events?.onMemoryNotice?.({
               episodeId: 'late-episode',
               summaries: [],
@@ -9583,6 +9592,7 @@ describe("createKodaXRuntime", () => {
         title: "Automatically recover an unknown Actor settlement",
       });
       const fencedCollector = collectEvents(runtime, session.id);
+      cleanupSessionId = session.id;
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "self-fence after Actor durability becomes unknown",
@@ -9702,6 +9712,7 @@ describe("createKodaXRuntime", () => {
         interrupted: true,
         lastText: "test cleanup",
         messages: [],
+        sessionId: cleanupSessionId,
       });
       save.mockRestore();
       vi.useRealTimers();
@@ -9710,6 +9721,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("repairs a Stop-before-self-fence race without waiting for its root provider", async () => {
+    let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
@@ -9760,7 +9772,7 @@ describe("createKodaXRuntime", () => {
             success: true,
             lastText: "queued successor completed after repair",
             messages: [],
-            sessionId: options.session?.id,
+            sessionId: options.session?.id ?? "missing-session",
           });
         }
         return new Promise<KodaXResult>((resolve) => {
@@ -9770,6 +9782,7 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Repair a Stop-before-self-fence race",
       });
+      cleanupSessionId = session.id;
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "ignore the first provider abort",
@@ -9846,6 +9859,7 @@ describe("createKodaXRuntime", () => {
         interrupted: true,
         lastText: "test cleanup",
         messages: [],
+        sessionId: cleanupSessionId,
       });
       save.mockRestore();
       vi.useRealTimers();
@@ -12881,7 +12895,7 @@ describe("createKodaXRuntime", () => {
     expect(result.failureDetail?.safeMessage).not.toBe("Provider request failed.");
     expect(JSON.stringify(result)).not.toContain("capacity-cred-secret");
 
-    // ContextCapacityError token shape: required = current + reserved,
+    // ContextCapacityError token shape: required = current + reserved + safety,
     // available = window.
     const contextError = Object.assign(new Error("request cannot fit"), {
       code: "KODAX_CONTEXT_CAPACITY_EXCEEDED",
@@ -12903,9 +12917,67 @@ describe("createKodaXRuntime", () => {
     const contextResult = await contextHandle.result;
     expect(contextResult.failureDetail).toMatchObject({
       failureKind: "context_capacity",
-      contextTokens: { required: 98_000, available: 100_000 },
+      contextTokens: { required: 100_640, available: 100_000 },
     });
+    const { KodaXContextOverflowError } = await import('@kodax-ai/llm');
+    const overflow = new KodaXContextOverflowError({ contextWindow: 131_072,
+      inputTokens: 140_000, inputTokensKind: 'lower_bound' }, 'mock-provider', { httpStatus: 400 });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
+      fakeRunningSession(options, Promise.reject(overflow)));
+    const overflowHandle = await runtime.runs.start({ sessionId: session.id, prompt: 'terminal overflow',
+      providerCredential: 'capacity-cred-secret', providerCredentialProvider: 'mock-provider',
+    } as RuntimeStartRunInput & { readonly providerCredential: string; readonly providerCredentialProvider: string });
+    const overflowResult = await overflowHandle.result;
+    expect(overflowResult.failureDetail).toMatchObject({ failureKind: 'context_capacity', stage: 'transport',
+      providerErrorCode: 'context_capacity_exceeded',
+      contextOverflow: { contextWindow: 131_072, inputTokens: 140_000, inputTokensKind: 'lower_bound' } });
+    expect(overflowResult.failureDetail?.contextTokens).toBeUndefined();
+    expect(JSON.stringify(overflowResult)).not.toContain('capacity-cred-secret');
     await runtime.close();
+  });
+
+  it.each([
+    { inputTokensKind: 'exact' as const, contextWindow: 131_072, inputTokens: 140_000 },
+    { inputTokensKind: 'lower_bound' as const, inputTokens: 140_000 },
+    { inputTokensKind: 'unknown' as const },
+  ])("preserves $inputTokensKind capacity rejection facts across daemon await, status, and events", async (facts) => {
+    const { createKodaXRuntime, connectKodaXRuntime } = await import('./sdk-runtime.js');
+    const { KodaXContextOverflowError } = await import('@kodax-ai/llm');
+    const { startRuntimeDaemonHost } = await import('./runtime-daemon/host.js');
+    const { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } = await import('./runtime-daemon/state.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sharedDaemonHost: true, defaultProvider: 'mock-provider' });
+    const paths = resolveRuntimeDaemonPaths(tempRoot);
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error('Could not acquire capacity test Host.');
+    const endpointPath = process.platform === 'win32'
+      ? `\\\\.\\pipe\\kodax-capacity-${randomUUID()}` : path.join(tempRoot, 'host.sock');
+    const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: {
+      kind: process.platform === 'win32' ? 'pipe' : 'unix', path: endpointPath,
+    } });
+    const client = await connectKodaXRuntime({ homeDir: tempRoot, endpoint: endpointPath });
+    try {
+      const session = await client.sessions.create({ projectPath: tempRoot });
+      const events: RuntimeEvent[] = [];
+      const subscription = client.events.subscribe({ sessionId: session.id, type: 'run.failed' }, event => events.push(event));
+      await subscription.ready;
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+        Promise.reject(new KodaXContextOverflowError(facts, 'mock-provider', { httpStatus: 400 }))));
+      const run = await client.runs.start({ sessionId: session.id, prompt: 'terminal capacity rejection' });
+      const result = await run.result;
+      expect(result.phase).toBe('failed');
+      expect(result.failureDetail?.contextOverflow).toEqual(facts);
+      expect((await client.runs.get(run.runId)).failureDetail?.contextOverflow).toEqual(facts);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'run.failed', payload: expect.objectContaining({
+        failureDetail: expect.objectContaining({ contextOverflow: facts }),
+      }) }));
+      subscription.close();
+    } finally {
+      await client.close();
+      await host.close();
+      await runtime.close();
+    }
   });
 
   it("reports effective config provenance without exposing credential values", async () => {
@@ -13634,7 +13706,7 @@ describe("createKodaXRuntime", () => {
     try {
       mutableNodeFs.readdirSync = ((directory, options) => {
         if (String(directory) === runsDir) runsDirectoryReads += 1;
-        return readdirSync(directory, options);
+        return Reflect.apply(readdirSync, mutableNodeFs, [directory, options]);
       }) as typeof nodeFs.readdirSync;
       syncBuiltinESMExports();
       try {
@@ -14739,7 +14811,7 @@ describe("createKodaXRuntime", () => {
       requirements: { skillLearningLoop: 1 },
     });
 
-    expect(runtime.capabilities.skillLearningLoop).toEqual({
+    expect(runtime.capabilities?.skillLearningLoop).toEqual({
       version: 1,
       activation: "project_scoped_canary",
       immutableDecisions: true,
@@ -14793,7 +14865,7 @@ describe("createKodaXRuntime", () => {
           success: true,
           lastText: "done",
           messages: [],
-          sessionId: options.session?.id,
+          sessionId: options.session?.id ?? "missing-session",
         };
       },
     );
@@ -15775,7 +15847,7 @@ describe("createKodaXRuntime", () => {
       await expect(runtime.permissions.listPending({ runId: handle.runId }))
         .resolves.toEqual([]);
 
-      const observations: KodaXToolSandboxObservationUpdate[] = [];
+      const observations: KodaXShellSandboxObservation[] = [];
       invocation = await runOptions.context?.shellSandbox?.prepare({
         toolCallId: "bash_accept_edits",
         toolInput: { command: "git status --short" },
@@ -16255,6 +16327,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: "bash_full_direct",
       ...runOptions.context,
+      gitRoot: runOptions.context?.gitRoot ?? undefined,
     });
     expect(directResult).toContain("full-access-direct");
     expect(callerPrepare).not.toHaveBeenCalled();
@@ -16385,6 +16458,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: autoCall.id,
       ...executionContext,
+      gitRoot: executionContext.gitRoot ?? undefined,
     });
     expect(autoResult).toContain("auto-after-switch");
     expect(observedPrepare).toHaveBeenCalledOnce();
@@ -16409,6 +16483,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: fullCall.id,
       ...executionContext,
+      gitRoot: executionContext.gitRoot ?? undefined,
     });
     expect(fullResult).toContain("full-after-switch");
     expect(observedPrepare).toHaveBeenCalledOnce();
@@ -16536,9 +16611,13 @@ describe("createKodaXRuntime", () => {
     });
     // Existing pre-workspace Sessions may have no identity; new Sessions always have one.
     const session = { id: "legacy-missing-workspace" };
-    await new FileSessionStorage({ sessionsDir: path.join(tempRoot, "sessions") }).save(session.id, {
-      title: "Missing workspace identity", messages: [],
-    });
+    const legacyDir = path.join(tempRoot, "sessions", "_unknown");
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(path.join(legacyDir, `${session.id}.jsonl`), JSON.stringify({
+      _type: "meta", id: session.id, title: "Missing workspace identity",
+      createdAt: "2025-01-02T03:04:05.000Z", scope: "user",
+      lineageEntryCount: 0, activeMessageCount: 0,
+    }) + "\n", "utf8");
     await runtime.sessions.updateSettings(session.id, {
       executionCwd: missingWorkspace,
     });
@@ -17016,7 +17095,7 @@ describe("createKodaXRuntime", () => {
         version: 1 as const,
         state: "applied" as const,
         backend: "windows-restricted-user" as const,
-        policyId: "caller-sandbox" as const,
+        policyId: "kodax-workspace-shell-v1" as const,
       };
       const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
         request.reportObservation?.(callerObservation);
@@ -17069,7 +17148,7 @@ describe("createKodaXRuntime", () => {
         schemaVersion: 1,
         analysis: { status: "complete", shell: "shell", binding: "exact" },
         operations: [{
-          kind: "update",
+          kind: "write",
           target: { path: existingTarget, boundary: "outside-workspace" },
         }],
         risks: ["cross_boundary_mutation"],
@@ -17110,7 +17189,7 @@ describe("createKodaXRuntime", () => {
         input: { command: `echo ok > "${missingTarget}"` },
       };
       await authorizeRuntimeAutoCall(runOptions, call);
-       const observations: KodaXToolSandboxObservationUpdate[] = [];
+       const observations: KodaXShellSandboxObservation[] = [];
        const created = await runOptions.context?.shellSandbox?.prepare({
         toolCallId: call.id,
         toolInput: call.input,
