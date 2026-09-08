@@ -7,6 +7,22 @@ _Last Updated: 2026-09-08_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## v0.7.96-beta.4 Release Corrections
+
+Beta.4 corrects the compaction summary contract without changing any sandbox,
+trusted-text, permission, credential, or Provider runtime path. Manual and
+automatic summary requests now share `compaction.reasoning`, independent of
+the main turn's effort; the default disables thinking where supported and
+always-thinking models use the existing side-query low-effort resolver.
+Manual compaction uses the effective Session provider/model unless explicitly
+overridden, never carries the previous provider's model into a switched
+request, and REPL `/compact` publishes success and clears the UI only after a
+durable save. Successful compaction reports and `context.compaction.finished`
+optionally carry bounded `summaryRequests` (one record per physical summary
+call, including map/reduce) and `commitMs`; recorded timings never include
+prompt or output text. Eligible-prefix coverage, protected atomic groups, the
+query ledger, and the summary prompt text remain unchanged.
+
 ## v0.7.96-beta.3 Release Corrections
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.

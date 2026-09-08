@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-beta.4] - 2026-09-08
+
+Fourth beta pre-release of the v0.7.96 line, retaining the beta.3 Windows WFP
+probe repair, credential-bridge retirement, and all earlier sandbox-first,
+trusted-text, permission-profile, context-recovery, and Provider fixes. npm
+publication remains a manual maintainer action.
+
 ### Fixed
 
 - Share manual and automatic compaction summary policy: `compaction.reasoning`

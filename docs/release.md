@@ -137,24 +137,35 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-beta.3 release preparation
+## v0.7.96-beta.4 release preparation
 
-The build/pack CLI resolves real paths when identifying its entry point, so linked workspaces and macOS temporary-directory aliases execute the same patch and validation checks.
+Beta.4 shares manual and automatic compaction summary policy:
+`compaction.reasoning` applies to both paths independent of the main turn's
+effort, defaulting to disabled thinking where supported and using the existing
+side-query low-effort resolver for always-thinking models. Manual compaction
+honors the effective Session provider/model without carrying a switched
+provider's model, records lineage `reason: 'manual'`, and REPL `/compact`
+clears the UI only after a durable save. Successful compaction reports and
+`context.compaction.finished` optionally carry bounded `summaryRequests` (one
+record per physical summary call, including map/reduce) and `commitMs`;
+recorded timings never include prompt or output text. Eligible-prefix
+coverage, protected atomic groups, the query ledger, and the summary prompt
+text remain unchanged. The beta.3 WFP probe repair and credential-bridge
+retirement are retained.
 
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
-
-All root/workspace package versions and lockfile entries are `0.7.96-beta.3`.
+All root/workspace package versions and lockfile entries are `0.7.96-beta.4`.
 The feature-design submodule, public guides, architecture documents, and
 `kodax_manual` track this release. Historical release records retain their versions.
 
 Release gates:
 
 1. Config templates, strict source/test typechecks, manual documentation tests,
-   bundle/ASRT regressions, and package/declaration builds pass.
+   compaction/REPL/SDK regressions, bundle/ASRT regressions, and
+   package/declaration builds pass.
 2. GitHub CI passes on the exact release commit across Node 20/22, Windows
    packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
 3. Push the reachable feature-design submodule commit before the parent commit.
-4. Tag the green commit `v0.7.96-beta.3`; the Release workflow must produce five
+4. Tag the green commit `v0.7.96-beta.4`; the Release workflow must produce five
    platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
 5. Publish the GitHub pre-release with release notes. Leave npm publication
    to the maintainer: set `npm_config_tag=beta` in the shell environment, then
@@ -163,6 +174,16 @@ Release gates:
 
 Windows remains native protocol/setup 10 and `sandboxRuntime:11`;
 `runtimeExitSettlement:2` and `crashOutcomeModel:2` remain unchanged.
+
+## v0.7.96-beta.3 release preparation
+
+Release state: `v0.7.96-beta.3` is the GitHub pre-release at `fb6af970`, with
+the linked-directory build/pack entry correction at `17474b64`. It repairs
+Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65
+dependency (SDK installs with `--ignore-scripts` receive the repair), retires
+superseded credential/Host Tool RPC connections, and separates production and
+source-test TypeScript checks. It predates beta.4's compaction summary policy
+and request metrics.
 
 ## v0.7.96-beta.2 release preparation
 
