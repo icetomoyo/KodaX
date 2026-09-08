@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createRequire } from 'node:module';
+import { Server } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
@@ -213,7 +214,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   runnerSource: '',
   nullDeviceReady: true,
   deleteArtifactDuringControlVerification: undefined as string | undefined,
-  wfpOutcome: 'blocked' as 'blocked' | 'access_denied' | 'timeout',
+  wfpOutcome: 'blocked' as 'blocked' | 'connected' | 'access_denied' | 'timeout',
   aclRecoveryOutcome: 'success' as 'success' | 'failure' | 'malformed',
   aclRecoveryOutcomes: [] as Array<'success' | 'failure' | 'malformed'>,
   sidProcessesActive: true,
@@ -439,10 +440,10 @@ vi.mock('node:child_process', async (importOriginal) => {
           };
         }
         return {
-          status: 0,
+          status: windowsSandboxMock.wfpOutcome === 'connected' ? 3 : 0,
           signal: null,
           stdout: JSON.stringify({
-            egress_probe: 'blocked',
+            egress_probe: windowsSandboxMock.wfpOutcome === 'connected' ? 'connected' : 'blocked',
             target: '127.0.0.1:49152',
             runner_exit: 0,
           }),
@@ -4715,6 +4716,138 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(0);
   });
+});
+
+describe('Windows WFP probe allocation', () => {
+  it.runIf(process.platform === 'win32')(
+    'keeps Windows doctor ready when ephemeral allocation repeatedly selects proxy ports',
+    async () => {
+      const originalListen = Server.prototype.listen;
+      const originalAddress = Server.prototype.address;
+      const ephemeralListeners = new Set<Server>();
+      const listeners = new Set<Server>();
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        listeners.add(this);
+        if ((args as unknown[])[0] === 0) ephemeralListeners.add(this);
+        return Reflect.apply(originalListen, this, args);
+      });
+      const address = vi.spyOn(Server.prototype, 'address').mockImplementation(function (this: Server) {
+        return ephemeralListeners.has(this)
+          ? { address: '127.0.0.1', family: 'IPv4', port: 60080 }
+          : originalAddress.call(this);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+          ready: true,
+          setupRequired: false,
+          diagnostics: [],
+        });
+        expect(ephemeralListeners.size).toBe(0);
+        expect([...listeners].every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        address.mockRestore();
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each(['EADDRINUSE', 'EACCES'])(
+    'retries a different probe port after %s without entering the proxy range',
+    async (code) => {
+      const originalListen = Server.prototype.listen;
+      const ports: number[] = [];
+      const listeners: Server[] = [];
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        ports.push(Number((args as unknown[])[0]));
+        listeners.push(this);
+        if (ports.length === 1) {
+          queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
+          return this;
+        }
+        return Reflect.apply(originalListen, this, args);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({ ready: true });
+        expect(ports).toHaveLength(2);
+        expect(new Set(ports).size).toBe(2);
+        expect(ports.every((port) => port >= 1024 && port < 60080)).toBe(true);
+        expect(listeners.every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each([
+    ['EADDRINUSE', 5, '[wfp_probe_bind_failed]'],
+    ['EMFILE', 1, 'EMFILE'],
+  ] as const)('bounds probe binding failure %s and never launches verification', async (code, count, diagnostic) => {
+    const ports: number[] = [];
+    const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+      this: Server, ...args: Parameters<Server['listen']>
+    ) {
+      ports.push(Number((args as unknown[])[0]));
+      queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
+      return this;
+    });
+    const probesBefore = capturedSyncSpawns.filter(({ args }) => args.includes('wfp')).length;
+    try {
+      await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+        ready: false,
+        diagnostics: expect.arrayContaining([expect.stringContaining(diagnostic)]),
+      });
+      expect(ports).toHaveLength(count);
+      expect(new Set(ports).size).toBe(count);
+      expect(capturedSyncSpawns.filter(({ args }) => args.includes('wfp'))).toHaveLength(probesBefore);
+    } finally {
+      listen.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform === 'win32').each(['blocked', 'connected', 'access_denied', 'timeout'] as const)(
+    'keeps the probe listener live through verification and closes it after %s',
+    async (outcome) => {
+      windowsSandboxMock.wfpOutcome = outcome;
+      const listeners: Server[] = [];
+      const originalListen = Server.prototype.listen;
+      const originalSpawn = vi.mocked(spawnSync).getMockImplementation()!;
+      const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (
+        this: Server, ...args: Parameters<Server['listen']>
+      ) {
+        listeners.push(this);
+        return Reflect.apply(originalListen, this, args);
+      });
+      let verified = false;
+      vi.mocked(spawnSync).mockImplementation((...args) => {
+        if (Array.isArray(args[1]) && args[1].includes('wfp') && args[1].includes('verify')) {
+          verified = true;
+          expect(listeners.some((server) => server.listening)).toBe(true);
+          const target = args[1][args[1].indexOf('--target') + 1];
+          const activeAddress = listeners.find((server) => server.listening)?.address();
+          expect(activeAddress).toMatchObject({ port: Number(target?.split(':')[1]) });
+        }
+        return Reflect.apply(originalSpawn, undefined, args);
+      });
+      try {
+        await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+          ready: outcome === 'blocked',
+        });
+        expect(verified).toBe(true);
+        expect(listeners.every((server) => !server.listening)).toBe(true);
+      } finally {
+        listen.mockRestore();
+        vi.mocked(spawnSync).mockImplementation(originalSpawn);
+        for (const server of listeners) if (server.listening) server.close();
+      }
+    },
+  );
+
 });
 
 describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter', () => {

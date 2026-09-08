@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
   closeSync,
@@ -1958,21 +1958,28 @@ async function bindWindowsWfpProbe(): Promise<{
   readonly target: string;
 }> {
   const [low, high] = KODAX_WINDOWS_PROXY_PORT_RANGE;
+  // Port 0 can repeatedly land inside the WFP permit range. Bind only
+  // unprivileged ports below it, retaining the listener through verification.
+  const attemptedPorts = new Set<number>();
+  let lastError: unknown;
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    let port = randomInt(1024, low);
+    while (attemptedPorts.has(port)) port = port + 1 < low ? port + 1 : 1024;
+    attemptedPorts.add(port);
     const server = createServer();
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
-    if (typeof address === 'object' && address !== null && (address.port < low || address.port > high)) {
-      return { server, target: `127.0.0.1:${address.port}` };
+    try {
+      server.listen(port, '127.0.0.1');
+      await once(server, 'listening');
+      return { server, target: `127.0.0.1:${port}` };
+    } catch (error) {
+      server.close();
+      if (!isFileSystemError(error, 'EADDRINUSE', 'EACCES')) throw error;
+      lastError = error;
     }
-    const closed = once(server, 'close');
-    server.close();
-    await closed;
   }
   throw new Error(
     `[wfp_probe_bind_failed] Could not bind a loopback listener outside `
-    + `the Windows sandbox proxy range [${low},${high}].`,
+    + `the Windows sandbox proxy range [${low},${high}].`, { cause: lastError },
   );
 }
 
