@@ -32,6 +32,31 @@ shell lifetime.
 
 ## Trusted text checks
 
+### Approved files outside the workspace (post-beta.2 regression)
+
+Use a disposable user configuration home and a separate workspace. In Full
+Access, create a user skill at `skills/example/SKILL.md`, then edit, multi-edit,
+insert after an anchor, and undo it. Repeat a write after switching to Full
+Access within the same Run. In Edits, approve an `integrations/a2a.json` write
+once and verify it succeeds; rejection must leave the file untouched. Repeat
+with Auto approval and with `tool_call` targeting `write`.
+The legacy REPL helper must not grant external access merely because its mode
+is Auto; an unreviewed or rejected call must retain the Host root restriction.
+
+The workspace/shell write roots must remain unchanged. Repeat with unavailable
+shell setup; approved text writes still work. An unapproved sibling write,
+Git metadata, trusted project Exec Policy, and native artifact/coordination
+state must remain protected. Retargeting a path alias between snapshot and
+commit must fail before writing to the new location.
+
+Run `src/trusted-text-permissions.test.ts` and the `writes user configuration`
+cases in `src/sdk-runtime.test.ts`, together with the existing native text,
+Bash/sandbox, permission, parallel-dispatch, and undo suites. Preserve the
+cross-process tests below: no new workspace-wide lock or pre-lock target read
+is permitted. Run the platform-native matrix on Windows, Linux, and macOS.
+
+### Existing transaction and containment checks
+
 1. Stop or rename the ASRT and shell sidecars, then use `write`, `edit`,
    `multi_edit`, `insert_after_anchor`, and `undo` on ordinary authorized files.
    All five operations must work; their diagnostics must not mention setup,

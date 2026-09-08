@@ -18941,6 +18941,90 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   }, 60_000);
 
+  it.each(["full-access", "allow-once", "switch-full-access", "auto"] as const)(
+    "writes user configuration after %s admission without expanding shell roots", async (route) => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { executeToolCall } = await import("../packages/coding/src/agent-runtime/tool-dispatch.js");
+    const { buildRuntimeSessionState } = await import("../packages/coding/src/agent-runtime/runtime-session-state.js");
+    const { getAgentConfigHome, setAgentConfigHome } = await import("@kodax-ai/agent");
+    const previousHome = getAgentConfigHome();
+    const configHome = path.join(tempRoot, ".kodax");
+    const projectRoot = path.join(tempRoot, "workspace");
+    await fs.mkdir(projectRoot, { recursive: true });
+    let runOptions: KodaXOptions | undefined;
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      runOptions = options;
+      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+    });
+    if (route === "auto") {
+      const guardrail = {
+        kind: "tool", name: "auto-mode", beforeTool: vi.fn(async () => ({ action: "allow" as const })),
+        getStats: () => ({ classifierHealth: "healthy" as const, denials: {}, breaker: {} }),
+        getStatsForTest: () => ({ classifierHealth: "healthy" as const, denials: {}, breaker: {} }),
+        setProviderForTest: () => undefined,
+      } as unknown as AutoModeToolGuardrail;
+      replMock.bootstrapAutoMode.mockResolvedValue({ getGuardrail: () => guardrail });
+    }
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider",
+      defaultModel: "mock-model",
+      sharedDaemonHost: false,
+    });
+    let runId: string | undefined;
+    try {
+      setAgentConfigHome(configHome);
+      const session = await runtime.sessions.create({ title: "User skill write" });
+      await runtime.sessions.updateSettings(session.id, {
+        permissionMode: route === "full-access" || route === "auto" ? route : "accept-edits",
+        executionCwd: projectRoot,
+      });
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        permissionBroker: "client",
+        prompt: "create a user skill",
+        options: { context: { executionCwd: projectRoot, gitRoot: projectRoot } },
+      });
+      runId = handle.runId;
+      await flushMicrotasks();
+      if (!runOptions) throw new Error("expected Runtime run options");
+      if (route === "switch-full-access") {
+        await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      }
+      const rootsBefore = runOptions.context?.workspaceSandboxRoots?.list();
+      const target = path.join(configHome, route === "allow-once" ? "integrations/a2a.json" : "skills/example/SKILL.md");
+      const call = { id: "user_config_write", name: "write", input: { path: target, content: "# Example" } };
+      if (route === "auto") {
+        const verdict = await runtimeAutoGuardrail(runOptions).beforeTool?.(call, {
+          agent: createAgent({ name: "text-test", instructions: "Create the requested skill." }),
+          messages: [{ role: "user", content: "Create a user-level skill." }],
+        });
+        expect(verdict).toEqual({ action: "allow" });
+      }
+      const result = executeToolCall(
+        runOptions.events ?? {},
+        call,
+        { backups: new Map(), ...runOptions.context },
+        buildRuntimeSessionState({ activeTools: ["write"], modelSelection: {} }),
+      );
+      if (route === "allow-once") {
+        await flushMicrotasks();
+        const pending = await runtime.permissions.listPending({ runId });
+        expect(pending).toHaveLength(1);
+        await runtime.permissions.respond(pending[0]!.id, { type: "allow_once" });
+      }
+      await expect(result).resolves.toContain("File created");
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("# Example");
+      expect(runOptions.context?.workspaceSandboxRoots?.list()).toEqual(rootsBefore);
+      await expect(runtime.permissions.listPending({ runId })).resolves.toEqual([]);
+    } finally {
+      if (runId) await runtime.runs.abort(runId);
+      await runtime.close();
+      setAgentConfigHome(previousHome);
+    }
+  });
+
   it("runs Full Access without a sandbox or Auto reviewer while enforcing Exec Policy", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const configHome = path.join(tempRoot, ".kodax");

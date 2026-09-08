@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
 import type { KodaXToolExecutionContext } from '@kodax-ai/coding';
 import { createPermissionContext, executeWithPermission } from './executor.js';
 
@@ -16,6 +18,7 @@ describe('executeWithPermission Full Access', () => {
   });
 
   it('bypasses legacy helper-script and protected-path gates', async () => {
+    const target = path.join(os.tmpdir(), 'user', '.kodax', 'temporary-helper.ps1');
     const coreContext: KodaXToolExecutionContext = { backups: new Map() };
     const permission = createPermissionContext({
       permissionMode: 'full-access',
@@ -25,13 +28,16 @@ describe('executeWithPermission Full Access', () => {
 
     await expect(executeWithPermission(
       'write',
-      { path: 'C:\\Users\\ADMIN\\.kodax\\temporary-helper.ps1', content: 'ok' },
+      { path: target, content: 'ok' },
       coreContext,
       permission,
     )).resolves.toBe('executed');
 
     expect(codingMock.executeTool).toHaveBeenCalledOnce();
     expect(permission.onConfirm).not.toHaveBeenCalled();
+    expect(codingMock.executeTool.mock.calls[0]?.[2].approvedTextMutationPath)
+      .toBe(target);
+    expect(coreContext).not.toHaveProperty('approvedTextMutationPath');
   });
 
   it('leaves Auto host-path judgment to the Auto reviewer', async () => {

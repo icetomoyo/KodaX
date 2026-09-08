@@ -4,7 +4,7 @@
  * 工具执行权限包装器 - 在 REPL 层处理权限检查
  */
 
-import { executeTool } from '@kodax-ai/coding';
+import { executeTool, withApprovedTextMutationTarget } from '@kodax-ai/coding';
 import type { KodaXToolExecutionContext } from '@kodax-ai/coding';
 import {
   PermissionMode,
@@ -42,6 +42,7 @@ export async function executeWithPermission(
   permContext: PermissionContext
 ): Promise<string> {
   const mode = permContext.permissionMode;
+  let explicitlyConfirmed = false;
 
   // === 1. Plan mode: block all modification tools ===
   if (mode === 'plan') {
@@ -55,7 +56,7 @@ export async function executeWithPermission(
   // the Runtime boundary; legacy REPL helper/protected-path heuristics must not
   // silently turn this profile back into Edits.
   if (mode === 'full-access') {
-    return executeTool(toolName, input, coreContext);
+    return executeTool(toolName, input, withApprovedTextMutationTarget(toolName, input, coreContext));
   }
 
   // === 2. Safe read-only bash commands: auto-allow in all modes ===
@@ -82,6 +83,7 @@ export async function executeWithPermission(
         ? await permContext.onConfirm(toolName, { ...input, _alwaysConfirm: true })
         : { confirmed: false };
       if (!result.confirmed) return '[Cancelled] Operation on protected path requires confirmation';
+      explicitlyConfirmed = true;
     }
   }
 
@@ -109,6 +111,7 @@ export async function executeWithPermission(
     if (!skipConfirmation && permContext.onConfirm) {
       const result = await permContext.onConfirm(toolName, input);
       if (!result.confirmed) return '[Cancelled] Operation cancelled by user';
+      explicitlyConfirmed = true;
 
       // Handle "always" selection
       if (result.always) {
@@ -120,7 +123,9 @@ export async function executeWithPermission(
   }
 
   // === 7. Execute via core's executeTool() ===
-  return executeTool(toolName, input, coreContext);
+  return executeTool(toolName, input, explicitlyConfirmed
+    ? withApprovedTextMutationTarget(toolName, input, coreContext)
+    : coreContext);
 }
 
 /**

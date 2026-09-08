@@ -79,7 +79,7 @@ jobs:
 
       - name: Trusted text host integration
         if: matrix.node == '22'
-        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
+        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts src/trusted-text-permissions.test.ts
 
       - name: Real POSIX per-command sandbox concurrency gate
         if: matrix.node == '22'
@@ -315,7 +315,7 @@ jobs:
         run: |
           npm run build:native
           npm run test:native
-          node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
+          node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts src/trusted-text-permissions.test.ts
 
       - name: Enforce Linux glibc 2.28 ABI
         if: runner.os == 'Linux'

@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Honor approved text-tool targets outside the workspace, including user-level
+  skills and A2A configuration, in Full Access and after normal permission
+  admission. Approvals remain call-local; shell write roots and native locking,
+  CAS, atomic replacement, and undo conflict checks remain unchanged.
+
 - Retire the old RPC connection and socket when the same authenticated client
   identity takes over the credential/Host Tool reverse bridge. Clients now
   observe a reconnectable disconnect instead of remaining RPC-connected with

@@ -5464,6 +5464,18 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
    root closure reads the live linked-worktree registry for each transaction;
    the CLI uses the same entry. Runtime-owned Runs continue to replace any
    caller host with their authenticated workspace registry.
+   Post-beta.2 correction: after the existing concrete-tool permission gate
+   allows a text call, its private per-call context carries one absolute
+   approved target. Full Access, Edits approval, and Auto review use the same
+   handoff, including concrete bridge targets and the selected Undo backup.
+   Calls without a permission hook retain root-constrained SDK behavior.
+   The legacy REPL helper only adds this target for Full Access or an actual
+   confirmation; selecting Auto there does not imply reviewer admission.
+   The Host checks the exact target for snapshot and commit and verifies the
+   snapshot's canonical path before commit. An existing ancestor may anchor
+   native traversal for an approved external file; it is not a shell write
+   root. Native state checks include the exact target. No persistent approval
+   state, new lock, native protocol change, or Bash execution change is needed.
 2. **Cross-platform in-process filesystem primitive**: strict platform path
    and commit guarantees are provided by a narrow native binding loaded into
    the trusted Runtime on Windows, Linux, and macOS. The transaction itself

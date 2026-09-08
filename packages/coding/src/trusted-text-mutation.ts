@@ -1,6 +1,23 @@
 import path from 'node:path';
 
-import type { KodaXTrustedTextFileSnapshot } from './types.js';
+import type { KodaXToolExecutionContext, KodaXTrustedTextFileSnapshot } from './types.js';
+import { resolveExecutionPath } from './runtime-paths.js';
+
+/** Called by trusted dispatchers only after the concrete tool passed permission checks. */
+export function withApprovedTextMutationTarget(
+  tool: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: KodaXToolExecutionContext,
+): KodaXToolExecutionContext {
+  if (!['write', 'edit', 'multi_edit', 'insert_after_anchor', 'undo'].includes(tool)) return ctx;
+  const target = tool === 'undo' ? [...ctx.backups.keys()].at(-1) : input.path;
+  return {
+    ...ctx,
+    approvedTextMutationPath: typeof target === 'string' && target.trim() !== ''
+      ? resolveExecutionPath(target, ctx)
+      : undefined,
+  };
+}
 
 export type KodaXTrustedTextMutationErrorCode =
   | 'text_mutation_stale'

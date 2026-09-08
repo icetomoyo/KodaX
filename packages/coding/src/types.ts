@@ -1814,6 +1814,10 @@ export interface KodaXTrustedTextFileSnapshot {
 
 export interface KodaXTrustedTextCommitInput {
   readonly path: string;
+  /** Exact target admitted by the host's per-call permission gate, never tool input. */
+  readonly approvedPath?: string;
+  /** Snapshot identity, checked before native commit if path aliases changed. */
+  readonly expectedCanonicalPath?: string;
   readonly expectedRevision: string;
   readonly content: string;
   readonly createParentDirectories: boolean;
@@ -1849,6 +1853,7 @@ export type KodaXTrustedTextCommitOutcome =
 export interface KodaXTrustedTextMutationHost {
   snapshot(input: {
     readonly path: string;
+    readonly approvedPath?: string;
     readonly createParentDirectories: boolean;
     readonly signal?: AbortSignal;
   }): Promise<KodaXTrustedTextFileSnapshot>;
@@ -2625,6 +2630,8 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  /** Call-local text target set only after permission admission; not a shell write root. */
+  approvedTextMutationPath?: string;
   /** File backups for undo functionality - 文件备份用于撤销功能 */
   backups: Map<string, string>;
   /** Runtime-minted collaboration principal; model inputs cannot replace its caller path. */

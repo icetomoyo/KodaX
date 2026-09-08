@@ -130,6 +130,7 @@ import { executeRunScopedTool, lookupRunScopedTool, toModelToolDefinition } from
 import { emitActiveExtensionEvent } from '../extensions/runtime.js';
 import { isVisibleToolName } from './event-emitter.js';
 import { getToolExecutionOverride } from './permission-gate.js';
+import { withApprovedTextMutationTarget } from '../trusted-text-mutation.js';
 import {
   type RunnableToolCall,
   maybeBlockExistingFileWrite,
@@ -308,6 +309,9 @@ function createContextForToolCall(
   toolCall: RunnableToolCall,
   ctx: KodaXToolExecutionContext,
 ): KodaXToolExecutionContext {
+  if (events.beforeToolExecute !== undefined) {
+    ctx = withApprovedTextMutationTarget(toolCall.name, toolCall.input ?? {}, ctx);
+  }
   const toolMeta = createToolEventMeta(events, toolCall.id);
   return events.onToolProgress
       || events.onToolSandboxObservation

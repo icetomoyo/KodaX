@@ -267,6 +267,7 @@ export type {
 
 export {
   assertTrustedTextMutationPolicy,
+  withApprovedTextMutationTarget,
   KodaXTrustedTextMutationError,
 } from './trusted-text-mutation.js';
 export type {

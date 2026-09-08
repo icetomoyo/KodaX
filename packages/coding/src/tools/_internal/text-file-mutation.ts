@@ -205,6 +205,7 @@ export function withTextFileMutation<T>(
   if (trustedHost !== undefined) {
     return trustedHost.snapshot({
       path: filePath,
+      ...(ctx.approvedTextMutationPath === undefined ? {} : { approvedPath: ctx.approvedTextMutationPath }),
       createParentDirectories: toolName === 'write',
       signal: ctx.abortSignal,
     }).then((snapshot) => {
@@ -321,6 +322,8 @@ export async function writeTextFileForMutation(
     }
     const outcome = await snapshot.trustedHost.commit({
       path: snapshot.request.path,
+      ...(ctx.approvedTextMutationPath === undefined ? {} : { approvedPath: ctx.approvedTextMutationPath }),
+      expectedCanonicalPath,
       expectedRevision,
       content,
       createParentDirectories,

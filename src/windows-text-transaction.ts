@@ -197,6 +197,41 @@ function loadNativeBinding(writeRoots: readonly string[]): NativeTextTransaction
   return loadedBinding;
 }
 
+function authorizeMutationTarget(
+  target: string,
+  roots: readonly string[],
+  approvedPath?: string,
+): AuthorizedTarget {
+  assertSupportedAbsolutePath(target, 'target');
+  if (approvedPath !== undefined) assertSupportedAbsolutePath(approvedPath, 'approved target');
+  if (approvedPath !== undefined && path.relative(approvedPath, target) !== '') {
+    throw new KodaXTrustedTextMutationError({
+      code: 'text_mutation_policy_denied', path: target,
+      message: `Trusted text mutation target differs from the approved path: ${target}`,
+    });
+  }
+  try {
+    return authorizeTarget(target, roots);
+  } catch (error: unknown) {
+    if (approvedPath === undefined || !(error instanceof KodaXTrustedTextMutationError)
+      || error.code !== 'text_mutation_policy_denied') throw error;
+  }
+  // This ancestor anchors native no-follow traversal. It grants no shell or sibling writes.
+  let ancestor = path.dirname(target);
+  for (;;) {
+    try {
+      fs.lstatSync(ancestor);
+      break;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) throw error;
+      ancestor = parent;
+    }
+  }
+  return authorizeTarget(target, [ancestor]);
+}
+
 /**
  * Explicit diagnostic probe used by release artifacts and `kodax doctor
  * --native-text`. It may provision the verified content-addressed addon cache,
@@ -395,10 +430,12 @@ export function createTrustedTextMutationHost(
     async snapshot(input) {
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
-      const target = authorizeTarget(input.path, roots());
+      const writeRoots = roots();
+      const target = authorizeMutationTarget(input.path, writeRoots, input.approvedPath);
       authorizeCanonicalTarget(target.canonicalTarget);
       try {
-        const binding = loadNativeBinding(roots());
+        const binding = loadNativeBinding(input.approvedPath === undefined
+          ? writeRoots : [...writeRoots, target.canonicalTarget]);
         const nativeRoot = createNativeRoot(binding, target.canonicalRoot);
         return publicSnapshot(await nativeRoot.snapshot(target.canonicalTarget));
       } catch (error: unknown) {
@@ -408,10 +445,19 @@ export function createTrustedTextMutationHost(
     async commit(input: KodaXTrustedTextCommitInput) {
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
-      const target = authorizeTarget(input.path, roots());
+      const writeRoots = roots();
+      const target = authorizeMutationTarget(input.path, writeRoots, input.approvedPath);
       authorizeCanonicalTarget(target.canonicalTarget);
+      if (input.expectedCanonicalPath !== undefined
+        && path.relative(input.expectedCanonicalPath, target.canonicalTarget) !== '') {
+        throw new KodaXTrustedTextMutationError({
+          code: 'text_mutation_identity_changed', path: input.path,
+          message: `Trusted text mutation target changed after snapshot: ${input.path}`,
+        });
+      }
       try {
-        const binding = loadNativeBinding(roots());
+        const binding = loadNativeBinding(input.approvedPath === undefined
+          ? writeRoots : [...writeRoots, target.canonicalTarget]);
         const nativeRoot = createNativeRoot(binding, target.canonicalRoot);
         const outcome = await nativeRoot.commit(
           target.canonicalTarget,
