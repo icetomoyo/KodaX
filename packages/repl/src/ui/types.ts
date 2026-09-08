@@ -211,7 +211,7 @@ export interface InputPromptProps {
    * `undefined` to leave history-recall behavior intact when the queue is
    * empty.
    */
-  onPopPendingInputs?: () => string | undefined;
+  onPopPendingInputs?: () => string | undefined | Promise<string | undefined>;
 }
 
 export type LearningSurfaceSnapshot = AgentLearningSurfaceSnapshot;

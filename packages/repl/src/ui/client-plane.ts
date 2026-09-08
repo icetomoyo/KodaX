@@ -324,6 +324,11 @@ function itemFingerprint(item: ClientViewItem): string {
 
 /** Suffix the Host adds when a bounded item was sliced; readItem pages the rest. */
 const TRUNCATED_SUFFIX = '\n[truncated]';
+/** True when the view text is a bounded slice of a longer item. */
+export function hasBoundedItemText(text: string): boolean {
+  return text.endsWith(TRUNCATED_SUFFIX);
+}
+
 
 function boundedText(item: ClientViewItem): string {
   return item.totalTextLength !== undefined && item.totalTextLength > item.text.length

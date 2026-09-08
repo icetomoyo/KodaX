@@ -527,6 +527,15 @@ export function usePromptInputController({
       // `undefined`).
       if (text.length === 0 && onPopPendingInputs) {
         const popped = onPopPendingInputs();
+        if (popped instanceof Promise) {
+          // Host-queue pull: withdrawals settle asynchronously; land the
+          // pulled text when they do. Only entries the Host actually took
+          // back are returned, so nothing editable re-runs behind the user.
+          void popped.then((value) => {
+            if (typeof value === "string" && value.length > 0) setText(value);
+          });
+          return true;
+        }
         if (typeof popped === "string" && popped.length > 0) {
           setText(popped);
           return true;

@@ -1016,6 +1016,19 @@ Keyboard Shortcuts:
       };
       console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
       console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+      // Review fix: an explicit /recover <prompt> continuation is the
+      // user's stated first input for the recovered session — run it
+      // through the same round path as the unbound flow.
+      const continuation = normalizeRecoveryPrompt(prompt);
+      if (continuation.length > 0) {
+        try {
+          await runAgentRoundWithPlane(continuation, currentOptions, context.messages);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.log(chalk.red(`\n[Recover failed] ${message}`));
+          return 'failed';
+        }
+      }
       return 'recovered';
     }
 

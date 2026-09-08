@@ -527,6 +527,7 @@ import { buildHostSessionPayload } from "./utils/session-payload.js";
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  hasBoundedItemText,
   mintInkInputId,
   runClientPlaneRound,
   viewRunsActive,
@@ -5104,17 +5105,61 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     alignTranscriptSelection(selectedTranscriptItemId);
   }, [alignTranscriptSelection, canToggleSelectedTranscriptDetail, selectedTranscriptItemId]);
 
+  // Review fix: copy must not present the bounded view slice as the whole
+  // item. When the selected item is truncated, page readItem to the end and
+  // copy the complete text (never invents a read face; reuses the plane's
+  // paginated item reader).
+  const readFullTranscriptItemText = useCallback(async (
+    itemId: string,
+    part: 'text' | 'input' = 'text',
+  ): Promise<string | undefined> => {
+    const plane = options.clientPlane;
+    if (!plane) return undefined;
+    let offset = 0;
+    let parts = "";
+    for (;;) {
+      const content = await plane.readItem(context.sessionId, itemId, { offset, part });
+      if (content === null || content.text.length === 0) break;
+      parts += content.text;
+      if (content.nextOffset === undefined || content.nextOffset <= offset) break;
+      offset = content.nextOffset;
+    }
+    return parts.length > 0 ? parts : undefined;
+  }, [options.clientPlane, context.sessionId]);
+
   const copySelectedTranscriptItem = useCallback(async () => {
     if (!canCopySelectedTranscriptItem || !selectedTranscriptItem) {
       return;
     }
-    const copyText = buildTranscriptCopyText(selectedTranscriptItem);
+    let copyText = buildTranscriptCopyText(selectedTranscriptItem);
     if (!copyText) {
       return;
     }
+    let copiedFull = false;
+    if (hasBoundedItemText(copyText)) {
+      try {
+        const fullText = await readFullTranscriptItemText(selectedTranscriptItem.id);
+        if (fullText !== undefined && fullText.length >= copyText.length) {
+          copyText = fullText;
+          copiedFull = true;
+        }
+      } catch (error) {
+        emitKodaXDiagnostic({
+          source: 'ink.transcript',
+          level: 'warn',
+          message: `The full-text read for item ${selectedTranscriptItem.id} failed; copying the bounded preview instead.`,
+          detail: error,
+        });
+      }
+    }
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      showClipboardNotice("Copied selected transcript entry to clipboard.", "success");
+      showClipboardNotice(
+        copiedFull
+          ? "Copied the complete transcript entry to clipboard."
+          : "Copied selected transcript entry to clipboard.",
+        "success",
+      );
     } catch (error) {
       showClipboardNotice(
         buildClipboardFailureNotice("Failed to copy transcript entry", error),
@@ -5124,6 +5169,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [
     buildClipboardFailureNotice,
     canCopySelectedTranscriptItem,
+    context.sessionId,
+    options.clientPlane,
+    readFullTranscriptItemText,
     selectedTranscriptItem,
     showClipboardNotice,
     writeTerminal,
@@ -5134,9 +5182,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    const copyText = buildTranscriptToolInputCopyText(selectedTranscriptItem);
+    let copyText = buildTranscriptToolInputCopyText(selectedTranscriptItem);
     if (!copyText) {
       return;
+    }
+    if (options.clientPlane) {
+      try {
+        const fullInput = await readFullTranscriptItemText(selectedTranscriptItem.id, 'input');
+        if (fullInput !== undefined && fullInput.length > copyText.length) {
+          copyText = fullInput;
+        }
+      } catch (error) {
+        emitKodaXDiagnostic({
+          source: 'ink.transcript',
+          level: 'warn',
+          message: `The full tool-args read for item ${selectedTranscriptItem.id} failed; copying the view copy instead.`,
+          detail: error,
+        });
+      }
     }
 
     try {
@@ -5151,6 +5214,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [
     buildClipboardFailureNotice,
     canCopySelectedToolInput,
+    context.sessionId,
+    options.clientPlane,
+    readFullTranscriptItemText,
     selectedTranscriptItem,
     showClipboardNotice,
     writeTerminal,
@@ -8949,11 +9015,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       getActivePasteStore()?.reset();
       setSessionId(recoveredId);
       teamModeHandle?.writer.update({ sessionId: recoveredId });
-      // FEATURE_298 T34 — the Host derives and persists the recovery
-      // seed; the unbound path's agent continuation round is not re-run
-      // here (the user's next input drives the recovered session).
-      console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
+      // FEATURE_298 T34 — the Host derives and persists the recovery seed.
+      // Review fix: an explicit /recover <prompt> continuation is the
+      // user's stated first input for the recovered session, so it runs
+      // here through the same round path as the unbound flow (the plane
+      // branch routes it over the Host faces).
+      console.log(chalk.green(`
+[Recovered into session: ${recoveredId}]`));
       console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+      const continuation = normalizeRecoveryPrompt(prompt);
+      if (continuation.length > 0) {
+        try {
+          await stageQueuedPrompt(continuation);
+          await runQueueableAgentSequence(
+            continuation,
+            async (nextPrompt) => {
+              const skillResult = await runQueuedUserSkillRound(nextPrompt);
+              if (skillResult) return skillResult;
+              const preparedArtifacts = preparePromptInputArtifacts(
+                nextPrompt,
+                currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
+              );
+              for (const warning of preparedArtifacts.warnings) {
+                addHistoryItem({ type: "info", text: warning });
+              }
+              return runAgentRound(
+                currentOptionsRef.current,
+                preparedArtifacts.promptText,
+                context.messages,
+                preparedArtifacts.inputArtifacts,
+              );
+            },
+          );
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendHistoryItemsWithPersistence([{
+            type: "error",
+            text: `[Recover failed] ${message}`,
+          }]);
+          return "failed";
+        }
+      }
       return "recovered";
     }
 
@@ -9111,13 +9213,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const submitHostQueuedFollowUp = useCallback((
     text: string,
     delivery: 'after_turn' | 'redirect' = 'after_turn',
-  ): Promise<void> => {
+  ): Promise<'submitted' | 'rejected'> => {
     const plane = options.clientPlane;
-    if (!plane) return Promise.resolve();
+    if (!plane) return Promise.resolve('rejected');
     const inputId = mintInkInputId();
     const targetRunId = delivery === 'redirect'
       ? (clientViewRef.current === null ? undefined : viewRunsActive(clientViewRef.current))
       : undefined;
+    // Cache the full text before the round trip: an accepted entry must be
+    // pullable at full length even before the view reflects it, and the
+    // input's original id is known from here on.
+    clientPlaneQueuedTextsRef.current.set(inputId, { text, at: Date.now() });
     return plane.submit({
       sessionId: context.sessionId,
       text,
@@ -9125,7 +9231,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       delivery,
       ...(targetRunId !== undefined ? { targetRunId } : {}),
     }).then((acceptance) => {
-      if (acceptance.state === 'dropped' || acceptance.state === 'withdrawn') return;
+      if (acceptance.state === 'dropped' || acceptance.state === 'withdrawn') {
+        clientPlaneQueuedTextsRef.current.delete(inputId);
+        return 'rejected';
+      }
       // Prune consumed entries: keep the current queue plus entries young
       // enough that the view may not reflect them yet.
       const queueIds = new Set((clientViewRef.current?.queue ?? []).map((entry) => entry.inputId));
@@ -9136,11 +9245,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
       clientPlaneQueuedTextsRef.current.set(inputId, { text, at: now });
+      return 'submitted';
     }, (error: unknown) => {
+      clientPlaneQueuedTextsRef.current.delete(inputId);
       pushClientPlaneNotice(
         `queue-reject-${Date.now()}`,
         `Queued follow-up rejected: ${error instanceof Error ? error.message : String(error)}`,
       );
+      // The draft was cleared on submit; restore it while the composer is
+      // still empty so a rejected follow-up is never lost (review fix).
+      setInputText((current) => (current.trim().length === 0 ? text : current));
+      setIsInputEmpty(text.trim().length > 0);
+      return 'rejected';
     });
   }, [options.clientPlane, context.sessionId, clientViewRef, pushClientPlaneNotice]);
 
@@ -11044,27 +11160,45 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // hand (mirrors Claude Code's `popAllEditable`).
           onPopPendingInputs={() => {
             const inputs = consumePendingInputs();
-            if (inputs.length > 0) return inputs.join("\n---\n");
+            if (inputs.length > 0) return inputs.join("
+---
+");
             // FEATURE_298 T17 -- plane-bound follow-ups live in the Host
-            // queue; pull them back by withdrawing every entry.
+            // queue. Review fix: the pull is atomic per entry — only
+            // inputs the Host actually took back (withdraw resolved with
+            // the full original text) land in the editor; a conflict
+            // (already delivered) or a failed withdraw stays queued and is
+            // surfaced, never silently handed back for a duplicate resend.
             const plane = options.clientPlane;
-            const hostQueue = clientView?.queue ?? [];
+            const hostQueue = [...(clientView?.queue ?? [])];
             if (!plane || hostQueue.length === 0) return undefined;
-            for (const entry of hostQueue) {
-              void plane.withdraw(context.sessionId, entry.inputId)
-                .then((text) => {
-                  if (text !== undefined) clientPlaneQueuedTextsRef.current.delete(entry.inputId);
-                })
-                .catch(() => {
-                  pushClientPlaneNotice(
-                    `withdraw-${entry.inputId}`,
-                    'Withdraw failed — the queued input may still run.',
-                  );
-                });
-            }
-            return hostQueue.map((entry) =>
-              clientPlaneQueuedTextsRef.current.get(entry.inputId)?.text ?? entry.text,
-            ).join("\n---\n");
+            return (async () => {
+              const pulled: string[] = [];
+              const stuck: string[] = [];
+              await Promise.all(hostQueue.map(async (entry) => {
+                try {
+                  const text = await plane.withdraw(context.sessionId, entry.inputId);
+                  const cached = clientPlaneQueuedTextsRef.current.get(entry.inputId)?.text;
+                  clientPlaneQueuedTextsRef.current.delete(entry.inputId);
+                  const full = text ?? cached;
+                  if (full !== undefined && full.length > 0) pulled.push(full);
+                } catch {
+                  stuck.push(entry.inputId);
+                }
+              }));
+              if (stuck.length > 0) {
+                pushClientPlaneNotice(
+                  `withdraw-failed-${Date.now()}`,
+                  stuck.length === hostQueue.length
+                    ? 'Nothing was pulled back — the queued inputs may still run.'
+                    : `${stuck.length} of ${hostQueue.length} queued inputs could not be withdrawn (already delivered?) and stay queued.`,
+                );
+              }
+              const text = pulled.join("
+---
+");
+              return text.length > 0 ? text : undefined;
+            })();
           }}
           prompt=">"
           placeholder={buildPromptPlaceholderText({
