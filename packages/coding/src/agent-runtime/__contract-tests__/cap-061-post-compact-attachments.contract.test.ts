@@ -90,6 +90,21 @@ describe('CAP-061: applyPostCompactAttachments — budget short-circuit', () => 
 });
 
 describe('CAP-061: applyPostCompactAttachments — non-empty ledger injection', () => {
+  it('drops optional attachments when fixed input and output reserve exhaust the remaining capacity', async () => {
+    const input = {
+      compacted: compactedSeed,
+      artifactLedger: [modifiedFileEntry('m1', '/non-existent/capacity.ts')],
+      tokensBefore: 5000, tokensAfter: 1000,
+    };
+    const roomy = await applyPostCompactAttachments({ ...input,
+      capacity: { contextWindow: 10_000, reservedResponseTokens: 1000, fixedInputTokens: 500 } });
+    expect(roomy.postCompactAttachmentsForLineage.length).toBeGreaterThan(0);
+    const tight = await applyPostCompactAttachments({ ...input,
+      capacity: { contextWindow: 1000, reservedResponseTokens: 400, fixedInputTokens: 590 } });
+    expect(tight.compacted).toBe(compactedSeed);
+    expect(tight.postCompactAttachmentsForLineage).toEqual([]);
+  });
+
   it('CAP-POST-COMPACT-003: file_modified entries + sufficient freed tokens → ledger message injected and surfaced in lineage list (FEATURE_072 routing)', async () => {
     const out = await applyPostCompactAttachments({
       compacted: compactedSeed,

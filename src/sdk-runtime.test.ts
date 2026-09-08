@@ -115,6 +115,7 @@ const SESSION_EVENT_JOURNAL_CAPABILITY = {
 
 const replMock = vi.hoisted(() => ({
   bootstrapAutoMode: vi.fn(),
+  compactSession: vi.fn(),
   beforeLoadSession: null as null | ((call: number) => Promise<void>),
   loadSessionCalls: 0,
 }));
@@ -251,6 +252,10 @@ vi.mock("@kodax-ai/repl", async (importOriginal) => {
       const manager = actual.createSessionManager(...args);
       return {
         ...manager,
+        async compactSession(...input: Parameters<typeof manager.compactSession>) {
+          replMock.compactSession(...input);
+          return manager.compactSession(...input);
+        },
         async loadSession(sessionId: string) {
           const call = replMock.loadSessionCalls + 1;
           replMock.loadSessionCalls = call;
@@ -283,6 +288,7 @@ describe("createKodaXRuntime", () => {
     codingMock.runManagedTask.mockReset();
     codingMock.startKodaX.mockReset();
     replMock.bootstrapAutoMode.mockReset();
+    replMock.compactSession.mockReset();
     replMock.beforeLoadSession = null;
     replMock.loadSessionCalls = 0;
   });
@@ -1631,6 +1637,7 @@ describe("createKodaXRuntime", () => {
       autoModeClassifierModel: "mock-provider:classifier-model",
       compactionTriggerPercent: 110,
       compactionTriggerTokens: 120_000,
+      compactionReasoning: { effort: "low" },
     });
     expect(settings).toMatchObject({
       provider: "settings-provider",
@@ -1644,6 +1651,7 @@ describe("createKodaXRuntime", () => {
       autoModeClassifierModel: "mock-provider:classifier-model",
       compactionTriggerPercent: 90,
       compactionTriggerTokens: 120_000,
+      compactionReasoning: { effort: "low" },
     });
     await expect(
       runtime.sessions.updateSettings(session.id, {
@@ -1688,6 +1696,7 @@ describe("createKodaXRuntime", () => {
       compaction: {
         triggerPercent: 90,
         triggerTokens: 120_000,
+        reasoning: { effort: "low" },
       },
       context: { executionCwd: path.resolve(tempRoot), shellExecution },
     });
@@ -1702,6 +1711,12 @@ describe("createKodaXRuntime", () => {
     expect(capturedOptions).toMatchObject({ context: { shellExecution } });
 
     expect(settingsEvents).toHaveLength(1);
+    await runtime.sessions.compact({ sessionId: session.id });
+    expect(replMock.compactSession).toHaveBeenLastCalledWith(session.id, expect.objectContaining({
+      provider: "settings-provider", model: "settings-model", reasoning: { effort: "low" },
+    }));
+    await runtime.sessions.compact({ sessionId: session.id, provider: "different-provider" });
+    expect(replMock.compactSession.mock.lastCall?.[1]).not.toHaveProperty("model");
     expect(effectiveConfigs[0]).toMatchObject({
       provider: "settings-provider",
       model: "settings-model",
@@ -1731,6 +1746,7 @@ describe("createKodaXRuntime", () => {
       model: "settings-model",
       permissionMode: "accept-edits",
       shellExecution,
+      compactionReasoning: { effort: "low" },
       compactionTriggerPercent: 90,
       compactionTriggerTokens: 120_000,
     });
@@ -1738,13 +1754,20 @@ describe("createKodaXRuntime", () => {
       recreated.sessions.updateSettings(session.id, {
         compactionTriggerPercent: -5,
         compactionTriggerTokens: 0,
+        compactionReasoning: false,
       }),
     ).resolves.toMatchObject({
       compactionTriggerPercent: 15,
+      compactionReasoning: false,
     });
     await expect(
       recreated.sessions.getSettings(session.id),
     ).resolves.not.toHaveProperty("compactionTriggerTokens");
+    await expect(recreated.sessions.updateSettings(session.id, {
+      compactionReasoning: { effort: "" },
+    })).rejects.toThrow(/compactionReasoning/);
+    await recreated.sessions.updateSettings(session.id, { compactionReasoning: null });
+    expect(await recreated.sessions.getSettings(session.id)).not.toHaveProperty("compactionReasoning");
     await recreated.close();
   });
 

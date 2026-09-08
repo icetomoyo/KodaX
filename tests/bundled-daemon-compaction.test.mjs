@@ -14,6 +14,23 @@ const summary = '## Goal\nContinue implementing the requested feature.\n## Progr
   + 'The earlier investigation identified the affected components and preserved the user requirements.\n'
   + '## Next Steps\nFinish implementation and verify the behavior with regression tests.';
 
+function assertCompactionMetrics(report) {
+  assert.ok(Number.isFinite(report?.commitMs) && report.commitMs >= 0);
+  assert.ok(report.summaryRequests.length > 0);
+  for (const request of report.summaryRequests) {
+    assert.deepEqual(request.reasoning, { effort: 'low' });
+    assert.equal(request.provider, 'daemon-test-openai');
+    assert.equal(request.model, 'test-model');
+    assert.equal(request.outcome, 'succeeded');
+    assert.equal(request.usage.outputTokens, 80);
+    for (const field of ['prepareMs', 'credentialMs', 'providerMs']) {
+      assert.ok(Number.isFinite(request[field]) && request[field] >= 0, field);
+    }
+    assert.ok(!JSON.stringify(request).includes('Earlier implementation evidence'));
+    assert.ok(!JSON.stringify(request).includes('Finish implementation'));
+  }
+}
+
 async function reconnectAfterTakeover(original, options, leaseId, broker) {
   const replacement = await connectKodaXRuntime(options);
   try {
@@ -119,13 +136,18 @@ test('bundled daemon routes manual and managed compaction through the v2 broker'
     );
     runtime = await reconnectAfterTakeover(runtime, connectionOptions, lease.id, broker);
     for (const { name, protocol } of customProviders) {
+      await runtime.sessions.updateSettings(name, { compactionReasoning: { effort: 'low' } });
       rejectRequest = protocol === 'anthropic';
       const operation = runtime.sessions.compact({
         sessionId: name, provider: name, contextWindow: 32768, triggerTokens: 2000,
         credential: { leaseId: lease.id, mode: 'scoped', providers: [name] },
       });
       if (rejectRequest) await assert.rejects(operation, /daemon-test-auth-rejection/);
-      else assert.equal((await operation).compacted, true);
+      else {
+        const result = await operation;
+        assert.equal(result.compacted, true);
+        assertCompactionMetrics(result.report);
+      }
       const request = brokerRequests.at(-1);
       assert.equal(request.provider, name);
       assert.equal(request.sessionId, name);
@@ -138,7 +160,9 @@ test('bundled daemon routes manual and managed compaction through the v2 broker'
     assert.equal(new Set(brokerRequests.map(({ target }) => target.operationId)).size, 2);
     assert.deepEqual(receivedKeys, ['Bearer daemon-test-scoped-key', 'daemon-test-scoped-key']);
     rejectRequest = false;
-    await runtime.sessions.updateSettings('managed-session', { compactionTriggerTokens: 2000 });
+    await runtime.sessions.updateSettings('managed-session', {
+      compactionTriggerTokens: 2000, compactionReasoning: { effort: 'low' },
+    });
     const events = [];
     const subscription = runtime.events.subscribe({
       sessionId: 'managed-session', type: 'context.compaction.finished',
@@ -158,6 +182,9 @@ test('bundled daemon routes manual and managed compaction through the v2 broker'
     });
     subscription.close();
     assert.ok(events.some((event) => event.runId === run.runId && event.payload.committed === true), JSON.stringify(events));
+    for (const event of events.filter(event => event.runId === run.runId && event.payload.committed === true)) {
+      assertCompactionMetrics(event.payload);
+    }
   } finally {
     try {
       const state = await runtime.daemon.inspect();

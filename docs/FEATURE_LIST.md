@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.3` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.3` (npm publication remains manual) |
+| Current released version | `v0.7.96-beta.4` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-beta.4` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| In development | `v0.7.97` / `FEATURE_298` — implementation and automated verification complete; manual release acceptance pending |
+| In development | `v0.7.97` / `FEATURE_298` — core implementation complete; automated entrypoint checks pass; known acceptance gaps remain |
 | Total tracked features | `82` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -27,8 +27,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.3; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; implementation and automated verification complete; manual release acceptance pending. `225` remains the bounded v0.8.25 cleanup. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.4; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation complete; automated entrypoint checks pass; known acceptance gaps remain. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -517,10 +517,25 @@
 
 ---
 
+## v0.7.96-beta.4 Release Record
+
+`v0.7.96-beta.4` is the fourth beta pre-release of the v0.7.96 line.
+Beta.4 shares manual and automatic compaction summary policy:
+`compaction.reasoning` applies to both paths independent of the main turn's
+effort, defaulting to disabled thinking where supported (always-thinking
+models use the side-query low-effort resolver). Manual compaction honors the
+effective Session provider/model without carrying a switched provider's model,
+records lineage `reason: 'manual'`, and REPL `/compact` clears the UI only
+after a durable save. Successful compaction reports and
+`context.compaction.finished` optionally carry bounded `summaryRequests` (one
+record per physical summary call, including map/reduce) and `commitMs`. The
+beta.3 WFP probe repair, credential-bridge retirement, and all earlier
+contracts are retained. npm publication remains a manual maintainer step.
+
 ## v0.7.96-beta.3 Release Record
 
-`v0.7.96-beta.3` is the third beta pre-release of the v0.7.96 line.
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+`v0.7.96-beta.3` was the third beta pre-release of the v0.7.96 line.
+Beta.3 repaired Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` received the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
 ## v0.7.96-beta.2 Release Record
 

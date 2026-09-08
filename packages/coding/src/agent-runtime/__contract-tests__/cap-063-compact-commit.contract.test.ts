@@ -65,7 +65,8 @@ describe('CAP-063: commitCompactedHistory — no compaction this turn', () => {
 
 describe('CAP-063: commitCompactedHistory — compaction fired this turn', () => {
   it('CAP-COMPACT-COMMIT-001: didCompactMessages=true → onCompactedMessages fired with (messages, compactionUpdate); fresh snapshot returned', async () => {
-    const onCompactedMessages = vi.fn();
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const onCompactedMessages = vi.fn(async () => { clock.mockReturnValue(15); });
     const onContextCompactionFinished = vi.fn();
     const events: KodaXEvents = {
       onCompactedMessages,
@@ -97,6 +98,7 @@ describe('CAP-063: commitCompactedHistory — compaction fired this turn', () =>
       tokensBefore: 1_100,
       elapsedMs: 25,
     });
+    clock.mockRestore();
 
     expect(out.contextTokenSnapshot).toBeDefined();
     expect(onCompactedMessages).toHaveBeenCalledExactlyOnceWith(
@@ -109,7 +111,8 @@ describe('CAP-063: commitCompactedHistory — compaction fired this turn', () =>
         tokensBefore: 1_100,
         tokensAfter: out.contextTokenSnapshot?.currentTokens,
         committed: true,
-        elapsedMs: 25,
+        elapsedMs: 40,
+        commitMs: 15,
         strategy: 'full_prefix',
         effectiveTriggerTokens: 1_000,
       }),

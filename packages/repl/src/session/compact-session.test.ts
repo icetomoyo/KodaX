@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +45,26 @@ beforeEach(() => {
 });
 
 describe('FEATURE_247 R6: compactSession', () => {
+  it('restores modified-file context with the same bounded attachments as automatic compaction', async () => {
+    const file = path.join(os.tmpdir(), `compact-file-${randomUUID()}.txt`);
+    fs.writeFileSync(file, 'EXACT_MODIFIED_FILE_CONTENT');
+    const storage = new FileSessionStorage();
+    vi.spyOn(storage, 'load').mockResolvedValue({ messages: [{ role: 'user', content: 'Continue' }],
+      title: 'Attachments', gitRoot: '' });
+    vi.spyOn(storage, 'save').mockResolvedValue(undefined);
+    compactMock.mockResolvedValue({ compacted: true,
+      messages: [{ role: 'user', _source: 'compaction-checkpoint', _synthetic: true,
+        content: `${COMPACTION_SUMMARY_PREFIX}Summary` }], summary: 'Summary',
+      tokensBefore: 4_000, tokensAfter: 100, entriesRemoved: 1,
+      artifactLedger: [{ id: 'modified', kind: 'file_modified', target: file,
+        timestamp: '2026-09-08T00:00:00.000Z', action: 'edit' }],
+    } satisfies CompactionResult);
+    try {
+      const result = await compactSession('attachments', { storage, provider: 'anthropic',
+        contextWindow: 200_000 });
+      expect(JSON.stringify(result.messages)).toContain('EXACT_MODIFIED_FILE_CONTENT');
+    } finally { fs.unlinkSync(file); }
+  });
   it('returns compacted:false with a reason for a missing session (never throws)', async () => {
     const r = await compactSession('does-not-exist', { sessionsDir: tmpDir('missing') });
     expect(r.compacted).toBe(false);

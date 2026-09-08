@@ -1,18 +1,13 @@
 /** Capacity-driven semantic history compaction for Runner-managed tasks. */
 
 import {
-  buildFileContentMessages,
   attachRunnerRecoveryTranscript,
-  buildPostCompactAttachments,
   ContextCapacityError,
   compact as intelligentCompact,
-  DEFAULT_POST_COMPACT_CONFIG,
   calculateMaxContextInputTokens,
   emitKodaXDiagnostic,
   exceedsContextCapacity,
-  injectPostCompactAttachments,
   needsCompaction,
-  POST_COMPACT_TOKEN_BUDGET,
   reclaimReservedResponseTokens,
   resolveContextWindow,
   resolveCompactionPolicy,
@@ -30,6 +25,7 @@ import {
 
 import { resolveProvider } from '../../../providers/index.js';
 import { loadCompactionConfig } from '../../../compaction-config.js';
+import { applyPostCompactAttachments } from '../../../agent-runtime/middleware/post-compact-attachments.js';
 import {
   CODING_SUMMARY_PROMPT,
   CODING_UPDATE_SUMMARY_PROMPT,
@@ -173,41 +169,15 @@ async function attachManagedCompactionContext(
   contextWindow: number,
   reservedResponseTokens: number,
 ): Promise<AttachedCompactionContext> {
-  if (!result.artifactLedger?.length) {
-    return { messages: result.messages };
-  }
-  const freedTokens = Math.max(0, result.tokensBefore - result.tokensAfter);
-  const attachments = buildPostCompactAttachments(result.artifactLedger, freedTokens);
-  const attachmentBudget = Math.min(
-    Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio),
-    POST_COMPACT_TOKEN_BUDGET,
-  );
-  const fileBudget = Math.max(0, attachmentBudget - attachments.totalTokens);
-  const fileMessages = fileBudget > 0
-    ? await buildFileContentMessages(result.artifactLedger, fileBudget)
-    : [];
-  const fullAttachments = {
-    ...attachments,
-    fileMessages,
-    totalTokens: attachments.totalTokens + estimateTokens(fileMessages as KodaXMessage[]),
-  };
-  if (fullAttachments.totalTokens <= 0) {
-    return { messages: result.messages };
-  }
-  const messages = injectPostCompactAttachments(result.messages, fullAttachments);
-  if (exceedsContextCapacity({
-    contextWindow,
-    currentTokens: fixedOverheadTokens + estimateTokens(messages),
-    reservedResponseTokens,
-  })) {
-    return { messages: result.messages };
-  }
+  const attached = await applyPostCompactAttachments({
+    compacted: result.messages, artifactLedger: result.artifactLedger ?? [],
+    tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter,
+    capacity: { contextWindow, reservedResponseTokens, fixedInputTokens: fixedOverheadTokens },
+  });
   return {
-    messages,
-    postCompactAttachments: [
-      ...(fullAttachments.ledgerMessage ? [fullAttachments.ledgerMessage] : []),
-      ...fullAttachments.fileMessages,
-    ],
+    messages: attached.compacted,
+    ...(attached.postCompactAttachmentsForLineage.length > 0
+      ? { postCompactAttachments: attached.postCompactAttachmentsForLineage } : {}),
   };
 }
 
@@ -779,12 +749,15 @@ async function commitManagedCompactionResult(
     reservedResponseTokens: input.reservedResponseTokens,
     preCompactionMessages: attempt.messages,
   });
+  const commitStartedAt = performance.now();
   const persisted = await persistCompaction(
     input.options.events?.onCompactedMessages,
     candidate.finalMessages,
     candidate.update,
   );
   if (!persisted.ok) return persistenceFailureOutcome(input, persisted.error);
+  const committedResult = { ...summary.result, report: summary.result.report
+    ? { ...summary.result.report, commitMs: performance.now() - commitStartedAt } : undefined };
 
   const irreducibleInputOwnsDebt = candidate.stillOverCapacity
     && hasIrreducibleUserInput(attempt.messages, input.contextWindow);
@@ -816,7 +789,7 @@ async function commitManagedCompactionResult(
     outcome: 'compacted',
     ...(candidate.stillOverCapacity ? { stillOverCapacity: true } : {}),
   };
-  emitCommittedCompaction(input, candidate, summary.result, startedAt);
+  emitCommittedCompaction(input, candidate, committedResult, startedAt);
   return { kind: 'committed', endResult, messages: candidate.finalMessages };
 }
 

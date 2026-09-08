@@ -8,6 +8,8 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { KodaXBaseProvider } from '@kodax-ai/llm';
+import type { CompactionRequestMetrics } from './types.js';
+import { setKodaXDiagnosticSink } from '../../diagnostics.js';
 import {
   buildCompactionPromptSnapshot,
   generateSummary,
@@ -208,7 +210,7 @@ describe('buildCompactionPromptSnapshot', () => {
     expect(provider.messageBatches[0]).toEqual(messages);
     expect(provider.toolBatches[0]).toEqual(tools);
     expect(provider.systems[0]).toBe('MAIN SYSTEM');
-    expect(provider.reasoningRequests[0]).toEqual(reasoning);
+    expect(provider.reasoningRequests[0]).toBe(false);
     expect(provider.ephemeralSuffixes[0]).toContain('TEXT ONLY');
     expect(provider.promptCacheKeys[0]).toBe('e'.repeat(64));
     expect(provider.ephemeralSuffixes[0]).toContain('final 1 message');
@@ -217,7 +219,7 @@ describe('buildCompactionPromptSnapshot', () => {
       messages,
       tools,
       system: 'MAIN SYSTEM',
-      reasoning,
+      reasoning: false,
       promptCacheKey: 'e'.repeat(64),
       ephemeralSuffix: expect.objectContaining({ content: expect.stringContaining('TEXT ONLY') }),
     }));
@@ -225,6 +227,77 @@ describe('buildCompactionPromptSnapshot', () => {
       expect.objectContaining({ messages }),
       undefined,
     );
+  });
+
+  it('applies explicit summary reasoning independently of the cache envelope', async () => {
+    const provider = new RecordingSummaryProvider();
+    for (const cache of [undefined, { tools: [], reasoning: { effort: 'xhigh' } }]) {
+      await generateSummary([{ role: 'user', content: 'continue' }], provider,
+        { readFiles: [], modifiedFiles: [] }, undefined, 'SYSTEM', undefined,
+        undefined, undefined, undefined, cache, undefined,
+        { reasoning: { effort: 'low' } });
+    }
+    expect(provider.reasoningRequests).toEqual([{ effort: 'low' }, { effort: 'low' }]);
+  });
+
+  it('reports actual usage, first output and retries without exposing summary text', async () => {
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const provider = new RecordingSummaryProvider();
+    const onMetrics = vi.fn();
+    vi.spyOn(provider, 'stream').mockImplementation(async (_messages, _tools, _system,
+      _reasoning, options) => {
+      now.mockReturnValue(10);
+      options?.onThinkingDelta?.('private reasoning');
+      options?.onRateLimit?.(1, 3, 20);
+      now.mockReturnValue(70);
+      options?.onTextDelta?.('summary');
+      return { textBlocks: [{ type: 'text', text: 'summary' }], toolBlocks: [],
+        thinkingBlocks: [], usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200,
+          cachedReadTokens: 800 }, stopReason: 'stop' };
+    });
+    try {
+      await generateSummary([{ role: 'user', content: 'continue' }], provider,
+        { readFiles: [], modifiedFiles: [] }, undefined, undefined, undefined,
+        undefined, undefined, 'actual-model', undefined, { onMetrics });
+      expect(onMetrics).toHaveBeenCalledWith(expect.objectContaining({
+        provider: provider.name, model: 'actual-model', reasoning: false,
+        providerMs: 70, firstDeltaMs: 10, retryCount: 1, retryWaitMs: 20,
+        usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200, cachedReadTokens: 800 },
+        stopReason: 'stop', outcome: 'succeeded',
+      }));
+      expect(JSON.stringify(onMetrics.mock.calls)).not.toContain('private reasoning');
+    } finally { now.mockRestore(); }
+  });
+
+  it('uses a supported low effort by default when the model cannot disable thinking', async () => {
+    const provider = new RecordingSummaryProvider();
+    vi.spyOn(provider, 'getReasoningProfile').mockReturnValue({
+      effortStrategy: 'openai-chat-effort', supportsDisabledThinking: false,
+      localRejectEfforts: ['none'], defaultEffort: 'high',
+      supportedEfforts: [{ value: 'low' }, { value: 'high', isDefault: true }],
+    });
+    await generateSummary([{ role: 'user', content: 'continue' }], provider,
+      { readFiles: [], modifiedFiles: [] });
+    expect(provider.reasoningRequests).toEqual([{ effort: 'low' }]);
+  });
+
+  it('preserves a provider failure when a metrics observer also throws', async () => {
+    const provider = new RecordingSummaryProvider();
+    const failure = new Error('provider unavailable');
+    vi.spyOn(provider, 'stream').mockRejectedValue(failure);
+    const onMetrics = vi.fn((_metrics: CompactionRequestMetrics) => { throw new Error('observer failure'); });
+    const diagnostic = vi.fn();
+    const restore = setKodaXDiagnosticSink(diagnostic);
+    try {
+      await expect(generateSummary([{ role: 'user', content: 'continue' }], provider,
+        { readFiles: [], modifiedFiles: [] }, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined, { onMetrics })).rejects.toBe(failure);
+      expect(onMetrics).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failed' }));
+      expect(onMetrics.mock.calls[0]?.[0]).not.toHaveProperty('firstDeltaMs');
+      expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        level: 'warn', message: 'Compaction metrics observer failed',
+      }));
+    } finally { restore(); }
   });
 
   it('rejects tool use even when the provider also returns text', async () => {

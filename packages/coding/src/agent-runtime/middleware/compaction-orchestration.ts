@@ -257,7 +257,6 @@ export async function tryIntelligentCompact(
       // FEATURE_072: `postCompactAttachmentsForLineage` is also routed
       // via `compactionUpdate.postCompactAttachments` for REPL-side
       // native storage on the CompactionEntry.
-      const semanticCompacted = compacted;
       let postCompactAttachmentsForLineage: readonly KodaXMessage[] = [];
       if (result.artifactLedger && result.artifactLedger.length > 0) {
         const attached = await applyPostCompactAttachments({
@@ -265,21 +264,14 @@ export async function tryIntelligentCompact(
           artifactLedger: result.artifactLedger,
           tokensBefore: result.tokensBefore,
           tokensAfter: result.tokensAfter,
+          capacity: {
+            contextWindow: input.contextWindow,
+            reservedResponseTokens: input.reservedResponseTokens ?? 0,
+            fixedInputTokens: Math.max(0, input.currentTokens - estimateTokens(input.messages)),
+          },
         });
         compacted = attached.compacted;
         postCompactAttachmentsForLineage = attached.postCompactAttachmentsForLineage;
-        const fixedOverheadTokens = Math.max(
-          0,
-          input.currentTokens - estimateTokens(input.messages),
-        );
-        if (exceedsContextCapacity({
-          contextWindow: input.contextWindow,
-          currentTokens: fixedOverheadTokens + estimateTokens(compacted),
-          reservedResponseTokens: input.reservedResponseTokens,
-        })) {
-          compacted = semanticCompacted;
-          postCompactAttachmentsForLineage = [];
-        }
       }
 
       didCompactMessages = true;
@@ -560,7 +552,9 @@ export async function commitCompactedHistory(
     baselineEstimatedTokens: validatedEstimate,
     source: 'estimate',
   };
+  const commitStartedAt = performance.now();
   await input.events.onCompactedMessages?.(validated, input.compactionUpdate);
+  const commitMs = performance.now() - commitStartedAt;
   const report = input.compactionUpdate?.report;
   if (input.tokensBefore !== undefined && input.elapsedMs !== undefined) {
     input.events.onContextCompactionFinished?.({
@@ -570,8 +564,9 @@ export async function commitCompactedHistory(
       tokensBefore: input.tokensBefore,
       tokensAfter: snapshot.currentTokens,
       committed: true,
-      elapsedMs: input.elapsedMs,
+      elapsedMs: input.elapsedMs + commitMs,
       ...(report ?? {}),
+      commitMs,
     });
   }
   return { messages: validated, contextTokenSnapshot: snapshot };

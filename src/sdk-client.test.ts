@@ -37,6 +37,28 @@ it('reads actual Host sessions through the product SDK without owning their life
         expect(sessions).toHaveLength(1);
         expect(sessions[0]).toMatchObject({ id: first.id, title: 'Fix login', msgCount: 0 });
         expect(await client.sessions.read(first.id)).toMatchObject({ id: first.id, title: 'Fix login' });
+        // One Session policy controls both manual and automatic summaries;
+        // it must survive the product SDK's read and live-view projections.
+        expect(await client.sessions.updateSettings(first.id, {
+          effort: 'high', compactionReasoning: { effort: 'low' },
+        })).toMatchObject({ effort: 'high', compactionReasoning: { effort: 'low' } });
+        expect(await client.sessions.getSettings(first.id)).toMatchObject({
+          effort: 'high', compactionReasoning: { effort: 'low' },
+        });
+        const views: import('@kodax-ai/coding/client-contract').ClientSessionView[] = [];
+        const observation = await client.sessions.observe(first.id, (view) => views.push(view));
+        try {
+          expect(views.at(-1)?.settings).toMatchObject({ compactionReasoning: { effort: 'low' } });
+          expect(await client.sessions.updateSettings(first.id, { compactionReasoning: false }))
+            .toMatchObject({ effort: 'high', compactionReasoning: false });
+          await expect.poll(() => views.at(-1)?.settings.compactionReasoning).toBe(false);
+          expect(await client.sessions.updateSettings(first.id, { compactionReasoning: null }))
+            .not.toHaveProperty('compactionReasoning');
+          await expect.poll(() => views.at(-1)?.settings.compactionReasoning).toBeUndefined();
+          expect(await client.sessions.getSettings(first.id)).toMatchObject({ effort: 'high' });
+        } finally {
+          observation.close();
+        }
         // Returned data belongs to the caller; changing it must not change Host facts.
         Object.assign(sessions[0], { title: 'Local display change' });
         expect(await client.sessions.read(first.id)).toMatchObject({ title: 'Fix login' });

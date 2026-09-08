@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> **v0.7.96-beta.3 release addendum:** ADR-070 removes the global ACL
+> **v0.7.96-beta.4 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native
 > protocol 10/setup generation 10 uses a required protected marker start gate,
 > one stable capability SID per root/clause, a deterministic per-root ACE set with
@@ -4855,6 +4855,11 @@ large compaction is always present and defaults to an earlier bounded trigger.
 5. The normal summary call reuses the exact cache-affecting main-request prefix
    and appends a text-only ephemeral instruction. A synthetic user checkpoint,
    not an inline system message, represents compacted history.
+   Summary reasoning is an explicit exception: manual and automatic compaction
+   share `compaction.reasoning`, independent of main-turn effort. The default
+   disables thinking where supported, otherwise uses the existing side-query
+   low-effort resolver. Message/tool/system prefixes and routing affinity remain
+   stable; cache hits still depend on provider behavior when reasoning changes.
 6. The structured checkpoint is installed only by a successful major compact;
    v0.7.74 does not add a second background memory owner.
 7. Token state, query ledger, checkpoint, generations, and canonical compact

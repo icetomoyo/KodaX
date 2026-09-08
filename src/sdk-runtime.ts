@@ -1505,7 +1505,13 @@ export type RuntimePermissionModeInput =
   | RuntimePermissionMode
   | "auto-in-project";
 
+export type RuntimeCompactionReasoning = boolean | {
+  readonly effort: NonNullable<KodaXOptions["effort"]>;
+};
+
 export interface RuntimeSessionSettings {
+  /** Shared manual/automatic summary policy; independent of the main turn's effort. */
+  readonly compactionReasoning?: RuntimeCompactionReasoning;
   readonly provider?: string;
   readonly model?: string;
   readonly effort?: KodaXOptions["effort"];
@@ -1525,6 +1531,7 @@ export interface RuntimeSessionSettings {
 }
 
 export interface RuntimeSessionSettingsPatch {
+  readonly compactionReasoning?: RuntimeCompactionReasoning | null;
   readonly provider?: string | null;
   readonly model?: string | null;
   readonly effort?: KodaXOptions["effort"] | null;
@@ -8496,7 +8503,12 @@ function createRuntimeSessionService(
         const data = await admission.loadExecutable(input.sessionId);
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         const trustedInput = input as RuntimeTrustedCompactSessionInput;
-        const compactProvider = input.provider ?? data.runtimeInfo?.provider ?? "anthropic";
+        const settings = (await settingsOwner.read(input.sessionId)).value;
+        const sessionProvider = settings.provider ?? data.runtimeInfo?.provider;
+        const compactProvider = input.provider ?? sessionProvider ?? "anthropic";
+        const compactModel = input.model ?? (compactProvider === sessionProvider
+          ? settings.model ?? (compactProvider === data.runtimeInfo?.provider
+            ? data.runtimeInfo.model : undefined) : undefined);
         if (
           trustedInput.providerCredentialAccess !== undefined
           && !trustedInput.providerCredentialAccess.allowedProviders.includes(compactProvider)
@@ -8513,7 +8525,7 @@ function createRuntimeSessionService(
             (entry) => entry.type === "compaction",
           ).length ?? 0;
         activeCompactions.add(input.sessionId);
-        return { compactProvider, providerCredentialScope, beforeRevision };
+        return { compactProvider, compactModel, settings, providerCredentialScope, beforeRevision };
       });
       const startedAt = Date.now();
       let finalRevision = admissionResult.beforeRevision;
@@ -8529,13 +8541,15 @@ function createRuntimeSessionService(
           },
           { sessionId: input.sessionId, runId: input.sessionId },
         );
-        const settings = (await settingsOwner.read(input.sessionId)).value;
+        const { settings, compactModel } = admissionResult;
         const compactOperation = () => manager.compactSession(input.sessionId, {
           provider: admissionResult.compactProvider,
           ...(admissionResult.providerCredentialScope === undefined
             ? {}
             : { propagateErrors: true }),
-          ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(compactModel !== undefined ? { model: compactModel } : {}),
+          ...(settings.compactionReasoning !== undefined
+            ? { reasoning: settings.compactionReasoning } : {}),
           ...(input.customInstructions !== undefined
             ? { customInstructions: input.customInstructions }
             : {}),
@@ -18977,9 +18991,12 @@ function buildEffectiveRuntimeOptions(
   const maxIter = options.maxIter ?? settings.maxIter;
   const compaction =
     options.compaction !== undefined ||
+    settings.compactionReasoning !== undefined ||
     settings.compactionTriggerPercent !== undefined ||
     settings.compactionTriggerTokens !== undefined
       ? {
+          ...(settings.compactionReasoning !== undefined
+            ? { reasoning: settings.compactionReasoning } : {}),
           ...(settings.compactionTriggerPercent !== undefined
             ? { triggerPercent: settings.compactionTriggerPercent }
             : {}),
@@ -19913,6 +19930,10 @@ function applySessionSettingsPatch(
   applyNullableCompactionPercentPatch(next, patch.compactionTriggerPercent);
   applyNullableCompactionTokensPatch(next, patch.compactionTriggerTokens);
   applyNullablePatch(next, "maxIter", patch.maxIter);
+  if (patch.compactionReasoning !== undefined) {
+    applyNullablePatch(next, "compactionReasoning", patch.compactionReasoning === null
+      ? null : parseRuntimeCompactionReasoning(patch.compactionReasoning));
+  }
   return next;
 }
 
@@ -19978,6 +19999,14 @@ function applyNullableShellExecutionPatch(
     "shellExecution",
     normalizeShellExecutionContract(value),
   );
+}
+
+function parseRuntimeCompactionReasoning(value: unknown): RuntimeCompactionReasoning {
+  if (typeof value === "boolean") return value;
+  if (isRecord(value) && typeof value.effort === "string" && value.effort.trim()) {
+    return { effort: value.effort.trim() as NonNullable<KodaXOptions["effort"]> };
+  }
+  throw new Error('compactionReasoning must be a boolean or an object with a non-empty effort');
 }
 
 function applyNullableCompactionTokensPatch(
@@ -20142,6 +20171,9 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
   }
   setStringIfPresent(settings, "reasoningMode", value.reasoningMode);
   setStringIfPresent(settings, "agentMode", value.agentMode);
+  if (value.compactionReasoning !== undefined) {
+    setMutableSetting(settings, "compactionReasoning", parseRuntimeCompactionReasoning(value.compactionReasoning));
+  }
   if (typeof value.compactionTriggerPercent === "number") {
     applyNullableCompactionPercentPatch(
       settings,
@@ -20893,6 +20925,9 @@ function serializeSessionSettings(
       "compactionTriggerPercent",
       settings.compactionTriggerPercent,
     );
+  }
+  if (settings.compactionReasoning !== undefined) {
+    setMutableSetting(result, "compactionReasoning", parseRuntimeCompactionReasoning(settings.compactionReasoning));
   }
   if (settings.compactionTriggerTokens !== undefined) {
     setMutableSetting(

@@ -610,6 +610,8 @@ export interface ClientPermissionGrants {
 }
 
 export interface ClientSessionSettings {
+  /** Shared manual/automatic summary policy, independent of main-turn effort. */
+  readonly compactionReasoning?: boolean | { readonly effort: string };
   readonly provider?: string;
   readonly model?: string;
   readonly effort?: string;

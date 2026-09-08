@@ -308,3 +308,30 @@ Standards 最终复核未发现新增可行动问题。Spec 复核发现的两�
 2. Windows 强制旧 legacy 渲染器时，搜索结果跳转可能把屏幕外历史误判为可见；当前 owned 路径通过不代表 legacy 路径通过。
 
 因此结论为：上述自动化场景通过，不能据此宣布整个 v0.7.97 无条件验收通过。Electron 验收运行真实打包主进程但没有 BrowserWindow，不属于视觉 GUI 点击验收；本地确定性 Provider 也不代表商业模型任务质量。跨平台实机、输入法/真实剪贴板和终端主观手感尚未覆盖。本轮未 push、未发布，版本仍继承主线 `0.7.96-beta.3`。
+
+### 2026-09-08：再次合入主仓库 beta.4
+
+从当前验收修复提交 `0914f589` 合入主仓库 `KodaX` 分支最新的 `7b1d1ffb`，新增提交为 `1762a74d`（统一手动/自动压缩推理策略与摘要请求指标）和 `7b1d1ffb`（beta.4 发布信息）。文档子模块以 `d24175a` 合并主仓库 `041f2c7` 与当前 `93ee740`。本次继承的包版本为 `0.7.96-beta.4`，重构设计仍为 v0.7.97；没有执行发布。
+
+冲突融合保留当前 Host 单写、会话准入、锁外 Provider 调用和异步新建会话；主线新增的压缩设置在准入锁内读取一致快照，再传给锁外压缩。classic 独立使用时通过 `saveClassicSession` 保存准确 lineage，绑定 Host 时继续由 Host 持久化；未恢复已删除的 REPL Runtime runner。文档保留两侧发布记录和重构实施状态，并明确已知验收缺口仍在。
+
+接口复验发现产品 Client 的设置类型及返回白名单遗漏 `compactionReasoning`，已补齐。公开产品 SDK 与真实 Host 的 RED→GREEN 测试覆盖 `low → false → null` 的写入、读取、实时视图更新，并确认主轮 `effort: high` 不受影响。既有 daemon 开放 settings/report 对象可以传输新增字段，无需扩展通用协议或恢复机制。
+
+| 本次合并验证 | 结果 |
+|---|---|
+| 完整 build 与最终严格 src/tests typecheck | 通过；产品 Client 无 Node ambient 消费者通过 |
+| 压缩领域、附件、持久化及 REPL 命令 | 26 文件，356/356 通过 |
+| Runtime 压缩和设置 | 9/9 定向通过；同文件其余 282 项未运行 |
+| 产品 SDK、协议 schema 与事件 | 36/36 通过 |
+| 真实打包 daemon 压缩 | 通过；手动结果和自动 finished 事件均核对 `summaryRequests`、`commitMs`、请求 reasoning、usage，保留 v2 凭据 broker 与失败断言 |
+| 合并后真实 Windows REPL | owned Ink 12/12、classic 10/10，命令正常退出 0 |
+
+PTY 证据为 `%TEMP%/kodax-repl-acceptance-uLaeqJ`。构建、类型、压缩回归、真实 daemon 和终端日志为 `%TEMP%/kodax-beta4-merge-{build,typecheck-final,compaction,bundled,pty}.log`。本轮针对新增压缩改动及其交互影响验证；没有将上一轮 Electron 成绩记为本次重跑，也没有重跑全仓全部测试。
+
+#### Standards
+
+独立复核合并 diff 与 Client 增量，未发现新增可行动规范问题；硬违反 0、smell 0。主任务增量核对新增打包断言，复用现有测试进程和报告结构。
+
+#### Spec
+
+独立复核其他合并路径，Host 单写、保存成功后刷新 UI、保存失败恢复 context、摘要推理独立于主轮和指标透传均保留。Client 字段缺口已按公开契约修复并由主任务独立复核；新增未解决 finding 0。上一节的跨客户端状态栏与旧 legacy 搜索两项既有缺口仍未关闭。

@@ -296,9 +296,9 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-beta.3 修复 KodaX doctor 和随包 ASRT 0.0.65 的 Windows WFP 探测端口分配；SDK 即使使用 `--ignore-scripts` 安装也包含修复。相同认证身份接管凭据/Host Tool 桥接时，旧 RPC 连接会断开，客户端可重连并恢复有效租约，已派发工具不会重放。生产代码与源码测试分别执行严格类型检查，SDK 公开入口保持不变。
+beta.4 统一了手动与自动压缩的摘要策略：`compaction.reasoning` 同时作用于两条路径，与主回合 effort 无关（默认在支持时关闭思考）。手动压缩遵循生效的 Session provider/model，不会把切换前 provider 的 model 带入请求；REPL `/compact` 仅在持久化保存成功后清空 UI；成功报告按每次物理摘要调用记录有界 `summaryRequests` 与 `commitMs`。
 
-**v0.7.96-beta.3 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-beta.4 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -336,7 +336,8 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.3 发布清单](docs/release.md#v0796-beta3-release-preparation)。
+npm 发布仍由
+维护者手动执行。详见 [v0.7.96-beta.4 发布清单](docs/release.md#v0796-beta4-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

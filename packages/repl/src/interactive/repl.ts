@@ -459,6 +459,28 @@ function markExtensionSessionPersisted(context: InteractiveContext): void {
   context.extensionRecordsDirty = false;
 }
 
+export async function saveClassicSession(
+  context: InteractiveContext,
+  storage: SessionStorage,
+  tag?: string,
+  compactionLineage?: InteractiveContext['lineage'],
+): Promise<void> {
+  if (context.messages.length === 0) return;
+  const title = extractTitle(context.messages);
+  context.title = title;
+  await storage.save(context.sessionId, {
+    messages: context.messages,
+    title,
+    gitRoot: context.gitRoot ?? '',
+    runtimeInfo: context.runtimeInfo,
+    artifactLedger: context.artifactLedger,
+    ...(compactionLineage ? { lineage: compactionLineage } : {}),
+    ...contextExtensionSessionData(context),
+    ...(tag !== undefined ? { tag } : {}),
+  });
+  markExtensionSessionPersisted(context);
+}
+
 export type ReplRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | undefined>;
 
 export interface RepLOptions extends KodaXOptions {
@@ -1181,26 +1203,10 @@ Keyboard Shortcuts:
       void teamModeHandle?.shutdown();
       rl.close();
     },
-    saveSession: async () => {
-      // FEATURE_298 T34 — bound mode: the Host owns the canonical journal;
-      // /save and the round flushes below become no-ops locally.
+    saveSession: async (compactionLineage) => {
+      // The bound Host owns persistence; standalone REPLs save the exact compacted lineage.
       if (hostOwnsWrites) return;
-      if (context.messages.length > 0) {
-        const title = extractTitle(context.messages);
-        context.title = title;
-        await storage.save(context.sessionId, {
-          messages: context.messages,
-          title,
-          gitRoot: context.gitRoot ?? '',
-          runtimeInfo: context.runtimeInfo,
-          artifactLedger: context.artifactLedger,
-          ...contextExtensionSessionData(context),
-          // FEATURE_226: carry the session tag so a brand-new session's first
-          // save persists it (storage merges `data.tag ?? existing` otherwise).
-          ...(currentOptions.session?.tag !== undefined ? { tag: currentOptions.session.tag } : {}),
-        });
-        markExtensionSessionPersisted(context);
-      }
+      await saveClassicSession(context, storage, currentOptions.session?.tag, compactionLineage);
     },
     startNewSession: async () => {
       const nextSessionId = generateInteractiveSessionId();
@@ -1314,8 +1320,8 @@ Keyboard Shortcuts:
         console.log();
       },
     clearHistory: () => {
-      context.messages = [];
-      context.contextTokenSnapshot = undefined;
+      // Classic readline has no separate presentation history to clear.
+      // /clear owns context resets; /compact must retain its committed context.
     },
     printHistory: () => {
       if (context.messages.length === 0) {

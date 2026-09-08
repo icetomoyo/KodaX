@@ -173,7 +173,8 @@ export interface SessionCompactBinding {
 
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
-  saveSession: () => Promise<void>;
+  /** Compaction supplies authoritative lineage; ordinary saves may omit it. */
+  saveSession: (compactionLineage?: KodaXSessionLineage) => Promise<void>;
   /** FEATURE_298 T34 — Host-owned goal plane; unbound keeps the local lineage path. */
   readonly goal?: SessionGoalBinding;
   /**
@@ -187,6 +188,7 @@ export interface CommandCallbacks {
   startNewSession?: () => void | Promise<void>;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;
+  /** Clear presentation only. Commands own changes to messages/token state. */
   clearHistory: () => void;
   printHistory: () => void;
   switchProvider?: (provider: string, model?: string) => void | Promise<void>;
