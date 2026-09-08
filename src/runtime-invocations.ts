@@ -97,19 +97,26 @@ export function createRuntimeInvocationService(deps: {
   readonly listCommands?: (projectRoot?: string) => readonly { readonly name: string }[];
   /** FEATURE_298 T37 slice 3 — /review and /agents lean preparation. */
   readonly reviewPreparation: RuntimeReviewPreparationService;
+  /** Supplies the admitted Session context and its Host-mediated executor. */
+  readonly resolveSkillContext?: (
+    input: Parameters<RuntimeInvocationService['prepareSkill']>[0],
+  ) => Promise<SkillContext>;
 }): RuntimeInvocationService {
-  const skillContext = (input: {
-    readonly projectRoot: string;
-    readonly sessionId?: string;
-  }): SkillContext => ({
-    workingDirectory: input.projectRoot,
-    projectRoot: input.projectRoot,
-    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
-    // No host-mediated executor is bound yet: dynamic context is
-    // hard-disabled — the resolver's legacy execSync path never runs inside
-    // the Host unmediated (same policy as buildRunOptions).
-    disableDynamicContext: true,
-  });
+  const skillContext = async (
+    input: Parameters<RuntimeInvocationService['prepareSkill']>[0],
+  ): Promise<SkillContext> => {
+    const context = await deps.resolveSkillContext?.(input) ?? {
+      workingDirectory: input.projectRoot,
+      projectRoot: input.projectRoot,
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    };
+    return {
+      ...context,
+      // A missing executor must never fall through to the resolver's execSync.
+      disableDynamicContext: context.disableDynamicContext === true
+        || context.executeDynamicContext === undefined,
+    };
+  };
 
   const prepareCommand: RuntimeInvocationService["prepareCommand"] = async (input) => {
     // Discovery order is owned by commandDiscoveryDirs (shared with the
@@ -154,7 +161,7 @@ export function createRuntimeInvocationService(deps: {
       const expanded = await expandSkillForLLM(
         skill,
         argumentsText,
-        skillContext(input),
+        await skillContext(input),
       );
       const hookEvents = skill.hooks
         ? Object.entries(skill.hooks)

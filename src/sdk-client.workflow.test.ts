@@ -44,7 +44,9 @@ it('runs one workflow on the Host that both clients observe and control', async 
   const second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   try {
     // Client A starts a declarative (inline) workflow on the Host.
+    const session = await first.sessions.create({ projectPath: homeDir });
     const started = await first.workflows.start({
+      sessionId: session.id,
       projectRoot: homeDir,
       source: { kind: 'inline', manifest: MANIFEST, source: SOURCE },
       metadata: { displayName: 'Dual-client audit', source: 'command' },
@@ -52,6 +54,9 @@ it('runs one workflow on the Host that both clients observe and control', async 
     expect(started).toMatchObject({ kind: 'started' });
     if (started.kind !== 'started') return;
     const runId = started.runId;
+    expect(await runtime.workflows.list({ runId })).toEqual([
+      expect.objectContaining({ runId, runDir: expect.stringContaining(path.join('workflow-runs')) }),
+    ]);
 
     // Client B sees the same work through its own connection.
     await expect.poll(async () =>
@@ -89,6 +94,17 @@ it('runs one workflow on the Host that both clients observe and control', async 
     }, { timeout: 20_000 }).toBe(true);
     const terminal = await first.workflows.get(runId);
     expect(terminal).toBeDefined();
+    const runTerminal = await runtime.runs.await(runId);
+    expect(['completed', 'interrupted']).toContain(runTerminal.phase);
+    expect(await first.workflows.resume(runId)).toBe(false);
+    expect((await runtime.runs.get(runId)).phase).toBe(runTerminal.phase);
+
+    // Validation settles the admitted Run even when no Workflow manager starts.
+    await expect(first.workflows.start({
+      projectRoot: homeDir,
+      provider: 'unavailable-workflow-fixture-provider',
+      source: { kind: 'inline', manifest: MANIFEST, source: 'not valid JavaScript !!!' },
+    })).rejects.toThrow();
   } finally {
     await first.disconnect();
     await second.disconnect();

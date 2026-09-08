@@ -7,7 +7,7 @@ import {
   resolveOneShotSession,
   runOneShotClientTask,
 } from './one-shot-task.js';
-import { toKodaXProductClient } from './sdk-client.js';
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 
 // ── Runtime environment defaults ──
 // NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
@@ -172,7 +172,7 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
-import type { ClientInteractionResponse, ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { createCliClientPlane } from './cli-client-plane.js';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -199,7 +199,6 @@ import {
   resolveInteractiveSurfacePreference,
   resolveUserSkillInvocation,
   prepareInvocationExecution,
-  firstActiveRunId,
   mintInkInputId,
   runInteractiveMode,
   runInkInteractiveMode,
@@ -742,14 +741,15 @@ export function toPreparedRunStartOptions(
   options: KodaXOptions,
 ): RuntimeKodaXOptions | KodaXOptions {
   const transportIsolated = identity.mode === 'daemon';
-  const invocationPolicy = options.context?.skillInvocation?.runtimePolicy;
-  const policyOptions: KodaXOptions = transportIsolated && invocationPolicy
+  const skillInvocation = options.context?.skillInvocation;
+  const invocationPolicy = skillInvocation?.runtimePolicy;
+  const policyOptions: KodaXOptions = transportIsolated && skillInvocation && invocationPolicy
     ? {
         ...options,
         context: {
           ...options.context,
           skillInvocation: {
-            ...options.context?.skillInvocation,
+            ...skillInvocation,
             runtimePolicy: { ...invocationPolicy, enforceAtRuntime: true },
           },
         },
@@ -5237,7 +5237,7 @@ complete -c kodax -l version -d 'Show version'`);
           learning: createReplLearningBinding(interactiveRuntime),
           // FEATURE_298 T36 — the Host owns the Memory plane; the UI names
           // the project root and presents/launches only.
-          memory: (projectRoot) => interactiveRuntime.memory.forProject(projectRoot),
+          memory: (projectRoot: string) => interactiveRuntime.memory.forProject(projectRoot),
           // FEATURE_298 T22 — workflow run/control routes to the Host
           // manager (daemon client or in-process service alike).
           workflows: interactiveRuntime.workflows,
@@ -5319,7 +5319,7 @@ complete -c kodax -l version -d 'Show version'`);
               const forked = await interactiveRuntime.sessions.fork(input);
               return forked?.id;
             },
-            rewind: async (input: { sessionId: string; selector?: string }) => {
+            rewind: async (input: { sessionId: string; selector?: string; expectedHead?: string | null }) => {
               const rewound = await interactiveRuntime.sessions.rewind(input);
               return rewound !== null;
             },
@@ -5337,80 +5337,7 @@ complete -c kodax -l version -d 'Show version'`);
           // FEATURE_298 T17 — the client plane: Ink submits through the
           // Host input face, renders from the live session view, and stops
           // via run receipts. Works in-process and over the daemon face.
-          clientPlane: {
-            submit: (input: {
-              sessionId: string;
-              text: string;
-              inputId: string;
-              delivery?: 'immediate' | 'after_turn' | 'steer' | 'redirect';
-              targetRunId?: string;
-              inputArtifacts?: readonly KodaXInputArtifact[];
-            }) =>
-              interactiveRuntime.runs.acceptInput({
-                sessionId: input.sessionId,
-                text: input.text,
-                inputId: input.inputId,
-                ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
-                ...(input.targetRunId !== undefined
-                  ? { targetRunId: input.targetRunId }
-                  : {}),
-                ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
-                  ? { inputArtifacts: input.inputArtifacts }
-                  : {}),
-              }),
-            withdraw: (sessionId: string, inputId: string) =>
-              interactiveRuntime.runs.withdrawInput(sessionId, inputId)
-                .then((withdrawn) => withdrawn.text)
-                .catch((error: unknown) => {
-                  // 'conflict' means the input is no longer queued (already
-                  // delivered or withdrawn) — legitimately absent. Any other
-                  // failure must reach the caller; a swallow would mask an
-                  // input that still runs later.
-                  if ((error as { readonly code?: string }).code === 'conflict') {
-                    return undefined;
-                  }
-                  throw error;
-                }),
-            awaitRun: async (sessionId: string, runId: string) => {
-              void sessionId;
-              const outcome = await interactiveRuntime.runs.await(runId);
-              return {
-                phase: outcome.phase,
-                ...(outcome.result !== undefined ? { result: outcome.result } : {}),
-                ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
-              };
-            },
-            stop: (runId: string) => interactiveRuntime.runs.abort(runId),
-            activeRun: (sessionId: string) =>
-              interactiveRuntime.runs
-                .list({ sessionId })
-                .then((runs) => firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase }))))
-                .catch((error: unknown) => {
-                  // Surface the failure instead of reporting a silent
-                  // "no active run": callers gate redirects on this answer.
-                  emitKodaXDiagnostic({
-                    source: 'kodax-cli',
-                    level: 'warn',
-                    message: `The active-run lookup for session ${sessionId} failed; redirect decisions will treat the session as idle.`,
-                    detail: error,
-                  });
-                  return undefined;
-                }),
-            observe: (sessionId: string, onView: (view: ClientSessionView) => void) =>
-              interactiveRuntime.sessions
-                .observeView(sessionId, onView)
-                .then((observation) => () => observation.close()),
-            readItem: (sessionId: string, itemId: string, offset?: number) =>
-              interactiveRuntime.sessions.readViewItem(
-                sessionId,
-                itemId,
-                offset !== undefined ? { offset } : undefined,
-              ),
-            respondInteraction: (requestId: string, response: ClientInteractionResponse) =>
-              interactiveRuntime.interactions
-                .respond(requestId, response)
-                .then((result) => result.accepted),
-          },
+          clientPlane: createCliClientPlane(interactiveRuntime),
           // FEATURE_298 T34 — manual /compact replays the Host journal
           // through the compaction domain and persists there.
           compactSession: {

@@ -1369,6 +1369,17 @@ describe("transcript-layout", () => {
     expect(text).toContain("\"path\": \"packages/repl/src/ui/InkREPL.tsx\"");
   });
 
+  it("renders all raw Host argument lines when an entry is expanded", () => {
+    const rows = buildTranscriptRows({
+      items: [{ id: 'raw-tool', type: 'tool_group', timestamp: 1, tools: [{
+        id: 'raw-call', name: 'write', status: ToolCallStatus.Success, startTime: 1,
+        inputText: 'line1\nline2\nline3\nline4\nline5\nline6\nlast argument',
+      }] }],
+      viewportWidth: 100, showDetailedTools: true, showAllContent: true,
+    });
+    expect(rows.map((row) => row.text).join('\n')).toContain('last argument');
+  });
+
   it("shows compact live tool summaries when tool input preview is available", () => {
     const rows = buildTranscriptRows({
       items: [],

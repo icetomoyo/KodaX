@@ -8,9 +8,21 @@ import {
   toPreparedRunStartOptions,
   toRuntimeOwnedInteractiveOptions,
 } from './kodax_cli.js';
-import { forwardDaemonCompactionEvent } from './run-progress-events.js';
+import { forwardDaemonCompactionEvent, forwardRunProgressEvent } from './run-progress-events.js';
 
 describe('one-shot runtime option shaping and auto-mode settings', () => {
+  it('forwards canonical sandbox updates and rejects an update without its tool identity', () => {
+    const onToolSandboxObservation = vi.fn();
+    const payload = { update: { id: 'tool-1', observation: { version: 1, state: 'not_selected' } } };
+    const event: RuntimeEvent = { id: 'event-1', seq: 1, time: '2026-09-08T00:00:00Z',
+      sessionId: 'session-1', runId: 'run-1', type: 'tool.sandbox', payload };
+    forwardRunProgressEvent({ onToolSandboxObservation }, event, payload, new Map());
+    expect(onToolSandboxObservation).toHaveBeenCalledWith(payload.update, undefined);
+    const malformed = { update: { observation: payload.update.observation } };
+    expect(() => forwardRunProgressEvent({ onToolSandboxObservation }, { ...event, payload: malformed }, malformed, new Map()))
+      .toThrow('tool.sandbox');
+    expect(onToolSandboxObservation).toHaveBeenCalledTimes(1);
+  });
   it('projects only committed daemon compactions as legacy successes', () => {
     const onCompact = vi.fn();
     const onCompactEnd = vi.fn();

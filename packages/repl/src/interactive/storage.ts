@@ -5090,6 +5090,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
           ...resolved.data,
           messages: getSessionMessagesFromLineage(lineage),
           lineage,
+          uiHistory: [],
         };
         const completeLineage = await this.completeConversationLineage(
           id,
@@ -5185,6 +5186,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
           ...resolved.data,
           messages: getSessionMessagesFromLineage(lineage),
           lineage,
+          uiHistory: [],
         };
         await this.appendIslandArchive(
           id,

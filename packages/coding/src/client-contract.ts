@@ -95,7 +95,7 @@ export interface KodaXProductClient {
     /** Move the active head to an entry by id or label; stale selectors conflict, never silently no-op. */
     selectBranch(sessionId: string, selector: string): Promise<ClientSession>;
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
-    rewindSession(sessionId: string, selector?: string): Promise<ClientSession>;
+    rewindSession(sessionId: string, input: { readonly selector?: string; readonly expectedHead: string | null }): Promise<ClientSession>;
     /** Derive a new Session from this idle session's history; the source stays unchanged. */
     forkSession(sessionId: string, input?: ClientSessionForkInput): Promise<ClientSession>;
     /** Derive a new Session from a deterministic recovery seed (no LLM call); continue with a normal input submit. */
@@ -724,6 +724,7 @@ export interface ClientWorkflowStartMetadata {
 }
 
 export interface ClientWorkflowStartInput {
+  readonly sessionId?: string;
   readonly projectRoot: string;
   readonly source: ClientWorkflowStartSource;
   readonly args?: unknown;

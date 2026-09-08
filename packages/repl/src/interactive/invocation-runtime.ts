@@ -366,8 +366,12 @@ export async function prepareInvocationExecution(
   baseOptions: KodaXOptions,
   request: CommandInvocationRequest,
   rawUserInput: string,
-  emit: (text: string) => void
+  emit: (text: string) => void,
+  hostOwnsSkill = false,
 ): Promise<PreparedInvocation> {
+  if (hostOwnsSkill && request.source === 'skill') {
+    return { mode: 'inline', prompt: rawUserInput, options: baseOptions, finalize: async () => {} };
+  }
   const baseEvents = baseOptions.events ?? {};
   const allowedToolPolicy = parseAllowedTools(request.allowedTools);
   const runtimeOwnsSkillToolPolicy = request.source === 'skill' && request.skillInvocation !== undefined;

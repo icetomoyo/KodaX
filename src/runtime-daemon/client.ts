@@ -1,3 +1,4 @@
+import type { RuntimeMemoryPlane } from '../runtime-memory.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
@@ -528,7 +529,9 @@ export function createRuntimeDaemonClient(
         if (page === null) {
           throw new Error('Runtime daemon returned no conversation history page.');
         }
-        return projectConversationHistoryPage(sessionId, page);
+        return projectConversationHistoryPage(sessionId, page, (input) => readRequest(
+          'session.conversation.entryChunk', { ...input },
+        ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
       },
       readHistoryEntry(sessionId, itemId, options) {
         return readConversationHistoryEntry(
@@ -929,14 +932,39 @@ export function createRuntimeDaemonClient(
         return revoked;
       },
     },
-    // FEATURE_298 T36 — Memory management is an in-process Host service; the
-    // daemon surface deliberately has no memory RPC, so daemon-connected
-    // clients report unavailability instead of a silent undefined.
     memory: {
-      forProject() {
-        throw new Error('Memory management requires an in-process runtime client.');
+      async forProject(projectRoot) {
+        const capability = options.capabilities?.memoryManagement;
+        if (typeof capability !== 'object' || capability === null
+          || !('version' in capability) || capability.version !== 1) {
+          throw Object.assign(new Error('Upgrade KodaX and restart the daemon to manage Memory.'), {
+            code: 'daemon_upgrade_required' as const,
+          });
+        }
+        const description = await request('memory.describe', { projectRoot }) as {
+          memoryRoot: string; entrypointPath: string; reviewerProviderConfigured: boolean;
+        };
+        const controller: RuntimeMemoryPlane['controller'] = {
+          listInbox: () => request('memory.listInbox', { projectRoot }) as ReturnType<RuntimeMemoryPlane['controller']['listInbox']>,
+          showProposal: (id) => request('memory.showProposal', { projectRoot, id }).then(nullToUndefined<Awaited<ReturnType<RuntimeMemoryPlane['controller']['showProposal']>>>),
+          listRefs: (filter) => request('memory.listRefs', { projectRoot, filter }) as ReturnType<RuntimeMemoryPlane['controller']['listRefs']>,
+          readRef: (ref) => request('memory.readRef', { projectRoot, id: ref.id }) as ReturnType<RuntimeMemoryPlane['controller']['readRef']>,
+          remember: (input) => request('memory.remember', { projectRoot, input }) as ReturnType<RuntimeMemoryPlane['controller']['remember']>,
+          forgetRef: (id, expectedBodyFingerprint) => request('memory.forgetRef', { projectRoot, id, expectedBodyFingerprint }) as ReturnType<RuntimeMemoryPlane['controller']['forgetRef']>,
+          approveProposal: (id, expectedFingerprints, expectedRevision) => request('memory.approveProposal', { projectRoot, id, expectedFingerprints, expectedRevision }) as ReturnType<RuntimeMemoryPlane['controller']['approveProposal']>,
+          rejectProposal: (id, reason, expectedRevision) => request('memory.rejectProposal', { projectRoot, id, reason, expectedRevision }) as ReturnType<RuntimeMemoryPlane['controller']['rejectProposal']>,
+        };
+        return {
+          controller,
+          memoryRoot: description.memoryRoot,
+          entrypointPath: description.entrypointPath,
+          reviewerProviderConfigured: () => description.reviewerProviderConfigured,
+          listReviews: () => request('memory.listReviews', { projectRoot }) as ReturnType<RuntimeMemoryPlane['listReviews']>,
+          rebuild: () => request('memory.rebuild', { projectRoot }) as ReturnType<RuntimeMemoryPlane['rebuild']>,
+          ensureOpenTarget: (targetPath) => request('memory.ensureOpenTarget', { projectRoot, targetPath }) as ReturnType<RuntimeMemoryPlane['ensureOpenTarget']>,
+        };
       },
-    } as unknown as KodaXRuntime['memory'],
+    },
     // FEATURE_298 T37 slice 4 — trusted Skill/command/review/agents-lean
     // preparation runs Host-side; daemon-connected clients reach the same
     // invocation service over RPC (the results are plain JSON projections).

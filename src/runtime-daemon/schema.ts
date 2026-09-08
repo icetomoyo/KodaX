@@ -236,6 +236,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     params: objectSchema({
       sessionId: stringSchema,
       selector: stringSchema,
+      expectedHead: nullableSchema(stringSchema),
       historyBoundary: conversationHistoryBoundarySchema(),
     }, ['sessionId']),
     result: nullableSchema(sessionSchema()),
@@ -414,6 +415,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'workflow.stop': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.start': {
     params: objectSchema({
+      sessionId: stringSchema,
+      credential: credentialBindingSchema(),
       projectRoot: stringSchema,
       source: {
         oneOf: [
@@ -576,6 +579,27 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'skill.describe': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
   'skill.read': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
+  'memory.describe': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: objectAnySchema },
+  'memory.listReviews': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: arrayAnySchema },
+  'memory.listInbox': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: arrayAnySchema },
+  'memory.rebuild': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: objectAnySchema },
+  'memory.showProposal': { params: objectSchema({ projectRoot: stringSchema, id: stringSchema }, ['projectRoot', 'id']), result: nullOrObjectSchema },
+  'memory.readRef': { params: objectSchema({ projectRoot: stringSchema, id: stringSchema }, ['projectRoot', 'id']), result: objectAnySchema },
+  'memory.listRefs': { params: objectSchema({ projectRoot: stringSchema, filter: objectSchema({
+      kinds: { type: 'array', items: { enum: ['working_context', 'session_trace', 'artifact_ledger', 'learning_proposal', 'memdir', 'skill', 'workflow_run', 'reasoning_report', 'self_manual', 'project_doc'] } },
+      scopes: { type: 'array', items: { enum: ['turn', 'session', 'project', 'workspace', 'agent', 'user', 'builtin'] } },
+      lifecycles: { type: 'array', items: { enum: ['pending', 'active', 'provisional', 'trusted', 'stale', 'quarantined', 'archived', 'readonly'] } },
+      includePrivate: booleanSchema, includeSensitive: booleanSchema, query: stringSchema,
+    }) }, ['projectRoot']), result: arrayAnySchema },
+  'memory.remember': { params: objectSchema({ projectRoot: stringSchema, input: objectSchema({
+      operation: { enum: ['remember', 'correct'] }, statement: stringSchema,
+      targetRefId: stringSchema, claimKind: { enum: ['fact', 'policy', 'preference', 'procedure', 'episode'] },
+      claimKey: stringSchema, evidenceRef: stringSchema, expectedTargetFingerprint: stringSchema,
+    }, ['statement']) }, ['projectRoot', 'input']), result: objectAnySchema },
+  'memory.forgetRef': { params: objectSchema({ projectRoot: stringSchema, id: stringSchema, expectedBodyFingerprint: stringSchema }, ['projectRoot', 'id']), result: objectAnySchema },
+  'memory.approveProposal': { params: objectSchema({ projectRoot: stringSchema, id: stringSchema, expectedFingerprints: { type: 'object', additionalProperties: stringSchema }, expectedRevision: stringSchema }, ['projectRoot', 'id', 'expectedFingerprints']), result: objectAnySchema },
+  'memory.rejectProposal': { params: objectSchema({ projectRoot: stringSchema, id: stringSchema, reason: stringSchema, expectedRevision: stringSchema }, ['projectRoot', 'id']), result: objectAnySchema },
+  'memory.ensureOpenTarget': { params: objectSchema({ projectRoot: stringSchema, targetPath: stringSchema }, ['projectRoot', 'targetPath']), result: stringSchema },
   'invocations.prepareSkill': {
     params: objectSchema({
       projectRoot: stringSchema,

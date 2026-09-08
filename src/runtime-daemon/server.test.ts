@@ -211,10 +211,11 @@ describe('runtime daemon dispatcher', () => {
         code: 'session_not_admitted' as const,
       });
     };
-    vi.spyOn(runtime.sessions, 'transcript').mockImplementation(async (sessionId) => {
+    vi.spyOn(runtime.sessions, 'load').mockImplementation(async (sessionId) => {
       if (sessionId === 'partner-session') notAdmitted();
-      return null;
+      return { id: sessionId, title: 'Admitted session' };
     });
+    const transcript = vi.spyOn(runtime.sessions, 'transcript').mockRejectedValue(new Error('Admission must not read the transcript.'));
     vi.spyOn(runtime.sessions, 'observe').mockImplementation(async (sessionId, _listener) => {
       if (sessionId === 'partner-session') notAdmitted();
       return createTestObservation(sessionId);
@@ -238,6 +239,7 @@ describe('runtime daemon dispatcher', () => {
         expect(response.error.code).toBe('session_not_admitted');
       }
     }
+    expect(transcript).not.toHaveBeenCalled();
   });
 
   it('requires the configured daemon token during initialize', async () => {
@@ -375,6 +377,14 @@ describe('runtime daemon dispatcher', () => {
         method: 'host_tool.complete',
         params: { invocationId: 'host-invocation-fenced', error: 'not dispatched' },
       },
+      { method: 'invocations.prepareReview', params: { projectRoot: process.cwd(), sessionId: 'session-1', args: ['--workflow'] } },
+      { method: 'memory.remember', params: { projectRoot: process.cwd(), input: { statement: 'Keep approved changes.' } } },
+      { method: 'memory.rebuild', params: { projectRoot: process.cwd() } },
+      { method: 'session.goal.create', params: { sessionId: 'session-1', objective: 'Finish the release' } },
+      { method: 'session.goal.pause', params: { sessionId: 'session-1' } },
+      { method: 'session.goal.resume', params: { sessionId: 'session-1' } },
+      { method: 'session.goal.clear', params: { sessionId: 'session-1' } },
+      { method: 'memory.ensureOpenTarget', params: { projectRoot: process.cwd(), targetPath: '/memory' } },
     ];
 
     for (const [index, request] of requests.entries()) {
@@ -1573,6 +1583,10 @@ describe('runtime daemon dispatcher', () => {
       'req-scoped-effective',
       'config.effective',
     ));
+    const review = await dispatcher.handle(createRuntimeDaemonRequest('req-scoped-review', 'invocations.prepareReview', {
+      projectRoot: process.cwd(), sessionId: 'session-1', args: ['--workflow'],
+    }));
+    expect(review).toMatchObject({ error: { code: 'unauthorized' } });
 
     expect(isRuntimeDaemonSuccessResponse(read)).toBe(true);
     expect(isRuntimeDaemonSuccessResponse(write)).toBe(false);
@@ -3022,6 +3036,18 @@ const METHOD_SMOKE_PARAMS = {
   'skill.list': { projectRoot: process.cwd(), userInvocableOnly: true },
   'skill.describe': { name: 'review', projectRoot: process.cwd() },
   'skill.read': { name: 'review', projectRoot: process.cwd() },
+  'memory.describe': { projectRoot: process.cwd() },
+  'memory.listReviews': { projectRoot: process.cwd() },
+  'memory.listInbox': { projectRoot: process.cwd() },
+  'memory.rebuild': { projectRoot: process.cwd() },
+  'memory.showProposal': { projectRoot: process.cwd(), id: 'proposal-1' },
+  'memory.readRef': { projectRoot: process.cwd(), id: 'memory-1' },
+  'memory.listRefs': { projectRoot: process.cwd(), filter: { kinds: ['memdir'] } },
+  'memory.remember': { projectRoot: process.cwd(), input: { statement: 'Use green gates.' } },
+  'memory.forgetRef': { projectRoot: process.cwd(), id: 'memory-1', expectedBodyFingerprint: 'fingerprint-1' },
+  'memory.approveProposal': { projectRoot: process.cwd(), id: 'proposal-1', expectedFingerprints: { 'memory-1': 'fingerprint-1' }, expectedRevision: 'revision-1' },
+  'memory.rejectProposal': { projectRoot: process.cwd(), id: 'proposal-1', expectedRevision: 'revision-1' },
+  'memory.ensureOpenTarget': { projectRoot: process.cwd(), targetPath: '/memory' },
   'invocations.prepareSkill': { projectRoot: process.cwd(), name: 'review' },
   'invocations.prepareCommand': { projectRoot: process.cwd(), name: 'help' },
   'invocations.prepareReview': { projectRoot: process.cwd(), sessionId: 'session-1', args: [] },
@@ -3785,7 +3811,23 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
 }
 
 function createTestMemoryPlane(): RuntimeMemoryPlane {
-  return {} as RuntimeMemoryPlane;
+  return {
+          memoryRoot: '/memory', entrypointPath: '/memory/MEMORY.md',
+          reviewerProviderConfigured: () => false,
+          async listReviews() { return []; },
+          async rebuild() { return { status: 'no-topics' as const, memoryRoot: '/memory', entrypointPath: '/memory/MEMORY.md', entryCount: 0, malformedFiles: [], warnings: [] }; },
+          async ensureOpenTarget(targetPath) { return targetPath; },
+          controller: {
+            async listInbox() { return []; },
+            async showProposal() { return undefined; },
+            async listRefs() { return [{ id: 'memory-1', owner: 'project' as const, sourceRefs: [], relatedRefs: [], kind: 'memdir' as const, scope: 'project' as const, lifecycle: 'active' as const, authority: 'approved_write' as const, visibility: 'prompt_safe' as const }]; },
+            async readRef(ref) { return { ref, body: 'Use green gates.', bodyFingerprint: 'fingerprint-1', readAt: '2026-09-08T00:00:00Z', warnings: [] }; },
+            async remember() { return { status: 'remembered' as const, changedRefIds: ['memory-1'], proposalIds: [], warnings: [] }; },
+            async forgetRef(id) { return { refId: id, operation: 'forget' as const, acknowledged: true, residualSourceRefs: [], warnings: [] }; },
+            async approveProposal(id) { return { proposalId: id, applied: true, changedRefs: [], changedPaths: [], warnings: [] }; },
+            async rejectProposal(id) { return { proposalId: id, rejected: true, warnings: [] }; },
+          },
+        };
 }
 
 function createTestUserInputs(): KodaXRuntime['userInputs'] {

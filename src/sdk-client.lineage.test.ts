@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,8 +7,9 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import type { ClientLineageSummary } from '@kodax-ai/coding/client-contract';
+import type { ClientLineageSummary, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
+import { FileSessionStorage } from '@kodax-ai/repl';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
@@ -19,10 +20,12 @@ class LineageProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_PRODUCT_LINEAGE_TEST_KEY', model: 'product-lineage-test', supportsThinking: false,
   };
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+  async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+    const messages = args[0];
     requests.push(structuredClone(messages));
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
     const userText = typeof lastUser?.content === 'string' ? lastUser.content : '';
+    args[4]?.onTextDelta?.(`REPLY ${userText.slice(-1)}`);
     return { textBlocks: [{ type: 'text', text: `REPLY ${userText.slice(-1)}` }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   }
 }
@@ -75,6 +78,63 @@ function firstUserEntryId(lineage: ClientLineageSummary): string {
   if (entry === undefined) throw new Error('No root message entry in lineage.');
   return entry.id;
 }
+
+it('waits for the completed run display checkpoint before opening a transcript boundary', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  let release = () => {};
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const original = FileSessionStorage.prototype.mutateUiHistory;
+  const checkpoint = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory').mockImplementation(async function (this: FileSessionStorage, ...args) {
+    await blocked;
+    return original.apply(this, args);
+  });
+  try {
+    await runRound(session.id, 1);
+    await expect.poll(() => checkpoint.mock.calls.length).toBeGreaterThan(0);
+    let settled = false;
+    const transcript = runtime.sessions.transcript(session.id).finally(() => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(settled).toBe(false);
+    release();
+    expect((await transcript)?.activeMessages.at(-1)?.content).toEqual([{ type: 'text', text: 'REPLY 1' }]);
+  } finally {
+    release();
+    await runtime.close();
+    checkpoint.mockRestore();
+  }
+}, 60_000);
+
+it('continues a legacy pathless session without claiming its shared unknown bucket', async () => {
+  const storage = new FileSessionStorage({
+    sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax'),
+  });
+  // HEAD sessions.create({ title }) persisted these fields; execution used
+  // process.cwd() but neither gitRoot nor runtimeInfo stored that identity.
+  const sessionId = 'legacy-pathless';
+  await storage.createGenerated(sessionId, { messages: [], title: 'Legacy', gitRoot: '', scope: 'user' });
+  await storage.createGenerated('legacy-neighbor', { messages: [], title: 'Neighbor', gitRoot: '', scope: 'user' });
+  const neighborPath = path.join(homeDir, '.kodax', 'sessions', '_unknown', 'legacy-neighbor.jsonl');
+  const neighbor = await readFile(neighborPath, 'utf8');
+  await runtime.sessions.updateSettings(sessionId, {
+    agentMode: 'sa', permissionMode: 'full-access', executionCwd: homeDir,
+  });
+  const accepted = await first.inputs.submit({ sessionId, inputId: 'legacy-round', text: 'Ask round 1' });
+  const result = await runtime.runs.await(accepted.runId!);
+  expect(result.error).toBeUndefined();
+  expect(result).toMatchObject({ phase: 'completed' });
+  expect((await runtime.sessions.transcript(sessionId))?.activeMessages.at(-1)?.content)
+    .toEqual([{ type: 'text', text: 'REPLY 1' }]);
+  const persisted = await storage.load(sessionId);
+  expect(persisted?.gitRoot).toBe('');
+  expect(persisted?.runtimeInfo?.canonicalRepoRoot).toBeUndefined();
+  expect(persisted?.runtimeInfo?.executionCwd).toBeUndefined();
+  const continued = await first.inputs.submit({ sessionId, inputId: 'legacy-round-2', text: 'Ask round 2' });
+  expect(await runtime.runs.await(continued.runId!)).toMatchObject({ phase: 'completed' });
+  expect(await readFile(neighborPath, 'utf8')).toBe(neighbor);
+  await expect(readFile(path.join(homeDir, '.kodax', 'sessions', '_unknown', 'project.json'), 'utf8'))
+    .rejects.toMatchObject({ code: 'ENOENT' });
+}, 60_000);
 
 it('labels branches and moves the head with both clients seeing the same lineage', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
@@ -140,10 +200,18 @@ it('rewinds the head through the Host without dropping entries', async () => {
   const rootId = firstUserEntryId(before!);
   const abandonedHead = before!.activeEntryId!;
   const rootIndex = before!.entries.findIndex((entry) => entry.id === rootId);
-  const rewound = await first.sessions.rewindSession(session.id, rootId);
+  const views: ClientSessionView[] = [];
+  const observation = await second.sessions.observe(session.id, view => views.push(view));
+  expect(views.at(-1)!.items.some(item => item.text === 'REPLY 2')).toBe(true);
+  await expect(first.sessions.rewindSession(session.id, { selector: rootId, expectedHead: rootId }))
+    .rejects.toMatchObject({ code: 'conflict' });
+  expect((await second.sessions.readLineage(session.id))!.activeEntryId).toBe(abandonedHead);
+  const rewound = await first.sessions.rewindSession(session.id, { selector: rootId, expectedHead: abandonedHead });
   expect(rewound.id).toBe(session.id);
   const after = await second.sessions.readLineage(session.id);
   expect(after!.activeEntryId).toBe(rootId);
+  await expect.poll(() => views.at(-1)!.items.some(item => item.text === 'REPLY 2')).toBe(false);
+  observation.close();
   // Rewind moves the head only: kept entries stay visible, the abandoned
   // branch is accounted by a rewind marker (archived through the lineage
   // domain, never deleted), and already-executed file effects are untouched

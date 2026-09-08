@@ -579,6 +579,7 @@ export interface WorkflowBuilderEvent {
 type GenerateWorkflowForRequest = typeof generateWorkflowFromOptions;
 
 export interface StartGeneratedWorkflowFromRequestOptions {
+  readonly sessionId?: string;
   readonly request: string;
   readonly builtin?: {
     readonly name: string;

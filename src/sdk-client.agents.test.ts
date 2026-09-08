@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { toKodaXProductClient } from './sdk-client.js';
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import type { KodaXRuntime } from './sdk-runtime.js';
 
 describe('product client agents and registrations face (T30)', () => {

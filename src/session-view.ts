@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
@@ -15,6 +16,7 @@ interface ObservedSession {
   timer?: ReturnType<typeof setTimeout>;
   dirty: boolean;
   historyDirty: boolean;
+  generation: number;
   readonly listeners: Set<(view: ClientSessionView) => void>;
   items: ClientViewItem[];
   readonly segments: Map<string, KodaXOutputSegmentProjection>;
@@ -39,7 +41,7 @@ export class SessionViewOwner {
   private state(sessionId: string): ObservedSession {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { dirty: true, historyDirty: true, listeners: new Set(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, transientItems: new Set() };
+      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Set(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, transientItems: new Set() };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -53,6 +55,9 @@ export class SessionViewOwner {
       meta?.contextKind !== 'child' && !meta?.childAgentId
       && !meta?.workflowCorrelation?.workflowRunId && !meta?.workflowCorrelation?.childAgentId;
     const upsert = (item: ClientViewItem): void => {
+      // Capture safe display facts while the exact credential scope is active;
+      // the later coalesced view/checkpoint runs after that scope may expire.
+      item = redactScopedProviderCredential(item);
       const index = state.items.findIndex((current) => current.id === item.id);
       if (index < 0) state.items.push(item);
       else state.items[index] = { ...item, timestamp: state.items[index]!.timestamp };
@@ -73,7 +78,7 @@ export class SessionViewOwner {
         this.checkpoint(sessionId);
       });
     const activity = (update: Omit<Partial<ClientSessionActivity>, 'runId'>): void => {
-      state.activity = { ...(state.activity?.runId === runId ? state.activity : {}), runId, ...update };
+      state.activity = { ...(state.activity?.runId === runId ? state.activity : {}), runId, ...redactScopedProviderCredential(update) };
       this.changed(sessionId);
     };
     const childActivity = createChildActivityUpdater(activity);
@@ -186,6 +191,22 @@ export class SessionViewOwner {
     state.timer.unref();
   }
 
+  /** Branch changes discard the old live projection, retaining observers. */
+  resetHistory(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    state.generation += 1;
+    state.items = [];
+    state.history = [];
+    state.segments.clear();
+    state.runIds.clear();
+    state.transientItems.clear();
+    state.activity = undefined;
+    state.costReport = undefined;
+    state.view = undefined;
+    this.changed(sessionId, true);
+  }
+
   async observe(sessionId: string, listener: (view: ClientSessionView) => void): Promise<ClientObservation> {
     const state = this.state(sessionId);
     await this.refresh(sessionId, state);
@@ -236,7 +257,9 @@ export class SessionViewOwner {
     state.dirty = false;
     const includeHistory = state.view === undefined || state.historyDirty;
     state.historyDirty = false;
+    const generation = state.generation;
     const loading = this.read(sessionId, includeHistory, state.view).then((view) => {
+      if (generation !== state.generation) return;
       if (includeHistory) state.history = view.items;
       const history = state.history.filter((item) => ![...state.runIds].some((runId) => item.id.startsWith(`${runId}:`)));
       const costReport = state.costReport?.current?.();
@@ -251,6 +274,8 @@ export class SessionViewOwner {
     }).finally(() => {
       state.loading = undefined;
       if (state.dirty) this.changed(sessionId);
+    }).then(() => {
+      if (generation !== state.generation) return this.refresh(sessionId, state);
     });
     state.loading = loading;
     return loading;
@@ -266,8 +291,8 @@ function createChildActivityUpdater(update: (patch: Omit<Partial<ClientSessionAc
     const previous = children.get(id);
     if (!completed && suppressesChurnOverToolAction(previous?.kind, kind)) return;
     if (completed) children.delete(id);
-    else children.set(id, { id, kind, label: childActivityLabel(meta), source: childActivitySource(meta),
-      detail: truncateChildActivityDetail(text), startedAt: previous?.startedAt ?? Date.now(), status: 'running' });
+    else children.set(id, redactScopedProviderCredential({ id, kind, label: childActivityLabel(meta), source: childActivitySource(meta),
+      detail: truncateChildActivityDetail(text), startedAt: previous?.startedAt ?? Date.now(), status: 'running' as const }));
     update({ children: [...children.values()] });
   };
 }
@@ -350,7 +375,9 @@ export function restoreSessionViewItems(
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
       return previous ?? { id: `tool:${tool.id}`, type: 'tool', text: String(tool.output ?? tool.error ?? ''), timestamp: item.timestamp,
-        tool: { callId: tool.id, name: tool.name, status: 'success', inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
+        tool: { callId: tool.id, name: tool.name,
+          status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
+          inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
     const previous = persisted.find((candidate) => candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp);
     if (previous) return [previous];

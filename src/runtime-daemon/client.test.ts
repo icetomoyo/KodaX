@@ -246,6 +246,8 @@ describe('runtime daemon client proxy', () => {
     })).rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'invocationPreparation' });
     await expect(client.invocations.prepareAgentsLean({ projectRoot: process.cwd() }))
       .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'invocationPreparation' });
+    await expect(client.memory.forProject(process.cwd()))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required' });
     expect(calls).toHaveLength(0);
     await client.close();
   });

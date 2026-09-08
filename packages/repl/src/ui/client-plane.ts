@@ -10,6 +10,8 @@
  */
 import type {
   ClientInteraction,
+  ClientHistoryPage,
+  ClientHistoryReadOptions,
   ClientInteractionResponse,
   ClientItemContent,
   ClientPermissionInteractionOptions,
@@ -58,6 +60,10 @@ export interface InkClientPlane {
   }>;
   /** Withdraw a queued input; returns the original text when this caller owned it. */
   withdraw(sessionId: string, inputId: string): Promise<string | undefined>;
+  /** Resolve uncertain acceptance without starting new work. */
+  readInput?(sessionId: string, inputId: string): Promise<{
+    readonly state: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
+  } | null>;
   /** Resolve when the run reaches a terminal phase. */
   awaitRun(sessionId: string, runId: string): Promise<ClientRoundOutcome>;
   /** Request a stop for one run (Esc); the receipt never implies terminal state. */
@@ -75,6 +81,8 @@ export interface InkClientPlane {
     itemId: string,
     options?: ClientItemReadOptions | number,
   ): Promise<ClientItemContent | null>;
+  readHistory?(sessionId: string, options?: ClientHistoryReadOptions): Promise<ClientHistoryPage>;
+  readHistoryEntry?(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
   /** Answer a pending Host question/permission; first valid answer wins. */
   respondInteraction(
     requestId: string,
@@ -82,7 +90,76 @@ export interface InkClientPlane {
   ): Promise<boolean>;
 }
 
+/** A partial or stale read must never be presented as complete content. */
+export async function readClientPlaneItemText(
+  plane: Pick<InkClientPlane, 'readItem' | 'readHistoryEntry'>,
+  sessionId: string,
+  itemId: string,
+  part: 'text' | 'input' = 'text',
+  historyEntry = false,
+): Promise<string> {
+  const read = historyEntry ? plane.readHistoryEntry : plane.readItem;
+  if (!read) throw new Error('Full transcript content is unavailable.');
+  const parts: string[] = [];
+  let offset = 0;
+  let totalLength: number | undefined;
+  for (;;) {
+    const content = await read(sessionId, itemId, { offset, part });
+    if (content === null) throw new Error('Full transcript content is unavailable; reopen history and try again.');
+    totalLength ??= content.totalLength;
+    if (content.id !== itemId || content.offset !== offset || content.totalLength !== totalLength) {
+      throw new Error('Transcript content changed during the read; try again.');
+    }
+    parts.push(content.text);
+    offset += content.text.length;
+    if (content.nextOffset === undefined) {
+      if (offset !== totalLength) throw new Error('Full transcript content is unavailable.');
+      return parts.join('');
+    }
+    if (content.text.length === 0 || content.nextOffset !== offset) {
+      throw new Error('Transcript content paging did not advance.');
+    }
+  }
+}
+
 type ViewToolStatus = NonNullable<ClientViewItem['tool']>['status'];
+
+/** Load the current conversation only when the user opens transcript history. */
+export async function readClientPlaneHistory(
+  plane: Pick<InkClientPlane, 'readItem' | 'readHistory' | 'readHistoryEntry'>,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<HistoryItem[]> {
+  if (!plane.readHistory) throw new Error('Complete transcript history is unavailable.');
+  const pages: HistoryItem[][] = [];
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  let revision: string | undefined;
+  do {
+    signal?.throwIfAborted();
+    const page = await plane.readHistory(sessionId, { cursor, limit: 100 });
+    revision ??= page.revision;
+    if (page.revision !== revision) throw new Error('History changed during loading; reopen transcript and try again.');
+    const items: HistoryItem[] = [];
+    for (const item of page.items) {
+      signal?.throwIfAborted();
+      const text = item.totalTextLength !== undefined && item.totalTextLength > item.text.length
+        ? await readClientPlaneItemText(plane, sessionId, item.id, 'text', true) : item.text;
+      const inputText = item.tool?.totalInputLength !== undefined && item.tool.totalInputLength > (item.tool.inputText?.length ?? 0)
+        ? await readClientPlaneItemText(plane, sessionId, item.id, 'input', true) : item.tool?.inputText;
+      const [mapped] = clientViewToHistoryItems([{ ...item, text, textOffset: 0, totalTextLength: undefined,
+        ...(item.tool ? { tool: { ...item.tool, inputText, totalInputLength: undefined } } : {}),
+      }]);
+      if (mapped) items.push({ ...mapped, historyItemId: item.id });
+    }
+    pages.push(items);
+    cursor = page.nextCursor;
+    if (cursor !== undefined && cursors.has(cursor)) throw new Error('History paging did not advance.');
+    if (cursor !== undefined) cursors.add(cursor);
+  } while (cursor !== undefined);
+  signal?.throwIfAborted();
+  return pages.reverse().flat();
+}
 
 const TOOL_STATUS_MAP: Record<ViewToolStatus, ToolCallStatus> = {
   running: RenderToolStatus.Executing,
@@ -147,6 +224,7 @@ async function pollActiveRun(
  */
 export async function runClientPlaneRound(input: {
   readonly plane: InkClientPlane;
+  readonly submit?: InkClientPlane['submit'];
   readonly sessionId: string;
   readonly prompt: string;
   readonly abortSignal?: AbortSignal;
@@ -186,7 +264,7 @@ export async function runClientPlaneRound(input: {
       });
     }
   };
-  const accepted = await input.plane.submit({
+  const accepted = await (input.submit ?? input.plane.submit)({
     sessionId: input.sessionId,
     text: input.prompt,
     inputId,
@@ -320,6 +398,8 @@ function itemFingerprint(item: ClientViewItem): string {
       ? '-'
       : `${item.tool.inputText.length}:${textHash(item.tool.inputText)}`,
     item.totalTextLength ?? -1,
+    item.textOffset ?? 0,
+    item.tool?.totalInputLength ?? -1,
   ].join('|');
 }
 
@@ -396,13 +476,16 @@ function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
     id: item.id,
     timestamp: item.timestamp ?? 0,
     isSessionUiOnly: true,
+    ...(item.textOffset !== undefined ? { textOffset: item.textOffset } : {}),
+    ...(item.totalTextLength !== undefined ? { totalTextLength: item.totalTextLength } : {}),
+    ...(item.tool?.totalInputLength !== undefined ? { totalInputLength: item.tool.totalInputLength } : {}),
   };
   if (item.type === 'tool' && item.tool) {
     const tool: ToolCall = {
       id: item.tool.callId,
       name: item.tool.name,
       status: TOOL_STATUS_MAP[item.tool.status],
-      ...(item.tool.inputText !== undefined ? { preview: item.tool.inputText } : {}),
+      ...(item.tool.inputText !== undefined ? { preview: item.tool.inputText, inputText: item.tool.inputText } : {}),
       ...(item.text.length > 0 ? { output: boundedText(item) } : {}),
       ...(item.tool.progress !== undefined
         ? { progressLines: [item.tool.progress] }

@@ -57,7 +57,7 @@ interface GeneratedExtension {
 const fixtureSource = readFileSync(
   fileURLToPath(new URL('./fixtures/electron-daemon-smoke/main.cjs', import.meta.url)),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 const nodeRequire = createRequire(import.meta.url);
 const probeGlobal = globalThis as typeof globalThis & {
   __kodaxElectronProbeHarness?: ProbeHarness;

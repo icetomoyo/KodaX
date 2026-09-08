@@ -83,7 +83,8 @@ class ClassifierProbeProvider extends KodaXBaseProvider {
 }
 
 function createRoot(prefix: string): string {
-  const root = createTempDirSync(prefix, process.cwd());
+  // An ordinary workspace must be outside protected agent checkouts and system-temp exemptions.
+  const root = createTempDirSync(prefix, os.homedir());
   createdRoots.push(root);
   return root;
 }
@@ -3266,7 +3267,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('allows reading non-credential ~/.kodax paths without confirmation', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'tool-results'), { recursive: true });
     fs.writeFileSync(path.join(userKodax, 'tool-results', 'out.txt'), 'x');
@@ -3297,7 +3298,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('allows glob/grep of a clean agent-home working subtree without confirmation', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'tool-results'), { recursive: true });
     fs.writeFileSync(path.join(userKodax, 'tool-results', 'out.txt'), 'x');
@@ -3318,7 +3319,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('allows common recursive shell search flags over clean working subtrees', () => {
     const projectRoot = createRoot('kodax-home-clean-shell-search-');
-    userKodax = createTempDirSync('kodax-home-clean-shell-search-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-clean-shell-search-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     const toolResults = path.join(userKodax, 'tool-results');
@@ -3341,7 +3342,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('reviews worktree removal only when an Agent Home tree contains protected descendants', () => {
     const projectRoot = createRoot('kodax-home-worktree-remove-');
-    userKodax = createTempDirSync('kodax-home-worktree-remove-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-worktree-remove-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const worktree = path.join(userKodax, 'sessions', 'worktree');
     fs.mkdirSync(worktree, { recursive: true });
@@ -3367,7 +3368,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('treats an rg file operand as an exact read instead of a recursive root', () => {
     const projectRoot = createRoot('kodax-home-rg-file-');
-    userKodax = createTempDirSync('kodax-home-rg-file-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-rg-file-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     const ordinary = path.join(scratch, 'out.txt');
@@ -3391,7 +3392,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('escalates recursive reads rooted above the agent home', () => {
     const projectRoot = createRoot('kodax-home-parent-read-');
-    userKodax = createTempDirSync('kodax-home-parent-read-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-parent-read-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const parent = path.dirname(userKodax);
 
@@ -3408,7 +3409,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('escalates glob selectors that escape an open agent-home subtree', () => {
     const projectRoot = createRoot('kodax-home-glob-escape-');
-    userKodax = createTempDirSync('kodax-home-glob-escape-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-glob-escape-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const assessment = assessAutoModeCall(call('glob', {
       path: path.join(userKodax, 'tool-results'),
@@ -3421,7 +3422,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('escalates absolute and ambiguous glob selectors that can reach credentials', () => {
     const projectRoot = createRoot('kodax-home-glob-selector-');
-    userKodax = createTempDirSync('kodax-home-glob-selector-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-glob-selector-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'tool-results'), { recursive: true });
     fs.mkdirSync(path.join(userKodax, 'mcp-tokens'), { recursive: true });
@@ -3441,7 +3442,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('escalates recursive search even in an open subtree with a sensitive descendant', () => {
     const projectRoot = createRoot('kodax-home-sensitive-descendant-');
-    userKodax = createTempDirSync('kodax-home-sensitive-descendant-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-sensitive-descendant-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'scratch'), { recursive: true });
     fs.writeFileSync(path.join(userKodax, 'scratch', 'credentials.json'), 'secret');
@@ -3459,7 +3460,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('does not mistake a recursive search option value for its search root', () => {
     const projectRoot = createRoot('kodax-home-search-options-');
-    userKodax = createTempDirSync('kodax-home-search-options-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-search-options-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     fs.mkdirSync(path.join(scratch, 'secret'), { recursive: true });
@@ -3475,7 +3476,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('escalates recursive reads rooted above credential-bearing descendants', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'mcp-tokens'), { recursive: true });
     fs.writeFileSync(path.join(userKodax, 'mcp-tokens', 'token.json'), '{"token":"secret"}');
@@ -3495,7 +3496,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
     'escalates generic sensitive agent-home read: %s',
     (filename) => {
       const projectRoot = createRoot('kodax-home-narrow-');
-      userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+      userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
       setAgentConfigHome(userKodax);
       fs.writeFileSync(path.join(userKodax, filename), 'secret');
 
@@ -3510,7 +3511,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('still escalates credential-bearing ~/.kodax reads', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'mcp-tokens'), { recursive: true });
     fs.writeFileSync(path.join(userKodax, 'mcp-tokens', 't.json'), '{}');
@@ -3560,7 +3561,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('still escalates reads of project <root>/.kodax/ (not the user home)', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(projectRoot, '.kodax'), { recursive: true });
     fs.writeFileSync(path.join(projectRoot, '.kodax', 'config.local.json'), '{}');
@@ -3578,7 +3579,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('allows writes to non-credential ~/.kodax paths', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
     for (const rel of [
       path.join('agents', 'reviewer.md'),
@@ -3596,7 +3597,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('still escalates writes to credential ~/.kodax paths', () => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
 
     const decision = evaluateAutoRulesCall(
@@ -3613,7 +3614,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
     ['generic sensitive file', '.env'],
   ])('escalates writes to %s', (_label, rel) => {
     const projectRoot = createRoot('kodax-home-narrow-');
-    userKodax = createTempDirSync('kodax-home-narrow-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-narrow-user-', os.homedir());
     setAgentConfigHome(userKodax);
 
     const decision = evaluateAutoRulesCall(
@@ -3625,7 +3626,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it.runIf(process.platform === 'win32')('protects Win32 aliases of the Runtime control plane', () => {
     const projectRoot = createRoot('kodax-home-win-alias-');
-    userKodax = createTempDirSync('kodax-home-win-alias-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-win-alias-user-', os.homedir());
     setAgentConfigHome(userKodax);
 
     for (const rel of [
@@ -3651,7 +3652,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
     // sensitivePathCandidate short-circuit fires and exercises the
     // classifySensitiveReadTarget deferral (not just classifyTarget).
     const projectRoot = createRoot('kodax-bash-narrow-');
-    userKodax = createTempDirSync('kodax-bash-narrow-', process.cwd());
+    userKodax = createTempDirSync('kodax-bash-narrow-', os.homedir());
     const agentHome = path.join(userKodax, '.kodax');
     fs.mkdirSync(path.join(agentHome, 'tool-results'), { recursive: true });
     fs.writeFileSync(path.join(agentHome, 'tool-results', 'out.txt'), 'x');
@@ -3669,7 +3670,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('still escalates bash reads of credential ~/.kodax paths', () => {
     const projectRoot = createRoot('kodax-bash-narrow-');
-    userKodax = createTempDirSync('kodax-bash-narrow-', process.cwd());
+    userKodax = createTempDirSync('kodax-bash-narrow-', os.homedir());
     const agentHome = path.join(userKodax, '.kodax');
     fs.mkdirSync(path.join(agentHome, 'mcp-tokens'), { recursive: true });
     fs.writeFileSync(path.join(agentHome, 'mcp-tokens', 't.json'), '{}');
@@ -3688,7 +3689,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('checks expanded reads and tree mutations against actual protected descendants', () => {
     const projectRoot = createRoot('kodax-home-selection-');
-    userKodax = createTempDirSync('kodax-home-selection-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-selection-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     const credential = path.join(scratch, 'credentials.json');
@@ -3714,7 +3715,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('keeps expanded reads and tree mutations prompt-free for clean working descendants', () => {
     const projectRoot = createRoot('kodax-home-clean-selection-');
-    userKodax = createTempDirSync('kodax-home-clean-selection-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-clean-selection-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     const destination = path.join(projectRoot, 'backup');
@@ -3741,7 +3742,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('traverses directories selected by a recursive mutation without broadening non-recursive reads', () => {
     const projectRoot = createRoot('kodax-home-recursive-selector-');
-    userKodax = createTempDirSync('kodax-home-recursive-selector-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-recursive-selector-user-', os.homedir());
     setAgentConfigHome(userKodax);
     const scratch = path.join(userKodax, 'scratch');
     const work = path.join(scratch, 'work');
@@ -3763,7 +3764,7 @@ describe('Auto[rules] user KodaX home read narrowing', () => {
 
   it('reviews every PowerShell Path array member while keeping ordinary members prompt-free', () => {
     const projectRoot = createRoot('kodax-home-powershell-array-');
-    userKodax = createTempDirSync('kodax-home-powershell-array-user-', process.cwd());
+    userKodax = createTempDirSync('kodax-home-powershell-array-user-', os.homedir());
     setAgentConfigHome(userKodax);
     fs.mkdirSync(path.join(userKodax, 'scratch'), { recursive: true });
     fs.mkdirSync(path.join(userKodax, 'sessions'), { recursive: true });

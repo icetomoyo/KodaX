@@ -20,8 +20,9 @@ class QueueProvider extends KodaXBaseProvider {
     apiKeyEnv: 'KODAX_PRODUCT_QUEUE_TEST_KEY', model: 'product-queue-test', supportsThinking: false,
   };
   constructor(private readonly request: (messages: KodaXMessage[]) => Promise<void>) { super(); }
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
-    await this.request(messages);
+  async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+    requestModels.push(args[4]?.modelOverride);
+    await this.request(args[0]);
     return {
       textBlocks: [{ type: 'text', text: 'This batch completed.' }],
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
@@ -32,6 +33,7 @@ class QueueProvider extends KodaXBaseProvider {
 let homeDir: string;
 let release: () => void = () => undefined;
 let requests: KodaXMessage[][] = [];
+let requestModels: (string | undefined)[] = [];
 let onRequest: () => void = () => undefined;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
@@ -42,6 +44,7 @@ beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-queue-'));
   const firstRequest = new Promise<void>((resolve) => { release = resolve; });
   requests = [];
+  requestModels = [];
   onRequest = () => undefined;
   registerModelProvider('product-queue-test', () => new QueueProvider(async (messages) => {
     requests.push(structuredClone(messages));
@@ -76,7 +79,7 @@ afterEach(async () => {
 
 it('shares queued input, atomically withdraws exact input, and batches the remaining text once', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', model: 'queue-model-a' });
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
@@ -94,9 +97,12 @@ it('shares queued input, atomically withdraws exact input, and batches the remai
     expect(withdrawn).toMatchObject({ inputId: removed.inputId, text: removed.text });
     await expect(first.inputs.withdraw(session.id, removed.inputId)).rejects.toMatchObject({ code: 'conflict' });
     expect(await first.inputs.submit(removed)).toMatchObject({ state: 'withdrawn' });
+    await first.sessions.updateSettings(session.id, { model: 'queue-model-b' });
+    expect(requestModels).toEqual(['queue-model-a']);
     release();
     await runtime.runs.await(active.runId!);
     await expect.poll(() => requests.length).toBe(2);
+    expect(requestModels).toEqual(['queue-model-a', 'queue-model-b']);
     await expect.poll(() => views.at(-1)?.queue.length).toBe(0);
     const latest = requests[1]!.filter((message) => message.role === 'user').at(-1);
     expect(latest?.content).toBe('Second instruction.\n\n---\n\nThird instruction.');

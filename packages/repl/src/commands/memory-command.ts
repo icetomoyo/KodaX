@@ -29,8 +29,6 @@ import {
   type MemoryActionProposal,
   type MemoryApplyResult,
   type MemoryClaimKind,
-  type MemoryController,
-  type MemoryManagementController,
   type MemoryRejectResult,
   type MemoryRememberResult,
   type PendingEpisodeReviewSummary,
@@ -63,7 +61,7 @@ const PUBLIC_MEMORY_COMMANDS = [
   ['/memory help', 'Show this help'],
 ] as const;
 
-async function listAcceptedMemory(controller: MemoryController): Promise<void> {
+async function listAcceptedMemory(controller: MemoryCommandPlane['controller']): Promise<void> {
   const refs = await controller.listRefs({
     kinds: ['memdir'],
     lifecycles: ['active', 'trusted'],
@@ -629,7 +627,7 @@ function printRememberResult(result: MemoryRememberResult): void {
 }
 
 async function resolveAcceptedRef(
-  controller: MemoryController,
+  controller: MemoryCommandPlane['controller'],
   token: string | undefined,
   allowOrdinal = false,
 ) {
@@ -644,7 +642,7 @@ async function resolveAcceptedRef(
 }
 
 async function resolveProposal(
-  controller: MemoryController,
+  controller: MemoryCommandPlane['controller'],
   token: string | undefined,
   allowOrdinal = false,
 ): Promise<MemoryActionProposal | undefined> {
@@ -679,7 +677,7 @@ interface MemoryCommandRuntime {
   readonly cwd: string;
   readonly memoryDir: string;
   readonly entrypointPath: string;
-  readonly controller: MemoryManagementController;
+  readonly controller: MemoryCommandPlane['controller'];
   readonly plane: MemoryCommandPlane;
   readonly context: InteractiveContext;
   readonly callbacks: CommandCallbacks;
@@ -697,14 +695,14 @@ function resolveCwd(context: InteractiveContext): string {
 // plane, index rebuild, and open-target trust; the command only presents and
 // launches the editor. Undefined means no Host binding: report unavailable,
 // never fall back to a self-built plane.
-function createMemoryCommandRuntime(
+async function createMemoryCommandRuntime(
   context: InteractiveContext,
   callbacks: CommandCallbacks,
-): MemoryCommandRuntime | undefined {
+): Promise<MemoryCommandRuntime | undefined> {
   const cwd = resolveCwd(context);
   const options = callbacks.createKodaXOptions?.();
   const identityCwd = options?.context?.executionCwd ?? context.runtimeInfo?.executionCwd ?? cwd;
-  const plane = callbacks.memory?.(identityCwd);
+  const plane = await callbacks.memory?.(identityCwd);
   if (plane === undefined) return undefined;
   return {
     cwd,
@@ -846,7 +844,7 @@ export const memoryCommand: Command = {
       printHelp();
       return;
     }
-    const runtime = createMemoryCommandRuntime(context, callbacks);
+    const runtime = await createMemoryCommandRuntime(context, callbacks);
     if (runtime === undefined) {
       console.log(chalk.yellow('\n[memory] Memory controls are unavailable in this runtime.\n'));
       return;

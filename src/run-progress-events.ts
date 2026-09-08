@@ -6,6 +6,7 @@
  */
 import type { KodaXEvents, KodaXOptions } from '@kodax-ai/coding';
 import type { KodaXRuntime, RuntimeEvent } from './sdk-runtime.js';
+import { parseRuntimeEvent } from './runtime-event.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -44,15 +45,12 @@ function forwardDaemonStreamEvent(
     );
   } else if (event.type === 'tool.progress') {
     forwardDaemonToolProgress(events, payload);
-  } else if (event.type === 'tool.sandbox' && isRecord(payload.update)) {
-    events?.onToolSandboxObservation?.(
-      payload.update as Parameters<
-        NonNullable<KodaXEvents['onToolSandboxObservation']>
-      >[0],
-      payload.meta as Parameters<
-        NonNullable<KodaXEvents['onToolSandboxObservation']>
-      >[1],
-    );
+  } else if (event.type === 'tool.sandbox') {
+    const parsed = parseRuntimeEvent(event);
+    if (!parsed.ok) throw new Error(parsed.error);
+    if (parsed.event.type === 'tool.sandbox') {
+      events?.onToolSandboxObservation?.(parsed.event.payload.update, parsed.event.payload.meta);
+    }
   } else if (event.type === 'tool.finished' && isRecord(payload.result)) {
     const result = payload.result as Parameters<
       NonNullable<KodaXEvents['onToolResult']>

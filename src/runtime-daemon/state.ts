@@ -491,7 +491,19 @@ export function writeRuntimeDaemonState(
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temporary, paths.stateFile);
+    // Windows readers/AV may briefly deny replacement. Keep the same fsynced
+    // staging file and atomic rename; five attempts wait at most 200 ms.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        fs.renameSync(temporary, paths.stateFile);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (process.platform !== 'win32' || attempt >= 5 ||
+            !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 20);
+      }
+    }
   } finally {
     fs.rmSync(temporary, { force: true });
   }

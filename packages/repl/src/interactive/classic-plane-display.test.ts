@@ -7,6 +7,31 @@ function item(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | '
 }
 
 describe('createClassicPlaneDisplayDiffer (T18)', () => {
+  it('prints complete bounded tool arguments and final output', async () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer(line => lines.push(line), async (id, options) => {
+      const full = options.part === 'input' ? 'full-args' : 'full-output';
+      return { id, text: full.slice(options.offset), offset: options.offset ?? 0, totalLength: full.length };
+    });
+    await differ([]);
+    await differ([item({ id: 't', type: 'tool', text: '', tool: {
+      callId: 'c', name: 'read', status: 'running', inputText: 'full', totalInputLength: 9,
+    } })]);
+    await differ([item({ id: 't', type: 'tool', text: 'put', textOffset: 8, totalTextLength: 11, tool: {
+      callId: 'c', name: 'read', status: 'success', inputText: 'full', totalInputLength: 9,
+    } })]);
+    expect(lines).toEqual(['tool:▶ read full-args', 'tool:✓ read full-output']);
+  });
+  it('prints every assistant character when the Host view advances a bounded tail', async () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line), async (id, options) => ({
+      id, text: 'abcdefghi'.slice(options.offset), offset: options.offset ?? 0, totalLength: 9,
+    }));
+    await differ([]);
+    await differ([item({ id: 'a', type: 'assistant', text: 'def', textOffset: 3, totalTextLength: 6 })]);
+    await differ([item({ id: 'a', type: 'assistant', text: 'ghi', textOffset: 6, totalTextLength: 9 })]);
+    expect(lines.map((line) => line.slice('assistant:'.length)).join('')).toBe('abcdefghi');
+  });
   it('skips the baseline view so restored history does not reprint', () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer((line) => lines.push(line));

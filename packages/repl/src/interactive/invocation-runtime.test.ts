@@ -5,6 +5,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { prepareInvocationExecution } from './invocation-runtime.js';
 
 describe('prepareInvocationExecution', () => {
+  it('leaves all Skill execution to the Host when the client plane owns the round', async () => {
+    const beforeToolExecute = vi.fn(async () => false);
+    const prepared = await prepareInvocationExecution(
+      { provider: 'zhipu-coding', events: { beforeToolExecute } },
+      { source: 'skill', displayName: 'host-skill', prompt: 'expanded', context: 'fork',
+        hooks: { SessionStart: [{ command: 'echo start' }], Stop: [{ command: 'echo stop' }] } },
+      '/host-skill original request', vi.fn(), true,
+    );
+    expect(prepared.prompt).toBe('/host-skill original request');
+    await prepared.finalize();
+    expect(beforeToolExecute).not.toHaveBeenCalled();
+  });
   it('executes an explicit skill invocation when model invocation is disabled', async () => {
     const prepared = await prepareInvocationExecution(
       {

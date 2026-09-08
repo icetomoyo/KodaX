@@ -1598,7 +1598,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "fallback-provider",
       defaultModel: "fallback-model",
     });
-    const session = await runtime.sessions.create({ title: "Settings Test" });
+    const session = await runtime.sessions.create({ title: "Settings Test", projectPath: tempRoot });
     const settingsEvents: unknown[] = [];
     const effectiveConfigs: unknown[] = [];
     runtime.events.subscribe({ sessionId: session.id }, (event) => {
@@ -3187,9 +3187,10 @@ describe("createKodaXRuntime", () => {
     });
 
     try {
-      await expect(runtime.catalog.extensions()).resolves.toEqual({
-        active: false,
+      await expect(runtime.catalog.extensions()).resolves.toMatchObject({
+        active: true,
         extensions: [],
+        diagnostics: { loadedExtensions: [], failures: [] },
       });
       await expect(
         runtime.mcp.validateServer("local", {
@@ -12536,7 +12537,7 @@ describe("createKodaXRuntime", () => {
     );
     expect(JSON.stringify(collector.events)).not.toContain(secret);
     await runtime.close();
-    expect(await readDirectoryText(tempRoot)).not.toContain(secret);
+    expect((await readDirectoryText(tempRoot)).includes(secret)).toBe(false);
   });
 
   it("projects one sanitized provider failure detail across result, status, event, and diagnostics", async () => {
@@ -13348,12 +13349,14 @@ describe("createKodaXRuntime", () => {
     await runtime.sessions.updateSettings(session.id, {
       provider: "settings-provider-a",
       model: "settings-model-a",
+      permissionMode: "full-access",
     });
 
     const starts: Array<{
       readonly prompt: string;
       readonly provider?: string;
       readonly model?: string;
+      readonly permission?: string;
     }> = [];
     let finishFirst: ((value: KodaXResult) => void) | undefined;
     let finishSecond: ((value: KodaXResult) => void) | undefined;
@@ -13363,6 +13366,7 @@ describe("createKodaXRuntime", () => {
           prompt,
           provider: options.provider,
           model: options.modelOverride,
+          permission: options.context?.resolveShellPermissionMode?.(),
         });
         if (prompt === "first") {
           return fakeRunningSession(
@@ -13392,6 +13396,7 @@ describe("createKodaXRuntime", () => {
     await runtime.sessions.updateSettings(session.id, {
       provider: "settings-provider-b",
       model: "settings-model-b",
+      permissionMode: "plan",
     });
 
     expect((await runtime.runs.get(second.runId)).phase).toBe("queued");
@@ -13400,6 +13405,7 @@ describe("createKodaXRuntime", () => {
         prompt: "first",
         provider: "settings-provider-a",
         model: "settings-model-a",
+        permission: "full-access",
       },
     ]);
 
@@ -13417,11 +13423,13 @@ describe("createKodaXRuntime", () => {
         prompt: "first",
         provider: "settings-provider-a",
         model: "settings-model-a",
+        permission: "full-access",
       },
       {
         prompt: "second",
         provider: "settings-provider-a",
         model: "settings-model-a",
+        permission: "plan",
       },
     ]);
 
@@ -15248,6 +15256,8 @@ describe("createKodaXRuntime", () => {
     });
     const session = await runtime.sessions.create({
       title: "Permission Policy Test",
+      // The mocked tools must target a non-temp workspace: Plan permits temp writes.
+      projectPath: process.cwd(),
     });
     const decisions = new Map<string, boolean | string>();
     const requestedTools: string[] = [];
@@ -15332,7 +15342,7 @@ describe("createKodaXRuntime", () => {
 
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "accept-edits",
-      executionCwd: path.join(process.cwd(), "permission-policy-project"),
+      executionCwd: process.cwd(),
     });
     await (
       await runtime.runs.start({ sessionId: session.id, prompt: "accept-edit" })
@@ -15398,6 +15408,26 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("provides the normal mediated shell for Runtime Skill dynamic reads", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: "mock-provider" });
+    const session = await runtime.sessions.create({ projectPath: tempRoot });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access", agentMode: "sa" });
+    let dynamicOutput = "";
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      const result = (async () => {
+        dynamicOutput = await options.skillDynamicContext!.execute!("echo runtime-dynamic-ok", tempRoot);
+        await expect(options.skillDynamicContext!.execute!("echo unsafe > forbidden.txt", tempRoot)).rejects.toThrow("read-only");
+        return { success: true, lastText: dynamicOutput, messages: [], sessionId: session.id } satisfies KodaXResult;
+      })();
+      return fakeRunningSession(options, result);
+    });
+    try {
+      await (await runtime.runs.start({ sessionId: session.id, prompt: "Read Skill context." })).result;
+      expect(dynamicOutput).toBe("runtime-dynamic-ok");
+    } finally { await runtime.close(); }
+  });
+
   it("loads a Skill in Plan mode without executing its inline dynamic command", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const projectRoot = path.join(tempRoot, "plan-skill-project");
@@ -15458,6 +15488,7 @@ describe("createKodaXRuntime", () => {
     });
     const session = await runtime.sessions.create({
       title: "Plan Skill Dynamic Context Test",
+      projectPath: projectRoot,
     });
     let expandedSkill = "";
     codingMock.startKodaX.mockImplementation(
@@ -15588,6 +15619,7 @@ describe("createKodaXRuntime", () => {
 
     const editFirst = await runtime.sessions.create({
       title: "Live Skill Edit First",
+      projectPath: projectRoot,
     });
     await runtime.sessions.updateSettings(editFirst.id, {
       permissionMode: "accept-edits",
@@ -15630,6 +15662,7 @@ describe("createKodaXRuntime", () => {
 
     const planFirst = await runtime.sessions.create({
       title: "Live Skill Plan First",
+      projectPath: projectRoot,
     });
     await runtime.sessions.updateSettings(planFirst.id, {
       permissionMode: "plan",
@@ -15706,7 +15739,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
       sharedDaemonHost: true,
     });
-    const session = await runtime.sessions.create({ title: "Sandbox accept-edits Bash" });
+    const session = await runtime.sessions.create({ title: "Sandbox accept-edits Bash", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "accept-edits",
       executionCwd: projectRoot,
@@ -15816,7 +15849,7 @@ describe("createKodaXRuntime", () => {
         modelGuidance: "Model catalog: distinguish staging from production.",
       },
     });
-    const session = await runtime.sessions.create({ title: "Sandbox-first Auto" });
+    const session = await runtime.sessions.create({ title: "Sandbox-first Auto", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "auto",
       executionCwd: projectRoot,
@@ -15967,7 +16000,7 @@ describe("createKodaXRuntime", () => {
       defaultModel: "mock-model",
       sharedDaemonHost: false,
     });
-    const session = await runtime.sessions.create({ title: "Live Auto reviewer settings" });
+    const session = await runtime.sessions.create({ title: "Live Auto reviewer settings", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "auto",
       executionCwd: projectRoot,
@@ -16055,7 +16088,7 @@ describe("createKodaXRuntime", () => {
       defaultModel: "mock-model",
       sharedDaemonHost: false,
     });
-    const session = await runtime.sessions.create({ title: "Bounded Auto reviewer cache" });
+    const session = await runtime.sessions.create({ title: "Bounded Auto reviewer cache", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "auto",
       executionCwd: projectRoot,
@@ -16116,7 +16149,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
       sharedDaemonHost: true,
     });
-    const session = await runtime.sessions.create({ title: "Sandbox-first Edits" });
+    const session = await runtime.sessions.create({ title: "Sandbox-first Edits", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "accept-edits",
       executionCwd: projectRoot,
@@ -16197,7 +16230,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
       sharedDaemonHost: false,
     });
-    const session = await runtime.sessions.create({ title: "Full Access policy" });
+    const session = await runtime.sessions.create({ title: "Full Access policy", projectPath: tempRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "full-access",
       executionCwd: tempRoot,
@@ -16305,7 +16338,7 @@ describe("createKodaXRuntime", () => {
       defaultModel: "mock-model",
       sharedDaemonHost: false,
     });
-    const session = await runtime.sessions.create({ title: "Live permission mode" });
+    const session = await runtime.sessions.create({ title: "Live permission mode", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "full-access",
       executionCwd: projectRoot,
@@ -16434,7 +16467,7 @@ describe("createKodaXRuntime", () => {
       defaultModel: "mock-model",
       sharedDaemonHost: true,
     });
-    const session = await runtime.sessions.create({ title: "Turn-scoped Auto denials" });
+    const session = await runtime.sessions.create({ title: "Turn-scoped Auto denials", projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "auto",
       executionCwd: projectRoot,
@@ -16501,7 +16534,11 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
       sharedDaemonHost: true,
     });
-    const session = await runtime.sessions.create({ title: "Missing workspace identity" });
+    // Existing pre-workspace Sessions may have no identity; new Sessions always have one.
+    const session = { id: "legacy-missing-workspace" };
+    await new FileSessionStorage({ sessionsDir: path.join(tempRoot, "sessions") }).save(session.id, {
+      title: "Missing workspace identity", messages: [],
+    });
     await runtime.sessions.updateSettings(session.id, {
       executionCwd: missingWorkspace,
     });
@@ -17003,6 +17040,7 @@ describe("createKodaXRuntime", () => {
       });
       const session = await runtime.sessions.create({
         title: "Auto external write fallback",
+        projectPath: projectRoot,
       });
       await runtime.sessions.updateSettings(session.id, {
         permissionMode: "auto",
@@ -17106,6 +17144,7 @@ describe("createKodaXRuntime", () => {
     });
     const session = await runtime.sessions.create({
       title: "Duplicate Auto Mode",
+      projectPath: tempRoot,
     });
     await runtime.sessions.updateSettings(session.id, {
       permissionMode: "auto",

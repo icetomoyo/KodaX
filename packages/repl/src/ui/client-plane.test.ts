@@ -7,9 +7,12 @@ import type {
 } from '@kodax-ai/coding/client-contract';
 import { CANCELLED_TOOL_RESULT_MESSAGE, type AskUserAnswer } from '@kodax-ai/coding';
 import { ToolCallStatus } from './types.js';
+import { buildTranscriptToolInputCopyText } from './utils/transcript-search.js';
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  readClientPlaneItemText,
+  readClientPlaneHistory,
   runClientPlaneRound,
   viewRunsActive,
   type ClientPlaneDialogSurface,
@@ -22,6 +25,46 @@ function viewItem(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id'
 }
 
 describe('clientViewToHistoryItems (T17)', () => {
+  it('loads older pages and full bounded text for transcript search', async () => {
+    const plane = {
+      readItem: async () => null,
+      readHistory: async (_sessionId: string, options?: { cursor?: string }) => options?.cursor
+        ? { revision: 'r', items: [viewItem({ id: 'old', type: 'user', text: 'old question' })], oversized: [] }
+        : { revision: 'r', nextCursor: 'older', items: [viewItem({ id: 'new', type: 'assistant', text: 'tail', totalTextLength: 18 })], oversized: [] },
+      readHistoryEntry: async () => ({ id: 'new', text: 'middle needle tail', offset: 0, totalLength: 18 }),
+    };
+    const items = await readClientPlaneHistory(plane, 's');
+    expect(items.map((item) => item.id)).toEqual(['old', 'new']);
+    expect(items[1]).toMatchObject({ text: 'middle needle tail', historyItemId: 'new' });
+  });
+  it('keeps full tool arguments in a frozen history snapshot for later copying', async () => {
+    const plane = {
+      readItem: async () => null,
+      readHistory: async () => ({ revision: 'r', oversized: [], items: [viewItem({
+        id: 'tool', type: 'tool', text: 'done', tool: { callId: 'c', name: 'read', status: 'success',
+          inputText: '{"p', totalInputLength: 19 },
+      })] }),
+      readHistoryEntry: async () => ({ id: 'tool', text: '{"path":"full.txt"}', offset: 0, totalLength: 19 }),
+    };
+    const [item] = await readClientPlaneHistory(plane, 's');
+    expect(buildTranscriptToolInputCopyText(item)).toBe('Tool: read\n{"path":"full.txt"}');
+    expect(item?.totalInputLength).toBeUndefined();
+  });
+  it('rejects incomplete content instead of returning a successfully copied preview', async () => {
+    const readItem = async (_sessionId: string, itemId: string, options?: { offset?: number }) =>
+      options?.offset ? null : { id: itemId, text: 'first', offset: 0, totalLength: 10, nextOffset: 5 };
+    await expect(readClientPlaneItemText({ readItem }, 's', 'a')).rejects.toThrow('unavailable');
+  });
+  it('preserves bounded content coordinates and copyable raw tool arguments', () => {
+    const items = clientViewToHistoryItems([
+      viewItem({ id: 'long-answer', type: 'assistant', text: 'last words', textOffset: 8990, totalTextLength: 9000 }),
+      viewItem({ id: 'tool-raw', type: 'tool', text: '', tool: {
+        callId: 'call-raw', name: 'read', status: 'success', inputText: '{"path":"a.txt"}',
+      } }),
+    ]);
+    expect(items[0]).toMatchObject({ textOffset: 8990, totalTextLength: 9000 });
+    expect(buildTranscriptToolInputCopyText(items[1])).toBe('Tool: read\n{"path":"a.txt"}');
+  });
   it('maps every display item kind onto the Ink render model', () => {
     const items = clientViewToHistoryItems([
       viewItem({ id: 'u1', type: 'user', text: 'Ship it.' }),

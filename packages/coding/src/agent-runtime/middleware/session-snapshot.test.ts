@@ -51,6 +51,21 @@ const minimalData = {
 };
 
 describe('saveRequiredSessionSnapshot', () => {
+  it('preserves Host project metadata and refuses to recreate a removed Session', async () => {
+    const runtimeInfo = { workspaceRoot: '/host-workspace', canonicalRepoRoot: '/host-repo',
+      executionCwd: '/host-workspace', surface: 'custom', profileId: 'partner', temporary: true };
+    const load = vi.fn().mockResolvedValue({ ...minimalData, gitRoot: '/host-repo', runtimeInfo });
+    const save = vi.fn().mockResolvedValue(undefined);
+    const options = { provider: 'anthropic', session: {
+      id: 'host-identity', persistedByHost: false, storage: { load, save } as unknown as KodaXSessionStorage,
+    }, context: { executionCwd: '/execution-only' } } as KodaXOptions;
+    await saveRequiredSessionSnapshot(options, 'host-identity', minimalData);
+    expect(save).toHaveBeenLastCalledWith('host-identity', expect.objectContaining({ gitRoot: '/host-repo', runtimeInfo }));
+    load.mockResolvedValueOnce(null);
+    await expect(saveRequiredSessionSnapshot(options, 'host-identity', minimalData)).rejects.toThrow('was removed');
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects when canonical storage is unavailable', async () => {
     const opts = {
       provider: 'anthropic',
@@ -69,12 +84,15 @@ describe('saveRequiredSessionSnapshot', () => {
       session: {
         id: 'runtime-owned-save-failure',
         persistedByHost: false,
-        storage: { save: vi.fn().mockRejectedValue(failure) } as never,
+        storage: { save: vi.fn().mockRejectedValue(failure), load: vi.fn().mockResolvedValue(minimalData) } as never,
       },
     } as KodaXOptions;
 
     await expect(
       saveRequiredSessionSnapshot(opts, opts.session!.id!, minimalData),
+    ).rejects.toBe(failure);
+    await expect(
+      saveSessionSnapshot(opts, opts.session!.id!, minimalData),
     ).rejects.toBe(failure);
     expect(diagnostics).toContainEqual(expect.objectContaining({
       source: 'coding:session-snapshot',

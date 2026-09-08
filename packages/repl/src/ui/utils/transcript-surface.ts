@@ -4,7 +4,10 @@ import type { TranscriptSurface } from "./transcript-state.js";
 import type { FullscreenPolicy } from "./terminal-host-profile.js";
 
 export interface TranscriptSnapshot {
+  sessionId?: string;
   items: HistoryItem[];
+  /** Bounded observation baseline stays separate from the fully loaded browse snapshot. */
+  observedItems?: readonly HistoryItem[];
   managedLiveEvents: HistoryItem[];
   isLoading: boolean;
   isThinking: boolean;
@@ -41,6 +44,7 @@ export interface CountPendingTranscriptUpdatesOptions {
   isTranscriptMode: boolean;
   snapshot: TranscriptSnapshot | null;
   currentItemsLength: number;
+  currentItems?: readonly HistoryItem[];
   currentManagedLiveEventsLength?: number;
   isLoading: boolean;
   currentResponse: string;
@@ -56,6 +60,13 @@ export function countPendingTranscriptUpdates(
   }
 
   let pending = Math.max(0, options.currentItemsLength - options.snapshot.items.length);
+  if (options.snapshot.observedItems && options.currentItems) {
+    const previous = new Map(options.snapshot.observedItems.map((item) => [item.id, item]));
+    pending = options.currentItems.filter((item) => {
+      const old = previous.get(item.id);
+      return old !== item && JSON.stringify(old) !== JSON.stringify(item);
+    }).length;
+  }
   if (options.isLoading !== options.snapshot.isLoading) {
     pending += 1;
   }

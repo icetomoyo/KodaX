@@ -85,7 +85,7 @@ import {
   type RuntimePermissionRequest,
   type RuntimeRunHandle,
 } from './sdk-runtime.js';
-import { toKodaXProductClient } from './sdk-client.js';
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import type {
   ClientPermissionDecision,
   KodaXProductClient,

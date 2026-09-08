@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveScopedMemoryRoot } from '@kodax-ai/agent';
 import { deriveCodingMemoryIdentityFromRoot } from '@kodax-ai/coding';
+import { randomUUID } from 'node:crypto';
+import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
+import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
 describe('runtime.memory Host service (FEATURE_298 T36)', () => {
   let homeDir: string;
@@ -21,11 +24,28 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
     fs.rmSync(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
-  it('serves remember, view, exact forget, honest rebuild, and trusted open targets from one Host identity', async () => {
+  it('does not let a cached Memory plane write after the Host closes', async () => {
     const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
-    const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic' });
+    const runtime = await createKodaXRuntime({ homeDir });
+    const plane = await runtime.memory.forProject(projectRoot);
+    await runtime.close();
+    await expect(plane.controller.remember({ statement: 'This must not be stored.' })).rejects.toThrow(/closed/i);
+    await expect(plane.rebuild()).rejects.toThrow(/closed/i);
+  }, 60_000);
+
+  it.each(['embedded', 'daemon'] as const)('serves remember, view, exact forget, honest rebuild, and trusted open targets via %s', async (mode) => {
+    const { createKodaXRuntime, connectKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const owner = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic', sharedDaemonHost: true });
+    const paths = resolveRuntimeDaemonPaths(homeDir);
+    const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: owner.identity.runtimeId, pid: process.pid, createdAt: owner.identity.startedAt });
+    if (!lock) throw new Error('Could not acquire Memory Host.');
+    const endpoint = process.platform === 'win32'
+      ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-memory-${randomUUID()}` }
+      : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
+    const host = await startRuntimeDaemonHost({ runtime: owner, paths, lock, endpoint });
+    const runtime = mode === 'daemon' ? await connectKodaXRuntime({ homeDir, endpoint: endpoint.path }) : owner;
     try {
-      const plane = runtime.memory.forProject(projectRoot);
+      const plane = await runtime.memory.forProject(projectRoot);
 
       // The Host derives the identity itself: the plane's root is the scoped
       // root for (configHome, projectRoot), never a caller-supplied root.
@@ -50,6 +70,10 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
       expect(refs.length).toBe(1);
       const snapshot = await plane.controller.readRef(refs[0]!);
       expect(snapshot.body).toContain('green eval suite');
+      if (mode === 'daemon') {
+        const forgedPath = { ...refs[0]!, storageUri: path.join(projectRoot, 'unrelated.txt') };
+        expect((await plane.controller.readRef(forgedPath)).body).toBe(snapshot.body);
+      }
       const forgotten = await plane.controller.forgetRef(
         refs[0]!.id,
         (await plane.controller.readRef(refs[0]!)).bodyFingerprint,
@@ -93,14 +117,24 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
       await expect(plane.ensureOpenTarget(escape)).rejects.toThrow(/escapes the project memory root/);
     } finally {
       await runtime.close();
+      await host.close();
+      await owner.close();
     }
   }, 60_000);
 
-  it('rejects stale approvals after the inspected content changed', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
-    const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic' });
+  it('rejects stale approvals after the inspected content changed over the daemon face', async () => {
+    const { createKodaXRuntime, connectKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const owner = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic', sharedDaemonHost: true });
+    const paths = resolveRuntimeDaemonPaths(homeDir);
+    const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: owner.identity.runtimeId, pid: process.pid, createdAt: owner.identity.startedAt });
+    if (!lock) throw new Error('Could not acquire Memory Host.');
+    const endpoint = process.platform === 'win32'
+      ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-memory-${randomUUID()}` }
+      : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
+    const host = await startRuntimeDaemonHost({ runtime: owner, paths, lock, endpoint });
+    const runtime = await connectKodaXRuntime({ homeDir, endpoint: endpoint.path });
     try {
-      const plane = runtime.memory.forProject(projectRoot);
+      const plane = await runtime.memory.forProject(projectRoot);
       // Seed a pending correction proposal the way the plane itself does:
       // remember a claim, then re-remember a conflicting statement for the
       // same key — the correction lands in the decision inbox.
@@ -132,6 +166,8 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
       expect(approved.applied).not.toBe(true);
     } finally {
       await runtime.close();
+      await host.close();
+      await owner.close();
     }
   }, 60_000);
 });

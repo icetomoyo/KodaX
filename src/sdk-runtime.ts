@@ -69,12 +69,15 @@ import {
   parseModelSpec,
   registerCustomProviders,
   resolveProviderModelDescriptors,
+  resolveSkillModelOverride,
   reduceOutputSegmentProjection,
   runManagedTask,
   runScopedToolMap,
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
   startKodaX,
+  toolBash,
+  buildPromptMessageContent,
   ToolResultBatchCapacityError,
   validateCustomProviderConfig,
   type CodingActorCredentialAccessFactory,
@@ -82,9 +85,11 @@ import {
   type ExecPolicyRuleInput,
   type WorkflowRunProcessMetadata,
   startManagedWorkflow,
+  KODAX_DEFAULT_PROVIDER,
   getBuiltinWorkflow,
   discoverSavedWorkflows,
   loadSavedWorkflow,
+  getDefaultWorkflowRunManager,
   parseInlineSkillReferences,
   parseBareInlineSlashReferences,
 } from "@kodax-ai/coding";
@@ -97,7 +102,7 @@ import {
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
-import { appendGoalEntry, appendSessionLineageLabel, clearCapabilityCache, readLatestGoalState } from "@kodax-ai/agent";
+import { appendGoalEntry, appendSessionLineageLabel, clearCapabilityCache, extractAssistantTextFromMessage, readLatestGoalState } from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
   ProviderCredentialLeaseScope,
@@ -141,6 +146,7 @@ import type {
   KodaXWorkspaceSandboxRootRegistry,
   KodaXToolEventMeta,
   KodaXToolSandboxObservationUpdate,
+  ManagedWorkflowSnapshot,
   KodaXTurnCompletedEvent,
   KodaXTurnFailedEvent,
   KodaXTurnStartedEvent,
@@ -218,7 +224,6 @@ import {
   isPathInsideDirectory,
   normalizeCompactionConfig,
   resolveExecutionPath,
-  getDefaultWorkflowRunManager,
   getAgentConfigPath,
   type WorkflowModule,
   initializeSkillRegistry,
@@ -266,7 +271,6 @@ import type {
   AgentRegistrationService,
   DispatchableAgentListing,
   DispatchableAgentQuery,
-  ManagedWorkflowSnapshot,
   McpServerConfig,
   McpServerStatus,
   McpServerToolList,
@@ -1542,6 +1546,7 @@ export interface RuntimeAppendNoticeInput {
 export interface RuntimeRewindSessionInput {
   readonly sessionId: string;
   readonly selector?: string;
+  readonly expectedHead?: string | null;
   readonly historyBoundary?: RuntimeConversationHistoryBoundary;
 }
 
@@ -1884,6 +1889,9 @@ export interface RuntimeStartRunInput {
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
+  readonly workflow?: Pick<Parameters<typeof startManagedWorkflow>[0], 'source' | 'args' | 'runsBaseDir' | 'processMetadata'> & {
+    readonly onStarted?: (result: RuntimeWorkflowStartResult) => void;
+  };
   readonly productInput?: ClientSubmitInput;
   readonly productBatch?: readonly string[];
   readonly providerCredential?: string;
@@ -3259,6 +3267,8 @@ export type RuntimeWorkflowStartSource =
   | { readonly kind: "name"; readonly name: string };
 
 export interface RuntimeWorkflowStartInput {
+  readonly sessionId?: string;
+  readonly credential?: RuntimeCredentialBinding;
   readonly projectRoot: string;
   readonly source: RuntimeWorkflowStartSource;
   readonly args?: unknown;
@@ -3266,6 +3276,14 @@ export interface RuntimeWorkflowStartInput {
   readonly model?: string;
   /** FEATURE_298 T22 — serializable run lineage the Host attaches verbatim. */
   readonly metadata?: WorkflowRunProcessMetadata;
+}
+
+interface RuntimeTrustedWorkflowStartInput extends RuntimeWorkflowStartInput {
+  readonly providerCredential?: string;
+  readonly providerCredentialProvider?: string;
+  readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
+  readonly origin?: RuntimeRunStatus['origin'];
+  readonly trustedRunId?: string;
 }
 
 export type RuntimeWorkflowStartResult =
@@ -3685,6 +3703,7 @@ interface RuntimeRunServiceInternal extends RuntimeRunService {
 }
 
 interface PendingRunStart {
+  readonly workflow?: RuntimeTrustedStartRunInput['workflow'];
   readonly prompt: string;
   readonly inputArtifacts: readonly KodaXInputArtifact[];
   readonly options: RuntimeKodaXOptions;
@@ -4308,6 +4327,9 @@ async function createKodaXRuntimeInternal(
     if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
+    if (type === 'session.rewound' || type === 'session.active_entry.updated') {
+      sessionViews.resetHistory(sessionId);
+    }
     // The second argument is the history-reload flag, not a refresh gate:
     // every listed event refreshes the view; only settings updates skip the
     // history reload because they cannot change display items.
@@ -4337,12 +4359,39 @@ async function createKodaXRuntimeInternal(
   const artifacts = createRuntimeArtifactStore();
   const workflows = createRuntimeWorkflowService({
     configHome,
-    ...(options.defaultProvider !== undefined
-      ? { defaultProvider: options.defaultProvider }
-      : {}),
-    ...(options.defaultModel !== undefined
-      ? { defaultModel: options.defaultModel }
-      : {}),
+    async startRun(input, workflow) {
+      const sessionId = input.sessionId ?? (await sessionService.create({ projectPath: input.projectRoot, temporary: true })).id;
+      const { providerCredential, providerCredentialProvider, providerCredentialAccess, origin, trustedRunId } = input as RuntimeTrustedWorkflowStartInput;
+      const trusted: RuntimeTrustedStartRunInput = {
+        ...(providerCredential !== undefined ? { providerCredential } : {}),
+        ...(providerCredentialProvider !== undefined ? { providerCredentialProvider } : {}),
+        ...(providerCredentialAccess !== undefined ? { providerCredentialAccess } : {}),
+        ...(origin !== undefined ? { origin } : {}),
+        ...(trustedRunId !== undefined ? { trustedRunId } : {}),
+        sessionId,
+        input: { type: 'text', text: `Start workflow ${input.source.kind === 'name' ? input.source.name : 'from reviewed source'}.` },
+        mode: 'managed_task',
+        workflow,
+        options: {
+          ...(input.provider !== undefined ? { provider: input.provider } : {}),
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          context: { gitRoot: input.projectRoot },
+        },
+      };
+      try {
+        return await runService.start(trusted);
+      } catch (error) {
+        if (input.sessionId === undefined) {
+          try { await sessionService.delete(sessionId); }
+          catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Workflow startup and temporary Session cleanup failed.'); }
+        }
+        throw error;
+      }
+    },
+    async stopRun(runId) {
+      if (!runs.has(runId)) return false;
+      return (await runService.abort(runId)).accepted;
+    },
   });
   const runs = new Map<string, RuntimeRunRecord>();
   const actorHealthBySession = new Map<string, AgentControllerHealth>();
@@ -4665,7 +4714,6 @@ async function createKodaXRuntimeInternal(
         message: `Per-Session MCP resources could not be rebuilt for ${sessionId}.`,
         detail: normalizeError(error),
       });
-      removeSessionMcpServers(sessionId);
     }
   };
   const sessionMcpStore = {
@@ -4785,12 +4833,57 @@ async function createKodaXRuntimeInternal(
   // Session mutations consult it so no writer interleaves with the
   // compaction's whole-lineage commit.
   const activeCompactions = new Set<string>();
-  // FEATURE_298 T37 — Skill preparation is Host-side trusted work. No
-  // host-mediated dynamic-context executor is bound yet, so dynamic context
-  // blocks are hard-disabled (the resolver's legacy execSync path never runs).
+  const reviewPreparation = createRuntimeReviewPreparationService(async (input) => {
+      ensureOpen();
+      const session = await sessionAdmission.loadExecutable(input.sessionId);
+      const workspace = resolveSessionPreparationRoot(session, (await settingsOwner.read(input.sessionId)).value);
+      if (!sameHostPath(fs.realpathSync.native(input.projectRoot), fs.realpathSync.native(workspace))) {
+        throw Object.assign(new Error('Review project must match the Session workspace.'), { code: 'session_not_admitted' });
+      }
+      if (activeCompactions.has(input.sessionId)) {
+        throw Object.assign(new Error('Session compaction is in progress.'), { code: 'conflict' });
+      }
+    });
+  // Skill preparation uses the admitted Session and the existing shell policy.
   const invocations = createRuntimeInvocationService({
     listCommands: listRuntimeCommands,
-    reviewPreparation: createRuntimeReviewPreparationService(),
+    resolveSkillContext: async (input) => {
+      ensureOpen();
+      if (input.sessionId === undefined) return { workingDirectory: input.projectRoot, disableDynamicContext: true };
+      const session = await sessionAdmission.loadExecutable(input.sessionId);
+      const settings = (await settingsOwner.read(input.sessionId)).value;
+      const workspace = resolveSessionPreparationRoot(session, settings);
+      if (!sameHostPath(fs.realpathSync.native(workspace), fs.realpathSync.native(input.projectRoot))) {
+        throw Object.assign(new Error('Skill project must match the Session workspace.'), { code: 'session_not_admitted' });
+      }
+      const cwd = settings.executionCwd ?? session.runtimeInfo?.executionCwd ?? workspace;
+      const shellSandbox = createAsrtShellSandbox({ workspaceRoot: workspace, shouldSandbox: () => true });
+      return {
+        workingDirectory: cwd, projectRoot: workspace, sessionId: input.sessionId,
+        executeDynamicContext: async (command) => {
+          ensureOpen();
+          await sessionAdmission.loadExecutable(input.sessionId!);
+          const liveSettings = (await settingsOwner.read(input.sessionId!)).value;
+          const mode = replApi.normalizePermissionMode(liveSettings.permissionMode);
+          if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
+          const output = await toolBash({ command, timeout: 10 }, {
+            backups: new Map(), executionCwd: cwd, gitRoot: workspace,
+            toolCallId: `skill-context-${randomUUID()}`,
+            shellExecution: liveSettings.shellExecution,
+            shellSandbox,
+            resolveShellPermissionMode: () => mode,
+            ...(mode === 'full-access' ? { authorizeShellHostExecution: async () => true as const } : {}),
+          });
+          const marker = /\nExit: (\d+)\n/.exec(output);
+          if (marker === null || marker[1] !== '0') throw new Error(output);
+          return output.slice(marker.index + marker[0].length).trimEnd();
+        },
+      };
+    },
+    reviewPreparation: {
+      ...reviewPreparation,
+      prepareReview: (input) => sessionOperations.run(input.sessionId, () => reviewPreparation.prepareReview(input)),
+    },
   });
   const runService = createRuntimeRunService({
     invocations,
@@ -4896,6 +4989,7 @@ async function createKodaXRuntimeInternal(
   // (configHome, projectRoot), never from caller-supplied identity.
   const memory = createRuntimeMemoryService({
     configHome,
+    authorize: async () => { ensureOpen(); },
     ...(options.defaultProvider !== undefined
       ? { defaultProvider: options.defaultProvider }
       : {}),
@@ -6140,6 +6234,8 @@ function createRuntimeSessionService(
     readonly promise: Promise<{
       readonly capture: SessionReadCapture;
       readonly revision: string;
+      readonly lineage: ReturnType<typeof createSessionLineage>;
+      readonly transcriptEntries: readonly SessionTranscriptEntry[];
     }>;
     waiters: number;
     settled: boolean;
@@ -6491,6 +6587,9 @@ function createRuntimeSessionService(
     budget: RuntimeReadBudget,
   ): Promise<SessionReadCapture> => {
     sessionReadOptionsFromBudget(budget);
+    // The Host's display checkpoint must settle before a new stable read
+    // boundary. External writers still undergo the storage identity checks.
+    await awaitRuntimeReadOperation(() => sessionViews.flush(sessionId), budget);
     let flight = sessionCaptureFlights.get(sessionId);
     if (flight === undefined) {
       const controller = new AbortController();
@@ -7364,9 +7463,7 @@ function createRuntimeSessionService(
             },
           );
         }
-        const projectPath = input.projectPath
-          ? path.resolve(input.projectPath)
-          : undefined;
+        const projectPath = path.resolve(input.projectPath || input.gitRoot || process.cwd());
         const gitRoot = input.gitRoot
           ? path.resolve(input.gitRoot)
           : projectPath;
@@ -7888,7 +7985,7 @@ function createRuntimeSessionService(
           { code: "not_found" as const },
         );
       }
-      return projectConversationHistoryPage(sessionId, page);
+      return projectConversationHistoryPage(sessionId, page, (input) => service.conversationEntryChunk(input));
     },
     readHistoryEntry(sessionId, itemId, options) {
       ensureOpen();
@@ -8313,8 +8410,12 @@ function createRuntimeSessionService(
     },
 
     async rewind(input) {
-      return mutateActiveSession(input.sessionId, async () => {
+      return mutateActiveSession(input.sessionId, async (current) => {
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
+        await sessionViews.flush(input.sessionId);
+        if (input.expectedHead !== undefined && input.expectedHead !== (current.lineage?.activeEntryId ?? null)) {
+          throw sessionCommandError('conflict', 'Session head changed; read the current branch before rewinding.');
+        }
         if (input.selector !== undefined && input.historyBoundary !== undefined) {
           throw new Error("rewind accepts either selector or historyBoundary, not both");
         }
@@ -8354,6 +8455,7 @@ function createRuntimeSessionService(
     async setActiveEntry(input) {
       return mutateActiveSession(input.sessionId, async () => {
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
+        await sessionViews.flush(input.sessionId);
         const data = await manager.setActiveEntry(
           input.sessionId,
           input.entryId,
@@ -9363,6 +9465,25 @@ function createRuntimeRunService(deps: {
       ? finishRun(record, result)
       : finishUnconfirmedRun(record, result);
 
+  const mergeForkSkillResult = async (record: RuntimeRunRecord, value: KodaXResult): Promise<KodaXResult> => {
+    if (record.start?.options.context?.skillInvocation?.context !== 'fork') return value;
+    return deps.sessionOperations.run(record.sessionId, async () => {
+      const session = await deps.sessionAdmission.loadExecutable(record.sessionId);
+      const lastMessage = value.messages.at(-1);
+      const text = lastMessage?.role === 'assistant' ? extractAssistantTextFromMessage(lastMessage) : '';
+      const messages: KodaXMessage[] = text.trim()
+        ? [...session.messages, { role: 'assistant', content: text, timestamp: new Date().toISOString() }]
+        : session.messages;
+      if (messages !== session.messages) {
+        await deps.sessionManager.storage.save(record.sessionId, {
+          ...session, messages, lineage: createSessionLineage(messages, session.lineage),
+        });
+      }
+      const { contextTokenSnapshot: _forkContextTokenSnapshot, ...parentResult } = value;
+      return { ...parentResult, messages };
+    });
+  };
+
   const settleFromExecutorSignal = (
     record: RuntimeRunRecord,
     signal: "completed" | "failed",
@@ -9395,6 +9516,8 @@ function createRuntimeRunService(deps: {
     setImmediate(() => {
       void (async () => {
       if (record.settlementFinished === true) return;
+      // A resolved executor Promise owns any asynchronous Host-side settlement.
+      if (executorPromiseSettled(record)) return;
       const latched = record.executorTerminalSignal;
       if (latched === undefined) return;
       const actorHealth = await awaitActorFinalization(record);
@@ -10029,8 +10152,11 @@ function createRuntimeRunService(deps: {
       if (upstreamSignal?.aborted) {
         handleUpstreamAbort();
       }
-      const managedOperation = () =>
-        runManagedTask(
+      const managedOperation = () => record.start?.workflow
+        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
+          record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
+        ))
+        : runManagedTask(
           {
             ...runOptions,
             sessionControl,
@@ -10064,6 +10190,8 @@ function createRuntimeRunService(deps: {
       registerActiveQueueRoute(record);
       void managedResult
         .then(async (value): Promise<RuntimeRunResult> => {
+          record.capturedExecutorResult = value;
+          value = await mergeForkSkillResult(record, value);
           record.capturedExecutorResult = value;
           const phase = record.terminalEmitted
             ? record.phase
@@ -10175,6 +10303,8 @@ function createRuntimeRunService(deps: {
     registerActiveQueueRoute(record);
     void running.result
       .then(async (value): Promise<RuntimeRunResult> => {
+        record.capturedExecutorResult = value;
+        value = await mergeForkSkillResult(record, value);
         record.capturedExecutorResult = value;
         const phase = record.terminalEmitted
           ? record.phase
@@ -10404,12 +10534,14 @@ function createRuntimeRunService(deps: {
           (record.phase !== "queued" && !isActiveRunPhase(record.phase))
         )
           continue;
-        if ("provider" in patch) {
+        // Low-level queued Runs have already captured model selection. Product
+        // inputs do not create a Run until consumption, when settings are read.
+        if (record.phase !== "queued" && "provider" in patch) {
           record.provider = settings.provider ?? deps.defaultProvider ?? record.provider;
           record.sessionControl?.setProvider(record.provider);
           if (record.start) record.start = { ...record.start, options: { ...record.start.options, provider: record.provider } };
         }
-        if ("model" in patch) {
+        if (record.phase !== "queued" && "model" in patch) {
           record.model = settings.model;
           record.sessionControl?.setModel(record.model);
           if (record.start) {
@@ -10417,7 +10549,7 @@ function createRuntimeRunService(deps: {
             record.start.options.modelOverride = record.model;
           }
         }
-        if ("reasoningMode" in patch || "effort" in patch || "thinking" in patch) {
+        if (record.phase !== "queued" && ("reasoningMode" in patch || "effort" in patch || "thinking" in patch)) {
           record.reasoning = settings.reasoningMode;
           const reasoning = { effort: settings.effort, thinking: settings.thinking };
           record.sessionControl?.setReasoning(record.reasoning, reasoning);
@@ -10593,7 +10725,7 @@ function createRuntimeRunService(deps: {
         );
       }
     }
-    const provider = options.provider ?? deps.defaultProvider;
+    const provider = options.provider ?? deps.defaultProvider ?? (trustedInput.workflow ? KODAX_DEFAULT_PROVIDER : undefined);
     if (!provider) {
       throw new Error(
         "runtime.runs.start requires input.options.provider or runtime defaultProvider",
@@ -10791,6 +10923,7 @@ function createRuntimeRunService(deps: {
       interruptInputOpen: false,
       result,
       start: {
+        ...(trustedInput.workflow !== undefined ? { workflow: trustedInput.workflow } : {}),
         prompt: normalizedInput.prompt,
         inputArtifacts: normalizedInput.inputArtifacts,
         options: effectiveOptions,
@@ -10803,7 +10936,7 @@ function createRuntimeRunService(deps: {
       const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
       const messages: KodaXMessage[] = [...session.messages, {
         role: "user",
-        content: normalizedInput.prompt,
+        content: buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts),
         inputId: productInput.inputId,
         ...(trustedInput.productBatch ? { inputIds: trustedInput.productBatch } : {}),
         timestamp: startedAt,
@@ -10846,11 +10979,12 @@ function createRuntimeRunService(deps: {
   // FEATURE_298 T37 — a queued Skill input is prepared Host-side at actual
   // consumption: the trusted registry expands it and mints the runtime
   // policy; unknown references fall back to the raw user text.
-  const prepareQueuedSkillInput = async (
+  const prepareSkillInput = async (
     sessionId: string,
     text: string,
   ): Promise<{
     readonly prompt: string;
+    readonly model?: string;
     readonly skillInvocation: NonNullable<
       RuntimeDaemonContextOptions["skillInvocation"]
     >;
@@ -10859,17 +10993,18 @@ function createRuntimeRunService(deps: {
       ...parseInlineSkillReferences(text),
       ...parseBareInlineSlashReferences(text),
     ].sort((left, right) => left.start - right.start);
-    // More than one Skill reference would need the REPL's reject semantics;
-    // forward the raw text instead of silently dropping references.
-    if (references.length > 1) return undefined;
+    // Preserve the REPL's single-Skill invocation boundary.
+    if (references.length > 1) {
+      throw createRuntimeConflictError('Only one Skill may be invoked by one input.', 0);
+    }
     const reference = references[0];
     if (reference === undefined) return undefined;
     const argumentsText = text
       .slice(reference.end, references[1]?.start ?? text.length)
       .trim();
     const session = await deps.sessionAdmission.loadRequired(sessionId);
-    const projectRoot = session.runtimeInfo?.workspaceRoot ?? session.gitRoot;
-    if (projectRoot === undefined || projectRoot.length === 0) return undefined;
+    const settings = (await deps.settingsOwner.read(sessionId)).value;
+    const projectRoot = resolveSessionPreparationRoot(session, settings);
     const prepared = await deps.invocations.prepareSkill({
       projectRoot,
       name: reference.name,
@@ -10877,8 +11012,10 @@ function createRuntimeRunService(deps: {
       sessionId,
     });
     if (prepared.kind !== "prepared") return undefined;
+    const model = resolveSkillModelOverride(settings.provider ?? deps.defaultProvider ?? '', prepared.invocation.model);
     return {
-      prompt: prepared.invocation.prompt,
+      prompt: text,
+      ...(model !== undefined ? { model } : {}),
       skillInvocation: prepared.invocation.skillInvocation,
     };
   };
@@ -10889,7 +11026,7 @@ function createRuntimeRunService(deps: {
     const first = batch[0];
     if (!first) return;
     const preparedSkill = first.skill
-      ? await prepareQueuedSkillInput(sessionId, first.input.text)
+      ? await prepareSkillInput(sessionId, first.input.text)
       : undefined;
     const batchArtifacts = batch.flatMap(({ input }) => input.inputArtifacts ?? []);
     await startRun({
@@ -10900,7 +11037,9 @@ function createRuntimeRunService(deps: {
       ...(preparedSkill !== undefined || batchArtifacts.length > 0
         ? {
           options: {
+            ...(preparedSkill?.model !== undefined ? { model: preparedSkill.model } : {}),
             context: {
+              ...(preparedSkill !== undefined ? { rawUserInput: first.input.text } : {}),
               ...(preparedSkill !== undefined
                 ? { skillInvocation: preparedSkill.skillInvocation }
                 : {}),
@@ -11245,7 +11384,6 @@ function createRuntimeRunService(deps: {
       };
       return deps.sessionOperations.run(input.sessionId, async () => {
         deps.ensureOpen();
-        assertSessionNotCompacting(input.sessionId);
         const duplicate = productQueue.find(productInput);
         if (duplicate) return duplicate;
         const accepted = findAcceptedInput(productInput.sessionId, productInput.inputId);
@@ -11255,6 +11393,7 @@ function createRuntimeRunService(deps: {
           }
           return { sessionId: accepted.sessionId, inputId: productInput.inputId, runId: accepted.runId, state: "submitted" as const };
         }
+        assertSessionNotCompacting(input.sessionId);
         if (productInput.delivery === "steer") {
           return acceptSteerInput(productInput);
         }
@@ -11265,10 +11404,15 @@ function createRuntimeRunService(deps: {
           await deps.sessionAdmission.loadExecutable(input.sessionId);
           return productQueue.enqueue(productInput);
         }
+        const preparedSkill = await prepareSkillInput(input.sessionId, productInput.text);
         const handle = await startRun({
-          sessionId: productInput.sessionId, prompt: productInput.text,
-          ...(productInput.inputArtifacts !== undefined && productInput.inputArtifacts.length > 0
-            ? { options: { context: { inputArtifacts: productInput.inputArtifacts } } as RuntimeKodaXOptions }
+          sessionId: productInput.sessionId, prompt: preparedSkill?.prompt ?? productInput.text,
+          ...(preparedSkill !== undefined || productInput.inputArtifacts !== undefined
+            ? { options: { ...(preparedSkill?.model !== undefined ? { model: preparedSkill.model } : {}), context: {
+              inputArtifacts: productInput.inputArtifacts,
+              rawUserInput: productInput.text,
+              ...(preparedSkill ? { skillInvocation: preparedSkill.skillInvocation } : {}),
+            } } as RuntimeKodaXOptions }
             : {}),
           productInput, permissionBroker: "runtime",
         } as RuntimeTrustedStartRunInput, "runtime.runs.start");
@@ -11598,8 +11742,8 @@ function workflowRunsProjectKey(root: string): string {
 
 function createRuntimeWorkflowService(deps: {
   readonly configHome: string;
-  readonly defaultProvider?: string;
-  readonly defaultModel?: string;
+  readonly startRun: (input: RuntimeWorkflowStartInput, workflow: NonNullable<RuntimeTrustedStartRunInput['workflow']>) => Promise<RuntimeRunHandle>;
+  readonly stopRun: (runId: string) => Promise<boolean>;
 }): RuntimeWorkflowService {
   const manager = getDefaultWorkflowRunManager();
   return {
@@ -11612,16 +11756,17 @@ function createRuntimeWorkflowService(deps: {
         | { kind: "request"; request: string }
         | { kind: "saved"; module: WorkflowModule };
       if (input.source.kind === "name") {
-        const builtin = getBuiltinWorkflow(input.source.name);
+        const name = input.source.name;
+        const builtin = getBuiltinWorkflow(name);
         if (builtin !== undefined) {
           source = { kind: "saved", module: builtin };
         } else {
           const saved = (
             await discoverSavedWorkflows({
               project: path.join(input.projectRoot, ".kodax", "workflows"),
-              personal: getAgentConfigPath("workflows"),
+              personal: path.join(deps.configHome, "workflows"),
             })
-          ).find((ref) => ref.name === input.source.name);
+          ).find((ref) => ref.name === name);
           if (saved === undefined) {
             return {
               kind: "declined",
@@ -11633,31 +11778,22 @@ function createRuntimeWorkflowService(deps: {
       } else {
         source = input.source;
       }
-      const provider = input.provider ?? deps.defaultProvider;
-      const model = input.model ?? deps.defaultModel;
-      const options: KodaXOptions = {
-        ...(provider !== undefined ? { provider } : {}),
-        ...(model !== undefined ? { model } : {}),
-        context: {
-          configHome: deps.configHome,
-          workspaceRoot: input.projectRoot,
-          gitRoot: input.projectRoot,
-          executionCwd: input.projectRoot,
-        },
-      };
-      const result = await startManagedWorkflow({
+      let onStarted!: (result: RuntimeWorkflowStartResult) => void;
+      const startup = new Promise<RuntimeWorkflowStartResult>((resolve) => { onStarted = resolve; });
+      const run = await deps.startRun(input, {
+        onStarted,
         source,
         args: input.args ?? {},
-        options,
-        runsBaseDir: getAgentConfigPath(
+        runsBaseDir: path.join(deps.configHome,
           "workflow-runs",
           workflowRunsProjectKey(input.projectRoot),
         ),
         ...(input.metadata !== undefined ? { processMetadata: input.metadata } : {}),
       });
-      return result.kind === "started"
-        ? { kind: "started", runId: result.runId }
-        : { kind: "declined", reason: result.reason };
+      return Promise.race([startup, run.result.then((result): RuntimeWorkflowStartResult => {
+        if (result.error) throw result.error;
+        return { kind: 'declined', reason: result.terminal?.message ?? `Workflow did not start (${result.phase}).` };
+      })]);
     },
     async list(filter) {
       const list = manager.list();
@@ -11695,8 +11831,30 @@ function createRuntimeWorkflowService(deps: {
     },
 
     async stop(runId) {
-      return manager.stop(runId);
+      const accepted = await deps.stopRun(runId);
+      return manager.stop(runId) || accepted;
     },
+  };
+}
+
+async function executeRuntimeWorkflow(
+  workflow: NonNullable<RuntimeTrustedStartRunInput['workflow']>,
+  options: KodaXOptions,
+  runId: string,
+  sessionId: string,
+  signal: AbortSignal,
+): Promise<KodaXResult> {
+  const started = await startManagedWorkflow({ ...workflow, options, runId, signal });
+  workflow.onStarted?.(started.kind === 'started' ? { kind: 'started', runId } : started);
+  if (started.kind === 'declined') throw new Error(started.reason);
+  const outcome = await started.managed.done;
+  if (outcome.kind === 'failed' && !signal.aborted) throw outcome.error;
+  return {
+    success: outcome.kind === 'completed',
+    lastText: started.managed.getSnapshot?.()?.resultText ?? '',
+    messages: [],
+    sessionId,
+    ...(signal.aborted ? { interrupted: true } : {}),
   };
 }
 
@@ -12351,6 +12509,19 @@ function gitCommonDirectoryForWorkspace(
   return commonDirectory;
 }
 
+/** Preparation shares the execution directory of legacy pathless Sessions. */
+function resolveSessionPreparationRoot(session: KodaXSessionData, settings: RuntimeSessionSettings): string {
+  const root = session.runtimeInfo?.workspaceRoot
+    || session.runtimeInfo?.canonicalRepoRoot
+    || session.gitRoot || settings.executionCwd || session.runtimeInfo?.executionCwd;
+  if (!root) {
+    throw Object.assign(new Error('Skill and review preparation require a Session workspace or execution directory.'), {
+      code: 'session_not_admitted' as const,
+    });
+  }
+  return path.resolve(root);
+}
+
 function sameHostPath(left: string, right: string): boolean {
   const comparable = (value: string): string => {
     const resolved = path.normalize(path.resolve(value));
@@ -12665,12 +12836,21 @@ function buildRunOptions(input: {
     request,
     runtimeAutoGuardrail,
   });
-  const executeSkillDynamicContext = options.skillDynamicContext?.execute;
+  const executeSkillDynamicContext = options.skillDynamicContext?.execute ?? (async (command: string) => {
+    if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
+    const output = await toolBash({ command, timeout: 10 }, {
+      ...ownerSafeContext, backups: new Map(), executionCwd, gitRoot: workspaceRoot,
+      toolCallId: `skill-context-${randomUUID()}`, shellSandbox: restrictedModeShellSandbox,
+      resolveShellPermissionMode, authorizeShellHostExecution,
+    });
+    const marker = /\nExit: (\d+)\n/.exec(output);
+    if (marker === null || marker[1] !== '0') throw new Error(output);
+    return output.slice(marker.index + marker[0].length).trimEnd();
+  });
   const skillDynamicContext: NonNullable<
     KodaXOptions["skillDynamicContext"]
   > =
-    options.skillDynamicContext?.disable === true ||
-    executeSkillDynamicContext === undefined
+    options.skillDynamicContext?.disable === true
       ? { disable: true }
       : {
           async execute(command, cwd) {
@@ -12690,16 +12870,17 @@ function buildRunOptions(input: {
     // Runtime-hosted Skill expansion must never fall through to the resolver's
     // inline execSync path, which bypasses tool permission hooks. The wrapper
     // rechecks live mode so Plan always refuses dynamic commands; other modes
-    // require and preserve an explicit host-mediated executor.
+    // use the normal mediated shell executor or a trusted embedder executor.
     skillDynamicContext,
     ...(model !== undefined ? { modelOverride: model } : {}),
     session: {
       ...(options.session ?? {}),
       id: record.sessionId,
-      storage: sessionManager.storage,
+      storage: options.context?.skillInvocation?.context === 'fork' ? undefined : sessionManager.storage,
+      ...(options.context?.skillInvocation?.context === 'fork' ? { initialMessages: [] } : {}),
       // The Runtime is the canonical Session owner even when a REPL client
       // supplied host-owned options before crossing the Runtime boundary.
-      persistedByHost: false,
+      persistedByHost: options.context?.skillInvocation?.context === 'fork',
     },
     events,
     context: {

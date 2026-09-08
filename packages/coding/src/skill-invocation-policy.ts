@@ -1,14 +1,13 @@
-import { exec as execCallback } from 'node:child_process';
-import { promisify } from 'node:util';
 import {
   SkillRegistry,
   emitKodaXDiagnostic,
   type Skill,
   type SkillHook,
+  type SkillHooks,
 } from '@kodax-ai/agent';
-import type { KodaXOptions } from './types.js';
+import type { KodaXOptions, KodaXShellExecutionContract } from './types.js';
+import { toolBash } from './tools/bash.js';
 
-const execAsync = promisify(execCallback);
 const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   read: 'read',
   grep: 'grep',
@@ -108,23 +107,65 @@ function hookMatches(hook: SkillHook, target: string): boolean {
   return hook.matcher === undefined || matchesPattern(hook.matcher, target);
 }
 
+interface HookResponse {
+  readonly allow?: boolean;
+  readonly message?: string;
+  readonly additionalContext?: string;
+}
+
+function hookToolInput(event: keyof SkillHooks, hook: SkillHook): Record<string, unknown> {
+  return {
+    command: hook.command,
+    _reason: `Frontmatter hook ${event}`,
+    _frontmatterHook: true,
+    _hookEvent: event,
+    _hookMatcher: hook.matcher,
+  };
+}
+
+async function executeHookCommand(
+  event: keyof SkillHooks, hook: SkillHook, payload: Record<string, unknown>,
+  cwd: string, options: KodaXOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  const shell: KodaXShellExecutionContract = options.context?.shellExecution ?? {
+    version: 1,
+    shell: { kind: process.platform === 'win32' ? 'cmd' : 'bash', profile: 'none',
+      ...(process.platform === 'win32' ? {} : { executable: '/bin/sh' }) },
+  };
+  const result = await toolBash(hookToolInput(event, hook), {
+    backups: new Map(),
+    executionCwd: cwd,
+    gitRoot: options.context?.gitRoot ?? undefined,
+    abortSignal: options.abortSignal,
+    shellSandbox: options.context?.shellSandbox,
+    resolveShellPermissionMode: options.context?.resolveShellPermissionMode,
+    authorizeShellHostExecution: options.context?.authorizeShellHostExecution,
+    sandbox: options.sandbox,
+    shellExecution: { ...shell, environment: { ...shell.environment, set: {
+      ...shell.environment?.set,
+      KODAX_HOOK_EVENT: event,
+      KODAX_HOOK_PAYLOAD: JSON.stringify(payload),
+    } } },
+  });
+  const prefix = `Command: ${hook.command}\nExit: 0\n`;
+  if (!result.startsWith(prefix)) throw new Error(result);
+  const body = result.slice(prefix.length);
+  const stderrOffset = body.indexOf('\n[stderr]\n');
+  const stdout = stderrOffset < 0 ? body : body.slice(0, stderrOffset);
+  const stderr = stderrOffset < 0 ? '' : body.slice(stderrOffset + '\n[stderr]\n'.length);
+  return { stdout, stderr };
+}
+
 async function runHook(
-  event: 'PreToolUse' | 'PostToolUse',
+  event: keyof SkillHooks,
   hook: SkillHook,
   payload: Record<string, unknown>,
   cwd: string,
-): Promise<boolean | undefined | 'failed'> {
+  options: KodaXOptions,
+  notify?: (message: string) => Promise<void>,
+): Promise<HookResponse> {
   try {
-    const { stdout, stderr } = await execAsync(hook.command, {
-      cwd,
-      env: {
-        ...process.env,
-        KODAX_HOOK_EVENT: event,
-        KODAX_HOOK_PAYLOAD: JSON.stringify(payload),
-      },
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    });
+    const { stdout, stderr } = await executeHookCommand(event, hook, payload, cwd, options);
     if (stderr.trim()) {
       emitKodaXDiagnostic({
         source: 'coding:skill-invocation',
@@ -132,24 +173,28 @@ async function runHook(
         message: `Skill ${event} hook wrote to stderr.`,
         detail: stderr.trim(),
       });
+      await notify?.(`[Hook ${event} stderr] ${stderr.trim()}`);
     }
     const output = stdout.trim();
-    if (!output) return undefined;
+    if (!output) return {};
     try {
       const parsed = JSON.parse(output) as Record<string, unknown>;
-      return typeof parsed.allow === 'boolean'
-        ? parsed.allow
-        : typeof parsed.continue === 'boolean'
-          ? parsed.continue
-          : undefined;
+      return {
+        allow: typeof parsed.allow === 'boolean' ? parsed.allow
+          : typeof parsed.continue === 'boolean' ? parsed.continue : undefined,
+        message: typeof parsed.message === 'string' ? parsed.message : undefined,
+        additionalContext: typeof parsed.additionalContext === 'string' ? parsed.additionalContext
+          : typeof parsed.additional_context === 'string' ? parsed.additional_context : undefined,
+      };
     } catch (error: unknown) {
+      if (event !== 'PreToolUse') return { message: output, additionalContext: output };
       emitKodaXDiagnostic({
         source: 'coding:skill-invocation',
         level: 'warn',
         message: `Skill ${event} hook returned invalid JSON.`,
         detail: error,
       });
-      return 'failed';
+      return { allow: false, message: `Skill ${event} hook returned invalid JSON.` };
     }
   } catch (error) {
     emitKodaXDiagnostic({
@@ -158,50 +203,53 @@ async function runHook(
       message: `Skill ${event} hook failed.`,
       detail: error,
     });
-    return 'failed';
+    return { allow: false, message: `Skill ${event} hook failed: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
 async function runHooks(
-  event: 'PreToolUse' | 'PostToolUse',
+  event: keyof SkillHooks,
   hooks: readonly SkillHook[] | undefined,
   target: string,
   payload: Record<string, unknown>,
   cwd: string,
   allowedTools: AllowedToolPolicy,
   admitHook: NonNullable<KodaXOptions['events']>['beforeToolExecute'],
-): Promise<boolean> {
+  options: KodaXOptions,
+  notify?: (message: string) => Promise<void>,
+): Promise<HookResponse> {
+  const additionalContext: string[] = [];
   for (const hook of hooks ?? []) {
     if (!hookMatches(hook, target)) continue;
-    const hookInput = {
-      command: hook.command,
-      _reason: `Frontmatter hook ${event}`,
-      _frontmatterHook: true,
-      _hookEvent: event,
-      _hookMatcher: hook.matcher,
-    } satisfies Record<string, unknown>;
+    const hookInput = hookToolInput(event, hook);
     if (!isToolAllowed(allowedTools, 'bash', hookInput)) {
       emitKodaXDiagnostic({
         source: 'coding:skill-invocation',
         level: 'warn',
         message: `Skill ${event} hook is blocked by allowed-tools policy.`,
       });
-      if (event === 'PreToolUse') return false;
-      continue;
+      return { allow: false, message: `Skill ${event} hook is blocked by allowed-tools policy.` };
     }
-    if (!admitHook || await admitHook('bash', hookInput) !== true) {
+    const admitted = await admitHook?.('bash', hookInput);
+    if (admitted !== true) {
       emitKodaXDiagnostic({
         source: 'coding:skill-invocation',
         level: 'warn',
         message: `Skill ${event} hook was denied by runtime permission policy.`,
       });
-      if (event === 'PreToolUse') return false;
-      continue;
+      return { allow: false, message: typeof admitted === 'string'
+        ? admitted : `Skill ${event} hook was denied by runtime permission policy.` };
     }
-    const result = await runHook(event, hook, payload, cwd);
-    if (result === false || (event === 'PreToolUse' && result === 'failed')) return false;
+    const result = await runHook(event, hook, payload, cwd, options, notify);
+    if (result.message) {
+      emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'info',
+        message: `Skill ${event}: ${result.message}` });
+      await notify?.(result.message);
+    }
+    if (result.additionalContext) additionalContext.push(result.additionalContext);
+    if (result.allow === false) return result;
   }
-  return true;
+  return { additionalContext: additionalContext.join('\n') || undefined };
 }
 
 async function loadTrustedInvokedSkill(options: KodaXOptions, name: string): Promise<Skill> {
@@ -221,10 +269,24 @@ async function loadTrustedInvokedSkill(options: KodaXOptions, name: string): Pro
   return registry.loadFull(name);
 }
 
-const pendingPostHooks = new WeakMap<KodaXOptions, Set<Promise<void>>>();
+export function resolveSkillModelOverride(provider: string, model: string | undefined): string | undefined {
+  const value = model?.trim();
+  if (!value) return undefined;
+  const aliases: Readonly<Record<string, string>> = {
+    haiku: 'claude-3-5-haiku-latest',
+    sonnet: 'claude-sonnet-4-6',
+    opus: 'claude-opus-4-1',
+  };
+  return aliases[value] === undefined ? value : provider === 'anthropic' ? aliases[value] : undefined;
+}
 
-function trackPostHook(options: KodaXOptions, task: Promise<boolean>): void {
-  const pending = pendingPostHooks.get(options);
+const invocationWork = new WeakMap<KodaXOptions, {
+  readonly pending: Set<Promise<void>>;
+  readonly finalize: (error?: unknown) => Promise<void>;
+}>();
+
+function trackPostHook(options: KodaXOptions, task: Promise<HookResponse>): void {
+  const pending = invocationWork.get(options)?.pending;
   if (!pending) return;
   const tracked = task.then(
     () => undefined,
@@ -241,20 +303,39 @@ function trackPostHook(options: KodaXOptions, task: Promise<boolean>): void {
   void tracked.finally(() => pending.delete(tracked));
 }
 
-/** Wait until all PostToolUse work owned by this runtime invocation settles. */
-export async function awaitRuntimeSkillInvocationPolicy(options: KodaXOptions): Promise<void> {
-  const pending = pendingPostHooks.get(options);
+/** Settle PostToolUse work, then run the invocation's one completion hook. */
+export async function awaitRuntimeSkillInvocationPolicy(options: KodaXOptions, error?: unknown): Promise<void> {
+  const work = invocationWork.get(options);
+  const pending = work?.pending;
   while (pending && pending.size > 0) {
     await Promise.all([...pending]);
   }
+  await work?.finalize(error);
 }
 
-export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions): Promise<KodaXOptions> {
+export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, prompt?: string): Promise<KodaXOptions> {
   const invocation = options.context?.skillInvocation;
   if (!invocation?.runtimePolicy?.enforceAtRuntime) return options;
 
   const skill = await loadTrustedInvokedSkill(options, invocation.name);
   const allowedTools = parseAllowedTools(skill.allowedTools);
+  const baseEvents = options.events ?? {};
+  const cwd = options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd();
+  let dispatchingNotification = false;
+  const notify = async (message: string): Promise<void> => {
+    if (dispatchingNotification || !skill.hooks?.Notification?.length) return;
+    dispatchingNotification = true;
+    try {
+      await runHooks('Notification', skill.hooks.Notification, message,
+        { displayName: invocation.name, source: 'skill', path: skill.skillFilePath, message },
+        cwd, allowedTools, baseEvents.beforeToolExecute, options, notify);
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
+        message: 'Skill Notification hook failed unexpectedly.', detail: error });
+    } finally {
+      dispatchingNotification = false;
+    }
+  };
   if (allowedTools.invalidEntries.length > 0) {
     emitKodaXDiagnostic({
       source: 'coding:skill-invocation',
@@ -262,16 +343,54 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions): 
       message: `Skill ${invocation.name} has invalid allowed-tools entries.`,
       detail: allowedTools.invalidEntries,
     });
+    await notify(`Skill ${invocation.name} has invalid allowed-tools entries: ${allowedTools.invalidEntries.join(', ')}`);
   }
-  const baseEvents = options.events ?? {};
-  const cwd = options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd();
+  const started = await runHooks(
+    'SessionStart', skill.hooks?.SessionStart, invocation.name,
+    { displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
+    cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+  );
+  if (started.allow === false) {
+    throw Object.assign(new Error(`[Blocked] ${started.message ?? 'Skill SessionStart hook refused execution.'}`), {
+      code: 'skill_invocation_blocked' as const,
+    });
+  }
+  const rawUserInput = options.context?.rawUserInput ?? prompt ?? '';
+  const submitted = await runHooks(
+    'UserPromptSubmit', skill.hooks?.UserPromptSubmit, rawUserInput,
+    { displayName: invocation.name, source: 'skill', path: skill.skillFilePath, prompt: rawUserInput },
+    cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+  );
+  if (submitted.allow === false) {
+    throw Object.assign(new Error(`[Blocked] ${submitted.message ?? 'Skill UserPromptSubmit hook refused execution.'}`), {
+      code: 'skill_invocation_blocked' as const,
+    });
+  }
+  const promptOverlay = [options.context?.promptOverlay,
+    skill.agent ? `Preferred agent: ${skill.agent}` : undefined,
+    started.additionalContext, submitted.additionalContext]
+    .filter((value): value is string => Boolean(value)).join('\n\n');
   const pending = new Set<Promise<void>>();
+  const modelOverride = resolveSkillModelOverride(options.provider, skill.model);
+  if (skill.model?.trim() && modelOverride === undefined) {
+    emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'info',
+      message: `Skill model preference '${skill.model}' is unsupported by '${options.provider}'; using the current model.` });
+    await notify(`Skill model preference '${skill.model}' is unsupported by '${options.provider}'; using the current model.`);
+  }
   const runtimeOptions: KodaXOptions = {
     ...options,
+    ...(modelOverride !== undefined ? { modelOverride } : {}),
     context: {
       ...options.context,
+      rawUserInput,
+      ...(promptOverlay ? { promptOverlay } : {}),
       skillInvocation: {
         ...invocation,
+        path: skill.skillFilePath,
+        allowedTools: skill.allowedTools,
+        model: skill.model,
+        context: skill.context,
+        agent: skill.agent,
         runtimePolicy: { enforceAtRuntime: false },
       },
     },
@@ -281,15 +400,16 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions): 
         if (!isToolAllowed(allowedTools, tool, input)) {
           return `[Blocked] Tool '${tool}' is not allowed by ${invocation.name}`;
         }
-        if (!await runHooks(
+        if ((await runHooks(
           'PreToolUse',
           skill.hooks?.PreToolUse,
           tool,
-          { tool, input, displayName: invocation.name, source: 'skill', path: invocation.path },
+          { tool, input, displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
           cwd,
           allowedTools,
           baseEvents.beforeToolExecute,
-        )) {
+          options, notify,
+        )).allow === false) {
           return `[Blocked] PreToolUse hook blocked '${tool}' for ${invocation.name}`;
         }
         return baseEvents.beforeToolExecute
@@ -304,15 +424,29 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions): 
             'PostToolUse',
             skill.hooks?.PostToolUse,
             result.name,
-            { ...result, displayName: invocation.name, source: 'skill', path: invocation.path },
+            { ...result, displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
             cwd,
             allowedTools,
             baseEvents.beforeToolExecute,
+            options, notify,
           ));
         }
       },
     },
   };
-  pendingPostHooks.set(runtimeOptions, pending);
+  let finalization: Promise<void> | undefined;
+  invocationWork.set(runtimeOptions, { pending, finalize: (error) => {
+    const event = skill.context === 'fork' ? 'SubagentStop' : 'Stop';
+    finalization ??= runHooks(
+      event, skill.hooks?.[event], invocation.name,
+      { displayName: invocation.name, source: 'skill', path: skill.skillFilePath,
+        ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }) },
+      cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+    ).then(() => undefined, (failure: unknown) => {
+      emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
+        message: `Skill ${event} hook failed unexpectedly.`, detail: failure });
+    });
+    return finalization;
+  } });
   return runtimeOptions;
 }

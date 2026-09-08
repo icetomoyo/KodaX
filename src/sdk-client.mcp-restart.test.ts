@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rename, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -96,6 +96,17 @@ it('rebuilds per-Session MCP resources across a Host restart and drops removed s
   // Restart over the same storage root: the surviving Session's private MCP
   // resources are rebuilt from the persisted Host-side record, and the
   // deleted Session leaves no rebuildable state behind.
+  // A temporary executable outage must not erase the saved connection intent.
+  await rename(fixture.scriptPath, `${fixture.scriptPath}.offline`);
+  const unavailable = await boot();
+  try {
+    await unavailable.client.sessions.read(survivorId);
+  } finally {
+    await unavailable.client.disconnect();
+    await unavailable.host.close();
+    await unavailable.runtime.close();
+    await rename(`${fixture.scriptPath}.offline`, fixture.scriptPath);
+  }
   const second = await boot();
   try {
     const invoke = async (sessionId: string, inputId: string) => {

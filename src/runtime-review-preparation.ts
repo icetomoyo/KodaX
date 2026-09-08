@@ -144,9 +144,12 @@ export interface RuntimeReviewPreparationService {
   }): Promise<RuntimePreparedAgentsLean>;
 }
 
-export function createRuntimeReviewPreparationService(): RuntimeReviewPreparationService {
+export function createRuntimeReviewPreparationService(
+  authorize?: (input: Parameters<RuntimeReviewPreparationService['prepareReview']>[0]) => Promise<void>,
+): RuntimeReviewPreparationService {
   return {
     async prepareReview(input) {
+      await authorize?.(input);
       const invocation = parseReviewInvocation([...input.args]);
       if (invocation.error !== undefined) {
         return { kind: "error", message: `/review: ${invocation.error}` };
@@ -164,6 +167,7 @@ export function createRuntimeReviewPreparationService(): RuntimeReviewPreparatio
       const displayName = buildReviewDisplayName(invocation);
 
       if (invocation.workflow) {
+        await authorize?.(input);
         try {
           const packets = await writeReviewPackets({
             cwd: input.projectRoot,

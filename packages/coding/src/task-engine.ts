@@ -143,7 +143,7 @@ export async function runManagedTask(
   prompt: string,
 ): Promise<KodaXResult> {
   const catalogOptions = await ensureManagedSkillCatalog(options);
-  const runtimeOptions = await applyRuntimeSkillInvocationPolicy(catalogOptions);
+  const runtimeOptions = await applyRuntimeSkillInvocationPolicy(catalogOptions, prompt);
   // Run-scoped config via AsyncLocalStorage (concurrency-safe): each concurrent
   // SDK session carries its own tier / token / prompt-cache / lsp overrides in
   // its own async context, so they never clobber one another through the global
@@ -153,6 +153,7 @@ export async function runManagedTask(
   // the caller actually set enter the store, so the CLI path stays on env.
   // Shared derivation (deriveRunScopedConfig) is the single source of truth so
   // this and the `runKodaX` SA entry never diverge on which fields are scoped.
+  let failure: unknown;
   try {
     return await runWithScopedConfig(
       deriveRunScopedConfig(runtimeOptions),
@@ -167,8 +168,11 @@ export async function runManagedTask(
           : reshaped;
       },
     );
+  } catch (error: unknown) {
+    failure = error;
+    throw error;
   } finally {
-    await awaitRuntimeSkillInvocationPolicy(runtimeOptions);
+    await awaitRuntimeSkillInvocationPolicy(runtimeOptions, failure);
   }
 }
 

@@ -14,7 +14,7 @@ import {
   createKodaXRuntime,
   type KodaXRuntime,
 } from './sdk-runtime.js';
-import { toKodaXProductClient } from './sdk-client.js';
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
 import {
   createRuntimeDaemonRequest,

@@ -13,12 +13,11 @@ import {
 } from '@kodax-ai/llm';
 import {
   runClientPlaneRound,
-  firstActiveRunId,
-  type InkClientPlane,
 } from '@kodax-ai/repl';
 import { attachClassicPlaneDisplay } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from './sdk-runtime.js';
+import { createCliClientPlane } from './cli-client-plane.js';
 
 class ProbeProvider extends KodaXBaseProvider {
   readonly name = 't18-probe';
@@ -46,54 +45,6 @@ class ProbeProvider extends KodaXBaseProvider {
   }
 }
 
-/** Wired exactly like src/kodax_cli.ts wires the interactive runtime. */
-function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
-  return {
-    submit: (input) => runtime.runs.acceptInput({
-      sessionId: input.sessionId,
-      text: input.text,
-      inputId: input.inputId,
-      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
-    }),
-    withdraw: (sessionId, inputId) =>
-      runtime.runs.withdrawInput(sessionId, inputId)
-        .then((withdrawn) => withdrawn.text)
-        .catch((error: unknown) => {
-          if ((error as { readonly code?: string }).code === 'conflict') return undefined;
-          throw error;
-        }),
-    awaitRun: async (sessionId, runId) => {
-      void sessionId;
-      const outcome = await runtime.runs.await(runId);
-      return {
-        phase: outcome.phase,
-        ...(outcome.result !== undefined ? { result: outcome.result } : {}),
-        ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
-      };
-    },
-    stop: (runId) => runtime.runs.abort(runId),
-    activeRun: (sessionId) =>
-      runtime.runs.list({ sessionId }).then((runs) =>
-        firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase })))),
-    observe: (sessionId, onView) =>
-      runtime.sessions
-        .observeView(sessionId, onView)
-        .then((observation) => () => observation.close()),
-    readItem: (sessionId, itemId, readOptions) =>
-      runtime.sessions.readViewItem(
-        sessionId,
-        itemId,
-        typeof readOptions === 'number'
-          ? { offset: readOptions }
-          : readOptions,
-      ),
-    respondInteraction: (requestId, response) =>
-      runtime.interactions
-        .respond(requestId, response)
-        .then((result) => result.accepted),
-  };
-}
-
 /**
  * FEATURE_298 T18 — the classic console display rides a real Host round:
  * the baseline view primes the differ (no history reprint) and streamed
@@ -109,7 +60,7 @@ it('prints a plane-bound classic round from the live session view', async () => 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't18-probe',
   });
-  const plane = wireClientPlane(runtime);
+  const plane = createCliClientPlane(runtime);
   try {
     const session = await runtime.sessions.create({ title: 'T18 classic', surface: 'repl' });
     await runtime.sessions.updateSettings(session.id, {
@@ -121,20 +72,28 @@ it('prints a plane-bound classic round from the live session view', async () => 
       write: (line) => lines.push(line),
     });
 
-    const roundPromise = runClientPlaneRound({
+    const roundOutcome = runClientPlaneRound({
       plane, sessionId: session.id, prompt: 'Summarize for the console.',
-    });
-    await expect.poll(() => releaseStream !== undefined, { timeout: 15_000 }).toBe(true);
+    }).then(result => ({ result }), (error: unknown) => ({ error }));
+    await expect.poll(() => releaseStream !== undefined, { timeout: 30_000 }).toBe(true);
+    const expectedText = `Classic summary. ${'x'.repeat(9_000)} END`;
     releaseStream!({
-      textBlocks: [{ type: 'text', text: 'Classic summary.' }],
+      textBlocks: [{ type: 'text', text: expectedText }],
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
     });
-    const result = await roundPromise;
+    const outcome = await roundOutcome;
+    if ('error' in outcome) throw outcome.error;
+    const result = outcome.result;
     expect(result.success).toBe(true);
     expect(result.lastText).toContain('Classic summary.');
-    await expect.poll(() =>
-      lines.some((line) => line === 'assistant:Classic summary.'),
-    { timeout: 15_000 }).toBe(true);
+    await expect.poll(() => lines.filter((line) => line.startsWith('assistant:'))
+      .map((line) => line.slice('assistant:'.length)).join(''),
+    { timeout: 15_000 }).toBe(expectedText);
+    const history = await plane.readHistory!(session.id);
+    const answer = history.items.find(item => item.type === 'assistant' && item.text.startsWith('Classic summary.'))!;
+    expect(answer).toBeDefined();
+    expect(answer.totalTextLength).toBe(expectedText.length);
+    expect((await plane.readHistoryEntry!(session.id, answer.id))?.text).toBe(expectedText);
     // The baseline view (user echo etc.) never reprints history.
     expect(lines.every((line) => !line.startsWith('user:'))).toBe(true);
     detach();
@@ -153,7 +112,7 @@ it('keeps the classic display view-only when no dialogs are provided', async () 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't18-probe',
   });
-  const plane = wireClientPlane(runtime);
+  const plane = createCliClientPlane(runtime);
   try {
     const session = await runtime.sessions.create({ title: 'T18 plain', surface: 'repl' });
     const views: ClientSessionView[] = [];

@@ -21,37 +21,37 @@ const HISTORY_READ_CHUNK_CHARS = 65_536;
 const HISTORY_CHUNK_READ_LIMIT = 512;
 
 /** Project one conversation page into public display items. */
-export function projectConversationHistoryPage(
+export async function projectConversationHistoryPage(
   sessionId: string,
   page: RuntimeConversationHistorySlice,
-): ClientHistoryPage {
+  readChunk: Parameters<typeof readConversationHistoryEntry>[2],
+): Promise<ClientHistoryPage> {
   const items: ClientViewItem[] = [];
   const oversized: { itemId: string; byteLength: number }[] = [];
   for (const [position, entry] of page.entries.entries()) {
-    if (entry.oversized || entry.entry === undefined) {
-      if (entry.oversized) {
-        oversized.push({
-          itemId: historyEntryItemId(sessionId, page.revision, entry.index),
-          byteLength: entry.byteLength,
-        });
-      }
-      continue;
+    if (entry.oversized) {
+      oversized.push({ itemId: historyEntryItemId(sessionId, page.revision, entry.index), byteLength: entry.byteLength });
     }
-    // Tool pairing is cross-message: an assistant tool_use pairs with the
-    // tool_result blocks of the NEXT message. Only that user-role successor
-    // joins the projection — a wider window would re-project the successor
-    // under this entry's anchor. Items always anchor to the tool-call owner.
-    const successor = entry.entry.message.role === 'assistant'
+    const owner = entry.entry ?? (entry.oversized
+      ? await assembleConversationHistoryEntry(readChunk, sessionId, page.revision, entry.index)
+      : undefined);
+    if (!owner) continue;
+    const hasTools = owner.message.role === 'assistant' && Array.isArray(owner.message.content)
+      && owner.message.content.some(block => block.type === 'tool_use');
+    const successor = hasTools
       ? page.entries[position + 1]?.entry?.message
+        ?? await readFollowingMessage(readChunk, sessionId, page.revision, entry.index)
       : undefined;
+    const results = successor?.role === 'user' && Array.isArray(successor.content)
+      ? successor.content.filter(block => block.type === 'tool_result') : [];
     items.push(...projectHistoryEntry(
       sessionId,
       page.revision,
       entry.index,
-      successor?.role === 'user'
-        ? [entry.entry.message, successor]
-        : [entry.entry.message],
-    ));
+      results.length > 0
+        ? [owner.message, { role: 'user', content: results }]
+        : [owner.message],
+    ).map(boundHistoryItem));
   }
   return {
     items,
@@ -81,8 +81,26 @@ export async function readConversationHistoryEntry(
   if (parsed === undefined) return null;
   const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex);
   if (entry === null) return null;
-  const text = entryBody(entry.message, options.part ?? 'text');
-  const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+  const selected = parsed.ordinal === undefined ? undefined
+    : projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex, [entry.message])[parsed.ordinal];
+  if (parsed.ordinal !== undefined && selected === undefined) return null;
+  let text = selected?.text ?? entryBody(entry.message, options.part ?? 'text');
+  if (selected?.tool !== undefined) {
+    const blocks = Array.isArray(entry.message.content) ? entry.message.content : [];
+    const call = blocks.find((block) => block.type === 'tool_use' && block.id === selected.tool?.callId);
+    if (options.part === 'input') {
+      if (call?.type !== 'tool_use') return null;
+      text = JSON.stringify(call.input);
+    } else {
+      const next = await readFollowingMessage(readChunk, sessionId, parsed.revision, parsed.entryIndex);
+      const results = Array.isArray(next?.content) ? next.content : [];
+      const result = results.find((block) => block.type === 'tool_result' && block.tool_use_id === selected.tool?.callId);
+      if (result?.type !== 'tool_result') return null;
+      text = toolResultText(result.content);
+    }
+  }
+  const offset = options.offset ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Item offset must be a non-negative integer.');
   if (offset >= text.length && text.length > 0) return null;
   const chunk = text.slice(offset, offset + HISTORY_READ_CHUNK_CHARS);
   const nextOffset = offset + chunk.length;
@@ -93,6 +111,21 @@ export async function readConversationHistoryEntry(
     totalLength: text.length,
     ...(nextOffset < text.length ? { nextOffset } : {}),
   };
+}
+
+async function readFollowingMessage(
+  readChunk: Parameters<typeof readConversationHistoryEntry>[2],
+  sessionId: string,
+  revision: string,
+  entryIndex: number,
+): Promise<KodaXMessage | undefined> {
+  try {
+    return (await assembleConversationHistoryEntry(readChunk, sessionId, revision, entryIndex + 1))?.message;
+  } catch (error: unknown) {
+    // An interrupted final tool call legitimately has no successor.
+    if (error instanceof Error && error.message.startsWith('Transcript entry index is out of range:')) return undefined;
+    throw error;
+  }
 }
 
 /**
@@ -130,10 +163,12 @@ function historyEntryItemId(sessionId: string, revision: string, entryIndex: num
 function parseHistoryEntryItemId(
   sessionId: string,
   itemId: string,
-): { revision: string; entryIndex: number } | undefined {
+): { revision: string; entryIndex: number; ordinal?: number } | undefined {
   const prefix = `${sessionId}:history:`;
   if (!itemId.startsWith(prefix)) return undefined;
-  const base = itemId.slice(prefix.length).split('#')[0] ?? '';
+  const [base = '', ordinal, extra] = itemId.slice(prefix.length).split('#');
+  if (extra !== undefined) return undefined;
+  if (ordinal !== undefined && !/^\d+$/u.test(ordinal)) return undefined;
   // Parse from the right: the revision itself contains a colon
   // ("sha256:<digest>"), so only the trailing index segment is structural.
   const lastColon = base.lastIndexOf(':');
@@ -142,7 +177,9 @@ function parseHistoryEntryItemId(
   if (!/^sha256:[0-9a-f]{8,}$/u.test(revision)) return undefined;
   const match = /^(\d+)$/u.exec(base.slice(lastColon + 1));
   if (match === null || match[1] === undefined) return undefined;
-  return { revision, entryIndex: Number(match[1]) };
+  const entryIndex = Number(match[1]);
+  if (!Number.isSafeInteger(entryIndex) || (ordinal !== undefined && !Number.isSafeInteger(Number(ordinal)))) return undefined;
+  return { revision, entryIndex, ...(ordinal !== undefined ? { ordinal: Number(ordinal) } : {}) };
 }
 
 function projectHistoryEntry(
@@ -155,18 +192,23 @@ function projectHistoryEntry(
   // projection inside its trimming window and gives every item an
   // unambiguous entry anchor; ordinals count emitted items flatly.
   const restored = restoreHistoryItemsFromSession({ messages });
+  const ownerBlocks = Array.isArray(messages[0]?.content) ? messages[0].content : [];
+  const resultBlocks = Array.isArray(messages[1]?.content) ? messages[1].content : [];
   const items: ClientViewItem[] = [];
   let ordinal = 0;
   for (const item of restored) {
     if (item.type === 'tool_group') {
       for (const tool of item.tools) {
+        const call = ownerBlocks.find(block => block.type === 'tool_use' && block.id === tool.id);
+        const result = resultBlocks.find(block => block.type === 'tool_result' && block.tool_use_id === tool.id);
         items.push({
           id: historyItemId(sessionId, revision, entryIndex, ordinal),
           type: 'tool',
-          text: String(tool.output ?? tool.error ?? ''),
+          text: result?.type === 'tool_result' ? toolResultText(result.content) : String(tool.output ?? tool.error ?? ''),
           tool: {
-            callId: tool.id, name: tool.name, status: 'success',
-            inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime,
+            callId: tool.id, name: tool.name,
+            status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
+            inputText: JSON.stringify(call?.type === 'tool_use' ? call.input : tool.input), startedAt: tool.startTime, endedAt: tool.endTime,
           },
         });
         ordinal += 1;
@@ -183,6 +225,17 @@ function projectHistoryEntry(
     ordinal += 1;
   }
   return items;
+}
+
+function boundHistoryItem(item: ClientViewItem): ClientViewItem {
+  const limit = 8192;
+  const input = item.tool?.inputText;
+  return {
+    ...item,
+    ...(item.text.length > limit ? { text: item.text.slice(0, limit), textOffset: 0, totalTextLength: item.text.length } : {}),
+    ...(item.tool && input && input.length > limit
+      ? { tool: { ...item.tool, inputText: input.slice(0, limit), totalInputLength: input.length } } : {}),
+  };
 }
 
 function historyItemId(sessionId: string, revision: string, entryIndex: number, ordinal: number): string {

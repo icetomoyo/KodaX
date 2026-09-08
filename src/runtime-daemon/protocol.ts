@@ -130,6 +130,18 @@ export type RuntimeDaemonMethod =
   | 'skill.list'
   | 'skill.describe'
   | 'skill.read'
+  | 'memory.describe'
+  | 'memory.listReviews'
+  | 'memory.listInbox'
+  | 'memory.showProposal'
+  | 'memory.listRefs'
+  | 'memory.readRef'
+  | 'memory.remember'
+  | 'memory.forgetRef'
+  | 'memory.approveProposal'
+  | 'memory.rejectProposal'
+  | 'memory.rebuild'
+  | 'memory.ensureOpenTarget'
   | 'invocations.prepareSkill'
   | 'invocations.prepareCommand'
   | 'invocations.prepareReview'
@@ -176,6 +188,17 @@ export type RuntimeDaemonWireMethod = RuntimeDaemonMethod | RuntimeDaemonRetired
 export type RuntimeDaemonMutationMethod =
   | 'runtime.shutdown'
   | 'daemon.stop'
+  | 'memory.remember'
+  | 'memory.forgetRef'
+  | 'memory.approveProposal'
+  | 'memory.rejectProposal'
+  | 'memory.rebuild'
+  | 'memory.ensureOpenTarget'
+  | 'invocations.prepareReview'
+  | 'session.goal.create'
+  | 'session.goal.pause'
+  | 'session.goal.resume'
+  | 'session.goal.clear'
   | 'session.create'
   | 'session.fork'
   | 'session.recover'
@@ -442,6 +465,18 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'skill.list',
   'skill.describe',
   'skill.read',
+  'memory.describe',
+  'memory.listReviews',
+  'memory.listInbox',
+  'memory.showProposal',
+  'memory.listRefs',
+  'memory.readRef',
+  'memory.remember',
+  'memory.forgetRef',
+  'memory.approveProposal',
+  'memory.rejectProposal',
+  'memory.rebuild',
+  'memory.ensureOpenTarget',
   'invocations.prepareSkill',
   'invocations.prepareCommand',
   'invocations.prepareReview',
@@ -470,6 +505,17 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
 export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMethod[] = [
   'runtime.shutdown',
   'daemon.stop',
+  'memory.remember',
+  'memory.forgetRef',
+  'memory.approveProposal',
+  'memory.rejectProposal',
+  'memory.rebuild',
+  'memory.ensureOpenTarget',
+  'invocations.prepareReview',
+  'session.goal.create',
+  'session.goal.pause',
+  'session.goal.resume',
+  'session.goal.clear',
   'session.create',
   'session.fork',
   'session.recover',

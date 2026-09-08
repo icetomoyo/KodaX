@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,6 +8,7 @@ import {
   KodaXBaseProvider,
   clearRuntimeModelProviders,
   registerModelProvider,
+  registerCustomProviders,
   type KodaXProviderConfig,
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
@@ -111,6 +113,30 @@ it('persists the canonical input identity before the Provider can consume it', a
   expect((await storage.load(session.id))!.messages.filter((message) => message.role === 'user')).toHaveLength(1);
 });
 
+it('returns the original acceptance during compaction while rejecting new input', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  const input = { sessionId: session.id, inputId: 'before-compact', text: 'Keep this accepted request identity.' };
+  const accepted = await client.inputs.submit(input);
+  await runtime.runs.await(accepted.runId!);
+  let release = () => {};
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  let entered = false;
+  onRequest = () => { entered = true; return waiting; };
+  const compacting = runtime.sessions.compact({
+    sessionId: session.id, provider: 'product-input-test', contextWindow: 60_000, triggerTokens: 1,
+  });
+  try {
+    await expect.poll(() => entered).toBe(true);
+    expect(await client.inputs.submit(input)).toEqual(accepted);
+    await expect(client.inputs.submit({ ...input, inputId: 'new-during-compact' }))
+      .rejects.toMatchObject({ code: 'conflict' });
+  } finally {
+    release();
+    await compacting;
+  }
+});
+
 it('rejects input persistence failure without starting a Provider or accepting the input', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
@@ -161,6 +187,7 @@ it('does not transparently resubmit an old connection after the Host changes', a
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   await expect(oldClient.inputs.submit(input)).rejects.toThrow();
+  await expect(oldClient.inputs.read(session.id, input.inputId)).rejects.toThrow();
   expect(await client.inputs.read(session.id, input.inputId)).toBeNull();
   expect(requests).toBe(1);
   await oldClient.disconnect();
@@ -174,4 +201,50 @@ it('reports temporary Session cleanup failure instead of claiming successful del
   await expect(runtime.runs.await(accepted.runId!)).rejects.toThrow();
   expect((await storage.load(session.id))?.runtimeInfo?.temporary).toBe(true);
   expect(requests).toBe(1);
+});
+
+it('delivers a busy queued image through the real Host to the next Provider request', async () => {
+  let release = () => {};
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const wireRequests: unknown[] = [];
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    wireRequests.push(JSON.parse(Buffer.concat(chunks).toString()));
+    if (wireRequests.length === 1) await waiting;
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end('data: '+JSON.stringify({ id: 'image-test', object: 'chat.completion.chunk', created: 1, model: 'image-test',
+      choices: [{ index: 0, delta: { content: 'Image received.' }, finish_reason: 'stop' }] })+'\n\ndata: [DONE]\n\n');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing fixture server address');
+  registerCustomProviders([{ name: 'product-image-test', protocol: 'openai', imageInput: true,
+    baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKeyEnv: 'KODAX_PRODUCT_INPUT_TEST_KEY', model: 'image-test' }]);
+  try {
+    const session = await client.sessions.create({ projectPath: homeDir });
+    await client.sessions.updateSettings(session.id, { provider: 'product-image-test', model: 'image-test', permissionMode: 'full-access', agentMode: 'sa' });
+    const imagePath = path.join(homeDir, 'pixel.png');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+    const first = await client.inputs.submit({ sessionId: session.id, inputId: 'busy', text: 'Wait before the image.' });
+    await expect.poll(() => wireRequests.length).toBe(1);
+    const input = { sessionId: session.id, inputId: 'picture', text: 'Describe this image.', delivery: 'after_turn' as const,
+      inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png', source: 'clipboard' as const }] };
+    expect((await client.inputs.submit(input)).state).toBe('queued');
+    await expect(client.inputs.submit({ ...input, inputArtifacts: [] })).rejects.toMatchObject({ code: 'conflict' });
+    release();
+    await runtime.runs.await(first.runId!);
+    await expect.poll(async () => (await client.inputs.read(session.id, 'picture'))?.runId).toBeTruthy();
+    const accepted = await client.inputs.read(session.id, 'picture');
+    const result = await runtime.runs.await(accepted!.runId!);
+    expect(result.phase, JSON.stringify(result)).toBe('completed');
+    expect(wireRequests.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(wireRequests[1])).toContain('data:image/png;base64,');
+    expect(JSON.stringify(wireRequests[1])).toContain('Describe this image.');
+  } finally {
+    release();
+    registerCustomProviders([]);
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

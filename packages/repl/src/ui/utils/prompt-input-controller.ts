@@ -43,6 +43,7 @@ export interface PromptInputControllerOptions {
   initialValue?: string;
   cwd?: string;
   gitRoot?: string;
+  sessionId?: string;
   autocompleteEnabled?: boolean;
   onInputChange?: (text: string) => void;
   /** Notify the UI when an image-path paste falls back to plain text. */
@@ -200,6 +201,7 @@ export function usePromptInputController({
   initialValue = "",
   cwd,
   gitRoot,
+  sessionId,
   autocompleteEnabled = true,
   onInputChange,
   onPasteFallback,
@@ -207,6 +209,19 @@ export function usePromptInputController({
   onPopPendingInputs,
 }: PromptInputControllerOptions): PromptInputControllerResult {
   const lastEscPressRef = useRef<number>(0);
+  const draftGeneration = useRef(0);
+  const deferredRecalls = useRef(new Map<string | undefined, string>());
+  const pendingRecalls = useRef(new Set<string | undefined>());
+  const currentSession = useRef(sessionId);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  if (currentSession.current !== sessionId) {
+    currentSession.current = sessionId;
+    draftGeneration.current += 1;
+  }
 
   const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
   const {
@@ -236,6 +251,11 @@ export function usePromptInputController({
     initialValue,
     onTextChange: onInputChange,
   });
+  const currentDraft = useRef(text);
+  if (currentDraft.current !== text) {
+    currentDraft.current = text;
+    draftGeneration.current += 1;
+  }
 
   // Issue 121 Layer 2: auto-truncate long non-paste input. Triggers when the
   // buffer exceeds LARGE_INPUT_TRUNCATE_THRESHOLD from a path that bypassed
@@ -434,6 +454,7 @@ export function usePromptInputController({
   }, [insert]);
 
   const handleKey = useCallback((key: KeyInfo): boolean => {
+    if (key.name !== "up" || !pendingRecalls.current.has(sessionId)) draftGeneration.current += 1;
     if (!focus) {
       return false;
     }
@@ -526,13 +547,34 @@ export function usePromptInputController({
       // recall UX is preserved when the queue is empty (callback returns
       // `undefined`).
       if (text.length === 0 && onPopPendingInputs) {
+        const deferred = deferredRecalls.current.get(sessionId);
+        if (deferred !== undefined) {
+          deferredRecalls.current.delete(sessionId);
+          setText(deferred);
+          return true;
+        }
+        if (pendingRecalls.current.has(sessionId)) return true;
         const popped = onPopPendingInputs();
         if (popped instanceof Promise) {
           // Host-queue pull: withdrawals settle asynchronously; land the
           // pulled text when they do. Only entries the Host actually took
           // back are returned, so nothing editable re-runs behind the user.
+          const generation = draftGeneration.current;
+          pendingRecalls.current.add(sessionId);
           void popped.then((value) => {
+            pendingRecalls.current.delete(sessionId);
+            if (!mounted.current || generation !== draftGeneration.current || currentSession.current !== sessionId) {
+              if (value) deferredRecalls.current.set(sessionId, value);
+              return;
+            }
             if (typeof value === "string" && value.length > 0) setText(value);
+            else {
+              saveTempInput(text);
+              handleHistoryRecall(navigateUp());
+            }
+          }, (error: unknown) => {
+            pendingRecalls.current.delete(sessionId);
+            reportPromptInputDiagnostic("Queued input recall failed; the input may still run.", error);
           });
           return true;
         }
@@ -711,6 +753,7 @@ export function usePromptInputController({
     newline,
     onExit,
     onPopPendingInputs,
+    sessionId,
     redo,
     resetHistory,
     saveTempInput,

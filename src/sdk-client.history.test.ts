@@ -9,6 +9,7 @@ import {
 } from '@kodax-ai/llm';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
+import { createCliClientPlane } from './cli-client-plane.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
@@ -31,6 +32,15 @@ class HistoryProvider extends KodaXBaseProvider {
       ? lastUser.content
       : JSON.stringify(lastUser?.content ?? '');
     const huge = userText.includes('HUGE-REQUEST');
+    if (userText.includes('ERROR-REQUEST')) {
+      return {
+        textBlocks: [{ type: 'text', text: 'Checking two missing files.' }], thinkingBlocks: [],
+        toolBlocks: [
+          { type: 'tool_use', id: 'missing-a', name: 'read', input: { path: path.join(homeDir, 'absent-a.txt') } },
+          { type: 'tool_use', id: 'missing-b', name: 'read', input: { path: path.join(homeDir, 'absent-b.txt') } },
+        ], stopReason: 'tool_use',
+      };
+    }
     const tool = userText.includes('TOOL-REQUEST') && !userText.includes('previous response was truncated');
     return {
       textBlocks: [{ type: 'text', text: huge ? HUGE_BODY : `FACT-${userText.slice(-1)} acknowledged.` }],
@@ -89,6 +99,32 @@ async function toolRound(sessionId: string): Promise<void> {
   await runtime.runs.await(accepted.runId!);
 }
 
+it('preserves failed tool outcomes in history after the run settles', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'errors', text: 'ERROR-REQUEST' });
+  await runtime.runs.await(accepted.runId!);
+  const page = await client.sessions.readHistory(session.id);
+  const tools = page.items.filter((item) => item.type === 'tool');
+  expect(tools).toHaveLength(2);
+  expect(tools.map((item) => item.tool?.status)).toEqual(['error', 'error']);
+  const second = tools.find((item) => item.tool?.callId === 'missing-b')!;
+  const input = await client.sessions.readHistoryEntry(session.id, second.id, { part: 'input' });
+  expect(JSON.parse(input!.text)).toEqual({ path: path.join(homeDir, 'absent-b.txt') });
+  const output = await client.sessions.readHistoryEntry(session.id, second.id);
+  expect(output?.text).toContain('absent-b.txt');
+  expect(output?.text).not.toContain('absent-a.txt');
+  const pagedTools: typeof tools = [];
+  let cursor: string | undefined;
+  do {
+    const single = await client.sessions.readHistory(session.id, { limit: 1, ...(cursor ? { cursor } : {}) });
+    pagedTools.push(...single.items.filter((item) => item.type === 'tool'));
+    cursor = single.nextCursor;
+  } while (cursor !== undefined);
+  expect(pagedTools.map((item) => ({ id: item.id, text: item.text, status: item.tool?.status })))
+    .toEqual(tools.map((item) => ({ id: item.id, text: item.text, status: item.tool?.status })));
+}, 30_000);
+
 it('pages older history with stable ids, copyable bodies, and oversized entry reads', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
@@ -118,7 +154,8 @@ it('pages older history with stable ids, copyable bodies, and oversized entry re
   expect(seenTexts.some((text) => text.includes('Ask round 1'))).toBe(true);
   expect(seenTexts.some((text) => text.includes('FACT-3 acknowledged.'))).toBe(true);
   // Bodies stay copyable in full for inline entries.
-  expect(seenTexts.some((text) => text.includes('HUGE-BODY-MARKER'))).toBe(false);
+  expect(seenTexts.some((text) => text.includes('HUGE-BODY-MARKER'))).toBe(true);
+  expect(seenTexts.filter((text) => text === 'Ask round 1')).toHaveLength(1);
 
   // The oversized assistant reply is referenced, and its full body reads back chunked.
   expect(oversizedIds.length).toBeGreaterThanOrEqual(1);
@@ -153,6 +190,16 @@ it('pages older history with stable ids, copyable bodies, and oversized entry re
   expect(toolInput).not.toBeNull();
   expect(toolInput!.text).toContain('"command"');
   expect(toolInput!.text).toContain('echo tool-round-ok');
+  const plane = createCliClientPlane(runtime);
+  let liveToolId: string | undefined;
+  const stopObserving = await plane.observe(session.id, view => {
+    liveToolId = view.items.find(item => item.tool?.callId === 'call-history-tool')?.id;
+  });
+  try {
+    expect(liveToolId).toBeDefined();
+    const liveInput = await plane.readItem!(session.id, liveToolId!, { part: 'input', offset: 0 });
+    expect(JSON.parse(liveInput!.text)).toEqual({ command: 'echo tool-round-ok' });
+  } finally { stopObserving(); }
 }, 60_000);
 
 it('marks old cursors stale after history changes and searches the whole history', async () => {

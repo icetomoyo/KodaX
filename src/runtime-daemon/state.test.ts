@@ -206,6 +206,53 @@ describe('runtime daemon state paths', () => {
     }
   });
 
+  it.runIf(process.platform === 'win32')('publishes after a transient Windows rename lock without disturbing the previous state', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const previous = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, previous);
+    const rename = fsDefault.renameSync;
+    let attempts = 0;
+    fsDefault.renameSync = (from, to) => {
+      if (to === paths.stateFile && ++attempts < 3) {
+        expect(readRuntimeDaemonState(paths)).toEqual(previous);
+        throw Object.assign(new Error('temporary Windows sharing lock'), { code: 'EPERM' });
+      }
+      rename(from, to);
+    };
+    syncBuiltinESMExports();
+    try {
+      expect(countFsyncCalls(() => writeRuntimeDaemonState(paths, state()))).toBe(1);
+      expect(attempts).toBe(3);
+      expect(readRuntimeDaemonState(paths)).toEqual(state());
+      expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      fsDefault.renameSync = rename;
+      syncBuiltinESMExports();
+    }
+  });
+
+  it.runIf(process.platform === 'win32').each([
+    ['EPERM', 5], ['EIO', 1],
+  ] as const)('surfaces persistent %s after a bounded attempt count and preserves the prior state', (code, expectedAttempts) => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const previous = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, previous);
+    const rename = fsDefault.renameSync;
+    const failure = Object.assign(new Error('publication unavailable'), { code });
+    let attempts = 0;
+    fsDefault.renameSync = () => { attempts += 1; throw failure; };
+    syncBuiltinESMExports();
+    try {
+      expect(() => writeRuntimeDaemonState(paths, state())).toThrow(failure);
+      expect(attempts).toBe(expectedAttempts);
+      expect(readRuntimeDaemonState(paths)).toEqual(previous);
+      expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      fsDefault.renameSync = rename;
+      syncBuiltinESMExports();
+    }
+  });
+
   it('treats malformed daemon state as missing instead of throwing', () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
     fs.mkdirSync(paths.rootDir, { recursive: true });

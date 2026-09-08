@@ -321,6 +321,64 @@ describe("prompt-input-controller", () => {
     expect(mocks.setTextMock).toHaveBeenCalledWith("latest draft");
   });
 
+  it("falls back to history only after an asynchronous empty queue reply", async () => {
+    mocks.state.navigateUpReturn = "older command";
+    let resolve!: (value: string | undefined) => void;
+    const pending = new Promise<string | undefined>((done) => { resolve = done; });
+    let controller: ReturnType<typeof usePromptInputController> | undefined;
+    const Harness = () => {
+      controller = usePromptInputController({ onSubmit: vi.fn(), onPopPendingInputs: () => pending });
+      return null;
+    };
+    render(React.createElement(Harness));
+    controller?.handleKey(createKey({ name: "up" }));
+    expect(mocks.navigateUpMock).not.toHaveBeenCalled();
+    resolve(undefined);
+    await pending;
+    expect(mocks.setTextMock).toHaveBeenCalledWith("older command");
+  });
+
+  it("keeps a late queue withdrawal for the next empty-buffer recall without overwriting a new draft", async () => {
+    let resolve!: (value: string | undefined) => void;
+    const pending = new Promise<string | undefined>((done) => { resolve = done; });
+    const pop = vi.fn(() => pending);
+    let controller: ReturnType<typeof usePromptInputController> | undefined;
+    const Harness = () => {
+      controller = usePromptInputController({ onSubmit: vi.fn(), onPopPendingInputs: pop });
+      return null;
+    };
+    render(React.createElement(Harness));
+    controller?.handleKey(createKey({ name: "up" }));
+    controller?.handleKey(createKey({ name: "x", sequence: "x", insertable: true }));
+    resolve("withdrawn original");
+    await pending;
+    expect(mocks.setTextMock).not.toHaveBeenCalled();
+    controller?.handleKey(createKey({ name: "up" }));
+    expect(mocks.setTextMock).toHaveBeenCalledWith("withdrawn original");
+    expect(pop).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a late withdrawal in its originating session", async () => {
+    let resolve!: (value: string | undefined) => void;
+    const pending = new Promise<string | undefined>((done) => { resolve = done; });
+    let controller: ReturnType<typeof usePromptInputController> | undefined;
+    const Harness = ({ sessionId }: { sessionId: string }) => {
+      controller = usePromptInputController({ sessionId, onSubmit: vi.fn(), onPopPendingInputs: () => pending });
+      return null;
+    };
+    const instance = render(React.createElement(Harness, { sessionId: "first" }));
+    controller?.handleKey(createKey({ name: "up" }));
+    instance.rerender(React.createElement(Harness, { sessionId: "second" }));
+    await new Promise((done) => setTimeout(done, 10));
+    resolve("first session draft");
+    await pending;
+    expect(mocks.setTextMock).not.toHaveBeenCalled();
+    instance.rerender(React.createElement(Harness, { sessionId: "first" }));
+    await new Promise((done) => setTimeout(done, 10));
+    controller?.handleKey(createKey({ name: "up" }));
+    expect(mocks.setTextMock).toHaveBeenCalledWith("first session draft");
+  });
+
   it("uses double escape to clear prompt text without swallowing empty escapes", () => {
     mocks.state.text = "draft";
 

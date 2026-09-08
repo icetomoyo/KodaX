@@ -213,6 +213,7 @@ async function startWorkflowViaHost(
   hostControl: NonNullable<Parameters<Command['handler']>[2]['workflows']>,
   callbacks: Parameters<Command['handler']>[2],
   input: {
+    readonly sessionId?: string;
     readonly projectRoot: string;
     readonly source:
       | { readonly kind: 'inline'; readonly manifest: unknown; readonly source: string }
@@ -228,6 +229,7 @@ async function startWorkflowViaHost(
   },
 ): Promise<void> {
   const started = await hostControl.start({
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     projectRoot: input.projectRoot,
     source: input.source,
     ...(input.args !== undefined ? { args: input.args } : {}),
@@ -868,7 +870,8 @@ export const workflowCommand: Command = {
           hostControl,
           callbacks,
           {
-            projectRoot: process.cwd(),
+            sessionId: context.sessionId,
+            projectRoot: context.gitRoot ?? process.cwd(),
             source: prepared.scriptSnapshot
               ? {
                 kind: 'inline',
@@ -940,7 +943,8 @@ export const workflowCommand: Command = {
         hostControl,
         callbacks,
         {
-          projectRoot: process.cwd(),
+          sessionId: context.sessionId,
+          projectRoot: context.gitRoot ?? process.cwd(),
           source: {
             kind: 'inline',
             manifest: loaded.capsule.manifest,
@@ -1067,7 +1071,8 @@ export const workflowCommand: Command = {
       hostControl,
       callbacks,
       {
-        projectRoot: process.cwd(),
+        sessionId: context.sessionId,
+        projectRoot: context.gitRoot ?? process.cwd(),
         source: scriptSnapshot
           ? {
             kind: 'inline',

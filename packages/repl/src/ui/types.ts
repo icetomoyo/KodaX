@@ -389,6 +389,8 @@ export interface ToolCall {
   name: string;
   status: ToolCallStatus;
   input?: Record<string, unknown>;
+  /** Serialized Host arguments; may be a bounded preview until explicitly read. */
+  inputText?: string;
   preview?: string;
   output?: unknown;
   error?: string;
@@ -424,6 +426,11 @@ export interface HistoryItemBase {
   id: string;
   type: HistoryItemType;
   timestamp: number;
+  textOffset?: number;
+  totalTextLength?: number;
+  totalInputLength?: number;
+  /** Stable canonical reader identity when this display item came from history paging. */
+  historyItemId?: string;
   /** Ephemeral marker used so restored display-only entries cannot evict canonical transcript history. */
   isSessionUiOnly?: boolean;
 }

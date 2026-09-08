@@ -238,6 +238,12 @@ describe("transcript-surface", () => {
       thinkingContent: "",
       activeToolCallsLength: 0,
     })).toBe(2);
+    expect(countPendingTranscriptUpdates({
+      isTranscriptMode: true,
+      snapshot: { ...snapshot, observedItems: [{ id: 'live', type: 'assistant', text: 'old tail', timestamp: 1 }] },
+      currentItems: [{ id: 'live', type: 'assistant', text: 'new tail', timestamp: 1 }],
+      currentItemsLength: 1, isLoading: false, currentResponse: '', thinkingContent: '', activeToolCallsLength: 0,
+    })).toBe(1);
   });
 
   it("uses the alternate screen only for the live prompt surface", () => {

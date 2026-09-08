@@ -16,7 +16,7 @@
  *      `errorMetadata` so the user sees the reason on resume.
  *   4. limit-reached terminal.
  *
- * **Behavior preserved verbatim from FEATURE_100 baseline**:
+ * **Standalone behavior preserved from FEATURE_100 baseline**:
  * - When `options.session?.storage` is absent, returns immediately
  *   (silent no-op).
  * - When `data.gitRoot` is not provided, falls back to `getGitRoot()`
@@ -27,10 +27,9 @@
  *   mutations do not mutate the persisted snapshot.
  *
  * **Storage failure isolation (CAP-013-003 / CAP-SESSION-SNAPSHOT-003)**:
- * `saveSessionSnapshot` absorbs `storage.save` rejections locally and logs
- * diagnostics. `saveRequiredSessionSnapshot` instead propagates failures at
- * Runtime-owned durable boundaries. Ordinary snapshots remain best-effort
- * session continuity, NOT load-bearing for the run's success/failure.
+ * Host-owned ordinary snapshots and `saveRequiredSessionSnapshot` propagate
+ * persistence failures. Standalone snapshots and original-error cleanup log
+ * diagnostics and remain best-effort.
  * Particularly important inside the catch-block cleanup chain
  * (`runCatchCleanup`) where a storage failure would otherwise clobber
  * the original error we are trying to record. Closed in FEATURE_100
@@ -291,7 +290,8 @@ async function saveSessionSnapshotWithPolicy(
     ?? options.context?.gitRoot
     ?? process.cwd(),
   ) ?? process.cwd().replace(/\\/g, '/');
-  const gitRoot =
+  const hostOwnsIdentity = options.session.persistedByHost === false;
+  const gitRoot = hostOwnsIdentity ? '' :
     data.gitRoot
     ?? options.context?.gitRoot
     ?? (await getGitRoot(executionCwd))
@@ -308,16 +308,16 @@ async function saveSessionSnapshotWithPolicy(
     extensionStateToPersist = runtimeSessionSnapshot?.extensionState;
     extensionRecordsToPersist = runtimeSessionSnapshot?.extensionRecords;
   }
-  // CAP-013-003 / CAP-SESSION-SNAPSHOT-003: storage failures are absorbed
-  // here so a transient backend issue (disk full, FS permission, race) cannot
-  // mask the caller's original error nor abort an otherwise-successful run.
-  // Snapshots are best-effort; resume just won't see the latest state.
+  // The Host owns Session identity; execution cwd must not implicitly move
+  // an existing (including legacy pathless) Session into another project.
   try {
+    const existing = hostOwnsIdentity ? await options.session.storage.load(sessionId) : undefined;
+    if (hostOwnsIdentity && !existing) throw new Error(`Session ${sessionId} was removed before its snapshot could be saved.`);
     await options.session.storage.save(sessionId, {
       messages: messagesToPersist,
       title: data.title,
-      gitRoot,
-      runtimeInfo,
+      gitRoot: existing ? existing.gitRoot : gitRoot,
+      runtimeInfo: existing ? existing.runtimeInfo : runtimeInfo,
       tag: options.session.tag,
       scope: options.session.scope ?? 'user',
       errorMetadata: data.errorMetadata,
@@ -338,13 +338,14 @@ async function saveSessionSnapshotWithPolicy(
   }
 }
 
-/** Best-effort snapshot used by ordinary SDK and error-cleanup paths. */
+/** Host-owned normal boundaries are durable; standalone SDK and error cleanup remain best-effort. */
 export async function saveSessionSnapshot(
   options: KodaXOptions,
   sessionId: string,
   data: SessionSnapshotData,
 ): Promise<void> {
-  await saveSessionSnapshotWithPolicy(options, sessionId, data, false);
+  await saveSessionSnapshotWithPolicy(options, sessionId, data,
+    options.session?.persistedByHost === false && data.errorMetadata === undefined);
 }
 
 /**

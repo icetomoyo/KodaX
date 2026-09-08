@@ -10,7 +10,7 @@ import type {
   RunningSession,
 } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { toKodaXProductClient } from './sdk-client.js';
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';

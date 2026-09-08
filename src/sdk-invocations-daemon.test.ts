@@ -63,6 +63,7 @@ it('prepares invocations over the daemon face against a real Host', async () => 
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const client = await connectKodaXRuntime({ homeDir: projectRoot, endpoint: endpointPath });
   try {
+    await client.sessions.create({ sessionId: 'session-t37-daemon', projectPath: projectRoot });
     // Skill preparation crosses the RPC boundary with the Host-minted policy.
     const prepared = await client.invocations.prepareSkill({
       projectRoot,
@@ -91,6 +92,16 @@ it('prepares invocations over the daemon face against a real Host', async () => 
     if (review.kind === 'prepared') {
       expect(review.invocation.prompt).toContain('+two');
     }
+    await expect(client.invocations.prepareReview({
+      projectRoot, sessionId: 'missing-session', args: ['--workflow'],
+    })).rejects.toThrow();
+    await expect(client.invocations.prepareReview({
+      projectRoot: path.dirname(projectRoot), sessionId: 'session-t37-daemon', args: ['--workflow'],
+    })).rejects.toThrow(/workspace|project/i);
+    const workflowReview = await client.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37-daemon', args: ['--workflow'],
+    });
+    expect(workflowReview.kind).toBe('workflow');
 
     // Builtin command names stay client-side execution without expansion.
     const command = await client.invocations.prepareCommand({
@@ -108,6 +119,10 @@ it('prepares invocations over the daemon face against a real Host', async () => 
     if (leanPrepared.kind === 'prepared') {
       expect(leanPrepared.invocation.displayName).toBe('/agents lean');
     }
+    await client.sessions.archive('session-t37-daemon');
+    await expect(client.invocations.prepareReview({
+      projectRoot, sessionId: 'session-t37-daemon', args: ['--workflow'],
+    })).rejects.toThrow(/archived/i);
   } finally {
     await client.close();
     await host.close();

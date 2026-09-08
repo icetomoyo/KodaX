@@ -25,14 +25,32 @@ async function optionsWithSkill(input: {
   readonly allowedTools?: string;
   readonly preToolUse?: string;
   readonly postToolUse?: string;
+  readonly model?: string;
+  readonly sessionStart?: string;
+  readonly userPromptSubmit?: string;
+  readonly stop?: string;
+  readonly fork?: boolean;
+  readonly notification?: string;
 }): Promise<{ readonly root: string; readonly options: KodaXOptions }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-policy-'));
   tempDirs.push(root);
   const skillDir = path.join(root, '.kodax', 'skills', 'transport-skill');
   await mkdir(skillDir, { recursive: true });
-  const hookLines = input.preToolUse || input.postToolUse
+  const hookLines = input.preToolUse || input.postToolUse || input.sessionStart || input.userPromptSubmit || input.stop || input.notification
     ? [
         'hooks:',
+        ...(input.notification
+          ? ['  Notification:', `    - command: ${JSON.stringify(input.notification)}`]
+          : []),
+        ...(input.stop
+          ? [`  ${input.fork ? 'SubagentStop' : 'Stop'}:`, `    - command: ${JSON.stringify(input.stop)}`]
+          : []),
+        ...(input.sessionStart
+          ? ['  SessionStart:', `    - command: ${JSON.stringify(input.sessionStart)}`]
+          : []),
+        ...(input.userPromptSubmit
+          ? ['  UserPromptSubmit:', `    - command: ${JSON.stringify(input.userPromptSubmit)}`]
+          : []),
         ...(input.preToolUse
           ? ['  PreToolUse:', '    - matcher: read', `      command: ${JSON.stringify(input.preToolUse)}`]
           : []),
@@ -46,6 +64,8 @@ async function optionsWithSkill(input: {
     'name: transport-skill',
     'description: Transport policy test',
     ...(input.allowedTools ? [`allowed-tools: ${input.allowedTools}`] : []),
+    ...(input.model ? [`model: ${input.model}`] : []),
+    ...(input.fork ? ['context: fork'] : []),
     ...hookLines,
     '---',
     '',
@@ -71,6 +91,68 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it.each(['hook-message', 'model-preference', 'stderr'] as const)('runs Notification for %s without recursively dispatching its own output', async (source) => {
+    const markerRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-notification-hook-'));
+    tempDirs.push(markerRoot);
+    const marker = path.join(markerRoot, 'notifications.txt');
+    const encodedMarker = Buffer.from(marker).toString('base64');
+    const fixture = await optionsWithSkill({
+      ...(source === 'model-preference' ? { model: 'sonnet' } : {
+        sessionStart: nodeCommand(source === 'stderr'
+          ? "process.stderr.write('Check release gate')"
+          : 'process.stdout.write(JSON.stringify({message:\'Preparing review\'}))'),
+      }),
+      notification: nodeCommand(`require('node:fs').appendFileSync(Buffer.from('${encodedMarker}','base64').toString(),JSON.parse(process.env.KODAX_HOOK_PAYLOAD).message);process.stdout.write(JSON.stringify({message:'Notification handled'}))`),
+    });
+    await applyRuntimeSkillInvocationPolicy(fixture.options, 'Inspect');
+    expect(await readFile(marker, 'utf8')).toBe(source === 'model-preference'
+      ? "Skill model preference 'sonnet' is unsupported by 'mock-provider'; using the current model."
+      : source === 'stderr' ? '[Hook SessionStart stderr] Check release gate' : 'Preparing review');
+  }, 20_000);
+  it('keeps plain-text startup hook output as additional context', async () => {
+    const fixture = await optionsWithSkill({ sessionStart: nodeCommand("process.stdout.write('Inspect the authentication boundary.')") });
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options, 'Inspect');
+    expect(options.context?.promptOverlay).toContain('Inspect the authentication boundary.');
+  });
+  it.each([false, true])('runs the trusted Stop hook once when invocation settlement is awaited twice (fork=%s)', async (fork) => {
+    const markerRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-stop-hook-'));
+    tempDirs.push(markerRoot);
+    const marker = path.join(markerRoot, 'stopped.txt');
+    const encodedMarker = Buffer.from(marker).toString('base64');
+    const fixture = await optionsWithSkill({ fork, stop: nodeCommand(`require('node:fs').appendFileSync(Buffer.from('${encodedMarker}','base64').toString(),process.env.KODAX_HOOK_EVENT)`) });
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options, 'Inspect');
+    await Promise.all([awaitRuntimeSkillInvocationPolicy(options), awaitRuntimeSkillInvocationPolicy(options)]);
+    expect(await readFile(marker, 'utf8')).toBe(fork ? 'SubagentStop' : 'Stop');
+  });
+  it('preserves existing context and includes both startup hook contexts with the real submitted prompt', async () => {
+    const fixture = await optionsWithSkill({
+      sessionStart: nodeCommand('process.stdout.write(JSON.stringify({additionalContext:\'Trusted startup instructions\'}))'),
+      userPromptSubmit: nodeCommand('process.stdout.write(JSON.stringify({additional_context:JSON.parse(process.env.KODAX_HOOK_PAYLOAD).prompt}))'),
+    });
+    fixture.options.context!.promptOverlay = 'Existing instructions';
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options, '/transport-skill inspect current diff');
+    expect(options.context?.promptOverlay).toBe('Existing instructions\n\nTrusted startup instructions\n\n/transport-skill inspect current diff');
+  }, 20_000);
+  it('blocks invocation admission when a trusted SessionStart hook refuses it', async () => {
+    const fixture = await optionsWithSkill({ sessionStart: nodeCommand('process.stdout.write(JSON.stringify({allow:false,message:\'Not ready\'}))') });
+    await expect(applyRuntimeSkillInvocationPolicy(fixture.options)).rejects.toMatchObject({
+      code: 'skill_invocation_blocked', message: expect.stringContaining('Not ready'),
+    });
+  });
+  it('blocks invocation admission when a trusted UserPromptSubmit hook refuses it', async () => {
+    const fixture = await optionsWithSkill({ userPromptSubmit: nodeCommand('process.stdout.write(JSON.stringify({continue:false,message:\'Prompt refused\'}))') });
+    await expect(applyRuntimeSkillInvocationPolicy(fixture.options, '/transport-skill')).rejects.toMatchObject({
+      code: 'skill_invocation_blocked', message: expect.stringContaining('Prompt refused'),
+    });
+  });
+  it('applies the trusted Skill model preference instead of caller metadata', async () => {
+    const fixture = await optionsWithSkill({ model: 'review-model' });
+    fixture.options.modelOverride = 'current-model';
+    fixture.options.context!.skillInvocation!.model = 'untrusted-model';
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    expect(options.modelOverride).toBe('review-model');
+    expect(options.context?.skillInvocation?.model).toBe('review-model');
+  });
   it('rehydrates allowed-tools from the trusted runtime Skill', async () => {
     const fixture = await optionsWithSkill({ allowedTools: 'read' });
     const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
@@ -98,6 +180,16 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       'bash',
       expect.objectContaining({ _frontmatterHook: true, _hookEvent: 'PreToolUse' }),
     );
+  });
+
+  it('does not bypass the selected shell sandbox when executing trusted hooks', async () => {
+    const fixture = await optionsWithSkill({ preToolUse: nodeCommand('process.stdout.write(JSON.stringify({allow:true}))') });
+    const prepare = vi.fn(async () => undefined);
+    fixture.options.context!.shellSandbox = { prepare };
+    fixture.options.context!.authorizeShellHostExecution = async () => false;
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    await expect(options.events?.beforeToolExecute?.('read', {})).resolves.toContain('PreToolUse hook blocked');
+    expect(prepare).toHaveBeenCalled();
   });
 
   it('fails closed when an isolated PreToolUse hook has no runtime permission broker', async () => {

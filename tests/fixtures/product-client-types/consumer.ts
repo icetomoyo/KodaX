@@ -4,6 +4,8 @@ import {
   type ClientSession,
   type ClientSessionSummary,
 } from '@kodax-ai/kodax/client';
+// @ts-expect-error Host adaptation is internal, not a product SDK export.
+import { toKodaXProductClient } from '@kodax-ai/kodax/client';
 
 declare const client: KodaXProductClient;
 const sessions: readonly ClientSessionSummary[] = await client.sessions.list();
@@ -19,3 +21,5 @@ await connectKodaXClient({ autoStart: true });
 client.hostTools.register({ execute: () => 'unsafe' });
 
 await client.disconnect();
+
+await client.agents.wait(session.id, undefined, 100, { signal: new AbortController().signal });

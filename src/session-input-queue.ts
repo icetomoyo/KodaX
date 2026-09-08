@@ -78,6 +78,7 @@ export class SessionInputQueue {
     }
     const messageId = this.queue.enqueue({
       agentId: input.sessionId, mode: 'prompt', priority: 'user', content: input.text,
+      ...(input.inputArtifacts !== undefined ? { inputArtifacts: structuredClone(input.inputArtifacts) } : {}),
     });
     this.facts.set(this.key(input.sessionId, input.inputId), {
       sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input), messageId,
@@ -135,7 +136,8 @@ export class SessionInputQueue {
       const fact = factByMessageId.get(message.id);
       if (!fact) throw conflict('Queued input is no longer available.');
       return {
-        input: { sessionId, inputId: fact.inputId, text: message.content, delivery: 'after_turn' as const },
+        input: { sessionId, inputId: fact.inputId, text: message.content, delivery: 'after_turn' as const,
+          ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) },
         skill: fact.skill,
         enqueuedAt: message.enqueuedAt,
       };
@@ -181,7 +183,8 @@ export class SessionInputQueue {
     if (!message) throw conflict('Input is already being submitted.');
     fact.state = 'withdrawn';
     this.changed(sessionId);
-    return { sessionId, inputId, text: message.content, delivery: 'after_turn' };
+    return { sessionId, inputId, text: message.content, delivery: 'after_turn',
+      ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) };
   }
 
   releaseSession(sessionId: string): void {

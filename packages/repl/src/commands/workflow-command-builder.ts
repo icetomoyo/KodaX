@@ -231,7 +231,8 @@ export async function startGeneratedWorkflowFromRequest(
     return 'failed';
   }
   const started = await hostControl.start({
-    projectRoot: process.cwd(),
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    projectRoot: options.context?.gitRoot ?? process.cwd(),
     source: input.builtin !== undefined
       ? { kind: 'name', name: input.builtin.name }
       : {

@@ -137,6 +137,7 @@ export interface SessionCommandBinding {
   rewind(input: {
     readonly sessionId: string;
     readonly selector?: string;
+    readonly expectedHead?: string | null;
   }): Promise<boolean>;
   /** Recovers into a fresh Host-derived seed session; returns its id. */
   recover(input: {
@@ -274,7 +275,7 @@ export interface CommandCallbacks {
    * root. Absent means Memory controls report unavailable; the UI never
    * builds its own identity/controller.
    */
-  memory?: (projectRoot: string) => MemoryCommandPlane;
+  memory?: (projectRoot: string) => MemoryCommandPlane | Promise<MemoryCommandPlane>;
   /**
    * FEATURE_298 T22 — Host-owned workflow control plane. When present,
    * run/control operations (list/get/pause/resume/stop/start) route to the
@@ -472,7 +473,9 @@ export interface MemoryRebuildResult {
 }
 
 export interface MemoryCommandPlane {
-  readonly controller: import('@kodax-ai/agent').MemoryManagementController;
+  readonly controller: Pick<import('@kodax-ai/agent').MemoryManagementController,
+    'listInbox' | 'showProposal' | 'approveProposal' | 'rejectProposal'
+    | 'listRefs' | 'readRef' | 'remember' | 'forgetRef'>;
   readonly memoryRoot: string;
   readonly entrypointPath: string;
   listReviews(): Promise<readonly import('@kodax-ai/agent').PendingEpisodeReviewSummary[]>;
@@ -569,6 +572,7 @@ export interface SkillPreparationBinding {
 
 export interface WorkflowHostControl {
   start(input: {
+    readonly sessionId?: string;
     readonly projectRoot: string;
     readonly source:
       | { readonly kind: 'inline'; readonly manifest: unknown; readonly source: string }

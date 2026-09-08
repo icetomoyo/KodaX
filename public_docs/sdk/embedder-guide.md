@@ -6640,6 +6640,33 @@ replacement:
 | `setThinking` REPL callback | Removed. Use `setReasoningMode` (the shared settings key is `reasoningMode`). |
 | `getKodaXRuntimeOwnerPolicy` export | Removed. `getKodaXRuntimeOwnerState()` remains and reports policy, owner status, and the current owner in one call. |
 
+Product UIs connect through `connectKodaXClient` from `@kodax-ai/kodax/client`.
+The Host owns execution and saved history; `sessions.observe` delivers the
+current display, while `readHistory` and chunked `readItem` provide complete
+content for browsing, search and copying. A display preview is not the full
+message. The Runtime-to-product adapter is internal and is not an SDK export.
+
+Keep an input's original text, artifacts and `inputId` until its outcome is
+known. After a lost response, query that same Host with `inputs.read`; only a
+confirmed withdrawal returns a queued input to the editor. A replacement Host
+does not inherit the old Host's input identities.
+
+Product rewind requires the head the user reviewed, so another client's newer
+work cannot be silently discarded:
+
+```ts
+const lineage = await client.sessions.readLineage(sessionId);
+await client.sessions.rewindSession(sessionId, {
+  selector: targetEntryId,
+  expectedHead: lineage?.activeEntryId ?? null,
+});
+```
+
+On `conflict`, reload the lineage and let the user review the new state before
+trying again. Rewind changes the conversation branch; it does not undo files.
+Bound REPL Memory commands use the same daemon owner, and Workflow/Skill
+execution uses real Runs with the Session's effective settings and tool policy.
+
 Two compatibilities are unchanged and worth restating: the constructed-handler
 worker (repo-intelligence and managed-task workers in `@kodax-ai/coding`) is a
 separate, kept surface, and the `mode: 'embedded' | 'daemon'` option on

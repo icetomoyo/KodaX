@@ -1,3 +1,4 @@
+import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
@@ -235,17 +236,27 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "skill.list",
     "skill.describe",
     "skill.read",
-    // FEATURE_298 T37 — trusted preparation reads (same exposure class as
-    // skill.read/command.resolve). prepareReview additionally runs git
-    // capture and writes review packets Host-side (same writes the embedded
-    // run path performs); the sha ref is option-guarded before git argv.
+    "memory.describe",
+    "memory.listReviews",
+    "memory.listInbox",
+    "memory.showProposal",
+    "memory.listRefs",
+    "memory.readRef",
+
+    // Review preparation can write workflow packets and requires session:write.
     "invocations.prepareSkill",
     "invocations.prepareCommand",
-    "invocations.prepareReview",
     "invocations.prepareAgentsLean",
     "artifact.get",
   ]),
   ...scopeEntries("session:write", [
+    "memory.remember",
+    "memory.forgetRef",
+    "memory.approveProposal",
+    "memory.rejectProposal",
+    "memory.rebuild",
+    "memory.ensureOpenTarget",
+    "invocations.prepareReview",
     "session.create",
     "session.fork",
     "session.recover",
@@ -1129,6 +1140,54 @@ async function dispatchRuntimeDaemonRequest(
           ? { projectRoot: params.projectRoot }
           : {}),
       });
+    }
+    case "memory.describe": {
+      const plane = await runtime.memory.forProject(requireStringParam(request.params, "projectRoot"));
+      return { memoryRoot: plane.memoryRoot, entrypointPath: plane.entrypointPath,
+        reviewerProviderConfigured: plane.reviewerProviderConfigured() };
+    }
+    case "memory.listReviews":
+      return (await runtime.memory.forProject(requireStringParam(request.params, "projectRoot"))).listReviews();
+    case "memory.rebuild":
+      return (await runtime.memory.forProject(requireStringParam(request.params, "projectRoot"))).rebuild();
+    case "memory.ensureOpenTarget": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot")))
+        .ensureOpenTarget(requireStringField(params, "targetPath"));
+    }
+    case "memory.listInbox":
+      return (await runtime.memory.forProject(requireStringParam(request.params, "projectRoot"))).controller.listInbox();
+    case "memory.showProposal": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.showProposal(requireStringField(params, "id"));
+    }
+    case "memory.listRefs": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.listRefs(params.filter as MemoryRefFilter | undefined);
+    }
+    case "memory.readRef": {
+      const params = requireRecord(request.params);
+      const controller = (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller;
+      const refs = await controller.listRefs({ includePrivate: true, includeSensitive: true });
+      const ref = refs.find((candidate) => candidate.id === requireStringField(params, "id"));
+      if (ref === undefined) throw daemonError("not_found", "Memory reference is unavailable in this project.");
+      return controller.readRef(ref);
+    }
+    case "memory.remember": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.remember(params.input as unknown as MemoryRememberInput);
+    }
+    case "memory.forgetRef": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.forgetRef(requireStringField(params, "id"), params.expectedBodyFingerprint as string | undefined);
+    }
+    case "memory.approveProposal": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.approveProposal(requireStringField(params, "id"), params.expectedFingerprints as Record<string, string>, params.expectedRevision as string | undefined);
+    }
+    case "memory.rejectProposal": {
+      const params = requireRecord(request.params);
+      return (await runtime.memory.forProject(requireStringField(params, "projectRoot"))).controller.rejectProposal(requireStringField(params, "id"), params.reason as string | undefined, params.expectedRevision as string | undefined);
     }
     case "invocations.prepareSkill": {
       const params = requireRecord(request.params);
@@ -2030,7 +2089,8 @@ async function dispatchRuntimeDaemonRequest(
       // FEATURE_298 T22 — trusted Host-side start: the source is declarative
       // and resolved/validated inside the runtime, never a prepared module.
       const params = requireRecord(request.params);
-      return runtime.workflows.start({
+      const workflowInput: RuntimeWorkflowStartInput = {
+        ...(optionalStringField(params, "sessionId") !== undefined ? { sessionId: optionalStringField(params, "sessionId")! } : {}),
         projectRoot: requireStringField(params, "projectRoot"),
         source: params.source as RuntimeWorkflowStartInput["source"],
         ...(params.args !== undefined ? { args: params.args } : {}),
@@ -2043,7 +2103,18 @@ async function dispatchRuntimeDaemonRequest(
         ...(params.metadata !== undefined
           ? { metadata: params.metadata as RuntimeWorkflowStartInput["metadata"] }
           : {}),
+      };
+      if (workflowInput.sessionId === undefined) {
+        if (params.credential !== undefined) throw daemonError('invalid_params', 'Workflow credential binding requires an explicit sessionId.');
+        return runtime.workflows.start(workflowInput);
+      }
+      const trusted = await bindTrustedRunInput({
+        params: { ...workflowInput, ...(params.credential !== undefined ? { credential: params.credential } : {}) },
+        sessionId: workflowInput.sessionId,
+        trustedRunId: `run_${Date.now().toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 8)}`,
+        principalId, clientName, clientVersion, reverseBridge,
       });
+      return runtime.workflows.start(trusted as unknown as RuntimeWorkflowStartInput);
     }
 
     case "learning.list":
@@ -2318,6 +2389,7 @@ function runtimeDaemonCapabilities(
     // dispatches; clients gate on this fact instead of RPC'ing methods an
     // older Host would reject with an unsettled id-less invalid_frame.
     invocationPreparation: { version: 1 },
+    memoryManagement: { version: 1 },
     sandboxRuntime: sandboxRuntimeCapability(),
     managedRunDurability: {
       version: 1,
@@ -2577,7 +2649,7 @@ async function assertAdmittedSessionId(
   runtime: KodaXRuntime,
   sessionId: string | undefined,
 ): Promise<void> {
-  if (sessionId !== undefined) await runtime.sessions.transcript(sessionId);
+  if (sessionId !== undefined) await runtime.sessions.load(sessionId);
 }
 
 

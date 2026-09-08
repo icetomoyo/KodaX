@@ -420,18 +420,17 @@ function getBodyWidth(viewportWidth: number, indent = 0): number {
 }
 
 function buildToolInputPreview(tool: ToolCall): string[] {
-  if (!tool.input) {
+  if (!tool.input && tool.inputText === undefined) {
     return [];
   }
 
-  const serializedInput = JSON.stringify(tool.input, null, 2)?.trim();
+  const serializedInput = (tool.inputText ?? JSON.stringify(tool.input, null, 2))?.trim();
   if (!serializedInput) {
     return [];
   }
 
   return serializedInput
     .split(/\r?\n/)
-    .slice(0, 6)
     .map((line: string, index: number) => (index === 0 ? `input: ${line}` : line));
 }
 

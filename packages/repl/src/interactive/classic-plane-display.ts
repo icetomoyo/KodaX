@@ -10,7 +10,10 @@
 import type {
   ClientSessionView,
   ClientViewItem,
+  ClientItemContent,
+  ClientItemReadOptions,
 } from '@kodax-ai/coding/client-contract';
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import {
   answerClientPlaneInteraction,
   type ClientPlaneDialogSurface,
@@ -18,6 +21,23 @@ import {
 } from '../ui/client-plane.js';
 
 type WriteLine = (line: string) => void;
+type ReadItem = (id: string, options: ClientItemReadOptions) => Promise<ClientItemContent | null>;
+
+async function readClassicItemRange(readItem: ReadItem | undefined, id: string, offset: number,
+  end: number, part: 'text' | 'input' = 'text'): Promise<string> {
+  if (!readItem) throw new Error('Complete console output is unavailable.');
+  const parts: string[] = [];
+  while (offset < end) {
+    const chunk = await readItem(id, { offset, part });
+    if (!chunk || chunk.id !== id || chunk.offset !== offset || chunk.text.length === 0) {
+      throw new Error(`Console output ${id} is incomplete; open session history to retry.`);
+    }
+    const text = chunk.text.slice(0, end - offset);
+    parts.push(text);
+    offset += text.length;
+  }
+  return parts.join('');
+}
 
 const THINKING_PREVIEW_LENGTH = 100;
 
@@ -32,7 +52,7 @@ function thinkingPreview(text: string): string {
  * Pure differ; the tests drive it directly. `write` receives one formatted
  * line per change (`kind:text`), the caller owns chalk styling.
  */
-export function createClassicPlaneDisplayDiffer(write: WriteLine) {
+export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: ReadItem) {
   let baselined = false;
   const printedText = new Map<string, number>();
   const printedToolStages = new Set<string>();
@@ -42,11 +62,11 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
     printedText.set(item.id, item.text.length);
   };
 
-  return (items: readonly ClientViewItem[]): void => {
+  return async (items: readonly ClientViewItem[]): Promise<void> => {
     if (!baselined) {
       baselined = true;
       for (const item of items) {
-        printedText.set(item.id, item.text.length);
+        printedText.set(item.id, item.totalTextLength ?? item.text.length);
         if (item.type === 'tool') {
           printedToolStages.add(`${item.id}:start`);
           if (item.tool !== undefined && item.tool.status !== 'running'
@@ -68,9 +88,14 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
     for (const item of items) {
       if (item.type === 'assistant') {
         const previous = printedText.get(item.id) ?? 0;
-        if (item.text.length > previous) {
-          write(`assistant:${item.text.slice(previous)}`);
-          printedText.set(item.id, item.text.length);
+        const end = item.totalTextLength ?? item.text.length;
+        if (end > previous) {
+          const start = item.textOffset ?? 0;
+          const text = previous < start
+            ? await readClassicItemRange(readItem, item.id, previous, end)
+            : item.text.slice(previous - start);
+          write(`assistant:${text}`);
+          printedText.set(item.id, end);
         }
         continue;
       }
@@ -79,17 +104,21 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine) {
         // view.interactions, not from this printer.
         if (item.tool.status === 'running' || item.tool.status === 'awaiting_approval') {
           if (!printedToolStages.has(`${item.id}:start`)) {
+            const input = item.tool.totalInputLength !== undefined
+              ? await readClassicItemRange(readItem, item.id, 0, item.tool.totalInputLength, 'input') : item.tool.inputText ?? '';
             printedToolStages.add(`${item.id}:start`);
-            printOnce(item, `tool:▶ ${item.tool.name} ${item.tool.inputText ?? ''}`.trimEnd());
+            printOnce(item, `tool:▶ ${item.tool.name} ${input}`.trimEnd());
           }
           continue;
         }
         printedToolStages.add(`${item.id}:start`);
         if (!printedToolStages.has(`${item.id}:done`)) {
+          const output = item.totalTextLength !== undefined
+            ? await readClassicItemRange(readItem, item.id, 0, item.totalTextLength) : item.text;
           printedToolStages.add(`${item.id}:done`);
           const mark = item.tool.status === 'error' ? '✗'
             : item.tool.status === 'cancelled' ? '•' : '✓';
-          printOnce(item, `tool:${mark} ${item.tool.name} ${item.text}`.trimEnd());
+          printOnce(item, `tool:${mark} ${item.tool.name} ${output}`.trimEnd());
         }
         continue;
       }
@@ -124,13 +153,19 @@ export async function attachClassicPlaneDisplay(
     onNotice?: (text: string) => void;
   } = {},
 ): Promise<() => void> {
-  const differ = createClassicPlaneDisplayDiffer(
-    options.write ?? ((line) => process.stdout.write(`${line}\n`)),
-  );
+  let closed = false;
+  const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const differ = createClassicPlaneDisplayDiffer(line => { if (!closed) write(line); },
+    (id, readOptions) => plane.readItem(sessionId, id, readOptions));
   const handledInteractions = new Set<string>();
   let dialogChain: Promise<void> = Promise.resolve();
+  let displayChain: Promise<void> = Promise.resolve();
   const observation = await plane.observe(sessionId, (view: ClientSessionView) => {
-    differ(view.items);
+    displayChain = displayChain.then(() => closed ? undefined : differ(view.items)).catch((error: unknown) => {
+      const message = `Console output read failed: ${error instanceof Error ? error.message : String(error)}`;
+      emitKodaXDiagnostic({ source: 'repl:classic-display', level: 'warn', message });
+      if (!closed) options.onNotice?.(message);
+    });
     const dialogs = options.dialogs;
     if (dialogs === undefined) return;
     for (const interaction of view.interactions) {
@@ -150,5 +185,5 @@ export async function attachClassicPlaneDisplay(
         });
     }
   });
-  return observation;
+  return () => { closed = true; observation(); };
 }

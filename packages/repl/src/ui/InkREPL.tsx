@@ -528,6 +528,8 @@ import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
   hasBoundedItemText,
+  readClientPlaneItemText,
+  readClientPlaneHistory,
   mintInkInputId,
   runClientPlaneRound,
   viewRunsActive,
@@ -535,6 +537,7 @@ import {
   type ClientViewItemMemo,
   type InkClientPlane,
 } from "./client-plane.js";
+import { createClientInputQueue } from "./client-input-queue.js";
 import type { ClientSessionView } from "@kodax-ai/coding/client-contract";
 import { SessionReadError } from "../interactive/storage.js";
 import type {
@@ -1873,6 +1876,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // the list is empty.
     setTimeout(expire, CLIENT_PLANE_NOTICE_TTL_MS + 250);
   }, []);
+  const clientInputQueue = useMemo(() => options.clientPlane
+    ? createClientInputQueue(options.clientPlane, (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      emitKodaXDiagnostic({ source: 'repl:input-queue', level: 'warn', message });
+      pushClientPlaneNotice(`queue-${Date.now()}`, message);
+    })
+    : undefined, [options.clientPlane, pushClientPlaneNotice]);
+  const hostQueueIdentity = JSON.stringify((clientView?.queue ?? []).map((entry) => entry.inputId));
+  useEffect(() => {
+    const ids: string[] = JSON.parse(hostQueueIdentity);
+    void clientInputQueue?.observeQueue(context.sessionId, ids).catch((error: unknown) => {
+      emitKodaXDiagnostic({ source: 'repl:input-queue', level: 'warn', message: 'Could not resolve consumed input state.', detail: error });
+    });
+  }, [clientInputQueue, context.sessionId, hostQueueIdentity]);
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
@@ -3469,8 +3486,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
   const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
-  const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
-    items: transcriptHistory,
+  const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => {
+    const snapshotItems = options.clientPlane && clientView
+      ? clientViewToHistoryItems(clientView.items, { activeRunId: viewRunsActive(clientView), memo: clientViewItemMemoRef.current })
+      : transcriptHistory;
+    return captureTranscriptSnapshot({
+    sessionId: context.sessionId,
+    items: snapshotItems,
+    ...(options.clientPlane ? { observedItems: snapshotItems } : {}),
     managedLiveEvents: [],
     isLoading,
     isThinking: streamingState.isThinking,
@@ -3486,8 +3509,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     iterationHistory: streamingState.iterationHistory,
     currentIteration: streamingState.currentIteration,
     isCompacting: streamingState.isCompacting,
-  }), [
+    });
+  }, [
     transcriptHistory,
+    options.clientPlane,
+    context.sessionId,
+    clientView,
     isLoading,
     streamingState.isThinking,
     streamingState.thinkingCharCount,
@@ -3505,18 +3532,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   useEffect(() => {
+    if (options.clientPlane && clientView?.session.id !== context.sessionId) {
+      setTranscriptSnapshot(null);
+      return;
+    }
     if (isTranscriptMode) {
-      setTranscriptSnapshot((prev) => prev ?? createTranscriptSnapshot());
+      setTranscriptSnapshot((prev) => prev?.sessionId === context.sessionId ? prev : createTranscriptSnapshot());
       return;
     }
 
     setTranscriptSnapshot(null);
-  }, [createTranscriptSnapshot, isTranscriptMode]);
+  }, [createTranscriptSnapshot, isTranscriptMode, context.sessionId, options.clientPlane, clientView?.session.id]);
 
   const pendingTranscriptUpdateCount = useMemo(() => countPendingTranscriptUpdates({
     isTranscriptMode,
     snapshot: transcriptSnapshot,
     currentItemsLength: transcriptHistory.length,
+    currentItems: transcriptHistory,
     currentManagedLiveEventsLength: 0,
     isLoading,
     currentResponse: streamingState.currentResponse,
@@ -3527,6 +3559,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     isLoading,
     isTranscriptMode,
     transcriptHistory.length,
+    transcriptHistory,
     streamingState.currentResponse,
     streamingState.thinkingContent,
     transcriptSnapshot,
@@ -4189,9 +4222,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   );
   const transcriptSearchIndex = useMemo(
     () => createTranscriptSearchIndex(
-      currentSurfaceItems.filter((item) => !isTranscriptHiddenDivider(item)),
+      rawTranscriptDisplayItems.filter((item) => !isTranscriptHiddenDivider(item)),
     ),
-    [currentSurfaceItems],
+    [rawTranscriptDisplayItems],
   );
   const historySearchMatches = useMemo(
     () => searchTranscriptIndex(transcriptSearchIndex, historySearchQuery),
@@ -4995,6 +5028,43 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const message = error instanceof Error ? error.message : String(error);
     return `${prefix}: ${message}`;
   }, []);
+  const historyReadRef = useRef<AbortController | undefined>(undefined);
+  const historyBrowseRef = useRef({ sessionId: context.sessionId, isTranscriptMode,
+    selectedItemId: transcriptDisplayState.selectedItemId, historyScrollOffset,
+    expandedTranscriptItemIds, activeTextSelection });
+  historyBrowseRef.current = { sessionId: context.sessionId, isTranscriptMode,
+    selectedItemId: transcriptDisplayState.selectedItemId, historyScrollOffset,
+    expandedTranscriptItemIds, activeTextSelection };
+  useEffect(() => () => historyReadRef.current?.abort(), [context.sessionId, isTranscriptMode]);
+  const loadCompleteTranscriptSnapshot = useCallback(async (): Promise<boolean> => {
+    const plane = options.clientPlane;
+    if (!plane || (transcriptSnapshot?.sessionId === context.sessionId
+      && transcriptSnapshot.items.some((item) => item.historyItemId !== undefined))) return true;
+    historyReadRef.current?.abort();
+    const controller = new AbortController();
+    historyReadRef.current = controller;
+    const started = historyBrowseRef.current;
+    showClipboardNotice('Loading complete saved history…');
+    try {
+      const items = await readClientPlaneHistory(plane, started.sessionId, controller.signal);
+      const current = historyBrowseRef.current;
+      if (controller.signal.aborted || current.sessionId !== started.sessionId || !current.isTranscriptMode) return false;
+      if (current.selectedItemId !== started.selectedItemId || current.historyScrollOffset !== started.historyScrollOffset
+        || current.expandedTranscriptItemIds !== started.expandedTranscriptItemIds || current.activeTextSelection !== started.activeTextSelection) {
+        showClipboardNotice('Your current selection was kept. Open complete history again when ready.', 'warning');
+        return false;
+      }
+      setTranscriptSnapshot((snapshot) => snapshot?.sessionId !== started.sessionId ? snapshot : ({ ...snapshot,
+        items: [...items, ...snapshot.items.filter((item) => !['user', 'assistant', 'thinking', 'tool_group'].includes(item.type))],
+      }));
+      setTranscriptDisplayState((state) => setTranscriptSelectedItem(state, undefined));
+      showClipboardNotice('Showing complete saved history. Esc returns to current output.');
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) showClipboardNotice(buildClipboardFailureNotice('Complete history unavailable', error), 'warning');
+      return false;
+    }
+  }, [options.clientPlane, context.sessionId, transcriptSnapshot, showClipboardNotice, buildClipboardFailureNotice]);
   const copySelectedTranscriptText = useCallback(async (selectionOverride?: TranscriptTextSelection) => {
     const selection = selectionOverride ?? activeTextSelection;
     if (!selection) {
@@ -5089,77 +5159,82 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, [canCycleTranscriptSelection, selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem]);
 
-  const toggleSelectedTranscriptDetail = useCallback(() => {
-    if (!canToggleSelectedTranscriptDetail || !selectedTranscriptItemId) {
-      return;
+  const toggleSelectedTranscriptDetail = useCallback(async () => {
+    if (!canToggleSelectedTranscriptDetail || !selectedTranscriptItemId) return;
+    const item = selectedTranscriptItem;
+    if (options.clientPlane && item && !expandedTranscriptItemIds.has(item.id)) {
+      const readId = item.historyItemId ?? item.id;
+      const started = historyBrowseRef.current;
+      try {
+        const text = item.totalTextLength !== undefined
+          ? await readClientPlaneItemText(options.clientPlane, context.sessionId, readId, 'text', item.historyItemId !== undefined) : undefined;
+        const inputText = item.totalInputLength !== undefined
+          ? await readClientPlaneItemText(options.clientPlane, context.sessionId, readId, 'input', item.historyItemId !== undefined) : undefined;
+        const current = historyBrowseRef.current;
+        if (current.sessionId !== started.sessionId || !current.isTranscriptMode) return;
+        if (current.selectedItemId !== started.selectedItemId || current.historyScrollOffset !== started.historyScrollOffset) {
+          showClipboardNotice('Your current selection was kept. Expand the entry again when ready.', 'warning');
+          return;
+        }
+        if (text !== undefined || inputText !== undefined) {
+          setTranscriptSnapshot((snapshot) => snapshot === null ? null : ({ ...snapshot,
+            items: snapshot.items.map((entry) => entry.id !== item.id ? entry : entry.type === 'tool_group'
+              ? { ...entry, totalTextLength: undefined, totalInputLength: undefined, tools: entry.tools.map((tool) => ({ ...tool,
+                ...(text !== undefined ? { output: text } : {}), ...(inputText !== undefined ? { inputText, preview: inputText } : {}),
+              })) }
+              : { ...entry, ...(text !== undefined ? { text } : {}), textOffset: 0, totalTextLength: undefined }),
+          }));
+        }
+      } catch (error) {
+        showClipboardNotice(buildClipboardFailureNotice('Full entry unavailable', error), 'warning');
+        return;
+      }
     }
     setExpandedTranscriptItemIds((prev) => {
       const next = new Set(prev);
-      if (next.has(selectedTranscriptItemId)) {
-        next.delete(selectedTranscriptItemId);
-      } else {
-        next.add(selectedTranscriptItemId);
-      }
+      if (next.has(selectedTranscriptItemId)) next.delete(selectedTranscriptItemId);
+      else next.add(selectedTranscriptItemId);
       return next;
     });
     alignTranscriptSelection(selectedTranscriptItemId);
-  }, [alignTranscriptSelection, canToggleSelectedTranscriptDetail, selectedTranscriptItemId]);
+  }, [alignTranscriptSelection, canToggleSelectedTranscriptDetail, selectedTranscriptItemId,
+    selectedTranscriptItem, options.clientPlane, context.sessionId, expandedTranscriptItemIds,
+    showClipboardNotice, buildClipboardFailureNotice]);
 
-  // Review fix: copy must not present the bounded view slice as the whole
-  // item. When the selected item is truncated, page readItem to the end and
-  // copy the complete text (never invents a read face; reuses the plane's
-  // paginated item reader).
   const readFullTranscriptItemText = useCallback(async (
-    itemId: string,
+    item: HistoryItem,
     part: 'text' | 'input' = 'text',
-  ): Promise<string | undefined> => {
+  ): Promise<string> => {
     const plane = options.clientPlane;
-    if (!plane) return undefined;
-    let offset = 0;
-    let parts = "";
-    for (;;) {
-      const content = await plane.readItem(
-        context.sessionId,
-        itemId,
-        part === 'input' ? { offset, part } : offset,
-      );
-      if (content === null || content.text.length === 0) break;
-      parts += content.text;
-      if (content.nextOffset === undefined || content.nextOffset <= offset) break;
-      offset = content.nextOffset;
-    }
-    return parts.length > 0 ? parts : undefined;
+    if (!plane) throw new Error('Full transcript content is unavailable.');
+    return readClientPlaneItemText(plane, context.sessionId, item.historyItemId ?? item.id,
+      part, item.historyItemId !== undefined);
   }, [options.clientPlane, context.sessionId]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
     if (!canCopySelectedTranscriptItem || !selectedTranscriptItem) {
       return;
     }
-    let copyText = buildTranscriptCopyText(selectedTranscriptItem);
-    if (!copyText) {
-      return;
-    }
-    let copiedFull = false;
-    if (hasBoundedItemText(copyText)) {
-      try {
-        const fullText = await readFullTranscriptItemText(selectedTranscriptItem.id);
-        if (fullText !== undefined && fullText.length >= copyText.length) {
-          copyText = fullText;
-          copiedFull = true;
-        }
-      } catch (error) {
-        emitKodaXDiagnostic({
-          source: 'ink.transcript',
-          level: 'warn',
-          message: `The full-text read for item ${selectedTranscriptItem.id} failed; copying the bounded preview instead.`,
-          detail: error,
-        });
-      }
-    }
     try {
+      let copyText = buildTranscriptCopyText(selectedTranscriptItem);
+      const bounded = selectedTranscriptItem.totalTextLength !== undefined
+        || selectedTranscriptItem.totalInputLength !== undefined || hasBoundedItemText(copyText ?? '');
+      if (bounded) {
+        const [text, inputText] = await Promise.all([
+          selectedTranscriptItem.totalTextLength !== undefined || hasBoundedItemText(copyText ?? '')
+            ? readFullTranscriptItemText(selectedTranscriptItem) : Promise.resolve(undefined),
+          selectedTranscriptItem.totalInputLength !== undefined
+            ? readFullTranscriptItemText(selectedTranscriptItem, 'input') : Promise.resolve(undefined),
+        ]);
+        copyText = selectedTranscriptItem.type === 'tool_group'
+          ? buildTranscriptCopyText({ ...selectedTranscriptItem, tools: selectedTranscriptItem.tools.map((tool) => ({ ...tool,
+            ...(text !== undefined ? { output: text } : {}), ...(inputText !== undefined ? { inputText } : {}),
+          })) }) : text ?? copyText;
+      }
+      if (!copyText) return;
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       showClipboardNotice(
-        copiedFull
+        bounded
           ? "Copied the complete transcript entry to clipboard."
           : "Copied selected transcript entry to clipboard.",
         "success",
@@ -5186,27 +5261,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    let copyText = buildTranscriptToolInputCopyText(selectedTranscriptItem);
-    if (!copyText) {
-      return;
-    }
-    if (options.clientPlane) {
-      try {
-        const fullInput = await readFullTranscriptItemText(selectedTranscriptItem.id, 'input');
-        if (fullInput !== undefined && fullInput.length > copyText.length) {
-          copyText = fullInput;
-        }
-      } catch (error) {
-        emitKodaXDiagnostic({
-          source: 'ink.transcript',
-          level: 'warn',
-          message: `The full tool-args read for item ${selectedTranscriptItem.id} failed; copying the view copy instead.`,
-          detail: error,
-        });
-      }
-    }
-
     try {
+      const copyText = options.clientPlane && selectedTranscriptItem.totalInputLength !== undefined
+        ? await readFullTranscriptItemText(selectedTranscriptItem, 'input')
+        : buildTranscriptToolInputCopyText(selectedTranscriptItem);
+      if (!copyText) return;
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       showClipboardNotice("Copied selected tool args to clipboard.", "success");
     } catch (error) {
@@ -5316,10 +5375,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     updateTranscriptMouseSelection,
   ]);
 
-  const openHistorySearchSurface = useCallback(() => {
+  const openHistorySearchSurface = useCallback(async () => {
     if (!isTranscriptMode || !currentSurfaceItems.length || confirmRequest || uiRequest) {
       return;
     }
+    if (!await loadCompleteTranscriptSnapshot()) return;
+    setShowAllInTranscript(true);
     clearTranscriptMouseSelection();
     const anchorItemId = resolveTranscriptSearchAnchorItemId(
       {
@@ -5343,6 +5404,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setHistorySearchSelectedIndex(0);
   }, [
     confirmRequest,
+    loadCompleteTranscriptSnapshot,
     currentSurfaceItems,
     expandedTranscriptItemIds,
     historyScrollOffset,
@@ -5465,13 +5527,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearTranscriptMouseSelection();
   }, [clearTranscriptMouseSelection, scrollTranscriptToBottom]);
 
-  const toggleTranscriptShowAll = useCallback(() => {
+  const toggleTranscriptShowAll = useCallback(async () => {
     if (!isTranscriptMode) {
       return;
     }
-
+    if (!showAllInTranscript && !await loadCompleteTranscriptSnapshot()) return;
     setShowAllInTranscript((prev) => !prev);
-  }, [isTranscriptMode]);
+  }, [isTranscriptMode, showAllInTranscript, loadCompleteTranscriptSnapshot]);
 
   const toggleTranscriptMode = useCallback(() => {
     if (isTranscriptMode) {
@@ -5909,20 +5971,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
           // FEATURE_298 T17 — with the plane owning the queue, Esc drops the
           // newest Host-queued input instead of a local pending entry.
-          const hostQueue = clientView?.queue ?? [];
-          const newest = hostQueue[hostQueue.length - 1];
-          if (newest !== undefined) {
-            void options.clientPlane?.withdraw(context.sessionId, newest.inputId)
-              .then((text) => {
-                if (text !== undefined) clientPlaneQueuedTextsRef.current.delete(newest.inputId);
-              })
-              .catch(() => {
-                pushClientPlaneNotice(
-                  `withdraw-${newest.inputId}`,
-                  'Withdraw failed — the queued input may still run.',
-                );
-              });
-          }
+          void clientInputQueue?.discardNewest(context.sessionId, (clientView?.queue ?? []).map((entry) => entry.inputId))
+            .catch((error: unknown) => {
+              pushClientPlaneNotice(`withdraw-${Date.now()}`,
+                `Withdraw failed — the queued input may still run. ${error instanceof Error ? error.message : String(error)}`);
+            });
           return true;
         case "none":
         default:
@@ -5939,7 +5992,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       displayPendingInputs.length,
       streamingState.pendingInputs.length,
       clientView,
-      options.clientPlane,
+      clientInputQueue,
       context.sessionId,
       pushClientPlaneNotice,
       removeLastPendingInput,
@@ -8263,6 +8316,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
       : context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
+    originalPrompt = prompt,
   ): Promise<KodaXResult> => {
     // FEATURE_298 T17 — client plane: the round travels the Host input/run
     // faces and display comes from the live session view, so none of the
@@ -8270,6 +8324,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (options.clientPlane) {
       return await runClientPlaneRound({
         plane: options.clientPlane,
+        submit: clientInputQueue ? (input) => clientInputQueue.submit(input, originalPrompt) : undefined,
         sessionId: context.sessionId,
         prompt,
         abortSignal: getSignal(),
@@ -8874,6 +8929,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       invocation,
       rawInput,
       (message) => addHistoryItem({ type: "info", text: message }),
+      options.clientPlane !== undefined,
     );
     if (prepared.mode === "manual" || !prepared.prompt || !prepared.options) {
       if (prepared.manualOutput) {
@@ -8896,7 +8952,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         : context.lineage
           ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
           : context.messages;
-      const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+      const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages, undefined, rawInput);
       await prepared.finalize();
       if (prepared.mode !== "fork") return result;
 
@@ -9048,6 +9104,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 preparedArtifacts.promptText,
                 context.messages,
                 preparedArtifacts.inputArtifacts,
+                prompt,
               );
             },
           );
@@ -9168,6 +9225,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             preparedArtifacts.promptText,
             context.messages,
             preparedArtifacts.inputArtifacts,
+            prompt,
           );
         },
       );
@@ -9213,56 +9271,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // queue; capacity conflicts surface as a visible footer notice. The
   // full text is cached per inputId because the view only carries a
   // bounded preview — pull-all needs the complete text back.
-  const clientPlaneQueuedTextsRef = useRef(new Map<string, { text: string; at: number }>());
-  const submitHostQueuedFollowUp = useCallback((
+  const submitHostQueuedFollowUp = useCallback(async (
     text: string,
     delivery: 'after_turn' | 'redirect' = 'after_turn',
-  ): Promise<'submitted' | 'rejected'> => {
-    const plane = options.clientPlane;
-    if (!plane) return Promise.resolve('rejected');
-    const inputId = mintInkInputId();
-    const targetRunId = delivery === 'redirect'
-      ? (clientViewRef.current === null ? undefined : viewRunsActive(clientViewRef.current))
-      : undefined;
-    // Cache the full text before the round trip: an accepted entry must be
-    // pullable at full length even before the view reflects it, and the
-    // input's original id is known from here on.
-    clientPlaneQueuedTextsRef.current.set(inputId, { text, at: Date.now() });
-    return plane.submit({
-      sessionId: context.sessionId,
-      text,
-      inputId,
-      delivery,
-      ...(targetRunId !== undefined ? { targetRunId } : {}),
-    }).then((acceptance) => {
+    preserveSkillText = false,
+  ): Promise<void> => {
+    if (!clientInputQueue) return;
+    const sessionId = context.sessionId;
+    const targetRunId = delivery === 'redirect' && clientViewRef.current
+      ? viewRunsActive(clientViewRef.current) : undefined;
+    try {
+      const acceptance = await clientInputQueue.submitPrompt({
+        sessionId, text, inputId: mintInkInputId(), delivery,
+        ...(targetRunId !== undefined ? { targetRunId } : {}),
+      }, currentOptionsRef.current.context?.executionCwd ?? process.cwd(), preserveSkillText);
       if (acceptance.state === 'dropped' || acceptance.state === 'withdrawn') {
-        clientPlaneQueuedTextsRef.current.delete(inputId);
-        return 'rejected';
+        pushClientPlaneNotice(`queue-rejected-${Date.now()}`, 'The input was not queued. Press Up in an empty prompt to retrieve it.');
       }
-      // Prune consumed entries: keep the current queue plus entries young
-      // enough that the view may not reflect them yet.
-      const queueIds = new Set((clientViewRef.current?.queue ?? []).map((entry) => entry.inputId));
-      const now = Date.now();
-      for (const [id, entry] of clientPlaneQueuedTextsRef.current) {
-        if (!queueIds.has(id) && now - entry.at > 30_000) {
-          clientPlaneQueuedTextsRef.current.delete(id);
-        }
-      }
-      clientPlaneQueuedTextsRef.current.set(inputId, { text, at: now });
-      return 'submitted';
-    }, (error: unknown) => {
-      clientPlaneQueuedTextsRef.current.delete(inputId);
-      pushClientPlaneNotice(
-        `queue-reject-${Date.now()}`,
-        `Queued follow-up rejected: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      // The draft was cleared on submit; restore it while the composer is
-      // still empty so a rejected follow-up is never lost (review fix).
-      setInputText((current) => (current.trim().length === 0 ? text : current));
-      setIsInputEmpty(text.trim().length > 0);
-      return 'rejected';
-    });
-  }, [options.clientPlane, context.sessionId, clientViewRef, pushClientPlaneNotice]);
+    } catch (error: unknown) {
+      pushClientPlaneNotice(`queue-unconfirmed-${Date.now()}`,
+        `Input acceptance could not be confirmed (${error instanceof Error ? error.message : String(error)}). Its original text is retained; press Up in an empty prompt to query and take it back.`);
+    }
+  }, [clientInputQueue, context.sessionId, pushClientPlaneNotice]);
 
   // Issue 120: drain pending inputs left over from skill / plan-mode rounds.
   // Hands the first queued prompt to `runQueueableAgentSequence`, which then
@@ -9314,7 +9344,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       },
       invocation,
       rawInput,
-      (message) => addHistoryItem({ type: "info", text: message })
+      (message) => addHistoryItem({ type: "info", text: message }),
+      options.clientPlane !== undefined,
     );
 
     if (prepared.mode === "manual") {
@@ -9343,7 +9374,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           : context.messages;
       // Issue 116: capture generation at call time to detect supersession after await
       const roundGeneration = promptGenerationRef.current;
-      const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+      const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages, undefined, rawInput);
 
       // Issue 116: discard results from a superseded round.
       // If the user Ctrl+C'd and submitted a new prompt while this round was
@@ -9556,15 +9587,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         dismissLearningRecovery();
 
         // FEATURE_298 T17 — plane-bound follow-ups join the Host queue.
-        // Skill references keep the local queue (the trusted resolver
-        // expands them after the round). FEATURE_149 parity: when the view
+        // Skill references retain their raw text for Host preparation.
+        // FEATURE_149 parity: when the view
         // shows a cancel-class tool running, 'redirect' delivery queues the
         // follow-up AND cancels the old run Host-side (queue-then-cancel).
-        if (options.clientPlane && !queuedSkillReference) {
+        if (options.clientPlane) {
           const activeToolName = newestRunningViewToolName();
           const redirect = activeToolName !== undefined
             && getRegisteredToolDefinition(activeToolName)?.interruptBehavior === 'cancel';
-          void submitHostQueuedFollowUp(fullText, redirect ? 'redirect' : 'after_turn');
+          void submitHostQueuedFollowUp(fullText, redirect ? 'redirect' : 'after_turn', Boolean(queuedSkillReference));
           setInputText("");
           setIsInputEmpty(true);
           setSubmitCounter(prev => prev + 1);
@@ -9808,6 +9839,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         try {
           const outcome = await startGeneratedWorkflowFromRequest({
+            sessionId: context.sessionId,
             request: workflow.request,
             callbacks: workflowCallbacks,
             approval: currentConfig.permissionMode === 'plan' ? 'required' : 'silent',
@@ -10416,6 +10448,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (options.sessionCommands) {
               const boundRewound = await options.sessionCommands.rewind({
                 sessionId: context.sessionId,
+          expectedHead: context.lineage?.activeEntryId ?? null,
                 ...(selector !== undefined ? { selector } : {}),
               });
               if (!boundRewound) {
@@ -10774,6 +10807,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               preparedArtifacts.promptText,
               context.messages,
               preparedArtifacts.inputArtifacts,
+              prompt === processed ? fullText : prompt,
             );
           },
         );
@@ -11155,6 +11189,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       composer={(
         <PromptComposer
+          sessionId={context.sessionId}
           onSubmit={handleSubmit}
           onHistoryRecall={handleHistoryRecall}
           // FEATURE_149 Phase 2.1 (v0.7.38) — ↑ on empty buffer pulls the
@@ -11165,40 +11200,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onPopPendingInputs={() => {
             const inputs = consumePendingInputs();
             if (inputs.length > 0) return inputs.join("\n---\n");
-            // FEATURE_298 T17 -- plane-bound follow-ups live in the Host
-            // queue. Review fix: the pull is atomic per entry — only
-            // inputs the Host actually took back (withdraw resolved with
-            // the full original text) land in the editor; a conflict
-            // (already delivered) or a failed withdraw stays queued and is
-            // surfaced, never silently handed back for a duplicate resend.
-            const plane = options.clientPlane;
-            const hostQueue = [...(clientView?.queue ?? [])];
-            if (!plane || hostQueue.length === 0) return undefined;
-            return (async () => {
-              const pulled: string[] = [];
-              const stuck: string[] = [];
-              await Promise.all(hostQueue.map(async (entry) => {
-                try {
-                  const text = await plane.withdraw(context.sessionId, entry.inputId);
-                  const cached = clientPlaneQueuedTextsRef.current.get(entry.inputId)?.text;
-                  clientPlaneQueuedTextsRef.current.delete(entry.inputId);
-                  const full = text ?? cached;
-                  if (full !== undefined && full.length > 0) pulled.push(full);
-                } catch {
-                  stuck.push(entry.inputId);
-                }
-              }));
-              if (stuck.length > 0) {
-                pushClientPlaneNotice(
-                  `withdraw-failed-${Date.now()}`,
-                  stuck.length === hostQueue.length
-                    ? 'Nothing was pulled back — the queued inputs may still run.'
-                    : `${stuck.length} of ${hostQueue.length} queued inputs could not be withdrawn (already delivered?) and stay queued.`,
-                );
-              }
-              const text = pulled.join("\n---\n");
-              return text.length > 0 ? text : undefined;
-            })();
+            return clientInputQueue?.pull(context.sessionId, (clientView?.queue ?? []).map((entry) => entry.inputId));
           }}
           prompt=">"
           placeholder={buildPromptPlaceholderText({

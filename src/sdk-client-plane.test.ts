@@ -11,9 +11,10 @@ import {
   type KodaXProviderStreamOptions,
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { runClientPlaneRound, firstActiveRunId, type InkClientPlane } from '@kodax-ai/repl';
+import { runClientPlaneRound } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from './sdk-runtime.js';
+import { createCliClientPlane as wireClientPlane } from './cli-client-plane.js';
 
 class ProbeProvider extends KodaXBaseProvider {
   readonly name = 't17-probe';
@@ -41,54 +42,6 @@ class ProbeProvider extends KodaXBaseProvider {
       resolve(result);
     }));
   }
-}
-
-/** Wired exactly like src/kodax_cli.ts wires the interactive runtime. */
-function wireClientPlane(runtime: KodaXRuntime): InkClientPlane {
-  return {
-    submit: (input) => runtime.runs.acceptInput({
-      sessionId: input.sessionId,
-      text: input.text,
-      inputId: input.inputId,
-      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
-      ...(input.inputArtifacts !== undefined && input.inputArtifacts.length > 0
-        ? { inputArtifacts: input.inputArtifacts }
-        : {}),
-    }),
-    withdraw: (sessionId, inputId) =>
-      runtime.runs.withdrawInput(sessionId, inputId)
-        .then((withdrawn) => withdrawn.text)
-        .catch(() => undefined),
-    awaitRun: async (sessionId, runId) => {
-      void sessionId;
-      const outcome = await runtime.runs.await(runId);
-      return {
-        phase: outcome.phase,
-        ...(outcome.result !== undefined ? { result: outcome.result } : {}),
-        ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
-      };
-    },
-    stop: (runId) => runtime.runs.abort(runId).catch(() => undefined),
-    activeRun: (sessionId) =>
-      runtime.runs.list({ sessionId }).then((runs) =>
-        firstActiveRunId(runs.map((run) => ({ runId: run.runId, phase: run.phase })))),
-    observe: (sessionId, onView) =>
-      runtime.sessions
-        .observeView(sessionId, onView)
-        .then((observation) => () => observation.close()),
-    readItem: (sessionId, itemId, readOptions) =>
-      runtime.sessions.readViewItem(
-        sessionId,
-        itemId,
-        typeof readOptions === 'number'
-          ? { offset: readOptions }
-          : readOptions,
-      ),
-    respondInteraction: (requestId, response) =>
-      runtime.interactions
-        .respond(requestId, response)
-        .then((result) => result.accepted),
-  };
 }
 
 /**

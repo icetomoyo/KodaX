@@ -14,6 +14,7 @@ let homeDir: string;
 let configHome: string;
 let providerServer: Server;
 let providerRequests = 0;
+const providerToolResults: string[] = [];
 let providerMode: 'hold-all' | 'tool-call-then-hold' = 'hold-all';
 const providerSockets = new Set<Socket>();
 // The daemon is spawned detached; any early test failure must still be
@@ -25,7 +26,7 @@ function writeSseToolCallResponse(response: ServerResponse): void {
     id: 'chatcmpl-crash', object: 'chat.completion.chunk', created: 1, model: 'crash-model',
     choices: [{ index: 0, delta, finish_reason: finishReason }],
   });
-  const command = JSON.stringify({ command: 'echo tool-ran | tee -a crash-marker.txt' });
+  const command = JSON.stringify({ command: 'echo tool-ran >> crash-marker.txt && echo tool-ran' });
   const frames = [
     chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'call-crash', type: 'function', function: { name: 'bash', arguments: '' } }] }, null),
     chunk({ tool_calls: [{ index: 0, function: { arguments: command } }] }, null),
@@ -39,8 +40,19 @@ beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-crash-'));
   configHome = path.join(homeDir, '.kodax');
   providerRequests = 0;
+  providerToolResults.length = 0;
   providerMode = 'hold-all';
   providerServer = createServer((request, response) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk: string) => { body += chunk; });
+    request.on('end', () => {
+      if (body.length === 0) return;
+      const parsed = JSON.parse(body) as { messages?: Array<{ role?: string; content?: unknown }> };
+      for (const message of parsed.messages ?? []) {
+        if (message.role === 'tool') providerToolResults.push(JSON.stringify(message.content));
+      }
+    });
     if (request.url?.includes('/chat/completions')) providerRequests += 1;
     response.socket?.on('error', () => undefined);
     // The first request may script a tool call; later requests hang forever
@@ -169,7 +181,11 @@ it('a Host crash after input acceptance preserves content, marks the Run interru
 it('a Host crash after tool dispatch keeps the executed tool un-redone and the Run interrupted', async () => {
   providerMode = 'tool-call-then-hold';
   const scenario = await startScenario('Run the scripted tool.');
-  await expect.poll(() => markerLines(), { timeout: 60_000 }).toBe(1);
+  try {
+    await expect.poll(() => markerLines(), { timeout: 60_000 }).toBe(1);
+  } catch (error) {
+    throw new Error(`Tool marker was not produced. Tool results: ${providerToolResults.join('\n')}`, { cause: error });
+  }
   const { survivor, restarted } = await killHostAndRestart(scenario);
   try {
     const status = await survivor.runs.read(scenario.runId);

@@ -1540,6 +1540,7 @@ Keyboard Shortcuts:
       if (options.sessionCommands) {
         const rewound = await options.sessionCommands.rewind({
           sessionId: context.sessionId,
+          expectedHead: context.lineage?.activeEntryId ?? null,
           ...(selector !== undefined ? { selector } : {}),
         });
         if (!rewound) {
@@ -1987,6 +1988,7 @@ Keyboard Shortcuts:
     };
 
     const outcome = await startGeneratedWorkflowFromRequest({
+      sessionId: context.sessionId,
       request: workflow.request,
       callbacks: workflowCallbacks,
       approval: currentConfig.permissionMode === 'plan' ? 'required' : 'silent',
@@ -2025,7 +2027,8 @@ Keyboard Shortcuts:
       },
       result.invocation,
       rawInput,
-      (message) => console.log(chalk.dim(`\n${message}`))
+      (message) => console.log(chalk.dim(`\n${message}`)),
+      options.clientPlane !== undefined,
     );
 
     if (prepared.mode === 'manual') {

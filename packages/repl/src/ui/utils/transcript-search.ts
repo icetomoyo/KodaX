@@ -269,8 +269,8 @@ export function buildTranscriptCopyText(item: HistoryItem | undefined): string |
       return item.tools
         .map((tool) => {
           const parts = [`Tool: ${tool.name}`, `Status: ${tool.status}`];
-          if (tool.input) {
-            parts.push(`Input: ${JSON.stringify(tool.input)}`);
+          if (tool.inputText !== undefined || tool.input) {
+            parts.push(`Input: ${tool.inputText ?? JSON.stringify(tool.input)}`);
           }
           if (typeof tool.output === "string" && tool.output.trim()) {
             parts.push(`Output: ${stripAnsi(tool.output)}`);
@@ -303,13 +303,13 @@ export function buildTranscriptToolInputCopyText(
 
   const serializedTools = item.tools
     .map((tool) => {
-      if (!tool.input) {
+      if (!tool.input && tool.inputText === undefined) {
         return undefined;
       }
 
-      const normalizedInput = typeof tool.input === "string"
+      const normalizedInput = tool.inputText ?? (typeof tool.input === "string"
         ? tool.input
-        : JSON.stringify(tool.input, null, 2);
+        : JSON.stringify(tool.input, null, 2));
       if (!normalizedInput?.trim()) {
         return undefined;
       }

@@ -3374,7 +3374,7 @@ describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
 
     await workflowCommand.handler(
       ['saved-host', '{"request":"请复查"}'],
-      {} as Parameters<typeof workflowCommand.handler>[1],
+      { sessionId: 'originating-session' } as Parameters<typeof workflowCommand.handler>[1],
       host.callbacks,
       { agentMode: 'ama' } as Parameters<typeof workflowCommand.handler>[3],
     );
@@ -3382,6 +3382,7 @@ describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(host.startInputs).toHaveLength(1);
     expect(host.startInputs[0]).toMatchObject({
+      sessionId: 'originating-session',
       projectRoot: dir,
       source: {
         kind: 'inline',

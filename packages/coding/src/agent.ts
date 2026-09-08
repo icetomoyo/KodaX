@@ -30,7 +30,7 @@ export async function runKodaX(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
-  const policyOptions = await applyRuntimeSkillInvocationPolicy(options);
+  const policyOptions = await applyRuntimeSkillInvocationPolicy(options, prompt);
   const normalizedOptions: KodaXOptions = policyOptions.agentMode === undefined
     ? policyOptions
     : { ...policyOptions, agentMode: normalizeKodaXAgentMode(policyOptions.agentMode) };
@@ -75,6 +75,7 @@ export async function runKodaX(
   // consumer calls it directly rather than via `runManagedTask`. When reached
   // through `runManagedTask` (SA dispatch) this simply re-establishes the same
   // scope — nesting replaces with an identical config, so it is idempotent.
+  let failure: unknown;
   try {
     return await runWithScopedConfig(deriveRunScopedConfig(runtimeOptions), async () => {
       const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
@@ -97,8 +98,11 @@ export async function runKodaX(
       }
       return result.data;
     });
+  } catch (error: unknown) {
+    failure = error;
+    throw error;
   } finally {
-    await awaitRuntimeSkillInvocationPolicy(policyOptions);
+    await awaitRuntimeSkillInvocationPolicy(policyOptions, failure);
   }
 }
 

@@ -29,8 +29,13 @@ export interface RuntimeMemoryRebuildResult {
   readonly warnings: readonly string[];
 }
 
+export type RuntimeMemoryController = Pick<MemoryManagementController,
+  | "listInbox" | "showProposal" | "approveProposal" | "rejectProposal"
+  | "listRefs" | "readRef" | "remember" | "forgetRef"
+>;
+
 export interface RuntimeMemoryPlane {
-  readonly controller: MemoryManagementController;
+  readonly controller: RuntimeMemoryController;
   readonly memoryRoot: string;
   readonly entrypointPath: string;
   /** Pending episode reviews for the identities this project actually reads. */
@@ -48,7 +53,7 @@ export interface RuntimeMemoryPlane {
 }
 
 export interface RuntimeMemoryService {
-  forProject(projectRoot: string): RuntimeMemoryPlane;
+  forProject(projectRoot: string): RuntimeMemoryPlane | Promise<RuntimeMemoryPlane>;
 }
 
 interface TopicFile {
@@ -106,10 +111,12 @@ function readTopicFiles(
 export function createRuntimeMemoryService(input: {
   readonly configHome: string;
   readonly defaultProvider?: string;
+  readonly authorize?: (projectRoot: string, write: boolean) => Promise<void>;
 }): RuntimeMemoryService {
   const planes = new Map<string, RuntimeMemoryPlane>();
   return {
-    forProject(projectRoot) {
+    async forProject(projectRoot) {
+      await input.authorize?.(projectRoot, false);
       const key = path.resolve(projectRoot).toLowerCase();
       const cached = planes.get(key);
       if (cached !== undefined) return cached;
@@ -122,8 +129,18 @@ export function createRuntimeMemoryService(input: {
         cwd: projectRoot,
         identity,
       });
+      const authorize = (write: boolean) => input.authorize?.(projectRoot, write);
       const plane: RuntimeMemoryPlane = {
-        controller,
+        controller: {
+          async listInbox() { await authorize(false); return controller.listInbox(); },
+          async showProposal(id) { await authorize(false); return controller.showProposal(id); },
+          async listRefs(filter) { await authorize(false); return controller.listRefs(filter); },
+          async readRef(ref) { await authorize(false); return controller.readRef(ref); },
+          async remember(value) { await authorize(true); return controller.remember(value); },
+          async forgetRef(id, fingerprint) { await authorize(true); return controller.forgetRef(id, fingerprint); },
+          async approveProposal(id, fingerprints, revision) { await authorize(true); return controller.approveProposal(id, fingerprints, revision); },
+          async rejectProposal(id, reason, revision) { await authorize(true); return controller.rejectProposal(id, reason, revision); },
+        },
         memoryRoot,
         entrypointPath: path.join(memoryRoot, "MEMORY.md"),
         reviewerProviderConfigured() {
@@ -136,6 +153,7 @@ export function createRuntimeMemoryService(input: {
           }
         },
         async listReviews() {
+          await authorize(false);
           const localProjectId = `local:${key}`;
           const ownerIdentities = identity.projectId === localProjectId
             ? [identity]
@@ -160,6 +178,7 @@ export function createRuntimeMemoryService(input: {
           ));
         },
         async rebuild() {
+          await authorize(true);
           const warnings: string[] = [];
           let dirExists = false;
           try {
@@ -206,6 +225,7 @@ export function createRuntimeMemoryService(input: {
           };
         },
         async ensureOpenTarget(targetPath) {
+          await authorize(true);
           if (
             path.resolve(targetPath) === path.resolve(memoryRoot)
             && !fs.existsSync(memoryRoot)

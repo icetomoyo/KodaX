@@ -22,6 +22,7 @@ export interface InputPromptAutocompleteProps extends InputPromptProps {
   cwd?: string;
   /** Git root for skill discovery - 技能发现的 Git 根目录 */
   gitRoot?: string;
+  sessionId?: string;
   /** Whether autocomplete is enabled (default: true) - 是否启用自动补全（默认：true） */
   autocompleteEnabled?: boolean;
 }
@@ -36,6 +37,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   initialValue = "",
   cwd,
   gitRoot,
+  sessionId,
   autocompleteEnabled = true,
   onInputChange,
   onPasteFallback,
@@ -55,6 +57,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
     initialValue,
     cwd,
     gitRoot,
+    sessionId,
     autocompleteEnabled,
     onInputChange,
     onPasteFallback,
