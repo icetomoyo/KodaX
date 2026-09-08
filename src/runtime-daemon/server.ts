@@ -2170,7 +2170,7 @@ async function bindTrustedRunInput(input: {
     rejectHostToolNameCollisions(input.reverseBridge, hostToolLeaseId);
   }
   const hostToolRuntime =
-    hostToolBinding === undefined
+    hostToolLeaseId === undefined
       ? undefined
       : input.reverseBridge.createHostToolRuntime({
           leaseId: hostToolLeaseId,

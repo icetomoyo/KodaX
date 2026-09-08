@@ -821,7 +821,7 @@ describe('runtime daemon dispatcher', () => {
       startedAt: '2026-08-09T00:00:00.000Z',
       provider: 'mock',
       lifecycleError: {
-        code: 'run_control_unknown',
+        code: 'run_settlement_not_persisted',
         message: 'Run control is unknown.',
         retryable: false,
       },
@@ -1397,8 +1397,9 @@ describe('runtime daemon dispatcher', () => {
     const disposeCollidingTool = registerTool({
       name: 'space_colliding_tool',
       description: 'Registered before the host binding attempts the same name',
-      input_schema: { type: 'object' },
+      input_schema: { type: 'object', properties: {} },
       handler: async () => 'ok',
+      toClassifierInput: () => 'readonly test tool',
       sideEffect: 'readonly',
       planModeAllowed: true,
     });
@@ -1841,7 +1842,7 @@ describe('runtime daemon dispatcher', () => {
           },
         },
       });
-      const settingsCapability = initialized.capabilities.sharedSessionSettings;
+      const settingsCapability = (initialized as { capabilities: { sharedSessionSettings: { version: number; keys: string[] } } }).capabilities.sharedSessionSettings;
       expect(settingsCapability.version).toBe(2);
       expect(settingsCapability.keys).not.toContain('autoModeEngine');
       expect(settingsCapability.keys).not.toContain('autoModeTimeoutMs');
@@ -2428,6 +2429,7 @@ describe('runtime daemon dispatcher', () => {
     expect(isRuntimeDaemonSuccessResponse(subscribed)).toBe(true);
 
     const event: RuntimeEvent = {
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 1 },
       id: 'evt-1',
       seq: 1,
       time: '2026-07-09T00:00:00.000Z',
@@ -2667,6 +2669,7 @@ describe('runtime daemon dispatcher', () => {
     await initializeDispatcher(dispatcher);
 
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 1 },
       id: 'evt-budget-1',
       seq: 1,
       time: '2026-07-09T00:00:00.000Z',
@@ -2676,6 +2679,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { usedTokens: 100 },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 2 },
       id: 'evt-budget-2',
       seq: 2,
       time: '2026-07-09T00:00:01.000Z',
@@ -2685,6 +2689,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { usedTokens: 80 },
     });
     runtime.emit({
+      cursor: { sessionId: 'child-worker-session', journalEpoch: 'test-epoch', seq: 3 },
       id: 'evt-budget-child',
       seq: 3,
       time: '2026-07-09T00:00:02.000Z',
@@ -2700,6 +2705,7 @@ describe('runtime daemon dispatcher', () => {
     });
     for (let index = 0; index < 101; index += 1) {
       runtime.emit({
+      cursor: { sessionId: 'child-worker-session', journalEpoch: 'test-epoch', seq: 4 + index },
         id: `evt-budget-child-${index}`,
         seq: 4 + index,
         time: '2026-07-09T00:00:02.000Z',
@@ -2715,6 +2721,7 @@ describe('runtime daemon dispatcher', () => {
       });
     }
     runtime.emit({
+      cursor: { sessionId: 'unrelated-child-worker-session', journalEpoch: 'test-epoch', seq: 105 },
       id: 'evt-budget-unrelated-child',
       seq: 105,
       time: '2026-07-09T00:00:03.000Z',
@@ -2729,6 +2736,7 @@ describe('runtime daemon dispatcher', () => {
       },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 106 },
       id: 'evt-exposure-1',
       seq: 106,
       time: '2026-07-09T00:00:04.000Z',
@@ -2738,6 +2746,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { profile: 'bridge_non_core', bridgedCount: 4 },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 107 },
       id: 'evt-cache-root',
       seq: 107,
       time: '2026-07-09T00:00:05.000Z',
@@ -2753,6 +2762,7 @@ describe('runtime daemon dispatcher', () => {
       },
     });
     runtime.emit({
+      cursor: { sessionId: 'child-worker-session', journalEpoch: 'test-epoch', seq: 108 },
       id: 'evt-cache-child',
       seq: 108,
       time: '2026-07-09T00:00:06.000Z',
@@ -2770,6 +2780,7 @@ describe('runtime daemon dispatcher', () => {
       },
     });
     runtime.emit({
+      cursor: { sessionId: 'other-child-worker-session', journalEpoch: 'test-epoch', seq: 109 },
       id: 'evt-cache-other-agent',
       seq: 109,
       time: '2026-07-09T00:00:07.000Z',
@@ -2787,6 +2798,7 @@ describe('runtime daemon dispatcher', () => {
       },
     });
     runtime.emit({
+      cursor: { sessionId: 'unrelated-child-worker-session', journalEpoch: 'test-epoch', seq: 110 },
       id: 'evt-cache-unrelated-session',
       seq: 110,
       time: '2026-07-09T00:00:08.000Z',
@@ -2804,6 +2816,7 @@ describe('runtime daemon dispatcher', () => {
       },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-unreported', journalEpoch: 'test-epoch', seq: 111 },
       id: 'evt-cache-unreported',
       seq: 111,
       time: '2026-07-09T00:00:09.000Z',
@@ -2980,6 +2993,7 @@ describe('runtime daemon dispatcher', () => {
   it('gates context diagnostics by negotiated client capability', async () => {
     const runtime = makeRuntime();
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 1 },
       id: 'evt-normal',
       seq: 1,
       time: '2026-07-09T00:00:00.000Z',
@@ -2989,6 +3003,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { ok: true },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 2 },
       id: 'evt-budget',
       seq: 2,
       time: '2026-07-09T00:00:01.000Z',
@@ -2998,6 +3013,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { usedTokens: 42 },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 3 },
       id: 'evt-compaction-skipped',
       seq: 3,
       time: '2026-07-09T00:00:02.000Z',
@@ -3007,6 +3023,7 @@ describe('runtime daemon dispatcher', () => {
       payload: { reason: 'cooldown' },
     });
     runtime.emit({
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 4 },
       id: 'evt-cache-diagnostics',
       seq: 4,
       time: '2026-07-09T00:00:03.000Z',
@@ -4182,13 +4199,13 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
     },
     diagnostics: {
       async latestContextBudget(filter) {
-        return latestTestDiagnostic(eventLog, 'context.budget.snapshot', filter);
+        return latestTestDiagnostic(eventLog, 'context.budget.snapshot', filter) as Awaited<ReturnType<KodaXRuntime["diagnostics"]["latestContextBudget"]>>;
       },
       async latestToolExposure(filter) {
-        return latestTestDiagnostic(eventLog, 'tool.exposure.planned', filter);
+        return latestTestDiagnostic(eventLog, 'tool.exposure.planned', filter) as Awaited<ReturnType<KodaXRuntime["diagnostics"]["latestToolExposure"]>>;
       },
       async latestProviderCacheDiagnostic(filter) {
-        return latestTestDiagnostic(eventLog, 'provider.cache.diagnostics', filter);
+        return latestTestDiagnostic(eventLog, 'provider.cache.diagnostics', filter) as Awaited<ReturnType<KodaXRuntime["diagnostics"]["latestProviderCacheDiagnostic"]>>;
       },
     },
     async close() {},
@@ -4228,6 +4245,8 @@ function createTestUserInputs(): KodaXRuntime['userInputs'] {
 
 function createTestCredentialService(): KodaXRuntime['credentials'] {
   return {
+    async registerScoped(input) { return { id: 'credential-test', ...input, brokerVersion: 2 }; },
+    async resumeScoped() { throw new Error('Missing credential lease.'); },
     async register(input) { return { id: 'credential-test', ...input }; },
     async resume() { throw new Error('Missing credential lease.'); },
     async revoke() { return false; },
@@ -4256,13 +4275,14 @@ function createTestObservation(sessionId: string) {
       pendingPermissions: [],
       live: {
         assistantTextByRun: {},
+        outputSegmentsByRun: {},
         thinkingTextByRun: {},
         activeTools: [],
         pendingUserInputs: [],
         managedTasks: [],
       },
     },
-    invalidated: new Promise(() => undefined),
+    invalidated: new Promise<never>(() => undefined),
     close() {},
   };
 }

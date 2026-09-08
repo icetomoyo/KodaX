@@ -430,13 +430,13 @@ export function createRuntimeDaemonClient(
         return readRequest('session.transcript', { sessionId }, readOptions) as Promise<RuntimeTranscript | null>;
       },
       transcriptPage(input, readOptions) {
-        return readRequest('session.transcript.page', input, readOptions) as Promise<RuntimeTranscriptSlice | null>;
+        return readRequest('session.transcript.page', { ...input }, readOptions) as Promise<RuntimeTranscriptSlice | null>;
       },
       transcriptEntryChunk(input, readOptions) {
-        return readRequest('session.transcript.entryChunk', input, readOptions) as Promise<RuntimeTranscriptEntryChunk | null>;
+        return readRequest('session.transcript.entryChunk', { ...input }, readOptions) as Promise<RuntimeTranscriptEntryChunk | null>;
       },
       transcriptSearch(input, readOptions) {
-        return readRequest('session.transcript.search', input, readOptions) as Promise<RuntimeTranscriptSearchResult | null>;
+        return readRequest('session.transcript.search', { ...input }, readOptions) as Promise<RuntimeTranscriptSearchResult | null>;
       },
       conversation(sessionId, readOptions) {
         return readRequest(

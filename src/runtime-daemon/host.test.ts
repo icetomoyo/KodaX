@@ -1251,12 +1251,13 @@ function makeRuntime(
   }> = [];
   let eventSeq = 1;
   const emitEvent = (
-    event: Omit<RuntimeEvent, "id" | "seq" | "time">,
+    event: Omit<RuntimeEvent, "id" | "seq" | "time" | "cursor">,
   ): RuntimeEvent => {
     const fullEvent: RuntimeEvent = {
       ...event,
       id: `evt_${eventSeq}`,
       seq: eventSeq,
+      cursor: { sessionId: event.sessionId, journalEpoch: "test-epoch", seq: eventSeq },
       time: new Date().toISOString(),
     };
     eventSeq += 1;
@@ -1277,6 +1278,14 @@ function makeRuntime(
       version: "0.7.66",
     },
     sessions: {
+      async status(sessionId) {
+        return { sessionId, runtimeId: "runtime-test", phase: "idle",
+          observedAt: new Date(0).toISOString() };
+      },
+      async conversation() { return null; },
+      async conversationPage() { return null; },
+      async conversationEntryChunk() { return null; },
+      async diagnostics() { throw new Error("Session diagnostics are not used by this fixture."); },
       async create(input) {
         return {
           id: input?.sessionId ?? "session-1",
@@ -1397,7 +1406,10 @@ function makeRuntime(
       async list() {
         return [];
       },
-      async abort() {},
+      async abort(runId) {
+        return { runId, sessionId: "session-1", accepted: false,
+          state: "confirmed", outcome: "completed", phase: "completed", revision: 0 };
+      },
       async setModel() {},
       async setProvider() {},
       async setReasoning() {},
@@ -1464,6 +1476,10 @@ function makeRuntime(
     },
     learning: {} as KodaXRuntime["learning"],
     config: {
+      async readEffective() {
+        return { schemaVersion: 1, capturedAt: new Date(0).toISOString(),
+          persistedConfig: { state: "missing" }, entries: {}, credentials: {} };
+      },
       async read() {
         return {};
       },
@@ -1683,6 +1699,12 @@ function createTestUserInputs(): KodaXRuntime["userInputs"] {
 
 function createTestCredentialService(): KodaXRuntime["credentials"] {
   return {
+    async registerScoped(input) {
+      return { id: "credential-test", ...input, brokerVersion: 2 };
+    },
+    async resumeScoped() {
+      throw new Error("Missing credential lease.");
+    },
     async register(input) {
       return { id: "credential-test", ...input };
     },
@@ -1714,9 +1736,10 @@ function createTestHostToolService(): KodaXRuntime["hostTools"] {
 
 function createTestObservation(sessionId: string) {
   return {
+    invalidated: new Promise<never>(() => undefined),
     snapshot: {
       runtimeId: "runtime-test",
-      cursor: 0,
+      cursor: { sessionId, journalEpoch: "test-epoch", seq: 0 },
       transcriptRevision: "sha256:test",
       session: { id: sessionId, title: "Test Session" },
       transcript: null,
@@ -1725,6 +1748,7 @@ function createTestObservation(sessionId: string) {
       pendingPermissions: [],
       live: {
         assistantTextByRun: {},
+        outputSegmentsByRun: {},
         thinkingTextByRun: {},
         activeTools: [],
         pendingUserInputs: [],

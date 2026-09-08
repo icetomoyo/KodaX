@@ -4464,7 +4464,7 @@ export async function createKodaXRuntime(
       status.sessionId,
       Math.max(recoveredSessionOrders.get(status.sessionId) ?? 0, sessionOrder),
     );
-    let normalizedStatus = {
+    let normalizedStatus: RuntimeRunStatus = {
       ...status,
       acceptedAt: status.acceptedAt ?? status.startedAt,
       sessionOrder,
@@ -6306,6 +6306,8 @@ function createRuntimeSessionService(
     readonly promise: Promise<{
       readonly capture: SessionReadCapture;
       readonly revision: string;
+      readonly lineage: ReturnType<typeof createSessionLineage>;
+      readonly transcriptEntries: readonly SessionTranscriptEntry[];
     }>;
     waiters: number;
     settled: boolean;
@@ -8851,7 +8853,9 @@ function createRuntimeRunService(deps: {
     return cancellation;
   };
 
-  const actorDurabilityFailureApplies = (record: RuntimeRunRecord): boolean =>
+  const actorDurabilityFailureApplies = (
+    record: RuntimeRunRecord,
+  ): record is RuntimeRunRecord & { actorDurabilityFailure: RuntimeRunFailureFact } =>
     record.actorDurabilityFailure !== undefined
     && record.actorDurabilityPreservesExecutorFact !== true;
   const executorPromiseSettled = (record: RuntimeRunRecord): boolean =>
@@ -9249,9 +9253,10 @@ function createRuntimeRunService(deps: {
     if (actorDurabilityFailureApplies(record)) {
       return record.actorDurabilityFailure;
     }
+    const stop = record.stop;
     const trustedManagedAbort =
       record.mode === "managed_task"
-      && record.stop !== undefined
+      && stop !== undefined
       && record.abortController?.signal.aborted === true
       && error instanceof Error
       && error.name === "AbortError";
@@ -9263,7 +9268,7 @@ function createRuntimeRunService(deps: {
         terminal: {
           code: "interrupted",
           effectOutcome: "unknown",
-          message: record.stop.reason,
+          message: stop.reason,
           failureKind: failureDetail.failureKind,
         },
       };
@@ -14071,7 +14076,7 @@ function createRuntimePersistence(
         const persisted: unknown = JSON.parse(
           fs.readFileSync(eventSequenceFile, "utf-8"),
         );
-        if (Number.isSafeInteger(persisted) && persisted >= 0) {
+        if (typeof persisted === "number" && Number.isSafeInteger(persisted) && persisted >= 0) {
           return persisted;
         }
       } catch (error: unknown) {
@@ -14740,7 +14745,7 @@ function createRuntimePersistence(
         );
       }
     };
-    if (filter.runId !== undefined) {
+    if (filter?.runId !== undefined) {
       assertWatermark(readRuntimeEventWatermark(
         eventWatermarkFile(filter.runId),
       ));
@@ -16743,7 +16748,7 @@ function eventMatchesReplayFilter(
 function compareRuntimeReplayEvents(
   left: RuntimeEvent,
   right: RuntimeEvent,
-  filter: RuntimeInternalEventFilter | undefined,
+  filter: RuntimeInternalEventReplayFilter | undefined,
 ): number {
   if (
     filter?.aggregateSessions !== true
@@ -16860,7 +16865,7 @@ function isRuntimeEvent(value: unknown): value is RuntimeEvent {
 
 function runtimeEventHasValidCursor(
   event: RuntimeEvent,
-): event is RuntimeEvent & { readonly cursor: RuntimeSessionCursor } {
+): boolean {
   const cursor: unknown = event.cursor;
   return (
     isRecord(cursor)
@@ -19220,17 +19225,18 @@ function wrapKodaXEvents(input: {
     },
     onManagedTaskStatus(status) {
       if (actorDurabilityFenced()) return;
-      if (record.mode === "managed_task" && status.phase === "completed") {
+      const phase = status.phase;
+      if (record.mode === "managed_task" && phase === "completed") {
         record.interruptInputOpen = false;
         onPhase("running");
         onStage("finalizing", 0);
-      } else if (record.mode === "managed_task") {
+      } else if (record.mode === "managed_task" && phase !== "completed") {
         onPhase(status.idleWaiting === true ? "waiting_agent" : "running");
         const activeSubtaskCount =
           status.idleWaitingPendingCount
           ?? (status.phase === "verifying" ? 0 : undefined);
         onStage(
-          status.phase
+          phase
             ?? (status.idleWaiting === true ? "waiting_agent" : "executing"),
           activeSubtaskCount,
         );
@@ -23091,7 +23097,8 @@ function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boo
       return operation.kind === "read" || writable(operation.target.boundary);
     }
     if (operation.kind === "copy") return writable(operation.destination.boundary);
-    return writable(operation.source.boundary)
+    return "source" in operation
+      && writable(operation.source.boundary)
       && writable(operation.destination.boundary);
   });
 }
@@ -23760,7 +23767,11 @@ function normalizeRuntimeSnapshotMaterializationError(
   error: unknown,
   closing: boolean,
 ): Error {
-  if (isExpectedRuntimeReadTermination(error)) return error;
+  if (isExpectedRuntimeReadTermination(error) && isRecord(error)) {
+    return error instanceof Error
+      ? error
+      : Object.assign(new Error("Runtime read terminated"), error);
+  }
   if (
     isRecord(error)
     && (error.code === "overloaded" || error.code === "resync_required")
@@ -23807,6 +23818,12 @@ function createRuntimeCredentialUnavailableError(
 
 function createUnsupportedCredentialService(): RuntimeCredentialService {
   return {
+    async registerScoped() {
+      throw new Error("Credential broker registration requires a shared daemon client.");
+    },
+    async resumeScoped() {
+      throw new Error("Credential broker resume requires a shared daemon client.");
+    },
     async register() {
       throw new Error(
         "Credential broker registration requires a shared daemon client.",

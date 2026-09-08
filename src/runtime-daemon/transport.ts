@@ -532,7 +532,7 @@ function runtimeDaemonSupportsRequestLifecycle(value: unknown): boolean {
   const initialized = asRecord(value);
   const capabilities = asRecord(initialized?.capabilities);
   const lifecycle = asRecord(capabilities?.runLifecycleControl);
-  return Number.isSafeInteger(lifecycle?.version)
+  return lifecycle !== undefined && Number.isSafeInteger(lifecycle.version)
     && Number(lifecycle?.version) >= 1
     && lifecycle.structuredStopReceipt === true
     && lifecycle.protocolCancellation === true

@@ -30,6 +30,7 @@ describe('interactive daemon runtime bridge', () => {
     const event: RuntimeEvent = {
       id: 'event-1',
       seq: 1,
+      cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 1 },
       time: '2026-08-08T00:00:00.000Z',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -69,7 +70,7 @@ describe('interactive daemon runtime bridge', () => {
   });
 
   it('synchronizes Auto reviewer settings without writing an engine selector', async () => {
-    const updateSettings = vi.fn(async () => ({ permissionMode: 'auto' }));
+    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({ permissionMode: 'auto' }));
     const runtime = {
       sessions: {
         load: vi.fn(async () => ({ id: 'session-1' })),
@@ -97,7 +98,7 @@ describe('interactive daemon runtime bridge', () => {
   });
 
   it('ignores a persisted legacy Rules engine when a fresh REPL control synchronizes', async () => {
-    const updateSettings = vi.fn(async () => ({
+    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({
       permissionMode: 'auto',
       autoModeEngine: 'rules' as const,
     }));
@@ -880,6 +881,7 @@ function runtimeEvent(type: RuntimeEvent['type'], payload: unknown): RuntimeEven
   return {
     id: `event-${type}`,
     seq: 1,
+    cursor: { sessionId: 'session-1', journalEpoch: 'test-epoch', seq: 1 },
     time: '2026-07-10T00:00:00.000Z',
     sessionId: 'session-1',
     runId: 'run-1',

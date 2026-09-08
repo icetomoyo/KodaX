@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Separate production and source-test TypeScript checks while retaining SDK
+  packaging and public entry points. Correct stale test contracts, await the
+  memory-review Session ID, complete A2A task-state projection, and return the
+  existing daemon-only error from embedded scoped credential methods.
 - Retire the old RPC connection and socket when the same authenticated client
   identity takes over the credential/Host Tool reverse bridge. Clients now
   observe a reconnectable disconnect instead of remaining RPC-connected with

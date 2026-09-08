@@ -444,7 +444,7 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
       list.mockRestore();
       await service.closeOwnerSession(owner.ownerSessionId);
     }
-    expect((await remoteStore.readCapability(record.capabilityId))?.canary)
+    expect((await readCanary(remoteStore, record.capabilityId)))
       .not.toHaveProperty('binding');
   });
 
@@ -599,7 +599,7 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
       toolPolicy: policy(),
     });
 
-    expect((await store.readCapability(record.capabilityId))?.canary).not.toHaveProperty('binding');
+    expect((await readCanary(store, record.capabilityId))).not.toHaveProperty('binding');
     const first = await service.startDefault({
       ownerSessionId: owner.ownerSessionId,
       bindingId: binding.bindingId,
@@ -607,7 +607,7 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
       sessionId: 'root-a',
       input: { type: 'text', text: 'First root.' },
     });
-    const firstBinding = (await store.readCapability(record.capabilityId))?.canary.binding?.bindingId;
+    const firstBinding = (await readCanary(store, record.capabilityId)).binding?.bindingId;
     expect(firstBinding).toBeTypeOf('string');
     expect(firstBinding).not.toBe(binding.bindingId);
     expect(starts[0]?.options?.context?.skillRegistry?.has('verify-release')).toBe(true);
@@ -620,12 +620,12 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
       input: { type: 'text', text: 'Concurrent root.' },
     });
     expect(starts[1]?.options?.context?.skillRegistry?.has('verify-release')).toBe(false);
-    expect((await store.readCapability(record.capabilityId))?.canary.binding?.bindingId)
+    expect((await readCanary(store, record.capabilityId)).binding?.bindingId)
       .toBe(firstBinding);
 
     resolveFirst({ runId: first.runId, sessionId: first.sessionId, phase: 'completed' });
     await first.result;
-    expect((await store.readCapability(record.capabilityId))?.canary).not.toHaveProperty('binding');
+    expect((await readCanary(store, record.capabilityId))).not.toHaveProperty('binding');
 
     await service.startDefault({
       ownerSessionId: owner.ownerSessionId,
@@ -634,7 +634,7 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
       sessionId: 'root-c',
       input: { type: 'text', text: 'Next root.' },
     });
-    const nextBinding = (await store.readCapability(record.capabilityId))?.canary.binding?.bindingId;
+    const nextBinding = (await readCanary(store, record.capabilityId)).binding?.bindingId;
     expect(nextBinding).toBeTypeOf('string');
     expect(nextBinding).not.toBe(firstBinding);
     expect(starts[2]?.options?.context?.skillRegistry?.has('verify-release')).toBe(true);
@@ -756,3 +756,9 @@ describe('FEATURE_263 Runtime learned Skill binding', () => {
     await service.closeOwnerSession(owner.ownerSessionId);
   });
 });
+
+async function readCanary(store: LearnedAreaStore, capabilityId: string) {
+  const record = await store.readCapability(capabilityId);
+  if (record?.schemaVersion !== 2) throw new Error('Expected a v2 capability record.');
+  return record.canary;
+}

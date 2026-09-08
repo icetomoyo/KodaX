@@ -54,6 +54,9 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
+      - name: Typecheck production source and source tests
+        run: npm run typecheck
+
       - name: Compile Linux native authority for glibc 2.28
         if: matrix.node == '22'
         run: node scripts/build-linux-native.mjs

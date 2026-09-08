@@ -83,7 +83,7 @@ describe('F270 Runtime Actor facade', () => {
     await runtime.agents.spawn(source.id, { taskName: 'scout', objective: 'Inspect.' });
     await runtime.agents.wait(source.id, 2, 1_000);
 
-    let forked: Awaited<ReturnType<typeof runtime.sessions.fork>>;
+    let forked: Awaited<ReturnType<typeof runtime.sessions.fork>> | undefined;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
         forked = await runtime.sessions.fork({

@@ -64,7 +64,7 @@ function messageEntry(
   role: 'user' | 'assistant',
   content: string,
   identity: { logicalId?: string; sourceEntryId?: string } = {},
-): KodaXSessionEntry {
+): Extract<KodaXSessionEntry, { type: 'message' }> {
   return {
     type: 'message',
     id,
@@ -837,13 +837,9 @@ describe('Runtime conversation history', () => {
       if (first === null || first.nextCursor === undefined) {
         throw new Error('multi-page conversation missing');
       }
-      const mutableIssues = first.issues as Array<{
-        code: string;
-        message: string;
-        entryIds: string[];
-      }>;
-      mutableIssues[0]?.entryIds.push('caller-mutation');
-      mutableIssues.push({
+      const mutableIssues = first.issues;
+      if (mutableIssues[0]) Array.prototype.push.call(mutableIssues[0].entryIds, 'caller-mutation');
+      Array.prototype.push.call(mutableIssues, {
         code: 'caller_mutation',
         message: 'must not enter the snapshot',
         entryIds: [],

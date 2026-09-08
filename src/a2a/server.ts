@@ -165,6 +165,9 @@ function operationForMethod(method: string): A2AOperation {
 function statusState(phase: RuntimeRunPhase): A2ATaskState {
   const states: Record<RuntimeRunPhase, A2ATaskState> = {
     queued: 'TASK_STATE_SUBMITTED',
+    unknown: 'TASK_STATE_UNSPECIFIED',
+    waiting_agent: 'TASK_STATE_WORKING',
+    recovering: 'TASK_STATE_WORKING',
     running: 'TASK_STATE_WORKING',
     waiting_permission: 'TASK_STATE_WORKING',
     waiting_user_input: 'TASK_STATE_INPUT_REQUIRED',

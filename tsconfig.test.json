@@ -1,0 +1,68 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "paths": {
+      "@kodax-ai/kodax/media": [
+        "./src/sdk-media.ts"
+      ],
+      "@kodax-ai/kodax/session": [
+        "./src/sdk-session.ts"
+      ],
+      "@kodax-ai/kodax/runtime": [
+        "./src/sdk-runtime.ts"
+      ],
+      "@kodax-ai/agent/media": [
+        "./packages/agent/src/media/index.ts"
+      ],
+      "@kodax-ai/coding/media": [
+        "./packages/coding/src/media/index.ts"
+      ],
+      "@kodax-ai/coding/internal/file-system-effects": [
+        "./packages/coding/src/internal/file-system-effects.ts"
+      ],
+      "@kodax-ai/agent/capabilities/skills/shared/yaml": [
+        "./packages/agent/src/capabilities/skills/shared/yaml.ts"
+      ],
+      "@kodax-ai/agent/messaging/queue": [
+        "./packages/agent/src/messaging/queue.ts"
+      ],
+      "@kodax-ai/agent/workflow": [
+        "./packages/agent/src/workflow/index.ts"
+      ],
+      "@kodax-ai/agent/experimental-memory": [
+        "./packages/agent/src/experimental-memory/index.ts"
+      ],
+      "@kodax-ai/agent/session-lineage": [
+        "./packages/agent/src/session-lineage/index.ts"
+      ],
+      "@kodax-ai/agent/capabilities/skills": [
+        "./packages/agent/src/capabilities/skills/index.ts"
+      ],
+      "@kodax-ai/agent/tracing": [
+        "./packages/agent/src/tracing/index.ts"
+      ],
+      "@kodax-ai/agent": [
+        "./packages/agent/src/index.ts"
+      ],
+      "@kodax-ai/llm": [
+        "./packages/llm/src/index.ts"
+      ],
+      "@kodax-ai/coding": [
+        "./packages/coding/src/index.ts"
+      ],
+      "@kodax-ai/repl/cli-resume": [
+        "./packages/repl/src/cli-resume.ts"
+      ],
+      "@kodax-ai/repl": [
+        "./packages/repl/src/index.ts"
+      ]
+    },
+    "allowJs": true
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
+}

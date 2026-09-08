@@ -142,6 +142,66 @@ SDK declaration generation passed. The optional root `tsc --noEmit` check still
 reports 479 pre-existing diagnostics: a compiler comparison against HEAD file
 contents found the same 479 diagnostics and zero additions.
 
+## Follow-up: strict type checks without changing SDK packaging
+
+The accepted scope is to separate production-source checking from source-test
+checking, fix the remaining real TypeScript errors, and retain the production
+bundle configuration, declaration resolver, package exports and existing
+credential/compaction recovery contracts. Test checking follows Vitest's source
+aliases and the REPL's JavaScript substrate; it must not mix source and dist
+types. Do not remove public APIs or relax strictness to make checks pass.
+
+After `npm run build:packages`, run `npm run typecheck`. Run `npm run build`,
+the complete default test suite and `npm run test:bundle`. Check an actual npm
+tarball in an external consumer without workspace aliases: every SDK entry must
+load, declaration checking must resolve without private workspace packages,
+and a scoped credential callback plus Runtime session operations must typecheck.
+Compare SDK entry exports before/after. No declaration migration is required.
+
+New behavioral regression cases cover the resolved memory-review Session ID,
+A2A projection of unknown/waiting-agent/recovering results, and explicit rejection
+of unsupported scoped credential methods by an embedded Runtime. Existing daemon
+takeover/reconnect, manual/managed compaction, capacity recovery, Stop/Actor
+settlement, session read-boundary and sandbox tests remain required.
+
+Artifact checks (2026-09-08): an isolated snapshot with `npm ci` passes the full
+build, both type checks, and all 13 bundled credential/daemon compaction tests.
+An actual tarball installed outside the workspace loads all 13 public entries
+and passes strict consumer checking with the repository's existing
+`skipLibCheck: true`, plus Runtime session/history/compaction and embedded
+credential-boundary checks. Package exports are unchanged; no declaration or
+runtime export names were removed. The existing referenced
+`CodingActorCredentialAccessFactory` type is now also exported.
+
+The full default suite scanned 982 files / 15,028 cases: 14,898 passed initially,
+78 were already skipped and 21 were existing TODOs. All 31 initial failures were
+verification-copy conditions: locating the checkout under system temp changed
+permission classifications, archive line endings broke an Electron fixture
+substring, and the private design-doc submodule was absent. Relocating the copy
+outside system temp and restoring the original fixture bytes/design docs made
+all six affected files pass on rerun, without product changes. No failed cases
+remain across the scan and rerun. The initial full scan includes 450 passing
+capacity, compaction, token-accounting and credential tests in 39 files.
+
+Checking third-party declaration internals with `skipLibCheck: false` separately
+reports 141 diagnostics in the unchanged `@agentclientprotocol/sdk@0.15.0`
+package (140 duplicate exports and one extensionless schema import). These are
+not KodaX source errors or missing private workspace packages; fixing that
+dependency is outside this configuration/typecheck change. The production
+compiler settings, bundle resolver and credential-scope identity guard remain
+unchanged.
+
+### Standards
+
+Independent review found no actionable violations of the repository rules or
+code-smell baseline. Findings: 0; severity: none.
+
+### Spec
+
+Independent review found no missing requirements, public export removals or
+unrequested packaging changes. Findings: 0; severity: none. Concurrent work on
+trusted text mutation permissions was excluded from this review and commit.
+
 ## Original Issue 332 sign-off
 
 Manual cases: **7**; passed / failed / blocked: **pending integration testing**.

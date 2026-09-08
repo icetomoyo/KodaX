@@ -18,7 +18,7 @@ import { createRequire } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { readProcessStartIdentity, SkillRegistry } from '@kodax-ai/agent';
+import { readProcessStartIdentity, SkillRegistry, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { build } from 'esbuild';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -223,7 +223,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   guardReady: true,
   user: {
     provisioned: true,
-    sid: 'S-1-5-21-1000',
+    sid: 'S-1-5-21-1000' as string | undefined,
     groupExists: true,
     groupSid: 'S-1-5-21-1001',
     inBuiltinUsers: true,
@@ -579,7 +579,7 @@ vi.mock('node:child_process', async (importOriginal) => {
           if (outcome === 'failure') {
             child.stderr.end('injected ACL recovery failure');
             child.stdout.end();
-            child.exitCode = 1;
+            Reflect.set(child, 'exitCode', 1);
             child.emit('close', 1, null);
             child.emit('exit', 1, null);
             return;
@@ -588,7 +588,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             ? 'not-json'
             : JSON.stringify({ deadBrokers: 1, acesRevoked: 2 }));
           child.stderr.end();
-          child.exitCode = 0;
+          Reflect.set(child, 'exitCode', 0);
           child.emit('close', 0, null);
           child.emit('exit', 0, null);
         });
@@ -619,7 +619,7 @@ vi.mock('node:child_process', async (importOriginal) => {
           capturedWindowsNetworkBrokerStops.count += 1;
           if (windowsNetworkBrokerMock.stopOutcome === 'unknown') return;
           queueMicrotask(() => {
-            child.exitCode = 0;
+            Reflect.set(child, 'exitCode', 0);
             control.end();
             child.emit('exit', 0, null);
             child.emit('close', 0, null);
@@ -693,7 +693,7 @@ vi.mock('node:child_process', async (importOriginal) => {
             if (outcome === 'failure') {
               child.stderr.end('injected ACL recovery failure');
               child.stdout.end();
-              child.exitCode = 1;
+              Reflect.set(child, 'exitCode', 1);
               child.emit('close', 1, null);
               child.emit('exit', 1, null);
               return;
@@ -702,7 +702,7 @@ vi.mock('node:child_process', async (importOriginal) => {
               ? 'not-json'
               : JSON.stringify({ deadBrokers: 1, acesRevoked: 2 }));
             child.stderr.end();
-            child.exitCode = 0;
+            Reflect.set(child, 'exitCode', 0);
             child.emit('close', 0, null);
             child.emit('exit', 0, null);
           });
@@ -1048,8 +1048,8 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kodax-ai/agent')>();
   return {
     ...actual,
-    emitKodaXDiagnostic: (diagnostic: Readonly<Record<string, unknown>>) => {
-      capturedDiagnostics.push(diagnostic);
+    emitKodaXDiagnostic: (diagnostic: KodaXDiagnostic) => {
+      capturedDiagnostics.push({ ...diagnostic });
       actual.emitKodaXDiagnostic(diagnostic);
     },
     acquireKodaXFileLock: async (
@@ -1325,19 +1325,15 @@ vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
 import {
   KODAX_ASRT_VERSION,
   bundledSrtWinSidecarPath,
-  clearWindowsSandboxAclMarkersForRuntimeOwner,
   createAsrtShellSandbox,
   createAsrtSkillScriptRunner,
   doctorSandboxExecution,
   doctorSandboxRuntime,
   isWindowsSandboxV2SetupCurrent,
-  clearPreviousBootWindowsSandboxAclMarkers,
   overrideWindowsSandboxV2CutoverDirectoryForTest,
   overrideWindowsSetupCapabilityInstallerForTest,
   prepareSandboxRuntimeForSetup,
   readWindowsSandboxBootIdentity,
-  recoverPreviousBootWindowsSandboxAcls,
-  recoverWindowsSandboxAclsForRuntimeOwner,
   runKodaXSandboxed,
   runAsrtBrokerProcess,
   setupSandboxRuntime,
@@ -1580,7 +1576,7 @@ afterEach(async () => {
   windowsSandboxMock.guardReady = true;
   windowsSandboxMock.user = {
     provisioned: true,
-    sid: 'S-1-5-21-1000',
+    sid: 'S-1-5-21-1000' as string | undefined,
     groupExists: true,
     groupSid: 'S-1-5-21-1001',
     inBuiltinUsers: true,
@@ -3274,7 +3270,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       }), 'utf8');
       const host = windowsEffectJobMock.latestChild;
       if (host === undefined) throw new Error('expected a native sandbox host');
-      host.stdin.once('finish', () => {
+      host.stdio[0].once('finish', () => {
         setTimeout(() => {
           writeFileSync(request.terminalRecordPath, JSON.stringify({
             protocol: 10,
@@ -3285,7 +3281,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
             brokerRetirementRecommended: false,
             denyReadCleanupDeferred: false,
           }));
-          host.exitCode = 1;
+          Reflect.set(host, 'exitCode', 1);
           host.stdout.end();
           host.stderr.end();
           host.stdio[3].end();
@@ -3414,7 +3410,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       vi.useRealTimers();
     }
-    failedChild.exitCode = 1;
+    Reflect.set(failedChild, 'exitCode', 1);
     failedChild.stdout?.destroy();
     failedChild.stderr?.destroy();
     failedChild.emit('exit', 1, null);
@@ -3441,7 +3437,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       brokerRetirementRecommended: false,
       denyReadCleanupDeferred: false,
     }), 'utf8');
-    holderChild.exitCode = 0;
+    Reflect.set(holderChild, 'exitCode', 0);
     holderChild.stdout?.destroy();
     holderChild.stderr?.destroy();
     holderChild.emit('exit', 0, null);
@@ -3532,7 +3528,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       } finally {
         vi.useRealTimers();
       }
-      failedChild.exitCode = 1;
+      Reflect.set(failedChild, 'exitCode', 1);
       failedChild.stdout?.destroy();
       failedChild.stderr?.destroy();
       failedChild.emit('exit', 1, null);
@@ -3593,7 +3589,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await expect(
       aborted.processControl.attestStart?.(child, controller.signal, deadlineAt),
     ).rejects.toThrow(/caller cancelled/i);
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3638,7 +3634,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       'data',
       Buffer.from('Windows sandbox launch deadline expired during runner authentication'),
     );
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3713,7 +3709,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       Buffer.from('kodax-windows-sandbox protocol 10 failed: '
         + 'Windows sandbox runner disconnected before Exit'),
     );
-    child.exitCode = 2;
+    Reflect.set(child, 'exitCode', 2);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 2, null);
@@ -3762,7 +3758,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       vi.useRealTimers();
     }
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -3809,7 +3805,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     const deadlineAt = Date.now() + 120_000;
     await failed.processControl.closeInput?.(child, undefined, deadlineAt);
     const attestation = failed.processControl.attestStart?.(child, undefined, deadlineAt);
-    child.exitCode = 1;
+    Reflect.set(child, 'exitCode', 1);
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.emit('exit', 1, null);
@@ -5571,3 +5567,22 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
     await expect(running).rejects.toThrow(/cancelled by SDK caller/i);
   });
 });
+
+async function capturedSandboxReadRoots(workspaceRoot: string, toolCallId: string) {
+  const sandbox = createAsrtShellSandbox({ workspaceRoot, shouldSandbox: () => true });
+  const invocation = await sandbox.prepare({
+    toolCallId, toolInput: { command: 'git status' }, command: 'git status',
+    cwd: workspaceRoot, env: { PATH: process.env.PATH },
+  });
+  try {
+    const filesystem = capturedWorkspaceSessionConfigs.at(-1)?.filesystem;
+    if (!filesystem || typeof filesystem !== 'object') throw new Error('Expected sandbox policy.');
+    const roots: unknown = Reflect.get(filesystem, 'allowRead');
+    if (!Array.isArray(roots) || !roots.every((root): root is string => typeof root === 'string')) {
+      throw new Error('Expected sandbox read roots.');
+    }
+    return roots;
+  } finally {
+    await invocation?.cleanup();
+  }
+}

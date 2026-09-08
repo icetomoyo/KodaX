@@ -189,8 +189,8 @@ describe('Windows trusted text transaction integration', () => {
       textTransactionProtocol: () => 3,
       TrustedTextTransactionRoot: class {
         constructor(_rootPath: string, _stateRoot?: string) {}
-        async snapshot() { throw new Error('not used'); }
-        async commit() { throw new Error('not used'); }
+        async snapshot(): Promise<never> { throw new Error('not used'); }
+        async commit(): Promise<never> { throw new Error('not used'); }
       },
     })).toThrow(/protocol 4/i);
   });

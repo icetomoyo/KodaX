@@ -55,7 +55,7 @@ describe('Runtime daemon orphan idle exit', () => {
         active
           ? {
               ...idlePreflight(),
-              activeRuns: [{}] as RuntimeDaemonPreflight['activeRuns'],
+              activeRuns: [{ runId: 'active', sessionId: 'session', phase: 'running', startedAt: new Date(0).toISOString(), provider: 'test' }],
               blockers: ['active_runs'],
               canStop: false,
             }

@@ -504,7 +504,7 @@ async function runBounded<T>(
   let timer: NodeJS.Timeout | undefined;
   const operationResult = Promise.resolve()
     .then(operation)
-    .then<BoundedResult<T>>(
+    .then<BoundedResult<T>, BoundedResult<T>>(
       (value) => ({ status: 'fulfilled', value }),
       (error: unknown) => ({ status: 'rejected', error }),
     );

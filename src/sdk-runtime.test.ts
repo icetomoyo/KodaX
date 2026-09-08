@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import {
   _resetActiveRootQueueRoutesForTests,
@@ -49,6 +49,8 @@ import type {
   AutoModePermissionReview,
   AutoModeToolGuardrail,
   KodaXMessage,
+  KodaXEvents,
+  KodaXShellSandboxObservation,
   KodaXOptions,
   KodaXResult,
   KodaXShellSandbox,
@@ -94,6 +96,8 @@ const mutableNodeFs = createRequire(import.meta.url)("node:fs") as {
   linkSync: typeof nodeFs.linkSync;
   openSync: typeof nodeFs.openSync;
   readFileSync: typeof nodeFs.readFileSync;
+  readSync: typeof nodeFs.readSync;
+  closeSync: typeof nodeFs.closeSync;
   readdirSync: typeof nodeFs.readdirSync;
   renameSync: typeof nodeFs.renameSync;
   rmSync: typeof nodeFs.rmSync;
@@ -305,7 +309,7 @@ describe("createKodaXRuntime", () => {
       isolation: "worker",
       workerThreadId: expect.any(Number),
     });
-    expect(runtime.capabilities.skillLearningLoop).toEqual({
+    expect(runtime.capabilities?.skillLearningLoop).toEqual({
       version: 1,
       activation: "project_scoped_canary",
       immutableDecisions: true,
@@ -313,7 +317,7 @@ describe("createKodaXRuntime", () => {
       exactUseAttribution: true,
       rollback: true,
     });
-    expect(runtime.capabilities.sandboxRuntime).toMatchObject({
+    expect(runtime.capabilities?.sandboxRuntime).toMatchObject({
       version: 11,
       genericCommandExecution: true,
       ordinaryCallsTriggerSetup: false,
@@ -325,7 +329,7 @@ describe("createKodaXRuntime", () => {
       windowsShellAuthority: "native-token-job-v2",
       commandLifetimeFilesystemLease: false,
     });
-    expect(runtime.capabilities.runtimeAutoModeGuardrail).toMatchObject({
+    expect(runtime.capabilities?.runtimeAutoModeGuardrail).toMatchObject({
       version: 5,
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
@@ -336,9 +340,9 @@ describe("createKodaXRuntime", () => {
       retryClassifierTimeoutMs: 180_000,
       maxClassifierAttempts: 2,
     });
-    expect(runtime.capabilities.runtimeAutoModeGuardrail)
+    expect(runtime.capabilities?.runtimeAutoModeGuardrail)
       .not.toHaveProperty("defaultSpeculativeWindowMs");
-    expect(runtime.capabilities.sharedSessionSettings).toEqual({
+    expect(runtime.capabilities?.sharedSessionSettings).toEqual({
       version: 2,
       permissionModes: ["plan", "accept-edits", "auto", "full-access"],
       legacyPermissionModeAliases: { "auto-in-project": "auto" },
@@ -347,24 +351,24 @@ describe("createKodaXRuntime", () => {
         "autoModeClassifierModel",
       ]),
     });
-    expect(runtime.capabilities.runtimeEventCoalescing).toEqual({
+    expect(runtime.capabilities?.runtimeEventCoalescing).toEqual({
       version: 1,
     });
-    expect(runtime.capabilities.managedRunDurability).toMatchObject({
+    expect(runtime.capabilities?.managedRunDurability).toMatchObject({
       version: 1,
       initialInputBeforeExecution: true,
       completedTurnBeforeEvent: true,
       deliveredInputBeforeEvent: true,
       persistenceFailure: "fail_closed",
     });
-    expect(runtime.capabilities.actorSettlementConvergence).toEqual({
+    expect(runtime.capabilities?.actorSettlementConvergence).toEqual({
       version: 2,
       rootFence: "fail_closed",
       sameOwnerRepair: "automatic",
       unknownAfterTurnQueue: true,
       terminal: "failed",
     });
-    expect(runtime.capabilities.conversationHistory).toEqual({
+    expect(runtime.capabilities?.conversationHistory).toEqual({
       version: 2,
       immutablePaging: true,
       revisionedBoundaries: true,
@@ -2112,7 +2116,7 @@ describe("createKodaXRuntime", () => {
       options: { context: { shellExecution: undefined } },
     });
     await inheritedHandle.result;
-    expect(capturedOptions?.context?.shellExecution).toEqual(shellExecution);
+    expect(capturedOptions).toMatchObject({ context: { shellExecution } });
 
     expect(settingsEvents).toHaveLength(1);
     expect(effectiveConfigs[0]).toMatchObject({
@@ -2622,7 +2626,7 @@ describe("createKodaXRuntime", () => {
       if (fd === sentinelFd) {
         throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
       }
-      return originalReadSync(fd, ...rest);
+      return Reflect.apply(originalReadSync, mutableNodeFs, [fd, ...rest]);
     }) as typeof nodeFs.readSync;
     mutableNodeFs.closeSync = ((fd) => {
       if (fd === sentinelFd) return;
@@ -2789,7 +2793,7 @@ describe("createKodaXRuntime", () => {
     } finally {
       finishRun?.({
         success: false,
-        error: "test cleanup",
+        lastText: "test cleanup",
         messages: [],
         sessionId: session.id,
       });
@@ -2809,7 +2813,7 @@ describe("createKodaXRuntime", () => {
     let runsDirectoryReads = 0;
     mutableNodeFs.readdirSync = ((directory, options) => {
       if (String(directory) === runsDir) runsDirectoryReads += 1;
-      return readdirSync(directory, options);
+      return Reflect.apply(readdirSync, mutableNodeFs, [directory, options]);
     }) as typeof nodeFs.readdirSync;
     syncBuiltinESMExports();
     let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
@@ -5655,6 +5659,7 @@ describe("createKodaXRuntime", () => {
       messages,
       lineage: createSessionLineage(messages),
       title: "Snapshot batched writes",
+      gitRoot: tempRoot,
     });
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const originalOpen = nodeFsPromises.open.bind(nodeFsPromises);
@@ -5674,7 +5679,7 @@ describe("createKodaXRuntime", () => {
     );
     try {
       const observation = await runtime.sessions.observe(sessionId, () => undefined);
-      expect(observation.snapshot.transcript.entries).toHaveLength(50);
+      expect(observation.snapshot.transcript?.entries).toHaveLength(50);
       expect(snapshotWrites).toBeLessThanOrEqual(8);
       observation.close();
     } finally {
@@ -5970,7 +5975,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-concurrent-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadBlocked: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -6034,7 +6039,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-reader-lease-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadBlocked: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -6781,7 +6786,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-chunk-timeout-sessions"),
     });
-    let open: ReturnType<typeof vi.spyOn> | undefined;
+    let open: MockInstance<typeof fs.open> | undefined;
     let releaseRead: (() => void) | undefined;
     let markReadStarted: (() => void) | undefined;
     const readGate = new Promise<void>((resolve) => {
@@ -8149,12 +8154,13 @@ describe("createKodaXRuntime", () => {
     await new FileSessionStorage({ sessionsDir }).save(sessionId, {
       messages: [{ role: "user", content: "stable after retry" }],
       title: "Capture retry",
+      gitRoot: tempRoot,
     });
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const original = FileSessionStorage.prototype.readFullSnapshot;
     let attempts = 0;
     const read = vi.spyOn(FileSessionStorage.prototype, "readFullSnapshot")
-      .mockImplementation(async function (id, options) {
+      .mockImplementation(async function (this: FileSessionStorage, id, options) {
         if (id === sessionId && attempts < 2) {
           attempts += 1;
           throw new SessionReadError("data_changed", "writer changed the session");
@@ -8169,7 +8175,7 @@ describe("createKodaXRuntime", () => {
       expect(attempts).toBe(3);
 
       attempts = 0;
-      read.mockImplementation(async function (id, options) {
+      read.mockImplementation(async function (this: FileSessionStorage, id, options) {
         if (id === sessionId) {
           attempts += 1;
           throw new SessionReadError("data_changed", "writer keeps changing the session");
@@ -10724,7 +10730,7 @@ describe("createKodaXRuntime", () => {
         success: true,
         lastText: "unexpected managed continuation",
         messages: [],
-        sessionId: options.session?.id,
+        sessionId: options.session?.id ?? "missing-session",
       });
     });
     codingMock.startKodaX.mockImplementation((options: KodaXOptions) => (
@@ -10732,7 +10738,7 @@ describe("createKodaXRuntime", () => {
         success: true,
         lastText: "coding continuation completed",
         messages: [],
-        sessionId: options.session?.id,
+        sessionId: options.session?.id ?? "missing-session",
       }))
     ));
 
@@ -11723,6 +11729,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails and drains after repair when the fenced root provider never settles", async () => {
+    let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
@@ -11732,7 +11739,7 @@ describe("createKodaXRuntime", () => {
     });
     let terminalSaveStarted = false;
     let rootAborted = false;
-    let lateAskUser: Promise<string> | undefined;
+    let lateAskUser: ReturnType<NonNullable<KodaXEvents["askUser"]>> | undefined;
     let lateExitPlanMode: Promise<boolean | "not-in-plan-mode"> | undefined;
     let resolveRoot: ((result: KodaXResult) => void) | undefined;
     let settleFirstInFlightTool: (() => void) | undefined;
@@ -11782,7 +11789,7 @@ describe("createKodaXRuntime", () => {
             success: true,
             lastText: "queued input ran after durability repair",
             messages: [],
-            sessionId: options.session?.id,
+            sessionId: options.session?.id ?? "missing-session",
           });
         }
         return new Promise<KodaXResult>((resolve) => {
@@ -11841,8 +11848,9 @@ describe("createKodaXRuntime", () => {
             lateExitPlanMode = options.events?.exitPlanMode?.('late plan');
             options.events?.onMidTurnUserMessages?.(['late input']);
             options.events?.onMemoryReview?.({
-              reviewKey: 'late-review',
-            } as Parameters<NonNullable<KodaXEvents["onMemoryReview"]>>[0]);
+              trigger: 'episode_completed', createdAt: new Date(0).toISOString(),
+              sourceRefs: [], candidateRefs: [], actions: [], warnings: [],
+            });
             options.events?.onMemoryNotice?.({
               episodeId: 'late-episode',
               summaries: [],
@@ -11865,6 +11873,7 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Automatically recover an unknown Actor settlement",
       });
+      cleanupSessionId = session.id;
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "self-fence after Actor durability becomes unknown",
@@ -11986,6 +11995,7 @@ describe("createKodaXRuntime", () => {
         interrupted: true,
         lastText: "test cleanup",
         messages: [],
+        sessionId: cleanupSessionId,
       });
       save.mockRestore();
       vi.useRealTimers();
@@ -11994,6 +12004,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("repairs a Stop-before-self-fence race without waiting for its root provider", async () => {
+    let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
@@ -12044,7 +12055,7 @@ describe("createKodaXRuntime", () => {
             success: true,
             lastText: "queued successor completed after repair",
             messages: [],
-            sessionId: options.session?.id,
+            sessionId: options.session?.id ?? "missing-session",
           });
         }
         return new Promise<KodaXResult>((resolve) => {
@@ -12054,6 +12065,7 @@ describe("createKodaXRuntime", () => {
       const session = await runtime.sessions.create({
         title: "Repair a Stop-before-self-fence race",
       });
+      cleanupSessionId = session.id;
       const run = await runtime.runs.start({
         sessionId: session.id,
         prompt: "ignore the first provider abort",
@@ -12130,6 +12142,7 @@ describe("createKodaXRuntime", () => {
         interrupted: true,
         lastText: "test cleanup",
         messages: [],
+        sessionId: cleanupSessionId,
       });
       save.mockRestore();
       vi.useRealTimers();
@@ -16382,7 +16395,7 @@ describe("createKodaXRuntime", () => {
     try {
       mutableNodeFs.readdirSync = ((directory, options) => {
         if (String(directory) === runsDir) runsDirectoryReads += 1;
-        return readdirSync(directory, options);
+        return Reflect.apply(readdirSync, mutableNodeFs, [directory, options]);
       }) as typeof nodeFs.readdirSync;
       syncBuiltinESMExports();
       try {
@@ -17482,7 +17495,7 @@ describe("createKodaXRuntime", () => {
       requirements: { skillLearningLoop: 1 },
     });
 
-    expect(runtime.capabilities.skillLearningLoop).toEqual({
+    expect(runtime.capabilities?.skillLearningLoop).toEqual({
       version: 1,
       activation: "project_scoped_canary",
       immutableDecisions: true,
@@ -17536,7 +17549,7 @@ describe("createKodaXRuntime", () => {
           success: true,
           lastText: "done",
           messages: [],
-          sessionId: options.session?.id,
+          sessionId: options.session?.id ?? "missing-session",
         };
       },
     );
@@ -18525,7 +18538,7 @@ describe("createKodaXRuntime", () => {
       await expect(runtime.permissions.listPending({ runId: handle.runId }))
         .resolves.toEqual([]);
 
-      const observations: KodaXToolSandboxObservationUpdate[] = [];
+      const observations: KodaXShellSandboxObservation[] = [];
       invocation = await runOptions.context?.shellSandbox?.prepare({
         toolCallId: "bash_accept_edits",
         toolInput: { command: "git status --short" },
@@ -19005,6 +19018,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: "bash_full_direct",
       ...runOptions.context,
+      gitRoot: runOptions.context?.gitRoot ?? undefined,
     });
     expect(directResult).toContain("full-access-direct");
     expect(callerPrepare).not.toHaveBeenCalled();
@@ -19135,6 +19149,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: autoCall.id,
       ...executionContext,
+      gitRoot: executionContext.gitRoot ?? undefined,
     });
     expect(autoResult).toContain("auto-after-switch");
     expect(observedPrepare).toHaveBeenCalledOnce();
@@ -19159,6 +19174,7 @@ describe("createKodaXRuntime", () => {
       backups: new Map(),
       toolCallId: fullCall.id,
       ...executionContext,
+      gitRoot: executionContext.gitRoot ?? undefined,
     });
     expect(fullResult).toContain("full-after-switch");
     expect(observedPrepare).toHaveBeenCalledOnce();
@@ -19762,7 +19778,7 @@ describe("createKodaXRuntime", () => {
         version: 1 as const,
         state: "applied" as const,
         backend: "windows-restricted-user" as const,
-        policyId: "caller-sandbox" as const,
+        policyId: "kodax-workspace-shell-v1" as const,
       };
       const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
         request.reportObservation?.(callerObservation);
@@ -19814,7 +19830,7 @@ describe("createKodaXRuntime", () => {
         schemaVersion: 1,
         analysis: { status: "complete", shell: "shell", binding: "exact" },
         operations: [{
-          kind: "update",
+          kind: "write",
           target: { path: existingTarget, boundary: "outside-workspace" },
         }],
         risks: ["cross_boundary_mutation"],
@@ -19855,7 +19871,7 @@ describe("createKodaXRuntime", () => {
         input: { command: `echo ok > "${missingTarget}"` },
       };
       await authorizeRuntimeAutoCall(runOptions, call);
-       const observations: KodaXToolSandboxObservationUpdate[] = [];
+       const observations: KodaXShellSandboxObservation[] = [];
        const created = await runOptions.context?.shellSandbox?.prepare({
         toolCallId: call.id,
         toolInput: call.input,

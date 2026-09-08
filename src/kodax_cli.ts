@@ -204,6 +204,8 @@ import {
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
   type CanonicalPermissionMode,
+  type PermissionMode,
+  canonicalizePermissionMode,
   type ReplRuntimePermissionGrantSuggestion,
   type ReplRuntimePermissionPrompt,
   type PreparedInvocation,
@@ -562,7 +564,7 @@ interface InteractiveRuntimeRunnerInput {
   readonly options: KodaXOptions;
   readonly prompt: string;
   readonly sessionId: string;
-  readonly permissionMode?: CanonicalPermissionMode;
+  readonly permissionMode?: PermissionMode;
   readonly autoModeSettings?: ReplRuntimeAutoModeSettings;
   readonly surface?: 'cli' | 'repl';
   readonly requestPermission?: ReplRuntimePermissionPrompt;
@@ -666,14 +668,15 @@ export function createInteractiveRuntimeRunner(
       runtime.identity.mode === 'daemon' ||
       runtime.identity.isolation === 'worker';
     const workerHosted = runtime.identity.isolation === 'worker';
-    const invocationPolicy = input.options.context?.skillInvocation?.runtimePolicy;
-    const policyOptions: KodaXOptions = transportIsolated && invocationPolicy
+    const skillInvocation = input.options.context?.skillInvocation;
+    const invocationPolicy = skillInvocation?.runtimePolicy;
+    const policyOptions: KodaXOptions = transportIsolated && skillInvocation && invocationPolicy
       ? {
           ...input.options,
           context: {
             ...input.options.context,
             skillInvocation: {
-              ...input.options.context?.skillInvocation,
+              ...skillInvocation,
               runtimePolicy: { ...invocationPolicy, enforceAtRuntime: true },
             },
           },
@@ -704,12 +707,12 @@ export function createInteractiveRuntimeRunner(
     ) {
       await autoModeControl.syncSettings(
         input.sessionId,
-        input.permissionMode,
+        canonicalizePermissionMode(input.permissionMode),
         input.autoModeSettings,
       );
     } else if (input.permissionMode !== undefined) {
       await runtime.sessions.updateSettings(input.sessionId, {
-        permissionMode: input.permissionMode,
+        permissionMode: canonicalizePermissionMode(input.permissionMode),
       });
     }
     const bridge = createRuntimeReplEventBridge(runtime, input);
@@ -856,12 +859,12 @@ export async function prepareCliSkillInvocation(
 
 async function resolveCliTaskSessionId(options: KodaXOptions): Promise<string> {
   if (options.session?.id) return options.session.id;
+  const storage = options.session?.storage;
+  const list = storage?.list;
   if (
     (options.session?.resume || options.session?.autoResume) &&
-    options.session.storage?.list
+    storage && list
   ) {
-    const storage = options.session.storage;
-    const list = storage.list;
     const recent = await findMostRecentResumableSession(
       {
         list: (gitRoot, listOptions) =>
@@ -1068,10 +1071,12 @@ function forwardDaemonStreamEvent(
   } else if (event.type === 'tool.progress') {
     forwardDaemonToolProgress(events, payload);
   } else if (event.type === 'tool.sandbox' && isRecord(payload.update)) {
+    const update = payload.update as Partial<Parameters<
+      NonNullable<KodaXEvents['onToolSandboxObservation']>
+    >[0]>;
+    if (typeof update.id !== 'string' || update.observation === undefined) return false;
     events?.onToolSandboxObservation?.(
-      payload.update as Parameters<
-        NonNullable<KodaXEvents['onToolSandboxObservation']>
-      >[0],
+      { ...update, id: update.id, observation: update.observation },
       payload.meta as Parameters<
         NonNullable<KodaXEvents['onToolSandboxObservation']>
       >[1],
@@ -4039,7 +4044,7 @@ async function runMemoryReviewDrain(input: {
     config.model,
   );
   const cwd = process.cwd();
-  const sessionId = generateSessionId();
+  const sessionId = await generateSessionId();
   const baseOptions: KodaXOptions = {
     provider: providerName,
     ...(model === undefined ? {} : { model }),

@@ -32,6 +32,31 @@ import { A2AFileTaskStore } from './task-store.js';
 
 const roots: string[] = [];
 
+it.each([
+  ['unknown', 'TASK_STATE_UNSPECIFIED'],
+  ['waiting_agent', 'TASK_STATE_WORKING'],
+  ['recovering', 'TASK_STATE_WORKING'],
+] as const)('projects Runtime result phase %s into an A2A task state', async (phase, state) => {
+  const runtime = fakeRuntime();
+  const start = runtime.runs.start.bind(runtime.runs);
+  vi.spyOn(runtime.runs, 'start').mockImplementation(async (input) => {
+    const handle = await start(input);
+    return { ...handle, result: handle.result.then((result) => ({ ...result, phase })) };
+  });
+  const base = serverOptions(runtime, temporaryRoot());
+  const server = createKodaXA2AServer({ ...base, limits: { ...base.limits, maxTaskWaitMs: 1 } });
+  try {
+    const taskId = await startPendingTask(server, `phase-${phase}`);
+    await expect.poll(async () => {
+      const response = await server.handle(directRpcRequest('GetTask', { id: taskId }));
+      const body = await response.json() as { result: { status: { state: string } } };
+      return body.result.status.state;
+    }).toBe(state);
+  } finally {
+    await server.close();
+  }
+});
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });

@@ -32,7 +32,8 @@ const acpServerState = vi.hoisted(() => ({
       setModel: vi.fn(),
       setReasoning: vi.fn(),
       abort: vi.fn(),
-      result: Promise.resolve({
+      result: Promise.resolve<KodaXResult>({
+        lastText: "",
         interrupted: false,
         success: true,
         messages: [],

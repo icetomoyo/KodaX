@@ -66,6 +66,7 @@ import {
   KodaXShellSandboxBackend,
   KodaXPreparedShellSandboxInvocation,
   KodaXShellSandboxObservation,
+  KodaXShellSandboxCleanupResult,
   KodaXShellSandboxProcessControl,
   KodaXSkillScriptRunInput,
   KodaXSkillScriptRunner,
@@ -3537,8 +3538,8 @@ function createWindowsV2ProcessControl(
         phases.get(child) === undefined
           ? undefined
           : encodeWindowsSandboxV2ControlFrame('terminate'),
-        (error) => {
-        if (error !== null && error !== undefined) deliveryFailure ??= error;
+        (error?: Error | null) => {
+          if (error !== null && error !== undefined) deliveryFailure ??= error;
         },
       );
     });
@@ -3656,7 +3657,7 @@ function writeSandboxGate(
   if (input === null) return Promise.reject(new Error('Sandbox gate stdin is unavailable.'));
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    const cleanup = (): void => input.removeListener('error', onError);
+    const cleanup = (): void => { input.removeListener('error', onError); };
     const settle = (error?: Error | null): void => {
       if (settled) return;
       settled = true;
@@ -3676,7 +3677,7 @@ function closeSandboxGate(child: ReturnType<typeof spawn>): Promise<void> {
   if (input === null || input.destroyed || input.writableEnded) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    const cleanup = (): void => input.removeListener('error', onError);
+    const cleanup = (): void => { input.removeListener('error', onError); };
     const settle = (error?: Error | null): void => {
       if (settled) return;
       settled = true;
@@ -3719,7 +3720,7 @@ async function runBrokerResult(
   rememberChildProcessTree(child);
   const collecting = collectProcess(child, signal, timeoutMs, maxOutputBytes);
   const control = collectSandboxBrokerControl(child).then(
-    (output) => ({ output }),
+    (output) => ({ output, failure: undefined }),
     (error: unknown) => ({ output: new Uint8Array(), failure: errorText(error) }),
   );
   try {
@@ -4548,7 +4549,7 @@ function workspaceShellSandboxConfig(
   shellTempDirectory: string | undefined,
   agentHomeAccess?: AsrtShellAgentHomeAccess,
   filesystemAccess?: AsrtShellSandboxSelection['filesystemAccess'],
-  runtimeReadScopes = workspaceShellRuntimeReadScopes(
+  runtimeReadScopes: readonly string[] = workspaceShellRuntimeReadScopes(
     process.env,
     workspaceShellExecutable(),
   ),
@@ -4885,7 +4886,7 @@ export async function runKodaXSandboxed(
   const protectedTextStateRoots = process.platform === 'win32'
     ? []
     : trustedTextNativeArtifactStateRoots();
-  const normalizedFilesystem: KodaXSandboxFilesystemPolicy = {
+  const normalizedFilesystem = {
     allowRead: normalizedSandboxPaths(input.filesystem.allowRead, cwd),
     allowWrite: normalizedSandboxPaths(input.filesystem.allowWrite, cwd),
     denyRead: normalizedSandboxPaths(input.filesystem.denyRead, cwd),
@@ -5093,7 +5094,7 @@ export async function doctorSandboxExecution(
       args,
       cwd,
       filesystem: {
-        allowRead: config.filesystem.allowRead,
+        allowRead: config.filesystem.allowRead ?? [],
         allowWrite: [],
         denyRead: config.filesystem.denyRead,
         denyWrite: [],
@@ -5732,7 +5733,7 @@ async function prepareWindowsV2Invocation(input: {
   throwIfSandboxRunnerPreparationStopped(input.signal, preparationDeadlineAt);
   const shellPolicy = withPreparedWindowsRunner(input.shellPolicy);
   assertWindowsSandboxControlStateNotDirectlyAccessible({
-    allowRead: shellPolicy.filesystem.allowRead,
+    allowRead: shellPolicy.filesystem.allowRead ?? [],
     allowWrite: shellPolicy.filesystem.allowWrite,
     denyRead: shellPolicy.filesystem.denyRead,
     denyWrite: shellPolicy.filesystem.denyWrite,
@@ -5818,7 +5819,7 @@ async function prepareWindowsV2Invocation(input: {
       ),
     );
     const preinstalledReadRoots = windowsSandboxPreinstalledReadRoots(
-      shellPolicy.filesystem.allowRead,
+      shellPolicy.filesystem.allowRead ?? [],
       cutover.setupReadRoots,
     );
     const nativeRequest = createWindowsSandboxV2RunRequest({
@@ -5835,7 +5836,7 @@ async function prepareWindowsV2Invocation(input: {
       targetArgv: [input.executable, ...input.args],
       cwd: input.cwd,
       preinstalledReadRoots,
-      allowRead: shellPolicy.filesystem.allowRead,
+      allowRead: shellPolicy.filesystem.allowRead ?? [],
       allowWrite: shellPolicy.filesystem.allowWrite,
       denyRead: shellPolicy.filesystem.denyRead,
       denyWrite: shellPolicy.filesystem.denyWrite,
@@ -5863,7 +5864,7 @@ async function prepareWindowsV2Invocation(input: {
       },
     });
     throwIfSandboxRunnerPreparationStopped(input.signal, operationDeadlineUnixMs);
-    let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
+    let cleanupPromise: Promise<KodaXShellSandboxCleanupResult | undefined> | undefined;
     const ownedBrokerLease = brokerLease;
     const ownedRequestFile = nativeRequestFile;
     const ownedTerminalRecordFile = nativeTerminalRecordFile;

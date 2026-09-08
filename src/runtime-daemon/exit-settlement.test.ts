@@ -80,7 +80,7 @@ function runtime(
       inspect: vi.fn(async () => ({
         runtimeId: expectedOwner.runtimeId,
         revision: 7,
-        ownerPolicy: { mode: 'daemon', revision: 0, updatedAt: new Date(0).toISOString() },
+        ownerPolicy: { mode: 'daemon' as const, revision: 0, updatedAt: new Date(0).toISOString() },
         owner: expectedOwner,
         preflight: {
           blockers,
@@ -103,7 +103,7 @@ function dependencies(
     isPidAlive: vi.fn(() => false),
     readProcessStartIdentity: vi.fn(() => undefined),
     waitForProcessExit: vi.fn(async () => true),
-    killPidTree: vi.fn(async () => 'already-exited'),
+    killPidTree: vi.fn<RuntimeExitSettlementDependencies['killPidTree']>(async () => 'already-exited'),
     removeRuntimeExitIntentFile: vi.fn((intentPath) => {
       fs.rmSync(intentPath, { force: true });
     }),
@@ -332,7 +332,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.close = vi.fn(async () => {
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(async () => {
       fs.rmSync(paths.lockFile, { force: true });
       fs.rmSync(paths.stateFile, { force: true });
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -344,7 +344,7 @@ describe('runtime exit settlement', () => {
       });
     });
 
-    const waitForProcessExit = vi.fn(async () => true);
+    const waitForProcessExit = vi.fn<RuntimeExitSettlementDependencies['waitForProcessExit']>(async () => true);
     const result = await settleRuntimeDaemonExitForTest({
       configHome,
       profile: 'coder',
@@ -363,7 +363,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.close = vi.fn(async () => {
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(async () => {
       fs.rmSync(paths.lockFile, { force: true });
       fs.rmSync(paths.stateFile, { force: true });
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -411,7 +411,7 @@ describe('runtime exit settlement', () => {
         pid === expectedOwner.pid ? expectedOwner.processStartIdentity : undefined
       )),
       waitForProcessExit: vi.fn(async (pid) => !alive.has(pid)),
-      killPidTree: vi.fn(async (pid, identity) => {
+      killPidTree: vi.fn<RuntimeExitSettlementDependencies['killPidTree']>(async (pid, identity) => {
         expect(pid).toBe(expectedOwner.pid);
         expect(identity).toBe(expectedOwner.processStartIdentity);
         alive.clear();
@@ -427,7 +427,7 @@ describe('runtime exit settlement', () => {
     }, deps);
 
     expect(result).toMatchObject({ status: 'recovered' });
-    expect(result.repairs).toEqual(['windows_process_tree']);
+    expect(result).toMatchObject({ repairs: ['windows_process_tree'] });
     expect(fs.existsSync(paths.lockFile)).toBe(false);
     expect(fs.existsSync(paths.stateFile)).toBe(false);
     expect(readRuntimeOwnerPolicy(paths).mode).toBe('daemon');
@@ -438,7 +438,7 @@ describe('runtime exit settlement', () => {
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
     const kill = vi.fn(async () => 'terminated' as const);
-    const waitForProcessExit = vi.fn(async (pid: number) => (
+    const waitForProcessExit = vi.fn<RuntimeExitSettlementDependencies['waitForProcessExit']>(async (pid: number) => (
       pid === expectedOwner.supervisorPid
     ));
 
@@ -473,7 +473,7 @@ describe('runtime exit settlement', () => {
       supervisorProcessStartIdentity: 'supervisor-start-4102',
     };
     seedDaemon(configHome, expectedOwner);
-    const waitForProcessExit = vi.fn(async () => false);
+    const waitForProcessExit = vi.fn<RuntimeExitSettlementDependencies['waitForProcessExit']>(async () => false);
     const kill = vi.fn(async () => 'terminated' as const);
 
     const result = await settleRuntimeDaemonExitForTest({
@@ -510,7 +510,7 @@ describe('runtime exit settlement', () => {
     };
     seedDaemon(configHome, expectedOwner);
     let supervisorIdentityReads = 0;
-    const waitForProcessExit = vi.fn(async () => false);
+    const waitForProcessExit = vi.fn<RuntimeExitSettlementDependencies['waitForProcessExit']>(async () => false);
     const kill = vi.fn(async () => 'terminated' as const);
 
     const result = await settleRuntimeDaemonExitForTest({
@@ -713,7 +713,7 @@ describe('runtime exit settlement', () => {
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       throw new Error('transport failed before acceptance');
     });
     const kill = vi.fn(async () => 'terminated' as const);
@@ -748,7 +748,7 @@ describe('runtime exit settlement', () => {
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const firstRuntime = runtime(expectedOwner);
     let acceptLateStop: (() => void) | undefined;
-    firstRuntime.daemon.stopForInline = vi.fn(() => new Promise((resolve) => {
+    firstRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(() => new Promise((resolve) => {
       acceptLateStop = () => {
         commitRuntimeDaemonRollbackPolicy(paths, expectedOwner.runtimeId, 0);
         resolve({ accepted: true as const });
@@ -798,7 +798,7 @@ describe('runtime exit settlement', () => {
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.inspect = vi.fn(() => new Promise(() => undefined));
+    managedRuntime.daemon.inspect = vi.fn<RuntimeExitSettlementRuntime['daemon']['inspect']>(() => new Promise(() => undefined));
 
     const result = await settleRuntimeDaemonExitForTest({
       configHome,
@@ -819,7 +819,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       commitRuntimeDaemonRollbackPolicy(paths, expectedOwner.runtimeId, 0);
       throw new Error('response lost after commit');
     });
@@ -843,7 +843,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const firstRuntime = runtime(expectedOwner);
-    const firstStop = vi.fn(async () => {
+    const firstStop = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       throw new Error('transport rejected before commit');
     });
     firstRuntime.daemon.stopForInline = firstStop;
@@ -895,7 +895,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(() => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(() => {
       commitRuntimeDaemonRollbackPolicy(paths, expectedOwner.runtimeId, 0);
       return new Promise(() => undefined);
     });
@@ -918,7 +918,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       fs.rmSync(paths.lockFile, { force: true });
       fs.rmSync(paths.stateFile, { force: true });
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -930,7 +930,7 @@ describe('runtime exit settlement', () => {
       });
       return { accepted: true as const };
     });
-    managedRuntime.close = vi.fn(() => new Promise(() => undefined));
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(() => new Promise(() => undefined));
 
     const result = await settleRuntimeDaemonExitForTest({
       configHome,
@@ -993,7 +993,7 @@ describe('runtime exit settlement', () => {
     const expectedOwner = owner();
     seedDaemon(configHome, expectedOwner);
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       throw new Error('not accepted');
     });
     await settleRuntimeDaemonExitForTest({
@@ -1026,7 +1026,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.close = vi.fn(async () => {
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(async () => {
       fs.rmSync(paths.lockFile, { force: true });
       fs.rmSync(paths.stateFile, { force: true });
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -1058,7 +1058,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.close = vi.fn(async () => {
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(async () => {
       fs.writeFileSync(paths.lockFile, '{corrupt');
       fs.writeFileSync(paths.stateFile, '{corrupt');
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -1136,7 +1136,7 @@ describe('runtime exit settlement', () => {
         waitBudgets.push(timeoutMs);
         return !alive.has(pid);
       }),
-      killPidTree: vi.fn(async () => {
+      killPidTree: vi.fn<RuntimeExitSettlementDependencies['killPidTree']>(async () => {
         alive.clear();
         return 'terminated';
       }),
@@ -1155,7 +1155,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       setTimeout(() => {
         writeRuntimeDaemonShutdownOutcome(paths, {
           version: 1,
@@ -1201,7 +1201,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.daemon.stopForInline = vi.fn(async () => {
+    managedRuntime.daemon.stopForInline = vi.fn<RuntimeExitSettlementRuntime['daemon']['stopForInline']>(async () => {
       setTimeout(() => {
         writeRuntimeDaemonShutdownOutcome(paths, {
           version: 1,
@@ -1245,7 +1245,7 @@ describe('runtime exit settlement', () => {
     seedDaemon(configHome, expectedOwner);
     const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
     const managedRuntime = runtime(expectedOwner);
-    managedRuntime.close = vi.fn(async () => {
+    managedRuntime.close = vi.fn<RuntimeExitSettlementRuntime['close']>(async () => {
       fs.rmSync(paths.lockFile, { force: true });
       fs.rmSync(paths.stateFile, { force: true });
       writeRuntimeDaemonShutdownOutcome(paths, {
@@ -1259,7 +1259,7 @@ describe('runtime exit settlement', () => {
     let now = 1_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const budgets: number[] = [];
-    const waitForProcessExit = vi.fn(async (pid: number, timeoutMs: number) => {
+    const waitForProcessExit = vi.fn<RuntimeExitSettlementDependencies['waitForProcessExit']>(async (pid: number, timeoutMs: number) => {
       budgets.push(timeoutMs);
       if (pid === expectedOwner.pid) now += timeoutMs;
       return true;
@@ -1292,7 +1292,7 @@ describe('runtime exit settlement', () => {
       isPidAlive: vi.fn((pid) => alive.has(pid)),
       readProcessStartIdentity: vi.fn(() => expectedOwner.processStartIdentity),
       waitForProcessExit: vi.fn(async (pid) => !alive.has(pid)),
-      killPidTree: vi.fn(async () => {
+      killPidTree: vi.fn<RuntimeExitSettlementDependencies['killPidTree']>(async () => {
         alive.clear();
         return 'terminated';
       }),
