@@ -100,21 +100,31 @@ export async function readClientPlaneItemText(
   itemId: string,
   part: 'text' | 'input' = 'text',
   historyEntry = false,
+  captured?: { readonly length: number; readonly signal?: AbortSignal },
 ): Promise<string> {
   const read = historyEntry ? plane.readHistoryEntry : plane.readItem;
   if (!read) throw new Error('Full transcript content is unavailable.');
   const parts: string[] = [];
   let offset = 0;
-  let totalLength: number | undefined;
+  let totalLength: number | undefined = captured?.length;
   for (;;) {
+    captured?.signal?.throwIfAborted();
+    if (totalLength !== undefined && offset >= totalLength) return parts.join('');
     const content = await read(sessionId, itemId, { offset, part });
+    captured?.signal?.throwIfAborted();
     if (content === null) throw new Error('Full transcript content is unavailable; reopen history and try again.');
     totalLength ??= content.totalLength;
-    if (content.id !== itemId || content.offset !== offset || content.totalLength !== totalLength) {
+    if (content.id !== itemId || content.offset !== offset
+      || (captured ? content.totalLength < totalLength : content.totalLength !== totalLength)) {
       throw new Error('Transcript content changed during the read; try again.');
     }
-    parts.push(content.text);
-    offset += content.text.length;
+    const text = content.text.slice(0, totalLength - offset);
+    parts.push(text);
+    offset += text.length;
+    if (offset === totalLength) {
+      if (!captured && content.nextOffset !== undefined) throw new Error('Transcript paging exceeded the content length.');
+      return parts.join('');
+    }
     if (content.nextOffset === undefined) {
       if (offset !== totalLength) throw new Error('Full transcript content is unavailable.');
       return parts.join('');
@@ -126,6 +136,35 @@ export async function readClientPlaneItemText(
 }
 
 type ViewToolStatus = NonNullable<ClientViewItem['tool']>['status'];
+
+/** Read the omitted prefix without admitting characters produced after the browse snapshot. */
+export async function readFrozenClientPlaneItems(
+  plane: Pick<InkClientPlane, 'readItem' | 'readHistoryEntry'>,
+  sessionId: string,
+  items: readonly HistoryItem[],
+  signal?: AbortSignal,
+): Promise<HistoryItem[]> {
+  return Promise.all(items.map(async item => {
+    const read = async (part: 'text' | 'input', length: number | undefined): Promise<string | undefined> => {
+      if (length === undefined) return undefined;
+      const text = await readClientPlaneItemText(plane, sessionId, item.historyItemId ?? item.id, part,
+        item.historyItemId !== undefined, { length, signal });
+      return text;
+    };
+    const text = await read('text', item.totalTextLength);
+    const inputText = await read('input', item.totalInputLength);
+    if (text === undefined && inputText === undefined) return item;
+    if (item.type !== 'tool_group' && text !== undefined && text.slice(item.textOffset ?? 0) !== item.text) {
+      throw new Error('Frozen transcript content changed during the read.');
+    }
+    if (item.type === 'tool_group') return { ...item, totalTextLength: undefined, totalInputLength: undefined,
+      tools: item.tools.map(tool => ({ ...tool,
+        ...(text !== undefined ? { output: text } : {}),
+        ...(inputText !== undefined ? { input: { preview: inputText }, inputText, preview: inputText } : {}),
+      })) };
+    return { ...item, ...(text !== undefined ? { text } : {}), textOffset: 0, totalTextLength: undefined };
+  }));
+}
 
 /** Load the current conversation only when the user opens transcript history. */
 export async function readClientPlaneHistory(
@@ -147,9 +186,10 @@ export async function readClientPlaneHistory(
     for (const item of page.items) {
       signal?.throwIfAborted();
       const text = item.totalTextLength !== undefined && item.totalTextLength > item.text.length
-        ? await readClientPlaneItemText(plane, sessionId, item.id, 'text', true) : item.text;
+        ? await readClientPlaneItemText(plane, sessionId, item.id, 'text', true, { length: item.totalTextLength, signal }) : item.text;
       const inputText = item.tool?.totalInputLength !== undefined && item.tool.totalInputLength > (item.tool.inputText?.length ?? 0)
-        ? await readClientPlaneItemText(plane, sessionId, item.id, 'input', true) : item.tool?.inputText;
+        ? await readClientPlaneItemText(plane, sessionId, item.id, 'input', true,
+          { length: item.tool.totalInputLength, signal }) : item.tool?.inputText;
       const [mapped] = clientViewToHistoryItems([{ ...item, text, textOffset: 0, totalTextLength: undefined,
         ...(item.tool ? { tool: { ...item.tool, inputText, totalInputLength: undefined } } : {}),
       }]);
@@ -477,6 +517,7 @@ function findLastIndex(
 function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
   const base = {
     id: item.id,
+    ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
     timestamp: item.timestamp ?? 0,
     isSessionUiOnly: true,
     ...(item.textOffset !== undefined ? { textOffset: item.textOffset } : {}),
@@ -488,7 +529,9 @@ function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
       id: item.tool.callId,
       name: item.tool.name,
       status: TOOL_STATUS_MAP[item.tool.status],
-      ...(item.tool.inputText !== undefined ? { preview: item.tool.inputText, inputText: item.tool.inputText } : {}),
+      ...(item.tool.inputText !== undefined ? {
+        input: { preview: item.tool.inputText }, preview: item.tool.inputText, inputText: item.tool.inputText,
+      } : {}),
       ...(item.text.length > 0 ? { output: boundedText(item) } : {}),
       ...(item.tool.progress !== undefined
         ? { progressLines: [item.tool.progress] }

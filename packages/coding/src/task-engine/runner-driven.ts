@@ -255,7 +255,7 @@ import { withDurableCompactionPersistence } from '../agent-runtime/durable-compa
 // CAP-008: shared initial-messages resolver. Three-tier fallback
 // (inline → storage.load → empty) for AMA frame entry; SA already
 // uses this from `run-substrate.ts`.
-import { resolveInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
+import { appendPromptIfNotDuplicate, resolveInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from '../agent-runtime/middleware/extension-queue.js';
 import {
   buildRuntimeSessionState,
@@ -2106,17 +2106,14 @@ async function runManagedTaskViaRunnerInner(
         ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
     },
   });
-  const userMessageContent = buildPromptMessageContent(
+  const initialMessages = appendPromptIfNotDuplicate(
+    stripManagedRunContextMessages(resolvedInitial.messages),
     promptWithOverlay,
     options.context?.inputArtifacts,
+    liveTurnController.currentTurnId(),
   );
-  const currentMessageTimestamp = new Date().toISOString();
-  const currentUserMessage: KodaXMessage = {
-    role: 'user',
-    content: userMessageContent,
-    turnId: liveTurnController.currentTurnId(),
-    timestamp: currentMessageTimestamp,
-  };
+  const currentUserMessage = initialMessages[initialMessages.length - 1]!;
+  const currentMessageTimestamp = currentUserMessage.timestamp ?? new Date().toISOString();
   const canonicalManagedContext = initialManagedContext.full
     ? createManagedRunContextMessage(initialManagedContext.full, {
         turnId: liveTurnController.currentTurnId(),
@@ -2124,7 +2121,7 @@ async function runManagedTaskViaRunnerInner(
       })
     : undefined;
   const runnerInput = [
-    ...stripManagedRunContextMessages(resolvedInitial.messages),
+    ...initialMessages.slice(0, -1),
     ...(canonicalManagedContext ? [canonicalManagedContext] : []),
     currentUserMessage,
   ];

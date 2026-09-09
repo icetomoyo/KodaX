@@ -99,6 +99,30 @@ async function toolRound(sessionId: string): Promise<void> {
   await runtime.runs.await(accepted.runId!);
 }
 
+it('shares accepted input identity across history and observation for identical prompts', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  for (const inputId of ['first-identical', 'second-identical']) {
+    const accepted = await client.inputs.submit({ sessionId: session.id, inputId, text: 'Same prompt' });
+    await runtime.runs.await(accepted.runId!);
+  }
+  const page = await client.sessions.readHistory(session.id);
+  expect(page.items.filter(item => item.type === 'user')).toMatchObject([
+    { text: 'Same prompt', inputId: 'first-identical' },
+    { text: 'Same prompt', inputId: 'second-identical' },
+  ]);
+  let users: readonly unknown[] = [];
+  const observation = await client.sessions.observe(session.id, view => {
+    users = view.items.filter(item => item.type === 'user');
+  });
+  try {
+    expect(users).toMatchObject([
+      { text: 'Same prompt', inputId: 'first-identical' },
+      { text: 'Same prompt', inputId: 'second-identical' },
+    ]);
+  } finally { observation.close(); }
+});
+
 it('preserves failed tool outcomes in history after the run settles', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });

@@ -510,6 +510,7 @@ import {
 import {
   buildPromptSurfaceItems,
   captureTranscriptSnapshot,
+  expandTranscriptSnapshot,
   countPendingTranscriptUpdates,
   resolveTranscriptInteractionPolicy,
   resolveTranscriptSurfaceItems,
@@ -528,6 +529,7 @@ import { buildHostSessionPayload } from "./utils/session-payload.js";
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
+  readFrozenClientPlaneItems,
   hasBoundedItemText,
   readClientPlaneItemText,
   readClientPlaneHistory,
@@ -3406,8 +3408,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const lastHistorySearchQueryRef = useRef("");
   const lastAutoCopiedTranscriptItemIdRef = useRef<string | undefined>(undefined);
 
-  // Issue 070: Calculate context token usage for status bar display
-  // Issue 070: Calculate context token usage for status bar display
   // Issue 070: calculate context token usage for the status bar.
   const contextUsage = useMemo(() => {
     if (!effectiveCompactionInfo) return undefined;
@@ -3508,8 +3508,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     lastLiveActivityLabel,
     workStripText: visibleWorkStripText,
     iterationHistory: streamingState.iterationHistory,
-    currentIteration: streamingState.currentIteration,
-    isCompacting: streamingState.isCompacting,
+    currentIteration: clientView?.activity?.iteration?.current ?? streamingState.currentIteration,
+    maxIter: clientView?.activity?.iteration?.maximum ?? clientView?.settings.maxIter ?? options.maxIter ?? streamingState.maxIter,
+    isCompacting: clientView?.activity?.compacting ?? streamingState.isCompacting,
     });
   }, [
     transcriptHistory,
@@ -3529,6 +3530,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     visibleWorkStripText,
     streamingState.iterationHistory,
     streamingState.currentIteration,
+    streamingState.maxIter,
+    options.maxIter,
     streamingState.isCompacting,
   ]);
 
@@ -4457,7 +4460,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }),
         isTranscriptMode,
         streamingState: statusBarStreamingState,
-        maxIter: streamingState.maxIter,
+        clientActivity: clientView?.session.id === context.sessionId ? clientView.activity : undefined,
+        parentContextTokens: clientView?.session.id === context.sessionId ? clientView.parentContextTokens : undefined,
+        maxIter: displaySnapshot?.maxIter ?? clientView?.settings.maxIter ?? options.maxIter ?? streamingState.maxIter,
         contextUsage,
         learning: learningSnapshot,
         isLoading: statusBarIsLoading,
@@ -4486,6 +4491,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       configuredEffort,
       isTranscriptMode,
       statusBarStreamingState,
+      displaySnapshot?.maxIter,
+      clientView,
+      options.maxIter,
       streamingState.maxIter,
       contextUsage,
       learningSnapshot,
@@ -5051,33 +5059,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const historyReadRef = useRef<AbortController | undefined>(undefined);
   const historyBrowseRef = useRef({ sessionId: context.sessionId, isTranscriptMode,
     selectedItemId: transcriptDisplayState.selectedItemId, historyScrollOffset,
-    expandedTranscriptItemIds, activeTextSelection });
+    expandedTranscriptItemIds, activeTextSelection, snapshot: transcriptSnapshot });
   historyBrowseRef.current = { sessionId: context.sessionId, isTranscriptMode,
     selectedItemId: transcriptDisplayState.selectedItemId, historyScrollOffset,
-    expandedTranscriptItemIds, activeTextSelection };
+    expandedTranscriptItemIds, activeTextSelection, snapshot: transcriptSnapshot };
   useEffect(() => () => historyReadRef.current?.abort(), [context.sessionId, isTranscriptMode]);
   const loadCompleteTranscriptSnapshot = useCallback(async (): Promise<boolean> => {
     const plane = options.clientPlane;
-    if (!plane || (transcriptSnapshot?.sessionId === context.sessionId
-      && transcriptSnapshot.items.some((item) => item.historyItemId !== undefined))) return true;
+    if (!plane || transcriptSnapshot?.completeHistoryLoaded) return true;
+    if (!transcriptSnapshot) return false;
     historyReadRef.current?.abort();
     const controller = new AbortController();
     historyReadRef.current = controller;
     const started = historyBrowseRef.current;
     showClipboardNotice('Loading complete saved history…');
     try {
-      const items = await readClientPlaneHistory(plane, started.sessionId, controller.signal);
+      const [items, frozenItems] = await Promise.all([
+        readClientPlaneHistory(plane, started.sessionId, controller.signal),
+        readFrozenClientPlaneItems(plane, started.sessionId, transcriptSnapshot.items, controller.signal),
+      ]);
       const current = historyBrowseRef.current;
-      if (controller.signal.aborted || current.sessionId !== started.sessionId || !current.isTranscriptMode) return false;
+      if (controller.signal.aborted || current.sessionId !== started.sessionId || !current.isTranscriptMode
+        || current.snapshot !== started.snapshot) return false;
       if (current.selectedItemId !== started.selectedItemId || current.historyScrollOffset !== started.historyScrollOffset
         || current.expandedTranscriptItemIds !== started.expandedTranscriptItemIds || current.activeTextSelection !== started.activeTextSelection) {
         showClipboardNotice('Your current selection was kept. Open complete history again when ready.', 'warning');
         return false;
       }
-      setTranscriptSnapshot((snapshot) => snapshot?.sessionId !== started.sessionId ? snapshot : ({ ...snapshot,
-        items: [...items, ...snapshot.items.filter((item) => !['user', 'assistant', 'thinking', 'tool_group'].includes(item.type))],
-      }));
-      setTranscriptDisplayState((state) => setTranscriptSelectedItem(state, undefined));
+      const expanded = expandTranscriptSnapshot({ ...transcriptSnapshot, items: frozenItems }, items);
+      if (!expanded) {
+        showClipboardNotice('Older history could not be loaded without changing this view. Reopen transcript to try again.', 'warning');
+        return false;
+      }
+      setTranscriptSnapshot((snapshot) => snapshot === started.snapshot ? expanded : snapshot);
       showClipboardNotice('Showing complete saved history. Esc returns to current output.');
       return true;
     } catch (error) {
@@ -5395,11 +5409,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     updateTranscriptMouseSelection,
   ]);
 
-  const openHistorySearchSurface = useCallback(async () => {
+  const openHistorySearchSurface = useCallback(() => {
     if (!isTranscriptMode || !currentSurfaceItems.length || confirmRequest || uiRequest) {
       return;
     }
-    if (!await loadCompleteTranscriptSnapshot()) return;
     setShowAllInTranscript(true);
     clearTranscriptMouseSelection();
     const anchorItemId = resolveTranscriptSearchAnchorItemId(
@@ -5422,6 +5435,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }));
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
+    void loadCompleteTranscriptSnapshot();
   }, [
     confirmRequest,
     loadCompleteTranscriptSnapshot,
@@ -5547,12 +5561,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearTranscriptMouseSelection();
   }, [clearTranscriptMouseSelection, scrollTranscriptToBottom]);
 
-  const toggleTranscriptShowAll = useCallback(async () => {
+  const toggleTranscriptShowAll = useCallback(() => {
     if (!isTranscriptMode) {
       return;
     }
-    if (!showAllInTranscript && !await loadCompleteTranscriptSnapshot()) return;
     setShowAllInTranscript((prev) => !prev);
+    if (showAllInTranscript) historyReadRef.current?.abort();
+    else void loadCompleteTranscriptSnapshot();
   }, [isTranscriptMode, showAllInTranscript, loadCompleteTranscriptSnapshot]);
 
   const toggleTranscriptMode = useCallback(() => {
@@ -8859,7 +8874,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           ? [{ type: "info" as const, text: "[No response text was produced for this round]" }]
           : []),
     ];
-    addHistoryItems(roundUiAdditions);
+    // Bound conversations already contain the Host's completed items.
+    if (!options.clientPlane) addHistoryItems(roundUiAdditions);
 
     iterationToolsRef.current = [];
     iterationToolCallsRef.current = [];
@@ -8891,6 +8907,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     reconcileContextLineage,
     resetLiveToolCalls,
     clearManagedForegroundTurnHistory,
+    options.clientPlane,
     setCurrentTool,
     setLastLiveActivityLabel,
     streamingState.currentIteration,
@@ -9713,10 +9730,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Add user message to UI history — store the DISPLAY form so the
       // transcript stays bounded. fullText already went to the agent below.
-      appendHistoryItemsToCurrentSnapshot([{
-        type: "user",
-        text: displayText,
-      }]);
+      if (!options.clientPlane) {
+        appendHistoryItemsToCurrentSnapshot([{
+          type: "user",
+          text: displayText,
+        }]);
+      }
       setInputText("");
       setIsInputEmpty(true);
 
@@ -11238,6 +11257,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       composer={(
         <PromptComposer
           sessionId={context.sessionId}
+          initialValue={inputText}
           onSubmit={handleSubmit}
           onHistoryRecall={handleHistoryRecall}
           // FEATURE_149 Phase 2.1 (v0.7.38) — ↑ on empty buffer pulls the

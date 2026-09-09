@@ -219,6 +219,7 @@ function projectHistoryEntry(
       id: historyItemId(sessionId, revision, entryIndex, ordinal),
       type: item.type as ClientViewItem['type'],
       text: item.text,
+      ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...('icon' in item ? { icon: item.icon } : {}),
       ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
     });

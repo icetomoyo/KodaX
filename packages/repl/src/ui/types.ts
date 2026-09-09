@@ -424,6 +424,8 @@ export type HistoryItemType =
  */
 export interface HistoryItemBase {
   id: string;
+  /** Accepted input identity used to join saved history to a frozen browse snapshot. */
+  inputId?: string;
   type: HistoryItemType;
   timestamp: number;
   textOffset?: number;

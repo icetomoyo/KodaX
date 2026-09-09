@@ -24,7 +24,6 @@ interface ObservedSession {
   readonly runIds: Set<string>;
   persistRequested: boolean;
   persisting?: Promise<void>;
-  readonly transientItems: Set<string>;
   activity?: ClientSessionActivity;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
 }
@@ -34,14 +33,15 @@ export class SessionViewOwner {
   private readonly sessions = new Map<string, ObservedSession>();
 
   constructor(
-    private readonly read: (sessionId: string, includeHistory: boolean, previous?: ClientSessionView) => Promise<ClientSessionView>,
+    private readonly read: (sessionId: string, includeHistory: boolean, previous: ClientSessionView | undefined,
+      liveItems: readonly ClientViewItem[]) => Promise<ClientSessionView>,
     private readonly save: (sessionId: string, runIds: readonly string[], items: readonly ClientViewItem[]) => Promise<void>,
   ) {}
 
   private state(sessionId: string): ObservedSession {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Set(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, transientItems: new Set() };
+      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Set(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -135,18 +135,20 @@ export class SessionViewOwner {
       },
       onManagedTaskStatus: (status) => {
         activity({ managedTask: { phase: status.phase, workerId: status.activeWorkerId, workerTitle: status.activeWorkerTitle,
+          harnessProfile: status.harnessProfile, globalWorkBudget: status.globalWorkBudget,
+          budgetUsage: status.budgetUsage, budgetApprovalRequired: status.budgetApprovalRequired,
           breadcrumb: formatManagedTaskBreadcrumb(status), expandedBreadcrumb: formatManagedTaskBreadcrumb(status, { expanded: true }),
           round: status.currentRound, maximumRounds: status.maxRounds, idleWaiting: status.idleWaiting === true,
           pendingChildren: status.idleWaitingPendingCount, fanoutCount: status.childFanoutCount } });
-        state.items = state.items.filter((item) => !state.transientItems.has(item.id) || !item.id.startsWith(`${runId}:`));
         for (const draft of buildManagedLiveEventDrafts(status)) {
+          // Temporary managed progress belongs to activity, as in the original
+          // REPL. Only explicit retained events belong to conversation history.
+          if (!draft.persistToHistory) continue;
           const item = draft.item;
           if (item.type === 'tool_group') continue;
           const id = `${runId}:${item.id}`;
           upsert({ id, type: item.type, text: item.text, timestamp: item.timestamp,
             ...('icon' in item ? { icon: item.icon } : {}), ...('compactText' in item ? { compactText: item.compactText } : {}) });
-          if (draft.persistToHistory) state.transientItems.delete(id);
-          else state.transientItems.add(id);
         }
         this.changed(sessionId);
         this.checkpoint(sessionId);
@@ -168,7 +170,7 @@ export class SessionViewOwner {
     state.persisting = Promise.resolve().then(async () => {
       while (state.persistRequested) {
         state.persistRequested = false;
-        await this.save(sessionId, [...state.runIds], state.items.filter((item) => !state.transientItems.has(item.id)));
+        await this.save(sessionId, [...state.runIds], state.items);
       }
     }).finally(() => { state.persisting = undefined; });
     void state.persisting.catch((error: unknown) => {
@@ -200,7 +202,6 @@ export class SessionViewOwner {
     state.history = [];
     state.segments.clear();
     state.runIds.clear();
-    state.transientItems.clear();
     state.activity = undefined;
     state.costReport = undefined;
     state.view = undefined;
@@ -258,12 +259,12 @@ export class SessionViewOwner {
     const includeHistory = state.view === undefined || state.historyDirty;
     state.historyDirty = false;
     const generation = state.generation;
-    const loading = this.read(sessionId, includeHistory, state.view).then((view) => {
+    const loading = this.read(sessionId, includeHistory, state.view, state.items).then((view) => {
       if (generation !== state.generation) return;
       if (includeHistory) state.history = view.items;
-      const history = state.history.filter((item) => ![...state.runIds].some((runId) => item.id.startsWith(`${runId}:`)));
+      const items = mergeSessionViewItems(state.history, state.items);
       const costReport = state.costReport?.current?.();
-      state.view = { ...view, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems([...history, ...state.items]) };
+      state.view = { ...view, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
       for (const listener of state.listeners) {
         try { listener(structuredClone(state.view)); }
         catch (error: unknown) {
@@ -280,6 +281,23 @@ export class SessionViewOwner {
     state.loading = loading;
     return loading;
   }
+}
+
+function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonly ClientViewItem[]): ClientViewItem[] {
+  const items = [...history];
+  let nextPosition = items.length;
+  // Canonical entries own their positions. Unsaved text keeps its live order
+  // relative to the next saved tool/notice, or follows history when none exists.
+  for (const item of [...live].reverse()) {
+    const position = items.findIndex(candidate => candidate.id === item.id);
+    if (position >= 0) {
+      items[position] = item;
+      nextPosition = position;
+    } else {
+      items.splice(nextPosition, 0, item);
+    }
+  }
+  return items;
 }
 
 function createChildActivityUpdater(update: (patch: Omit<Partial<ClientSessionActivity>, 'runId'>) => void) {
@@ -305,16 +323,21 @@ function sessionActivityEvents(
     onTodoUpdate: (items) => update({ todos: items.map(({ id, subject, status, description, owner, note, activeForm }) =>
       ({ id, subject, status, description, owner, note, activeForm })) }),
     onIterationStart: (current, maximum) => update({ iteration: { current, maximum } }),
-    onIterationEnd: (info) => update({
-      iteration: { current: info.iter, maximum: info.maxIter },
-      context: { tokenCount: info.tokenCount, tokenSource: info.tokenSource, scope: info.scope ?? 'parent' },
-      ...(info.scope !== 'worker' ? { parentContextTokens: info.tokenCount } : {}),
-      ...(info.usage ? { usage: { ...info.usage } } : {}),
-    }),
+    onIterationEnd: (info) => {
+      const scope = info.contextKind === 'child' || info.scope === 'worker' ? 'worker' : 'parent';
+      update({
+        iteration: { current: info.iter, maximum: info.maxIter },
+        context: { tokenCount: info.tokenCount, tokenSource: info.tokenSource, scope },
+        ...(scope === 'parent' ? { parentContextTokens: info.tokenCount } : {}),
+        ...(info.usage ? { usage: { ...info.usage } } : {}),
+      });
+    },
     onCompactStart: () => update({ compacting: true }),
     onCompactStats: (info) => {
       notices.onCompactStats?.(info);
-      update({ context: { tokenCount: info.tokensAfter, tokenSource: 'estimate', scope: info.contextKind === 'child' ? 'worker' : 'parent' } });
+      const scope = info.contextKind === 'child' ? 'worker' : 'parent';
+      update({ context: { tokenCount: info.tokensAfter, tokenSource: 'estimate', scope },
+        ...(scope === 'parent' ? { parentContextTokens: info.tokensAfter } : {}) });
     },
     onCompact: (tokens, meta) => { notices.onCompact?.(tokens, meta); update({ compacting: false }); },
     onCompactEnd: (meta, result) => { notices.onCompactEnd?.(meta, result); update({ compacting: false }); },
@@ -365,12 +388,24 @@ export function restoreSessionViewItems(
   sessionId: string,
   data: KodaXSessionData | null | undefined,
   conversation?: readonly KodaXMessage[] | null,
+  liveItems: readonly ClientViewItem[] = [],
 ): ClientViewItem[] {
   if (!data) return [];
-  const persisted = restorePersistedViewItems(data.uiHistory);
-  const occurrences = new Map<string, number>();
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
-  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory: data.uiHistory });
+  const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
+  const savedOutputTime = lastAssistant?.timestamp ? Date.parse(lastAssistant.timestamp) : NaN;
+  // A live response can equal an earlier answer before it has been saved.
+  // Only finalized output may lend its display identity to canonical history.
+  const savedLiveItems = liveItems.filter(item => item.type !== 'assistant' && item.type !== 'thinking'
+    || (item.timestamp !== undefined && item.timestamp <= savedOutputTime));
+  // A canonical save can precede the display checkpoint. Reuse the current
+  // display identities during reconciliation instead of showing both versions.
+  const liveIds = new Set(liveItems.map(item => item.id));
+  const uiHistory = [...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
+    ...persistSessionViewItems(savedLiveItems)];
+  const persisted = restorePersistedViewItems(uiHistory);
+  const occurrences = new Map<string, number>();
+  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory });
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
@@ -380,11 +415,12 @@ export function restoreSessionViewItems(
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
     const previous = persisted.find((candidate) => candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp);
-    if (previous) return [previous];
+    if (previous) return [{ ...previous, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}) }];
     const fingerprint = createHash('sha256').update(`${item.type}\0${item.text}\0${item.timestamp ?? ''}`).digest('hex');
     const occurrence = occurrences.get(fingerprint) ?? 0;
     occurrences.set(fingerprint, occurrence + 1);
     return [{ id: `${sessionId}:history:${fingerprint}:${occurrence}`, type: item.type, text: item.text,
+      ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...('icon' in item ? { icon: item.icon } : {}), ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
   });
   for (const entry of data.lineage?.entries ?? []) {

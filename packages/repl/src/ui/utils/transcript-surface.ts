@@ -5,6 +5,7 @@ import type { FullscreenPolicy } from "./terminal-host-profile.js";
 
 export interface TranscriptSnapshot {
   sessionId?: string;
+  completeHistoryLoaded?: boolean;
   items: HistoryItem[];
   /** Bounded observation baseline stays separate from the fully loaded browse snapshot. */
   observedItems?: readonly HistoryItem[];
@@ -22,6 +23,7 @@ export interface TranscriptSnapshot {
   workStripText?: string;
   iterationHistory: IterationRecord[];
   currentIteration: number;
+  maxIter?: number;
   isCompacting: boolean;
 }
 
@@ -38,6 +40,50 @@ export function captureTranscriptSnapshot(
     items: [...options.items],
     managedLiveEvents: [...(options.managedLiveEvents ?? [])],
   };
+}
+
+/** Extend the old prefix using source identity; the frozen current turn remains authoritative. */
+export function expandTranscriptSnapshot(
+  snapshot: TranscriptSnapshot,
+  savedItems: readonly HistoryItem[],
+): TranscriptSnapshot | undefined {
+  const isConversationItem = (item: HistoryItem): boolean =>
+    ["user", "assistant", "thinking", "tool_group"].includes(item.type);
+  let snapshotIndex = snapshot.items.findIndex(item => item.type === "user"
+    && item.inputId !== undefined && savedItems.some(saved => saved.type === "user" && saved.inputId === item.inputId));
+  let savedIndex = snapshotIndex < 0 ? -1 : savedItems.findIndex(item =>
+    item.type === "user" && item.inputId === snapshot.items[snapshotIndex]?.inputId);
+  if (snapshotIndex < 0) {
+    snapshotIndex = snapshot.items.findIndex(item => item.type === "tool_group"
+      && savedItems.some(saved => saved.type === "tool_group"
+        && saved.tools.some(tool => item.tools.some(frozen => frozen.id === tool.id))));
+    const anchor = snapshot.items[snapshotIndex];
+    if (anchor?.type === "tool_group") savedIndex = savedItems.findIndex(saved => saved.type === "tool_group"
+      && saved.tools.some(tool => anchor.tools.some(frozen => frozen.id === tool.id)));
+  }
+  if (snapshotIndex < 0) {
+    snapshotIndex = snapshot.items.findIndex(item =>
+      snapshot.items.filter(other => matchesLegacyUserSource(item, other)).length === 1
+      && savedItems.filter(saved => matchesLegacyUserSource(item, saved)).length === 1);
+    const anchor = snapshot.items[snapshotIndex];
+    if (anchor) savedIndex = savedItems.findIndex(saved => matchesLegacyUserSource(anchor, saved));
+  }
+  if (snapshotIndex < 0) return savedItems.length === 0 && !snapshot.items.some(isConversationItem)
+    ? { ...snapshot, completeHistoryLoaded: true } : undefined;
+  const items = [
+    ...snapshot.items.slice(0, snapshotIndex).filter(item => !isConversationItem(item)),
+    ...savedItems.slice(0, savedIndex),
+    ...snapshot.items.slice(snapshotIndex),
+  ];
+  return { ...snapshot, items, completeHistoryLoaded: true };
+}
+
+/** Legacy view ids use this same source tuple. An ambiguous timestamp is not an anchor. */
+function matchesLegacyUserSource(left: HistoryItem, right: HistoryItem): boolean {
+  return left.type === "user" && right.type === "user"
+    && left.inputId === undefined && right.inputId === undefined
+    && left.timestamp > 0 && left.timestamp === right.timestamp
+    && left.text === right.text;
 }
 
 export interface CountPendingTranscriptUpdatesOptions {

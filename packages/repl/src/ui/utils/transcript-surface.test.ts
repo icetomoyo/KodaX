@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPromptSurfaceItems,
   captureTranscriptSnapshot,
+  expandTranscriptSnapshot,
   countPendingTranscriptUpdates,
   resolveTranscriptInteractionPolicy,
   resolveTranscriptSurfaceItems,
@@ -14,6 +15,43 @@ import {
 import { ToolCallStatus } from "../types.js";
 
 describe("transcript-surface", () => {
+  it("adds saved older history at input identity without replacing the frozen live reply", () => {
+    const snapshot = captureTranscriptSnapshot({
+      items: [
+        { id: "view-second", type: "user", text: "Same prompt", inputId: "second", timestamp: 2 },
+        { id: "live", type: "assistant", text: "Frozen partial", isStreaming: true, timestamp: 3 },
+      ],
+      isLoading: true, isThinking: false, thinkingCharCount: 0, thinkingContent: "", currentResponse: "",
+      activeToolCalls: [], toolInputCharCount: 0, toolInputContent: "", iterationHistory: [], currentIteration: 1,
+      isCompacting: false,
+    });
+    const expanded = expandTranscriptSnapshot(snapshot, [
+      { id: "saved-first", type: "user", text: "Same prompt", inputId: "first", timestamp: 0 },
+      { id: "saved-answer", type: "assistant", text: "Earlier answer", timestamp: 1 },
+      { id: "saved-second", type: "user", text: "Same prompt", inputId: "second", timestamp: 2 },
+      { id: "saved-final", type: "assistant", text: "Frozen partial and later completion", timestamp: 4 },
+    ]);
+    expect(expanded?.items.map(item => item.id)).toEqual(["saved-first", "saved-answer", "view-second", "live"]);
+    expect(snapshot.items).toHaveLength(2);
+    const legacy = { ...snapshot, items: snapshot.items.map(({ inputId: _inputId, ...item }) => item) };
+    expect(expandTranscriptSnapshot(legacy, [
+      { id: "saved-same-text", type: "user", text: "Same prompt", timestamp: 2 },
+      { id: "ambiguous-copy", type: "user", text: "Same prompt", timestamp: 2 },
+    ])).toBeUndefined();
+    expect(expandTranscriptSnapshot({ ...legacy, isLoading: false }, [
+      { id: "older", type: "assistant", text: "Older reply", timestamp: 1 },
+      { id: "saved-same-text", type: "user", text: "Same prompt", timestamp: 2 },
+      { id: "later-input", type: "user", text: "Other client input", timestamp: 4 },
+    ])?.items.map(item => item.id)).toEqual(["older", "view-second", "live"]);
+    const toolSnapshot = { ...snapshot, items: [{ id: "live-tool", type: "tool_group" as const, timestamp: 1,
+      tools: [{ id: "call-one", name: "read", status: ToolCallStatus.Executing, startTime: 1 }],
+    }, ...snapshot.items.slice(1)] };
+    expect(expandTranscriptSnapshot(toolSnapshot, [
+      { id: "old", type: "assistant", text: "Older history", timestamp: 0 },
+      { id: "saved-tool", type: "tool_group", timestamp: 1,
+        tools: [{ id: "call-one", name: "read", status: ToolCallStatus.Success, startTime: 1 }] },
+    ])?.items.map(item => item.id)).toEqual(["old", "live-tool", "live"]);
+  });
   it("captures the full transcript items for transcript mode snapshots", () => {
     const items = [
       { type: "user", text: "Round 1 prompt" },

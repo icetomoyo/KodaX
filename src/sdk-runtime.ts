@@ -62,6 +62,7 @@ import {
   evaluateShellExecPolicy,
   createOutputSegmentProjection,
   effectiveOutputSegmentText,
+  estimateTokens,
   generateSessionId,
   listCodingDispatchableAgents,
   listRunScopedTools,
@@ -4316,7 +4317,7 @@ async function createKodaXRuntimeInternal(
       return null;
     }
   };
-  const sessionViews = new SessionViewOwner(async (sessionId, includeHistory, previous) => {
+  const sessionViews = new SessionViewOwner(async (sessionId, includeHistory, previous, liveItems) => {
     const [session, data, conversation] = await Promise.all([
       includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
       includeHistory ? sessionManager.storage.load(sessionId) : undefined,
@@ -4326,7 +4327,8 @@ async function createKodaXRuntimeInternal(
     const currentRuns = [...runs.values()].filter((run) => run.sessionId === sessionId).map(statusFromRecord);
     const latest = currentRuns.reduce<RuntimeRunStatus | undefined>((last, run) =>
       !last || run.startedAt > last.startedAt ? run : last, undefined);
-    return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data, conversation),
+    return { session, settings: toClientSessionSettings(settings), items: restoreSessionViewItems(sessionId, data, conversation, liveItems),
+      parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
       queue: runService.queuedInputs(sessionId),
       interactions: await interactions.list({ sessionId }),
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)

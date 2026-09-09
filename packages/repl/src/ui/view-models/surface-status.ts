@@ -1,5 +1,6 @@
 import { ToolCallStatus } from "../types.js";
 import type { StatusBarProps } from "../types.js";
+import type { ClientSessionActivity } from "@kodax-ai/coding/client-contract";
 
 export interface SurfaceStatusStreamingState {
   isThinking: boolean;
@@ -53,11 +54,31 @@ export interface BuildSurfaceStatusBarPropsOptions {
   learning?: StatusBarProps["learning"];
   isLoading: boolean;
   managedState?: SurfaceStatusManagedState;
+  clientActivity?: ClientSessionActivity;
+  parentContextTokens?: number;
 }
 
 export function buildSurfaceStatusBarProps(
   options: BuildSurfaceStatusBarPropsOptions,
 ): StatusBarProps {
+  const activity = options.clientActivity;
+  const parentTokens = activity?.parentContextTokens
+    ?? (activity?.context?.scope === 'parent' ? activity.context.tokenCount : undefined)
+    ?? options.parentContextTokens;
+  const currentTokens = options.isLoading
+    ? activity?.context?.tokenCount ?? parentTokens
+    : options.agentMode === 'sa' ? parentTokens : options.parentContextTokens ?? parentTokens;
+  const liveActivity = options.isTranscriptMode ? undefined : activity;
+  const managed = liveActivity?.managedTask;
+  const phase = managed?.phase;
+  const managedState: SurfaceStatusManagedState | undefined = managed ? {
+    phase: phase === 'starting' || phase === 'routing' || phase === 'preflight' || phase === 'round'
+      || phase === 'worker' || phase === 'upgrade' || phase === 'verifying' || phase === 'completed' ? phase : undefined,
+    workerTitle: managed.workerTitle, round: managed.round, maxRounds: managed.maximumRounds,
+    harnessProfile: managed.harnessProfile, globalWorkBudget: managed.globalWorkBudget,
+    budgetUsage: managed.budgetUsage, budgetApprovalRequired: managed.budgetApprovalRequired,
+    idleWaiting: managed.idleWaiting, idleWaitingPendingCount: managed.pendingChildren,
+  } : options.managedState;
   return {
     sessionId: options.sessionId,
     permissionMode: options.permissionMode,
@@ -81,31 +102,34 @@ export function buildSurfaceStatusBarProps(
     toolInputContent: options.isTranscriptMode
       ? options.streamingState.toolInputContent
       : "",
-    currentIteration: options.streamingState.currentIteration,
-    maxIter: options.maxIter,
-    contextUsage: options.contextUsage,
+    currentIteration: liveActivity?.iteration?.current ?? options.streamingState.currentIteration,
+    maxIter: liveActivity?.iteration?.maximum ?? options.maxIter,
+    contextUsage: options.contextUsage && currentTokens !== undefined
+      ? { ...options.contextUsage, currentTokens } : options.contextUsage,
+    tokenUsage: activity?.usage ? { input: activity.usage.inputTokens,
+      output: activity.usage.outputTokens, total: activity.usage.totalTokens } : undefined,
     learning: options.learning,
-    isCompacting: options.streamingState.isCompacting,
+    isCompacting: liveActivity?.compacting ?? options.streamingState.isCompacting,
     showBusyStatus: false,
-    managedPhase: options.isLoading ? options.managedState?.phase : undefined,
-    managedHarnessProfile: options.isLoading ? options.managedState?.harnessProfile : undefined,
-    managedWorkerTitle: options.isLoading ? options.managedState?.workerTitle : undefined,
-    managedRound: options.isLoading ? options.managedState?.round : undefined,
-    managedMaxRounds: options.isLoading ? options.managedState?.maxRounds : undefined,
-    managedGlobalWorkBudget: options.isLoading ? options.managedState?.globalWorkBudget : undefined,
-    managedBudgetUsage: options.isLoading ? options.managedState?.budgetUsage : undefined,
+    managedPhase: options.isLoading ? managedState?.phase : undefined,
+    managedHarnessProfile: options.isLoading ? managedState?.harnessProfile : undefined,
+    managedWorkerTitle: options.isLoading ? managedState?.workerTitle : undefined,
+    managedRound: options.isLoading ? managedState?.round : undefined,
+    managedMaxRounds: options.isLoading ? managedState?.maxRounds : undefined,
+    managedGlobalWorkBudget: options.isLoading ? managedState?.globalWorkBudget : undefined,
+    managedBudgetUsage: options.isLoading ? managedState?.budgetUsage : undefined,
     managedBudgetApprovalRequired: options.isLoading
-      ? options.managedState?.budgetApprovalRequired
+      ? managedState?.budgetApprovalRequired
       : undefined,
     // v0.7.38 FEATURE_156 — gated on `isLoading` like every other
     // managedState passthrough above: when the run finishes the idle
     // state is no longer meaningful, so we clear it the same way the
     // sibling fields are cleared.
     managedIdleWaiting: options.isLoading
-      ? options.managedState?.idleWaiting
+      ? managedState?.idleWaiting
       : undefined,
     managedIdleWaitingPendingCount: options.isLoading
-      ? options.managedState?.idleWaitingPendingCount
+      ? managedState?.idleWaitingPendingCount
       : undefined,
   };
 }

@@ -8,11 +8,13 @@ import type {
 import { CANCELLED_TOOL_RESULT_MESSAGE, type AskUserAnswer } from '@kodax-ai/coding';
 import { ToolCallStatus } from './types.js';
 import { buildTranscriptToolInputCopyText } from './utils/transcript-search.js';
+import { buildTranscriptRows } from './utils/transcript-layout.js';
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
   readClientPlaneItemText,
   readClientPlaneHistory,
+  readFrozenClientPlaneItems,
   runClientPlaneRound,
   viewRunsActive,
   type ClientPlaneDialogSurface,
@@ -25,6 +27,69 @@ function viewItem(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id'
 }
 
 describe('clientViewToHistoryItems (T17)', () => {
+  it('searches and copies the complete frozen stream without later appended characters', async () => {
+    const items = clientViewToHistoryItems([viewItem({
+      id: 'stream', type: 'assistant', text: 'snapshot', textOffset: 6, totalTextLength: 14,
+    })], { activeRunId: 'run' });
+    const expanded = await readFrozenClientPlaneItems({ readItem: async () => ({
+      id: 'stream', text: 'Early snapshot LATER', offset: 0, totalLength: 20,
+    }) }, 'session', items);
+    expect(expanded).toMatchObject([{ id: 'stream', text: 'Early snapshot', isStreaming: true }]);
+    expect(expanded[0]?.totalTextLength).toBeUndefined();
+    expect(items).toMatchObject([{ text: 'snapshot', textOffset: 6, totalTextLength: 14 }]);
+  });
+  it('reads a captured multi-page prefix while the live stream continues to grow', async () => {
+    const prefix = 'a'.repeat(65_536);
+    const items = clientViewToHistoryItems([viewItem({ id: 'growing', type: 'assistant',
+      text: 'frozen-tail', textOffset: prefix.length, totalTextLength: prefix.length + 11,
+    })]);
+    let reads = 0;
+    const expanded = await readFrozenClientPlaneItems({ readItem: async (_session, id, options) => {
+      reads += 1;
+      return typeof options === 'object' && options.offset === prefix.length
+        ? { id, text: 'frozen-tailLATER', offset: prefix.length, totalLength: prefix.length + 16 }
+        : { id, text: prefix, offset: 0, totalLength: prefix.length + 11, nextOffset: prefix.length };
+    } }, 'session', items);
+    expect(expanded).toMatchObject([{ text: `${prefix}frozen-tail` }]);
+    expect(reads).toBe(2);
+  });
+  it('stops frozen content paging when transcript browsing is cancelled', async () => {
+    const controller = new AbortController();
+    let reads = 0;
+    const items = clientViewToHistoryItems([viewItem({ id: 'cancelled-read', type: 'assistant',
+      text: 'tail', textOffset: 65_536, totalTextLength: 65_540,
+    })]);
+    await expect(readFrozenClientPlaneItems({ readItem: async (_session, id) => {
+      reads += 1;
+      controller.abort(new Error('Left transcript'));
+      return { id, text: 'a'.repeat(65_536), offset: 0, totalLength: 65_540, nextOffset: 65_536 };
+    } }, 'session', items, controller.signal)).rejects.toThrow('Left transcript');
+    expect(reads).toBe(1);
+  });
+  it('rejects a changed captured suffix rather than replacing the frozen text', async () => {
+    const items = clientViewToHistoryItems([viewItem({ id: 'changed', type: 'assistant',
+      text: 'old', textOffset: 7, totalTextLength: 10,
+    })]);
+    await expect(readFrozenClientPlaneItems({ readItem: async () => ({
+      id: 'changed', text: 'prefix new', offset: 0, totalLength: 10,
+    }) }, 'session', items)).rejects.toThrow('Frozen transcript content changed');
+  });
+  it('renders Host tool arguments and result details in the transcript', () => {
+    const items = clientViewToHistoryItems([viewItem({
+      id: 'bash-details', type: 'tool', text: 'Command: git status\nExit: 0\nworking tree clean',
+      tool: { callId: 'bash-call', name: 'bash', status: 'success',
+        inputText: JSON.stringify({ command: 'git status', description: 'Inspect working tree' }),
+        startedAt: 1000, endedAt: 3800 },
+    })]);
+    const text = buildTranscriptRows({ items, viewportWidth: 100 })
+      .map((row) => row.text).join('\n');
+    expect(text).toContain('git status');
+    expect(text).toContain('2.8s');
+    const expanded = buildTranscriptRows({ items, viewportWidth: 100, showDetailedTools: true })
+      .map((row) => row.text).join('\n');
+    expect(expanded).toContain('working tree clean');
+    expect(expanded).toContain('Inspect working tree');
+  });
   it('loads older pages and full bounded text for transcript search', async () => {
     const plane = {
       readItem: async () => null,

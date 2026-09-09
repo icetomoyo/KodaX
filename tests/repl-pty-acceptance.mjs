@@ -99,6 +99,15 @@ async function respondToModelRequest(state, request, response) {
     respondWithQuestion(response);
     return;
   }
+  if (token === 'ACCEPT_TOOL' && data.messages.at(-1).role !== 'tool') {
+    response.end(`data: ${JSON.stringify({ id: 'acceptance-tool', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'acceptance-bash', type: 'function',
+        function: { name: 'bash', arguments: JSON.stringify({ command: 'echo ACCEPT_TOOL_RESULT',
+          description: 'Display the acceptance result' }) },
+      }] }, finish_reason: 'tool_calls' }],
+    })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   const send = content => response.write(`data: ${JSON.stringify({
     id: 'acceptance', object: 'chat.completion.chunk',
     choices: [{ index: 0, delta: { content }, finish_reason: null }],
@@ -110,7 +119,8 @@ async function respondToModelRequest(state, request, response) {
       usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
     })}\n\ndata: [DONE]\n\n`);
   };
-  send(`BEGIN_${token}`);
+  send(token === 'ACCEPT_HOLD_TRANSCRIPT'
+    ? 'EARLY_FROZEN_MARKER\n' + 'x'.repeat(10000) + `\nBEGIN_${token}` : `BEGIN_${token}`);
   if (token.includes('HOLD')) state.pending.set(token, finish);
   else setTimeout(finish, 350);
 }
@@ -236,6 +246,64 @@ async function checkPrompt(state) {
   await waitFor('terminal final reply', () => state.terminal.screen().includes('END_ACCEPT_HELLO'));
   assert.equal((await state.client.sessions.list()).length, 1);
   await waitFor('Host saved assistant', () => state.view.items.some(item => item.text.includes('END_ACCEPT_HELLO')));
+  if (state.mode === 'ink') {
+    for (let sample = 0; sample < 30; sample += 1) {
+      assert.ok(state.terminal.screen().split('\n')
+        .filter(line => line.trim() === 'BEGIN_ACCEPT_HELLO END_ACCEPT_HELLO').length <= 1,
+      'The completed reply must not be appended again by the local UI');
+      await delay(50);
+    }
+    const lines = state.terminal.screen().split('\n').map(line => line.trim());
+    assert.equal(lines.filter(line => line === 'ACCEPT_HELLO').length, 1, 'One input must render once');
+    assert.equal(lines.filter(line => line === 'BEGIN_ACCEPT_HELLO END_ACCEPT_HELLO').length, 1,
+      'One assistant reply must render once after persistence');
+    const screen = state.terminal.screen();
+    assert.ok(screen.includes('60/65.5k'), 'Status must show API context usage against the configured window');
+    assert.ok(screen.includes('50→10') && screen.includes('(60)'), 'Status must show actual API input/output usage');
+    assert.ok(screen.includes('1/7'), 'Status must preserve the selected iteration limit');
+  }
+}
+
+async function checkAmaPresentation(state) {
+  await state.terminal.submit('/agent-mode ama');
+  await waitFor('AMA setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'ama');
+  await delay(300);
+  await state.terminal.submit('ACCEPT_HOLD_AMA');
+  await waitFor('AMA streaming reply', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_AMA'));
+  await delay(300);
+  assert.equal(state.terminal.screen().split('\n').filter(line => line.trim() === 'ACCEPT_HOLD_AMA').length, 1,
+    'AMA must display the submitted user query exactly once');
+  assert.equal(received(state, 'ACCEPT_HOLD_AMA')[0].messages
+    .filter(message => message.role === 'user' && message.content === 'ACCEPT_HOLD_AMA').length, 1,
+  'The provider must receive one canonical AMA query');
+  assert.ok(!state.terminal.screen().includes('AMA Worker - Worker analyzing task'),
+    'Transient AMA status must not be an extra transcript row');
+  state.pending.get('ACCEPT_HOLD_AMA')();
+  await waitFor('AMA completed', () => state.view.runs.every(run => run.phase === 'completed'));
+  await waitFor('AMA input ready', () => /^>\s+Type a message/m.test(state.terminal.screen()));
+  const screen = state.terminal.screen();
+  assert.ok(screen.indexOf('BEGIN_ACCEPT_HELLO END_ACCEPT_HELLO') < screen.indexOf('ACCEPT_HOLD_AMA'),
+    'The previous answer must remain before the next user query');
+  await state.terminal.submit('/agent-mode sa');
+  await waitFor('restore SA setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
+}
+
+async function checkToolPresentation(state) {
+  await state.terminal.submit('/agent-mode ama');
+  await waitFor('AMA tool setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'ama');
+  await delay(300);
+  await state.terminal.submit('ACCEPT_TOOL');
+  await waitFor('tool round completed', () => state.terminal.screen().includes('END_ACCEPT_TOOL'));
+  await waitFor('tool summary preserves command', () => state.terminal.screen().includes('cmd=echo ACCEPT_TOOL_RESULT'));
+  const tool = state.view.items.find(item => item.tool?.callId === 'acceptance-bash');
+  assert.equal(tool?.tool.status, 'success');
+  assert.ok(tool.text.includes('ACCEPT_TOOL_RESULT'), 'The real tool output must reach the Host view');
+  await waitFor('AMA tool round settled', () => state.view.runs.every(run => run.phase === 'completed'));
+  assert.equal(state.view.items.filter(item => item.type === 'user' && item.text === 'ACCEPT_TOOL').length, 1);
+  assert.equal(state.view.items.filter(item => item.type === 'assistant' && item.text.includes('END_ACCEPT_TOOL')).length, 1);
+  await waitFor('AMA tool input ready', () => /^>\s+Type a message/m.test(state.terminal.screen()));
+  await state.terminal.submit('/agent-mode sa');
+  await waitFor('restore SA after tool', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
 }
 
 async function checkLongInput(state) {
@@ -378,6 +446,33 @@ async function checkNewSession(state) {
   await waitFor('new Host assistant', () => state.view.items.some(item => item.text.includes('END_ACCEPT_FRESH')));
 }
 
+async function checkTranscriptKeys(state) {
+  await state.terminal.submit('ACCEPT_HOLD_TRANSCRIPT');
+  await waitFor('live reply', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_TRANSCRIPT'));
+  await state.terminal.type('UNSUBMITTED_DRAFT');
+  await state.terminal.type('\x0f');
+  await waitFor('transcript mode', () => state.terminal.screen().includes('Ctrl+E show all'));
+  await state.terminal.type('\x05');
+  await waitFor('Ctrl+E expands complete history', () => state.terminal.screen().includes('Ctrl+E collapse'), 5000);
+  await waitFor('complete saved history loaded', () => state.terminal.screen().includes('Showing complete saved history'), 5000);
+  await state.terminal.save('ctrl-e-expanded');
+  assert.ok(state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_TRANSCRIPT'), 'Ctrl+E must retain the frozen in-flight reply');
+  await state.terminal.type('q');
+  await waitFor('draft restored', () => /^>.*UNSUBMITTED_DRAFT/m.test(state.terminal.screen()));
+  await state.terminal.type('\x0f');
+  await state.terminal.type('/');
+  await waitFor('slash opens search', () => state.terminal.screen().includes('Type to search transcript'), 5000);
+  await state.terminal.type('EARLY_FROZEN_MARKER');
+  await waitFor('frozen reply searchable', () => state.terminal.screen().includes('1/1'), 5000);
+  await state.terminal.type('\r');
+  await waitFor('search submits selected match', () => !state.terminal.screen().includes('Type to search transcript'));
+  await state.terminal.type('q');
+  await waitFor('draft restored after search', () => /^>.*UNSUBMITTED_DRAFT/m.test(state.terminal.screen()));
+  await state.terminal.type('\x05'); // Prompt Ctrl+E moves to the end of the restored draft.
+  await state.terminal.type('\x15');
+  state.pending.get('ACCEPT_HOLD_TRANSCRIPT')();
+}
+
 async function checkExit(state) {
   await state.terminal.submit('/exit');
   await waitFor('CLI exit', () => state.terminal.exited);
@@ -444,10 +539,13 @@ async function run(mode) {
     await check(state, 'startup', checkStartup);
     await check(state, 'prompt-stream-complete', checkPrompt);
     await check(state, 'session-settings-roundtrip', checkSettings);
+    if (mode === 'ink') await check(state, 'ama-presentation', checkAmaPresentation);
+    if (mode === 'ink') await check(state, 'tool-presentation', checkToolPresentation);
     await check(state, 'multiline-long-input', checkLongInput);
     await check(state, 'question-dialog-roundtrip', checkQuestion);
     if (mode === 'ink') await check(state, 'busy-queue-withdraw-edit', checkQueue);
     if (mode === 'ink') await check(state, 'history-search-frozen-live-view', checkFrozenHistory);
+    if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
     await check(state, 'stop-and-next-input', checkStop);
     await check(state, 'new-session-isolation', checkNewSession);
     await check(state, 'exit', checkExit);

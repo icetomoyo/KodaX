@@ -16,7 +16,7 @@ import {
 } from "./tool-sanitizer.js";
 
 export type RestoredHistorySeed = (
-  | { type: "user"; text: string }
+  | { type: "user"; text: string; inputId?: string }
   | { type: "assistant"; text: string }
   | { type: "system"; text: string }
   | { type: "thinking"; text: string }
@@ -408,6 +408,7 @@ function extractAssistantHistorySeeds(
  * Minimal message shape required to restore UI history items.
  */
 export interface HistorySeedSourceMessage {
+  inputId?: string;
   role: KodaXMessage["role"];
   content: string | KodaXContentBlock[];
   timestamp?: string;
@@ -526,7 +527,9 @@ function withMessageTimestamp(
 export function extractHistorySeedsFromMessage(
   message: HistorySeedSourceMessage,
 ): RestoredHistorySeed[] {
-  return withMessageTimestamp(extractHistorySeedsFromMessageWithoutTimestamp(message), message.timestamp);
+  return withMessageTimestamp(extractHistorySeedsFromMessageWithoutTimestamp(message), message.timestamp)
+    .map(seed => seed.type === "user" && message.inputId !== undefined
+      ? { ...seed, inputId: message.inputId } : seed);
 }
 
 export function extractHistorySeedsFromMessages(

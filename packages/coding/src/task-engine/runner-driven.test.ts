@@ -196,6 +196,25 @@ describe('managed runner queue routing', () => {
     );
   });
 
+  it('reuses the Host-persisted initial input instead of presenting it twice to the worker', async () => {
+    const prompt = 'HOST_ACCEPTED_INPUT';
+    const accepted: KodaXMessage = {
+      role: 'user', content: prompt, inputId: 'accepted-input-1', timestamp: '2026-09-09T00:00:00.000Z',
+    };
+    const captured: KodaXMessage[][] = [];
+    const result = await runManagedTaskViaRunner({
+      ...makeOptions(), session: { id: 'accepted-managed-input', initialMessages: [accepted] },
+    }, prompt, async (messages) => {
+      captured.push([...messages]);
+      return { textBlocks: [{ text: 'Done.' }], toolBlocks: [] };
+    });
+    for (const messages of [captured[0]!, result.messages]) {
+      const prompts = messages.filter(message => message.role === 'user' && message.content === prompt);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatchObject({ inputId: accepted.inputId, timestamp: accepted.timestamp });
+    }
+  });
+
   it('does not report managed completion before the canonical Session commit', async () => {
     const sessionId = 'runtime-terminal-commit-order';
     let stored: KodaXSessionData = { messages: [], title: sessionId, gitRoot: process.cwd() };

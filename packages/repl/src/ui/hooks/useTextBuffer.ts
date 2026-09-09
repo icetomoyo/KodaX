@@ -48,7 +48,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   const [state, setState] = useState<TextBufferState>({
     text: initialValue,
     cursor: { row: 0, col: 0 },
-    lines: [""],
+    lines: initialValue.split("\n"),
     isPasting: false,
     editingMode: initialValue ? "typing" : "idle",
   });

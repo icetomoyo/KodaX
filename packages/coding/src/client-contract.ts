@@ -386,6 +386,8 @@ export interface ClientItemContent {
 }
 
 export interface ClientSessionView {
+  /** Host estimate of the saved parent context, available without a live Run. */
+  readonly parentContextTokens?: number;
   readonly activity?: ClientSessionActivity;
   readonly queue: readonly ClientQueuedInput[];
   readonly session: ClientSession;
@@ -412,6 +414,8 @@ export interface ClientSessionActivity {
     readonly detail: string; readonly status: 'running' | 'completed'; readonly startedAt: number;
   }[];
   readonly managedTask?: {
+    readonly harnessProfile?: string;
+    readonly globalWorkBudget?: number; readonly budgetUsage?: number; readonly budgetApprovalRequired?: boolean;
     readonly phase?: string; readonly workerId?: string; readonly workerTitle?: string;
     readonly breadcrumb?: string; readonly expandedBreadcrumb?: string;
     readonly round?: number; readonly maximumRounds?: number; readonly idleWaiting: boolean;
@@ -420,6 +424,7 @@ export interface ClientSessionActivity {
   readonly compacting?: boolean;
   readonly iteration?: { readonly current: number; readonly maximum: number };
   readonly context?: { readonly tokenCount: number; readonly tokenSource: 'api' | 'estimate'; readonly scope: 'parent' | 'worker' };
+  /** Latest root iteration/compaction fact; child events never overwrite it. */
   readonly parentContextTokens?: number;
   readonly usage?: {
     readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number;
@@ -433,6 +438,8 @@ export interface ClientSessionActivity {
 
 export interface ClientViewItem {
   readonly id: string;
+  /** Accepted input identity of a canonical user message; absent on legacy history. */
+  readonly inputId?: string;
   readonly type: 'user' | 'assistant' | 'thinking' | 'info' | 'error' | 'event' | 'hint' | 'sidecar' | 'system' | 'tool';
   readonly text: string;
   /** Present when text is a bounded suffix; readItem retains the complete original. */
