@@ -10,9 +10,58 @@ import {
   type KodaXProviderConfig,
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
-import type { SessionCommandBinding } from '@kodax-ai/repl';
+import { FileSessionStorage, createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
+import { createKodaXRuntime } from './sdk-runtime.js';
+import { createCliSessionCommands } from './cli-client-plane.js';
+
+it('shows Host missing and operation failures through the production tree command binding', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-tree-errors-'));
+  const runtime = await createKodaXRuntime({ homeDir });
+  const session = await runtime.sessions.create({ title: 'Tree errors', projectPath: homeDir });
+  const binding = createCliSessionCommands(runtime);
+  const context = await createInteractiveContext({ sessionId: session.id, gitRoot: homeDir });
+  const config = { provider: 'test', thinking: false, reasoningMode: 'off' as const,
+    agentMode: 'sa' as const, permissionMode: 'accept-edits' as const };
+  const callbacks: CommandCallbacks = {
+    ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined },
+    exit: () => {}, saveSession: async () => {}, loadSession: async () => 'missing',
+    listSessions: async () => {}, clearHistory: () => {}, printHistory: () => {},
+    switchSessionBranch: async selector =>
+      await binding.setActiveEntry({ sessionId: session.id, selector }) ? 'switched' : 'missing',
+    labelSessionBranch: (selector, label) => binding.setLabel({ sessionId: session.id, selector, label }),
+  };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    for (const args of [['missing-entry'], ['label', 'missing-entry', 'checkpoint']]) {
+      log.mockClear();
+      expect(await executeCommand({ command: 'tree', args }, context, callbacks, config)).toBe(false);
+      const output = log.mock.calls.flat().join('\n');
+      expect(output).toContain('Command failed:');
+      expect(output).toMatch(/No lineage entry matches|Session lineage is unavailable/);
+    }
+    for (const error of [
+      Object.assign(new Error('Session is busy with an active Run.'), { code: 'conflict' }),
+      Object.assign(new Error('Disk write denied.'), { code: 'EACCES' }),
+      new Error('Runtime connection was closed.'),
+    ]) {
+      const active = vi.spyOn(runtime.sessions, 'setActiveEntry').mockRejectedValueOnce(error);
+      const label = vi.spyOn(runtime.sessions, 'labelEntry').mockRejectedValueOnce(error);
+      for (const args of [['existing-entry'], ['label', 'existing-entry', 'checkpoint']]) {
+        log.mockClear();
+        expect(await executeCommand({ command: 'tree', args }, context, callbacks, config)).toBe(false);
+        const output = log.mock.calls.flat().join('\n');
+        expect(output).toContain(`Command failed: ${error.message}`);
+        expect(output).not.toContain('Tree entry not found');
+      }
+      active.mockRestore();
+      label.mockRestore();
+    }
+  } finally {
+    log.mockRestore();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
 
 class ProbeProvider extends KodaXBaseProvider {
   readonly name = 't34-session-probe';
@@ -29,56 +78,6 @@ class ProbeProvider extends KodaXBaseProvider {
   }
 }
 
-/** Wired exactly like src/kodax_cli.ts wires the interactive runtime. */
-function wireSessionCommands(runtime: KodaXRuntime): SessionCommandBinding {
-  return {
-    delete: (sessionId) => runtime.sessions.delete(sessionId),
-    deleteAll: async ({ gitRoot }) => {
-      const sessions = await runtime.sessions.list(
-        gitRoot !== undefined ? { projectRoot: gitRoot } : undefined,
-      );
-      for (const session of sessions) {
-        await runtime.sessions.delete(session.id);
-      }
-    },
-    setActiveEntry: async (input) => {
-      try {
-        await runtime.sessions.setActiveEntry({
-          sessionId: input.sessionId,
-          entryId: input.selector,
-          ...(input.summarizeCurrentBranch === true ? { summarizeCurrentBranch: true } : {}),
-        });
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    setLabel: async (input) => {
-      try {
-        await runtime.sessions.labelEntry(input);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    fork: async (input) => {
-      const forked = await runtime.sessions.fork(input);
-      return forked?.id;
-    },
-    rewind: async (input) => {
-      const rewound = await runtime.sessions.rewind(input);
-      return rewound !== null;
-    },
-    recover: async (input) => {
-      const recovered = await runtime.sessions.recover(input);
-      return recovered.id;
-    },
-    create: async (input) => {
-      await runtime.sessions.create(input);
-    },
-  };
-}
-
 /**
  * FEATURE_298 T34 — session-command mutations go through the Host; the
  * REPL-side storage never writes, and its read-back sees exactly what the
@@ -92,7 +91,7 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't34-session-probe',
   });
-  const binding = wireSessionCommands(runtime);
+  const binding = createCliSessionCommands(runtime);
   const sessionId = 't34-cmds-session';
   await binding.create({ sessionId, title: 'T34 cmds', surface: 'repl' });
 

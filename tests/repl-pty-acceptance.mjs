@@ -121,6 +121,9 @@ async function respondToModelRequest(state, request, response) {
   };
   send(token === 'ACCEPT_HOLD_TRANSCRIPT'
     ? 'EARLY_FROZEN_MARKER\n' + 'x'.repeat(10000) + `\nBEGIN_${token}` : `BEGIN_${token}`);
+  if (token === 'ACCEPT_HOLD_TRANSCRIPT') {
+    state.pending.set('grow', () => send('\nLATE_AFTER_FREEZE_MARKER'));
+  }
   if (token.includes('HOLD')) state.pending.set(token, finish);
   else setTimeout(finish, 350);
 }
@@ -452,6 +455,14 @@ async function checkTranscriptKeys(state) {
   await state.terminal.type('UNSUBMITTED_DRAFT');
   await state.terminal.type('\x0f');
   await waitFor('transcript mode', () => state.terminal.screen().includes('Ctrl+E show all'));
+  state.pending.get('grow')();
+  await waitFor('Host grows after snapshot', () => state.view.items.some(item => item.text.includes('LATE_AFTER_FREEZE_MARKER')));
+  await state.terminal.type('\x1b[D');
+  await state.terminal.type('v');
+  await delay(600);
+  await state.terminal.type('G');
+  assert.ok(!state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER'),
+    'Expanding a single item must preserve the captured content boundary');
   await state.terminal.type('\x05');
   await waitFor('Ctrl+E expands complete history', () => state.terminal.screen().includes('Ctrl+E collapse'), 5000);
   await waitFor('complete saved history loaded', () => state.terminal.screen().includes('Showing complete saved history'), 5000);

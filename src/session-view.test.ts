@@ -4,6 +4,115 @@ import { runWithProviderCredential } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from './session-view.js';
 
+it('retires checkpointed replacement output without removing other responses or retry notices', async () => {
+  let saved: ClientSessionView['items'] = [];
+  const createOwner = () => new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Replacement' }, settings: {}, queue: [], interactions: [], runs: [],
+    items: structuredClone(saved),
+  }), async (_sessionId, _runIds, items) => { saved = structuredClone(items); });
+  const owner = createOwner();
+  const events = owner.events('session', 'run');
+  const views: ClientSessionView[] = [];
+  try {
+    events.onOutputSegmentStart?.({ responseId: 'earlier', providerRequestId: 'first', mode: 'append' });
+    events.onTextDelta?.('Completed response', { providerRequestId: 'first' });
+    events.onOutputSegmentStart?.({ responseId: 'current', providerRequestId: 'failed', mode: 'append' });
+    events.onTextDelta?.('Failed partial answer', { providerRequestId: 'failed' });
+    events.onThinkingDelta?.('Failed partial reasoning', { providerRequestId: 'failed' });
+    events.onRetry?.('Retry this request', 1, 2);
+    await owner.flush('session');
+    const observation = await owner.observe('session', view => views.push(view));
+    expect(views.at(-1)?.items.some(item => item.id === 'run:failed:assistant')).toBe(true);
+
+    events.onOutputSegmentStart?.({ responseId: 'current', providerRequestId: 'replacement', mode: 'replace' });
+    await owner.flush('session');
+    // The replacement boundary itself retires persisted partial output, even
+    // if the next provider request fails before emitting a new token.
+    expect(saved.filter(item => item.id.startsWith('run:failed:'))).toEqual([]);
+    events.onTextDelta?.('Replacement answer', { providerRequestId: 'replacement' });
+    const second = await owner.observe('session', view => views.push(view));
+    const expectedIds = ['run:first:assistant', expect.stringContaining('run:retry:'), 'run:replacement:assistant'];
+    expect(views.at(-1)?.items.map(item => item.id)).toEqual(expectedIds);
+    expect(views.at(-1)?.items[1]?.text).toContain('Retry this request');
+    second.close();
+    observation.close();
+    owner.checkpoint('session');
+    await owner.flush('session');
+    const reopened = createOwner();
+    try {
+      const observation = await reopened.observe('session', view => views.push(view));
+      expect(views.at(-1)?.items.map(item => item.id)).toEqual(expectedIds);
+      observation.close();
+    } finally { await reopened.close(); }
+  } finally { await owner.close(); }
+});
+
+it('does not revive replacement output from an in-flight history read', async () => {
+  let saved: ClientSessionView['items'] = [];
+  let releaseRead: (() => void) | undefined;
+  let holdRead = true;
+  const owner = new SessionViewOwner(async () => {
+    const items = structuredClone(saved);
+    if (holdRead) {
+      holdRead = false;
+      await new Promise<void>(resolve => { releaseRead = resolve; });
+    }
+    return { session: { id: 'session', title: 'Replacement' }, settings: {}, queue: [], interactions: [], runs: [], items };
+  }, async (_sessionId, _runIds, items) => { saved = structuredClone(items); });
+  const events = owner.events('session', 'run');
+  const views: ClientSessionView[] = [];
+  try {
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'failed', mode: 'append' });
+    events.onTextDelta?.('Failed partial answer', { providerRequestId: 'failed' });
+    owner.checkpoint('session');
+    await owner.flush('session');
+    const observing = owner.observe('session', view => views.push(view));
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'replacement', mode: 'replace' });
+    events.onTextDelta?.('Replacement answer', { providerRequestId: 'replacement' });
+    releaseRead?.();
+    const observation = await observing;
+    expect(views.map(view => view.items.map(item => item.text))).toEqual([['Replacement answer']]);
+    observation.close();
+  } finally { releaseRead?.(); await owner.close(); }
+});
+
+it('waits for replacement persistence before starting a new history read', async () => {
+  let saved: ClientSessionView['items'] = [];
+  let holdSave = false;
+  let releaseSave: (() => void) | undefined;
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Replacement' }, settings: {}, queue: [], interactions: [], runs: [],
+    items: structuredClone(saved),
+  }), async (_sessionId, _runIds, items) => {
+    const snapshot = structuredClone(items);
+    if (holdSave) {
+      holdSave = false;
+      await new Promise<void>(resolve => { releaseSave = resolve; });
+    }
+    saved = snapshot;
+  });
+  const events = owner.events('session', 'run');
+  const views: ClientSessionView[] = [];
+  try {
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'failed', mode: 'append' });
+    events.onTextDelta?.('Failed partial answer', { providerRequestId: 'failed' });
+    owner.checkpoint('session');
+    await owner.flush('session');
+    const baseline = await owner.observe('session', () => {});
+    baseline.close();
+    holdSave = true;
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'replacement', mode: 'replace' });
+    events.onTextDelta?.('Replacement answer', { providerRequestId: 'replacement' });
+    const observing = owner.observe('session', view => views.push(view));
+    await expect.poll(() => releaseSave !== undefined).toBe(true);
+    expect(views).toEqual([]);
+    releaseSave?.();
+    const observation = await observing;
+    expect(views.map(view => view.items.map(item => item.text))).toEqual([['Replacement answer']]);
+    observation.close();
+  } finally { releaseSave?.(); await owner.close(); }
+});
+
 it('preserves managed harness and budget display facts in the public observation', async () => {
   const owner = new SessionViewOwner(async () => ({
     session: { id: 'session', title: 'Test' }, settings: {}, queue: [], interactions: [], runs: [], items: [],

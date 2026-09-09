@@ -92,7 +92,12 @@ export class SessionViewOwner {
         if (segment.mode === 'replace' && current.active?.responseId === segment.responseId
           && current.active.providerRequestId !== segment.providerRequestId) {
           const replaced = `${runId}:${current.active.providerRequestId}:`;
-          state.items = state.items.filter((item) => item.id !== `${replaced}assistant` && item.id !== `${replaced}thinking`);
+          const retain = (item: ClientViewItem) => item.id !== `${replaced}assistant` && item.id !== `${replaced}thinking`;
+          state.items = state.items.filter(retain);
+          state.history = state.history.filter(retain);
+          state.generation += 1;
+          state.historyDirty = true;
+          this.checkpoint(sessionId);
         }
         state.segments.set(runId, reduceOutputSegmentProjection(current, { type: 'segment.started', ...segment }).state);
         this.changed(sessionId);
@@ -259,7 +264,11 @@ export class SessionViewOwner {
     const includeHistory = state.view === undefined || state.historyDirty;
     state.historyDirty = false;
     const generation = state.generation;
-    const loading = this.read(sessionId, includeHistory, state.view, state.items).then((view) => {
+    const read = () => this.read(sessionId, includeHistory, state.view, state.items);
+    // A replacement checkpoint retires prior output on disk. A fresh history
+    // read must wait for that write, just as an invalidated read does below.
+    const pendingRead = includeHistory && state.persisting ? this.flush(sessionId).then(read) : read();
+    const loading = pendingRead.then((view) => {
       if (generation !== state.generation) return;
       if (includeHistory) state.history = view.items;
       const items = mergeSessionViewItems(state.history, state.items);
@@ -274,9 +283,12 @@ export class SessionViewOwner {
       }
     }).finally(() => {
       state.loading = undefined;
-      if (state.dirty) this.changed(sessionId);
-    }).then(() => {
-      if (generation !== state.generation) return this.refresh(sessionId, state);
+      if (state.dirty && generation === state.generation) this.changed(sessionId);
+    }).then(async () => {
+      if (generation !== state.generation) {
+        await this.flush(sessionId);
+        return this.refresh(sessionId, state);
+      }
     });
     state.loading = loading;
     return loading;

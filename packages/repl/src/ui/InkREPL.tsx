@@ -531,7 +531,6 @@ import {
   clientViewToHistoryItems,
   readFrozenClientPlaneItems,
   hasBoundedItemText,
-  readClientPlaneItemText,
   readClientPlaneHistory,
   mintInkInputId,
   runClientPlaneRound,
@@ -5063,7 +5062,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   historyBrowseRef.current = { sessionId: context.sessionId, isTranscriptMode,
     selectedItemId: transcriptDisplayState.selectedItemId, historyScrollOffset,
     expandedTranscriptItemIds, activeTextSelection, snapshot: transcriptSnapshot };
-  useEffect(() => () => historyReadRef.current?.abort(), [context.sessionId, isTranscriptMode]);
+  useEffect(() => () => historyReadRef.current?.abort(), [context.sessionId, isTranscriptMode, transcriptSnapshot, selectedTranscriptItemId]);
   const loadCompleteTranscriptSnapshot = useCallback(async (): Promise<boolean> => {
     const plane = options.clientPlane;
     if (!plane || transcriptSnapshot?.completeHistoryLoaded) return true;
@@ -5193,32 +5192,38 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, [canCycleTranscriptSelection, selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem]);
 
+  const readSelectedFrozenTranscriptItem = useCallback(async (item: HistoryItem): Promise<HistoryItem | undefined> => {
+    const plane = options.clientPlane;
+    if (!plane) return item;
+    historyReadRef.current?.abort();
+    const controller = new AbortController();
+    historyReadRef.current = controller;
+    const started = historyBrowseRef.current;
+    try {
+      const [expanded] = await readFrozenClientPlaneItems(plane, started.sessionId, [item], controller.signal);
+      const current = historyBrowseRef.current;
+      if (controller.signal.aborted || current.sessionId !== started.sessionId || !current.isTranscriptMode
+        || current.snapshot !== started.snapshot || current.selectedItemId !== started.selectedItemId
+        || current.historyScrollOffset !== started.historyScrollOffset
+        || current.activeTextSelection !== started.activeTextSelection
+        || current.expandedTranscriptItemIds !== started.expandedTranscriptItemIds) return undefined;
+      return expanded;
+    } catch (error) {
+      if (controller.signal.aborted) return undefined;
+      throw error;
+    }
+  }, [options.clientPlane]);
+
   const toggleSelectedTranscriptDetail = useCallback(async () => {
     if (!canToggleSelectedTranscriptDetail || !selectedTranscriptItemId) return;
     const item = selectedTranscriptItem;
     if (options.clientPlane && item && !expandedTranscriptItemIds.has(item.id)) {
-      const readId = item.historyItemId ?? item.id;
-      const started = historyBrowseRef.current;
       try {
-        const text = item.totalTextLength !== undefined
-          ? await readClientPlaneItemText(options.clientPlane, context.sessionId, readId, 'text', item.historyItemId !== undefined) : undefined;
-        const inputText = item.totalInputLength !== undefined
-          ? await readClientPlaneItemText(options.clientPlane, context.sessionId, readId, 'input', item.historyItemId !== undefined) : undefined;
-        const current = historyBrowseRef.current;
-        if (current.sessionId !== started.sessionId || !current.isTranscriptMode) return;
-        if (current.selectedItemId !== started.selectedItemId || current.historyScrollOffset !== started.historyScrollOffset) {
-          showClipboardNotice('Your current selection was kept. Expand the entry again when ready.', 'warning');
-          return;
-        }
-        if (text !== undefined || inputText !== undefined) {
-          setTranscriptSnapshot((snapshot) => snapshot === null ? null : ({ ...snapshot,
-            items: snapshot.items.map((entry) => entry.id !== item.id ? entry : entry.type === 'tool_group'
-              ? { ...entry, totalTextLength: undefined, totalInputLength: undefined, tools: entry.tools.map((tool) => ({ ...tool,
-                ...(text !== undefined ? { output: text } : {}), ...(inputText !== undefined ? { inputText, preview: inputText } : {}),
-              })) }
-              : { ...entry, ...(text !== undefined ? { text } : {}), textOffset: 0, totalTextLength: undefined }),
-          }));
-        }
+        const expanded = await readSelectedFrozenTranscriptItem(item);
+        if (!expanded) return;
+        setTranscriptSnapshot((snapshot) => snapshot !== transcriptSnapshot || snapshot === null ? snapshot : ({ ...snapshot,
+          items: snapshot.items.map((entry) => entry.id === item.id ? expanded : entry),
+        }));
       } catch (error) {
         showClipboardNotice(buildClipboardFailureNotice('Full entry unavailable', error), 'warning');
         return;
@@ -5232,18 +5237,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
     alignTranscriptSelection(selectedTranscriptItemId);
   }, [alignTranscriptSelection, canToggleSelectedTranscriptDetail, selectedTranscriptItemId,
-    selectedTranscriptItem, options.clientPlane, context.sessionId, expandedTranscriptItemIds,
-    showClipboardNotice, buildClipboardFailureNotice]);
-
-  const readFullTranscriptItemText = useCallback(async (
-    item: HistoryItem,
-    part: 'text' | 'input' = 'text',
-  ): Promise<string> => {
-    const plane = options.clientPlane;
-    if (!plane) throw new Error('Full transcript content is unavailable.');
-    return readClientPlaneItemText(plane, context.sessionId, item.historyItemId ?? item.id,
-      part, item.historyItemId !== undefined);
-  }, [options.clientPlane, context.sessionId]);
+    selectedTranscriptItem, options.clientPlane, expandedTranscriptItemIds, transcriptSnapshot,
+    readSelectedFrozenTranscriptItem, showClipboardNotice, buildClipboardFailureNotice]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
     if (!canCopySelectedTranscriptItem || !selectedTranscriptItem) {
@@ -5254,16 +5249,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const bounded = selectedTranscriptItem.totalTextLength !== undefined
         || selectedTranscriptItem.totalInputLength !== undefined || hasBoundedItemText(copyText ?? '');
       if (bounded) {
-        const [text, inputText] = await Promise.all([
-          selectedTranscriptItem.totalTextLength !== undefined || hasBoundedItemText(copyText ?? '')
-            ? readFullTranscriptItemText(selectedTranscriptItem) : Promise.resolve(undefined),
-          selectedTranscriptItem.totalInputLength !== undefined
-            ? readFullTranscriptItemText(selectedTranscriptItem, 'input') : Promise.resolve(undefined),
-        ]);
-        copyText = selectedTranscriptItem.type === 'tool_group'
-          ? buildTranscriptCopyText({ ...selectedTranscriptItem, tools: selectedTranscriptItem.tools.map((tool) => ({ ...tool,
-            ...(text !== undefined ? { output: text } : {}), ...(inputText !== undefined ? { inputText } : {}),
-          })) }) : text ?? copyText;
+        const expanded = await readSelectedFrozenTranscriptItem(selectedTranscriptItem);
+        if (!expanded) return;
+        copyText = buildTranscriptCopyText(expanded);
+        if (hasBoundedItemText(copyText ?? '')) throw new Error('Full transcript content is unavailable.');
       }
       if (!copyText) return;
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
@@ -5284,7 +5273,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     canCopySelectedTranscriptItem,
     context.sessionId,
     options.clientPlane,
-    readFullTranscriptItemText,
+    readSelectedFrozenTranscriptItem,
     selectedTranscriptItem,
     showClipboardNotice,
     writeTerminal,
@@ -5296,9 +5285,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     try {
-      const copyText = options.clientPlane && selectedTranscriptItem.totalInputLength !== undefined
-        ? await readFullTranscriptItemText(selectedTranscriptItem, 'input')
-        : buildTranscriptToolInputCopyText(selectedTranscriptItem);
+      const item = options.clientPlane && selectedTranscriptItem.totalInputLength !== undefined
+        ? await readSelectedFrozenTranscriptItem(selectedTranscriptItem) : selectedTranscriptItem;
+      if (!item) return;
+      const copyText = buildTranscriptToolInputCopyText(item);
       if (!copyText) return;
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       showClipboardNotice("Copied selected tool args to clipboard.", "success");
@@ -5313,7 +5303,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     canCopySelectedToolInput,
     context.sessionId,
     options.clientPlane,
-    readFullTranscriptItemText,
+    readSelectedFrozenTranscriptItem,
     selectedTranscriptItem,
     showClipboardNotice,
     writeTerminal,

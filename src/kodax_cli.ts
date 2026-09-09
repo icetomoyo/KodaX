@@ -172,7 +172,7 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
-import { createCliClientPlane } from './cli-client-plane.js';
+import { createCliClientPlane, createCliSessionCommands } from './cli-client-plane.js';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -5276,65 +5276,7 @@ complete -c kodax -l version -d 'Show version'`);
           // FEATURE_298 T34 — session-command mutations are Host-owned; the
           // REPL sends ids/selectors and re-reads the session file the Host
           // wrote. deleteAll composes existing Host list + delete (no bulk RPC).
-          sessionCommands: {
-            delete: (sessionId: string) => interactiveRuntime.sessions.delete(sessionId),
-            deleteAll: async ({ gitRoot }: { gitRoot?: string }) => {
-              // Explicit unbounded limit: the composed delete must match
-              // the old bulk deleteAll exactly (list defaults to 50).
-              const sessions = await interactiveRuntime.sessions.list({
-                ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}),
-                limit: Number.MAX_SAFE_INTEGER,
-              });
-              for (const session of sessions) {
-                await interactiveRuntime.sessions.delete(session.id);
-              }
-            },
-            setActiveEntry: async (input: {
-              sessionId: string;
-              selector: string;
-              summarizeCurrentBranch?: boolean;
-            }) => {
-              try {
-                await interactiveRuntime.sessions.setActiveEntry({
-                  sessionId: input.sessionId,
-                  entryId: input.selector,
-                  ...(input.summarizeCurrentBranch === true
-                    ? { summarizeCurrentBranch: true }
-                    : {}),
-                });
-                return true;
-              } catch {
-                return false;
-              }
-            },
-            setLabel: async (input: { sessionId: string; selector: string; label?: string }) => {
-              try {
-                await interactiveRuntime.sessions.labelEntry(input);
-                return true;
-              } catch {
-                return false;
-              }
-            },
-            fork: async (input: { sessionId: string; selector?: string }) => {
-              const forked = await interactiveRuntime.sessions.fork(input);
-              return forked?.id;
-            },
-            rewind: async (input: { sessionId: string; selector?: string; expectedHead?: string | null }) => {
-              const rewound = await interactiveRuntime.sessions.rewind(input);
-              return rewound !== null;
-            },
-            recover: async (input: { sessionId: string; reason?: string }) => {
-              const recovered = await interactiveRuntime.sessions.recover(input);
-              return recovered.id;
-            },
-            create: (input: {
-              sessionId: string;
-              title: string;
-              gitRoot?: string;
-              projectPath?: string;
-              surface: string;
-            }) => interactiveRuntime.sessions.create(input).then(() => undefined),
-          },
+          sessionCommands: createCliSessionCommands(interactiveRuntime),
           // FEATURE_298 T17 — the client plane: Ink submits through the
           // Host input face, renders from the live session view, and stops
           // via run receipts. Works in-process and over the daemon face.

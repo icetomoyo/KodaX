@@ -1,5 +1,31 @@
-import { firstActiveRunId, type InkClientPlane } from '@kodax-ai/repl';
+import { firstActiveRunId, type InkClientPlane, type SessionCommandBinding } from '@kodax-ai/repl';
 import type { KodaXRuntime } from './sdk-runtime.js';
+
+/** CLI command adapters shared with the public command integration tests. */
+export function createCliSessionCommands(runtime: KodaXRuntime): SessionCommandBinding {
+  return {
+    delete: sessionId => runtime.sessions.delete(sessionId),
+    deleteAll: async ({ gitRoot }) => {
+      const sessions = await runtime.sessions.list({
+        ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}), limit: Number.MAX_SAFE_INTEGER,
+      });
+      for (const session of sessions) await runtime.sessions.delete(session.id);
+    },
+    setActiveEntry: async input => {
+      await runtime.sessions.setActiveEntry({ sessionId: input.sessionId, entryId: input.selector,
+        ...(input.summarizeCurrentBranch === true ? { summarizeCurrentBranch: true } : {}) });
+      return true;
+    },
+    setLabel: async input => {
+      await runtime.sessions.labelEntry(input);
+      return true;
+    },
+    fork: input => runtime.sessions.fork(input).then(result => result?.id),
+    rewind: input => runtime.sessions.rewind(input).then(result => result !== null),
+    recover: input => runtime.sessions.recover(input).then(result => result.id),
+    create: input => runtime.sessions.create(input).then(() => undefined),
+  };
+}
 
 /** The production binding shared by Ink and its runtime integration tests. */
 export function createCliClientPlane(runtime: KodaXRuntime): InkClientPlane {

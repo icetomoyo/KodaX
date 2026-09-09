@@ -189,10 +189,6 @@ export interface KodaXProductClient {
      * vocabulary as `commands`; see {@link ClientSkillInfo}.
      */
     skills(input?: { readonly userInvocableOnly?: boolean }): Promise<readonly ClientSkillInfo[]>;
-    /** Commands the real Host discovered for a workspace. */
-    commands(workspaceRoot: string): Promise<readonly ClientCommandInfo[]>;
-    /** Skills the real Host registry discovered. */
-    skills(input?: { readonly userInvocableOnly?: boolean }): Promise<readonly ClientSkillInfo[]>;
   };
   readonly mcp: {
     listServers(): Promise<Readonly<Record<string, ClientMcpServerConfig>>>;

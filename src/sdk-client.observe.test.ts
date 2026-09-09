@@ -171,6 +171,9 @@ it('keeps earlier output and retry history when replacing exactly one failed out
     segment('a', 'append', 'Earlier complete output.');
     segment('b', 'append', 'Failed partial output.');
     events!.onRetry?.('Connection reset', 1, 2);
+    await expect.poll(() => views.at(-1)?.items.some(item => item.text === 'Failed partial output.')).toBe(true);
+    const beforeReplacement = await client.sessions.observe(session.id, () => {});
+    beforeReplacement.close();
     segment('c', 'replace', 'Replacement partial output.');
     events!.onThinkingDelta?.('partial reasoning', { providerRequestId: 'c' });
     events!.onThinkingEnd?.('Complete reasoning.', { providerRequestId: 'c' });

@@ -3,44 +3,7 @@ import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { connectKodaXRuntime } from './sdk-runtime.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 
-export type {
-  KodaXProductClient,
-  ClientSession,
-  ClientSessionSummary,
-  ClientSessionFilter,
-  ClientCreateSessionInput,
-  ClientSubmitInput,
-  ClientInputAcceptance,
-  ClientSessionSettings,
-  ClientSessionSettingsPatch,
-  ClientConfig,
-  ClientMcpServerConfig,
-  ClientMcpServerStatus,
-  ClientMcpTool,
-  ClientModelSelection,
-  ClientCapabilityProbeResult,
-  ClientProviderInfo,
-  ClientModelCatalog,
-  ClientInteraction,
-  ClientInteractionResponse,
-  ClientInteractionResult,
-  ClientPermissionDecision,
-  ClientHistoryPage,
-  ClientHistoryReadOptions,
-  ClientHistorySearchInput,
-  ClientHistorySearchResult,
-  ClientSessionGoal,
-  ClientGoalCreateInput,
-  ClientLineageSummary,
-  ClientLineageEntry,
-  ClientLineageLabelInput,
-  ClientSessionForkInput,
-  ClientSessionRecoverInput,
-  ClientPermissionGrant,
-  ClientPermissionGrants,
-  ClientCommandInfo,
-  ClientSkillInfo,
-} from '@kodax-ai/coding/client-contract';
+export type * from '@kodax-ai/coding/client-contract';
 
 export interface ConnectKodaXClientOptions {
   /** Base directory containing .kodax, matching CLI --home. */
