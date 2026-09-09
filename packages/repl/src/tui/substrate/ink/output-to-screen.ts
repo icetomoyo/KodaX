@@ -151,7 +151,9 @@ function styledCharToCell(sc: StyledCharLike): Cell {
   }
 
   return {
-    char: sc.value,
+    // The grid assigns these characters one cell; emitting them as terminal
+    // controls (TAB, CR, BS) would move the physical cursor outside that cell.
+    char: sc.value.replace(/[\u0000-\u001f\u007f]/g, ' '),
     width: sc.fullWidth ? CellWidth.Wide : CellWidth.Single,
     style,
     hyperlink,

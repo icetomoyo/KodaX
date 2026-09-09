@@ -283,6 +283,19 @@ function collectEvents(
 describe("createKodaXRuntime", () => {
   let tempRoot: string;
 
+  it.each([undefined, '0.7.97-test-build'])('reports the package version unless explicitly injected (%s)', async (injectedVersion) => {
+    vi.stubEnv('KODAX_VERSION', injectedVersion);
+    const { createKodaXRuntime } = await import('./sdk-runtime.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    try {
+      expect(KODAX_VERSION).not.toBe('0.0.0');
+      expect(runtime.identity.version).toBe(injectedVersion ?? KODAX_VERSION);
+    } finally {
+      await runtime.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   beforeEach(async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kodax-runtime-"));
     codingMock.runManagedTask.mockReset();

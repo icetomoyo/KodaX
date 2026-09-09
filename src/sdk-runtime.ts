@@ -4203,7 +4203,7 @@ async function createKodaXRuntimeInternal(
     mode: "embedded",
     profile: options.profile ?? "default",
     startedAt: new Date().toISOString(),
-    version: process.env.KODAX_VERSION ?? "0.0.0",
+    version: process.env.KODAX_VERSION ?? replApi.KODAX_VERSION,
     isolation: "inline",
   };
   const configHome = options.homeDir

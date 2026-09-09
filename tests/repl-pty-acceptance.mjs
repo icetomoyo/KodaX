@@ -15,6 +15,9 @@ const toolRequire = createRequire(path.join(
 ));
 const pty = toolRequire('node-pty');
 const { Terminal } = toolRequire('@xterm/headless');
+let Unicode11Addon;
+try { ({ Unicode11Addon } = toolRequire('@xterm/addon-unicode11')); }
+catch (error) { throw new Error('PTY screen checks require @xterm/addon-unicode11; install the dependencies in FEATURE_298_v0.7.97_TEST_GUIDE.md.', { cause: error }); }
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = await mkdtemp(path.join(os.tmpdir(), 'kodax-repl-acceptance-'));
 const results = [];
@@ -32,6 +35,8 @@ async function waitFor(label, predicate, timeout = 25_000) {
 
 function openTerminal(homeDir, mode, extraArgs = []) {
   const terminal = new Terminal({ cols: 110, rows: 32, scrollback: 10000, allowProposedApi: true });
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = '11';
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'NO_COLOR'));
   const child = pty.spawn(process.execPath, [path.join(repo, 'scripts/kodax-bin.cjs'),
     '--provider', 'acceptance-local', '--model', 'acceptance-model', '--effort', 'off',
@@ -50,6 +55,7 @@ function openTerminal(homeDir, mode, extraArgs = []) {
   // Answer terminal cursor/device queries through an actual terminal emulator.
   terminal.onData(data => child.write(data));
   return {
+    async resize(columns, rows) { terminal.resize(columns, rows); child.resize(columns, rows); await delay(400); },
     child, exit, get exited() { return exited; },
     cursorLine() {
       const buffer = terminal.buffer.active;
@@ -119,6 +125,9 @@ async function respondToModelRequest(state, request, response) {
       usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
     })}\n\ndata: [DONE]\n\n`);
   };
+  if (token === 'ACCEPT_HOLD_PAINT') {
+    send(Array.from({ length: 80 }, (_, index) => index + '\t' + 'BODY_中文 '.repeat(45)).join('\n') + '\n');
+  }
   send(token === 'ACCEPT_HOLD_TRANSCRIPT'
     ? 'EARLY_FROZEN_MARKER\n' + 'x'.repeat(10000) + `\nBEGIN_${token}` : `BEGIN_${token}`);
   if (token === 'ACCEPT_HOLD_TRANSCRIPT') {
@@ -484,6 +493,34 @@ async function checkTranscriptKeys(state) {
   state.pending.get('ACCEPT_HOLD_TRANSCRIPT')();
 }
 
+async function checkTranscriptPaint(state) {
+  await state.terminal.resize(240, 64);
+  await state.terminal.submit('/agent-mode ama');
+  await waitFor('AMA paint setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'ama');
+  await delay(300);
+  await state.terminal.submit('ACCEPT_HOLD_PAINT');
+  await waitFor('long tabbed reply', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_PAINT'));
+  await state.terminal.type('\x0f');
+  await waitFor('paint transcript', () => state.terminal.screen().includes('Ctrl+E show all'));
+  for (const key of ['\x05', 'g', '/', '\x1b', 'G', '\x05']) {
+    await state.terminal.type(key);
+    if (key === '/') continue;
+    await delay(400);
+    const footer = state.terminal.screen().split('\n').slice(-3).map(row => row.trimEnd());
+    assert.match(footer[0], /^ Transcript \| PgUp\/PgDn page \| j\/k scroll .* Ctrl\+O\/q\/Esc back$/, 'Transcript help row must be intact after each repaint');
+    assert.match(footer[1], /^ ←\/→ enter select mode \| Ctrl\+E (show all|collapse) \| Mouse drag selects text$/, 'Selection help must not contain old transcript text');
+    assert.match(footer[2], /^ KodaX - AMA \| Edits \| off \|/, 'Status must remain on the final row');
+    await state.terminal.save('paint-' + key.charCodeAt(0));
+  }
+  await state.terminal.resize(110, 32);
+  await state.terminal.type('q');
+  state.pending.get('ACCEPT_HOLD_PAINT')();
+  await waitFor('paint round settled', () => state.view.runs.every(run => run.phase === 'completed'));
+  await waitFor('paint prompt ready', () => /^>\s+Type a message/m.test(state.terminal.screen()));
+  await state.terminal.submit('/agent-mode sa');
+  await waitFor('restore SA after paint', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
+}
+
 async function checkExit(state) {
   await state.terminal.submit('/exit');
   await waitFor('CLI exit', () => state.terminal.exited);
@@ -557,6 +594,7 @@ async function run(mode) {
     if (mode === 'ink') await check(state, 'busy-queue-withdraw-edit', checkQueue);
     if (mode === 'ink') await check(state, 'history-search-frozen-live-view', checkFrozenHistory);
     if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
+    if (mode === 'ink') await check(state, 'transcript-control-character-paint', checkTranscriptPaint);
     await check(state, 'stop-and-next-input', checkStop);
     await check(state, 'new-session-isolation', checkNewSession);
     await check(state, 'exit', checkExit);

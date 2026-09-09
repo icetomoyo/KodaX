@@ -12,7 +12,7 @@
 
 ```powershell
 npm run build
-npm install --prefix "$env:TEMP/kodax-acceptance-tools" --no-audit --no-fund node-pty@1.1.0 @xterm/headless@5.5.0
+npm install --prefix "$env:TEMP/kodax-acceptance-tools" --no-audit --no-fund node-pty@1.1.0 @xterm/headless@5.5.0 @xterm/addon-unicode11@0.9.0
 npm run test:repl-pty:built
 ```
 
@@ -36,6 +36,8 @@ npm run test:repl-pty:built
 
 接口再扫描后，同一场景还在 Ctrl+O 后让 Host 追加独有标记，再选择当前项并按 `v` 展开、`G` 移到底部，断言冻结内容没有混入后来的标记。完整历史展开与单项展开必须同时遵守冻结边界；`c/i` 复用该读取实现，本驱动不读取或改写用户剪贴板来断言复制内容。
 
+真实旧会话残留修复后，另加 240×64 长 AMA 输出（Tab 与中文长行），执行展开/收起、开头/末尾跳转及搜索/取消，逐行检查页脚没有混入正文，然后缩回 110×32。xterm 必须启用 Unicode 11，让 emoji 列宽与产品一致。此场景在旧代码下会出现正文标记错位，不以字符串存在替代页脚行检查。Tab 等控制字符只在显示 cell 转为空格；历史和全文复制保留原始字符。
+
 这里 Ctrl+E 表示展开/折叠完整历史，`/` 表示打开 transcript 搜索。分页期间模型继续追加、旧会话来源歧义和取消读取另有契约/显示函数回归；不把这些单测计为额外真实终端用例。
 
 ## 打包 Electron 与沙箱验收
@@ -57,3 +59,18 @@ npm run test:electron-daemon:built
 本轮执行与修复记录见 [真实产品入口自动化验收](../REVIEW_v0.7.97_FINAL.md#真实产品入口自动化验收)。确定性 Provider 让输入与交互断言可重复，不代表真实商业模型的任务质量验收。本指南也不替代 macOS/Linux 实机、剪贴板/输入法、视觉 GUI 和主观终端手感检查。
 
 仍有两项已知缺口：其他客户端修改会话设置后，当前 REPL 的状态栏未同步刷新；强制 legacy 渲染器的搜索结果跳转可能无法显示屏幕外的历史消息。详见 [Known Issues](../KNOWN_ISSUES.md)。因此本指南的通过结果不代表整个 v0.7.97 无条件验收通过。
+
+## 开发代码更新后验证旧会话
+
+REPL 和 Host 是两个进程。修改源码后重新运行 `npm run dev`，可能仍连接之前启动的 Host；界面的包版本不能证明后台进程已加载本次修复。同版本源码修改不会触发按版本判断的自动更新。
+
+在任务结束后退出旧 REPL，从本 worktree 正常重启 Host，再恢复会话：
+
+```powershell
+npm run dev -- daemon restart
+npm run dev -- -r 20260909_075806_ed59a28bf46b46
+```
+
+这是普通重启，没有 force。若 Host 报忙，先结束或由用户停止对应任务后重试，不强停。SDK 的被动 connect 仍只连接与校验。
+
+恢复验证要检查后一轮 query 位于前一轮最后输出和后一轮首段输出之间，而不只查找正文是否存在。历史中已保存的重复输入不自动清理；测试副本可以隔离重放，但不得重写用户原会话来让验收通过。

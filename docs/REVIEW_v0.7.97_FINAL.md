@@ -407,3 +407,44 @@ PTY 证据为 `%TEMP%/kodax-repl-acceptance-uLaeqJ`。构建、类型、压缩�
 - 真实 Windows PTY：owned Ink 15/15、classic 10/10，退出码 0；已加强冻结后追加、单项展开的检查。证据 `%TEMP%/kodax-repl-acceptance-kxOp3i`。
 - 日志 `%TEMP%/kodax-contract-scan-{build,regression-final,typecheck-final,commands-final,pty}.log`。初次类型检查发现新增命令夹具缺少必需的 UI 字段，补齐后重新通过；不影响产品代码。
 - 临时诊断脚本已删除。未执行 push、发布或主仓库写入。
+
+## 2026-09-09：真实旧会话恢复与 transcript 绘制残留
+
+本轮基线 `da2516d6`。用户提供 Session `20260909_075806_ed59a28bf46b46` 及两张实际终端截图；对原文件和默认 Host 只读检查，将会话复制到临时目录后隔离重放。没有修改用户原始会话、停止其 Host 或执行真实模型请求。
+
+### 恢复 query 与旧 Host
+
+两次用户 query 都已保存。默认 Host PID 58032 的启动时间为 2026-09-09 07:58，早于前两轮修复；退出、重开 REPL 仍会连回该独立进程。只读 observe 返回 74 项，后一次 query 被排在前一次回答之前（index 10/11），不是被删除。当前源码对同一存档经 Runtime observe 隔离重放：前一轮最后输出 index 46，后一次 query index 47，旧 AMA 重复输入 index 48，后一轮首段 thinking index 49，顺序正确。不能仅凭 includes(query) 判断恢复体验通过。
+
+`AMA Worker - Worker analyzing task` 是旧 Host 仍在发布的临时执行状态；运行结束后的实际观察及保存的 uiHistory 均无该行。当前代码只把明确要求持久化的状态事件放进历史，旧进程不会随源码修改自动获得这个修复。原会话已保存的两组重复用户输入保持原状，不按文本删除。
+
+另确认开发入口的 Host 身份默认报告 `0.0.0`，而界面显示实际包版本，导致现有版本比较跳过。修复仅把默认值改为已有 `replApi.KODAX_VERSION`，保留显式构建版本注入；默认与注入版本均经历 RED→GREEN。没有改变被动连接、空闲更新、忙时拒绝或同版本源码的重启策略。该修复不会让当前旧进程自行更新。
+
+### transcript 残留
+
+用隔离的真实会话在 240×64 Windows PTY 中执行 Ctrl+O / Ctrl+E，当前源码也能复现旧正文混入页脚。帧本身的页脚和高度正确，实际终端网格错误；首个坏帧含 50 个原始 Tab。布局把 Tab 放在单列 cell 中，输出字节却让终端跳到制表位，造成光标与局部刷新位置失配。必须修正显示 cell 的字符边界，不能用反复整屏清空掩盖。
+
+诊断期间发现 headless xterm 默认 Unicode 6 与产品的 emoji 宽度不同；使用 Unicode 11 校准后仍可复现真实会话的严重残留。旧验收中的短文本、只检查字符串存在等断言不足以验证整段工具正文及页脚的绘制一致性。
+
+最终产品修复只在 `outputToScreen` 把显示 cell 中的 C0/DEL 控制字符转换为单列空格，与现有测宽和布局一致。换行在更早的分行阶段处理，SGR/OSC 样式与链接继续走原有结构字段；不修改历史和复制原文，不增加整屏重绘机制。三条 Output→LogUpdate→终端网格回归分别复现 Tab、回车和退格造成的错位，修复后通过，相关显示测试 41/41。
+
+原会话副本在修复前残留（证据 `%TEMP%/kodax-repl-acceptance-67Cn3w`），修复后展开、搜索/取消、开头/末尾跳转、长短切换及 110×32↔240×64 缩放六个阶段的实际页脚逐行匹配帧（`JVSYGt`）。永久验收入口增加不含用户正文的长 Tab/中文 AMA 场景：旧代码会把正文标记绘坏并超时（`Mgiyu3`），修复后页脚完整（`6hm1Y0`）。后三个证据目录同样位于 `%TEMP%/kodax-repl-acceptance-<后缀>`。原始会话副本仅用于本地诊断，没有加入仓库。
+
+### 本轮最终验证
+
+| 验证 | 本次结果 |
+|---|---|
+| Runtime 与 SessionView 完整相关套件 | 2 文件，302/302 |
+| 完整 REPL 套件 | 237 文件，2712 通过、1 跳过 |
+| 真实 Windows PTY | owned Ink 16/16、classic 10/10，退出码 0 |
+| 构建与类型 | 完整 build、发布声明消费者、严格 src/tests typecheck 均通过 |
+
+最终 PTY 证据 `%TEMP%/kodax-repl-acceptance-RcvqbD`；日志 `%TEMP%/kodax-resume-runtime-regression.log`、`%TEMP%/kodax-resume-final-{build,repl,pty,typecheck}.log`。临时绘制探针和诊断脚本已删除。
+
+### Standards
+
+独立最终逐 hunk 复核：硬违反 0、需处理 smell 0。产品仅两处行为改动，沿用现有版本常量与显示转换；没有新建恢复框架、产品配置或依赖。
+
+### Spec
+
+独立最终复核剩余 finding 0，限于本轮修复。旧会话恢复按实际顺序验证，显示修复保持完整内容读取及冻结语义。多 Client 设置反向同步和强制 legacy 搜索仍按前节保留，未以本轮成绩豁免。原默认 Host 未被重启，实际使用本次修复需在任务结束后正常重启 Host 并重开 REPL，见现有测试指南；未 push、未发布。

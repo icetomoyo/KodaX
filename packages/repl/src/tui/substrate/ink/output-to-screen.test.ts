@@ -4,6 +4,10 @@ import { describe, it, expect } from "vitest";
 import Output from "./output.js";
 import { outputToScreen } from "./output-to-screen.js";
 import { CellWidth, cellAt } from "./cell-screen.js";
+import { LogUpdate } from './cell-renderer.js';
+import { emptyFrame } from './frame.js';
+import { patchToBytes } from './apply-diff.js';
+import { TerminalModel } from './terminal-emulator.js';
 import { LINK_END, link } from "./osc.js";
 
 describe("substrate/ink/output-to-screen (FEATURE_057 Track F, Phase 4a)", () => {
@@ -193,5 +197,19 @@ describe("substrate/ink/output-to-screen (FEATURE_057 Track F, Phase 4a)", () =>
     expect(cellAt(screen, 2, 0)?.char).toBe("c");
     // Cell at x=3 doesn't exist — screen is 3 wide.
     expect(cellAt(screen, 3, 0)).toBeUndefined();
+  });
+});
+
+
+describe('terminal control characters in displayed output', () => {
+  it.each(['\t', '\r', '\b'])('renders %j as the grid cell instead of moving the terminal cursor', (control) => {
+    const output = new Output({ width: 12, height: 2 });
+    output.write(0, 0, 'a' + control + 'b', { transformers: [] });
+    output.write(0, 1, 'footer', { transformers: [] });
+    const frame = { ...emptyFrame(2, 12), screen: outputToScreen(output), cursor: { x: 0, y: 2, visible: false } };
+    const bytes = new LogUpdate({ isTTY: true }).render(emptyFrame(2, 12), frame, { altScreen: true }).map(patchToBytes).join('');
+    const terminal = new TerminalModel(12, 2);
+    terminal.apply(bytes);
+    expect(terminal.rows(2).map(row => row.trimEnd())).toEqual(['a b', 'footer']);
   });
 });
