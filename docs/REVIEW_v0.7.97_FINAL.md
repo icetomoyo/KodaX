@@ -448,3 +448,52 @@ PTY 证据为 `%TEMP%/kodax-repl-acceptance-uLaeqJ`。构建、类型、压缩�
 ### Spec
 
 独立最终复核剩余 finding 0，限于本轮修复。旧会话恢复按实际顺序验证，显示修复保持完整内容读取及冻结语义。多 Client 设置反向同步和强制 legacy 搜索仍按前节保留，未以本轮成绩豁免。原默认 Host 未被重启，实际使用本次修复需在任务结束后正常重启 Host 并重开 REPL，见现有测试指南；未 push、未发布。
+
+## 2026-09-10：同版本 Host 更新、统一入口与输出说明书
+
+本轮基线 `28e47ed971`。修复范围是重建后仍连接旧 Host，以及扫描中确认的产品入口和输出契约失配。专门说明书为 [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md)，覆盖全部 71 个域内方法、连接释放及 80 个输出字段，同时说明 Node 启动、未来 Web 类型消费与尚未实现的远程传输边界。
+
+### 实际修复
+
+- Host 在加载时冻结构建身份，按实际生产文件字节区分同版本构建；Node ensure、CLI 普通启动和 daemon start 共用检查。相同来源空闲旧 Host 正常关闭，确认精确原进程退出后由既有锁启动新构建。被动 connect 不更新；忙碌、跨来源、旧调用进程和无法确认身份均明确处理，不引入升级锁或新恢复框架。
+- 真实并发启动测试发现：另一启动器可在探测后开始正常关闭，导致 attach 返回 conflict。初版按 daemon.json 的退出状态重试，完整复验再次失败：内存 draining 先于状态文件写入，且 lease acquisition 将退出中的 owner 当作启动中等待。最终修复仅对 ensure 的初始化连接冲突按已有预算退避重试；等待进程时区分启动与退出，不重放业务/管理操作，被动连接仍直接报告错误。
+- 连续并发启动第三轮进一步发现 Windows Job 监督进程自然退出时，IPC disconnect 及写入失败可先于 ChildProcess 的 exit 事件。两条真实进程测试分别复现“通道已断”和“状态仍 connected 但写入 EPIPE”，不能把它归为环境抖动，也不能将通道断开当作已退出。修复复用有界退出等待，以原监督进程和子进程真实退出为准；仍存活或无法确认时明确失败。
+- ACP 默认使用同一产品 Client；文本、工具详情、Session 私有 MCP、权限及取消走 Host。保留协议并发请求顺序，取消涵盖尚在创建 Session、设置、观察和提交答复中的请求。默认目录交给统一 resolver，保留 KODAX_HOME。通知失败停止本次 Run 并明确报错；全文分页校验进展和连续性，不把截断当全文。
+- 输出扫描发现 API 缓存用量的底层 cachedReadTokens/cachedWriteTokens 与 Client 声明 cacheReadTokens/cacheWriteTokens 不同，已在 Host 显式映射；RED 测试确认原投影丢失公开字段。
+- 声明构建抓到新增诊断类重导出会将全部 Runtime Node 类型带入产品入口。移除该非必要新出口，错误类仍留原 `/runtime`；ClientInfo 只提取同一份纯数据声明，保留旧出口。未降低 `types: []`、`skipLibCheck: false` 消费者检查。
+
+### 真实用户 Host 与会话
+
+先只读确认旧 `rt_43c668f1e1e1` / PID 58032 空闲、无其他连接和待答交互；再次验证 owner/lock/processStartIdentity 后，通过正常 shutdown 迁移，确认原进程退出。新 Host 通过公开 observe 读取用户 Session `20260909_075806_ed59a28bf46b46`：76 项，后一轮 query 位于 index 47/48，前项为 assistant，后项为 thinking，没有临时 AMA Worker 提示。已保存的重复输入保持原样，没有按文本清理历史。
+
+随后因最终并发修复产生实际源码变化，使用新的 ensure 调用验证同版本自动更新：`rt_933fb6ca5026` → `rt_2ba1b95353d2`，版本均为 0.7.96-beta.4，指定 Session 保留。这次走普通自动更新，没有手工 stop/force；一次性缺身份旧 Host 迁移与后续自动更新分别验证。
+
+Windows 清理竞态修复并完成最终构建后，再用同一 ensure 将 `rt_2ba1b95353d2` 正常更新为 `rt_3db3cdbd8346`，版本保持 0.7.96-beta.4，最终 source fingerprint 为 `c76f95cac1f26f86389e49fb9f58fcfa0c87098882d689b90131fc6825dea934`。公开 Session view 仍为 76 项，user 索引为 0/1、47/48、74/75，临时 AMA Worker 提示为 0；仅观察并释放本连接，没有提交新输入或改写历史。
+
+### 验证
+
+第一轮全量 1,034 文件：15,019 passed、3 failed、77 skipped、21 todo。并发启动失败是已复现的产品竞态，已修；另外两项涉及压缩及后台学习请求的测试归属，单独核实后处理，不能称为环境漂移。
+
+测试归属修正保留原业务断言：压缩测试按实际压缩请求指令分开统计主请求与摘要请求，分别核对设置；steer 测试为真实后台 learning-review 请求返回合法空审查结果，不把它算成下一次主请求，也不禁用后台学习。第三轮全量 15,032 passed，唯一失败是执行途中新增的 Windows disconnect RED 用例；该轮用于补强竞态证据，不能标为最终全绿。
+
+最终冻结代码门禁记录：
+
+| 验证 | 结果 |
+|---|---|
+| 完整 `npm test` | 1,034 文件通过、1 文件跳过；15,035 passed、0 failed、77 skipped、21 todo；退出码 0 |
+| 完整 build、src/tests typecheck | 通过；真实 `/client` 发布声明消费者保持无 Node ambient types |
+| Windows Job/启动进程/owner 退出/真实并发 launcher 定向 | 39/39，通过；其中三个新用例覆盖两种自然退出竞态与断通道但仍存活 |
+| 真实并发 launcher 连续复测 | 3 轮均通过 |
+| 最终 dist Host 构建更新验收 | 7/7，退出码 0 |
+| 最终 dist 真实 Windows PTY | owned Ink 16/16、classic 10/10，退出码 0 |
+| 新增构建身份、ACP 投影、产品 SDK 入口模块覆盖率 | statements/lines 99.52%、branches 92%、functions 94.11%；仅这三个模块，不是全仓覆盖率 |
+
+证据：`%TEMP%/kodax-host-contract-full-release.log`、`kodax-host-contract-build-release.log`、`kodax-host-contract-types-release.log`、`kodax-supervisor-fixed-launcher-stress-{1,2,3}.log`、`kodax-host-build-oUPVQd/report.json`、`kodax-repl-acceptance-p47vNd/results.json`、`kodax-host-contract-coverage/coverage-summary.json`。覆盖率运行早于最后的 supervisor 修复，但上述三个被计量模块此后未改动。本轮无 lint script，不虚构 lint 通过记录；未执行真实商业模型任务质量或独立二进制实机验收。
+
+### Standards
+
+独立逐 hunk 复核：硬违反 0；初审两个局部命名建议已修，最终需处理 smell 0。并发退出重试及最终 Windows Job 自然退出修复分别经独立复核通过。
+
+### Spec
+
+初审发现 ACP 默认目录与取消准入窗口两项 P1，均经历 RED→GREEN 并经独立复核关闭。最终本轮修复剩余 finding 0。先前已记录的多 Client 设置反向同步与强制 legacy 搜索仍未关闭，不据本轮门禁宣称整个版本无条件验收通过。未 push、未发布。

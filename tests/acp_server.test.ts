@@ -207,14 +207,12 @@ async function createHarness(options: {
     },
   };
 
-  const runtime = options.runtimeOwnedByTest
-    ? await createKodaXRuntime({
+  const runtime = await createKodaXRuntime({
         homeDir: runtimeHome,
         sessionsDir: storage.getSessionsDir(),
         profile: 'acp-test',
         defaultProvider: 'openai',
-      })
-    : undefined;
+      });
   if (runtime) harnessRuntimes.add(runtime);
   const server = new KodaXAcpServer({
     ...(options.serverCwd ? { cwd: options.serverCwd } : {}),
@@ -363,10 +361,8 @@ describe('KodaXAcpServer', () => {
     );
   });
 
-  it('hydrates runtime config during ACP server construction', () => {
-    new KodaXAcpServer({
-      logLevel: 'off',
-    });
+  it('hydrates runtime config during ACP server construction', async () => {
+    await createHarness();
 
     expect(prepareRuntimeConfigMock).toHaveBeenCalledTimes(1);
   });
@@ -426,6 +422,8 @@ describe('KodaXAcpServer', () => {
       });
     } finally {
       await harness.server.dispose();
+      await harness.runtime?.close();
+      if (harness.runtime) harnessRuntimes.delete(harness.runtime);
       await rm(sessionsDir, { recursive: true, force: true });
     }
   });
@@ -831,10 +829,7 @@ describe('KodaXAcpServer', () => {
       mcpServers,
     });
 
-    const server = new KodaXAcpServer({
-      cwd: serverCwd,
-      logLevel: 'off',
-    });
+    const { server } = await createHarness({ serverCwd });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(buildMcpReverseCapabilitiesMock).toHaveBeenCalledWith({

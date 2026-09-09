@@ -14,7 +14,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolveDaemonCliEntry } from "../runtime-build-identity.js";
 import os from "node:os";
 import path from "node:path";
 
@@ -327,6 +327,7 @@ type RuntimeDaemonHealthObserver = (
 export async function waitForRuntimeDaemonOwnerExit(
   owner: { readonly pid: number; readonly processStartIdentity?: string },
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !owner.processStartIdentity) {
     throw new Error('Cannot confirm Host exit without its exact process identity.');
@@ -334,6 +335,7 @@ export async function waitForRuntimeDaemonOwnerExit(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('Host exit timeout must be a positive integer.');
   const deadline = Date.now() + timeoutMs;
   while (true) {
+    if (signal?.aborted) throw runtimeDaemonStartupCancelled();
     try {
       process.kill(owner.pid, 0);
     } catch (error: unknown) {
@@ -347,13 +349,14 @@ export async function waitForRuntimeDaemonOwnerExit(
         ? 'Cannot verify the original Host process identity; retry startup after it exits.'
         : 'The original Host is still running; retry startup after it exits.');
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
+    await raceRuntimeDaemonStartupStep(delay(Math.min(50, deadline - Date.now())), signal);
   }
 }
 
 export async function acquireRuntimeDaemonProcessLease(
   options: RuntimeDaemonProcessLeaseOptions,
 ): Promise<RuntimeDaemonProcessLease> {
+  const startupDeadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
   if (
     options.orphanExitMs !== undefined
     && (!Number.isSafeInteger(options.orphanExitMs) || options.orphanExitMs <= 0)
@@ -379,6 +382,21 @@ export async function acquireRuntimeDaemonProcessLease(
 
   const initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
   const initialHealth = classifyRuntimeDaemonHealth(initial);
+  if (initial.pidAlive && (initial.state?.status === 'stopping' || initial.state?.status === 'draining')) {
+    const owner = initial.observedLockOwner;
+    if (initialHealth === 'mismatch' || owner?.runtimeId !== initial.state.runtimeId
+      || owner.pid !== initial.state.pid || owner.kind !== 'daemon') {
+      throw new RuntimeDaemonStartupError(
+        'Cannot confirm the stopping Runtime daemon owner identity.', 'identity_mismatch',
+      );
+    }
+    const exitBudget = startupDeadline - Date.now();
+    if (exitBudget <= 0) throw runtimeDaemonStartupTimeout(paths);
+    await waitForRuntimeDaemonOwnerExit(owner, exitBudget, options.startupSignal);
+    const remainingMs = startupDeadline - Date.now();
+    if (remainingMs <= 0) throw runtimeDaemonStartupTimeout(paths);
+    return acquireRuntimeDaemonProcessLease({ ...options, startupTimeoutMs: remainingMs });
+  }
   if (initialHealth === "healthy" && initial.state) {
     if (options.ownerBootstrap !== undefined) {
       throw new Error(
@@ -1078,19 +1096,6 @@ function assertOnlyFields(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function resolveDaemonCliEntry(): string | undefined {
-  if (process.env.KODAX_BUNDLED === "true") return undefined;
-  const current = fileURLToPath(import.meta.url);
-  if (current.endsWith(".ts"))
-    return path.resolve(path.dirname(current), "..", "kodax_cli.ts");
-  const currentDir = path.dirname(current);
-  const distDir =
-    path.basename(currentDir) === "chunks"
-      ? path.dirname(currentDir)
-      : currentDir;
-  return path.join(distDir, "kodax_cli.js");
 }
 
 export function daemonServeExecArgv(

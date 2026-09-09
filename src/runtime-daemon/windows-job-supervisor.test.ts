@@ -1,5 +1,6 @@
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,6 +20,85 @@ afterEach(() => {
 });
 
 describe('Windows Job daemon supervisor', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'does not report a released but live supervisor as reclaimed',
+    async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'kodax-job-live-release-'));
+      temporaryDirectories.push(directory);
+      const stopFile = path.join(directory, 'stop');
+      const contained = await spawnWindowsJobContainedProcess({
+        executable: process.execPath,
+        args: ['-e', 'setInterval(() => { if (require("node:fs").existsSync(process.env.KODAX_TEST_STOP_FILE)) process.exit(0); }, 10);'],
+        cwd: process.cwd(), env: { ...process.env, KODAX_TEST_STOP_FILE: stopFile },
+        logFile: path.join(directory, 'supervisor.log'),
+      });
+      const exited = once(contained.supervisor, 'exit');
+      try {
+        contained.release();
+        await expect(contained.terminate()).rejects.toThrow('did not exit');
+        expect(contained.supervisor.exitCode).toBeNull();
+        expect(isPidAlive(contained.processPid)).toBe(true);
+      } finally {
+        writeFileSync(stopFile, 'stop');
+        await exited;
+        await waitForPidExit(contained.processPid);
+      }
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform !== 'win32').each(['disconnect-event', 'before-event-delivery'] as const)(
+    'accepts natural supervisor exit during cleanup at %s',
+    async (phase) => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'kodax-job-natural-exit-'));
+      temporaryDirectories.push(directory);
+      const stopFile = path.join(directory, 'stop');
+      const contained = await spawnWindowsJobContainedProcess({
+        executable: process.execPath,
+        args: ['-e', 'setInterval(() => { if (require("node:fs").existsSync(process.env.KODAX_TEST_STOP_FILE)) process.exit(0); }, 10);'],
+        cwd: process.cwd(),
+        env: { ...process.env, KODAX_TEST_STOP_FILE: stopFile },
+        logFile: path.join(directory, 'supervisor.log'),
+      });
+      const exited = once(contained.supervisor, 'exit');
+      let cleanup: Promise<void>;
+      if (phase === 'disconnect-event') {
+        cleanup = new Promise<void>((resolve, reject) => {
+          contained.supervisor.once('disconnect', () => {
+            try {
+              expect(contained.supervisor.exitCode).toBeNull();
+              contained.terminate().then(resolve, reject);
+            } catch (error: unknown) {
+              reject(error);
+            }
+          });
+        });
+        writeFileSync(stopFile, 'stop');
+      } else {
+        writeFileSync(stopFile, 'stop');
+        // Keep this event loop paused until the exact wrapper exits in the OS,
+        // so IPC still looks connected while its asynchronous write fails.
+        const waiter = spawnSync(process.execPath, ['-e',
+          'const deadline = Date.now() + 5000; while (true) { try { process.kill(Number(process.argv[1]), 0); } catch (error) { if (error.code === "ESRCH") break; throw error; } if (Date.now() >= deadline) process.exit(1); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); }',
+          String(contained.supervisor.pid),
+        ], { windowsHide: true, timeout: 10_000 });
+        expect(waiter.status).toBe(0);
+        expect(contained.supervisor.connected).toBe(true);
+        expect(contained.supervisor.exitCode).toBeNull();
+        cleanup = contained.terminate();
+      }
+      try {
+        await expect(cleanup).resolves.toBeUndefined();
+        expect(contained.supervisor.exitCode).toBe(0);
+        await waitForPidExit(contained.containmentSupervisorPid);
+        await waitForPidExit(contained.processPid);
+      } finally {
+        await exited;
+      }
+    },
+    30_000,
+  );
+
   it('quotes Windows command-line arguments with spaces, quotes, and trailing slashes', () => {
     expect(quoteWindowsCommandLineArg('plain')).toBe('plain');
     expect(quoteWindowsCommandLineArg('two words')).toBe('"two words"');

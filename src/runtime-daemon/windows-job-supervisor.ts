@@ -549,19 +549,31 @@ async function terminateSupervisor(
   daemonPid?: number,
 ): Promise<void> {
   if (supervisor.pid === undefined) return;
-  if (supervisor.exitCode === null && supervisor.signalCode === null) {
-    if (!supervisor.connected) {
-      throw new Error('Windows Job supervisor control channel is unavailable during startup.');
-    }
-    await new Promise<void>((resolve, reject) => {
-      supervisor.send({ kind: 'terminate' }, (error) => {
-        if (error) reject(error);
-        else resolve();
+  let controlError: unknown;
+  if (supervisor.exitCode === null && supervisor.signalCode === null && supervisor.connected) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        supervisor.send({ kind: 'terminate' }, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
       });
-    });
+    } catch (error: unknown) {
+      controlError = error;
+    }
   }
-  await waitForWrapperExit(supervisor);
-  if (daemonPid !== undefined) await waitForPidExit(daemonPid, 2_000);
+  // Natural exit can close IPC before Node delivers the exit event. Only
+  // process-exit proof settles cleanup; a lost channel alone never does.
+  try {
+    await waitForWrapperExit(supervisor);
+    if (daemonPid !== undefined) await waitForPidExit(daemonPid, 2_000);
+  } catch (error: unknown) {
+    if (controlError !== undefined) {
+      throw new AggregateError([controlError, error],
+        'Windows Job supervisor control failed and process cleanup could not be confirmed.');
+    }
+    throw error;
+  }
 }
 
 async function waitForWrapperExit(supervisor: ChildProcess): Promise<void> {

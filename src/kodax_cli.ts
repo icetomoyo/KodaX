@@ -54,6 +54,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import {
   createKodaXRuntime,
+  ensureKodaXRuntime,
   type KodaXRuntime,
   type RuntimeKodaXOptions,
 } from './sdk-runtime.js';
@@ -82,11 +83,7 @@ import {
   consumeRuntimeDaemonOwnerBootstrap,
   detachRuntimeDaemonBootstrapOutput,
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
-  RuntimeDaemonStartupError,
   daemonServeExecArgv,
-  spawnRuntimeDaemonServeProcess,
-  waitForHealthyDaemonStartup,
-  waitForReadyRuntimeDaemonOwner,
 } from './runtime-daemon/process.js';
 import { runDoctor } from './kodax_doctor.js';
 import {
@@ -984,84 +981,28 @@ async function getDaemonStartResult(input: {
     input.profile,
   );
   const before = await observeRuntimeDaemonHealth(paths);
-  const beforeHealth = classifyRuntimeDaemonHealth(before);
-  if (beforeHealth === 'healthy' && before.state?.status === 'ready') {
-    return {
-      started: false,
-      reason: 'already_running',
-      state: before.state,
-    };
-  }
-  if (beforeHealth === 'healthy' && before.state) {
-    const cancellation = createDaemonStartupCancellation();
-    try {
-      const ready = await waitForReadyRuntimeDaemonOwner(
-        paths,
-        {
-          startupTimeoutMs: input.timeoutMs,
-          startupSignal: cancellation.signal,
-        },
-        before,
-      );
-      return {
-        started: false,
-        reason: 'already_running',
-        state: ready.state,
-      };
-    } finally {
-      cancellation.close();
-    }
-  }
-  if (beforeHealth === 'unhealthy' || beforeHealth === 'mismatch') {
-    return {
-      started: false,
-      health: beforeHealth,
-      error: `Runtime daemon is ${beforeHealth}; refusing to start a competing owner.`,
-      state: before.state ?? null,
-    };
-  }
-
   const cancellation = createDaemonStartupCancellation();
   try {
-    const child = await spawnRuntimeDaemonServeProcess({
+    const runtime = await ensureKodaXRuntime({
       profile: paths.profile,
-      homeDir: input.homeDir,
-      configHome: input.configHome,
+      // Omitted Home retains the existing KODAX_HOME override for the default location.
+      homeDir: isSameRuntimeDaemonPath(input.configHome, path.join(input.homeDir, '.kodax')) ? input.homeDir : undefined,
       defaultProvider: input.provider,
       defaultModel: input.model,
-      startupTimeoutMs: input.timeoutMs,
+      daemonStartupTimeoutMs: input.timeoutMs,
+      daemonStartupSignal: cancellation.signal,
+      clientInfo: { name: 'kodax-daemon-start', clientType: 'automation' },
     });
     try {
-      const observation = await waitForHealthyDaemonStartup(
-        paths,
-        {
-          startupTimeoutMs: input.timeoutMs,
-          startupSignal: cancellation.signal,
-        },
-        child,
-      );
-      return {
-        started: true,
-        pid: child.pid ?? null,
-        health: 'healthy',
-        state: observation.state,
-      };
-    } catch (error: unknown) {
-      if (
-        !(error instanceof RuntimeDaemonStartupError) ||
-        error.reason === 'cancelled'
-      ) {
-        throw error;
-      }
       const observation = await observeRuntimeDaemonHealth(paths);
-      return {
-        started: false,
-        pid: child.pid ?? null,
-        health: classifyRuntimeDaemonHealth(observation),
-        error: error.message,
-        state: observation.state ?? null,
-      };
-    }
+      if (!observation.state || observation.state.runtimeId !== runtime.identity.runtimeId
+        || observation.state.status !== 'ready' || !observation.identityMatches) {
+        throw new Error('The Host owner changed while startup was being verified. Retry startup.');
+      }
+      return before.state?.runtimeId === runtime.identity.runtimeId
+        ? { started: false, reason: 'already_running', state: observation.state }
+        : { started: true, pid: observation.state?.pid ?? null, health: 'healthy', state: observation.state };
+    } finally { await runtime.close(); }
   } finally {
     cancellation.close();
   }

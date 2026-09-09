@@ -5,8 +5,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
+  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
+import { LEARNING_REVIEW_TOOL, awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime, RUNTIME_REDIRECT_STOP_REASON } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -19,7 +20,14 @@ class SteerProvider extends KodaXBaseProvider {
     apiKeyEnv: 'KODAX_PRODUCT_STEER_TEST_KEY', model: 'product-steer-test', supportsThinking: false,
   };
   constructor(private readonly request: (messages: KodaXMessage[]) => Promise<void>) { super(); }
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+  async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    // Episode reviews are real background requests, not redirected conversation turns.
+    if (tools.some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
+      textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
+        type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
+        input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+      }],
+    };
     await this.request(messages);
     return {
       textBlocks: [{ type: 'text', text: 'Acknowledged.' }],
@@ -71,6 +79,7 @@ afterEach(async () => {
   await Promise.all([first.disconnect(), second.disconnect()]);
   await host.close();
   await runtime.close();
+  await awaitLatestCodingMemoryReviewDrain(5_000);
   clearRuntimeModelProviders();
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

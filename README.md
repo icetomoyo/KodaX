@@ -422,6 +422,8 @@ const result = await runKodaX(
 
 ## Runtime SDK and daemon
 
+For the shared CLI/SDK/future Web product surface, see the [Client contract](docs/CLIENT_CONTRACT.md): passive connect, local ensure/update, all public methods, streaming views, full history, and disconnect boundaries.
+
 SDK hosts can use `@kodax-ai/kodax/runtime` in two forms: inline embedded for
 lowest latency, or a local daemon shared by REPL, Space, IDE adapters, and
 custom SDK clients. Both expose the same `KodaXRuntime` services. (The

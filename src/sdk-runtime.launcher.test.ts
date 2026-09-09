@@ -42,7 +42,8 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
     ]);
     const clients = connections.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     try {
-      expect(connections.filter((result) => result.status === 'rejected')).toEqual([]);
+      const rejected = connections.filter((result) => result.status === 'rejected');
+      expect(rejected, rejected.map(result => String(result.reason)).join('\n')).toEqual([]);
       const current = clients[0]!;
       expect(current.identity.runtimeId).not.toBe(oldId);
       expect(clients[1]!.identity.runtimeId).toBe(current.identity.runtimeId);

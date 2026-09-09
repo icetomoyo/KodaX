@@ -341,7 +341,11 @@ function sessionActivityEvents(
         iteration: { current: info.iter, maximum: info.maxIter },
         context: { tokenCount: info.tokenCount, tokenSource: info.tokenSource, scope },
         ...(scope === 'parent' ? { parentContextTokens: info.tokenCount } : {}),
-        ...(info.usage ? { usage: { ...info.usage } } : {}),
+        ...(info.usage ? { usage: {
+          inputTokens: info.usage.inputTokens, outputTokens: info.usage.outputTokens, totalTokens: info.usage.totalTokens,
+          cacheReadTokens: info.usage.cachedReadTokens, cacheWriteTokens: info.usage.cachedWriteTokens,
+          thoughtTokens: info.usage.thoughtTokens,
+        } } : {}),
       });
     },
     onCompactStart: () => update({ compacting: true }),

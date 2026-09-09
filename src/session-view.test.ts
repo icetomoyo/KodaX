@@ -180,11 +180,13 @@ it('publishes API usage and rebases parent tokens after root compaction without 
   const observed: ClientSessionView[] = [];
   const events = owner.events('session', 'run');
   events.onIterationEnd?.({ iter: 1, maxIter: 20, tokenCount: 6000, tokenSource: 'api', contextKind: 'root',
-    usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000 } });
+    usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000, cachedReadTokens: 400, cachedWriteTokens: 100 } });
   try {
     const observation = await owner.observe('session', view => observed.push(view));
     expect(observed.at(-1)?.activity).toMatchObject({ parentContextTokens: 6000,
-      usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000 } });
+      usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000, cacheReadTokens: 400, cacheWriteTokens: 100 } });
+    expect(observed.at(-1)?.activity?.usage).not.toHaveProperty('cachedReadTokens');
+    expect(observed.at(-1)?.activity?.usage).not.toHaveProperty('cachedWriteTokens');
     events.onCompactStats?.({ tokensBefore: 6000, tokensAfter: 1200, contextKind: 'root' });
     await owner.flush('session');
     await expect.poll(() => observed.at(-1)?.activity?.parentContextTokens).toBe(1200);

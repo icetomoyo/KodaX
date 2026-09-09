@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KODAX_VERSION } from '@kodax-ai/repl';
+import { LOCAL_RUNTIME_BUILD, type RuntimeBuildIdentity } from './runtime-build-identity.js';
 
 const upgradeMocks = vi.hoisted(() => ({
   acquireProcessLease: vi.fn(),
@@ -11,6 +12,14 @@ const upgradeMocks = vi.hoisted(() => ({
   readDaemonToken: vi.fn(),
   readLockOwner: vi.fn(),
   waitOwnerExit: vi.fn(),
+  localBuild: { origin: '/fixture/kodax/dist/kodax_cli.js', fingerprint: 'a'.repeat(64) },
+  readBuild: vi.fn(),
+}));
+
+vi.mock('./runtime-build-identity.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./runtime-build-identity.js')>(),
+  LOCAL_RUNTIME_BUILD: upgradeMocks.localBuild,
+  readRuntimeBuildIdentity: upgradeMocks.readBuild,
 }));
 
 vi.mock('./runtime-daemon/process.js', async (importOriginal) => {
@@ -80,6 +89,7 @@ const NEWER_RUNTIME_VERSION = `${CURRENT_MAJOR + 1n}.0.0`;
 
 describe('product Host startup and passive connection', () => {
   beforeEach(() => {
+    upgradeMocks.readBuild.mockReset().mockReturnValue(upgradeMocks.localBuild);
     upgradeMocks.waitOwnerExit.mockReset().mockResolvedValue(undefined);
     upgradeMocks.acquireProcessLease.mockReset();
     upgradeMocks.createSocketTransport.mockReset();
@@ -118,6 +128,25 @@ describe('product Host startup and passive connection', () => {
     await runtime.close();
   });
 
+  it('refreshes the same version from changed files in the same installation before attaching', async () => {
+    const calls: string[] = [];
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(createLegacyTransport({
+        preflight: createPreflight(), calls, close: async () => undefined,
+        runtimeVersion: KODAX_VERSION, capabilities: current.capabilities,
+        build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
+      })))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(calls).toContain('old:runtime.shutdown');
+      expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledTimes(1);
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+    } finally { await runtime.close(); }
+  });
+
   it('releases a transient competing connection and retries startup without an upgrade election', async () => {
     const calls: string[] = [];
     const competing = createLegacyTransport({
@@ -132,6 +161,82 @@ describe('product Host startup and passive connection', () => {
     const runtime = await ensureKodaXRuntime({ profile: PROFILE });
     expect(calls.filter((call) => call === 'old:runtime.shutdown')).toHaveLength(1);
     await runtime.close();
+  });
+
+  it.each([
+    { name: 'busy changed build', build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) }, busy: true },
+    { name: 'another installation', build: { ...LOCAL_RUNTIME_BUILD, origin: '/other/kodax_cli.js' }, busy: false },
+    { name: 'legacy missing identity', build: undefined, busy: false },
+  ])('does not silently attach or stop a $name', async ({ build, busy }) => {
+    const calls: string[] = [];
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(busy ? { canStop: false, blockers: ['active_runs'] } : {}),
+      calls, close: async () => undefined, runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build,
+    })));
+    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({
+      code: 'daemon_capability_upgrade_required',
+      ...(busy ? { preflight: { blockers: ['active_runs'] } } : {}),
+    });
+    expect(calls).not.toContain('old:runtime.shutdown');
+    expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps passive clients compatible with a different build without replacing it', async () => {
+    const calls: string[] = [];
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    const runtime = await connectKodaXRuntime({ profile: PROFILE, transport: createLegacyTransport({
+      preflight: createPreflight(), calls, close: async () => undefined, runtimeVersion: KODAX_VERSION,
+      capabilities: current.capabilities, build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
+    }) });
+    try {
+      expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
+      expect(calls).toEqual(['old:initialize']);
+      expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
+  it('leaves the old Host alive when installation changes during the shutdown preflight', async () => {
+    const calls: string[] = [];
+    upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createLegacyTransport({
+      preflight: createPreflight(), calls, close: async () => undefined,
+    })));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    upgradeMocks.readBuild.mockReturnValueOnce(LOCAL_RUNTIME_BUILD)
+      .mockReturnValue({ ...LOCAL_RUNTIME_BUILD, fingerprint: 'b'.repeat(64) });
+    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('Restart the calling process');
+    expect(calls).toContain('old:daemon.management.get');
+    expect(calls).not.toContain('old:runtime.shutdown');
+    expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+  });
+
+  it.each(['ensure', 'connect'] as const)('bounds initialization conflict retries to the launcher (%s)', async mode => {
+    const calls: string[] = [];
+    const conflict = Object.assign(new Error('Attach rejected'), { code: 'conflict' });
+    const rejected = createCurrentTransport(calls, async () => undefined);
+    const conflicting = { ...rejected, request: async () => { throw conflict; } };
+    // Draining admission can precede the asynchronous state-file update.
+    upgradeMocks.readDaemonState.mockReturnValue({ status: 'ready' });
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(conflicting))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    if (mode === 'connect') {
+      upgradeMocks.createSocketTransport.mockResolvedValue(conflicting);
+      await expect(connectKodaXRuntime({ profile: PROFILE })).rejects.toBe(conflict);
+      expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+      expect(upgradeMocks.createSocketTransport).toHaveBeenCalledTimes(1);
+    } else {
+      const client = await ensureKodaXRuntime({ profile: PROFILE });
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
+      await client.close();
+    }
+    expect(calls[0]).toBe('new:close');
+  });
+
+  it('refuses an already loaded launcher after its installation changes', async () => {
+    upgradeMocks.readBuild.mockReturnValue({ ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) });
+    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ capability: 'launcherBuild' });
+    expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
   });
 
   it.each(['active_runs', 'queued_runs', 'active_workflows', 'active_agent_turns', 'pending_interactions'] as const)(
@@ -274,6 +379,7 @@ function createLegacyTransport(input: {
   readonly close: () => Promise<void>;
   readonly capabilities?: Readonly<Record<string, unknown>>;
   readonly runtimeVersion?: string;
+  readonly build?: RuntimeBuildIdentity;
   readonly omitLiveOutputSegments?: boolean;
   readonly onInitialize?: (params: unknown) => void;
 }): RuntimeDaemonClientTransport {
@@ -302,6 +408,7 @@ function createLegacyTransport(input: {
             }),
           },
           input.runtimeVersion,
+          input.build,
         );
       }
       if (method === 'daemon.management.get') {
@@ -351,7 +458,7 @@ function createCurrentTransport(
           idleOnly: true,
           bootstrapGrace: true,
         },
-      }, KODAX_VERSION);
+      }, KODAX_VERSION, LOCAL_RUNTIME_BUILD);
     },
     subscribe() {
       return { close() {} };
@@ -367,6 +474,7 @@ function initializeResult(
   runtimeId: string,
   capabilities: Readonly<Record<string, unknown>>,
   version = runtimeId === RUNTIME_ID ? '0.7.85' : '0.7.86',
+  build?: RuntimeBuildIdentity,
 ): Readonly<Record<string, unknown>> {
   return {
     identity: {
@@ -375,6 +483,7 @@ function initializeResult(
       profile: PROFILE,
       startedAt: '2026-07-19T00:00:00.000Z',
       version,
+      ...(build ? { build } : {}),
       isolation: 'process',
     },
     capabilities,

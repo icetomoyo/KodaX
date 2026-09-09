@@ -62,15 +62,24 @@ npm run test:electron-daemon:built
 
 ## 开发代码更新后验证旧会话
 
-REPL 和 Host 是两个进程。修改源码后重新运行 `npm run dev`，可能仍连接之前启动的 Host；界面的包版本不能证明后台进程已加载本次修复。同版本源码修改不会触发按版本判断的自动更新。
+REPL 和 Host 是两个进程；界面的包版本不能证明后台进程已加载本次修复。启动器现在比较运行中 Host 与本次启动实际代码的构建身份：同版本、同入口、不同字节且旧 Host 空闲时，正常关闭旧进程、确认退出后启动新构建。`npm run dev`、`daemon start`、SDK ensure 和默认 ACP 共用这一规则；被动 connect 不更新进程。
 
-在任务结束后退出旧 REPL，从本 worktree 正常重启 Host，再恢复会话：
+没有构建身份的历史 Host 需要一次明确的正常迁移。在任务结束后退出旧 REPL，从本 worktree 停止、启动 Host，再恢复会话：
 
 ```powershell
-npm run dev -- daemon restart
+npm run dev -- daemon stop
+npm run dev -- daemon start
 npm run dev -- -r 20260909_075806_ed59a28bf46b46
 ```
 
-这是普通重启，没有 force。若 Host 报忙，先结束或由用户停止对应任务后重试，不强停。SDK 的被动 connect 仍只连接与校验。
+这些命令不使用 force。若 Host 报忙，先结束或由用户停止对应任务后重试，不强停。跨安装来源、较新版本或安装正在变化时，按具体诊断处理；不循环重启，不降级。已加载旧 SDK 的长寿命调用进程需要重开。
 
 恢复验证要检查后一轮 query 位于前一轮最后输出和后一轮首段输出之间，而不只查找正文是否存在。历史中已保存的重复输入不自动清理；测试副本可以隔离重放，但不得重写用户原会话来让验收通过。
+
+## 构建更新与统一产品接口自动验收
+
+接口说明见 [CLIENT_CONTRACT.md](../CLIENT_CONTRACT.md)。执行完整 `npm run build` 后运行 `node tests/host-build-acceptance.mjs`。脚本在临时安装副本中使用真正的独立 Host 和公开 SDK，覆盖同版本字节更新、相同内容复用、被动连接、真实观察者阻止更新、空闲后重试、旧调用进程拒绝更新，以及 `daemon start` 一致性。
+
+脚本通过删除/复制隔离 dist 和添加合法 JavaScript 注释模拟 clean/build 的文件替换效果，验证旧 PID 真实退出及 Session 保留；不声称在副本中再次运行了编译器。它不会修改用户安装、用户会话或调用商业模型。
+
+ACP 的共享 Host、文本/工具、Session MCP、权限、取消、并发请求和提交竞态由 `src/acp_server.daemon.test.ts`、`src/acp_server.admission.test.ts` 与投影测试覆盖。发布声明通过真实 `/client` 消费者在 `types: []`、`skipLibCheck: false` 下检查，不能靠注入 Node 全局类型掩盖产品契约泄漏。

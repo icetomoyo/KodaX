@@ -82,6 +82,8 @@ macOS/Linux 会报告 Seatbelt/bubblewrap 所需依赖。拒绝 UAC 或缺少依
 
 ## Runtime SDK 与共享 daemon
 
+CLI、SDK 与未来 Web 共用的产品面见 [Client 接口契约](docs/CLIENT_CONTRACT.md)：涵盖被动连接、本机启动更新、全部公开方法、流式视图、完整历史与断连边界。
+
 `@kodax-ai/kodax/runtime` 支持 inline、Worker 和本机共享 daemon。FEATURE_269
 让 CLI、Space、IDE 与其他本地 SDK 客户端可以原子加入同一个 Coder
 session/run，共享 transcript、Todo、tool、AskUser、permission、队列与唯一终态。

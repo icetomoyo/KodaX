@@ -1,5 +1,9 @@
 import {
   connectKodaXClient,
+  ensureKodaXClient,
+  type ConnectKodaXClientOptions,
+  type EnsureKodaXClientOptions,
+  type RuntimeClientInfo,
   type KodaXProductClient,
   type ClientSession,
   type ClientSessionSummary,
@@ -18,6 +22,11 @@ import {
 import { toKodaXProductClient } from '@kodax-ai/kodax/client';
 
 declare const client: KodaXProductClient;
+const clientInfo: RuntimeClientInfo = { name: 'consumer', clientType: 'app' };
+const connectOptions: ConnectKodaXClientOptions = { clientInfo };
+const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeoutMs: 30_000 };
+await connectKodaXClient(connectOptions);
+await ensureKodaXClient(ensureOptions);
 const sessions: readonly ClientSessionSummary[] = await client.sessions.list();
 const session: ClientSession = await client.sessions.read('session-id');
 const renderItem = (item: ClientViewItem): string => item.text;

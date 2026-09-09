@@ -7,7 +7,7 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
+import { awaitLatestCodingMemoryReviewDrain, LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -27,7 +27,8 @@ it.each([
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-live-settings-'));
   const samples = Array.from({ length: 3 }, (_, index) => path.join(homeDir, `sample-${index}.txt`));
   await Promise.all(samples.map((sample, index) => writeFile(sample, `sample content ${index}`)));
-  const requests: { provider: string; model: string | undefined; reasoning: Parameters<KodaXBaseProvider['stream']>[3] }[] = [];
+  const mainRequests: { provider: string; model: string | undefined; reasoning: Parameters<KodaXBaseProvider['stream']>[3] }[] = [];
+  const summaryRequests: typeof mainRequests = [];
   const entered = Array.from({ length: 4 }, gate);
   const release = Array.from({ length: 4 }, gate);
   let seedingHistory = compact;
@@ -38,6 +39,12 @@ it.each([
     };
     constructor(readonly name: string) { super(); }
     async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+      if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
+        textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
+          type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
+          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+        }],
+      };
       if (args[1].some((tool) => tool.name === 'emit_sidecar_verdict')) return {
         textBlocks: [], thinkingBlocks: [],
         toolBlocks: [{ type: 'tool_use', id: 'verdict', name: 'emit_sidecar_verdict', input: { verdict: 'accept' } }],
@@ -47,9 +54,16 @@ it.each([
         textBlocks: [{ type: 'text', text: 'Historical context from prior work. '.repeat(8_000) }],
         thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
       };
-      const index = requests.length;
       const request = { provider: this.name, model: args[4]?.modelOverride, reasoning: typeof args[3] === 'object' ? { enabled: args[3].enabled, effort: args[3].effort } : args[3] };
-      requests.push(request);
+      // Identify the summary request itself; lifecycle delivery can lag the next Provider call.
+      if (args[4]?.ephemeralSuffix?.content.startsWith('CRITICAL COMPACTION MODE:')
+        || args[2].startsWith('You are a context summarization specialist.')) {
+        summaryRequests.push(request);
+        return { textBlocks: [{ type: 'text', text: 'Prior work context and the pending sample-file inspection.' }],
+          thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+      }
+      const index = mainRequests.length;
+      mainRequests.push(request);
       entered[index]?.resolve();
       await release[index]?.promise;
       expect(args[4]?.modelOverride).toBe(request.model);
@@ -102,18 +116,20 @@ it.each([
         expect((await runtime.runs.get(accepted.runId)).mode).toBe(agentMode === 'ama' ? 'managed_task' : 'coding');
         await entered[0]!.promise;
         const first = { provider: 'live-settings-first', model: 'initial-model', reasoning: { enabled: true, effort: 'low' } };
-        expect(requests[0]).toEqual(first);
+        expect(mainRequests[0]).toEqual(first);
         await client.sessions.updateSettings(session.id, { provider: 'live-settings-next', model: 'next-model', effort: 'none' });
-        expect(requests[0]).toEqual(first);
+        expect(mainRequests[0]).toEqual(first);
         release[0]!.resolve();
         await entered[1]!.promise;
-        expect(requests[1]).toEqual({ provider: 'live-settings-next', model: 'next-model', reasoning: { enabled: false, effort: 'none' } });
+        expect(mainRequests[1]).toEqual({ provider: 'live-settings-next', model: 'next-model', reasoning: { enabled: false, effort: 'none' } });
         if (compact) {
           expect(compactionStartedCount).toBeGreaterThan(0);
+          expect(summaryRequests.length).toBeGreaterThan(0);
+          // Summary policy is independent of main-turn effort; every physical summary request disables thinking by default.
+          for (const summary of summaryRequests) expect(summary).toEqual({
+            provider: 'live-settings-next', model: 'next-model', reasoning: false,
+          });
           release[1]!.resolve();
-          await entered[2]!.promise;
-          expect(requests[2]).toEqual({ provider: 'live-settings-next', model: 'next-model', reasoning: { enabled: false, effort: 'none' } });
-          release[2]!.resolve();
           expect((await runtime.runs.await(accepted.runId)).phase).toBe('completed');
           compactionStarted.close();
           return;
@@ -121,11 +137,11 @@ it.each([
         await client.sessions.updateSettings(session.id, { effort: null, reasoningMode: 'quick' });
         release[1]!.resolve();
         await entered[2]!.promise;
-        expect(requests[2]?.reasoning).toEqual({ enabled: true, effort: 'low' });
+        expect(mainRequests[2]?.reasoning).toEqual({ enabled: true, effort: 'low' });
         await client.sessions.updateSettings(session.id, { reasoningMode: null, thinking: false, model: null });
         release[2]!.resolve();
         await entered[3]!.promise;
-        expect(requests[3]).toEqual({ provider: 'live-settings-next', model: undefined, reasoning: { enabled: false, effort: 'none' } });
+        expect(mainRequests[3]).toEqual({ provider: 'live-settings-next', model: undefined, reasoning: { enabled: false, effort: 'none' } });
         release[3]!.resolve();
         expect((await runtime.runs.await(accepted.runId)).phase).toBe('completed');
       } finally {

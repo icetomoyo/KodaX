@@ -1,9 +1,11 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import { connectKodaXRuntime } from './sdk-runtime.js';
+import { connectKodaXRuntime, ensureKodaXRuntime } from './sdk-runtime.js';
+import type { RuntimeClientInfo } from './runtime-client-info.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 
 export type * from '@kodax-ai/coding/client-contract';
+export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {
   /** Base directory containing .kodax, matching CLI --home. */
@@ -13,6 +15,16 @@ export interface ConnectKodaXClientOptions {
   readonly endpoint?: string;
   /** Explicit Host token; otherwise read from the selected local profile. */
   readonly token?: string;
+  readonly clientInfo?: RuntimeClientInfo;
+}
+
+export interface EnsureKodaXClientOptions extends Omit<ConnectKodaXClientOptions, 'endpoint' | 'token'> {
+  readonly daemonStartupTimeoutMs?: number;
+}
+
+/** Local launcher. All business operations use the same product Client as passive connections. */
+export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
+  return toKodaXProductClient(await ensureKodaXRuntime(options));
 }
 
 /** Connect to an existing compatible Host without starting or replacing one. */
@@ -25,6 +37,7 @@ export async function connectKodaXClient(
     endpoint: options.endpoint,
     daemonToken: options.token,
     autoStart: false,
+    clientInfo: options.clientInfo,
   });
   return toKodaXProductClient(runtime);
 }

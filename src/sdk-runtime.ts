@@ -6,6 +6,8 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
+import { LOCAL_RUNTIME_BUILD, readRuntimeBuildIdentity, type RuntimeBuildIdentity } from './runtime-build-identity.js';
+export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ClientSession,
@@ -702,28 +704,14 @@ export interface RuntimeIdentity {
   readonly profile: string;
   readonly startedAt: string;
   readonly version: string;
+  /** Frozen installation identity for the local launcher; not a UI capability version. */
+  readonly build?: RuntimeBuildIdentity;
   readonly isolation?: KodaXRuntimeIsolation;
 }
 
 /** Client-supplied metadata; display fields are not authenticated identity. */
-export interface RuntimeClientInfo {
-  readonly name: string;
-  /** Stable host-generated identity used only after daemon authentication. */
-  readonly instanceId?: string;
-  /** Stable host-generated secret; persist in OS keychain to resume client-owned leases. */
-  readonly instanceSecret?: string;
-  readonly title?: string;
-  readonly version?: string;
-  /** Display-only classification; never use it for authorization or process control. */
-  readonly clientType?: RuntimeDaemonClientType;
-}
-
-export type RuntimeDaemonClientType =
-  | "app"
-  | "cli"
-  | "diagnostic"
-  | "automation"
-  | "unknown";
+import type { RuntimeClientInfo, RuntimeDaemonClientType } from './runtime-client-info.js';
+export type { RuntimeClientInfo, RuntimeDaemonClientType } from './runtime-client-info.js';
 
 /**
  * A read-only connection observation. Display metadata remains client-supplied
@@ -872,6 +860,8 @@ export interface ConnectKodaXRuntimeOptions {
   /** AskUser deadline for a newly started daemon. Defaults to five minutes. */
   readonly userInputTimeoutMs?: number;
   readonly daemonStartupTimeoutMs?: number;
+  /** Local startup cancellation; never crosses the Host protocol. */
+  readonly daemonStartupSignal?: AbortSignal;
   readonly daemonConnectTimeoutMs?: number;
   /** Auto-started daemon idle-exit policy; see CreateKodaXRuntimeOptions. */
   readonly daemonOrphanExitMs?: number;
@@ -4204,6 +4194,7 @@ async function createKodaXRuntimeInternal(
     profile: options.profile ?? "default",
     startedAt: new Date().toISOString(),
     version: process.env.KODAX_VERSION ?? replApi.KODAX_VERSION,
+    build: LOCAL_RUNTIME_BUILD,
     isolation: "inline",
   };
   const configHome = options.homeDir
@@ -5544,9 +5535,37 @@ function firstRequiredDaemonUpgrade(
   const capability = firstUpgradeableCapability(capabilities, requirements);
   if (capability !== undefined) return capability;
   if (!requireCurrentVersion) return undefined;
+  if (versionOrder === 1) return undefined;
+  if (versionOrder === 0 && requiresRuntimeBuildRefresh(identity)) {
+    return { name: 'runtimeBuild', version: 1 };
+  }
   return currentVersion !== "0.0.0" && versionOrder === -1
     ? { name: "runtimeVersion", version: 1 }
     : undefined;
+}
+
+function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
+  if (!identity.build) {
+    throw new RuntimeDaemonCapabilityUpgradeError(
+      'This Host predates build identification. Finish its work and perform one normal daemon restart; its loaded code cannot be verified.',
+      undefined, undefined, 'runtimeBuild',
+    );
+  }
+  if (identity.build.origin !== LOCAL_RUNTIME_BUILD.origin) {
+    throw new RuntimeDaemonCapabilityUpgradeError(
+      'A different KodaX installation owns this profile. Connect passively to use that Host, or stop it explicitly before starting this installation.',
+      undefined, undefined, 'runtimeBuild',
+    );
+  }
+  return identity.build.fingerprint !== LOCAL_RUNTIME_BUILD.fingerprint;
+}
+
+function assertCurrentLauncherBuild(): void {
+  if (readRuntimeBuildIdentity().fingerprint === LOCAL_RUNTIME_BUILD.fingerprint) return;
+  throw new RuntimeDaemonCapabilityUpgradeError(
+    'This launcher loaded an earlier build. Restart the calling process before starting or updating a Host.',
+    undefined, undefined, 'launcherBuild',
+  );
 }
 
 function compareSemanticVersions(left: string, right: string): -1 | 0 | 1 | undefined {
@@ -5626,7 +5645,10 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     if (!hasVersionedRuntimeCapability(input.capabilities, "daemonManagement", 1)) {
       throw new Error("The older Host does not support normal managed shutdown; stop it and retry startup.");
     }
-    if (compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
+    const sameInstallationBuildChanged = input.identity.build?.origin === LOCAL_RUNTIME_BUILD.origin
+      && input.identity.build.fingerprint !== LOCAL_RUNTIME_BUILD.fingerprint
+      && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) === 0;
+    if (!sameInstallationBuildChanged && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
       throw new Error("Only a provably older Host can be refreshed automatically; use a compatible installation.");
     }
     const management = await runtime.daemon.inspect();
@@ -5647,6 +5669,7 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
       || !owner.processStartIdentity
       || current.processStartIdentity !== owner.processStartIdentity
     ) throw new Error("The original Host process identity cannot be confirmed; retry against the current owner.");
+    assertCurrentLauncherBuild();
     await input.transport.request("runtime.shutdown");
     await runtime.close();
     await waitForRuntimeDaemonOwnerExit(owner, input.exitTimeoutMs);
@@ -5668,6 +5691,7 @@ async function connectKodaXRuntimeInternal(
   ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
   startupRetries = 2,
 ): Promise<KodaXDaemonRuntime> {
+  if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   assertRuntimeTimeout(
     "permissionTimeoutMs",
     options.permissionTimeoutMs,
@@ -5712,6 +5736,7 @@ async function connectKodaXRuntimeInternal(
           userInputTimeoutMs: options.userInputTimeoutMs,
           orphanExitMs: options.daemonOrphanExitMs,
           startupTimeoutMs: options.daemonStartupTimeoutMs,
+          startupSignal: options.daemonStartupSignal,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
           ownerBootstrap,
         })
@@ -5746,6 +5771,7 @@ async function connectKodaXRuntimeInternal(
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
   let upgradeReleasedLease = false;
+  let attaching = true;
   try {
     const requirements = daemonCapabilityRequirements(options);
     const probedDaemon = parseProbedDaemon(lease);
@@ -5793,6 +5819,7 @@ async function connectKodaXRuntimeInternal(
         ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
       }),
     );
+    attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
     const expectedProfile = options.profile ?? "default";
     if (identity.profile !== expectedProfile) {
@@ -5826,6 +5853,12 @@ async function connectKodaXRuntimeInternal(
       );
     }
     if (requiredUpgrade !== undefined) {
+      if (startupRetries < 0) {
+        throw new RuntimeDaemonCapabilityUpgradeError(
+          'Host startup did not converge on the requested build. Retry after the installation has finished updating.',
+          undefined, undefined, requiredUpgrade.name,
+        );
+      }
       if (
         replApi.KODAX_VERSION !== "0.0.0"
         && compareSemanticVersions(identity.version, replApi.KODAX_VERSION) === 1
@@ -5879,15 +5912,24 @@ async function connectKodaXRuntimeInternal(
       }
       return connectKodaXRuntimeInternal(
         options,
-        false,
+        allowCapabilityUpgrade,
         ownerBootstrap,
+        startupRetries - 1,
       );
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
+    if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   } catch (error: unknown) {
     if (!upgradeReleasedLease) {
       if (lease !== undefined) await lease.close();
       else await transport.close?.();
+    }
+    if (allowCapabilityUpgrade && lease && attaching && startupRetries > 0
+      && isRecord(error) && error.code === 'conflict') {
+      // Admission may temporarily close before shutdown is published on disk.
+      // Only retry connection initialization; business operations are never replayed.
+      await new Promise<void>(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1);
     }
     throw error;
   }
@@ -20874,12 +20916,23 @@ function parseRuntimeIdentity(value: unknown): RuntimeIdentity {
   ) {
     throw new Error("Invalid runtime daemon response: missing identity fields");
   }
+  const build = record.build;
+  let runtimeBuild: RuntimeBuildIdentity | undefined;
+  if (build !== undefined) {
+    if (!isRecord(build) || typeof build.origin !== 'string' || build.origin.length === 0
+      || build.origin.length > 4096 || typeof build.fingerprint !== 'string'
+      || !/^[a-f0-9]{64}$/.test(build.fingerprint)) {
+      throw new Error('Invalid runtime daemon response: invalid build identity');
+    }
+    runtimeBuild = { origin: build.origin, fingerprint: build.fingerprint };
+  }
   return {
     runtimeId: record.runtimeId,
     mode: record.mode === "daemon" ? "daemon" : "embedded",
     profile: record.profile,
     startedAt: record.startedAt,
     version: record.version,
+    ...(runtimeBuild === undefined ? {} : { build: runtimeBuild }),
     ...(record.isolation === "inline" ||
     record.isolation === "process"
       ? { isolation: record.isolation }

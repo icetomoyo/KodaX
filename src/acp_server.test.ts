@@ -165,16 +165,18 @@ function lastRunOptions(): Record<string, unknown> {
 
 describe('KodaXAcpServer reasoning effort forwarding', () => {
   let testHome: string;
+  let testRuntime: Awaited<ReturnType<typeof createKodaXRuntime>>;
   const testServers = new Set<KodaXAcpServer>();
 
   function createTestServer(options: KodaXAcpServerOptions): KodaXAcpServer {
-    const server = new KodaXAcpServer({ homeDir: testHome, ...options });
+    const server = new KodaXAcpServer({ homeDir: testHome, runtime: testRuntime, ...options });
     testServers.add(server);
     return server;
   }
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-acp-unit-'));
+    testRuntime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
     delete process.env.KODAX_PROVIDER;
     delete process.env.KODAX_EFFORT;
     acpServerState.capturedOptions = [];
@@ -189,6 +191,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
   afterEach(async () => {
     await Promise.all([...testServers].map((server) => server.dispose()));
     testServers.clear();
+    await testRuntime.close();
     await fs.rm(testHome, { recursive: true, force: true });
     vi.clearAllMocks();
     if (originalProvider === undefined) delete process.env.KODAX_PROVIDER;
