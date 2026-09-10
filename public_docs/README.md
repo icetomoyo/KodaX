@@ -2,14 +2,15 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-beta.4`; npm publication remains a separate
-manual maintainer action. Beta.4 shares manual and automatic compaction
-summary policy (`compaction.reasoning`, default disabled thinking where
-supported), honors the effective Session provider/model for manual compaction,
-clears the REPL UI only after a durable `/compact` save, and reports bounded
-`summaryRequests` plus `commitMs` per physical summary call. The beta.3
-Windows WFP probe repair, credential-bridge retirement, and strict
-production/source-test checks are retained.
+The current release is `v0.7.96-beta.5`; npm publication remains a separate
+manual maintainer action. Beta.5 moves the built-in `deepseek` provider to
+DeepSeek's official Anthropic-compatible endpoint with new default model
+`deepseek-flash` (native image input), repairs replayed restored-session
+histories with an explicit interrupted-tool marker for orphaned `tool_use`
+calls, and advances Windows sandbox setup to generation 11 (Issue 333) with
+Codex-compatible profile/SSH ACL exclusions. The beta.4 compaction summary
+policy, the beta.3 Windows WFP probe repair, credential-bridge retirement,
+and strict production/source-test checks are retained.
 
 Beta.2 adds long-session context-boundary recovery,
 keeps bundled Provider credential scopes shared across SDK/CLI/Worker
@@ -28,7 +29,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-   restricted-token runner (beta.4 native shell protocol version 10/setup
+   restricted-token runner (beta.5 native shell protocol version 10/setup
    generation 10, Windows `sandboxRuntime:11`, interactive startup recovery
    through the setup-only boundary, and no command-lifetime global admission
 lock). It replaces the

@@ -49,6 +49,31 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-beta.5 Release Corrections
+
+Issue 333 (setup generation 11) keeps the fixed ACL and per-command
+token/concurrency contract while matching Codex's profile and SSH dependency
+ACL exclusions on read and write roots. Ordinary home/tool reads remain
+supported; no new denyRead policy is added. Setup removes provably owned
+generation-10 SSH ACEs while preserving owner and unrelated entries; pending
+cleanup retains the old SID, nonce, and roots across retries, and only that
+cleanup requires idle sandbox processes. Generation-8/9 protocol-only
+in-place upgrades retain their existing behavior. A long-running REPL keeps
+its provider wire code in memory: after updating KodaX, restart the REPL
+before switching providers on restored sessions.
+
+Two defects surfaced when restored sessions were replayed on the new
+`api.deepseek.com/anthropic` wire, both producing "`tool_use` ids were found
+without `tool_result` blocks" 400s. Assistant block reordering was the root
+cause: `convertMessages` regrouped assistant blocks to
+`thinking → tool_use → text`, which DeepSeek rejects even when the next user
+message carries every result; assistant messages are now emitted
+order-preserving while user messages keep the required `tool_result`-first
+grouping. Separately, dropping orphaned `tool_use` calls from replayed
+histories silently rewrote what the model issued; `repairToolCallHistory` now
+answers them with an explicit interrupted-tool marker so strict endpoints
+receive a wire-valid history without fabricated results.
+
 ## v0.7.96-beta.4 Release Corrections
 
 Beta.4 corrects the compaction summary contract without changing any sandbox,
@@ -402,7 +427,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | Unreleased | 2026-09-10 | 2026-09-10 |
+| 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
 | 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
@@ -628,7 +653,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Priority**: High
 - **Status**: Resolved in the working tree; not released
 - **Introduced**: confirmed in v0.7.96-beta.4 source; first affected release not established
-- **Fixed**: Unreleased
+- **Fixed**: v0.7.96-beta.5
 - **Created**: 2026-09-10
 
 **Problem**: Windows setup and read admission included the user's `.ssh` in

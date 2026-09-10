@@ -296,9 +296,17 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+beta.5 将内置 `deepseek` provider 迁移到 DeepSeek 官方 Anthropic 兼容协议
+（`api.deepseek.com/anthropic`），新默认模型 `deepseek-flash`
+（DeepSeek-V4.1-Flash，1M 上下文，原生图片理解），并修复恢复会话重放时的
+历史校验：孤立的 `tool_use` 调用会以显式的 interrupted-tool 标记应答而不是
+被丢弃，类型化 `AbortError` 取消优先于 provider 文本匹配。Windows sandbox
+setup 升级到 generation 11（Issue 333），对齐 Codex 的 profile 与 SSH 依赖
+ACL 排除，同时保留普通 home/tool 读取与现有并发机制。
+
 beta.4 统一了手动与自动压缩的摘要策略：`compaction.reasoning` 同时作用于两条路径，与主回合 effort 无关（默认在支持时关闭思考）。手动压缩遵循生效的 Session provider/model，不会把切换前 provider 的 model 带入请求；REPL `/compact` 仅在持久化保存成功后清空 UI；成功报告按每次物理摘要调用记录有界 `summaryRequests` 与 `commitMs`。
 
-**v0.7.96-beta.4 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-beta.5 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -337,7 +345,7 @@ scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留�
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.4 发布清单](docs/release.md#v0796-beta4-release-preparation)。
+维护者手动执行。详见 [v0.7.96-beta.5 发布清单](docs/release.md#v0796-beta5-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
