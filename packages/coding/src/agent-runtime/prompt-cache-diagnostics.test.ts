@@ -363,7 +363,7 @@ describe('prompt-cache diagnostics', () => {
       .toBe(hashProviderVisibleMessages(second, acp));
   });
 
-  it('matches the DeepSeek diagnostic orphan-tool repair placeholder', () => {
+  it('distinguishes a retained orphan call from a thinking-only placeholder', () => {
     const orphan: readonly KodaXMessage[] = [{
       role: 'assistant',
       content: [{
@@ -373,17 +373,13 @@ describe('prompt-cache diagnostics', () => {
         input: { path: 'missing' },
       }],
     }];
-    // The diagnostic projection pairs only adjacent tool_use/tool_result
-    // turns; an orphaned call is replaced by the wire-only thinking
-    // placeholder (assistant messages with tool calls but no thinking block
-    // get one before pairing is checked).
-    const repaired: readonly KodaXMessage[] = [{
+    const placeholder: readonly KodaXMessage[] = [{
       role: 'assistant',
       content: [{ type: 'thinking', thinking: '...', signature: '' }],
     }];
 
     expect(hashProviderVisibleMessages(orphan, getProvider('deepseek')))
-      .toBe(hashProviderVisibleMessages(repaired, getProvider('deepseek')));
+      .not.toBe(hashProviderVisibleMessages(placeholder, getProvider('deepseek')));
   });
 
   it('fails open when provider identity diagnostics throw', () => {
@@ -429,7 +425,7 @@ describe('prompt-cache diagnostics', () => {
         throw new Error('callback getter failed');
       },
     });
-    const usage = Object.defineProperty({}, 'inputTokens', {
+    const usage = Object.defineProperty({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }, 'inputTokens', {
       get: () => {
         throw new Error('usage getter failed');
       },

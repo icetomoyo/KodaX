@@ -2895,10 +2895,37 @@ mod tests {
     /// Strips the parent-managed SE_DACL_AUTO_INHERITED flag (SDDL `AI`,
     /// control bit 0x0400) from a snapshot before equality checks.
     fn without_auto_inherited_flag(snapshot: &(String, u16)) -> (String, u16) {
-        (
-            snapshot.0.replace("D:AI(", "D:("),
-            snapshot.1 & !0x0400u16,
-        )
+        let mut sddl = snapshot.0.clone();
+        if let Some(start) = sddl.find("D:").map(|index| index + 2) {
+            let suffix = &sddl[start..];
+            let length = ["(", "O:", "G:", "S:"]
+                .iter()
+                .filter_map(|delimiter| suffix.find(delimiter))
+                .min()
+                .unwrap_or(suffix.len());
+            let flags = suffix[..length].replace("AI", "");
+            sddl.replace_range(start..start + length, &flags);
+        }
+        (sddl, snapshot.1 & !0x0400u16)
+    }
+
+    #[test]
+    fn auto_inherited_normalization_preserves_other_flags_and_sections() {
+        for (flags, normalized) in [("AI", ""), ("PAI", "P"), ("ARAI", "AR"), ("PARAI", "PAR")] {
+            for tail in ["", "(A;;FA;;;SY)", "S:AI(AU;SA;FA;;;WD)"] {
+                let input = format!("O:SYD:{flags}{tail}");
+                let expected = format!("O:SYD:{normalized}{tail}");
+                assert_eq!(
+                    without_auto_inherited_flag(&(input, 0x9504)),
+                    (expected, 0x9104),
+                );
+            }
+        }
+        let unchanged = "O:SYD:P(A;;FA;;;SY)S:AI(AU;SA;FA;;;WD)".to_string();
+        assert_eq!(
+            without_auto_inherited_flag(&(unchanged.clone(), 0x9004)),
+            (unchanged, 0x9004),
+        );
     }
 
     #[test]
