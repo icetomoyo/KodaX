@@ -9,7 +9,7 @@ dedicated environment variable — no key is ever stored in config files.
 |---|---|---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-4-6` |
 | `openai` | `OPENAI_API_KEY` | Yes | `gpt-5.3-codex` |
-| `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-v4-flash` (also `deepseek-v4-pro`; vision `deepseek-v4-flash-vision-exp`) |
+| `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-flash` (Anthropic-compat; also legacy text-only `deepseek-v4-pro`) |
 | `kimi` | `KIMI_API_KEY` | Yes | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | Yes | `k3-256k` |
 | `qwen` | `QWEN_API_KEY` | Yes | `qwen3.5-plus` |

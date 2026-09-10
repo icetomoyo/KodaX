@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-24",
+  "updatedAt": "2026-09-10",
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
@@ -152,58 +152,36 @@
     },
     "deepseek": {
       "apiKeyEnv": "DEEPSEEK_API_KEY",
-      "model": "deepseek-v4-flash",
+      "model": "deepseek-flash",
       "models": [
         {
-          "id": "deepseek-v4-pro",
-          "displayName": "DeepSeek V4 Pro",
-          "reasoningProfile": {
-            "reasoningPreset": "deepseek-v4-pro-openai",
-            "effortStrategy": "openai-chat-effort",
-            "thinkingStrategy": "provider-toggle",
-            "defaultEffort": "high",
-            "supportedEfforts": [
-              { "value": "none", "description": "Disable thinking" },
-              { "value": "minimal", "description": "Disable thinking", "isUserVisible": false },
-              { "value": "low", "description": "Alias to high" },
-              { "value": "medium", "description": "Alias to high" },
-              { "value": "high", "description": "DeepSeek high reasoning", "isDefault": true },
-              { "value": "xhigh", "description": "Alias to max" },
-              { "value": "max", "description": "DeepSeek max reasoning" }
-            ],
-            "effortAliases": {
-              "low": "high",
-              "medium": "high",
-              "xhigh": "max"
-            },
-            "disabledEfforts": ["none", "minimal"],
-            "supportsReasoningEffort": true,
-            "supportsDisabledThinking": true
-          }
+          "id": "deepseek-flash",
+          "displayName": "DeepSeek Flash"
         },
         {
-          "id": "deepseek-v4-flash-vision-exp",
-          "displayName": "DeepSeek V4 Flash Vision"
+          "id": "deepseek-v4-pro",
+          "displayName": "DeepSeek V4 Pro"
         }
       ],
       "reasoningCapability": "native-effort",
       "reasoningProfile": {
-        "reasoningPreset": "deepseek-v4-flash-openai",
-        "effortStrategy": "openai-chat-effort",
+        "reasoningPreset": "deepseek-v4-anthropic",
+        "effortStrategy": "anthropic-output-effort",
         "thinkingStrategy": "provider-toggle",
         "defaultEffort": "high",
         "supportedEfforts": [
           { "value": "none", "description": "Disable thinking" },
           { "value": "minimal", "description": "Disable thinking", "isUserVisible": false },
-          { "value": "low", "description": "DeepSeek low reasoning" },
+          { "value": "low", "description": "Alias to high" },
           { "value": "medium", "description": "Alias to high" },
           { "value": "high", "description": "DeepSeek high reasoning", "isDefault": true },
-          { "value": "xhigh", "description": "Alias to high" },
+          { "value": "xhigh", "description": "Alias to max" },
           { "value": "max", "description": "DeepSeek max reasoning" }
         ],
         "effortAliases": {
+          "low": "high",
           "medium": "high",
-          "xhigh": "high"
+          "xhigh": "max"
         },
         "disabledEfforts": ["none", "minimal"],
         "supportsReasoningEffort": true,
@@ -212,9 +190,8 @@
       "capabilityProfile": "image-input-native",
       "supportsThinking": true,
       "contextWindow": 1000000,
-      "maxOutputTokens": 64000,
-      "maxOutputTokensField": "max_tokens",
-      "verifyStrategy": "models-list"
+      "maxOutputTokens": 384000,
+      "verifyStrategy": "count-tokens"
     },
     "kimi": {
       "apiKeyEnv": "KIMI_API_KEY",

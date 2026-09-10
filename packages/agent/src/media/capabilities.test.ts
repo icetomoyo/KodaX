@@ -82,24 +82,22 @@ describe('getModelInputCapabilities', () => {
   );
 
   it('supports image but not video input for the DeepSeek vision route', () => {
-    const caps = getModelInputCapabilities({
-      provider: 'deepseek',
-      model: 'deepseek-v4-flash-vision-exp',
-    });
+    // deepseek-flash (DeepSeek-V4.1-Flash) has native image understanding.
+    const caps = getModelInputCapabilities({ provider: 'deepseek', model: 'deepseek-flash' });
     expect(caps.image.status).toBe('supported');
     expect(caps.video.status).toBe('unsupported');
   });
 
-  it.each(['deepseek-v4-flash', 'deepseek-v4-pro'])(
-    'keeps DeepSeek text-only route %s image-unsupported',
+  it.each(['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'])(
+    'keeps DeepSeek legacy route %s image-unsupported',
     (model) => {
       expect(getModelInputCapabilities({ provider: 'deepseek', model }).image.status)
         .toBe('unsupported');
     },
   );
 
-  it('keeps the DeepSeek provider default model image-unsupported', () => {
-    expect(getModelInputCapabilities({ provider: 'deepseek' }).image.status).toBe('unsupported');
+  it('supports image input for the DeepSeek provider default model (deepseek-flash)', () => {
+    expect(getModelInputCapabilities({ provider: 'deepseek' }).image.status).toBe('supported');
   });
 
   it('supports documented non-official image models and their current defaults', () => {

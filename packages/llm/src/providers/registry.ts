@@ -285,16 +285,15 @@ class OpenAIProvider extends KodaXOpenAICompatProvider {
   });
 }
 
-class DeepSeekProvider extends KodaXOpenAICompatProvider {
+class DeepSeekProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'deepseek';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('deepseek', {
-    baseUrl: 'https://api.deepseek.com',
-    // V4 thinking mode 400s on multi-turn replays that strip
-    // reasoning_content (empirically verified via direct API probe).
-    // Kimi/Qwen/Zhipu share the same OpenAI-compat field convention so
-    // they get the same flag for max fault-tolerance — see those
-    // provider entries below.
-    replayReasoningContent: true,
+    // Official Anthropic-compatible endpoint
+    // (api-docs.deepseek.com/zh-cn/guides/anthropic_api). Wire dialect
+    // verified live 2026-09-10: thinking adaptive + output_config.effort
+    // (typed enum, includes max), {type:'disabled'} off-shape, signed
+    // thinking-block replay, count_tokens, tool use / vision / SSE.
+    baseUrl: 'https://api.deepseek.com/anthropic',
   });
 }
 

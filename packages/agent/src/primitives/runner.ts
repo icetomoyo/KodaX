@@ -718,8 +718,10 @@ async function recoverRejectedGeneration(
   agent: Agent, transcript: AgentMessage[], opts: RunOptions, span: Span | null,
   error: unknown,
 ): Promise<{ outcome: GenerationTurnOutcome; messages: AgentMessage[] }> {
-  opts.abortSignal?.throwIfAborted();
+  // Preserve the observed provider failure (including AbortError). A caller's
+  // signal.reason may be a plain Error and must not replace that evidence.
   if (!(error instanceof KodaXContextOverflowError) || !opts.compactionHook) throw error;
+  opts.abortSignal?.throwIfAborted();
   let recovered = transcript;
   try {
     const replacement = await opts.compactionHook(transcript, error);

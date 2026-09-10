@@ -5698,6 +5698,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         case "interrupt":
           queueInterruptedPersistence();
           resetInterruptedPromptState();
+          addHistoryItem({ type: "info", text: t("cancellationRequested") });
           return true;
         case "pop-pending-input":
           removeLastPendingInput();
@@ -5718,6 +5719,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       removeLastPendingInput,
       queueInterruptedPersistence,
       resetInterruptedPromptState,
+      addHistoryItem,
       stopActiveWorkflowRuns,
       transcriptModeTextSelection,
       workflowLiveViewModel.shouldRender,
@@ -6937,6 +6939,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       sidecarMessageDeliveredRef.current = true;
     },
     onError: (error: Error) => {
+      // Cancellation is a control event. Handle it before marking tools failed
+      // or constructing API/network recovery messages.
+      const classification = classifyError(error);
+      if (classification.category === ErrorCategory.USER_ABORT) {
+        return;
+      }
       const latestExecutingTool = findLatestExecutingTool();
       if (latestExecutingTool?.name) {
         setLastLiveActivityLabel(
@@ -6957,12 +6965,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         );
       }
       // Classify error to provide better user feedback
-      const classification = classifyError(error);
       const categoryNames = ['Transient', 'Permanent', 'Tool Call ID', 'User Abort'];
-
-      if (classification.category === ErrorCategory.USER_ABORT) {
-        return;
-      }
 
       // Build a multi-line error payload and route it to the correct
       // rendering layer. Earlier code emitted each line via

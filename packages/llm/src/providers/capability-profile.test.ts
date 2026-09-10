@@ -100,10 +100,11 @@ describe('provider capability profiles', () => {
     }
   });
 
-  it('marks DeepSeek image-input capable for the vision-exp model route', () => {
-    // Provider-level gate opened with the 2026-08 deepseek-v4-flash-vision-exp
-    // announcement; per-model routing (only the vision model accepts images,
-    // flash/pro stay text-only) lives in @kodax-ai/agent media capabilities.
+  it('marks DeepSeek image-input capable (native vision on deepseek-flash)', () => {
+    // Provider-level gate opened with the 2026-08 vision announcement; since
+    // 2026-09-10 vision is native to the deepseek-flash default. Per-model
+    // routing (legacy flash/pro/vision-exp ids stay text-only) lives in
+    // @kodax-ai/agent media capabilities.
     expect(getProviderConfiguredCapabilityProfile('deepseek')).toEqual(
       EXPECTED_IMAGE_INPUT_NATIVE_PROFILE,
     );

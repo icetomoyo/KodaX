@@ -4998,8 +4998,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
         recovered = true;
       });
       if (recovered) {
+        // Neutral wording: the recovery pass ran, but whether the next
+        // request is actually wire-valid is decided by the serializer
+        // (pairing/ordering repair), not by this cleanup pass.
         writeStorageNotice(chalk.cyan(
-          '[Session Recovery] Cleaned incomplete tool calls from previous session',
+          '[Session Recovery] Attempted cleanup of incomplete tool calls from previous session',
         ));
       }
       return current;

@@ -7,10 +7,10 @@
   // Active provider alias and optional model override. Run `kodax setup` or
   // `/model` instead of editing these manually when possible.
   // "provider": "deepseek",
-  // "model": "deepseek-v4-flash",
+  // "model": "deepseek-flash",
   // Add or reorder model ids shown by `/model` for a provider.
   // "providerModels": {
-  //   "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]
+  //   "deepseek": ["deepseek-flash", "deepseek-v4-pro"]
   // },
 
   // Interactive Runtime hosting: "embedded" (this process) or "daemon".

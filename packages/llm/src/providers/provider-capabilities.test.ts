@@ -247,10 +247,18 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       });
     });
 
-    it('deepseek: KODAX_ESCALATED_MAX_OUTPUT_TOKENS resolved to 64000', () => {
+    it('deepseek: defaults to deepseek-flash at the 384K official output ceiling', () => {
       const d = getProviderSnapshots().deepseek;
-      expect(d.maxOutputTokens).toBe(64000);
+      expect(d.model).toBe('deepseek-flash');
+      expect(d.maxOutputTokens).toBe(384_000);
       expect(d.contextWindow).toBe(1_000_000);
+      // Only the officially-listed ids stay selectable. The retired
+      // deepseek-v4-flash / vision-exp ids are NOT re-declared —
+      // deepseek-flash supersedes both (native vision, same backing model).
+      const ids = d.models?.map((m) => m.id);
+      expect(ids).toContain('deepseek-v4-pro');
+      expect(ids).not.toContain('deepseek-v4-flash');
+      expect(ids).not.toContain('deepseek-v4-flash-vision-exp');
     });
 
     it('kimi-code: defaults to the direct K3 256K route and retains both K2.7 Code routes', () => {
@@ -444,22 +452,23 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
   });
 
   // FEATURE_216 v0.7.45 — per-provider verifyStrategy drift guard.
-  // Distribution (from 2026-05-28 12-provider real+fake key probe):
-  //   count-tokens (6):    anthropic + qwen-token-plan + 4 anthropic-coding (zhipu/kimi/minimax/ark)
-  //   models-list (4):     openai, deepseek, kimi, qwen
+  // Distribution (updated 2026-09-10: deepseek moved to the official
+  // Anthropic-compat wire; count_tokens verified live):
+  //   count-tokens (7):    anthropic + deepseek + qwen-token-plan + 4 anthropic-coding (zhipu/kimi/minimax/ark)
+  //   models-list (3):     openai, kimi, qwen
   //   minimal-message (3): zhipu, mimo, mimo-coding (each empirical reason)
   //   unsupported (2):     gemini-cli, codex-cli
   describe('FEATURE_216 verifyStrategy per-provider', () => {
-    it('count-tokens providers (6): anthropic + 5 anthropic-compatible plans', () => {
+    it('count-tokens providers (7): anthropic + deepseek + 5 anthropic-compatible plans', () => {
       const snap = getProviderSnapshots();
-      for (const name of ['anthropic', 'zhipu-coding', 'kimi-code', 'minimax-coding', 'ark-coding', 'qwen-token-plan']) {
+      for (const name of ['anthropic', 'deepseek', 'zhipu-coding', 'kimi-code', 'minimax-coding', 'ark-coding', 'qwen-token-plan']) {
         expect(snap[name].verifyStrategy).toBe('count-tokens');
       }
     });
 
-    it('models-list providers (4): openai-compat with auth-gated /v1/models', () => {
+    it('models-list providers (3): openai-compat with auth-gated /v1/models', () => {
       const snap = getProviderSnapshots();
-      for (const name of ['openai', 'deepseek', 'kimi', 'qwen']) {
+      for (const name of ['openai', 'kimi', 'qwen']) {
         expect(snap[name].verifyStrategy).toBe('models-list');
       }
     });

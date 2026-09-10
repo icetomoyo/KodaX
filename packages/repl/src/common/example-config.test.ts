@@ -80,8 +80,9 @@ describe('ensureExampleConfigFile (F1 first-launch template)', () => {
     expect(core).toContain('KodaX core configuration template');
     expect(core).toContain('kodax integrations migrate`');
     expect(core).not.toContain('migrate --dry-run');
-    expect(core).toContain('"deepseek-v4-flash"');
+    expect(core).toContain('"deepseek-flash"');
     expect(core).toContain('"deepseek-v4-pro"');
+    expect(core).not.toContain('"deepseek-v4-flash"');
     expect(core).not.toContain('"deepseek-reasoner"');
     expect(getConfigTemplate('mcp')).toContain('"version": 1');
     const a2a = getConfigTemplate('a2a');

@@ -889,7 +889,7 @@ Verifier 的 `revise` / `blocked` 可执行消息；JSONL 输出使用同形
 
 `imageInput: true` 会在 KodaX 所有层面（provider 实例、能力查询、policy gate）强制 `capabilityProfile.multimodalSupport: "image-input"`，显式写了 `"none"` 也会被覆盖。进阶写法 —— 手写 `capabilityProfile` 块并设 `"multimodalSupport": "image-input"` —— 同样有效，详见 [Custom Providers](public_docs/configuration/custom-providers.md)。纯文本模型保持不设即可，图片 artifact 会在请求发出前被 `MODEL_INPUT_UNSUPPORTED` 拒绝。
 
-内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了图片输入。DeepSeek V4 默认模型（`deepseek-v4-flash` / `deepseek-v4-pro`）和 Codex-CLI 是纯文本 —— 内置 `deepseek` 只有 `deepseek-v4-flash-vision-exp` 这一个路由收图；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
+内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了图片输入。内置 `deepseek` 的默认模型 `deepseek-flash`（DeepSeek-V4.1-Flash）原生支持图片理解；兼容名 `deepseek-v4-pro` 和 Codex-CLI 是纯文本；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
 
 序列化层（Anthropic-compat 走 `packages/llm/src/providers/anthropic.ts:1431`，OpenAI-compat 走 `openai.ts:1496`）通过基类继承自动转发 image block —— OpenAI-compatible 端点收到的是标准 `image_url` 块。这个 flag 只控制 KodaX 自身是否预先拒绝多模态请求 —— 上游模型到底支不支持 vision 由 provider 自己决定。如果模型实际是 text-only，你会看到真实的上游 API 错误，而不是 KodaX 一侧的 `[Provider Policy] multimodal requests are unsupported` 预拦截。
 
@@ -1014,7 +1014,7 @@ dist/binary/linux-x64/
 | mimo | `MIMO_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo 按量计费，Anthropic 协议） |
 | mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo Token Plan，Anthropic 协议） |
 | ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3（火山方舟 Coding Plan — GLM-5.3（1M ctx、128K out） · GLM-5.2（别名 `glm-latest`） · Kimi K2.7 Code / K2.6 · MiniMax M3 / M2.7 · DeepSeek V4 Pro / V4 Flash · Doubao Seed 2.0 Code / Pro / Lite · Doubao Seed Code） |
-| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash（可 `/model` 切换 `deepseek-v4-pro` 及视觉模型 `deepseek-v4-flash-vision-exp`，后者支持图片输入） |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-flash（Anthropic 协议；DeepSeek-V4.1-Flash，1M ctx，原生图片理解；可 `/model` 切换纯文本兼容名 `deepseek-v4-pro`） |
 | gemini-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 gemini CLI） |
 | codex-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 codex CLI） |
 

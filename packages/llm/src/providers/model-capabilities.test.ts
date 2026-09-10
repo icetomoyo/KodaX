@@ -149,9 +149,11 @@ describe('built-in provider model capabilities (no API key required)', () => {
     }
   });
 
-  it('exposes deepseek-v4 series at 1M context', () => {
-    expect(getModelCapabilities('deepseek', 'deepseek-v4-flash')?.contextWindow).toBe(1_000_000);
+  it('exposes deepseek-flash and deepseek-v4-pro at 1M context', () => {
+    expect(getModelCapabilities('deepseek', 'deepseek-flash')?.contextWindow).toBe(1_000_000);
     expect(getModelCapabilities('deepseek', 'deepseek-v4-pro')?.contextWindow).toBe(1_000_000);
+    // Default model first in the descriptor list, under its official id.
+    expect(getProviderModelDescriptors('deepseek')[0]?.id).toBe('deepseek-flash');
   });
 
   it('registers glm-5.3-flash (native multimodal, 1M) on all three Zhipu routes', () => {

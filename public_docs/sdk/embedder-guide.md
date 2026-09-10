@@ -2264,8 +2264,10 @@ For an OpenAI-compatible endpoint that follows DeepSeek Chat Completions, set
 `max_completion_tokens`; an object entry in `models[]` may override the
 provider-level value for a mixed gateway. DeepSeek V4 custom configurations
 should likewise use the model-specific `deepseek-v4-flash-openai` or
-`deepseek-v4-pro-openai` reasoning preset. Both built-in DeepSeek V4 routes are
-text-only.
+`deepseek-v4-pro-openai` reasoning preset. (The built-in `deepseek` provider
+itself speaks the official Anthropic-compatible protocol and uses the
+`deepseek-v4-anthropic` preset; the `-openai` presets are for custom
+OpenAI-wire gateways only.)
 
 For a self-hosted multimodal endpoint (vLLM / SGLang serving a Qwen-VL-style
 model), set `imageInput: true` on the custom provider config. The flag feeds

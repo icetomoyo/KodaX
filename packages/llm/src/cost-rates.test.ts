@@ -117,25 +117,23 @@ describe('cost-rates', () => {
       expect(openai['gpt-5.4'].cachePer1M).toBeUndefined();
     });
 
-    it('should have DeepSeek V4 models with cache pricing', () => {
+    it('should have DeepSeek flash/V4 models with cache pricing', () => {
       const deepseek = DEFAULT_COST_RATES.deepseek;
-      expect(deepseek['deepseek-v4-flash']).toEqual({
+      // Idle-hour CNY rates × ¥1 ≈ $0.14 (official pricing page, 2026-09-10).
+      expect(deepseek['deepseek-flash']).toEqual({
         inputPer1M: 0.14,
-        outputPer1M: 0.28,
+        outputPer1M: 0.56,
         cachePer1M: 0.0028,
       });
+      // Official pro price until the 2026-09-14 routing change (see cost-rates.ts).
       expect(deepseek['deepseek-v4-pro']).toEqual({
-        inputPer1M: 0.435,
-        outputPer1M: 0.87,
-        cachePer1M: 0.003625,
+        inputPer1M: 0.63,
+        outputPer1M: 1.89,
+        cachePer1M: 0.021,
       });
-      // Vision model is priced identically to flash; images are billed as
-      // size-derived tokens (≤384/image) at text rates.
-      expect(deepseek['deepseek-v4-flash-vision-exp']).toEqual({
-        inputPer1M: 0.14,
-        outputPer1M: 0.28,
-        cachePer1M: 0.0028,
-      });
+      // Retired ids (superseded by deepseek-flash) are no longer priced.
+      expect(deepseek['deepseek-v4-flash']).toBeUndefined();
+      expect(deepseek['deepseek-v4-flash-vision-exp']).toBeUndefined();
     });
 
     it('should price both Qwen 3.8 Token Plan model IDs', () => {

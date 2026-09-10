@@ -15574,6 +15574,51 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it.each(["upstream signal", "runtime Stop"])("preserves cancellation through Runtime and Runner via %s", async (via) => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const controller = new AbortController();
+    const observedError = vi.fn();
+    const enteredGeneration = vi.fn();
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot, sessionsDir: path.join(tempRoot, "runner-cancel-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    codingMock.runManagedTask.mockImplementation(async (options: KodaXOptions) => {
+      try {
+        await Runner.run(createAgent({ name: "cancel-probe", instructions: "test" }), "hello", {
+          tracer: null, abortSignal: options.abortSignal,
+          llm: () => new Promise<string>((_resolve, reject) => {
+            const abort = () => reject(new DOMException("This operation was aborted", "AbortError"));
+            options.abortSignal?.addEventListener("abort", abort, { once: true });
+            if (options.abortSignal?.aborted) abort();
+            enteredGeneration();
+          }),
+        });
+        return { success: true, messages: [], lastText: "" };
+      } catch (error) {
+        if (error instanceof Error) options.events?.onError?.(error);
+        throw error;
+      }
+    });
+    try {
+      const session = await runtime.sessions.create({ title: "Runner cancellation" });
+      const handle = await runtime.runs.start({
+        sessionId: session.id, prompt: "hello", mode: "managed_task",
+        options: { abortSignal: controller.signal, events: { onError: observedError } },
+      });
+      await vi.waitFor(() => expect(enteredGeneration).toHaveBeenCalledOnce());
+      if (via === "upstream signal") controller.abort();
+      else await runtime.runs.abort(handle.runId);
+      await expect(handle.result).resolves.toMatchObject({ phase: "interrupted" });
+      expect(observedError).toHaveBeenCalledOnce();
+      expect(observedError.mock.calls[0]?.[0]).toMatchObject({ name: "AbortError" });
+      const failed = await runtime.events.replay({ runId: handle.runId, type: "run.failed" });
+      expect(failed).toEqual([]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("preserves trusted managed Stop causality before run-scoped credential redaction", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const secret = "F280_ABORT_CREDENTIAL_SECRET";
@@ -15621,6 +15666,10 @@ describe("createKodaXRuntime", () => {
       phase: "unknown",
       state: "unknown",
       outcome: "unknown",
+    });
+    expect(managedOptions?.abortSignal?.reason).toMatchObject({
+      name: "AbortError",
+      message: "runtime run aborted",
     });
     await expect(managedOptions?.events?.beforeToolExecute?.(
       "bash",

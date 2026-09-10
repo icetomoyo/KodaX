@@ -63,7 +63,11 @@ const SOURCE_BACKED_IMAGE_ROUTES = new Set([
   'ark-coding/kimi-k2.6',
   'ark-coding/kimi-k2.7-code',
   'ark-coding/minimax-m3',
-  'deepseek/deepseek-v4-flash-vision-exp',
+  // deepseek-flash (DeepSeek-V4.1-Flash, released 2026-09-10) has native
+  // image understanding per the official pricing/vision docs. The legacy
+  // deepseek-v4-flash / deepseek-v4-pro / deepseek-v4-flash-vision-exp ids
+  // stay text-only here.
+  'deepseek/deepseek-flash',
   'kimi-code/k3-256k',
   'qwen-token-plan/qwen3.8-max',
   'qwen-token-plan/qwen3.8-max-preview',

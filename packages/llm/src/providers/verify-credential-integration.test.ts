@@ -30,7 +30,7 @@ const CASES: ProviderCase[] = [
   { provider: 'kimi-code',      apiKeyEnv: 'KIMI_CODE_API_KEY',      expectedStrategy: 'count-tokens' },
   { provider: 'minimax-coding', apiKeyEnv: 'MINIMAX_CODING_API_KEY', expectedStrategy: 'count-tokens' },
   { provider: 'ark-coding',     apiKeyEnv: 'ARK_CODING_API_KEY',     expectedStrategy: 'count-tokens' },
-  { provider: 'deepseek',       apiKeyEnv: 'DEEPSEEK_API_KEY',       expectedStrategy: 'models-list' },
+  { provider: 'deepseek',       apiKeyEnv: 'DEEPSEEK_API_KEY',       expectedStrategy: 'count-tokens' },
   { provider: 'kimi',           apiKeyEnv: 'KIMI_API_KEY',           expectedStrategy: 'models-list' },
 ];
 
