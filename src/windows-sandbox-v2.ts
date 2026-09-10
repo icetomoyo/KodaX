@@ -33,6 +33,7 @@ export interface WindowsSandboxV2PolicyInput {
 }
 
 export interface WindowsSandboxV2RunRequest {
+  readonly aclExclusions: readonly string[];
   readonly protocol: typeof WINDOWS_SANDBOX_V2_PROTOCOL;
   readonly generation: string;
   readonly filesystemCapabilityNonce: string;
@@ -58,6 +59,7 @@ export interface WindowsSandboxV2RunRequest {
 }
 
 export interface WindowsSandboxV2RunRequestInput {
+  readonly aclExclusions?: readonly string[];
   readonly generation: string;
   readonly filesystemCapabilityNonce: string;
   readonly sandboxUserSid: string;
@@ -369,6 +371,7 @@ export function createWindowsSandboxV2RunRequest(
   return {
     protocol: WINDOWS_SANDBOX_V2_PROTOCOL,
     generation: input.generation,
+    aclExclusions: input.aclExclusions ?? [],
     filesystemCapabilityNonce: input.filesystemCapabilityNonce.toLowerCase(),
     sandboxUserSid: input.sandboxUserSid,
     sandboxGroupSid: input.sandboxGroupSid,

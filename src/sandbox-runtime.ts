@@ -34,6 +34,7 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { windowsSandboxAclExclusions, windowsSandboxAclRoots, windowsSandboxSshCleanupRoots } from './windows-sandbox-read-policy.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type {
@@ -1121,7 +1122,7 @@ function windowsSandboxV2SetupLockFile(): string {
 const WINDOWS_SANDBOX_V2_CUTOVER_DIAGNOSTIC = '[windows_v2_acl_cutover_required]';
 const WINDOWS_LEGACY_ACL_STATE_IGNORED_DIAGNOSTIC = '[legacy_acl_state_ignored]';
 const WINDOWS_SANDBOX_V2_CUTOVER_MARKER_MAX_BYTES = 1024 * 1024;
-const WINDOWS_SANDBOX_V2_SETUP_VERSION = 10 as const;
+const WINDOWS_SANDBOX_V2_SETUP_VERSION = 11 as const;
 const WINDOWS_LEGACY_ACL_MIGRATION_VERSION = 8 as const;
 
 interface WindowsSandboxV2CutoverMarker {
@@ -1137,9 +1138,19 @@ interface WindowsSandboxV2CutoverMarker {
 
 interface WindowsSandboxV2InstallingMarker extends WindowsSandboxV2CutoverMarker {
   readonly state: 'installing';
+  readonly legacyAclCleanup?: WindowsLegacyAclCleanup;
+}
+
+interface WindowsLegacyAclCleanup {
+  readonly roots: readonly string[];
+  readonly sandboxGroupSid: string;
+  readonly filesystemCapabilityNonce: string;
 }
 
 interface PreviousWindowsSandboxV2CutoverIdentity {
+  readonly setupReadRoots: readonly string[];
+  readonly installing: boolean;
+  readonly legacyAclCleanup?: WindowsLegacyAclCleanup;
   readonly version: number;
   readonly hostUserSid: string;
   readonly sandboxUserSid: string;
@@ -1307,12 +1318,38 @@ function readPreviousWindowsSandboxV2CutoverIdentity(
   ) {
     throw new Error('the previous cutover marker has an incompatible identity');
   }
+  if (marker.setupReadRoots !== undefined && (!Array.isArray(marker.setupReadRoots)
+    || marker.setupReadRoots.length > 1_024
+    || !marker.setupReadRoots.every((root: unknown) => typeof root === 'string' && path.isAbsolute(root)))) {
+    throw new Error('the previous cutover marker has invalid setup read roots');
+  }
   return {
     version: marker.version,
+    installing: marker.state === 'installing',
+    setupReadRoots: marker.setupReadRoots as string[] | undefined ?? [],
+    ...(marker.legacyAclCleanup === undefined ? {} : {
+      legacyAclCleanup: parseWindowsLegacyAclCleanup(marker.legacyAclCleanup),
+    }),
     hostUserSid: marker.hostUserSid,
     sandboxUserSid: marker.sandboxUserSid,
     sandboxGroupSid: marker.sandboxGroupSid,
   };
+}
+
+function parseWindowsLegacyAclCleanup(value: unknown): WindowsLegacyAclCleanup {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid pending Windows SSH ACL cleanup');
+  }
+  const pending = value as Record<string, unknown>;
+  if (!Array.isArray(pending.roots) || pending.roots.length > 1_024
+    || !pending.roots.every((root: unknown) => typeof root === 'string' && path.isAbsolute(root) && !root.includes('\0'))
+    || typeof pending.sandboxGroupSid !== 'string' || !/^S-\d+(?:-\d+)+$/i.test(pending.sandboxGroupSid)
+    || typeof pending.filesystemCapabilityNonce !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pending.filesystemCapabilityNonce)) {
+    throw new Error('invalid pending Windows SSH ACL cleanup authority');
+  }
+  return { roots: pending.roots as string[], sandboxGroupSid: pending.sandboxGroupSid,
+    filesystemCapabilityNonce: pending.filesystemCapabilityNonce };
 }
 
 function windowsSandboxV2CutoverError(reason: string): Error {
@@ -1497,8 +1534,13 @@ function writeWindowsSandboxV2CutoverMarker(
 
 function stageWindowsSandboxV2CutoverMarker(
   marker: WindowsSandboxV2CutoverMarker,
+  previousCutover?: PreviousWindowsSandboxV2CutoverIdentity,
 ): WindowsSandboxV2InstallingMarker {
-  const installing: WindowsSandboxV2InstallingMarker = { ...marker, state: 'installing' };
+  const installing: WindowsSandboxV2InstallingMarker = {
+    ...marker, state: 'installing',
+    setupReadRoots: [...new Set([...marker.setupReadRoots, ...(previousCutover?.setupReadRoots ?? [])])],
+    ...pendingWindowsSshAclCleanup(previousCutover, marker.filesystemCapabilityNonce),
+  };
   cachedWindowsSandboxV2Cutover = undefined;
   writePrivateJsonFile(windowsSandboxV2CutoverMarkerFile(), installing);
   return installing;
@@ -2314,6 +2356,8 @@ exit $exitCode
 `;
 
 interface WindowsSetupCapabilityRequest {
+  readonly aclExclusions: readonly string[];
+  readonly legacyAclCleanup?: WindowsLegacyAclCleanup;
   readonly version: 2;
   readonly sandboxSid: string;
   readonly sandboxGroupSid: string;
@@ -2403,6 +2447,8 @@ function installWindowsV2AccountCapabilities(
   filesystemCapabilityNonce: string,
   marker: WindowsSandboxV2CutoverMarker | WindowsSandboxV2InstallingMarker,
 ): void {
+  const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
+  const aclExclusions = windowsSandboxAclExclusions(home);
   windowsSetupCapabilityInstaller(
     resolveWindowsSandboxV2Executable({ provision: true }).path,
     {
@@ -2414,10 +2460,29 @@ function installWindowsV2AccountCapabilities(
       setupMarkerSha256: createHash('sha256')
         .update(JSON.stringify(marker), 'utf8')
         .digest('hex'),
-      readRoots: marker.setupReadRoots,
+      readRoots: windowsSandboxAclRoots(marker.setupReadRoots, home, aclExclusions),
       writeRoots: [],
+      aclExclusions,
+      ...('legacyAclCleanup' in marker ? { legacyAclCleanup: marker.legacyAclCleanup } : {}),
     },
   );
+}
+
+function pendingWindowsSshAclCleanup(
+  previous: PreviousWindowsSandboxV2CutoverIdentity | undefined, nonce: string,
+): { readonly legacyAclCleanup?: WindowsLegacyAclCleanup } {
+  if (previous?.legacyAclCleanup !== undefined) return { legacyAclCleanup: previous.legacyAclCleanup };
+  if (previous === undefined || previous.version < 10
+    || (previous.version >= WINDOWS_SANDBOX_V2_SETUP_VERSION && !previous.installing)) return {};
+  const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
+  const excluded = windowsSandboxAclExclusions(home);
+  const oldRoots = previous.setupReadRoots.filter((root) => excluded.some((entry) => (
+    isInside(root, entry) || isInside(entry, root)
+  )));
+  return { legacyAclCleanup: {
+    roots: [...new Set([...oldRoots, ...excluded, ...windowsSandboxSshCleanupRoots(home)])],
+    sandboxGroupSid: previous.sandboxGroupSid, filesystemCapabilityNonce: nonce,
+  } };
 }
 
 function verifyWindowsV2AccountCompatibility(
@@ -2468,11 +2533,18 @@ async function setupWindowsSandboxRuntimeWithLock(
       detail: error,
     });
   }
+  const needsSshAclMigration = previousCutover !== undefined && previousCutover.version >= 10
+    && (previousCutover.version < WINDOWS_SANDBOX_V2_SETUP_VERSION || previousCutover.installing);
+  if (needsSshAclMigration && previousCutover !== undefined
+    && !await windowsSandboxSidIsIdle(previousCutover.sandboxUserSid)) {
+    throw new Error('Windows sandbox SSH ACL migration requires idle sandbox processes; close sandboxed shells and retry "kodax sandbox setup".');
+  }
   // Versioned setup owns migration. Retire legacy markers without placing a
   // hard-timeout delay in front of every upgrade; a healthy fixed account is
   // updated in place, as in Codex, so existing sessions keep their identity.
   await retireLegacyWindowsSandboxCutoverForSetup();
-  await invalidateWindowsSandboxV2CutoverForSetup();
+  // Keep the old roots/nonce available if elevation is cancelled or cleanup fails.
+  if (!needsSshAclMigration) await invalidateWindowsSandboxV2CutoverForSetup();
   const runner = await prepareWindowsSandboxRunner([], true);
   const oldUser = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
   const oldSid = oldUser.sid;
@@ -2561,7 +2633,7 @@ async function setupWindowsSandboxRuntimeWithLock(
       sandboxGroupSid: installedUser.groupSid,
       setupReadRoots: windowsSandboxSetupReadRoots(),
     };
-    const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
+    const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover, previousCutover);
     installWindowsV2AccountCapabilities(
       installedUser.sid,
       installedUser.groupSid,
@@ -2622,7 +2694,7 @@ async function setupWindowsSandboxRuntimeWithLock(
     sandboxGroupSid: installedUser.groupSid,
     setupReadRoots: windowsSandboxSetupReadRoots(),
   };
-  const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover);
+  const installingCutover = stageWindowsSandboxV2CutoverMarker(nextCutover, previousCutover);
   installWindowsV2AccountCapabilities(
     installedUser.sid,
     installedUser.groupSid,
@@ -4155,17 +4227,15 @@ function migrateWindowsLegacyAclGuardsForSetup(
 }
 
 function windowsSandboxProfileReadRoots(home: string): string[] {
-  return readdirSync(home, { withFileTypes: true })
-    .filter((entry) => !entry.isSymbolicLink())
-    .map((entry) => path.join(home, entry.name));
+  return windowsSandboxAclRoots([home], home, windowsSandboxAclExclusions(home));
 }
 
 function windowsSandboxSetupReadRoots(): string[] {
   const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
-  return existingMinimalWindowsAclGuardRoots([
+  return existingMinimalWindowsAclGuardRoots(windowsSandboxAclRoots([
     ...windowsSandboxProfileReadRoots(home),
     ...windowsNativeRuntimeReadScopes(workspaceShellRuntimeReadScopes(process.env)),
-  ]);
+  ], home, windowsSandboxAclExclusions(home)));
 }
 
 function workspaceShellWriteRoots(
@@ -4606,7 +4676,9 @@ function workspaceShellSandboxConfig(
         : []),
   ];
   const allowRead = process.platform === 'win32'
-    ? existingMinimalWindowsAclGuardRoots(allowReadCandidates)
+    ? existingMinimalWindowsAclGuardRoots(windowsSandboxAclRoots(
+      allowReadCandidates, home, windowsSandboxAclExclusions(home),
+    ))
     : [...new Set(allowReadCandidates)];
   if (process.platform !== 'win32') {
     assertTrustedTextNativeStateNotDirectlyReadable(allowRead);
@@ -4623,7 +4695,8 @@ function workspaceShellSandboxConfig(
     filesystem: {
       denyRead,
       allowRead,
-      allowWrite: writeRoots,
+      allowWrite: process.platform === 'win32'
+        ? windowsSandboxAclRoots(writeRoots, home, windowsSandboxAclExclusions(home)) : writeRoots,
       denyWrite: [
         ...protectedAgentHomeWriteRoots,
         ...trustedTextNativeArtifactStateRoots(),
@@ -5830,6 +5903,7 @@ async function prepareWindowsV2Invocation(input: {
       cutover.setupReadRoots,
     );
     const nativeRequest = createWindowsSandboxV2RunRequest({
+      aclExclusions: windowsSandboxAclExclusions(path.resolve(process.env.USERPROFILE ?? os.homedir())),
       generation,
       filesystemCapabilityNonce: cutover.filesystemCapabilityNonce,
       sandboxUserSid: ready.sandboxUserSid,

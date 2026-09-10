@@ -23,7 +23,7 @@ use windows::Win32::Security::Authorization::{
 };
 use windows::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation,
-    AddAce, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, GENERIC_MAPPING, GetAce,
+    AddAce, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, DeleteAce, GENERIC_MAPPING, GetAce,
     GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, INHERIT_ONLY_ACE, INHERITED_ACE,
     InitializeAcl, IsValidSid, MapGenericMask, NO_PROPAGATE_INHERIT_ACE, OBJECT_INHERIT_ACE,
     OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
@@ -597,6 +597,69 @@ fn filesystem_capability_generation(request: &RunRequest) -> String {
     )
 }
 
+pub fn filter_acl_roots(paths: &[String], exclusions: &[String]) -> Vec<String> {
+    let key = |value: &str| {
+        value
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let excluded = exclusions.iter().map(|path| key(path)).collect::<Vec<_>>();
+    paths
+        .iter()
+        .filter(|path| {
+            let path = key(path);
+            !excluded
+                .iter()
+                .any(|excluded| path == *excluded || path.starts_with(&format!("{excluded}\\")))
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn remove_legacy_root_grants(paths: &[String], group_sid: &str, nonce: &str) -> Result<()> {
+    let generation = format!(
+        "v{}:{}",
+        FILESYSTEM_CAPABILITY_SCHEMA_VERSION,
+        nonce.to_ascii_lowercase()
+    );
+    let mut operations = Vec::new();
+    for path in normalized_paths(paths.iter().map(PathBuf::from)) {
+        if has_reparse_ancestor(&path)? {
+            continue;
+        }
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 => {
+                continue;
+            }
+            Ok(_) => {
+                operations.extend(stable_root_operations(path, group_sid, false, false, false))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("inspect legacy sandbox ACL root"),
+        }
+    }
+    for (inspected, owned) in open_grouped_operations(operations, &generation, group_sid)? {
+        let target = open_acl_target(Path::new(&inspected.canonical_path))?;
+        target.remove_exact_aces(&owned)?;
+    }
+    Ok(())
+}
+
+fn has_reparse_ancestor(path: &Path) -> Result<bool> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 => {
+                return Ok(true);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("inspect legacy ACL path ancestry"),
+        }
+    }
+    Ok(false)
+}
+
 fn policy_operations(
     request: &RunRequest,
     _runner_directory: &Path,
@@ -638,6 +701,14 @@ fn policy_operations(
     // set. The token alone selects the active capabilities, so concurrent
     // read/write admissions cannot overwrite one another with different DACLs.
     for (_, (path, allow_read, allow_write, deny_write)) in roots {
+        if filter_acl_roots(
+            &[path.to_string_lossy().into_owned()],
+            &request.acl_exclusions,
+        )
+        .is_empty()
+        {
+            continue;
+        }
         operations.extend(stable_root_operations(
             path,
             &request.sandbox_group_sid,
@@ -1181,6 +1252,76 @@ impl AclTarget {
             after.required_aces_are_canonical(&required, sandbox_user_sid),
             "Windows sandbox ACL read-back verification failed for {}",
             self.canonical_path,
+        );
+        Ok(())
+    }
+
+    fn remove_exact_aces(&self, owned: &[AclOperation]) -> Result<()> {
+        let before = self.read_aces()?;
+        // The shared sandbox group alone does not prove KodaX installed an ACE.
+        // Require a path/nonce-specific capability before retiring group grants.
+        let attributed = owned.iter().any(|operation| {
+            operation.pass == AccessPass::Restricted
+                && before.has_explicit(
+                    operation.mode,
+                    &operation.sid,
+                    operation.mask,
+                    operation.inherit,
+                )
+        });
+        if !attributed {
+            return Ok(());
+        }
+        let matches = |ace: &ObservedAce| {
+            owned.iter().any(|operation| {
+                let flags = if self.directory && operation.inherit {
+                    (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).0 as u8
+                } else {
+                    0
+                };
+                ace.mode == operation.mode
+                    && ace.sid.eq_ignore_ascii_case(&operation.sid)
+                    && ace.mask == operation.mask
+                    && ace.flags == flags
+            })
+        };
+        let indices = before
+            .aces
+            .iter()
+            .filter(|ace| matches(ace))
+            .map(|ace| ace.index)
+            .collect::<Vec<_>>();
+        if indices.is_empty() {
+            return Ok(());
+        }
+        self.remove_legacy_ace_indices(indices)?;
+        ensure!(
+            !self.read_aces()?.aces.iter().any(matches),
+            "legacy sandbox ACE cleanup verification failed"
+        );
+        Ok(())
+    }
+
+    fn remove_legacy_ace_indices(&self, indices: Vec<u32>) -> Result<()> {
+        let old = raw_dacl(self.handle.raw())?;
+        for index in indices.into_iter().rev() {
+            unsafe { DeleteAce(old.dacl, index) }.context("remove exact legacy sandbox ACE")?;
+        }
+        let status = unsafe {
+            SetSecurityInfo(
+                self.handle.raw(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(old.dacl),
+                None,
+            )
+        };
+        ensure!(
+            status == ERROR_SUCCESS,
+            "restore legacy sandbox ACL at {}: {status:?}",
+            self.canonical_path
         );
         Ok(())
     }
@@ -2066,6 +2207,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             policy_fingerprint: fingerprint.clone(),
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
+            acl_exclusions: Vec::new(),
             allow_read: vec![root.to_string_lossy().into_owned()],
             preinstalled_read_roots: vec![],
             allow_write: vec![root.to_string_lossy().into_owned()],
@@ -2575,6 +2717,205 @@ mod tests {
         let diagnostic = format!("{:#}", missing.unwrap_err());
         assert!(diagnostic.contains("[windows_v2_setup_required]"));
         assert_eq!(after_missing, before);
+    }
+
+    #[test]
+    fn ssh_read_admission_does_not_change_the_hosts_acl() {
+        let workspace = temporary_directory("read-boundary-workspace");
+        let external = temporary_directory("read-boundary-credentials");
+        let mut request = request(&workspace);
+        request.allow_read = vec![external.to_string_lossy().into_owned()];
+        request.acl_exclusions = vec![external.to_string_lossy().into_owned()];
+        request.deny_write.clear();
+        let before = host_acl_snapshot(&external).unwrap();
+
+        let result = ensure_policy_aces(&request, &workspace);
+        let after = host_acl_snapshot(&external).unwrap();
+        fs::remove_dir_all(&external).unwrap();
+        fs::remove_dir_all(&workspace).unwrap();
+
+        result.expect("external read fixture should be admitted without changing its host ACL");
+        assert!(
+            after == before,
+            "reading an external path changed its host ACL"
+        );
+    }
+
+    #[test]
+    fn legacy_ssh_cleanup_restores_owner_and_dacl_without_removing_user_permissions() {
+        let root = temporary_directory("ssh-cleanup");
+        let config = root.join("config");
+        fs::write(&config, "Host example\n").unwrap();
+        let request = request(&root);
+        let before = host_acl_snapshot(&root).unwrap();
+        let child_before = host_acl_snapshot(&config).unwrap();
+        ensure_setup_acl_roots(
+            &[root.to_string_lossy().into_owned()],
+            &[],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+        assert_ne!(host_acl_snapshot(&config).unwrap(), child_before);
+        for _ in 0..2 {
+            remove_legacy_root_grants(
+                &[root.to_string_lossy().into_owned()],
+                &request.sandbox_group_sid,
+                &request.filesystem_capability_nonce,
+            )
+            .unwrap();
+        }
+        let after = host_acl_snapshot(&root).unwrap();
+        let child_after = host_acl_snapshot(&config).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(child_after, child_before);
+    }
+
+    #[test]
+    fn openssh_accepts_private_key_after_exact_legacy_acl_cleanup() {
+        let root = temporary_directory("openssh-key-cleanup");
+        let key = root.join("id_ed25519");
+        let keygen = PathBuf::from(std::env::var_os("WINDIR").unwrap())
+            .join("System32/OpenSSH/ssh-keygen.exe");
+        let generated = std::process::Command::new(&keygen)
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&key)
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "OpenSSH fixture key generation failed"
+        );
+        let accepted = || {
+            std::process::Command::new(&keygen)
+                .args(["-y", "-f"])
+                .arg(&key)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        assert!(accepted(), "OpenSSH must accept the original private key");
+        let request = request(&root);
+        let paths = [key.to_string_lossy().into_owned()];
+        ensure_setup_acl_roots(
+            &paths,
+            &[],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+        let dirty_accepted = accepted();
+        remove_legacy_root_grants(
+            &paths,
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+        let repaired_accepted = accepted();
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            !dirty_accepted,
+            "fixture must reproduce OpenSSH's bad-permissions failure"
+        );
+        assert!(
+            repaired_accepted,
+            "OpenSSH must accept the repaired private key"
+        );
+    }
+
+    #[test]
+    fn legacy_cleanup_skips_junctions_without_touching_their_targets() {
+        let root = temporary_directory("ssh-cleanup-junction");
+        let target = temporary_directory("ssh-cleanup-junction-target");
+        let link = root.join(".config");
+        fs::write(target.join("key"), "fixture").unwrap();
+        let created = std::process::Command::new("cmd.exe")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "create disposable junction");
+        let before = host_acl_snapshot(&target).unwrap();
+        let request = request(&root);
+        let result = remove_legacy_root_grants(
+            &[
+                link.to_string_lossy().into_owned(),
+                link.join("key").to_string_lossy().into_owned(),
+            ],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        );
+        let after = host_acl_snapshot(&target).unwrap();
+        fs::remove_dir(&link).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(target).unwrap();
+        result.unwrap();
+        assert_eq!(after, before);
+    }
+
+    fn host_acl_snapshot(path: &Path) -> Result<(String, u16)> {
+        use windows::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        let target = inspect_acl_target(path)?;
+        let raw = raw_dacl(target.handle.raw())?;
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        let mut sddl = PWSTR::null();
+        unsafe {
+            GetSecurityDescriptorControl(raw.descriptor, &mut control, &mut revision)?;
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                raw.descriptor,
+                SDDL_REVISION_1,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut sddl,
+                None,
+            )?;
+        }
+        let text = unsafe { sddl.to_string() };
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(sddl.0.cast())));
+        }
+        Ok((text.context("decode test security descriptor")?, control))
+    }
+
+    #[test]
+    fn legacy_cleanup_preserves_a_group_grant_without_kodax_capability_provenance() {
+        let root = temporary_directory("unrelated-group-grant");
+        let request = request(&root);
+        let operation = stable_root_operations(
+            root.clone(),
+            &request.sandbox_group_sid,
+            false,
+            false,
+            false,
+        )[2]
+        .clone();
+        let grouped = open_grouped_operations(
+            vec![operation],
+            &filesystem_capability_generation(&request),
+            &request.sandbox_user_sid,
+        )
+        .unwrap();
+        let target = open_acl_target(&root).unwrap();
+        target
+            .apply_and_verify(&grouped[0].1, &request.sandbox_user_sid)
+            .unwrap();
+        drop(target);
+        drop(grouped);
+        let before = host_acl_snapshot(&root).unwrap();
+        remove_legacy_root_grants(
+            &[root.to_string_lossy().into_owned()],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+        let after = host_acl_snapshot(&root).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(after, before);
     }
 
     #[test]

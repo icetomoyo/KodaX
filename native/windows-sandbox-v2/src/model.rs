@@ -35,6 +35,8 @@ pub struct RunRequest {
     pub policy_fingerprint: String,
     pub policy_capability_sid: String,
     pub allow_read: Vec<String>,
+    #[serde(default)]
+    pub acl_exclusions: Vec<String>,
     pub preinstalled_read_roots: Vec<String>,
     pub allow_write: Vec<String>,
     pub deny_read: Vec<String>,
@@ -135,6 +137,7 @@ impl RunRequest {
             .chain(&self.allow_write)
             .chain(&self.deny_read)
             .chain(&self.deny_write)
+            .chain(&self.acl_exclusions)
         {
             if candidate.is_empty() || candidate.contains('\0') {
                 bail!("Windows sandbox policy contains an empty or invalid path");
@@ -417,6 +420,7 @@ mod tests {
             cwd: r"C:\work".into(),
             policy_fingerprint: "0".repeat(64),
             policy_capability_sid: "S-1-5-21-1-2-3-4".into(),
+            acl_exclusions: Vec::new(),
             allow_read: vec![],
             preinstalled_read_roots: vec![],
             allow_write: vec![],
@@ -447,6 +451,7 @@ mod tests {
             cwd: r"C:\work".into(),
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
+            acl_exclusions: Vec::new(),
             allow_read: vec![],
             preinstalled_read_roots: vec![],
             allow_write: vec![],
@@ -495,6 +500,7 @@ mod tests {
             cwd: r"C:\work".into(),
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
+            acl_exclusions: Vec::new(),
             allow_read: vec![],
             preinstalled_read_roots: vec![],
             allow_write: vec![],
@@ -532,6 +538,7 @@ mod tests {
             cwd: r"C:\work".into(),
             policy_capability_sid: capability_sid(&fingerprint).unwrap(),
             policy_fingerprint: fingerprint,
+            acl_exclusions: Vec::new(),
             allow_read: vec![],
             preinstalled_read_roots: vec![],
             allow_write: vec![],

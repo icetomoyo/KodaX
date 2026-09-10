@@ -1444,7 +1444,7 @@ beforeEach(async () => {
   await writeFile(
     path.join(cutoverDirectory, 'windows-v2-cutover.json'),
     JSON.stringify({
-      version: 10,
+      version: 11,
       protocol: 10,
       generationNonce: '00000000-0000-4000-8000-000000000001',
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -2736,7 +2736,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await mkdir(workspace);
     vi.stubEnv('USERPROFILE', home);
     await writeFile(cutoverMarkerFile(), JSON.stringify({
-      version: 10,
+      version: 11,
       protocol: 10,
       generationNonce: '00000000-0000-4000-8000-000000000001',
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -3460,7 +3460,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       await writeFile(
         path.join(cutoverDirectory, 'windows-v2-cutover.json'),
         JSON.stringify({
-          version: 10,
+          version: 11,
           protocol: 10,
           generationNonce: randomUUID(),
           filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -3835,7 +3835,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
         await writeFile(
           path.join(cutoverDirectory, 'windows-v2-cutover.json'),
           JSON.stringify({
-            version: 10,
+            version: 11,
             protocol: 10,
             generationNonce: `00000000-0000-4000-8000-${String(index + 10).padStart(12, '0')}`,
             filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -3853,7 +3853,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       await writeFile(
         path.join(cutoverDirectory, 'windows-v2-cutover.json'),
         JSON.stringify({
-          version: 10,
+          version: 11,
           protocol: 10,
           generationNonce: '00000000-0000-4000-8000-000000000099',
           filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -3921,7 +3921,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       await writeFile(
         path.join(cutoverDirectory, 'windows-v2-cutover.json'),
         JSON.stringify({
-          version: 10,
+          version: 11,
           protocol: 10,
           generationNonce: randomUUID(),
           filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -3970,7 +3970,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     windowsNetworkBrokerMock.beforeReady = () => {
       windowsNetworkBrokerMock.beforeReady = undefined;
       writeFileSync(cutoverMarkerFile(), JSON.stringify({
-        version: 10,
+        version: 11,
         protocol: 10,
         generationNonce: randomUUID(),
         filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -4091,7 +4091,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     };
 
     await writeFile(cutoverMarkerFile(), JSON.stringify({
-      version: 10,
+      version: 11,
       protocol: 10,
       generationNonce: '00000000-0000-4000-8000-000000000002',
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
@@ -4204,7 +4204,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       expect(createHash('sha256').update(markerBytes).digest('hex'))
         .toBe(request.setupMarkerSha256);
       expect(JSON.parse(markerBytes.toString('utf8'))).toMatchObject({
-        version: 10,
+        version: 11,
         protocol: 10,
         state: 'installing',
       });
@@ -4250,7 +4250,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       const outcome = await prepareSandboxRuntimeForSetup();
       expect(outcome).toMatchObject({ status: 'unavailable', attempted: true });
       expect(outcome.error).toContain('injected elevated setup failure');
-      expect(pendingMarker).toMatchObject({ version: 10, protocol: 10, state: 'installing' });
+      expect(pendingMarker).toMatchObject({ version: 11, protocol: 10, state: 'installing' });
       expect(() => JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8'))).not.toThrow();
       await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
         ready: false,
@@ -4260,6 +4260,58 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     } finally {
       restore();
     }
+  });
+
+  it('migrates setup-10 SSH roots and explicit key files without changing account identity', async () => {
+    const home = path.join(path.dirname(cutoverDirectory), 'ssh-migration-home');
+    const ssh = path.join(home, '.ssh');
+    const key = path.join(ssh, 'custom-key');
+    await mkdir(ssh, { recursive: true });
+    await writeFile(key, 'fixture, not a private key');
+    vi.stubEnv('USERPROFILE', home);
+    const previous = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...previous, version: 10, setupReadRoots: [ssh] }));
+    windowsSandboxMock.sidProcessesActive = false;
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      expect(request.readRoots).not.toContain(ssh);
+      expect(request.aclExclusions).toContain(ssh);
+      expect(request.legacyAclCleanup).toMatchObject({
+        sandboxGroupSid: previous.sandboxGroupSid, filesystemCapabilityNonce: previous.filesystemCapabilityNonce,
+        roots: expect.arrayContaining([ssh, key]),
+      });
+      windowsSandboxMock.nullDeviceReady = true;
+    });
+    try {
+      expect(await prepareSandboxRuntimeForSetup()).toMatchObject({ status: 'ready' });
+      const published = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+      expect(published).toMatchObject({ version: 11, sandboxUserSid: previous.sandboxUserSid });
+      expect(published.legacyAclCleanup).toBeUndefined();
+      expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    } finally { restore(); }
+  });
+
+  it('retains a rotated account cleanup identity across failed setup retries', async () => {
+    const marker = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    const legacyAclCleanup = {
+      roots: [path.join(path.dirname(cutoverDirectory), 'old-ssh')],
+      sandboxGroupSid: 'S-1-5-21-1-2-3-8888',
+      filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000004',
+    };
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, state: 'installing', legacyAclCleanup }));
+    windowsSandboxMock.sidProcessesActive = false;
+    let attempts = 0;
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      expect(request.legacyAclCleanup).toEqual(legacyAclCleanup);
+      attempts += 1;
+      if (attempts === 1) throw new Error('injected cleanup interruption');
+      windowsSandboxMock.nullDeviceReady = true;
+    });
+    try {
+      expect(await prepareSandboxRuntimeForSetup()).toMatchObject({ status: 'unavailable' });
+      expect(JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8'))).toMatchObject({ legacyAclCleanup });
+      expect(await prepareSandboxRuntimeForSetup()).toMatchObject({ status: 'ready' });
+      expect(attempts).toBe(2);
+    } finally { restore(); }
   });
 
   it('reinstalls a same-SID setup generation while that account is active', async () => {
@@ -4456,7 +4508,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(removals).toHaveLength(1);
     expect(removals[0]?.args[3]).toBe(previousGroupSid);
     expect(removals[0]?.args[3]).toBe(windowsSandboxMock.user.groupSid);
-    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":10');
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":11');
 
     const removalsAfterSetup = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
@@ -4537,7 +4589,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       readonly filesystemCapabilityNonce: string;
     };
     expect(marker).toMatchObject({
-      version: 10,
+      version: 11,
       protocol: 10,
       filesystemCapabilityNonce: '00000000-0000-4000-8000-000000000003',
     });
@@ -4564,7 +4616,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(0);
-    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":10');
+    await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain('"version":11');
   });
 
   it('self-heals the released setup-9 marker and proves a real target start before reporting ready', async () => {
@@ -4594,7 +4646,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       readonly protocol: number;
       readonly setupReadRoots: readonly string[];
     };
-    expect(marker).toMatchObject({ version: 10, protocol: 10 });
+    expect(marker).toMatchObject({ version: 11, protocol: 10 });
     expect(marker.setupReadRoots.length).toBeGreaterThan(0);
   });
 

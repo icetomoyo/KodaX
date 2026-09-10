@@ -6156,6 +6156,13 @@ lock.
    canonical system-TMP writes remain on-demand. Ordinary admission verifies
    prepared roots and converges only a genuinely new exact root, never clears
    or revokes another command's capability state.
+   Issue 333 (setup generation 11) keeps this concurrency contract while
+   matching Codex's profile/SSH-dependency ACL exclusions on read and write
+   roots. Ordinary home/tool reads remain supported; no new denyRead policy
+   is added. Setup removes provably owned generation-10 SSH ACEs, preserving
+   owner and unrelated entries. Pending cleanup retains old SID, nonce and
+   roots across retries; only that cleanup requires idle sandbox processes.
+   Generation-8/9 protocol-only in-place upgrades retain their existing behavior.
 3. Windows per-command `denyRead` is rejected as structured
    `unsupported_policy` before doctor, setup, DACL mutation, or target start.
    `WRITE_RESTRICTED` consults restricting SIDs for writes, not reads, so a

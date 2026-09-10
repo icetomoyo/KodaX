@@ -22,6 +22,10 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SetupAccountCapabilitiesRequest {
+    #[serde(default)]
+    acl_exclusions: Vec<String>,
+    #[serde(default)]
+    legacy_acl_cleanup: Option<LegacyAclCleanup>,
     version: u32,
     sandbox_sid: String,
     sandbox_group_sid: String,
@@ -30,6 +34,41 @@ struct SetupAccountCapabilitiesRequest {
     setup_marker_sha256: String,
     read_roots: Vec<String>,
     write_roots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyAclCleanup {
+    roots: Vec<String>,
+    sandbox_group_sid: String,
+    filesystem_capability_nonce: String,
+}
+
+#[cfg(windows)]
+impl LegacyAclCleanup {
+    fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.sandbox_group_sid.starts_with("S-1-5-21-"),
+            "Invalid legacy sandbox group SID"
+        );
+        win::LocalSid::from_string(&self.sandbox_group_sid)?;
+        ensure!(
+            uuid::Uuid::parse_str(&self.filesystem_capability_nonce)?.get_version_num() == 4,
+            "Invalid legacy filesystem capability nonce"
+        );
+        ensure!(
+            self.roots.len() <= 1_024
+                && self.roots.iter().all(|path| {
+                    !path.is_empty()
+                        && !path.contains('\0')
+                        && std::path::Path::new(path).is_absolute()
+                        && path.encode_utf16().count() <= 32_767
+                }),
+            "Invalid legacy sandbox ACL roots"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -44,6 +83,9 @@ struct SetupAccountCapabilitiesEnvelope {
 #[cfg(windows)]
 impl SetupAccountCapabilitiesRequest {
     fn validate(&self) -> anyhow::Result<()> {
+        if let Some(legacy) = &self.legacy_acl_cleanup {
+            legacy.validate()?;
+        }
         ensure!(
             self.version == 2,
             "Unsupported setup account capability request version"
@@ -86,12 +128,16 @@ impl SetupAccountCapabilitiesRequest {
             "Elevated setup account capability requests cannot grant write roots",
         );
         ensure!(
-            self.read_roots.iter().chain(&self.write_roots).all(|path| {
-                !path.is_empty()
-                    && !path.contains('\0')
-                    && std::path::Path::new(path).is_absolute()
-                    && path.encode_utf16().count() <= 32_767
-            }),
+            self.read_roots
+                .iter()
+                .chain(&self.write_roots)
+                .chain(&self.acl_exclusions)
+                .all(|path| {
+                    !path.is_empty()
+                        && !path.contains('\0')
+                        && std::path::Path::new(path).is_absolute()
+                        && path.encode_utf16().count() <= 32_767
+                }),
             "Setup account capability request contains invalid paths",
         );
         Ok(())
@@ -250,9 +296,21 @@ fn run() -> anyhow::Result<u32> {
                 "Setup account capability marker is not current",
             );
             win::ensure_null_device_access(&request.sandbox_sid)?;
+            if let Some(legacy) = &request.legacy_acl_cleanup {
+                ensure!(
+                    uuid::Uuid::parse_str(&legacy.filesystem_capability_nonce)?.get_version_num()
+                        == 4,
+                    "Invalid legacy filesystem capability nonce"
+                );
+                acl::remove_legacy_root_grants(
+                    &legacy.roots,
+                    &legacy.sandbox_group_sid,
+                    &legacy.filesystem_capability_nonce,
+                )?;
+            }
             acl::ensure_setup_acl_roots(
-                &request.read_roots,
-                &request.write_roots,
+                &acl::filter_acl_roots(&request.read_roots, &request.acl_exclusions),
+                &acl::filter_acl_roots(&request.write_roots, &request.acl_exclusions),
                 &request.sandbox_group_sid,
                 &request.filesystem_capability_nonce,
             )?;
