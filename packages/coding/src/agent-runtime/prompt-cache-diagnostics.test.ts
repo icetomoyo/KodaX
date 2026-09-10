@@ -363,7 +363,7 @@ describe('prompt-cache diagnostics', () => {
       .toBe(hashProviderVisibleMessages(second, acp));
   });
 
-  it('matches OpenAI orphan-tool repair after empty tool calls become a placeholder', () => {
+  it('matches the DeepSeek diagnostic orphan-tool repair placeholder', () => {
     const orphan: readonly KodaXMessage[] = [{
       role: 'assistant',
       content: [{
@@ -373,12 +373,13 @@ describe('prompt-cache diagnostics', () => {
         input: { path: 'missing' },
       }],
     }];
+    // The diagnostic projection pairs only adjacent tool_use/tool_result
+    // turns; an orphaned call is replaced by the wire-only thinking
+    // placeholder (assistant messages with tool calls but no thinking block
+    // get one before pairing is checked).
     const repaired: readonly KodaXMessage[] = [{
       role: 'assistant',
-      content: [
-        { type: 'thinking', thinking: '' },
-        { type: 'text', text: '...' },
-      ],
+      content: [{ type: 'thinking', thinking: '...', signature: '' }],
     }];
 
     expect(hashProviderVisibleMessages(orphan, getProvider('deepseek')))

@@ -2768,8 +2768,18 @@ mod tests {
         let after = host_acl_snapshot(&root).unwrap();
         let child_after = host_acl_snapshot(&config).unwrap();
         fs::remove_dir_all(root).unwrap();
-        assert_eq!(after, before);
-        assert_eq!(child_after, child_before);
+        // Windows re-derives the SE_DACL_AUTO_INHERITED control bit from the
+        // parent chain when a DACL is reapplied, so it is environment-owned
+        // and not part of the cleanup contract. Owner, ACE set, and every
+        // user permission must still match the original exactly.
+        assert_eq!(
+            without_auto_inherited_flag(&after),
+            without_auto_inherited_flag(&before)
+        );
+        assert_eq!(
+            without_auto_inherited_flag(&child_after),
+            without_auto_inherited_flag(&child_before)
+        );
     }
 
     #[test]
@@ -2880,6 +2890,15 @@ mod tests {
             let _ = LocalFree(Some(HLOCAL(sddl.0.cast())));
         }
         Ok((text.context("decode test security descriptor")?, control))
+    }
+
+    /// Strips the parent-managed SE_DACL_AUTO_INHERITED flag (SDDL `AI`,
+    /// control bit 0x0400) from a snapshot before equality checks.
+    fn without_auto_inherited_flag(snapshot: &(String, u16)) -> (String, u16) {
+        (
+            snapshot.0.replace("D:AI(", "D:("),
+            snapshot.1 & !0x0400u16,
+        )
     }
 
     #[test]
