@@ -4,8 +4,8 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current release: `v0.7.96-beta.5`
-> (`@kodax-ai/kodax@0.7.96-beta.5`; Windows `sandboxRuntime:11`,
+> Current release: `v0.7.96-beta.6`
+> (`@kodax-ai/kodax@0.7.96-beta.6`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
 >

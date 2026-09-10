@@ -759,6 +759,13 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+Beta.6 makes prompt-cache diagnostics mirror the provider wire: retained
+orphan `tool_use` calls are answered with the interrupted-tool marker inside
+their pairing scope and assistant projection keeps source order, so the
+diagnostic hash describes the messages actually sent. A 224-case wire
+contract suite proves the projected envelope equals the real provider
+request across built-in and custom Anthropic/OpenAI providers.
+
 Beta.5 moves the built-in `deepseek` provider to DeepSeek's official
 Anthropic-compatible endpoint (`api.deepseek.com/anthropic`) with new default
 model `deepseek-flash` (DeepSeek-V4.1-Flash, 1M context, native image input)
@@ -777,7 +784,7 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
-**v0.7.96-beta.5 release:** Windows shell admission now follows the
+**v0.7.96-beta.6 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -826,7 +833,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta5-release-preparation).
+[release checklist](docs/release.md#v0796-beta6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

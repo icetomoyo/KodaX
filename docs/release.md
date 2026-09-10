@@ -137,9 +137,52 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-beta.6 release preparation
+
+Beta.6 is a review-hardening pass over the beta.5 diagnostics. Prompt-cache
+diagnostics now mirror the provider wire: the Anthropic diagnostic repair
+mirrors the provider's pairing semantics (a retained orphan `tool_use` is
+answered with the interrupted-tool marker inside its pairing scope, real
+non-adjacent answers are hoisted, foreign and duplicate results are
+dropped), the OpenAI diagnostic repair gains the same full pairing scope,
+and assistant projection keeps source order to match the order-preserving
+serialization. A 224-case wire contract suite proves the projected
+diagnostic envelope equals the real provider request across every built-in
+and custom Anthropic/OpenAI provider, including retained orphan calls that
+must stay distinct from a thinking-only placeholder. The native SDDL
+auto-inherited flag normalization parses the flag field instead of a blind
+string replace, with its own regression test. `@kodax-ai/llm` exports
+`KODAX_INTERRUPTED_TOOL_RESULT_MARKER` as the shared wire-contract
+constant. All beta.5 contracts are retained.
+
+All root/workspace package versions and lockfile entries are `0.7.96-beta.6`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, prompt-cache diagnostics/wire regressions (224-case suite),
+   bundle/ASRT regressions, and package/declaration builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-beta.6`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
+remain unchanged.
+
 ## v0.7.96-beta.5 release preparation
 
-Beta.5 carries two change streams. First, the built-in `deepseek` provider
+Release state: `v0.7.96-beta.5` is the GitHub pre-release at `15a01cde`,
+with the DeepSeek migration at `b25c5142` and the setup-generation-11 work
+at `a5c23da1`. Beta.5 carries two change streams. First, the built-in `deepseek` provider
 moves to DeepSeek's official `api.deepseek.com/anthropic` endpoint with the
 `deepseek-v4-anthropic` reasoning preset, new default model `deepseek-flash`
 (DeepSeek-V4.1-Flash, 1M context, native image input), converted official CNY
@@ -151,31 +194,8 @@ message matching. Second, Windows sandbox setup advances to generation 11
 read and write roots, setup-only ownership-exact generation-10 SSH ACE
 cleanup that retains old SID/nonce/roots across interrupted retries, and
 unchanged generation-8/9 in-place upgrades. The beta.4 compaction summary
-policy and all earlier contracts are retained.
-
-All root/workspace package versions and lockfile entries are `0.7.96-beta.5`.
-The feature-design submodule, public guides, architecture documents, and
-`kodax_manual` track this release. Historical release records retain their versions.
-
-Release gates:
-
-1. Config templates, strict source/test typechecks, manual documentation
-   tests, DeepSeek provider/serialization/replay regressions,
-   Windows sandbox read-policy and native ACL suites (88 cargo tests),
-   bundle/ASRT regressions, and package/declaration builds pass.
-2. GitHub CI passes on the exact release commit across Node 20/22, Windows
-   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
-3. Push the reachable feature-design submodule commit before the parent commit.
-4. Tag the green commit `v0.7.96-beta.5`; the Release workflow must produce five
-   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
-5. Publish the GitHub pre-release with release notes. Leave npm publication
-   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
-   run `node scripts/release.mjs` to download and verify the exact universal
-   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
-
-Windows remains native shell protocol 10 with setup generation 11 and
-`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
-remain unchanged.
+policy and all earlier contracts are retained. It predates beta.6's
+diagnostics wire-fidelity hardening.
 
 ## v0.7.96-beta.4 release preparation
 

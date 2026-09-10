@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.5` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.5` (npm publication remains manual) |
+| Current released version | `v0.7.96-beta.6` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-beta.6` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Total tracked features | `82` |
@@ -27,7 +27,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.5; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.6; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -517,9 +517,24 @@
 
 ---
 
+## v0.7.96-beta.6 Release Record
+
+`v0.7.96-beta.6` is the sixth beta pre-release of the v0.7.96 line: a
+review-hardening pass over the beta.5 diagnostics. The Anthropic diagnostic
+repair mirrors the provider's pairing semantics — a retained orphan
+`tool_use` is answered with the interrupted-tool marker inside its pairing
+scope, real non-adjacent answers are hoisted, foreign and duplicate results
+are dropped — the OpenAI diagnostic repair gains the same full pairing
+scope, and assistant projection keeps source order, so the diagnostic hash
+describes the messages actually sent. A 224-case wire contract suite proves
+the projected envelope equals the real provider request across every
+built-in and custom Anthropic/OpenAI provider. The native SDDL
+auto-inherited normalization parses the flag field with its own regression
+test. npm publication remains a manual maintainer step.
+
 ## v0.7.96-beta.5 Release Record
 
-`v0.7.96-beta.5` is the fifth beta pre-release of the v0.7.96 line. The
+`v0.7.96-beta.5` was the fifth beta pre-release of the v0.7.96 line. The
 built-in `deepseek` provider speaks DeepSeek's official
 `api.deepseek.com/anthropic` wire with default model `deepseek-flash`
 (DeepSeek-V4.1-Flash, 1M context, native image input) and the

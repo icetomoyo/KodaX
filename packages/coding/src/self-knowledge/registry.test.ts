@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-beta.5 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-beta.6 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,12 +173,14 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-beta.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-beta.6 release advertises Windows `sandboxRuntime:11`');
     expect(sdk).toContain('`manylinux_2_28` images and require no `GLIBC_*` symbol newer than 2.28');
     expect(sdk).toContain('one generation retry after persisted history reduction without replaying tools');
     expect(sdk).toContain('Bundled Provider credential scopes stay shared');
     expect(sdk).toContain('omit empty `tools` arrays for strict vLLM gateways');
     expect(sdk).toContain('`compaction.reasoning` applies to');
+    expect(sdk).toContain('answered with the interrupted-tool marker inside their pairing scope');
+    expect(sdk).toContain('equals the real provider request across built-in and custom');
     expect(sdk).toContain('records bounded `summaryRequests` plus `commitMs` per successful compaction report');
     expect(sdk).toContain('api.deepseek.com/anthropic wire');
     expect(sdk).toContain('interrupted-tool marker');

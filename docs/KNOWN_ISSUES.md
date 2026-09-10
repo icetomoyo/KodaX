@@ -49,6 +49,24 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-beta.6 Release Corrections
+
+The beta.6 review pass closes a diagnostics fidelity gap in the beta.5
+history repair: prompt-cache diagnostics kept erasing orphaned `tool_use`
+calls while the provider wire retained them with an interrupted-tool answer,
+so the diagnostic hash described a different prompt than the one actually
+sent. The Anthropic diagnostic repair now mirrors the provider's pairing
+semantics (retained orphan calls answered with the marker, real
+non-adjacent answers hoisted, foreign and duplicate results dropped), the
+OpenAI diagnostic repair gains the same full pairing scope, and assistant
+projection keeps source order. A 224-case wire contract suite asserts the
+projected envelope equals the real provider request across built-in and
+custom Anthropic/OpenAI providers, including retained orphan calls that
+must stay distinct from a thinking-only placeholder. The native SDDL
+auto-inherited normalization parses the flag field instead of a blind
+string replace. No sandbox, trusted-text, permission, credential, or
+provider wire behavior changed.
+
 ## v0.7.96-beta.5 Release Corrections
 
 Issue 333 (setup generation 11) keeps the fixed ACL and per-command

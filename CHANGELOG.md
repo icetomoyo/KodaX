@@ -8,6 +8,35 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-beta.6] - 2026-09-11
+
+Sixth beta pre-release of the v0.7.96 line: a review-hardening pass that
+makes prompt-cache diagnostics describe the actual provider wire, retaining
+every beta.5 contract. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Prompt-cache diagnostics now mirror the provider wire: the Anthropic
+  diagnostic repair mirrors the provider's pairing semantics — a retained
+  orphan `tool_use` is answered with the interrupted-tool marker inside its
+  pairing scope, real non-adjacent answers are hoisted, foreign and
+  duplicate results are dropped, and other user blocks carry after the
+  answers. The OpenAI diagnostic repair gains the same full pairing scope,
+  and assistant projection keeps source order to match the
+  order-preserving serialization, so the diagnostic hash describes the
+  messages actually sent.
+- A new prompt-cache wire contract suite (224 cases) proves the projected
+  diagnostic envelope equals the real provider request across every
+  built-in and custom Anthropic/OpenAI provider, including retained
+  orphan calls that must stay distinct from a thinking-only placeholder.
+- The native SDDL auto-inherited flag normalization parses the flag field
+  instead of a blind string replace, preserving P/AR flags and S: sections,
+  with its own regression test (89 native tests). `@kodax-ai/llm` exports
+  `KODAX_INTERRUPTED_TOOL_RESULT_MARKER` as the shared wire-contract
+  constant.
+
+---
+
 ## [0.7.96-beta.5] - 2026-09-10
 
 Fifth beta pre-release of the v0.7.96 line. Two change streams: the built-in
