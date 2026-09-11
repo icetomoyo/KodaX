@@ -8,9 +8,27 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [0.7.96-beta] - 2026-09-11
+## [0.7.96-beta.8] - 2026-09-11
 
-The consolidated beta of the v0.7.96 line: it carries every numbered-beta
+Eighth beta pre-release of the v0.7.96 line: an explicit, audited opt-in for
+legacy interrupt identities, retaining every beta.7 contract. npm
+publication remains a manual maintainer action.
+
+### Fixed
+
+- Add `runtime.sessions.confirmIdentityAlias` for explicitly confirmed legacy
+  interrupt identities. Registration verifies the original delivery receipt and
+  session revision, preserves an immutable audit record, and rejects competing
+  claims. Subsequent conversation, page and chunk reads apply the alias across
+  saves, compaction and restart; older caches rebuild. Original messages and
+  journal events remain intact. Unconfirmed historical identities are not inferred
+  from text, timestamps or turn IDs.
+
+---
+
+## [0.7.96-beta.7] - 2026-09-11
+
+The seventh beta pre-release of the v0.7.96 line: it carries every numbered-beta
 contract (sandbox-first permissions, trusted text, Windows setup generation
 11, context recovery, DeepSeek Anthropic-compat endpoint, compaction summary
 policy, wire-faithful prompt-cache diagnostics) plus the multimodal and

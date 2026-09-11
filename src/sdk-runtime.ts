@@ -113,6 +113,7 @@ import type {
   ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
+import type { KodaXExtensionSessionRecord } from "@kodax-ai/agent";
 import type {
   AskUserAnswer,
   AskUserMultiOptions,
@@ -1551,6 +1552,22 @@ export interface RuntimeRewindSessionInput {
   readonly historyBoundary?: RuntimeConversationHistoryBoundary;
 }
 
+/** Host-confirmed alias backed by an existing interrupt delivery event. */
+export interface RuntimeConfirmIdentityAliasInput {
+  readonly sessionId: string;
+  readonly sourceEntryId: string;
+  readonly targetEntryId: string;
+  /** Latest conversation source revision. On data_changed, reload and revalidate
+   * before retrying; a cold Runtime's Actor claim can also change this revision. */
+  readonly expectedSourceRevision: string;
+  readonly confirmationReference: string;
+  readonly delivery: {
+    readonly runId: string;
+    readonly inputId: string;
+    readonly eventId: string;
+  };
+}
+
 export interface RuntimeSetActiveEntryInput {
   readonly sessionId: string;
   readonly entryId: string;
@@ -1777,6 +1794,7 @@ export interface RuntimeSessionService {
     input: RuntimeAppendNoticeInput,
   ): Promise<SessionTranscriptEntry | null>;
   rewind(input: RuntimeRewindSessionInput): Promise<RuntimeSession | null>;
+  confirmIdentityAlias(input: RuntimeConfirmIdentityAliasInput): Promise<KodaXExtensionSessionRecord>;
   setActiveEntry(
     input: RuntimeSetActiveEntryInput,
   ): Promise<RuntimeSession | null>;
@@ -7325,7 +7343,7 @@ function createRuntimeSessionService(
 
   const mutateActiveSession = <T>(
     sessionId: string,
-    mutation: (data: KodaXSessionData) => Promise<T>,
+    mutation: (data: KodaXSessionData, ownerId?: string) => Promise<T>,
   ): Promise<T> =>
     sessionOperations.run(sessionId, async () => {
       ensureOpen();
@@ -7334,7 +7352,7 @@ function createRuntimeSessionService(
         return await withActorSessionFileMutation(
           sessionId,
           "mutate",
-          () => mutation(data),
+          (ownerId) => mutation(data, ownerId),
         );
       } finally {
         invalidateMaterializedSessionCapture(sessionId);
@@ -8465,6 +8483,52 @@ function createRuntimeSessionService(
           );
         }
         return entry;
+      });
+    },
+
+    async confirmIdentityAlias(input) {
+      const confirmation = structuredClone(input);
+      return mutateActiveSession(confirmation.sessionId, async (_data, ownerId) => {
+        assertSessionMutationAllowed(confirmation.sessionId, activeRunOwner);
+        const { delivery } = confirmation;
+        // The durable event journal was retired (T26); the persisted Run
+        // status projection is the delivery receipt. A delivered interrupt
+        // names its canonical conversation entry and survives restart, so
+        // confirmation is still bound to an exact durable receipt. The
+        // caller-attested eventId is provenance only, not verification.
+        const runStatus = persistence.loadRunStatus(delivery.runId);
+        const receipts = runStatus?.status.interruptInputs?.filter(
+          (candidate) => candidate.inputId === delivery.inputId,
+        ) ?? [];
+        const receipt = receipts.length === 1 ? receipts[0] : undefined;
+        if (runStatus?.status.sessionId !== confirmation.sessionId
+          || receipt === undefined
+          || receipt.state !== "delivered"
+          || receipt.afterRunId !== delivery.runId
+          || receipt.entryId !== confirmation.sourceEntryId) {
+          throw Object.assign(new Error("Identity confirmation requires its exact persisted interrupt delivery receipt"), {
+            code: "conflict" as const,
+          });
+        }
+        return manager.storage.confirmIdentityAlias(confirmation.sessionId, {
+          sourceEntryId: confirmation.sourceEntryId,
+          targetEntryId: confirmation.targetEntryId,
+          expectedSourceRevision: confirmation.expectedSourceRevision,
+          confirmationReference: confirmation.confirmationReference,
+          deliveryWitness: {
+            runId: delivery.runId,
+            inputId: delivery.inputId,
+            eventId: delivery.eventId,
+            receiptDigest: `sha256:${createHash("sha256").update(JSON.stringify({
+              runId: delivery.runId,
+              sessionId: confirmation.sessionId,
+              inputId: receipt.inputId,
+              entryId: receipt.entryId,
+              state: receipt.state,
+              deliveredAt: receipt.deliveredAt ?? null,
+            })).digest("hex")}` ,
+          },
+        }, ownerId);
       });
     },
 

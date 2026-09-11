@@ -41,6 +41,7 @@ import type {
   RuntimeAgentOperationOptions,
   RuntimeReadOptions,
   RuntimeRewindSessionInput,
+  RuntimeConfirmIdentityAliasInput,
   RuntimeRunFilter,
   RuntimeRunResult,
   RuntimeRunStatus,
@@ -264,6 +265,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.recover",
     "session.notice.append",
     "session.rewind",
+    "session.identityAlias.confirm",
     "session.active_entry.set",
     "session.activeEntry.set",
     "session.compact",
@@ -1670,6 +1672,10 @@ async function dispatchRuntimeDaemonRequest(
     case "session.rewind":
       return runtime.sessions.rewind(
         requireRecord(request.params) as unknown as RuntimeRewindSessionInput,
+      );
+    case "session.identityAlias.confirm":
+      return runtime.sessions.confirmIdentityAlias(
+        requireRecord(request.params) as unknown as RuntimeConfirmIdentityAliasInput,
       );
     case "session.active_entry.set":
     case "session.activeEntry.set":

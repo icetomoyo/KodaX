@@ -2948,6 +2948,11 @@ const METHOD_SMOKE_PARAMS = {
   'session.lineage.get': { sessionId: 'session-1' },
   'session.lineage.label': { sessionId: 'session-1', selector: 'entry-1', label: 'v1' },
   'session.rewind': { sessionId: 'session-1', selector: 'entry-1' },
+  'session.identityAlias.confirm': {
+    sessionId: 'session-1', sourceEntryId: 'entry-old', targetEntryId: 'entry-new',
+    expectedSourceRevision: 'sha256:source', confirmationReference: 'host-confirmation-1',
+    delivery: { runId: 'run-1', inputId: 'input-1', eventId: 'event-1' },
+  },
   'session.active_entry.set': { sessionId: 'session-1', entryId: 'entry-1' },
   'session.activeEntry.set': { sessionId: 'session-1', entryId: 'entry-1' },
   'session.compact': { sessionId: 'session-1' },
@@ -3357,6 +3362,10 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
       async rewind(input) {
         return { id: input.sessionId, title: 'Rewound Session' };
+      },
+      async confirmIdentityAlias(input) {
+        return { id: 'repair-1', extensionId: 'kodax.session.identity', type: 'confirmed-alias', ts: 1,
+          data: { sourceEntryId: input.sourceEntryId, targetEntryId: input.targetEntryId } };
       },
       async setActiveEntry(input) {
         return { id: input.sessionId, title: 'Active Entry Session' };

@@ -35,8 +35,8 @@ export {
   removeConversationPageCachesInDirectory,
 } from './conversation-page-cache-files.js';
 
-// v5 rebuilds caches that omitted physical ancestors outside the active context.
-const CACHE_VERSION = 5;
+// v6 includes persisted operator-confirmed identity aliases in the projection.
+const CACHE_VERSION = 6;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -53,7 +53,7 @@ export interface ConversationPageCacheAdmission {
 }
 
 interface ConversationCacheManifest {
-  readonly version: 5;
+  readonly version: 6;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;

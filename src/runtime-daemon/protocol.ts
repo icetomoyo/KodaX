@@ -41,6 +41,7 @@ export type RuntimeDaemonMethod =
   | 'session.goal.resume'
   | 'session.goal.clear'
   | 'session.rewind'
+  | 'session.identityAlias.confirm'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
   | 'session.compact'
@@ -204,6 +205,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.recover'
   | 'session.notice.append'
   | 'session.rewind'
+  | 'session.identityAlias.confirm'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
   | 'session.lineage.label'
@@ -376,6 +378,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.goal.resume',
   'session.goal.clear',
   'session.rewind',
+  'session.identityAlias.confirm',
   'session.active_entry.set',
   'session.activeEntry.set',
   'session.compact',
@@ -521,6 +524,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.recover',
   'session.notice.append',
   'session.rewind',
+  'session.identityAlias.confirm',
   'session.active_entry.set',
   'session.activeEntry.set',
   'session.lineage.label',

@@ -25,6 +25,7 @@ export type SessionConversationHistoryIssueCode =
   | 'legacy_overlap_ambiguous'
   | 'lineage_path_incomplete'
   | 'lineage_unavailable'
+  | 'identity_repair_invalid'
   | 'logical_identity_conflict';
 
 export interface SessionConversationHistoryIssue {
