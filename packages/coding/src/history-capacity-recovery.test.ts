@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ContextCapacityError, estimateTokens } from '@kodax-ai/agent';
 import type { KodaXMessage } from '@kodax-ai/llm';
+import type { KodaXToolResultBlock } from '@kodax-ai/llm';
 import { recoverContextHistory } from './history-capacity-recovery.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
 
@@ -115,4 +116,38 @@ it('composes request-only oversized user relief with durable tool history relief
   expect(result.messages.at(-1)).toBe(user);
   expect(persist).toHaveBeenCalledTimes(1);
   expect(result.currentTokens).toBeLessThan(currentTokens);
+});
+
+it('recovers multimodal text durably and keeps images and their original evidence on further relief', async () => {
+  const image = { type: 'image', path: '/retained-image.png' } as const;
+  const body = 'large evidence '.repeat(12_000);
+  const messages = toolPair();
+  const block = (messages[1]!.content as KodaXToolResultBlock[])[0]!;
+  block.content = [{ type: 'text', text: body }, image];
+  const original = structuredClone(messages);
+  const first = await recoverContextHistory({ ...capacity, messages });
+  const reduced = (first.messages[1]!.content as KodaXToolResultBlock[])[0]!;
+  expect(reduced.content).toEqual(expect.arrayContaining([image]));
+  const artifact = reduced.metadata?.outputPath as string;
+  expect(await fs.readFile(artifact, 'utf8')).toBe(body);
+  const second = await recoverContextHistory({ ...capacity, messages: first.messages });
+  const next = (second.messages[1]!.content as KodaXToolResultBlock[])[0]!;
+  expect(next.content).toEqual(expect.arrayContaining([image]));
+  expect(next.metadata?.outputPath).toBe(artifact);
+  expect(await fs.readFile(artifact, 'utf8')).toBe(body);
+  expect(estimateTokens(second.messages)).toBeLessThan(estimateTokens(first.messages));
+  expect(messages).toEqual(original);
+});
+
+it('reports irreducible image capacity without losing the image or committing partial history', async () => {
+  const messages = toolPair();
+  const block = (messages[1]!.content as KodaXToolResultBlock[])[0]!;
+  block.content = [{ type: 'image', path: '/retained-image.png' }];
+  const original = structuredClone(messages);
+  const persist = vi.fn();
+  await expect(recoverContextHistory({ ...capacity, messages, persist }))
+    .rejects.toBeInstanceOf(ContextCapacityError);
+  expect(messages).toEqual(original);
+  expect(persist).not.toHaveBeenCalled();
+  expect(await fs.readdir(directory)).toEqual([]);
 });

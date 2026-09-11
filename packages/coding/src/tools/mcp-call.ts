@@ -1,29 +1,9 @@
 import { normalizeMcpCapabilityId } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { readOptionalString } from './internal.js';
-import { finalizeRetrievalResult } from './retrieval.js';
-
-function stringifyValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  if (typeof value === 'string') {
-    return value.trim().length > 0 ? value : undefined;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function combineDistinctContent(content: unknown, structuredContent: unknown): string | undefined {
-  const primary = stringifyValue(content);
-  const structured = stringifyValue(structuredContent);
-  if (!primary) return structured;
-  if (!structured || structured === primary) return primary;
-  return `${primary}\n\nStructured content:\n${structured}`;
-}
+import { renderRetrievalResult } from './retrieval.js';
+import { renderCapabilityToolResult } from './capability-result.js';
+import type { ToolResult } from './types.js';
 
 function omitRepeatedMetadata(
   metadata: Record<string, unknown> | undefined,
@@ -36,7 +16,7 @@ function omitRepeatedMetadata(
 export async function toolMcpCall(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-): Promise<string> {
+): Promise<ToolResult> {
   try {
     if (!ctx.extensionRuntime) {
       throw new Error('mcp_call requires an active extension runtime.');
@@ -53,20 +33,20 @@ export async function toolMcpCall(
       : {};
 
     const result = await ctx.extensionRuntime.executeCapability('mcp', capabilityId, args);
-    return finalizeRetrievalResult({
+    return renderCapabilityToolResult(result, (content) => renderRetrievalResult({
       tool: 'mcp_call',
       scope: 'remote',
       trust: 'provider',
       freshness: 'unknown',
       provider: 'mcp',
       summary: `Executed MCP tool ${capabilityId}.`,
-      content: combineDistinctContent(result.content, result.structuredContent),
+      content,
       items: [],
       metadata: {
         capabilityKind: result.kind,
         ...omitRepeatedMetadata(result.metadata),
       },
-    }, ctx);
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] mcp_call: ${message}`;

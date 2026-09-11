@@ -98,7 +98,7 @@ export function createCtxProxy(
   const guardedTools: Record<string, unknown> = Object.create(null);
 
   for (const name of allowedTools) {
-    guardedTools[name] = async (input?: unknown): Promise<string> => {
+    guardedTools[name] = async (input?: unknown): ReturnType<typeof executeTool> => {
       // Defense in depth: re-check capability membership in case the
       // capabilities set was somehow mutated between proxy creation and
       // this call (it is `readonly` in TS but arrays are runtime-mutable).

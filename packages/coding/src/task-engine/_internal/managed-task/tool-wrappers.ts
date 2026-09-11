@@ -17,6 +17,7 @@ import type {
   RunnerToolResult,
 } from '@kodax-ai/agent';
 import { incrementManagedBudgetUsage } from './budget.js';
+import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
 import type { ManagedTaskBudgetController } from './budget.js';
 import type {
   KodaXEvents,
@@ -199,6 +200,7 @@ export function wrapCodingToolAsRunnable(
         const content = await handler(input, ctxForCall);
         return {
           content,
+          ...(isToolResultErrorContent(content) ? { isError: true } : {}),
           ...(outputPath
             ? { metadata: { truncated: true, capacityFallback: true, outputPath } }
             : {}),

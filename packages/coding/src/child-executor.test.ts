@@ -1507,6 +1507,18 @@ describe('executeChildAgents', () => {
     });
   });
 
+  it('propagates ordinary execution errors recorded in child metadata', async () => {
+    mockRunKodaX.mockResolvedValueOnce({ success: false, lastText: 'Reading the image now.',
+      messages: [], sessionId: 'local-failure',
+      errorMetadata: { lastError: 'result.startsWith is not a function', consecutiveErrors: 1 },
+    });
+    const result = await executeChildAgents([createBundle({ id: 'local-error' })], createCtx(), createOptions());
+    expect(result.results[0]).toMatchObject({ status: 'failed', failure: {
+      source: 'local', errorClass: 'local_execution_error',
+      message: expect.stringContaining('result.startsWith is not a function'),
+    } });
+  });
+
   it('respects maxParallel concurrency limit', async () => {
     let concurrentCount = 0;
     let maxConcurrent = 0;

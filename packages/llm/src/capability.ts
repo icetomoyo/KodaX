@@ -10,6 +10,8 @@
  * because it is coupled to the coding CLI surface.
  */
 
+import type { KodaXToolResultContentItem } from './types.js';
+
 export type CapabilityKind = 'tool' | 'resource' | 'prompt';
 
 export interface CapabilitySearchOptions {
@@ -36,7 +38,8 @@ export interface CapabilitySearchSnapshot {
 
 export interface CapabilityResult {
   kind: CapabilityKind;
-  content?: string;
+  content?: string | readonly KodaXToolResultContentItem[];
+  isError?: boolean;
   structuredContent?: unknown;
   evidence?: unknown[];
   artifacts?: unknown[];

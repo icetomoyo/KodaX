@@ -19,6 +19,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { RunnableTool } from '@kodax-ai/agent';
 
 import {
   type AmaRole,
@@ -306,6 +307,23 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
       { agent: chain.worker, toolCallId: 'call-1' },
     );
     expect(callResult.content).toBe('managed-target:ok');
+  });
+
+  it('preserves registered multimodal results through the managed bridge', async () => {
+    const content = [{ type: 'text', text: 'image result' },
+      { type: 'image', path: '/pixel.png', mediaType: 'image/png' }] as const;
+    cleanupToolRegistrations.push(registerTool({
+      name: 'managed_image_target', description: 'Image target',
+      input_schema: { type: 'object', properties: {} },
+      handler: async () => content, sideEffect: 'readonly', toClassifierInput: () => '',
+    }));
+    const chain = buildRunnerAgentChain(makeCtx(false, false), makeRecorder());
+    const bridge = chain.worker.tools?.find((tool) => tool.name === 'tool_call') as RunnableTool | undefined;
+    expect(bridge).toBeDefined();
+    const result = await bridge!.execute({ name: 'managed_image_target', input: {} },
+      { agent: chain.worker, toolCallId: 'image-bridge' });
+    expect(result.content).toEqual(content);
+    expect(result.isError).toBe(false);
   });
 
   it('does not start a bridge target after cancellation during an extension permission hook', async () => {

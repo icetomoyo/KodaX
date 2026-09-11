@@ -46,6 +46,8 @@
  * baseline) during FEATURE_100 P2 (CAP-026/028 batch).
  */
 
+import type { ToolResult } from '../../tools/types.js';
+import { toolResultText } from '../../tools/tool-result-content.js';
 import type { KodaXToolExecutionContext } from '../../types.js';
 import { parseEditToolError } from '../../tools/index.js';
 import {
@@ -61,16 +63,16 @@ import {
 
 export function updateToolOutcomeTracking(
   toolCall: RunnableToolCall,
-  toolResult: string,
+  toolResult: ToolResult,
   runtimeSessionState: RuntimeSessionState,
   ctx: KodaXToolExecutionContext,
 ): void {
   const resolvedPath = resolveToolTargetPath(toolCall, ctx);
-  runtimeSessionState.lastToolResultBytes = Buffer.byteLength(toolResult, 'utf8');
+  runtimeSessionState.lastToolResultBytes = Buffer.byteLength(toolResultText(toolResult), 'utf8');
   runtimeSessionState.lastToolErrorCode = extractStructuredToolErrorCode(toolResult);
 
   if (toolCall.name === 'edit') {
-    if (!parseEditToolError(toolResult)) {
+    if (!parseEditToolError(toolResultText(toolResult))) {
       clearEditRecoveryStateForPath(runtimeSessionState, resolvedPath);
     }
     return;

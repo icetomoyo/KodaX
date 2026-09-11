@@ -51,6 +51,30 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     actorSession = undefined;
   });
 
+  it('reports a local dispatch exception independently of the last assistant reply', async () => {
+    class LocalFailureProvider extends KodaXBaseProvider {
+      readonly name = PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config: KodaXProviderConfig = {
+        apiKeyEnv: API_KEY_ENV, model: 'baseline-model', supportsThinking: false,
+      };
+      async stream(): Promise<KodaXStreamResult> {
+        return { textBlocks: [{ type: 'text', text: 'Reading the image now.' }],
+          toolBlocks: [{ type: 'tool_use', id: 'read-image', name: 'read', input: { path: 'image.png' } }],
+          thinkingBlocks: [] };
+      }
+    }
+    registerModelProvider(PROVIDER_NAME, () => new LocalFailureProvider());
+    const result = await runKodaX({ provider: PROVIDER_NAME, maxIter: 2, lsp: false,
+      context: { executionCwd: process.cwd(), repoIntelligenceMode: 'off' },
+      events: { beforeToolExecute: async () => { throw new TypeError('result.startsWith is not a function'); } },
+    }, 'Read the image');
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ source: 'local', errorClass: 'local_execution_error',
+      errorName: 'TypeError', message: expect.stringContaining('result.startsWith is not a function') });
+    expect(result.failure?.provider).toBeUndefined();
+  });
+
   it('consumes input accepted during the final provider request before completing', async () => {
     const sessionId = 'ordinary-terminal-interrupt';
     const queueAgentId = actorQueueId(sessionId, '/root');

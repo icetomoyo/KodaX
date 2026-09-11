@@ -2,8 +2,13 @@
 
 Public documentation for KodaX users and SDK integrators.
 
-The current release is `v0.7.96-beta.6`; npm publication remains a separate
-manual maintainer action. Beta.6 makes prompt-cache diagnostics mirror the
+The current release is `v0.7.96-beta`; npm publication remains a separate
+manual maintainer action. The consolidated beta adds multimodal result
+fidelity (text/image tool results survive dispatch, Workers, MCP adapters;
+MCP images persist as attachments), typed local failure propagation through
+Actor metadata and Runtime/daemon status, and stable interrupt entry
+references across context rewrites and conversation pagination. Beta.6
+makes prompt-cache diagnostics mirror the
 provider wire (retained orphan calls are answered with the interrupted-tool
 marker; a 224-case wire contract suite covers every provider). Beta.5 moves the built-in `deepseek` provider to
 DeepSeek's official Anthropic-compatible endpoint with new default model
@@ -31,7 +36,7 @@ without one, and daemons may expose bounded, display-only client inventory
 containment on Windows, Linux, and macOS: controlled text tools commit in the
 trusted KodaX Runtime with per-file kernel locking, revision CAS, and flushed
 atomic replacement, while Windows shell commands run through the native
-   restricted-token runner (beta.6 native shell protocol version 10/setup
+   restricted-token runner (beta native shell protocol version 10/setup
    generation 10, Windows `sandboxRuntime:11`, interactive startup recovery
    through the setup-only boundary, and no command-lifetime global admission
 lock). It replaces the

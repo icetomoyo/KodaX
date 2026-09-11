@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type {
@@ -135,14 +135,39 @@ interface DiagnosticOpenAIWireMessage {
   readonly reasoning_content?: string;
 }
 
-function projectOpenAIToolResultContent(
+function diagnosticImageMissing(filePath: string): boolean {
+  try { statSync(filePath); return false; }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return true;
+    throw error;
+  }
+}
+
+function projectOpenAIToolResult(
   block: Extract<KodaXContentBlock, { type: 'tool_result' }>,
-): string {
-  if (typeof block.content === 'string') return block.content;
-  return block.content.map((item) => item.type === 'text'
-    ? item.text
-    : `[Image at ${item.path}${item.mediaType ? ` (${item.mediaType})` : ''}] (provider does not support image content in tool_result; if the image was previously visible to you in the conversation, refer to it directly via native vision)`)
-    .join('\n');
+  supportsImages: boolean,
+  attachments: Map<DiagnosticOpenAIWireMessage, DiagnosticOpenAIWireMessage>,
+): DiagnosticOpenAIWireMessage {
+  const text: string[] = [];
+  const images: unknown[] = [];
+  if (typeof block.content === 'string') text.push(block.content);
+  else for (const item of block.content) {
+    if (item.type === 'text') text.push(item.text);
+    else if (diagnosticImageMissing(item.path)) {
+      text.push('[Historical image unavailable: the local attachment file is missing.]');
+    } else if (supportsImages) images.push({ type: 'image_url',
+      mediaType: resolveDiagnosticImageMediaType(item.path, item.mediaType), dataHash: hashImageFile(item.path) });
+    else text.push('[Image content omitted: this provider does not support inline images in tool results.]');
+  }
+  if (images.length > 0) text.push('[Images from this tool result follow in a user message.]');
+  const message: DiagnosticOpenAIWireMessage = {
+    role: 'tool', tool_call_id: block.tool_use_id, content: text.join('\n'),
+  };
+  if (images.length > 0) attachments.set(message, { role: 'user', content: [
+    { type: 'text', text: `Images from tool result ${block.tool_use_id}:` }, ...images,
+  ] });
+  return message;
 }
 
 function projectOpenAIMessages(
@@ -151,6 +176,9 @@ function projectOpenAIMessages(
   model?: string,
 ): readonly DiagnosticOpenAIWireMessage[] {
   const projected: DiagnosticOpenAIWireMessage[] = [];
+  const attachments = new Map<DiagnosticOpenAIWireMessage, DiagnosticOpenAIWireMessage>();
+  const multimodal = provider.getCapabilityProfile().multimodalSupport;
+  const supportsImages = multimodal === 'image-input' || multimodal === 'full';
   for (const message of messages) {
     if (typeof message.content === 'string') {
       projected.push({ role: message.role, content: message.content });
@@ -205,11 +233,7 @@ function projectOpenAIMessages(
     }
     for (const block of blocks) {
       if (block.type !== 'tool_result') continue;
-      projected.push({
-        role: 'tool',
-        tool_call_id: block.tool_use_id,
-        content: projectOpenAIToolResultContent(block),
-      });
+      projected.push(projectOpenAIToolResult(block, supportsImages, attachments));
     }
     const text = blocks
       .filter((block): block is Extract<KodaXContentBlock, { type: 'text' }> =>
@@ -236,11 +260,12 @@ function projectOpenAIMessages(
       ],
     });
   }
-  return repairOpenAIToolHistory(projected);
+  return repairOpenAIToolHistory(projected, attachments);
 }
 
 function repairOpenAIToolHistory(
   messages: readonly DiagnosticOpenAIWireMessage[],
+  attachments: ReadonlyMap<DiagnosticOpenAIWireMessage, DiagnosticOpenAIWireMessage>,
 ): readonly DiagnosticOpenAIWireMessage[] {
   const repaired: DiagnosticOpenAIWireMessage[] = [];
   let index = 0;
@@ -265,6 +290,8 @@ function repairOpenAIToolHistory(
         && !answers.has(toolMessage.tool_call_id)
       ) {
         answers.set(toolMessage.tool_call_id, toolMessage);
+        const images = attachments.get(toolMessage);
+        if (images) carried.push(images);
       }
       nextIndex += 1;
     }

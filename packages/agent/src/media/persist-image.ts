@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { KodaXImageBlock } from '@kodax-ai/llm';
-import type { NormalizedImage } from './image-normalize.js';
+import type { KodaXImageMediaType } from './types.js';
 
 export const PASTE_TMP_DIR_ENV = 'KODAX_PASTE_TMP_DIR';
 export const PASTE_TMP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -23,12 +23,12 @@ function sanitizeFileNamePrefix(prefix: string | undefined): string {
 }
 
 export async function persistImageAsBlock(
-  image: NormalizedImage,
+  image: { readonly buffer: Buffer; readonly mediaType: KodaXImageMediaType },
   options: PersistImageAsBlockOptions = {},
 ): Promise<KodaXImageBlock> {
   const dir = options.directory ?? resolvePasteTmpDir();
   await mkdir(dir, { recursive: true });
-  const ext = image.mediaType === 'image/jpeg' ? '.jpg' : '.png';
+  const ext = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }[image.mediaType];
   const hash = createHash('sha256').update(image.buffer).digest('hex').slice(0, 16);
   const filename = `${sanitizeFileNamePrefix(options.fileNamePrefix)}-${hash}${ext}`;
   const fullPath = path.join(dir, filename);

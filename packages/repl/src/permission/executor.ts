@@ -40,7 +40,7 @@ export async function executeWithPermission(
   input: Record<string, unknown>,
   coreContext: KodaXToolExecutionContext,
   permContext: PermissionContext
-): Promise<string> {
+): ReturnType<typeof executeTool> {
   const mode = permContext.permissionMode;
 
   // === 1. Plan mode: block all modification tools ===

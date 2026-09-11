@@ -1,10 +1,11 @@
-﻿/**
+/**
  * KodaX Agent
  *
  * Agent 主循环 - Core 层核心入口
  */
 
-import {
+import { buildLocalExecutionFailure } from '../execution-failure.js';
+﻿import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
   KodaXExecutionFailure,
@@ -1491,7 +1492,8 @@ export async function runSubstrate(
       });
     }
 
-    if (terminalExecutionFailure !== undefined && Object.isExtensible(error)) {
+    terminalExecutionFailure ??= buildLocalExecutionFailure(error);
+    if (Object.isExtensible(error)) {
       Object.defineProperty(error, 'executionFailure', {
         value: terminalExecutionFailure,
         enumerable: false,
@@ -2670,7 +2672,7 @@ export async function runSubstrate(
           toolResultArtifactPaths.set(toolCallId, outputPath);
           previousArtifactRecorder?.(toolCallId, outputPath);
         };
-        let resultMap: Map<string, string>;
+        let resultMap: Map<string, KodaXToolResultBlock['content']>;
         try {
           resultMap = await runToolDispatch({
             toolBlocks: result.toolBlocks,

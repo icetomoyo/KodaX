@@ -156,7 +156,7 @@ describe('Conversation page cache durability', () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it('invalidates v3 caches after the ordinary-history projection changes', async () => {
+  it.each([3, 4])('invalidates v%s caches after the ordinary-history projection changes', async (version) => {
     const value = await fixture('old-projection');
     await writeConversationPageCache(
       value.mainPath,
@@ -169,7 +169,7 @@ describe('Conversation page cache durability', () => {
     );
     const manifestPath = value.mainPath.replace(/\.jsonl$/, '.conversation-cache.json');
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as Record<string, unknown>;
-    manifest.version = 3;
+    manifest.version = version;
     await fs.writeFile(manifestPath, JSON.stringify(manifest));
 
     await expect(readConversationPageCacheManifest(value.mainPath)).resolves.toBeUndefined();

@@ -253,9 +253,9 @@ export async function runConstructedToolDispatch(
   } as KodaXToolExecutionContext;
 
   const result = await executeTool(toolName, input, ctx);
-  // The handler always returns a string (registry contract). Print it
-  // verbatim — error wrapping happens upstream in executeTool.
-  process.stdout.write(result.endsWith('\n') ? result : `${result}\n`);
+  const text = typeof result === 'string' ? result : result
+    .map((item) => item.type === 'text' ? item.text : `[Image: ${item.path}]`).join('\n');
+  process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
 }
 
 function printToolHelp(toolName: string, registration: { description: string; input_schema?: unknown; source: { kind: string; version?: string } }): void {

@@ -764,6 +764,58 @@ function physicalAuditEntryIds(
     : [entry.id];
 }
 
+/** Context rewrites can leave older physical copies outside the selected epochs. */
+function expandPhysicalProvenance(
+  group: MutableConversationEntry,
+  entriesById: ReadonlyMap<string, KodaXSessionMessageEntry>,
+  owners: ReadonlyMap<string, MutableConversationEntry>,
+): string[] {
+  const seen = new Set(group.auditEntryIds);
+  const ancestors: string[] = [];
+  for (const id of group.auditEntryIds) {
+    let entry = entriesById.get(id);
+    while (entry?.sourceEntryId !== undefined) {
+      const source = entriesById.get(entry.sourceEntryId);
+      if (!source || seen.has(source.id)) break;
+      const owner = owners.get(source.id);
+      if ((owner !== undefined && owner !== group)
+        || !messagesEqual(entry.message, source.message)
+        || (entry.logicalId !== undefined && entry.logicalId !== entry.id
+          && logicalIdentity(entry) !== logicalIdentity(source))) break;
+      seen.add(source.id);
+      ancestors.push(source.id);
+      entry = source;
+    }
+  }
+  return [...ancestors.reverse(), ...group.auditEntryIds];
+}
+
+function resolvePhysicalProvenance(
+  groups: readonly MutableConversationEntry[],
+  entriesById: ReadonlyMap<string, KodaXSessionMessageEntry>,
+  owners: ReadonlyMap<string, MutableConversationEntry>,
+  issues: PendingConversationHistoryIssue[],
+): string[][] {
+  const candidates = groups.map((group) => expandPhysicalProvenance(group, entriesById, owners));
+  const claims = new Map<string, number>();
+  for (const ids of candidates) for (const id of ids) claims.set(id, (claims.get(id) ?? 0) + 1);
+  const conflicts = new Set<string>();
+  const resolved = candidates.map((ids, index) => {
+    const existing = new Set(groups[index]!.auditEntryIds);
+    return ids.filter((id) => {
+      if (existing.has(id) || claims.get(id) === 1) return true;
+      conflicts.add(id);
+      return false;
+    });
+  });
+  for (const id of conflicts) issues.push({
+    code: 'logical_identity_conflict',
+    message: `Physical provenance ${id} is claimed by multiple conversation records.`,
+    entryIds: [id],
+  });
+  return resolved;
+}
+
 function provenLegacyOverlap(
   root: KodaXSessionCompactionEntry,
   epoch: ConversationEpoch,
@@ -1102,9 +1154,12 @@ export function buildSessionConversationHistory(
     }
   }
 
-  const entries = groups.map((group): SessionConversationHistoryEntry => ({
+  const entriesById = new Map(messageEntries.map((entry) => [entry.id, entry]));
+  const auditIds = unreliableTopology ? groups.map((group) => group.auditEntryIds)
+    : resolvePhysicalProvenance(groups, entriesById, groupsByIdentity, issues);
+  const entries = groups.map((group, index): SessionConversationHistoryEntry => ({
     boundaryId: group.source.id,
-    auditEntryIds: group.auditEntryIds,
+    auditEntryIds: auditIds[index]!,
     message: group.source.message,
   }));
   return {

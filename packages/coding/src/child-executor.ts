@@ -8,6 +8,7 @@
  * concurrent conflict avoidance, see ADR-034).
  */
 
+import { buildLocalExecutionFailure, childExecutionFailure } from './execution-failure.js';
 import { execFileSync } from 'child_process';
 import { randomUUID } from 'node:crypto';
 import fsPromises from 'fs/promises';
@@ -1343,7 +1344,7 @@ async function runReadChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false },
+      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
     );
   }
 
@@ -1509,7 +1510,7 @@ async function runReadChildBody(
         ...(actualProvider === provider && model ? { model } : {}),
         routeFacts,
         structured,
-        failure: result.failure,
+        failure: childExecutionFailure(result),
       },
     );
   } catch (error) {
@@ -1517,7 +1518,7 @@ async function runReadChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false },
+      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
     );
   } finally {
     emitChildActivityEnd(
@@ -1642,7 +1643,7 @@ async function runWriteChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false },
+      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
     );
   }
 
@@ -1809,7 +1810,7 @@ async function runWriteChildBody(
         ...(actualProvider === provider && model ? { model } : {}),
         routeFacts,
         structured,
-        failure: result.failure,
+        failure: childExecutionFailure(result),
       },
     );
   } catch (error) {
@@ -1817,7 +1818,7 @@ async function runWriteChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false },
+      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
     );
   } finally {
     emitChildActivityEnd(

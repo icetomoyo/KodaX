@@ -56,6 +56,22 @@ function filler(n: number): KodaXMessage[] {
 }
 
 describe('microcompaction', () => {
+  it('preserves complete nested-image results while clearing eligible text-only arrays', () => {
+    const imageResult: KodaXMessage = { role: 'user', content: [{ type: 'tool_result',
+      tool_use_id: 'image', content: [{ type: 'text', text: 'Image context' },
+        { type: 'image', path: '/image.png' }] }] };
+    const textResult: KodaXMessage = { role: 'user', content: [{ type: 'tool_result',
+      tool_use_id: 'text', content: [{ type: 'text', text: 'Old text' }] }] };
+    const messages = [createToolUseMessage('read', 'image'), imageResult,
+      createToolUseMessage('read', 'text'), textResult, ...filler(3)];
+    const original = structuredClone(messages);
+    const result = microcompact(messages, { enabled: true, maxAge: 1, protectedTools: [] });
+    expect(result[1]).toBe(imageResult);
+    expect(result[3]).toMatchObject({ content: [{ content: '[Cleared: read]' }] });
+    expect(messages).toEqual(original);
+    expect(microcompact(messages)).toBe(messages);
+  });
+
   it('returns the same array when disabled', () => {
     const messages: KodaXMessage[] = [
       createTextMessage('user', 'hello'),

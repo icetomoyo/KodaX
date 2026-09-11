@@ -8,6 +8,31 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-beta] - 2026-09-11
+
+The consolidated beta of the v0.7.96 line: it carries every numbered-beta
+contract (sandbox-first permissions, trusted text, Windows setup generation
+11, context recovery, DeepSeek Anthropic-compat endpoint, compaction summary
+policy, wire-faithful prompt-cache diagnostics) plus the multimodal and
+interrupt-identity fixes below. npm publication remains a manual maintainer
+action.
+
+### Fixed
+
+- Preserve text/image tool results through direct and managed dispatch, constructed
+  Worker RPC, allowing guardrails, capacity recovery and MCP tool/resource adapters.
+  MCP images persist as attachments; image-capable OpenAI providers receive tool
+  images after valid paired responses, with matching prompt-cache diagnostics.
+- Carry local execution failures and Worker error codes through child results,
+  Actor metadata and Runtime/daemon status. Returned managed/MCP errors retain
+  their error classification instead of appearing successful or as provider faults.
+- Keep delivered interrupt entry references valid across context rewrites,
+  storage reads/saves, compaction, restart and conversation pagination. Preserve
+  explicit provenance, resolve physical ancestor aliases, reject competing claims,
+  and rebuild older conversation caches. Equal text or timestamps never create aliases.
+
+---
+
 ## [0.7.96-beta.6] - 2026-09-11
 
 Sixth beta pre-release of the v0.7.96 line: a review-hardening pass that

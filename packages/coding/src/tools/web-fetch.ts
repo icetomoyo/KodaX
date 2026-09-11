@@ -1,10 +1,13 @@
 import type { CapabilityResult } from '../extensions/types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { readOptionalString } from './internal.js';
+import { renderCapabilityToolResult } from './capability-result.js';
+import type { ToolResult } from './types.js';
 import {
   convertCapabilityReadResult,
   extractHtmlTitle,
   finalizeRetrievalResult,
+  renderRetrievalResult,
   readResponseTextLimited,
   stripHtmlToText,
 } from './retrieval.js';
@@ -37,7 +40,7 @@ function readCapabilityContent(result: CapabilityResult): string | undefined {
 export async function toolWebFetch(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-): Promise<string> {
+): Promise<ToolResult> {
   try {
     const providerId = readOptionalString(input, 'provider_id');
     const capabilityId = readOptionalString(input, 'capability_id');
@@ -56,15 +59,17 @@ export async function toolWebFetch(
         capabilityId,
         providerInput,
       );
-      return finalizeRetrievalResult(
-        convertCapabilityReadResult(
-          'web_fetch',
-          providerId,
-          capabilityId,
-          providerResult,
-          `Fetched provider capability ${capabilityId} from ${providerId}.`,
+      return renderCapabilityToolResult(
+        { ...providerResult, structuredContent: undefined },
+        (content) => renderRetrievalResult(
+          convertCapabilityReadResult(
+            'web_fetch',
+            providerId,
+            capabilityId,
+            { ...providerResult, content },
+            `Fetched provider capability ${capabilityId} from ${providerId}.`,
+          ),
         ),
-        ctx,
       );
     }
 

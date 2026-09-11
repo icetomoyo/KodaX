@@ -27,6 +27,7 @@ import {
   KodaXTextBlock,
   KodaXTokenUsage,
   KodaXToolUseBlock,
+  KodaXToolResultBlock,
   KodaXVerifyCredentialResult,
 } from '../types.js';
 import { runVerifyCredential, type VerifyPrimitiveRunner } from './verify-credential.js';
@@ -51,6 +52,11 @@ import {
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 
 const KODAX_OPENAI_COMPAT_USER_AGENT = 'KodaX';
+
+type ToolResultImages = Map<
+  OpenAI.Chat.ChatCompletionMessageParam,
+  OpenAI.Chat.ChatCompletionUserMessageParam
+>;
 
 async function createOpenAISdkClient(
   options: ConstructorParameters<typeof OpenAI>[0],
@@ -1449,8 +1455,42 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];
   }
 
+  private async serializeToolResult(
+    block: KodaXToolResultBlock,
+    attachments: ToolResultImages,
+  ): Promise<OpenAI.Chat.ChatCompletionToolMessageParam> {
+    const text: string[] = [];
+    const images: OpenAI.Chat.ChatCompletionContentPart[] = [];
+    const multimodal = this.getCapabilityProfile().multimodalSupport;
+    const supportsImages = multimodal === 'image-input' || multimodal === 'full';
+    if (typeof block.content === 'string') text.push(block.content);
+    else for (const item of block.content) {
+      if (item.type === 'text') {
+        text.push(item.text);
+      } else if (supportsImages) {
+        const url = await buildImageDataUrlIfAvailable(item.path, item.mediaType);
+        if (url === undefined) text.push(MISSING_IMAGE_PLACEHOLDER);
+        else images.push({ type: 'image_url', image_url: { url } });
+      } else {
+        text.push(await isImageFileMissing(item.path)
+          ? MISSING_IMAGE_PLACEHOLDER : UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER);
+      }
+    }
+    if (images.length > 0) text.push('[Images from this tool result follow in a user message.]');
+    const message: OpenAI.Chat.ChatCompletionToolMessageParam = {
+      role: 'tool', tool_call_id: block.tool_use_id, content: text.join('\n'),
+    };
+    if (images.length > 0) attachments.set(message, {
+      role: 'user', content: [
+        { type: 'text', text: `Images from tool result ${block.tool_use_id}:` }, ...images,
+      ],
+    });
+    return message;
+  }
+
   private async serializeUserMessage(
     contentBlocks: KodaXContentBlock[],
+    attachments: ToolResultImages,
   ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
     const results: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     const text = contentBlocks
@@ -1463,37 +1503,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
     for (const block of contentBlocks) {
       if (block.type === 'tool_result') {
-        // OpenAI Chat Completions tool messages take `content: string` and
-        // do not accept image blocks inline. When the tool_result content
-        // is the array form (e.g. `read` on an image path), downgrade:
-        // emit text items as-is and replace image items with a textual
-        // path-free placeholder. This preserves the tool-result
-        // contract for OpenAI-compat gateways whose tool-message wire
-        // format is text-only (DeepSeek, Zhipu, MiniMax, etc. — applies
-        // even to vision-capable models) without rejecting the request.
-        let toolContent: string;
-        if (typeof block.content === 'string') {
-          toolContent = block.content;
-        } else {
-          const loweredItems: string[] = [];
-          for (const item of block.content) {
-            if (item.type === 'text') {
-              loweredItems.push(item.text);
-              continue;
-            }
-            loweredItems.push(
-              (await isImageFileMissing(item.path))
-                ? MISSING_IMAGE_PLACEHOLDER
-                : UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
-            );
-          }
-          toolContent = loweredItems.join('\n');
-        }
-        results.push({
-          role: 'tool',
-          tool_call_id: block.tool_use_id,
-          content: toolContent,
-        } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
+        // Images travel only with the result selected by history repair;
+        // orphan/duplicate results must not leave image-only user messages.
+        results.push(await this.serializeToolResult(block, attachments));
       }
     }
 
@@ -1570,6 +1582,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     model?: string,
   ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
     const converted: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    const attachments: ToolResultImages = new Map();
 
     for (const message of messages) {
       if (message.role === 'system') {
@@ -1590,14 +1603,15 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         continue;
       }
 
-      converted.push(...await this.serializeUserMessage(message.content));
+      converted.push(...await this.serializeUserMessage(message.content, attachments));
     }
 
-    return this.repairToolCallHistory(converted);
+    return this.repairToolCallHistory(converted, attachments);
   }
 
   private repairToolCallHistory(
     messages: OpenAI.Chat.ChatCompletionMessageParam[],
+    attachments: ToolResultImages,
   ): OpenAI.Chat.ChatCompletionMessageParam[] {
     // Pairing scope mirrors the Anthropic side: an assistant tool_calls turn
     // owns everything up to the NEXT assistant message. Real tool messages
@@ -1634,6 +1648,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             if (toolCallId !== undefined && openCallIds.has(toolCallId)) {
               if (!answerById.has(toolCallId)) {
                 answerById.set(toolCallId, m2);
+                const images = attachments.get(m2);
+                if (images) carried.push(images);
               }
             }
             // Foreign and duplicate results cannot be carried as user messages.

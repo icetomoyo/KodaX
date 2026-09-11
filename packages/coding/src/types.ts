@@ -1227,15 +1227,17 @@ export interface KodaXChildRouteFacts {
 }
 
 /**
- * Bounded, redaction-safe terminal Provider failure facts.
- * Raw upstream messages, bodies, URLs, stacks, and credentials never belong here.
+ * Bounded terminal execution failure facts. Provider failures use only safe
+ * structured facts, never raw upstream messages or bodies. Local exceptions
+ * retain a bounded diagnostic with scoped Provider credentials redacted.
  */
 export interface KodaXExecutionFailure {
-  /** Bounded diagnostic assembled only from safe structured facts. */
+  readonly source?: 'provider' | 'local';
+  /** Bounded diagnostic, independent of any assistant reply. */
   readonly message: string;
   readonly safeMessage: string;
   readonly errorName?: string;
-  readonly errorClass: ResilienceErrorClass;
+  readonly errorClass: ResilienceErrorClass | 'local_execution_error';
   /** Most specific safe upstream or KodaX failure code available. */
   readonly code?: string;
   readonly failureCode?:
@@ -1245,7 +1247,7 @@ export interface KodaXExecutionFailure {
     | 'response_stream_error';
   readonly provider?: string;
   readonly model?: string;
-  readonly requestPhase: FailureStage;
+  readonly requestPhase: FailureStage | 'local_execution';
   readonly providerStage?: 'catalog' | 'request_build' | 'transport' | 'response_stream';
   readonly httpStatus?: number;
   readonly upstreamCode?: string;
@@ -1273,7 +1275,7 @@ export interface KodaXChildAgentResult {
   /** Actual provider/model selected for this child run, when known. */
   provider?: string;
   model?: string;
-  /** Redaction-safe terminal Provider failure, independent of assistant text. */
+  /** Terminal execution failure, independent of assistant text. */
   failure?: KodaXExecutionFailure;
   /** Actual iterations consumed by this child agent. */
   actualIterations?: number;
@@ -2607,7 +2609,7 @@ export interface KodaXResult {
   limitReached?: boolean;
   /** Error metadata for recovery - 错误元数据用于恢复 */
   errorMetadata?: SessionErrorMetadata;
-  /** Redaction-safe terminal Provider failure, independent of assistant text. */
+  /** Terminal execution failure, independent of assistant text. */
   failure?: KodaXExecutionFailure;
 }
 

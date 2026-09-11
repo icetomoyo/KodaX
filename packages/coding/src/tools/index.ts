@@ -5,6 +5,7 @@
  */
 
 export type {
+  ToolResult,
   ToolHandler,
   ToolRegistry,
   ToolSideEffect,

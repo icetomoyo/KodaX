@@ -196,6 +196,7 @@ export class McpCapabilityProvider implements CapabilityProvider {
     return {
       kind: 'tool',
       content: result.content,
+      isError: result.isError,
       structuredContent: result.structuredContent,
       artifacts: [{
         kind: 'provider',

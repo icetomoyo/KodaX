@@ -379,6 +379,7 @@ export type { ProviderName, KodaXModelCapabilities } from './providers/index.js'
 // ============== Tools ==============
 
 export {
+  type ToolResult,
   type ToolHandler,
   type ToolRegistry,
   type ToolSideEffect,

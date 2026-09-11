@@ -39,25 +39,9 @@ async function transformRunnerToolResultBatch(
   options: RunnerToolResultBatchTransformOptions,
 ): Promise<readonly RunnerToolResult[]> {
   const budget = resolveRunnerToolResultBudget(batch.transcript, options);
-  const rawTokens = estimateRunnerToolResultBatchTokens(batch.calls, batch.results);
-  const stringEntries = collectStringEntries(batch);
-  if (stringEntries.length === 0) {
-    if (rawTokens > budget.aggregateInlineTokens) {
-      // FEATURE_296: unspillable non-string results admit with debt instead of
-      // aborting; the pair commits and compaction owns the next request.
-      emitCapacityDebtDiagnostic(rawTokens, budget.aggregateInlineTokens);
-      return stampCapacityDebt(batch.results);
-    }
-    return batch.results;
-  }
-  const nonStringTokens = estimateNonStringResultTokens(batch.calls, batch.results);
-  const stringBudgetTokens = Math.max(0, budget.aggregateInlineTokens - nonStringTokens);
-  const guarded = await applyToolResultBatchGuardrail(
-    stringEntries,
-    options.ctx,
-    narrowBudgetToStrings(budget, stringBudgetTokens),
-  );
-  const transformed = mergeGuardedStringResults(batch, guarded.entries, options);
+  const entries = collectToolResultEntries(batch);
+  const guarded = await applyToolResultBatchGuardrail(entries, options.ctx, budget);
+  const transformed = mergeGuardedResults(batch, guarded.entries, options);
   const finalTokens = estimateRunnerToolResultBatchTokens(batch.calls, transformed);
   const capacityDebt = shouldStampRunnerCapacityDebt(
     guarded.capacityDebt !== undefined,
@@ -109,9 +93,8 @@ export function resolveRunnerToolResultBudget(
   });
 }
 
-function collectStringEntries(batch: RunnerToolResultBatch): ToolResultBatchEntry[] {
+function collectToolResultEntries(batch: RunnerToolResultBatch): ToolResultBatchEntry[] {
   return batch.results.flatMap((result, index) => {
-    if (typeof result.content !== 'string') return [];
     const outputPath = result.metadata?.outputPath;
     return [{
       id: batch.calls[index]!.id,
@@ -122,21 +105,13 @@ function collectStringEntries(batch: RunnerToolResultBatch): ToolResultBatchEntr
   });
 }
 
-function narrowBudgetToStrings(
-  budget: ToolResultBudget,
-  aggregateInlineTokens: number,
-): ToolResultBudget {
-  return { ...budget, aggregateInlineTokens };
-}
-
-function mergeGuardedStringResults(
+function mergeGuardedResults(
   batch: RunnerToolResultBatch,
   guardedEntries: readonly ToolResultBatchEntry[],
   options: RunnerToolResultBatchTransformOptions,
 ): RunnerToolResult[] {
   const guardedById = new Map(guardedEntries.map((entry) => [entry.id, entry]));
   return batch.results.map((result, index): RunnerToolResult => {
-    if (typeof result.content !== 'string') return result;
     const guarded = guardedById.get(batch.calls[index]!.id);
     const content = guarded?.content ?? result.content;
     if (content === result.content) return result;
@@ -159,16 +134,6 @@ export function estimateRunnerToolResultBatchTokens(
   results: readonly RunnerToolResult[],
 ): number {
   return estimateTokens([buildToolResultTokenMessage(calls, results)]);
-}
-
-function estimateNonStringResultTokens(
-  calls: readonly RunnerToolCall[],
-  results: readonly RunnerToolResult[],
-): number {
-  const blocks = buildToolResultBlocks(calls, results)
-    .filter((_, index) => typeof results[index]!.content !== 'string');
-  if (blocks.length === 0) return 0;
-  return estimateTokens([{ role: 'user', content: blocks }]) - 4;
 }
 
 function buildToolResultTokenMessage(
