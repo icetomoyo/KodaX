@@ -858,3 +858,17 @@ GPT 独立复查（docs/REVIEW_v0.7.97_FINAL.md，按范围 e6eb7292...150e64e3�
 **复查 old-12 未修项处置（记录在案，不因本票翻牌豁免）**：刻意边界——dynamic-context hard-disable（策略）、prepareReview 写域（边界即设计）。跨票跟进（归属票不变）——memory daemon 路径（T36）；workflow 会话设置继承；排队 Skill 元数据；MCP 配置重建失败删配置（MCP 票）；工具状态硬编码 success 映射（执行票）；跨页 call/result 配对；rewind 分支缓存/过期 intent 防护；compact 期间重交去重顺序；全历史搜索分页 UI（复制/全文已接，搜索仍限已加载窗口）。会话快照三重复（P3）留待抽象时机，未在本轮扩面。
 
 **票据**：T27 复开切片已录 docs/features/v0.7.97.md（子模块 aa8be68，父指针 17362e23），含错误归因更正与上述遗留清单。
+
+## 2026-09-11 Space 线程复审响应：重订阅恢复 + 显示身份（31b3aed1）
+
+KodaX Space SDK 用户复审当前分支后提出三点，全部核实成立并修复：
+
+**P1 重连后订阅失败无法恢复（client.ts:1646）**：原逻辑只在 lifecycle 'connected' 事件里触发重订阅——首次失败后既无重试也无报告，而连接已恢复时不再有新 connected 事件，视图停在 ready=false。修复：失败后在当前连接上就地有界重试（3 次、250ms 退避）；close/ready/新连接代际（token）取消旧循环；迟到的超代际 observe 结果释放其游离订阅且不投递（openRemoteView 增 isCurrent 守卫——这是测试逼出的真实缺陷：迟到成功原会覆盖新代际视图）；耗尽时显式诊断+脱离；代际切换时清空 latest，旧连接迟到通知不再冒充恢复后状态。验收覆盖：恢复（首败后连接保持健康自动恢复+后续更新到达）、代际取消（迟到结果不投递）、耗尽（3 次后停止+诊断+释放探测）、迟到快照。
+
+**P2 历史恢复显示身份碰撞（session-view.ts:433）**：按 type+text+timestamp find 不消费匹配项，同文同时间输入借用同一显示 ID（Space 纯内存复现）。修复为身份优先：带 inputId 的恢复项只按 inputId 精确对齐持久显示项，绝不落回文本/时间匹配（用户要求“缺身份旧记录不能强行合并”）；legacy 项文本/时间匹配但每个持久项至多借出一次（“不能反复使用同一匹配项”）；未匹配项派生新身份。inputId 端到端贯通（此前 T06 只声明了消息字段从未打点）：EnqueueInput/QueuedMessage→MessageQueue.enqueue 白名单（此处曾静默丢弃）→中断入队→中途 drain（run-substrate/runner-driven）→idle-yield WAKE 路径（中断实际走这条，e2e 测试逼出）→uiHistory 持久类型。未新建任何事件账本。
+
+**P3 验收补齐**：Space 复现套件（同文同时间不同身份/legacy 消耗/no-forced-merge/round-trip，session-view.identity.test.ts）；故障会话 20260911_100157_8gbfe22d504b2f 隔离副本（从 ~/.kodax/backups 拷入临时目录加载，全部显示 ID 唯一）；缓存清空重观察（resetHistory 后重建含外部写入项）；同 Run 多输入（interrupt-identity e2e 断言持久消息携带 inputId）。checkpoint 先后/回答替换/rewind/分页压缩由既有 session-view.test.ts 9 用例覆盖；beta.8 身份确认 18/18 保持绿。
+
+**门禁**：build 绿；parity 零新增（24 条 TS6059 既录噪音）；session-view 16/16、daemon 310/310（含 resubscribe 4/4）、client+messaging+orchestration+media 174/174、coding task-engine+agent-runtime 1842、repl 2732、sdk-runtime+interrupt-identity+daemon-smoke 326。
+
+**残留说明**：多输入批 drain 合并为一条 joined 消息时仅首 input 有独立身份（inputIds 列表在消息上，视图项无逐条对应）——按“不强行合并”原则该消息不参与 inputId 对齐，属已知边界；旧记录无 inputId 的历史仅靠消耗性文本/时间桥接，升级后新会话不再产生此类记录。
