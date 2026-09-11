@@ -8,9 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [0.7.96-beta] - 2026-09-11
+## [0.7.96-beta.7] - 2026-09-11
 
-The consolidated beta of the v0.7.96 line: it carries every numbered-beta
+The seventh beta pre-release of the v0.7.96 line: it carries every numbered-beta
 contract (sandbox-first permissions, trusted text, Windows setup generation
 11, context recovery, DeepSeek Anthropic-compat endpoint, compaction summary
 policy, wire-faithful prompt-cache diagnostics) plus the multimodal and

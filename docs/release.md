@@ -137,9 +137,9 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## v0.7.96-beta release preparation
+## v0.7.96-beta.7 release preparation
 
-Release state: `v0.7.96-beta` is the consolidated beta of the v0.7.96 line,
+Release state: `v0.7.96-beta.7` is the seventh beta pre-release of the v0.7.96 line,
 tagged from the exact green commit. The tag-triggered Release workflow
 builds every platform archive and the universal npm tarball, publishes
 checksums, and creates the GitHub pre-release. npm registry publication
@@ -158,7 +158,7 @@ On top of beta.6 it includes the multimodal and interrupt-identity fixes:
 - delivered interrupt entry references stay valid across context rewrites,
   storage reads/saves, compaction, restart, and conversation pagination.
 
-All root/workspace package versions and lockfile entries are `0.7.96-beta`.
+All root/workspace package versions and lockfile entries are `0.7.96-beta.7`.
 The feature-design submodule, public guides, architecture documents, and
 `kodax_manual` track this release. Historical release records retain their versions.
 
@@ -170,7 +170,7 @@ Release gates:
 2. GitHub CI passes on the exact release commit across Node 20/22, Windows
    packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
 3. Push the reachable feature-design submodule commit before the parent commit.
-4. Tag the green commit `v0.7.96-beta`; the Release workflow must produce five
+4. Tag the green commit `v0.7.96-beta.7`; the Release workflow must produce five
    platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
 5. Publish the GitHub pre-release with release notes. Leave npm publication
    to the maintainer: set `npm_config_tag=beta` in the shell environment, then
@@ -200,7 +200,7 @@ auto-inherited flag normalization parses the flag field instead of a blind
 string replace, with its own regression test. `@kodax-ai/llm` exports
 `KODAX_INTERRUPTED_TOOL_RESULT_MARKER` as the shared wire-contract
 constant. All beta.5 contracts are retained. It predates the consolidated
-`v0.7.96-beta` multimodal and interrupt-identity fixes.
+`v0.7.96-beta.7` multimodal and interrupt-identity fixes.
 
 ## v0.7.96-beta.5 release preparation
 

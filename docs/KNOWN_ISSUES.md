@@ -104,9 +104,9 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
-## v0.7.96-beta Release Corrections
+## v0.7.96-beta.7 Release Corrections
 
-The consolidated beta closes the multimodal and interrupt-identity gaps
+The seventh beta closes the multimodal and interrupt-identity gaps
 found in the post-beta.6 SDK contract audit. Text/image tool results now
 survive direct and managed dispatch, constructed Worker RPC, allowing
 guardrails, capacity recovery, and MCP tool/resource adapters; MCP images

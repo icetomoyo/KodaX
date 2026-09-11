@@ -784,7 +784,7 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
-**v0.7.96-beta release:** The consolidated beta of the v0.7.96 line. It
+**v0.7.96-beta.7 release:** The seventh beta pre-release of the v0.7.96 line. It
 adds multimodal result fidelity — text/image tool results survive direct and
 managed dispatch, Worker RPC, guardrails, capacity recovery, and MCP
 adapters (MCP images persist as attachments) — carries typed local failures
@@ -841,7 +841,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta-release-preparation).
+[release checklist](docs/release.md#v0796-beta7-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
