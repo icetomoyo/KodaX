@@ -399,6 +399,8 @@ export interface KodaXSessionUiTextHistoryItem {
   /** Stable display identity, retained when a live item becomes history. */
   id?: string;
   type: KodaXSessionUiTextHistoryItemType;
+  /** Accepted client input identity; joins this display item to its canonical user message. */
+  inputId?: string;
   text: string;
   /** Original UI event time in epoch milliseconds. Absent on older sessions. */
   timestamp?: number;

@@ -58,6 +58,8 @@ export interface QueuedMessage {
   /** Omitted means `runtime`; `host` messages must not be spliced into a model turn. */
   readonly delivery?: MessageDelivery;
   readonly content: string;
+  /** Accepted client input identity; joins the canonical user message to its Host admission. */
+  readonly inputId?: string;
   readonly inputArtifacts?: readonly QueuedInputArtifact[];
   readonly taskResult?: KodaXTaskResultMetadata;
   /** Wall-clock timestamp (`Date.now()`) for tracing only — not used for ordering. */
@@ -141,6 +143,8 @@ export type QueueEventListener = (event: QueueEvent) => void;
 export interface EnqueueInput {
   readonly priority: MessagePriority;
   readonly mode: MessageMode;
+  /** Accepted client input identity carried onto the drained user message. */
+  readonly inputId?: string;
   /** Omitted means `runtime`; use `host` for command-pipeline-owned prompts. */
   readonly delivery?: MessageDelivery;
   readonly content: string;

@@ -2462,6 +2462,7 @@ async function runManagedTaskViaRunnerInner(
       const message: KodaXMessage = {
         role: 'user',
         content: buildPromptMessageContent(queued.content, inputArtifacts),
+        ...(queued.inputId !== undefined ? { inputId: queued.inputId } : {}),
         ...(preparedTurn ? { turnId: preparedTurn.turnId } : {}),
         timestamp,
       };

@@ -74,6 +74,15 @@ it('keeps real Runtime interrupt delivery resolvable through context saves, comp
     expect(deliveredEntryId).toMatch(/^entry_/);
     const storage = new FileSessionStorage({ sessionsDir });
     const saved = await storage.load(session.id);
+    // The delivered interrupt keeps its accepted-input identity on the
+    // canonical user message, so display reconciliation can never collide
+    // same-text inputs inside one Run.
+    const interruptInputId = (await runtime.runs.get(run.runId)).interruptInputs?.[0]?.inputId;
+    const queuedMessage = saved?.messages.find((message) => message.role === 'user'
+      && (message.content === 'queued query'
+        || (Array.isArray(message.content) && message.content.some((block) =>
+          typeof block === 'object' && block !== null && 'text' in block && block.text === 'queued query'))));
+    expect(queuedMessage?.inputId).toBe(interruptInputId);
     if (saved === null) throw new Error('missing saved session');
     // Managed boundary saves strip this context; compaction saves may carry it.
     // Reinsert it through the real writer, retaining the source message objects.

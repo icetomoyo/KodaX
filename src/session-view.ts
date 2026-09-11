@@ -390,7 +390,8 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
         startedAt: tool.startTime, endedAt: tool.endTime },
     }));
     return [{ id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
-      text: item.text, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+      text: item.text, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
+      ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
       ...(item.icon !== undefined ? { icon: item.icon } : {}), ...(item.compactText !== undefined ? { compactText: item.compactText } : {}) }];
   });
 }
@@ -420,6 +421,28 @@ export function restoreSessionViewItems(
   const uiHistory = [...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
     ...persistSessionViewItems(savedLiveItems)];
   const persisted = restorePersistedViewItems(uiHistory);
+  // Display-identity reconciliation is identity-first: an accepted input
+  // joins its persisted display item by inputId only, so same-text inputs
+  // can never borrow one identity. Legacy items without identity may
+  // borrow a text/time lookalike, but each persisted item is lent at most
+  // once — leftovers mint fresh derived identities.
+  const consumed = new Set<ClientViewItem>();
+  const persistedByInputId = new Map<string, ClientViewItem>();
+  for (const candidate of persisted) {
+    if (candidate.inputId !== undefined && !persistedByInputId.has(candidate.inputId)) {
+      persistedByInputId.set(candidate.inputId, candidate);
+    }
+  }
+  const findLegacyDisplayMatch = (item: { type: ClientViewItem['type']; text: string; timestamp?: number }): ClientViewItem | undefined => {
+    for (const candidate of persisted) {
+      if (consumed.has(candidate)) continue;
+      if (candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp) {
+        consumed.add(candidate);
+        return candidate;
+      }
+    }
+    return undefined;
+  };
   const occurrences = new Map<string, number>();
   const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory });
   const items = restored.flatMap((item): ClientViewItem[] => {
@@ -430,7 +453,16 @@ export function restoreSessionViewItems(
           status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
-    const previous = persisted.find((candidate) => candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp);
+    let previous: ClientViewItem | undefined;
+    if (item.inputId !== undefined) {
+      const identified = persistedByInputId.get(item.inputId);
+      if (identified !== undefined && !consumed.has(identified)) {
+        consumed.add(identified);
+        previous = identified;
+      }
+    } else {
+      previous = findLegacyDisplayMatch(item);
+    }
     if (previous) return [{ ...previous, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}) }];
     const fingerprint = createHash('sha256').update(`${item.type}\0${item.text}\0${item.timestamp ?? ''}`).digest('hex');
     const occurrence = occurrences.get(fingerprint) ?? 0;

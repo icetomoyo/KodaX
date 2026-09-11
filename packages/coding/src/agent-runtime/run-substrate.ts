@@ -1000,6 +1000,7 @@ export async function runSubstrate(
       const message: KodaXMessage = {
         role: 'user',
         content: buildPromptMessageContent(queued.content, inputArtifacts),
+        ...(queued.inputId !== undefined ? { inputId: queued.inputId } : {}),
         turnId: queuedTurnId,
         timestamp,
       };

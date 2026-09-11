@@ -1579,7 +1579,7 @@ function subscribeToDaemonEvents(
   return { ready, close };
 }
 
-async function observeDaemonSessionView(
+export async function observeDaemonSessionView(
   transport: RuntimeDaemonClientTransport,
   sessionId: string,
   listener: (view: ClientSessionView) => void,
@@ -1592,7 +1592,9 @@ async function observeDaemonSessionView(
   let connectionId: string | undefined;
   let lifecycle: RuntimeSubscription | undefined;
   let resubscribing: Promise<void> | undefined;
-  let resubscribeAttempts = 0;
+  // Cancels the in-flight resubscribe loop when a newer connection
+  // generation takes ownership, so a late result never lands on it.
+  let resubscribeToken = 0;
   const deliver = (view: ClientSessionView): void => {
     const previousItems = new Map(previous?.items.map((item) => [item.id, item]));
     const items = view.items.map((item) => {
@@ -1618,16 +1620,22 @@ async function observeDaemonSessionView(
     }
     else latest = view;
   });
-  const openRemoteView = async (): Promise<void> => {
+  const openRemoteView = async (isCurrent?: () => boolean): Promise<void> => {
     const response = requireRecord(await transport.request('session.view.observe', { sessionId, subscriptionId }));
     if (closed) {
       void transport.request('session.view.close', { subscriptionId }).catch(() => undefined);
       throw new Error('Connection closed while opening the Session view.');
     }
+    if (isCurrent !== undefined && !isCurrent()) {
+      // A newer connection generation took ownership while this observe
+      // round trip was in flight; release the stray subscription without
+      // delivering its snapshot onto the newer generation's view.
+      void transport.request('session.view.close', { subscriptionId }).catch(() => undefined);
+      throw new Error('Session view reopen was superseded by a newer connection generation.');
+    }
     deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
     latest = undefined;
     ready = true;
-    resubscribeAttempts = 0;
   };
   lifecycle = transport.subscribeLifecycle?.((state) => {
     if (state.state === 'connected') {
@@ -1636,26 +1644,53 @@ async function observeDaemonSessionView(
         return;
       }
       connectionId = state.connectionId;
+      if (closed || ready) return;
+      // A snapshot parked before this generation belongs to the dead
+      // connection; it must never surface as the recovered state.
+      latest = undefined;
       // FEATURE_298 T17 — the server drops this connection's subscriptions,
       // so a reconnected transport reopens the view; the fresh snapshot is a
       // full current-state replacement, which is exactly what the listener
       // expects (reconnect must not lose pending answers or queued inputs).
-      // A failed reopen retries a few times before the observation detaches.
-      if (closed || ready || resubscribing !== undefined) return;
-      resubscribeAttempts += 1;
-      resubscribing = openRemoteView().catch((error: unknown) => {
-        if (closed) return;
-        if (resubscribeAttempts >= 3) {
-          emitKodaXDiagnostic({
-            source: 'session.view',
-            level: 'warn',
-            message: 'Session view could not reopen after a Runtime reconnect; the observation was detached.',
-            detail: error,
-          });
-          close();
+      // The reopened connection stays healthy without new lifecycle
+      // events, so a failed reopen retries on it directly (bounded,
+      // generation-cancelled) instead of waiting for another reconnect;
+      // exhaustion detaches the observation with an explicit diagnostic.
+      resubscribeToken += 1;
+      const token = resubscribeToken;
+      let attempts = 0;
+      resubscribing = (async () => {
+        while (!closed && !ready) {
+          attempts += 1;
+          const generation: string | undefined = connectionId;
+          try {
+            await openRemoteView(() => token === resubscribeToken && connectionId === generation);
+            return;
+          } catch (error: unknown) {
+            if (closed || token !== resubscribeToken) return;
+            if (connectionId !== generation) {
+              // Superseded mid-flight: the newer generation owns recovery.
+              attempts = 0;
+              continue;
+            }
+            if (attempts >= 3) {
+              emitKodaXDiagnostic({
+                source: 'session.view',
+                level: 'warn',
+                message: 'Session view could not reopen after a Runtime reconnect; the observation was detached.',
+                detail: error,
+              });
+              close();
+              return;
+            }
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 250);
+              timer.unref?.();
+            });
+          }
         }
-      }).finally(() => {
-        resubscribing = undefined;
+      })().finally(() => {
+        if (token === resubscribeToken) resubscribing = undefined;
       });
       return;
     }

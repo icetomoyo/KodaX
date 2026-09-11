@@ -12,6 +12,8 @@ import {
 
 export interface EnqueueWithArtifactsInput extends ValidateInputArtifactsOptions {
   readonly content: string;
+  /** Accepted client input identity stamped onto the drained user message. */
+  readonly inputId?: string;
   readonly inputArtifacts?: readonly KodaXInputArtifact[];
   readonly priority?: MessagePriority;
   /** Explicit low-level queue route. Mutually exclusive with sessionId. */
@@ -36,6 +38,7 @@ export function enqueueWithArtifacts(input: EnqueueWithArtifactsInput): string {
     priority: input.priority ?? 'user',
     mode: 'prompt',
     content: input.content,
+    ...(input.inputId !== undefined ? { inputId: input.inputId } : {}),
     agentId,
     inputArtifacts: input.inputArtifacts,
   });

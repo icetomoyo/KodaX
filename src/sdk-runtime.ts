@@ -11252,6 +11252,7 @@ function createRuntimeRunService(deps: {
       const queueMessageId = enqueueWithArtifacts({
         sessionId: input.sessionId,
         content: normalized.prompt,
+        inputId,
         inputArtifacts: normalized.inputArtifacts,
         provider: afterRun.provider,
         ...(afterRun.model !== undefined ? { model: afterRun.model } : {}),

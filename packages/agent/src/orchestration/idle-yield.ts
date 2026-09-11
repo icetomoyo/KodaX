@@ -57,6 +57,8 @@ import { createRuntimeDeliveryPredicate } from '../messaging/index.js';
 interface PromptFragment {
   readonly id: string;
   readonly content: string;
+  /** Accepted client input identity; stamped onto the drained user message. */
+  readonly inputId?: string;
   readonly inputArtifacts?: readonly QueuedInputArtifact[];
 }
 
@@ -482,6 +484,7 @@ export async function composeIdleYieldUserMessage(
       promptFragments.push({
         id: msg.id,
         content: msg.content,
+        ...(msg.inputId !== undefined ? { inputId: msg.inputId } : {}),
         inputArtifacts: msg.inputArtifacts,
       });
     } else {
@@ -515,6 +518,9 @@ export async function composeIdleYieldUserMessage(
     ? {
         role: 'user',
         content: buildQueuedPromptContent(promptFragments),
+        ...(promptFragments.length === 1 && promptFragments[0]!.inputId !== undefined
+          ? { inputId: promptFragments[0]!.inputId }
+          : {}),
         ...(promptTurnId !== undefined ? { turnId: promptTurnId } : {}),
         timestamp: new Date().toISOString(),
       }
@@ -528,6 +534,7 @@ export async function composeIdleYieldUserMessage(
         promptMessagesByQueuedId.set(fragment.id, {
           role: 'user',
           content: buildQueuedPromptContent([fragment]),
+          ...(fragment.inputId !== undefined ? { inputId: fragment.inputId } : {}),
           ...(promptTurnId !== undefined ? { turnId: promptTurnId } : {}),
           timestamp: promptMessage.timestamp,
         });

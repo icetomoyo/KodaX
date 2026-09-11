@@ -128,6 +128,7 @@ export class MessageQueue {
       mode: input.mode,
       delivery: input.delivery,
       content: input.content,
+      ...(input.inputId !== undefined ? { inputId: input.inputId } : {}),
       agentId: input.agentId,
       inputArtifacts: input.inputArtifacts,
       taskResult: input.taskResult,
