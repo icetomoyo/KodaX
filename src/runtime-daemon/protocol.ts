@@ -32,6 +32,7 @@ export type RuntimeDaemonMethod =
   | 'session.fork'
   | 'session.notice.append'
   | 'session.rewind'
+  | 'session.identityAlias.confirm'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
   | 'session.compact'
@@ -164,6 +165,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.fork'
   | 'session.notice.append'
   | 'session.rewind'
+  | 'session.identityAlias.confirm'
   | 'session.active_entry.set'
   | 'session.activeEntry.set'
   | 'session.compact'
@@ -337,6 +339,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.fork',
   'session.notice.append',
   'session.rewind',
+  'session.identityAlias.confirm',
   'session.active_entry.set',
   'session.activeEntry.set',
   'session.compact',
@@ -458,6 +461,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.fork',
   'session.notice.append',
   'session.rewind',
+  'session.identityAlias.confirm',
   'session.active_entry.set',
   'session.activeEntry.set',
   'session.compact',

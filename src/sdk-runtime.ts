@@ -64,6 +64,7 @@ import type {
   ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
+import type { KodaXExtensionSessionRecord } from "@kodax-ai/agent";
 import type {
   AskUserAnswer,
   AskUserMultiOptions,
@@ -1597,6 +1598,22 @@ export interface RuntimeRewindSessionInput {
   readonly historyBoundary?: RuntimeConversationHistoryBoundary;
 }
 
+/** Host-confirmed alias backed by an existing interrupt delivery event. */
+export interface RuntimeConfirmIdentityAliasInput {
+  readonly sessionId: string;
+  readonly sourceEntryId: string;
+  readonly targetEntryId: string;
+  /** Latest conversation source revision. On data_changed, reload and revalidate
+   * before retrying; a cold Runtime's Actor claim can also change this revision. */
+  readonly expectedSourceRevision: string;
+  readonly confirmationReference: string;
+  readonly delivery: {
+    readonly runId: string;
+    readonly inputId: string;
+    readonly eventId: string;
+  };
+}
+
 export interface RuntimeSetActiveEntryInput {
   readonly sessionId: string;
   readonly entryId: string;
@@ -1787,6 +1804,7 @@ export interface RuntimeSessionService {
     input: RuntimeAppendNoticeInput,
   ): Promise<SessionTranscriptEntry | null>;
   rewind(input: RuntimeRewindSessionInput): Promise<RuntimeSession | null>;
+  confirmIdentityAlias(input: RuntimeConfirmIdentityAliasInput): Promise<KodaXExtensionSessionRecord>;
   setActiveEntry(
     input: RuntimeSetActiveEntryInput,
   ): Promise<RuntimeSession | null>;
@@ -7345,7 +7363,7 @@ function createRuntimeSessionService(
 
   const mutateActiveSession = <T>(
     sessionId: string,
-    mutation: (data: KodaXSessionData) => Promise<T>,
+    mutation: (data: KodaXSessionData, ownerId?: string) => Promise<T>,
   ): Promise<T> =>
     sessionOperations.run(sessionId, async () => {
       ensureOpen();
@@ -7354,7 +7372,7 @@ function createRuntimeSessionService(
         return await withActorSessionFileMutation(
           sessionId,
           "mutate",
-          () => mutation(data),
+          (ownerId) => mutation(data, ownerId),
         );
       } finally {
         invalidateMaterializedSessionCapture(sessionId);
@@ -8136,6 +8154,37 @@ function createRuntimeSessionService(
           );
         }
         return entry;
+      });
+    },
+
+    async confirmIdentityAlias(input) {
+      const confirmation = structuredClone(input);
+      return mutateActiveSession(confirmation.sessionId, async (_data, ownerId) => {
+        assertSessionMutationAllowed(confirmation.sessionId, activeRunOwner);
+        const { delivery } = confirmation;
+        const events = persistence.replay({ runId: delivery.runId, type: "run.input.delivered" });
+        const matches = events.filter((event) => event.id === delivery.eventId
+          && event.sessionId === confirmation.sessionId && event.runId === delivery.runId);
+        const event = matches.length === 1 ? matches[0] : undefined;
+        const inputs = event !== undefined && isRecord(event.payload) && Array.isArray(event.payload.inputs)
+          ? event.payload.inputs : [];
+        const inputMatches = inputs.filter((item: unknown): item is Record<string, unknown> =>
+          isRecord(item) && item.inputId === delivery.inputId);
+        if (event === undefined || inputMatches.length !== 1
+          || inputMatches[0]?.afterRunId !== delivery.runId
+          || inputMatches[0]?.entryId !== confirmation.sourceEntryId) {
+          throw Object.assign(new Error("Identity confirmation requires its exact persisted interrupt delivery receipt"), {
+            code: "conflict" as const,
+          });
+        }
+        return manager.storage.confirmIdentityAlias(confirmation.sessionId, {
+          sourceEntryId: confirmation.sourceEntryId,
+          targetEntryId: confirmation.targetEntryId,
+          expectedSourceRevision: confirmation.expectedSourceRevision,
+          confirmationReference: confirmation.confirmationReference,
+          deliveryWitness: { ...delivery, seq: event.seq,
+            eventDigest: `sha256:${createHash("sha256").update(JSON.stringify(event)).digest("hex")}` },
+        }, ownerId);
       });
     },
 

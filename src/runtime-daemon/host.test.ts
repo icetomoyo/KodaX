@@ -1334,6 +1334,9 @@ function makeRuntime(
       async appendNotice() {
         return null;
       },
+      async confirmIdentityAlias() {
+        throw new Error('Identity confirmation is outside this host fixture.');
+      },
       async rewind(input) {
         return { id: input.sessionId, title: "Rewound Session" };
       },

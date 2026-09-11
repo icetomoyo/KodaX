@@ -49,6 +49,8 @@ export {
 export { SessionReadError };
 export { ConversationPageCacheCapacityError } from '../interactive/storage.js';
 import { compactSession } from './compact-session.js';
+import { applyConfirmedIdentityRepairs } from './identity-repair.js';
+export type { SessionIdentityRepairInput, SessionConfirmedIdentityRepairData } from './identity-repair.js';
 export { compactSession } from './compact-session.js';
 export type { CompactSessionOptions, CompactSessionResult } from './compact-session.js';
 import {
@@ -315,6 +317,8 @@ export interface FullTranscriptSessionData extends Omit<SessionData, 'messages'>
 
 /** One immutable storage boundary shared by Runtime admission and history. */
 export interface SessionReadCapture {
+  /** Actual storage key; never inferred from extension record contents. */
+  readonly sessionId?: string;
   readonly data: SessionData;
   readonly transcript: FullTranscriptSessionData;
   readonly sourceRevision: string;
@@ -1155,11 +1159,11 @@ export function conversationHistoryFromCapture(
           capture.sourceRevision,
           checkpoint,
         )
-    : buildSessionConversationHistory(
+    : applyConfirmedIdentityRepairs(buildSessionConversationHistory(
         capture.transcript.lineage,
         capture.sourceRevision,
         checkpoint,
-      );
+      ), capture.transcript.lineage, capture.sessionId ?? '', capture.data.extensionRecords ?? []);
 }
 
 export async function readSessionCapture(
@@ -1391,6 +1395,7 @@ async function readSessionCaptureWithStorage(
   if (snapshot === null) return null;
   const transcript = fullTranscriptFromSnapshot(snapshot);
   return {
+    sessionId: id,
     data: snapshot.data,
     transcript,
     sourceRevision: snapshot.sourceRevision,

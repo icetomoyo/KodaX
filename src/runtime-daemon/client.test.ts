@@ -1461,6 +1461,11 @@ describe('runtime daemon client proxy', () => {
     });
     await client.sessions.appendNotice({ sessionId: 'session-1', content: 'notice' });
     await client.sessions.rewind({ sessionId: 'session-1', selector: 'entry-1' });
+    await client.sessions.confirmIdentityAlias({
+      sessionId: 'session-1', sourceEntryId: 'entry-old', targetEntryId: 'entry-new',
+      expectedSourceRevision: 'sha256:source', confirmationReference: 'host-confirmation-1',
+      delivery: { runId: 'run-1', inputId: 'input-1', eventId: 'event-1' },
+    });
     await client.sessions.setActiveEntry({ sessionId: 'session-1', entryId: 'entry-1' });
     await client.sessions.compact({ sessionId: 'session-1' });
     await client.sessions.archive('session-1');
@@ -1525,6 +1530,7 @@ describe('runtime daemon client proxy', () => {
       'session.settings.updateVersioned',
       'session.notice.append',
       'session.rewind',
+      'session.identityAlias.confirm',
       'session.active_entry.set',
       'session.compact',
       'session.archive',

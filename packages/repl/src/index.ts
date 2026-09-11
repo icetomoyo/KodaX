@@ -296,6 +296,7 @@ export type {
 } from "./interactive/auto-mode-bootstrap.js";
 
 // === FEATURE_173 Part B: Session Management Public SDK (v0.7.42) ===
+export type { SessionIdentityRepairInput, SessionConfirmedIdentityRepairData } from './session/identity-repair.js';
 // Also available via the `@kodax-ai/kodax/session` SDK subpath.
 export type {
   SessionSummary,

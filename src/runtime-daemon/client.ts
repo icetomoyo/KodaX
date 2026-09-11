@@ -512,6 +512,9 @@ export function createRuntimeDaemonClient(
       rewind(input) {
         return request('session.rewind', input) as Promise<RuntimeSession | null>;
       },
+      confirmIdentityAlias(input) {
+        return request('session.identityAlias.confirm', input) as ReturnType<KodaXRuntime['sessions']['confirmIdentityAlias']>;
+      },
       setActiveEntry(input) {
         return request('session.active_entry.set', input) as Promise<RuntimeSession | null>;
       },

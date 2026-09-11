@@ -12,6 +12,23 @@ import {
 } from './schema.js';
 
 describe('runtime daemon protocol schema', () => {
+  it('requires explicit identity confirmation and a persisted delivery receipt', () => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.identityAlias.confirm'];
+    expect(schema).toBeDefined();
+    const input = {
+      sessionId: 'session-1', sourceEntryId: 'entry-old', targetEntryId: 'entry-new',
+      expectedSourceRevision: 'sha256:source', confirmationReference: 'host-confirmation-1',
+      delivery: { runId: 'run-1', inputId: 'input-1', eventId: 'event-1' },
+    };
+    expect(validateRuntimeDaemonJsonSchema(schema.params, input)).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema.params, { ...input, delivery: {} }))
+      .toContain('$.delivery.eventId is required.');
+    expect(validateRuntimeDaemonJsonSchema(schema.params, { ...input, confirmationReference: undefined }))
+      .not.toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema.params, { ...input, deliveryWitness: {} }))
+      .toContain('$.deliveryWitness is not allowed.');
+  });
+
   it('covers every daemon protocol method with params and result schemas', () => {
     expect(Object.keys(RUNTIME_DAEMON_METHOD_SCHEMAS).sort()).toEqual([...RUNTIME_DAEMON_METHODS].sort());
     expect(RUNTIME_DAEMON_PROTOCOL_SCHEMA_JSON).not.toContain('agentTasks.');

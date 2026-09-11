@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Add `runtime.sessions.confirmIdentityAlias` for explicitly confirmed legacy
+  interrupt identities. Registration verifies the original delivery receipt and
+  session revision, preserves an immutable audit record, and rejects competing
+  claims. Subsequent conversation, page and chunk reads apply the alias across
+  saves, compaction and restart; older caches rebuild. Original messages and
+  journal events remain intact. Unconfirmed historical identities are not inferred
+  from text, timestamps or turn IDs.
+
 ---
 
 ## [0.7.96-beta.7] - 2026-09-11

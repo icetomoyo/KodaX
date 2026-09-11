@@ -223,6 +223,19 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     }, ['sessionId', 'content']),
     result: nullOrObjectSchema,
   },
+  'session.identityAlias.confirm': {
+    params: objectSchema({
+      sessionId: stringSchema,
+      sourceEntryId: stringSchema,
+      targetEntryId: stringSchema,
+      expectedSourceRevision: stringSchema,
+      confirmationReference: stringSchema,
+      delivery: objectSchema({ runId: stringSchema, inputId: stringSchema, eventId: stringSchema },
+        ['runId', 'inputId', 'eventId']),
+    }, ['sessionId', 'sourceEntryId', 'targetEntryId', 'expectedSourceRevision', 'confirmationReference', 'delivery']),
+    result: objectSchema({ id: stringSchema, extensionId: stringSchema, type: stringSchema,
+      ts: { type: 'number' }, data: {}, dedupeKey: stringSchema }, ['id', 'extensionId', 'type', 'ts']),
+  },
   'session.rewind': {
     params: objectSchema({
       sessionId: stringSchema,

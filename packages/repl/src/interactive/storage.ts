@@ -77,6 +77,13 @@ import {
   type SessionConversationHistoryData,
 } from '../session/conversation-history.js';
 import {
+  applyConfirmedIdentityRepairs,
+  buildConfirmedIdentityRepairRecord,
+  mergeConfirmedIdentityRepairRecords,
+  isConfirmedIdentityRepairRecord,
+  type SessionIdentityRepairInput,
+} from '../session/identity-repair.js';
+import {
   appendConversationPageCache,
   canAppendConversationPageCache,
   conversationPageIdentityFilterContains,
@@ -3769,6 +3776,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     mainPath: string,
     lineage: KodaXSessionLineage,
     runtimeInfo: KodaXSessionRuntimeInfo | undefined,
+    records: readonly KodaXExtensionSessionRecord[] = [],
   ): Promise<void> {
     try {
       const archivedEntries = await this.readArchivedEntries(id, mainPath, true);
@@ -3785,7 +3793,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
         undefined,
         true,
       );
-      const history = buildSessionConversationHistory(completeLineage, bundle.sourceRevision);
+      const history = applyConfirmedIdentityRepairs(
+        buildSessionConversationHistory(completeLineage, bundle.sourceRevision),
+        completeLineage, id, records,
+      );
       if (await refreshConversationPageCache(
         mainPath,
         bundle.boundaryRevision,
@@ -4061,6 +4072,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         targetPath,
         conversationLineage,
         data.runtimeInfo,
+        data.extensionRecords,
       );
     }
     const knownMainPaths = [targetPath];
@@ -4112,7 +4124,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       // Actor state has one writer: saveActorSnapshot's revision CAS. A stale
       // full Session snapshot must never replace a newer owner/revision.
       actorSnapshot: existing?.data.actorSnapshot ?? data.actorSnapshot,
-      extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
+      extensionRecords: mergeConfirmedIdentityRepairRecords(id, existing?.data.extensionRecords, data.extensionRecords),
       runtimeInfo: data.runtimeInfo === undefined
         ? existing?.data.runtimeInfo
         : {
@@ -4214,6 +4226,56 @@ export class FileSessionStorage implements KodaXSessionStorage {
     });
   }
 
+  /** Register an operator-confirmed historical identity without rewriting audit entries. */
+  async confirmIdentityAlias(
+    id: string,
+    input: SessionIdentityRepairInput,
+    expectedOwnerId?: string,
+  ): Promise<KodaXExtensionSessionRecord> {
+    const request = structuredClone(input);
+    await this.ensureMigrated();
+    const mainPath = await this.resolveSessionLocation(id, true);
+    if (mainPath === null) throw new Error(`Session ${id} was not found.`);
+    let result: KodaXExtensionSessionRecord | undefined;
+    await this.serializedWrite(id, async () => {
+      if (await this.resolveSessionLocation(id) !== mainPath) {
+        throw new SessionReadError('data_changed', 'Session moved before identity confirmation.');
+      }
+      const snapshot = await this.readFullSnapshotAtPath(id, mainPath, undefined, true);
+      if (snapshot?.lineage == null) throw new Error('Identity confirmation requires complete lineage.');
+      this.assertActorFileOwner(snapshot.data.actorSnapshot, expectedOwnerId);
+      if (snapshot.data.actorSnapshot?.turns.some((turn) => turn.state === 'accepted' || turn.state === 'running')) {
+        throw new Error('Cannot confirm historical identity while a turn is active.');
+      }
+      const records = snapshot.data.extensionRecords ?? [];
+      const record = buildConfirmedIdentityRepairRecord(id, request, snapshot.lineage, records);
+      if (records.some((existing) => existing.id === record.id)) { result = record; return; }
+      if (snapshot.sourceRevision !== request.expectedSourceRevision) {
+        throw new SessionReadError('data_changed', 'Session changed before identity confirmation; reload before retrying.');
+      }
+      await this.appendIdentityRepairRecord(mainPath, record);
+      result = record;
+      this.appendState.delete(id);
+      // Never stamp an unchanged projection with the new source revision.
+      try { await removeConversationPageCache(mainPath); }
+      catch (error: unknown) { reportStorageDiagnostic('warn', `Unable to remove stale Conversation cache for ${id}.`, error); }
+    });
+    if (result === undefined) throw new Error('Identity confirmation did not commit.');
+    return result;
+  }
+
+  private async appendIdentityRepairRecord(mainPath: string, record: KodaXExtensionSessionRecord): Promise<void> {
+    const original = await fs.readFile(mainPath);
+    const suffix = `${original.at(-1) === 10 ? '' : '\n'}${JSON.stringify(toExtensionRecordLine(record))}\n`;
+    const temporary = `${mainPath}.${randomUUID()}.tmp`;
+    try {
+      const handle = await fs.open(temporary, 'wx');
+      try { await handle.writeFile(Buffer.concat([original, Buffer.from(suffix)])); await handle.sync(); }
+      finally { await handle.close(); }
+      await replaceSessionFile(temporary, mainPath);
+    } finally { await fs.rm(temporary, { force: true }); }
+  }
+
   /**
    * Append an explicit new tail without accepting any historical prefix.
    * A fulfilled non-null value means the append committed and its successor
@@ -4255,6 +4317,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const newLineage = preparedDelta.lineageEntries;
       const newArtifacts = preparedDelta.artifactEntries ?? [];
       const newExtensions = preparedDelta.extensionRecords ?? [];
+      if (newExtensions.some(isConfirmedIdentityRepairRecord)) {
+        throw new SessionReadError('data_changed', 'Identity repair records require a full projection rebuild.');
+      }
       if (
         cached.lineageIdentityFilter === undefined
         || cached.lineageIdentityFilterHash === undefined
@@ -5733,6 +5798,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         path.join(archivedDir, `${id}.jsonl`),
         resolved.data.lineage ?? createSessionLineage(resolved.data.messages),
         resolved.data.runtimeInfo,
+        resolved.data.extensionRecords,
       );
       result = true;
     });
@@ -5820,6 +5886,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         path.join(activeDir, `${id}.jsonl`),
         resolved.data.lineage ?? createSessionLineage(resolved.data.messages),
         resolved.data.runtimeInfo,
+        resolved.data.extensionRecords,
       );
       result = true;
     });

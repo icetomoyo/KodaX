@@ -156,7 +156,7 @@ describe('Conversation page cache durability', () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it.each([3, 4])('invalidates v%s caches after the ordinary-history projection changes', async (version) => {
+  it.each([3, 4, 5])('invalidates v%s caches after the ordinary-history projection changes', async (version) => {
     const value = await fixture('old-projection');
     await writeConversationPageCache(
       value.mainPath,
