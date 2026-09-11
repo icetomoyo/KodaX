@@ -137,9 +137,50 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-beta.8 release preparation
+
+Release state: `v0.7.96-beta.8` is the GitHub pre-release for the exact
+tagged commit. The tag-triggered Release workflow builds every platform
+archive and the universal npm tarball, publishes checksums, and creates the
+GitHub pre-release. npm registry publication remains a separate manual
+maintainer action.
+
+On top of beta.7 it adds `runtime.sessions.confirmIdentityAlias` for
+explicitly confirmed legacy interrupt identities: registration verifies the
+original delivery receipt and session revision, preserves an immutable
+audit record, and rejects competing claims. The alias applies across
+conversation, page, and chunk reads, saves, compaction, restart, and
+pagination; older caches rebuild; original messages and journal events
+remain intact; and unconfirmed historical identities are never inferred
+from text, timestamps, or turn IDs. All beta.7 contracts are retained.
+
+All root/workspace package versions and lockfile entries are `0.7.96-beta.8`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, identity-repair/confirm-alias regressions, prompt-cache
+   diagnostics/wire regressions, bundle/ASRT regressions, and
+   package/declaration builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-beta.8`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
+remain unchanged.
+
 ## v0.7.96-beta.7 release preparation
 
-Release state: `v0.7.96-beta.7` is the seventh beta pre-release of the v0.7.96 line,
+Release state: `v0.7.96-beta.7` was the seventh beta pre-release of the v0.7.96 line,
 tagged from the exact green commit. The tag-triggered Release workflow
 builds every platform archive and the universal npm tarball, publishes
 checksums, and creates the GitHub pre-release. npm registry publication
@@ -157,29 +198,7 @@ On top of beta.6 it includes the multimodal and interrupt-identity fixes:
   status;
 - delivered interrupt entry references stay valid across context rewrites,
   storage reads/saves, compaction, restart, and conversation pagination.
-
-All root/workspace package versions and lockfile entries are `0.7.96-beta.7`.
-The feature-design submodule, public guides, architecture documents, and
-`kodax_manual` track this release. Historical release records retain their versions.
-
-Release gates:
-
-1. Config templates, strict source/test typechecks, manual documentation
-   tests, multimodal/interrupt regressions, prompt-cache diagnostics/wire
-   regressions, bundle/ASRT regressions, and package/declaration builds pass.
-2. GitHub CI passes on the exact release commit across Node 20/22, Windows
-   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
-3. Push the reachable feature-design submodule commit before the parent commit.
-4. Tag the green commit `v0.7.96-beta.7`; the Release workflow must produce five
-   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
-5. Publish the GitHub pre-release with release notes. Leave npm publication
-   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
-   run `node scripts/release.mjs` to download and verify the exact universal
-   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
-
-Windows remains native shell protocol 10 with setup generation 11 and
-`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
-remain unchanged.
+It predates beta.8's confirmed legacy interrupt identity alias.
 
 ## v0.7.96-beta.6 release preparation
 

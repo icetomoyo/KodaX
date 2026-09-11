@@ -104,6 +104,20 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-beta.8 Release Corrections
+
+The beta.8 addition closes the confirmed-identity gap left by beta.7's
+interrupt-identity work: legacy sessions whose delivered interrupt entries
+predate identity tracking could not adopt a replacement identity without
+ambiguity. `runtime.sessions.confirmIdentityAlias` registers the alias only
+after verifying the original delivery receipt and session revision, keeps an
+immutable audit record, and rejects competing claims. Conversation, page,
+and chunk reads apply the alias across saves, compaction, restart, and
+pagination; older caches rebuild; original messages and journal events stay
+intact. Unconfirmed historical identities are never inferred from text,
+timestamps, or turn IDs. No sandbox, trusted-text, permission, credential,
+or provider wire behavior changed.
+
 ## v0.7.96-beta.7 Release Corrections
 
 The seventh beta closes the multimodal and interrupt-identity gaps

@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-beta.8] - 2026-09-11
+
+Eighth beta pre-release of the v0.7.96 line: an explicit, audited opt-in for
+legacy interrupt identities, retaining every beta.7 contract. npm
+publication remains a manual maintainer action.
+
 ### Fixed
 
 - Add `runtime.sessions.confirmIdentityAlias` for explicitly confirmed legacy

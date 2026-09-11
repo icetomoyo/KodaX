@@ -296,6 +296,12 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-beta.8 发布**：新增 `runtime.sessions.confirmIdentityAlias`，
+用于显式确认的遗留中断标识：注册时验证原始投递回执与 session revision，
+保留不可变审计记录并拒绝竞争声明。别名跨保存、压缩、重启与分页生效；
+原始消息与 journal 事件保持不变，且绝不从文本、时间戳或 turn ID 推断
+未确认的历史标识。
+
 **v0.7.96-beta.7 发布**：新增多模态结果保真——
 文本/图片工具结果在直接与托管分发、Worker RPC、guardrail、容量恢复与 MCP
 适配器中完整保留（MCP 图片持久化为附件）；本地执行失败以类型化错误贯穿
@@ -356,7 +362,7 @@ scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留�
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.7 发布清单](docs/release.md#v0796-beta7-release-preparation)。
+维护者手动执行。详见 [v0.7.96-beta.8 发布清单](docs/release.md#v0796-beta8-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

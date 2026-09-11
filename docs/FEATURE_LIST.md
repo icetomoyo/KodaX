@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.7` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.7` (npm publication remains manual) |
+| Current released version | `v0.7.96-beta.8` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-beta.8` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Total tracked features | `82` |
@@ -27,7 +27,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.7; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -517,9 +517,21 @@
 
 ---
 
+## v0.7.96-beta.8 Release Record
+
+`v0.7.96-beta.8` is the eighth beta pre-release of the v0.7.96 line. It adds
+`runtime.sessions.confirmIdentityAlias` for explicitly confirmed legacy
+interrupt identities: registration verifies the original delivery receipt and
+session revision, preserves an immutable audit record, and rejects competing
+claims. The alias applies across conversation, page, and chunk reads, saves,
+compaction, restart, and pagination; older caches rebuild; original messages
+and journal events remain intact. Unconfirmed historical identities are not
+inferred from text, timestamps, or turn IDs. All beta.7 contracts are
+retained. npm publication remains a manual maintainer step.
+
 ## v0.7.96-beta.7 Release Record
 
-`v0.7.96-beta.7` is the seventh beta pre-release of the v0.7.96 line, carrying every
+`v0.7.96-beta.7` was the seventh beta pre-release of the v0.7.96 line, carrying every
 numbered-beta contract. On top of beta.6 it adds multimodal result fidelity:
 text/image tool results survive direct and managed dispatch, constructed
 Worker RPC, allowing guardrails, capacity recovery, and MCP tool/resource
