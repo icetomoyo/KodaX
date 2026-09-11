@@ -2185,6 +2185,7 @@ export type RuntimeRunFailureKind =
   | "provider_aborted"
   | "invalid_response"
   | "runtime_cleanup"
+  | "local_execution"
   | "context_capacity"
   | "provider";
 
@@ -2195,6 +2196,7 @@ export type RuntimeFailureStage =
   | "transport"
   | "response_stream"
   | "runtime_control"
+  | "local_execution"
   | "runtime_settlement";
 
 export type RuntimeProviderErrorCode =
@@ -2216,6 +2218,7 @@ export type RuntimeProviderErrorCode =
   | "response_stream_error"
   | "cancelled"
   | "runtime_settlement_failed"
+  | "local_execution_error"
   | "context_capacity_exceeded"
   | "provider_error";
 
@@ -17308,7 +17311,8 @@ function isRuntimeRequestPhase(
     || value === "mid_stream_text"
     || value === "mid_stream_thinking"
     || value === "mid_stream_tool_input"
-    || value === "post_tool_execution_pre_assistant_close";
+    || value === "post_tool_execution_pre_assistant_close"
+    || value === "local_execution";
 }
 
 function isRuntimeContextTokens(
@@ -17336,6 +17340,7 @@ function isRuntimeRunFailureKind(
     value === "provider_aborted" ||
     value === "invalid_response" ||
     value === "runtime_cleanup" ||
+    value === "local_execution" ||
     value === "context_capacity" ||
     value === "provider"
   );
@@ -17348,6 +17353,7 @@ function isRuntimeFailureStage(value: unknown): value is RuntimeFailureStage {
     || value === "transport"
     || value === "response_stream"
     || value === "runtime_control"
+    || value === "local_execution"
     || value === "runtime_settlement";
 }
 
@@ -22359,6 +22365,7 @@ const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProvide
   "response_stream_error",
   "cancelled",
   "runtime_settlement_failed",
+  "local_execution_error",
   "context_capacity_exceeded",
   "provider_error",
 ]);
@@ -22508,6 +22515,13 @@ function classifyRuntimeFailureDetail(
     || error instanceof ToolResultBatchCapacityError
   ) {
     return runtimeFailure("context_capacity", "runtime_control", "context_capacity_exceeded");
+  }
+  // Executor-owned provenance takes precedence over overloaded Node error codes.
+  // A plain provider TypeError or matching message is not local execution evidence.
+  if (readStringErrorField(error, "source") === "local"
+    && readStringErrorField(error, "errorClass") === "local_execution_error"
+    && readStringErrorField(error, "requestPhase") === "local_execution") {
+    return runtimeFailure("local_execution", "local_execution", "local_execution_error");
   }
   const normalized = normalizeError(error);
   const facts: RuntimeFailureFacts = {
@@ -22783,6 +22797,7 @@ function readRuntimeRequestPhase(
     || value === "mid_stream_thinking"
     || value === "mid_stream_tool_input"
     || value === "post_tool_execution_pre_assistant_close"
+    || value === "local_execution"
     ? value
     : undefined;
 }
@@ -22886,6 +22901,7 @@ function runtimeFailurePublicMessage(
     case "response_stream_error": return "Provider returned an invalid response stream.";
     case "cancelled": return "Runtime run was cancelled.";
     case "runtime_settlement_failed": return "Runtime settlement failed.";
+    case "local_execution_error": return "Local SDK execution failed.";
     case "context_capacity_exceeded": return "The run could not fit its context within the model window.";
     case "provider_error": return "Provider request failed.";
   }

@@ -7,6 +7,7 @@ import {
 import type { KodaXMessage, KodaXToolResultBlock } from '@kodax-ai/llm';
 import type { KodaXEvents, KodaXToolExecutionContext } from './types.js';
 import { applyToolResultGuardrail, TOOL_RESULT_INCOMPLETE_MARKER } from './tools/tool-result-policy.js';
+import { toolResultText } from './tools/tool-result-content.js';
 import { cleanupUserInputDegradationCache, createUserInputDegradationCache,
   degradeIrreducibleUserInputs, hasIrreducibleUserInput } from './capacity-recovery.js';
 
@@ -43,14 +44,17 @@ async function trustedOutputPath(block: KodaXToolResultBlock): Promise<string | 
 async function shrinkResult(
   block: KodaXToolResultBlock, toolName: string, excess: number, ctx: KodaXToolExecutionContext,
 ): Promise<KodaXToolResultBlock> {
-  if (typeof block.content !== 'string') return block;
   const outputPath = await trustedOutputPath(block);
   // A legacy or forged marker alone cannot establish ownership of full evidence.
   if (!outputPath && (block.metadata?.truncated === true
-    || block.content.includes(TOOL_RESULT_INCOMPLETE_MARKER))) return block;
+    || toolResultText(block.content).includes(TOOL_RESULT_INCOMPLETE_MARKER))) return block;
+  const contentTokens = typeof block.content === 'string'
+    ? countTokens(block.content)
+    : estimateTokens([{ role: 'user', content: [block] }])
+      - estimateTokens([{ role: 'user', content: [{ ...block, content: '' }] }]);
   const guarded = await applyToolResultGuardrail(toolName, block.content, ctx, {
     existingOutputPath: outputPath,
-    maxInlineTokens: Math.max(0, countTokens(block.content) - excess),
+    maxInlineTokens: Math.max(0, contentTokens - excess),
   });
   if (guarded.spillFailed || !guarded.outputPath || guarded.content === block.content) return block;
   return { ...block, content: guarded.content, metadata: { ...block.metadata,

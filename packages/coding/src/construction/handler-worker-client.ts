@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 import type { KodaXToolExecutionContext } from '../types.js';
+import type { ToolResult } from '../tools/types.js';
 import { CapabilityDeniedError, type Capabilities } from './types.js';
 import { createCtxProxy, type CreateCtxProxyOptions } from './ctx-proxy.js';
 import {
@@ -15,8 +16,8 @@ import {
 
 interface WorkerInvocation {
   readonly id: number;
-  readonly proxy: { readonly tools: Record<string, (input?: unknown) => Promise<string>> };
-  readonly resolve: (value: string) => void;
+  readonly proxy: { readonly tools: Record<string, (input?: unknown) => Promise<ToolResult>> };
+  readonly resolve: (value: ToolResult) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
   readonly removeAbortListener?: () => void;
@@ -50,7 +51,7 @@ export async function prepareConstructedHandlerWorker(input: {
   readonly capabilities: Capabilities;
   readonly timeoutMs: number;
   readonly ctxProxyOptions?: CreateCtxProxyOptions;
-}): Promise<(toolInput: Record<string, unknown>, ctx: unknown) => Promise<string>> {
+}): Promise<(toolInput: Record<string, unknown>, ctx: unknown) => Promise<ToolResult>> {
   await disposeConstructedHandlerWorker(input.key);
   const entry: HandlerWorkerEntry = {
     ...input,
@@ -87,7 +88,7 @@ function enqueueInvocation(
   entry: HandlerWorkerEntry,
   input: Record<string, unknown>,
   ctx: unknown,
-): Promise<string> {
+): Promise<ToolResult> {
   const run = entry.tail.then(() => invoke(entry, input, ctx));
   entry.tail = run.then(() => undefined, () => undefined);
   return run;
@@ -97,17 +98,17 @@ async function invoke(
   entry: HandlerWorkerEntry,
   input: Record<string, unknown>,
   ctx: unknown,
-): Promise<string> {
+): Promise<ToolResult> {
   assertHandlerWorkerEntryActive(entry);
   const state = getWorkerState(entry);
   await state.ready;
   assertHandlerWorkerEntryActive(entry);
   state.worker.ref();
   const proxy = createCtxProxy(ctx, entry.capabilities, entry.ctxProxyOptions) as {
-    readonly tools: Record<string, (input?: unknown) => Promise<string>>;
+    readonly tools: Record<string, (input?: unknown) => Promise<ToolResult>>;
   };
   const invocationId = ++nextInvocationId;
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<ToolResult>((resolve, reject) => {
     const timer = setTimeout(() => {
       void terminateTimedOutInvocation(entry, state, invocationId);
     }, entry.timeoutMs);
@@ -218,7 +219,7 @@ async function dispatchToolCall(
 function settleInvocation(
   state: HandlerWorkerState,
   invocationId: number,
-  result: string | undefined,
+  result: ToolResult | undefined,
   error: HandlerWorkerError | undefined,
 ): void {
   const invocation = state.invocation;
@@ -288,6 +289,7 @@ function errorFromWorker(input: HandlerWorkerError): Error {
   const error = new Error(input.message);
   error.name = input.name;
   if (input.stack) error.stack = input.stack;
+  if (input.code !== undefined) Object.assign(error, { code: input.code });
   if (input.name === 'CapabilityDeniedError') {
     Object.setPrototypeOf(error, CapabilityDeniedError.prototype);
   }

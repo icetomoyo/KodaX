@@ -69,6 +69,35 @@ describe('tool result guardrail', () => {
     expect(result.content).toBe('small output');
   });
 
+  it('preserves images while spilling oversized multimodal text and recording image capacity debt', async () => {
+    const text = 'image evidence\n'.repeat(10_000);
+    const image = { type: 'image', path: '/pixel.png', mediaType: 'image/png' } as const;
+    const content = [{ type: 'text', text }, image] as const;
+    const ctx = { backups: new Map(), executionCwd: tempDir };
+    const guarded = await applyToolResultGuardrail('read', content, ctx);
+    expect(guarded.truncated).toBe(true);
+    expect(guarded.content).toEqual([{ type: 'text', text: expect.stringContaining('KODAX_RESULT_INCOMPLETE') }, image]);
+    expect(await fs.readFile(guarded.outputPath!, 'utf8')).toBe(text);
+    const batch = await applyToolResultBatchGuardrail([
+      { id: 'image', toolName: 'read', content: [image] },
+    ], ctx, { aggregateInlineTokens: 100 });
+    expect(batch.entries[0]?.content).toEqual([image]);
+    expect(batch.capacityDebt).toEqual({ requiredTokens: 1508, availableTokens: 100 });
+  });
+
+  it('reserves image tokens before choosing a recoverable text preview', async () => {
+    const text = 'evidence '.repeat(2000);
+    const image = { type: 'image', path: '/pixel.png' } as const;
+    const batch = await applyToolResultBatchGuardrail([
+      { id: 'mixed', toolName: 'read', content: [{ type: 'text', text }, image] },
+    ], { backups: new Map(), executionCwd: tempDir }, { aggregateInlineTokens: 2000 });
+    expect(batch.capacityDebt).toBeUndefined();
+    expect(batch.entries[0]?.content).toEqual([
+      { type: 'text', text: expect.stringContaining('KODAX_RESULT_INCOMPLETE') }, image,
+    ]);
+    expect(await fs.readFile(batch.entries[0]!.outputPath!, 'utf8')).toBe(text);
+  });
+
   it('does not guard an already guarded result or persist a second artifact', async () => {
     const content = Array.from({ length: 3_000 }, (_, index) => `line-${index + 1}`).join('\n');
     const ctx = { backups: new Map(), executionCwd: process.cwd() };

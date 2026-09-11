@@ -29,6 +29,7 @@ import {
 import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonShutdownOutcome,
+  releaseRuntimeDaemonOwnership,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
   tryAcquireRuntimeDaemonLock,
@@ -1258,36 +1259,42 @@ describe('daemon CLI smoke', () => {
       version: '0.7.66',
       status: 'ready',
     });
-    expect(tryAcquireRuntimeDaemonLock(paths, {
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: 'runtime-live',
       pid: process.pid,
       createdAt: '2026-07-09T00:00:00.000Z',
-    })).toBeDefined();
-
-    const stop = await runDaemonCommand([
-      'stop',
-      '--home',
-      homeDir,
-      '--profile',
-      profile,
-      '--timeout-ms',
-      '3000',
-      '--force',
-      '--json',
-    ]);
-
-    expect(stop).toMatchObject({
-      stopped: false,
-      forced: true,
-      reason: 'unverified_owner',
-      health: 'unhealthy',
-      state: {
-        runtimeId: 'runtime-live',
-        pid: process.pid,
-      },
     });
-    expect(fs.existsSync(paths.stateFile)).toBe(true);
-    expect(fs.existsSync(paths.lockFile)).toBe(true);
+    expect(lock).toBeDefined();
+
+    try {
+      const stop = await runDaemonCommand([
+        'stop',
+        '--home',
+        homeDir,
+        '--profile',
+        profile,
+        '--timeout-ms',
+        '3000',
+        '--force',
+        '--json',
+      ]);
+
+      expect(stop).toMatchObject({
+        stopped: false,
+        forced: true,
+        reason: 'unverified_owner',
+        health: 'unhealthy',
+        state: {
+          runtimeId: 'runtime-live',
+          pid: process.pid,
+        },
+      });
+      expect(fs.existsSync(paths.stateFile)).toBe(true);
+      expect(fs.existsSync(paths.lockFile)).toBe(true);
+    } finally {
+      // This test created metadata, not a daemon. Remove only its owned fixture.
+      if (lock !== undefined) releaseRuntimeDaemonOwnership(paths, lock);
+    }
   }, 30_000);
 
   it('does not report stop success when detached serve final cleanup fails', async () => {
@@ -1784,7 +1791,7 @@ async function stopDaemonBestEffort(homeDir: string): Promise<void> {
     if (!entry.isDirectory()) continue;
     const profile = entry.name;
     try {
-      await runDaemonCommand([
+      const result = await runDaemonCommand([
         'stop',
         '--home',
         homeDir,
@@ -1794,15 +1801,19 @@ async function stopDaemonBestEffort(homeDir: string): Promise<void> {
         '3000',
         '--json',
       ], {}, 10_000);
+      if (result.stopped !== true) throw new Error('Test daemon did not stop.');
     } catch {
-      const stateFile = path.join(daemonRoot, profile, 'daemon.json');
       try {
-        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as { pid?: unknown };
-        if (typeof state.pid === 'number') {
-          process.kill(state.pid, 'SIGTERM');
-        }
-      } catch {
-        // Best-effort cleanup only.
+        // Fixture state can deliberately name an unrelated live PID (including
+        // this worker). Force cleanup must retain the daemon's ownership check.
+        const result = await runDaemonCommand([
+          'stop', '--home', homeDir, '--profile', profile,
+          '--timeout-ms', '3000', '--force', '--json',
+        ], {}, 10_000);
+        if (result.stopped !== true) throw new Error('Verified test daemon stop was refused.');
+      } catch (error) {
+        // Leave the temporary scope intact when verified cleanup fails.
+        throw new Error(`Failed to clean up test daemon ${profile} in ${homeDir}.`, { cause: error });
       }
     }
   }

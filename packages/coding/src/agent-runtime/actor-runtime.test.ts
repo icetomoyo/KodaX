@@ -619,6 +619,29 @@ describe('F270 coding Actor runtime adapter', () => {
     await session.close();
   });
 
+  it('reports local child failures ahead of a stale assistant summary', async () => {
+    const child = completedChild('Reading the image now.');
+    child.results[0]!.status = 'failed';
+    child.results[0]!.failure = {
+      source: 'local', errorClass: 'local_execution_error', requestPhase: 'local_execution',
+      errorName: 'TypeError', message: 'Local SDK execution failed. TypeError: result.startsWith is not a function',
+      safeMessage: 'Local SDK execution failed.',
+    };
+    executeChildAgentsMock.mockResolvedValue(child);
+    const session = new CodingActorSession({ sessionId: 'local-error-session' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    try {
+      const turn = await root.spawn({ taskName: 'image-worker', objective: 'Read the image.' });
+      await vi.waitFor(() => expect(root.output(turn.actorPath, turn.turnId)).toMatchObject({
+        state: 'failed', error: child.results[0]!.failure!.message,
+      }));
+      expect(root.get(turn.actorPath).turns[0]?.metadata?.executionFailure).toMatchObject({
+        source: 'local', errorClass: 'local_execution_error', errorName: 'TypeError',
+      });
+    } finally { await session.close(); }
+  });
+
   it('accepts a root-validated sibling target delivered to the executing challenger', async () => {
     executeChildAgentsMock.mockResolvedValueOnce(completedChild('candidate result'));
     const session = new CodingActorSession({ sessionId: 'session-1' });

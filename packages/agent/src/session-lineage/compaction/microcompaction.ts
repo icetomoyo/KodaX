@@ -124,6 +124,9 @@ export function microcompact(
       }
 
       const toolResult = block as KodaXToolResultBlock;
+      // Nested images have the same preservation contract as top-level images.
+      if (Array.isArray(toolResult.content)
+        && toolResult.content.some((item) => item.type === 'image')) return block;
 
       // Already cleared
       if (typeof toolResult.content === 'string' && (toolResult.content.startsWith('[Cleared:') || toolResult.content.startsWith('[Pruned:'))) {

@@ -48,6 +48,26 @@ import type {
   RunnerToolObserver,
   RunnerToolResult,
 } from '@kodax-ai/agent';
+import { ContextCapacityError } from '@kodax-ai/agent';
+import { KodaXError } from '@kodax-ai/llm';
+import { buildLocalExecutionFailure } from '../../execution-failure.js';
+import { ToolResultBatchCapacityError } from '../../tools/tool-result-policy.js';
+
+/** Only synchronous local notifications use this boundary; permission gates may call Providers. */
+function notifyToolObserver(notify: () => void): void {
+  try {
+    notify();
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    if ('executionFailure' in error || error.name === 'AbortError'
+      || error instanceof KodaXError || error instanceof ContextCapacityError
+      || error instanceof ToolResultBatchCapacityError) throw cause;
+    const failure = buildLocalExecutionFailure(error);
+    const target = Object.isExtensible(error) ? error : new Error(error.message, { cause: error });
+    Object.defineProperty(target, 'executionFailure', { value: failure, configurable: true });
+    throw target;
+  }
+}
 
 /**
  * Compose N `RunnerToolObserver`s into a single observer with the
@@ -81,19 +101,19 @@ export function composeToolObservers(
     },
     onToolCall: (call: RunnerToolCall) => {
       for (const obs of observers) {
-        obs.onToolCall?.(call);
+        notifyToolObserver(() => obs.onToolCall?.(call));
       }
     },
     onToolResult: (call: RunnerToolCall, result: RunnerToolResult) => {
       for (const obs of observers) {
-        obs.onToolResult?.(call, result);
+        notifyToolObserver(() => obs.onToolResult?.(call, result));
       }
     },
     onToolExecutionStart: (call: RunnerToolCall) => {
-      for (const obs of observers) obs.onToolExecutionStart?.(call);
+      for (const obs of observers) notifyToolObserver(() => obs.onToolExecutionStart?.(call));
     },
     onToolExecutionEnd: (call: RunnerToolCall) => {
-      for (const obs of observers) obs.onToolExecutionEnd?.(call);
+      for (const obs of observers) notifyToolObserver(() => obs.onToolExecutionEnd?.(call));
     },
   };
 }

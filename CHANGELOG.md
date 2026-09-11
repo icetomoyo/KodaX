@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve text/image tool results through direct and managed dispatch, constructed
+  Worker RPC, allowing guardrails, capacity recovery and MCP tool/resource adapters.
+  MCP images persist as attachments; image-capable OpenAI providers receive tool
+  images after valid paired responses, with matching prompt-cache diagnostics.
+- Carry local execution failures and Worker error codes through child results,
+  Actor metadata and Runtime/daemon status. Returned managed/MCP errors retain
+  their error classification instead of appearing successful or as provider faults.
+- Keep delivered interrupt entry references valid across context rewrites,
+  storage reads/saves, compaction, restart and conversation pagination. Preserve
+  explicit provenance, resolve physical ancestor aliases, reject competing claims,
+  and rebuild older conversation caches. Equal text or timestamps never create aliases.
+
 ---
 
 ## [0.7.96-beta.6] - 2026-09-11

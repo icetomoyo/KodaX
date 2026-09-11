@@ -1,7 +1,9 @@
+import type { ToolResult } from './types.js';
+import { toolResultText } from './tool-result-content.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { hasTransientTextArtifact } from '../transient-text-artifacts.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
-import { countTokens } from '../tokenizer.js';
+import { countTokens, estimateTokens } from '../tokenizer.js';
 import {
   formatSize,
   persistToolOutput,
@@ -17,8 +19,8 @@ export interface ToolResultPolicy {
   spillToFile: boolean;
 }
 
-export interface GuardedToolResult {
-  content: string;
+export interface GuardedToolResult<T extends ToolResult = string> {
+  content: T;
   truncated: boolean;
   outputPath?: string;
   policy: ToolResultPolicy;
@@ -216,10 +218,10 @@ export interface ApplyToolResultGuardrailOptions {
   persistOutput?: (toolName: string, content: string) => Promise<string>;
 }
 
-export interface ToolResultBatchEntry {
+export interface ToolResultBatchEntry<T extends ToolResult = ToolResult> {
   readonly id: string;
   readonly toolName: string;
-  readonly content: string;
+  readonly content: T;
   readonly outputPath?: string;
 }
 
@@ -237,8 +239,8 @@ export interface ToolResultBatchDebt {
 }
 
 /** Result of the batch admission choke point; debt is present only when over. */
-export interface GuardedToolResultBatch {
-  readonly entries: readonly ToolResultBatchEntry[];
+export interface GuardedToolResultBatch<T extends ToolResult = ToolResult> {
+  readonly entries: readonly ToolResultBatchEntry<T>[];
   readonly capacityDebt?: ToolResultBatchDebt;
 }
 
@@ -281,12 +283,23 @@ export class ToolResultBatchCapacityError extends Error {
   }
 }
 
+export function applyToolResultGuardrail(
+  toolName: string, content: string, ctx: KodaXToolExecutionContext,
+  options?: ApplyToolResultGuardrailOptions,
+): Promise<GuardedToolResult>;
+export function applyToolResultGuardrail(
+  toolName: string, content: ToolResult, ctx: KodaXToolExecutionContext,
+  options?: ApplyToolResultGuardrailOptions,
+): Promise<GuardedToolResult<ToolResult>>;
 export async function applyToolResultGuardrail(
   toolName: string,
-  content: string,
+  content: ToolResult,
   ctx: KodaXToolExecutionContext,
   options?: ApplyToolResultGuardrailOptions,
-): Promise<GuardedToolResult> {
+): Promise<GuardedToolResult<ToolResult>> {
+  if (typeof content !== 'string') {
+    return guardMultimodalToolResult(toolName, content, ctx, options);
+  }
   const policy = getToolResultPolicy(toolName);
   const maxInlineTokens = options?.maxInlineTokens
     ?? options?.toolResultBudget?.aggregateInlineTokens;
@@ -432,6 +445,33 @@ export async function applyToolResultGuardrail(
   };
 }
 
+/** Image blocks remain inline; only text can be spilled to a text artifact. */
+async function guardMultimodalToolResult(
+  toolName: string,
+  content: Exclude<ToolResult, string>,
+  ctx: KodaXToolExecutionContext,
+  options?: ApplyToolResultGuardrailOptions,
+): Promise<GuardedToolResult<ToolResult>> {
+  const text = toolResultText(content);
+  if (!text) return { content, truncated: false, policy: getToolResultPolicy(toolName) };
+  const images = content.filter((item) => item.type === 'image');
+  const imageTokens = countToolResultTokens(images) - TOOL_RESULT_ENTRY_STRUCTURAL_TOKENS;
+  const totalBudget = options?.maxInlineTokens ?? options?.toolResultBudget?.aggregateInlineTokens;
+  const guarded = await applyToolResultGuardrail(toolName, text, ctx, {
+    ...options,
+    ...(totalBudget === undefined ? {} : { maxInlineTokens: Math.max(0, totalBudget - imageTokens) }),
+  });
+  if (guarded.content === text) return { ...guarded, content };
+  let textEmitted = false;
+  const replacement = content.flatMap((item): typeof content[number][] => {
+    if (item.type === 'image') return [item];
+    if (textEmitted) return [];
+    textEmitted = true;
+    return [{ type: 'text', text: guarded.content }];
+  });
+  return { ...guarded, content: replacement };
+}
+
 /**
  * The sole capacity owner for a dispatched tool-result batch.
  *
@@ -445,6 +485,14 @@ export async function applyToolResultGuardrail(
  * recovery ladder owns the next request — while artifact persistence failure
  * still degrades visibly rather than discarding otherwise admissible data.
  */
+export function applyToolResultBatchGuardrail(
+  entries: readonly ToolResultBatchEntry<string>[], ctx: KodaXToolExecutionContext,
+  budget: ToolResultCapacity | undefined, additionalMessageTokens?: number,
+): Promise<GuardedToolResultBatch<string>>;
+export function applyToolResultBatchGuardrail(
+  entries: readonly ToolResultBatchEntry[], ctx: KodaXToolExecutionContext,
+  budget: ToolResultCapacity | undefined, additionalMessageTokens?: number,
+): Promise<GuardedToolResultBatch>;
 export async function applyToolResultBatchGuardrail(
   entries: readonly ToolResultBatchEntry[],
   ctx: KodaXToolExecutionContext,
@@ -556,9 +604,10 @@ export async function applyToolResultBatchGuardrail(
   return { entries: result };
 }
 
-function countToolResultTokens(content: string): number {
-  // Mirrors the current tokenizer's structural overhead for a tool_result block.
-  return countTokens(content) + TOOL_RESULT_ENTRY_STRUCTURAL_TOKENS;
+function countToolResultTokens(content: ToolResult): number {
+  return estimateTokens([{ role: 'user', content: [
+    { type: 'tool_result', tool_use_id: 'budget', content },
+  ] }]) - TOOL_RESULT_BATCH_STRUCTURAL_TOKENS;
 }
 
 interface ExistingGuardedContent {

@@ -7,6 +7,7 @@
  * live AMA path is a single Worker loop plus out-of-band Sidecar Verifier.
  */
 
+import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
 import type {
   Agent,
   Handoff,
@@ -212,15 +213,6 @@ function parseManagedBridgeCallInput(input: Record<string, unknown>): (
   };
 }
 
-function resultContentToText(content: RunnerToolResult['content']): string {
-  if (typeof content === 'string') return content;
-  try {
-    return JSON.stringify(content);
-  } catch {
-    return '[Tool Error] tool_call: target returned unserializable content.';
-  }
-}
-
 function buildManagedToolDescribeBridge(
   definition: ManagedToolDefinition,
   activeDefinitions: readonly ManagedToolDefinition[],
@@ -294,10 +286,10 @@ function buildManagedToolCallBridge(
       const overrideRunnable = overrides.get(parsed.name);
       if (overrideRunnable) {
         const targetResult = await overrideRunnable.execute(parsed.input, targetRunnerCtx);
-        const content = resultContentToText(targetResult.content);
+        const content = targetResult.content;
         return {
           content,
-          isError: targetResult.isError === true || content.startsWith('[Tool Error]'),
+          isError: targetResult.isError === true || isToolResultErrorContent(content),
           metadata: targetResult.metadata,
         };
       }
@@ -319,16 +311,16 @@ function buildManagedToolCallBridge(
           registration.handler as (
             targetInput: Record<string, unknown>,
             execCtx: KodaXToolExecutionContext,
-          ) => Promise<string>,
+          ) => Promise<RunnerToolResult['content']>,
           ctx,
           budget,
           events,
         );
         const targetResult = await runnable.execute(parsed.input, targetRunnerCtx);
-        const content = resultContentToText(targetResult.content);
+        const content = targetResult.content;
         return {
           content,
-          isError: targetResult.isError === true || content.startsWith('[Tool Error]'),
+          isError: targetResult.isError === true || isToolResultErrorContent(content),
           metadata: targetResult.metadata,
         };
       }
@@ -338,7 +330,7 @@ function buildManagedToolCallBridge(
         const content = await executeRunScopedTool(ctx, runScopedTarget, parsed.input);
         return {
           content,
-          isError: content.startsWith('[Tool Error]'),
+          isError: isToolResultErrorContent(content),
         };
       }
 
@@ -447,7 +439,7 @@ function buildAgentToolsFromRegistry(
         handler as (
           input: Record<string, unknown>,
           execCtx: KodaXToolExecutionContext,
-        ) => Promise<string>,
+        ) => Promise<RunnerToolResult['content']>,
         ctx,
         budget,
         events,

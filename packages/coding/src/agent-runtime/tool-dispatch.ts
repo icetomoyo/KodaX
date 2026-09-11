@@ -51,7 +51,7 @@
  *      7-tool allow-list — mutating tools (`write`/`edit`/`bash`)
  *      MUST never silently redirect.
  *
- * The function returns a string (not a `KodaXToolResultBlock`) because
+ * The function returns raw ToolResult content because
  * the substrate dispatch loop also handles cancellation and parallel
  * tool execution at a higher level — wrapping into a block happens in
  * the loop, not here.
@@ -102,13 +102,16 @@
  * — pre-FEATURE_100 baseline — during FEATURE_100 P3.3d.
  */
 
+import type { ToolResult } from '../tools/types.js';
+import { toolResultText } from '../tools/tool-result-content.js';
 import type {
   KodaXEvents,
   KodaXToolEventMeta,
   KodaXToolExecutionContext,
   KodaXToolResultBlock,
 } from '../types.js';
-import type { CapabilityResult, KodaXToolUseBlock } from '@kodax-ai/llm';
+import type { KodaXToolUseBlock } from '@kodax-ai/llm';
+import { renderCapabilityToolResult } from '../tools/capability-result.js';
 import {
   emitKodaXDiagnostic,
   runToolAfterGuardrails,
@@ -150,7 +153,7 @@ import { estimateTokens } from '../tokenizer.js';
 
 export function createToolResultBlock(
   toolUseId: string,
-  content: string,
+  content: ToolResult,
   metadata?: KodaXToolResultBlock['metadata'],
 ): KodaXToolResultBlock {
   return {
@@ -169,7 +172,7 @@ export async function executeToolCall(
   runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
   abortSignal?: AbortSignal,
-): Promise<string> {
+): Promise<ToolResult> {
   // Issue 088: Check abort signal before executing each tool
   if (abortSignal?.aborted) {
     return CANCELLED_TOOL_RESULT_MESSAGE;
@@ -269,14 +272,14 @@ export async function executeToolCall(
     { id: toolCall.id, name: toolCall.name },
     toolMeta,
   );
-  let result: string;
+  let result: ToolResult;
   try {
     result = runScopedDefinition === undefined
       ? await executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
       : await executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {});
 
     // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
-    if (result.startsWith('[Tool Error]') && ctx.extensionRuntime) {
+    if (toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(
         toolCall.name,
         toolCall.input ?? {},
@@ -408,7 +411,7 @@ async function executeBridgeToolCall(input: {
   readonly runtimeSessionState: RuntimeSessionState;
   readonly activeToolNames: readonly string[] | undefined;
   readonly abortSignal: AbortSignal | undefined;
-}): Promise<string> {
+}): Promise<ToolResult> {
   const resolved = resolveToolBridgeTarget(input.bridgeCall);
   if (!resolved?.ok) {
     return `[Tool Error] ${TOOL_CALL_NAME}: ${resolved?.error ?? 'invalid bridge call.'}`;
@@ -462,12 +465,12 @@ async function executeBridgeToolCall(input: {
     { id: targetCall.id, name: targetName },
     toolMeta,
   );
-  let result: string;
+  let result: ToolResult;
   try {
     result = runScopedTarget === undefined
       ? await executeTool(targetName, targetInput, ctxWithToolHooks)
       : await executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput);
-    if (result.startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
+    if (toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(targetName, targetInput, input.ctx);
       if (fallbackResult !== undefined) result = fallbackResult;
     }
@@ -493,34 +496,11 @@ export const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
   'semantic_lookup',
 ]);
 
-function stringifyMcpFallbackPart(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  if (typeof value === 'string') {
-    return value.trim().length > 0 ? value : undefined;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function formatMcpFallbackContent(result: CapabilityResult): string {
-  const content = stringifyMcpFallbackPart(result.content);
-  const structured = stringifyMcpFallbackPart(result.structuredContent);
-  if (content && structured && content !== structured) {
-    return `${content}\n\nStructured content:\n${structured}`;
-  }
-  return content ?? structured ?? JSON.stringify(result, null, 2);
-}
-
 export async function tryMcpFallback(
   toolName: string,
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-): Promise<string | undefined> {
+): Promise<ToolResult | undefined> {
   if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName)) {
     return undefined;
   }
@@ -538,8 +518,14 @@ export async function tryMcpFallback(
       return undefined;
     }
     const mcpResult = await ctx.extensionRuntime!.executeCapability('mcp', hit.id, input);
-    const content = formatMcpFallbackContent(mcpResult);
-    return `[MCP Fallback via ${hit.id}]\n${content}`;
+    const metadataOnly = mcpResult.content === undefined && mcpResult.structuredContent === undefined
+      ? JSON.stringify(mcpResult, null, 2) : '';
+    // Fallback has historically pretty-printed structured evidence; ordinary
+    // mcp_call keeps its compact retrieval rendering. Preserve both contracts.
+    const structuredContent = mcpResult.structuredContent == null || typeof mcpResult.structuredContent === 'string'
+      ? mcpResult.structuredContent : JSON.stringify(mcpResult.structuredContent, null, 2);
+    return renderCapabilityToolResult({ ...mcpResult, structuredContent }, (content) =>
+      `[MCP Fallback via ${hit.id}]\n${content ?? metadataOnly}`);
   } catch (error) {
     if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
       emitKodaXDiagnostic({
@@ -573,7 +559,7 @@ export interface RunToolDispatchInput {
 interface PreparedToolCall {
   readonly index: number;
   readonly call: RunnerToolCall;
-  readonly blockedContent?: string;
+  readonly blockedContent?: ToolResult;
 }
 
 /**
@@ -588,8 +574,8 @@ interface PreparedToolCall {
  */
 export async function runToolDispatch(
   input: RunToolDispatchInput,
-): Promise<Map<string, string>> {
-  const resultMap = new Map<string, string>();
+): Promise<Map<string, ToolResult>> {
+  const resultMap = new Map<string, ToolResult>();
   const preparedByIndex = new Map<number, PreparedToolCall>();
   const nonBashEntries = input.toolBlocks
     .map((block, index) => ({ block, index }))
@@ -688,7 +674,7 @@ async function prepareToolBlock(
 async function executePreparedToolCall(
   input: RunToolDispatchInput,
   call: RunnerToolCall,
-): Promise<string> {
+): Promise<ToolResult> {
   let content = await executeToolCall(
     input.events,
     call,
@@ -719,15 +705,11 @@ function runnerCallToToolBlock(call: RunnerToolCall): KodaXToolUseBlock {
   } as KodaXToolUseBlock;
 }
 
-function normalizeGuardrailResult(content: RunnerToolResult['content'], isError: boolean): string {
-  const text = typeof content === 'string'
-    ? content
-    : content.map((item) => (
-        item.type === 'text' ? item.text : `[Image: ${item.path}]`
-      )).join('\n');
-  return isError && !isToolResultErrorContent(text)
-    ? `[Blocked] ${text}`
-    : text;
+function normalizeGuardrailResult(content: RunnerToolResult['content'], isError: boolean): ToolResult {
+  if (!isError || isToolResultErrorContent(content)) return content;
+  return typeof content === 'string'
+    ? `[Blocked] ${content}`
+    : [{ type: 'text', text: '[Blocked]' }, ...content];
 }
 
 async function emitToolCallStart(
@@ -749,7 +731,7 @@ async function emitToolCallStart(
 
 export interface PostToolProcessingInput {
   readonly toolBlocks: readonly KodaXToolUseBlock[];
-  readonly resultMap: Map<string, string>;
+  readonly resultMap: Map<string, ToolResult>;
   readonly events: KodaXEvents;
   readonly emitActiveExtensionEvent: ExtensionEventEmitter;
   /**
@@ -809,7 +791,10 @@ export async function applyPostToolProcessing(
       && isMutationTool(tc.name)
       && isMutationScopeSignificant(input.ctx.mutationTracker)
     ) {
-      content += buildMutationScopeReflection(input.ctx.mutationTracker);
+      const reflection = buildMutationScopeReflection(input.ctx.mutationTracker);
+      content = typeof content === 'string'
+        ? content + reflection
+        : [...content, { type: 'text', text: reflection }];
       // MUTATION: latches the once-per-session contract — see
       // `PostToolProcessingInput.ctx` JSDoc for the ownership note.
       input.ctx.mutationTracker.reflectionInjected = true;
@@ -818,7 +803,7 @@ export async function applyPostToolProcessing(
     if (tc.name === 'edit' && isToolResultErrorContent(content)) {
       const recoveryMessage = await buildEditRecoveryUserMessage(
         tc,
-        content,
+        toolResultText(content),
         input.runtimeSessionState,
         input.ctx,
       );
@@ -866,7 +851,7 @@ async function admitAndEmitVisibleToolResults(
     toolResults.map((result) => ({
       id: result.tool_use_id,
       toolName: toolBlockById.get(result.tool_use_id)?.name ?? 'tool',
-      content: result.content as string,
+      content: result.content,
       ...(typeof result.metadata?.outputPath === 'string' && result.metadata.outputPath.length > 0
         ? { outputPath: result.metadata.outputPath }
         : {}),
@@ -899,14 +884,15 @@ async function admitAndEmitVisibleToolResults(
   });
   for (const result of finalResults) {
     const toolBlock = toolBlockById.get(result.tool_use_id);
-    if (!toolBlock || typeof result.content !== 'string') continue;
+    if (!toolBlock) continue;
+    const displayContent = toolResultText(result.content);
     await input.emitActiveExtensionEvent('tool:result', {
       id: toolBlock.id,
       name: toolBlock.name,
-      content: result.content,
+      content: displayContent,
     });
     input.events.onToolResult?.(
-      { id: toolBlock.id, name: toolBlock.name, content: result.content },
+      { id: toolBlock.id, name: toolBlock.name, content: displayContent },
       createToolEventMeta(input.events, toolBlock.id),
     );
   }

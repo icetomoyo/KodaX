@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createCustomProvider, KODAX_PROVIDERS, KodaXAnthropicCompatProvider,
@@ -43,6 +46,34 @@ async function captureMessages(provider: KodaXBaseProvider, messages: KodaXMessa
 }
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+it.each([true, false])('keeps tool-image diagnostic projection aligned with imageInput=%s', async (imageInput) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-wire-'));
+  try {
+    const imagePath = path.join(directory, 'pixel.png');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+    const provider = createCustomProvider({ name: 'image-wire', protocol: 'openai', model: 'test-model',
+      baseUrl: 'https://provider.invalid', apiKeyEnv: 'UNUSED', imageInput });
+    for (const filePath of [imagePath, path.join(directory, 'missing.png')]) {
+      const block = (id: string) => ({ type: 'tool_result' as const, tool_use_id: id,
+        content: [{ type: 'image' as const, path: filePath, mediaType: 'image/png' }] });
+      const history: KodaXMessage[] = [
+        { role: 'assistant', content: [call('a'), call('b')] },
+        { role: 'user', content: [block('b'), block('a'), block('a'), block('foreign')] },
+      ];
+      const wire = await captureMessages(provider, history, 'complete');
+      const normalized = JSON.parse(JSON.stringify(wire), (_key, value: unknown) => {
+        if (typeof value !== 'object' || value === null || !('type' in value)
+          || value.type !== 'image_url' || !('image_url' in value)) return value;
+        const image = value.image_url as { url: string };
+        const [header, encoded] = image.url.split(',');
+        return { type: 'image_url', mediaType: header!.slice(5, -7),
+          dataHash: createHash('sha256').update(Buffer.from(encoded!, 'base64')).digest('hex') };
+      }) as unknown;
+      expect(hashProviderVisibleMessages(history, provider)).toBe(hash(normalized));
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 const call = (id: string) => ({ type: 'tool_use' as const, id, name: 'read', input: { path: id } });
 const result = (id: string, content = `result:${id}`) => ({ type: 'tool_result' as const, tool_use_id: id, content });

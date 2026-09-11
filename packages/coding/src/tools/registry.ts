@@ -6,6 +6,7 @@ import type {
   ToolSideEffect,
   ToolDefinitionSource,
   ToolHandler,
+  ToolResult,
   ToolRegistry,
   ToolRegistrationOptions,
 } from './types.js';
@@ -431,9 +432,9 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unkn
  * We must use manual .next() iteration to capture `{ done: true, value }`.
  */
 async function consumeToolGenerator(
-  gen: AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+  gen: AsyncGenerator<import('./types.js').ToolProgress, ToolResult, void>,
   onProgress?: (message: string) => void,
-): Promise<string> {
+): Promise<ToolResult> {
   let step = await gen.next();
   while (!step.done) {
     const progress = step.value;
@@ -442,7 +443,7 @@ async function consumeToolGenerator(
     }
     step = await gen.next();
   }
-  // step.done === true → step.value is the return value (string)
+  // step.done === true → step.value is the return value (text or multimodal content)
   return step.value;
 }
 
@@ -450,7 +451,7 @@ export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-): Promise<string> {
+): Promise<ToolResult> {
   const definition = getRegisteredToolDefinition(name);
   if (!definition) {
     return `[Tool Error] Unknown tool: ${name}. Available tools: ${listTools().join(', ')}`;
@@ -469,13 +470,13 @@ export async function executeTool(
     // Streaming tool (async generator): consume yields as progress, return final value
     if (isAsyncGenerator(result)) {
       return await consumeToolGenerator(
-        result as AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+        result as AsyncGenerator<import('./types.js').ToolProgress, ToolResult, void>,
         ctx.reportToolProgress,
       );
     }
 
-    // Standard tool (Promise<string>): await as before
-    return await (result as Promise<string>);
+    // Standard tool (Promise<ToolResult>): await as before
+    return await (result as Promise<ToolResult>);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (errorMsg.includes('ENOENT')) {

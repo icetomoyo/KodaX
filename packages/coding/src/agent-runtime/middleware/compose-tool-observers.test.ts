@@ -17,6 +17,9 @@ import type {
 } from '@kodax-ai/agent';
 
 import { composeToolObservers } from './compose-tool-observers.js';
+import { ContextCapacityError } from '@kodax-ai/agent';
+import { KodaXProviderError } from '@kodax-ai/llm';
+import { ToolResultBatchCapacityError } from '../../tools/tool-result-policy.js';
 
 const SAMPLE_CALL: RunnerToolCall = {
   name: 'read',
@@ -24,6 +27,44 @@ const SAMPLE_CALL: RunnerToolCall = {
   input: { file_path: '/x' },
 };
 const SAMPLE_RESULT: RunnerToolResult = { content: 'file contents' };
+
+describe('composeToolObservers — local failure provenance', () => {
+  it.each(['onToolCall', 'onToolResult', 'onToolExecutionStart', 'onToolExecutionEnd'] as const)(
+    'marks local exceptions from %s without continuing fan-out', (event) => {
+      const failure = new TypeError('observer failed');
+      const later = vi.fn();
+      const composed = composeToolObservers({ [event]: () => { throw failure; } }, { [event]: later });
+      expect(() => composed[event]!(SAMPLE_CALL, SAMPLE_RESULT)).toThrow(failure);
+      expect(failure).toMatchObject({ executionFailure: { source: 'local', errorName: 'TypeError' } });
+      expect(later).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    Object.assign(new Error('stop'), { name: 'AbortError' }),
+    new KodaXProviderError('provider failure'),
+    new ContextCapacityError({ currentTokens: 100, contextWindow: 10, reservedResponseTokens: 1 }),
+    new ToolResultBatchCapacityError(100, 10),
+  ])('preserves existing typed failure $name', (failure) => {
+    const composed = composeToolObservers({ onToolCall: () => { throw failure; } });
+    expect(() => composed.onToolCall!(SAMPLE_CALL)).toThrow(failure);
+    expect(failure).not.toHaveProperty('executionFailure');
+  });
+
+  it('does not overwrite attributed errors or classify async permission/provider gates', async () => {
+    const executionFailure = { source: 'provider', errorClass: 'connection_failure' };
+    const attributed = Object.assign(new Error('existing failure'), { executionFailure });
+    const providerFailure = new Error('untyped upstream failure');
+    const composed = composeToolObservers({
+      onToolCall: () => { throw attributed; },
+      beforeTool: async () => { throw providerFailure; },
+    });
+    expect(() => composed.onToolCall!(SAMPLE_CALL)).toThrow(attributed);
+    expect(attributed.executionFailure).toBe(executionFailure);
+    await expect(composed.beforeTool!(SAMPLE_CALL)).rejects.toBe(providerFailure);
+    expect(providerFailure).not.toHaveProperty('executionFailure');
+  });
+});
 
 describe('composeToolObservers — beforeTool precedence', () => {
   it('invokes beforeTool in argument order and returns the first short-circuit verdict', async () => {

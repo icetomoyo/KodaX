@@ -1,4 +1,7 @@
 import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
+import type { CapabilityResult, KodaXToolResultContentItem } from '@kodax-ai/llm';
+import { persistImageAsBlock } from '../../media/persist-image.js';
+import { getAgentConfigPath } from '../../runtime/agent-home.js';
 import {
   buildCatalogSearchText,
   createMcpCapabilityId,
@@ -93,6 +96,12 @@ function collectContentMetadata(value: unknown): unknown[] | undefined {
     if (!record) {
       return [];
     }
+    const image = mcpImageRecord(record);
+    if (image) {
+      const remaining = omitRecordKeys(record, new Set(['type', 'data', 'blob', 'resource']));
+      if (record.resource) remaining.resource = omitRecordKeys(image, new Set(['data', 'blob']));
+      return Object.keys(remaining).length > 0 ? [remaining] : [];
+    }
     const selectedKey = readString(record.text) !== undefined
       ? 'text'
       : readString(record.content) !== undefined
@@ -181,6 +190,42 @@ function flattenMcpContent(value: unknown): string | undefined {
   return readTextContent(record.text)
     ?? readTextContent(record.content)
     ?? stringifyStructuredValue(record);
+}
+
+/** Media becomes a durable local attachment, never base64 text in model history. */
+async function normalizeMcpContent(value: unknown): Promise<CapabilityResult['content']> {
+  if (!Array.isArray(value)) return flattenMcpContent(value);
+  const hasImage = value.some((entry) => mcpImageRecord(entry) !== undefined);
+  if (!hasImage) return flattenMcpContent(value);
+  const items: KodaXToolResultContentItem[] = [];
+  for (const entry of value) {
+    const record = mcpImageRecord(entry);
+    const data = record?.type === 'image' ? record.data : record?.blob;
+    if (record) {
+      const mediaType = record?.mimeType;
+      if (mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/gif' && mediaType !== 'image/webp') {
+        throw new Error(`Unsupported MCP image media type: ${String(mediaType)}`);
+      }
+      if (typeof data !== 'string' || !data.length || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+        throw new Error('MCP image content must contain valid base64 data.');
+      }
+      items.push(await persistImageAsBlock({ buffer: Buffer.from(data, 'base64'), mediaType }, {
+        directory: getAgentConfigPath('media', 'mcp'), fileNamePrefix: 'mcp',
+      }));
+    } else {
+      const text = flattenMcpContent([entry]);
+      if (text !== undefined) items.push({ type: 'text', text });
+    }
+  }
+  return items;
+}
+
+function mcpImageRecord(entry: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(entry);
+  if (record?.type === 'image') return record;
+  const resource = record?.type === 'resource' ? asRecord(record.resource) : record;
+  return typeof resource?.mimeType === 'string' && resource.mimeType.startsWith('image/')
+    && typeof resource.blob === 'string' ? resource : undefined;
 }
 
 function jsonRpcString(payload: Record<string, unknown>): string {
@@ -577,7 +622,8 @@ export class McpServerRuntime {
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<{
-    content?: string;
+    content?: CapabilityResult['content'];
+    isError?: boolean;
     structuredContent?: unknown;
     metadata?: Record<string, unknown>;
   }> {
@@ -604,7 +650,8 @@ export class McpServerRuntime {
         const record = asRecord(response);
         const contentMetadata = collectContentMetadata(record?.content);
         return {
-          content: flattenMcpContent(record?.content),
+          content: await normalizeMcpContent(record?.content),
+          isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,
           structuredContent: record?.structuredContent ?? record?.structured_content,
           metadata: {
             serverId: this.serverId,
@@ -679,7 +726,7 @@ export class McpServerRuntime {
   }
 
   async readResource(name: string, options: Record<string, unknown>): Promise<{
-    content?: string;
+    content?: CapabilityResult['content'];
     structuredContent?: unknown;
     metadata?: Record<string, unknown>;
   }> {
@@ -692,7 +739,7 @@ export class McpServerRuntime {
     const contents = Array.isArray(record?.contents) ? record.contents : [];
     const contentMetadata = collectContentMetadata(contents);
     return {
-      content: flattenMcpContent(contents),
+      content: await normalizeMcpContent(contents),
       structuredContent: record?.structuredContent,
       metadata: {
         serverId: this.serverId,

@@ -15036,6 +15036,50 @@ describe("createKodaXRuntime", () => {
     expect(await readDirectoryText(tempRoot)).not.toContain(secret);
   });
 
+  it.each(["KODAX_LOCAL_EXECUTION_ERROR", "ERR_INVALID_ARG_TYPE"])(
+    "retains local execution failures (%s) across result, events, status and restart", async (code) => {
+    const { createKodaXRuntime, captureRuntimeSessionDiagnostics } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "local-failure-audit"), defaultProvider: "mock-provider" });
+    try {
+      const session = await runtime.sessions.create({ title: "Local failure audit" });
+      const error = Object.assign(new TypeError("result.startsWith is not a function"), {
+        executionFailure: { source: "local", errorClass: "local_execution_error",
+          requestPhase: "local_execution", errorName: "TypeError", code,
+          message: "Local SDK execution failed. TypeError: result.startsWith is not a function",
+          safeMessage: "Local SDK execution failed." },
+      });
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+        options.events?.onError?.(error);
+        return fakeRunningSession(options, Promise.reject(error));
+      });
+      const handle = await runtime.runs.start({ sessionId: session.id, prompt: "Read an image" });
+      const result = await handle.result;
+      const expected = {
+        failureKind: "local_execution", stage: "local_execution",
+        providerErrorCode: "local_execution_error", requestPhase: "local_execution",
+        upstreamErrorCode: code, safeMessage: "Local SDK execution failed.",
+      };
+      expect(result.failureDetail).toEqual(expected);
+      expect(result.terminal?.failureKind).toBe("local_execution");
+      expect((await runtime.runs.get(handle.runId)).failureDetail).toEqual(expected);
+      expect((await runtime.events.replay({ runId: handle.runId, type: "run.failed" }))[0]?.payload)
+        .toMatchObject({ failureDetail: expected });
+      expect((await captureRuntimeSessionDiagnostics(runtime, {
+        sessionId: session.id, runId: handle.runId,
+      })).run.failureDetail).toEqual(expected);
+      expect(JSON.stringify(result)).not.toContain("startsWith");
+      await runtime.close();
+      const restarted = await createKodaXRuntime({ homeDir: tempRoot,
+        sessionsDir: path.join(tempRoot, "local-failure-audit"), defaultProvider: "mock-provider" });
+      try {
+        expect((await restarted.runs.get(handle.runId)).failureDetail).toEqual(expected);
+        expect((await restarted.events.replay({ runId: handle.runId, type: "run.failed" }))[0]?.payload)
+          .toMatchObject({ failureDetail: expected });
+      } finally { await restarted.close(); }
+    } finally { await runtime.close(); }
+  });
+
   it("distinguishes the supported provider and Runtime failure taxonomy", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({

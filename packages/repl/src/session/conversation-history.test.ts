@@ -84,6 +84,38 @@ function project(entries: KodaXSessionEntry[], activeEntryId: string) {
 }
 
 describe('buildSessionConversationHistory', () => {
+  it('resolves physical provenance ancestors outside the active context path', () => {
+    const history = project([
+      messageEntry('delivered', null, 'user', 'query'),
+      messageEntry('saved-copy', null, 'user', 'query', { logicalId: 'delivered', sourceEntryId: 'delivered' }),
+      messageEntry('retained-copy', null, 'user', 'query', { logicalId: 'delivered', sourceEntryId: 'saved-copy' }),
+    ], 'retained-copy');
+    expect(history.entries).toHaveLength(1);
+    expect(history.entries[0]?.auditEntryIds).toEqual(['delivered', 'saved-copy', 'retained-copy']);
+  });
+
+  it('does not expand a physical provenance chain across conflicting payloads', () => {
+    const history = project([
+      messageEntry('unrelated', null, 'user', 'different query'),
+      messageEntry('saved-copy', null, 'user', 'query', { logicalId: 'unrelated', sourceEntryId: 'unrelated' }),
+      messageEntry('retained-copy', null, 'user', 'query', { logicalId: 'unrelated', sourceEntryId: 'saved-copy' }),
+    ], 'retained-copy');
+    expect(history.entries[0]?.auditEntryIds).not.toContain('unrelated');
+  });
+
+  it('does not assign a shared physical ancestor to competing legacy groups', () => {
+    const history = project([
+      messageEntry('origin', null, 'user', 'query'),
+      messageEntry('a0', null, 'user', 'query', { sourceEntryId: 'origin' }),
+      messageEntry('b0', null, 'user', 'query', { sourceEntryId: 'origin' }),
+      messageEntry('a', null, 'user', 'query', { sourceEntryId: 'a0' }),
+      messageEntry('b', 'a', 'user', 'query', { sourceEntryId: 'b0' }),
+    ], 'b');
+    expect(history.entries).toHaveLength(2);
+    expect(history.entries.flatMap((entry) => entry.auditEntryIds)).not.toContain('origin');
+    expect(history.status).toBe('ambiguous');
+  });
+
   it('treats an absent lineage as complete when no conversation record exists', () => {
     expect(buildLineageUnavailableConversationHistory([], 'sha256:empty')).toEqual({
       sourceRevision: 'sha256:empty',

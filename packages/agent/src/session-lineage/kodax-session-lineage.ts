@@ -229,7 +229,7 @@ function entryOwnsCompactionMessage(
     : messageProvenanceSourceIds.get(message)?.has(entry.id) === true;
 }
 
-function inheritCompactionMessageProvenance(
+function inheritMessageProvenance(
   entries: readonly KodaXSessionEntry[],
   existingIds: ReadonlySet<string>,
   sourceEntries: readonly NavigableSessionEntry[],
@@ -292,6 +292,7 @@ function createSummaryContextMessage(
 function getContextMessagesForEntry(entry: NavigableSessionEntry): KodaXMessage[] {
   switch (entry.type) {
     case 'message':
+      recordMessageProvenanceSource(entry.message, entry);
       return [cloneMessage(entry.message)];
     case 'compaction':
       if (entry.reason === 'rewind') {
@@ -619,6 +620,15 @@ export function createSessionLineage(
   }
 
   lineage.activeEntryId = activeEntryId;
+  if (previous !== undefined && !extendsPriorActivePath) {
+    // A context rewrite may reattach an already delivered message below a new
+    // parent. Preserve only its proven source identity; equal text is not an alias.
+    lineage.entries = inheritMessageProvenance(
+      lineage.entries,
+      new Set(previous.entries.map((entry) => entry.id)),
+      getSessionLineagePath(previous),
+    );
+  }
   return lineage;
 }
 
@@ -903,7 +913,7 @@ export function applySessionCompaction(
 
   const existingIds = new Set(base.entries.map((entry) => entry.id));
   const next = createSessionLineage(keptMessages, base);
-  const entriesWithProvenance = inheritCompactionMessageProvenance(
+  const entriesWithProvenance = inheritMessageProvenance(
     next.entries,
     existingIds,
     sourceEntries,

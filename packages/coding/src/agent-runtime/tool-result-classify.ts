@@ -41,17 +41,19 @@
  *   pre-FEATURE_100 baseline, during FEATURE_100 P2.
  */
 
+import type { ToolResult } from '../tools/types.js';
+import { toolResultText } from '../tools/tool-result-content.js';
 import { CANCELLED_TOOL_RESULT_PREFIX } from '../constants.js';
 
-export function isToolResultErrorContent(content: string): boolean {
-  return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(content);
+export function isToolResultErrorContent(content: ToolResult): boolean {
+  return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(toolResultText(content));
 }
 
-export function isCancelledToolResultContent(content: string): boolean {
-  return content.startsWith(CANCELLED_TOOL_RESULT_PREFIX);
+export function isCancelledToolResultContent(content: ToolResult): boolean {
+  return toolResultText(content).startsWith(CANCELLED_TOOL_RESULT_PREFIX);
 }
 
-export function extractStructuredToolErrorCode(content: string): string | undefined {
-  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(content.trim());
+export function extractStructuredToolErrorCode(content: ToolResult): string | undefined {
+  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(toolResultText(content).trim());
   return match?.[1];
 }

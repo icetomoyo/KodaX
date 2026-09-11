@@ -258,6 +258,21 @@ describe('runtime daemon protocol schema', () => {
     })).toEqual([]);
   });
 
+  it('admits local execution diagnostics with the complete public failure detail', () => {
+    expect(validateRuntimeDaemonJsonSchema(RUNTIME_DAEMON_METHOD_SCHEMAS['run.await'].result, {
+      runId: 'run-local', sessionId: 'session-local', phase: 'failed',
+      failureDetail: {
+        failureKind: 'local_execution', stage: 'local_execution',
+        providerErrorCode: 'local_execution_error', safeMessage: 'Local SDK execution failed.',
+        upstreamErrorCode: 'ERR_INVALID_ARG_TYPE', requestPhase: 'local_execution',
+        provider: 'provider', model: 'model', elapsedMs: 10,
+        contextOverflow: { inputTokensKind: 'lower_bound', inputTokens: 42, contextWindow: 100 },
+      },
+      terminal: { revision: 1, kind: 'failed', code: 'run_failed',
+        effectOutcome: 'known', failureKind: 'local_execution' },
+    })).toEqual([]);
+  });
+
   it('admits an unconfirmed Runtime settlement across status and diagnostics', () => {
     const failureDetail = {
       failureKind: 'runtime_cleanup',

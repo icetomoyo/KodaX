@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-10_
+_Last Updated: 2026-09-11_
 
 ---
 
@@ -15,6 +15,61 @@ move to the official Anthropic-compat endpoint), a resumed session in an
 old process keeps using the old wire while reading new capability data — and
 model/provider switches inside that process do not reload either. Restart the
 REPL after updating KodaX before switching providers on restored sessions.
+
+## Resolved in working tree 2026-09-11 — Multimodal contracts and Runtime failure classification
+
+A follow-up audit reproduced nine failing cases across constructed-tool Worker
+RPC, MCP transport/error flags, managed direct tools, history capacity recovery,
+opt-in legacy microcompaction, and public Runtime local-error classification.
+These gaps are now repaired: Worker preserves typed content and error codes;
+MCP persists image attachments and carries error state; managed direct tools
+classify returned errors; history recovery and microcompaction preserve images.
+Runtime and daemon/persisted schemas classify explicit local execution failures
+as `local_execution`. Image-capable OpenAI providers carry tool images in valid
+user image messages after paired tool responses; text-only providers retain
+the explicit unsupported fallback. Orphan/duplicate result images are excluded.
+
+See [the historical audit and repair status](multimodal-contract-audit.md).
+All audit probes are normal regressions now, with additional real PNG, Worker,
+MCP restart/resource, provider request and error lifecycle coverage. Not released.
+
+## Resolved in working tree 2026-09-11 — Interrupt input identity across context rewrites
+
+Ordinary lineage reconciliation could reattach a delivered user message beneath
+a changed managed context prefix without inheriting its known physical source.
+Reading messages and cloning public storage snapshots could also discard the
+in-memory provenance needed by a subsequent save. Conversation projection then
+omitted older physical ancestors outside its selected context epochs.
+
+The writer now carries proven source relationships through reads and rewrites.
+Projection follows explicit source chains and rejects competing alias claims;
+cache v5 rebuilds older projections. A real offline Runtime/managed-runner test
+verifies delivered IDs through saves, compaction, restart, journal replay and
+paged conversation reads. Same-text new inputs remain distinct. No real user
+session files were changed; historical records with no surviving provenance
+cannot be safely repaired by matching text or timestamps. Not released.
+
+## Resolved in working tree 2026-09-11 — Multimodal dispatch and local child failures
+
+Reported against SDK 0.7.96-beta.6 by KodaX Space 0.1.46-alpha.10:
+PNG reads returned valid text/image arrays, but direct and `tool_call` dispatch
+called string methods on them. Outcome tracking and capacity admission also
+assumed strings; allowing after-tool guardrails and the managed bridge lost
+image structure. Ordinary execution exceptions could leave only a stale
+assistant reply in child results, causing Actor consumers to misidentify the failure.
+
+The SDK now carries `ToolResult` through registry, dispatch, bridge, permission
+and batch admission. Classification, telemetry and display project text;
+the patched dispatch output retains image blocks (provider wire support varies).
+Capacity admission counts image tokens,
+spills recoverable text only, and reports capacity debt when images cannot fit.
+Local failures now carry a bounded diagnostic, error name/code and explicit
+local origin through run results, read/write child results and Actor metadata.
+
+Offline regressions cover actual PNG reads through dispatch and native child
+execution, allowing guardrails, managed bridges, text spill/image capacity,
+local exception reporting and Actor error precedence. The original published
+beta.6 reproduction was confirmed before changes. This fix is not yet released.
 
 ## Resolved 2026-09-10 — DeepSeek Anthropic wire 400 on replayed tool history
 

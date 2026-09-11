@@ -104,7 +104,32 @@ describe('loadHandler', () => {
     );
 
     const result = await handler({}, { backups: new Map() });
+    if (typeof result !== 'string') throw new Error('Plain objects must remain JSON text.');
     expect(JSON.parse(result)).toEqual({ ok: true, n: 42 });
+  });
+
+  it.each([42, true, null, [], [1, 2], [{ type: 'image', path: 42 }]])(
+    'keeps ordinary JSON return values compatible: %j', async (value) => {
+      const handler = await loadHandler(
+        { name: 'json-result', version: '1.0.0', cwd: tmpRoot },
+        jsSource(`export async function handler() { return ${JSON.stringify(value)}; }`),
+        { tools: [] },
+      );
+      expect(await handler({}, { backups: new Map() })).toBe(JSON.stringify(value));
+    },
+  );
+
+  it('retains host gate error codes across both Worker RPC directions', async () => {
+    const handler = await loadHandler(
+      { name: 'forward-error', version: '1.0.0', cwd: tmpRoot },
+      jsSource('export async function handler(input, ctx) { return await ctx.tools.read(input); }'),
+      { tools: ['read'] },
+    );
+    await expect(handler({}, { backups: new Map(), planModeBlockCheck: () => {
+      throw Object.assign(new TypeError('host error'), { code: 'ERR_INVALID_ARG_TYPE' });
+    } })).rejects.toMatchObject({
+      name: 'TypeError', code: 'ERR_INVALID_ARG_TYPE', message: 'host error',
+    });
   });
 
   it('throws when the module does not export `handler` as a function', async () => {

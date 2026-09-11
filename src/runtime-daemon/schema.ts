@@ -1456,6 +1456,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
         'transport',
         'response_stream',
         'runtime_control',
+        'local_execution',
         'runtime_settlement',
       ],
     },
@@ -1479,6 +1480,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
         'response_stream_error',
         'cancelled',
         'runtime_settlement_failed',
+        'local_execution_error',
         'context_capacity_exceeded',
         'provider_error',
       ],
@@ -1488,6 +1490,19 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
     upstreamErrorCode: { type: 'string', maxLength: 200 },
     requestId: { type: 'string', maxLength: 200 },
     retryAfterMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+    provider: { type: 'string', maxLength: 200 },
+    model: { type: 'string', maxLength: 200 },
+    requestPhase: { enum: [
+      'before_request_accepted', 'before_first_delta', 'mid_stream_text',
+      'mid_stream_thinking', 'mid_stream_tool_input',
+      'post_tool_execution_pre_assistant_close', 'local_execution',
+    ] },
+    elapsedMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+    contextOverflow: objectSchema({
+      inputTokensKind: { enum: ['exact', 'lower_bound', 'unknown'] },
+      inputTokens: { type: 'integer', minimum: 0 },
+      contextWindow: { type: 'integer', minimum: 0 },
+    }, ['inputTokensKind']),
     contextTokens: {
       type: 'object',
       properties: {
@@ -1513,6 +1528,7 @@ function runtimeFailureKindSchema(): RuntimeDaemonJsonSchema {
       'provider_aborted',
       'invalid_response',
       'runtime_cleanup',
+      'local_execution',
       'context_capacity',
       'provider',
     ],

@@ -108,6 +108,26 @@ function makeCtx(): KodaXToolExecutionContext {
   };
 }
 
+it('reports managed local tool observer exceptions with execution provenance', async () => {
+  const failure = new TypeError('local observer failed');
+  const observed = vi.fn();
+  const adapter = vi.fn(async () => ({ textBlocks: [], toolBlocks: [{
+    type: 'tool_use' as const, id: 'observer-read', name: 'read',
+    input: { path: path.join(testWorkspaceRoot, 'missing.txt') },
+  }] }));
+  const result = runManagedTaskViaRunner({ provider: 'anthropic', context: {
+    executionCwd: testWorkspaceRoot, gitRoot: testWorkspaceRoot,
+    managedTaskWorkspaceDir: testWorkspaceRoot, repoIntelligenceMode: 'off',
+  }, events: { onToolExecutionStart: () => { throw failure; }, onError: observed } },
+  'Read a file.', adapter);
+  await expect(result).rejects.toMatchObject({ executionFailure: {
+    source: 'local', errorClass: 'local_execution_error', requestPhase: 'local_execution',
+    errorName: 'TypeError',
+  } });
+  expect(adapter).toHaveBeenCalledOnce();
+  expect(observed.mock.calls[0]?.[0]).toBe(failure);
+});
+
 async function awaitTestEvent(
   event: Promise<void>,
   label: string,

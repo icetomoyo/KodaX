@@ -23,7 +23,9 @@ import type {
   ExtensionRuntimeContract,
   RunScopedToolDefinition,
 } from '../extensions/runtime-contract.js';
-import { finalizeRetrievalResult } from '../tools/retrieval.js';
+import { renderRetrievalResult } from '../tools/retrieval.js';
+import { renderCapabilityToolResult } from '../tools/capability-result.js';
+import type { ToolResult } from '../tools/types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 
 export function listRunScopedTools(
@@ -78,36 +80,11 @@ export function toModelToolDefinition(definition: RunScopedToolDefinition): Koda
   };
 }
 
-function stringifyValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  if (typeof value === 'string') {
-    return value.trim().length > 0 ? value : undefined;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function combineDistinctContent(
-  content: unknown,
-  structuredContent: unknown,
-): string | undefined {
-  const primary = stringifyValue(content);
-  const structured = stringifyValue(structuredContent);
-  if (!primary) return structured;
-  if (!structured || structured === primary) return primary;
-  return `${primary}\n\nStructured content:\n${structured}`;
-}
-
 export async function executeRunScopedTool(
   ctx: KodaXToolExecutionContext,
   definition: RunScopedToolDefinition,
   input: Record<string, unknown>,
-): Promise<string> {
+): Promise<ToolResult> {
   if (!ctx.extensionRuntime) {
     return `[Tool Error] ${definition.name}: Tool is not active in the current runtime.`;
   }
@@ -117,17 +94,17 @@ export async function executeRunScopedTool(
       definition.capabilityId,
       input,
     );
-    return await finalizeRetrievalResult({
+    return renderCapabilityToolResult(result, (content) => renderRetrievalResult({
       tool: 'mcp_call',
       scope: 'remote',
       trust: 'provider',
       freshness: 'unknown',
       provider: 'mcp',
       summary: `Executed MCP tool ${definition.capabilityId}.`,
-      content: combineDistinctContent(result.content, result.structuredContent),
+      content,
       items: [],
-      metadata: { capabilityKind: result.kind },
-    }, ctx);
+      metadata: { ...result.metadata, capabilityKind: result.kind },
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] ${definition.name}: ${message}`;

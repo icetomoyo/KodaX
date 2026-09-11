@@ -135,8 +135,8 @@ export interface RunnerToolContext {
  *   - `readonly KodaXToolResultContentItem[]` — an array of typed items
  *     (text + image), used by multimodal tools like `read` on an image
  *     path. Provider serializers lower each item to the wire format
- *     (Anthropic accepts inline; OpenAI-compat downgrades image to text
- *     placeholder).
+ *     (Anthropic accepts inline; image-capable OpenAI providers attach images
+ *     after the paired tool responses, otherwise use a text placeholder).
  */
 export interface RunnerToolResult {
   readonly content: string | readonly KodaXToolResultContentItem[];

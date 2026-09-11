@@ -2269,6 +2269,14 @@ function buildSessionData(
   };
 }
 
+function cloneSessionDataForRead(data: SessionData): SessionData {
+  const cloned = structuredClone(data);
+  // Re-materialize from the cloned lineage so callers keep explicit message
+  // provenance after the read-isolation copy and can safely save context edits.
+  if (cloned.lineage) cloned.messages = getSessionMessagesFromLineage(cloned.lineage);
+  return cloned;
+}
+
 function createSessionMeta(
   id: string,
   data: SessionData,
@@ -4615,7 +4623,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
   /** Read Session data without recovery writes or append-watermark mutation. */
   async peek(id: string): Promise<SessionData | null> {
     const resolved = await this.readSession(id, { migrate: false });
-    return resolved ? structuredClone(resolved.data) : null;
+    return resolved ? cloneSessionDataForRead(resolved.data) : null;
   }
 
   /** Strict read-only Session load. It never migrates or repairs persisted data. */
@@ -4628,7 +4636,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       this.readSession(id, { migrate: false, strict: true }),
       options,
     );
-    return resolved ? structuredClone(resolved.data) : null;
+    return resolved ? cloneSessionDataForRead(resolved.data) : null;
   }
 
   async readConversationPageCache(
@@ -4856,7 +4864,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         this.assertLocationTopologyUnchanged(id, topologyIdentity);
       }
     return {
-      data: structuredClone(resolved.data),
+      data: cloneSessionDataForRead(resolved.data),
       lineage,
       sourceRevision: bundle.sourceRevision,
       sourceRevisionState: bundle.sourceRevisionState,
