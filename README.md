@@ -784,6 +784,14 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-beta release:** The consolidated beta of the v0.7.96 line. It
+adds multimodal result fidelity — text/image tool results survive direct and
+managed dispatch, Worker RPC, guardrails, capacity recovery, and MCP
+adapters (MCP images persist as attachments) — carries typed local failures
+through child results, Actor metadata, and Runtime/daemon status, and keeps
+delivered interrupt entry references valid across context rewrites,
+storage reads, compaction, restart, and conversation pagination.
+
 **v0.7.96-beta.6 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
@@ -833,7 +841,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta6-release-preparation).
+[release checklist](docs/release.md#v0796-beta-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

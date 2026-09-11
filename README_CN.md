@@ -296,6 +296,12 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-beta 发布**（v0.7.96 线的整合 beta）：新增多模态结果保真——
+文本/图片工具结果在直接与托管分发、Worker RPC、guardrail、容量恢复与 MCP
+适配器中完整保留（MCP 图片持久化为附件）；本地执行失败以类型化错误贯穿
+child 结果、Actor 元数据与 Runtime/daemon 状态；已投递中断条目引用在上下文
+重写、存储读写、压缩、重启与分页中保持有效。
+
 beta.6 让 prompt-cache 诊断与真实 provider wire 对齐：保留的孤立 `tool_use`
 调用在其配对范围内以 interrupted-tool 标记应答，assistant 投影保持源顺序，
 诊断哈希因此描述实际发送的消息。新增 224 个 wire 契约用例，验证投影包络在
@@ -350,7 +356,7 @@ scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留�
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.6 发布清单](docs/release.md#v0796-beta6-release-preparation)。
+维护者手动执行。详见 [v0.7.96-beta 发布清单](docs/release.md#v0796-beta-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

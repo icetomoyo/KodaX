@@ -137,9 +137,55 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-beta release preparation
+
+Release state: `v0.7.96-beta` is the consolidated beta of the v0.7.96 line,
+tagged from the exact green commit. The tag-triggered Release workflow
+builds every platform archive and the universal npm tarball, publishes
+checksums, and creates the GitHub pre-release. npm registry publication
+remains a separate manual maintainer action.
+
+On top of beta.6 it includes the multimodal and interrupt-identity fixes:
+
+- text/image tool results survive direct and managed dispatch, constructed
+  Worker RPC, allowing guardrails, capacity recovery, and MCP tool/resource
+  adapters; MCP images persist as attachments, and image-capable OpenAI
+  providers receive tool images after valid paired responses with matching
+  prompt-cache diagnostics;
+- local execution failures and Worker error codes keep their typed
+  classification through child results, Actor metadata, and Runtime/daemon
+  status;
+- delivered interrupt entry references stay valid across context rewrites,
+  storage reads/saves, compaction, restart, and conversation pagination.
+
+All root/workspace package versions and lockfile entries are `0.7.96-beta`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, multimodal/interrupt regressions, prompt-cache diagnostics/wire
+   regressions, bundle/ASRT regressions, and package/declaration builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-beta`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
+remain unchanged.
+
 ## v0.7.96-beta.6 release preparation
 
-Beta.6 is a review-hardening pass over the beta.5 diagnostics. Prompt-cache
+Release state: `v0.7.96-beta.6` is the GitHub pre-release at `1d4a7a7d`,
+with the diagnostics wire-fidelity work at `31eaa7e4`. Beta.6 is a
+review-hardening pass over the beta.5 diagnostics. Prompt-cache
 diagnostics now mirror the provider wire: the Anthropic diagnostic repair
 mirrors the provider's pairing semantics (a retained orphan `tool_use` is
 answered with the interrupted-tool marker inside its pairing scope, real
@@ -153,30 +199,8 @@ must stay distinct from a thinking-only placeholder. The native SDDL
 auto-inherited flag normalization parses the flag field instead of a blind
 string replace, with its own regression test. `@kodax-ai/llm` exports
 `KODAX_INTERRUPTED_TOOL_RESULT_MARKER` as the shared wire-contract
-constant. All beta.5 contracts are retained.
-
-All root/workspace package versions and lockfile entries are `0.7.96-beta.6`.
-The feature-design submodule, public guides, architecture documents, and
-`kodax_manual` track this release. Historical release records retain their versions.
-
-Release gates:
-
-1. Config templates, strict source/test typechecks, manual documentation
-   tests, prompt-cache diagnostics/wire regressions (224-case suite),
-   bundle/ASRT regressions, and package/declaration builds pass.
-2. GitHub CI passes on the exact release commit across Node 20/22, Windows
-   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
-3. Push the reachable feature-design submodule commit before the parent commit.
-4. Tag the green commit `v0.7.96-beta.6`; the Release workflow must produce five
-   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
-5. Publish the GitHub pre-release with release notes. Leave npm publication
-   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
-   run `node scripts/release.mjs` to download and verify the exact universal
-   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
-
-Windows remains native shell protocol 10 with setup generation 11 and
-`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
-remain unchanged.
+constant. All beta.5 contracts are retained. It predates the consolidated
+`v0.7.96-beta` multimodal and interrupt-identity fixes.
 
 ## v0.7.96-beta.5 release preparation
 

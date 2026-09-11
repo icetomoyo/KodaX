@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-beta] - 2026-09-11
+
+The consolidated beta of the v0.7.96 line: it carries every numbered-beta
+contract (sandbox-first permissions, trusted text, Windows setup generation
+11, context recovery, DeepSeek Anthropic-compat endpoint, compaction summary
+policy, wire-faithful prompt-cache diagnostics) plus the multimodal and
+interrupt-identity fixes below. npm publication remains a manual maintainer
+action.
+
 ### Fixed
 
 - Preserve text/image tool results through direct and managed dispatch, constructed

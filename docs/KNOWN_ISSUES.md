@@ -104,6 +104,23 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-beta Release Corrections
+
+The consolidated beta closes the multimodal and interrupt-identity gaps
+found in the post-beta.6 SDK contract audit. Text/image tool results now
+survive direct and managed dispatch, constructed Worker RPC, allowing
+guardrails, capacity recovery, and MCP tool/resource adapters; MCP images
+persist as attachments, and image-capable OpenAI providers receive tool
+images only after valid paired responses with matching prompt-cache
+diagnostics. Local execution failures and Worker error codes keep their
+error classification through child results, Actor metadata, and
+Runtime/daemon status instead of surfacing as successes or provider faults.
+Delivered interrupt entry references remain valid across context rewrites,
+storage reads/saves, compaction, restart, and conversation pagination, with
+explicit provenance preserved, physical ancestor aliases resolved, and
+competing claims rejected. Full audit notes live in
+`docs/multimodal-contract-audit.md` and `docs/sdk-contract-repair-plan.md`.
+
 ## v0.7.96-beta.6 Release Corrections
 
 The beta.6 review pass closes a diagnostics fidelity gap in the beta.5
