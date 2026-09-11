@@ -27,6 +27,7 @@ import {
   KodaXVerifyCredentialResult,
 } from '../types.js';
 import { runVerifyCredential, type VerifyPrimitiveRunner } from './verify-credential.js';
+import { KODAX_INTERRUPTED_TOOL_RESULT_MARKER } from '../constants.js';
 import {
   clampThinkingBudget,
   effortToThinkingDepth,
@@ -1389,136 +1390,126 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // Order must be: thinking -> tool_result -> tool_use -> text
       // Reference: https://docs.anthropic.com/en/docs/build-with-claude/tool-use
 
-      // 1. thinking blocks (must be first for assistant messages)
-      //
-      // strictThinkingSignature mode (Anthropic proper) cryptographically
-      // verifies `signature` server-side. Cross-provider thinking blocks
-      // (kept around when user /model-switches mid-session) carry empty
-      // or other-issuer signatures that fail verification → 400 thinking
-      // signature invalid. Convert those to a `<prior_reasoning>` text
-      // block so the reasoning context survives without being claimed
-      // as Anthropic-generated thinking.
-      //
-      // Lenient mode (default; third-party Anthropic-compat servers like
-      // kimi-code / ark-coding / mimo-coding / zhipu-coding /
-      // minimax-coding) lacks the signing key and accepts any signature
-      // including '', so we pass everything through unchanged.
-      // v0.7.28.
-      const crossProviderReasoning: string[] = [];
-      for (const b of m.content) {
-        if (b.type === 'thinking') {
-          const trustedSignature = !strictSignature
-            || (typeof b.signature === 'string' && b.signature.length > 0);
-          if (trustedSignature) {
-            content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
-          } else if (b.thinking) {
-            // Strict mode + empty/missing signature → preserve the
-            // reasoning text via a text block, dropped from the
-            // thinking-block channel.
-            crossProviderReasoning.push(b.thinking);
+      // ASSISTANT messages: text-first normalization. DeepSeek's
+      // Anthropic-compat endpoint 400s ("tool_use ids were found without
+      // tool_result blocks immediately after", pointing at the trailing
+      // text) whenever a text block FOLLOWS tool_use blocks in an assistant
+      // message — even when the next user message carries every result
+      // (verified live 2026-09-10). The restriction is undocumented, so the
+      // converter normalizes ANY input order — KodaX-native history,
+      // SDK-supplied transcripts, cross-provider imports — to
+      // [thinking?, text*, tool_use*]: thinking/signature stay first and
+      // untouched, text is hoisted ahead of the calls, call order is
+      // preserved. USER messages keep the grouped emission below
+      // (tool_result-first IS required there).
+      if (role === 'assistant') {
+        for (const b of m.content) {
+          if (b.type === 'thinking') {
+            const trustedSignature = !strictSignature
+              || (typeof b.signature === 'string' && b.signature.length > 0);
+            if (trustedSignature) {
+              content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
+            } else if (b.thinking) {
+              // Strict mode + empty/missing signature → preserve the
+              // reasoning text in place via a <prior_reasoning> text block,
+              // dropped from the thinking-block channel.
+              content.push({
+                type: 'text',
+                text: `<prior_reasoning>\n${b.thinking}\n</prior_reasoning>`,
+              } as Anthropic.Messages.TextBlockParam);
+            }
+          } else if (b.type === 'redacted_thinking') {
+            if (!strictSignature) {
+              // Lenient: third-party server doesn't decrypt the data
+              // field, so passing it through is harmless.
+              content.push({ type: 'redacted_thinking', data: b.data } as any);
+            }
+            // Strict mode: redacted blocks signed by another provider
+            // would fail server-side decryption (data is provider-issued
+            // ciphertext, not plaintext we can salvage). Drop silently —
+            // there's nothing recoverable to convert. The original turn
+            // already had no user-visible content; only the model's
+            // sealed reasoning is lost.
+          } else if (b.type === 'text') {
+            content.push({ type: 'text', text: b.text });
           }
-        } else if (b.type === 'redacted_thinking') {
-          if (!strictSignature) {
-            // Lenient: third-party server doesn't decrypt the data
-            // field, so passing it through is harmless.
-            content.push({ type: 'redacted_thinking', data: b.data } as any);
-          }
-          // Strict mode: redacted blocks signed by another provider
-          // would fail server-side decryption (data is provider-issued
-          // ciphertext, not plaintext we can salvage). Drop silently —
-          // there's nothing recoverable to convert. The original turn
-          // already had no user-visible content; only the model's
-          // sealed reasoning is lost.
         }
-      }
+        for (const b of m.content) {
+          if (b.type === 'tool_use') {
+            content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+          }
+        }
+      } else {
+        // USER messages: grouped emission — tool_result MUST come before
+        // text (protocol requirement), so blocks are grouped by type rather
+        // than emitted in stored order. Thinking blocks do not occur on
+        // user turns.
 
-      // 1.5 Cross-provider reasoning (strictThinkingSignature mode).
-      // Emit immediately after the thinking-block channel so the
-      // converted text occupies the same conceptual slot the original
-      // thinking would have occupied (Anthropic protocol places
-      // thinking first). Without this, the wire order would become
-      // [tool_use, prior_reasoning, text] which inverts the natural
-      // "think, then act, then explain" reading order. Wrapped in
-      // <prior_reasoning> tags so the model treats the block as
-      // historical context, not its own visible output. v0.7.28.
-      if (crossProviderReasoning.length > 0 && m.role === 'assistant') {
-        content.push({
-          type: 'text',
-          text: `<prior_reasoning>\n${crossProviderReasoning.join('\n\n')}\n</prior_reasoning>`,
-        } as Anthropic.Messages.TextBlockParam);
-      }
-
-      // 2. tool_result MUST come before text in user messages
-      for (const b of m.content) {
-        if (b.type === 'tool_result' && m.role === 'user') {
-          // Tool_result content can be (a) a plain string — passed through
-          // as-is (Anthropic accepts string), or (b) an array of typed
-          // content items — each item lowered to Anthropic's wire shape.
-          // Image items are read from disk and base64-encoded just like
-          // top-level image blocks above.
-          let serializedContent: Anthropic.Messages.ToolResultBlockParam['content'];
-          if (typeof b.content === 'string') {
-            serializedContent = b.content;
-          } else {
-            const items: Array<Anthropic.Messages.TextBlockParam | Anthropic.Messages.ImageBlockParam> = [];
-            for (const item of b.content) {
-              if (item.type === 'text') {
-                items.push({ type: 'text', text: item.text });
-              } else if (item.type === 'image') {
-                const encoded = await readImageFileAsBase64IfAvailable(
-                  item.path,
-                );
-                if (encoded === undefined) {
-                  items.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
-                } else {
-                  items.push({
-                    type: 'image',
-                    source: {
-                      type: 'base64',
-                      media_type: resolveImageMediaType(item.path, item.mediaType),
-                      data: encoded,
-                    },
-                  } as Anthropic.Messages.ImageBlockParam);
+        // 2a. tool_result blocks first
+        for (const b of m.content) {
+          if (b.type === 'tool_result' && m.role === 'user') {
+            // Tool_result content can be (a) a plain string — passed through
+            // as-is (Anthropic accepts string), or (b) an array of typed
+            // content items — each item lowered to Anthropic's wire shape.
+            // Image items are read from disk and base64-encoded just like
+            // top-level image blocks above.
+            let serializedContent: Anthropic.Messages.ToolResultBlockParam['content'];
+            if (typeof b.content === 'string') {
+              serializedContent = b.content;
+            } else {
+              const items: Array<Anthropic.Messages.TextBlockParam | Anthropic.Messages.ImageBlockParam> = [];
+              for (const item of b.content) {
+                if (item.type === 'text') {
+                  items.push({ type: 'text', text: item.text });
+                } else if (item.type === 'image') {
+                  const encoded = await readImageFileAsBase64IfAvailable(
+                    item.path,
+                  );
+                  if (encoded === undefined) {
+                    items.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
+                  } else {
+                    items.push({
+                      type: 'image',
+                      source: {
+                        type: 'base64',
+                        media_type: resolveImageMediaType(item.path, item.mediaType),
+                        data: encoded,
+                      },
+                    } as Anthropic.Messages.ImageBlockParam);
+                  }
                 }
               }
+              serializedContent = items;
             }
-            serializedContent = items;
-          }
-          content.push({
-            type: 'tool_result',
-            tool_use_id: b.tool_use_id,
-            content: serializedContent,
-            ...(b.is_error === true ? { is_error: true } : {}),
-          } as Anthropic.Messages.ToolResultBlockParam);
-        }
-      }
-
-      // 3. tool_use in assistant messages
-      for (const b of m.content) {
-        if (b.type === 'tool_use' && m.role === 'assistant') {
-          content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
-        }
-      }
-
-      // 4. text/image blocks (must come after tool_result in user messages)
-      for (const b of m.content) {
-        if (b.type === 'text') {
-          content.push({ type: 'text', text: b.text });
-        } else if (b.type === 'image' && m.role === 'user') {
-          const encoded = await readImageFileAsBase64IfAvailable(
-            b.path,
-          );
-          if (encoded === undefined) {
-            content.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
-          } else {
             content.push({
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: resolveImageMediaType(b.path, b.mediaType),
-                data: encoded,
-              },
-            } as Anthropic.Messages.ImageBlockParam);
+              type: 'tool_result',
+              tool_use_id: b.tool_use_id,
+              content: serializedContent,
+              ...(b.is_error === true ? { is_error: true } : {}),
+            } as Anthropic.Messages.ToolResultBlockParam);
+          }
+        }
+
+        // 2b. text/image blocks (after tool_result in user messages)
+        for (const b of m.content) {
+          if (b.type === 'text') {
+            content.push({ type: 'text', text: b.text });
+          } else if (b.type === 'image' && m.role === 'user') {
+            const encoded = await readImageFileAsBase64IfAvailable(
+              b.path,
+            );
+            if (encoded === undefined) {
+              content.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
+            } else {
+              content.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: resolveImageMediaType(b.path, b.mediaType),
+                  data: encoded,
+                },
+              } as Anthropic.Messages.ImageBlockParam);
+            }
           }
         }
       }
@@ -1583,69 +1574,151 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   }
 
   /**
-   * Wire-only defense-in-depth: drop orphan `tool_use` / `tool_result` blocks
-   * so the Anthropic API never 400s on "tool_use ids ... were not found in
-   * tool_result blocks" or "unexpected tool_result". The upstream
-   * `validateAndFixToolHistory` (run every turn before serialization) is the
-   * primary guard; this mirrors the OpenAI-side `repairToolCallHistory` so
-   * both provider families have the same last-mile net for any path that
-   * bypasses validate (custom callers, side queries). Never mutates input.
+   * Wire-only defense-in-depth: make replayed tool history wire-valid before
+   * it reaches the API, so strict endpoints never 400 on "tool_use ids were
+   * found without tool_result blocks immediately after" or "unexpected
+   * tool_result". The upstream `validateAndFixToolHistory` (run every turn
+   * before serialization) is the primary guard; this mirrors the OpenAI-side
+   * `repairToolCallHistory` so both provider families have the same
+   * last-mile net for any path that bypasses validate (custom callers, side
+   * queries). Never mutates input.
    *
-   * Pairing is computed against adjacent messages (same rule as validate): a
-   * `tool_use` is orphan when the immediately-following user message has no
-   * matching `tool_result`; a `tool_result` is orphan when the
-   * immediately-preceding assistant message has no matching `tool_use`. A
-   * message emptied by repair is replaced with a minimal wire-only `'...'`
-   * text block to keep user/assistant alternation and satisfy gateways that
-   * reject empty content.
+   * Pairing scope: an assistant tool_use turn owns every user message up to
+   * the NEXT assistant message. Real results recorded non-adjacently within
+   * that scope (recovery/compaction splits, mid-run provider switches) are
+   * hoisted into a single results turn right after their calls, in call
+   * order — real output is never discarded. Calls with no result anywhere in
+   * scope are answered with a synthetic "status unknown" tool_result instead
+   * of being silently erased. Foreign tool_results and duplicate answers are
+   * dropped. Fully-emptied user turns are dropped (their content moved into
+   * the merged results turn); a stripped assistant turn is held with a
+   * wire-only `'...'` to preserve alternation.
    */
   private repairToolCallHistory(
     messages: Anthropic.Messages.MessageParam[],
   ): Anthropic.Messages.MessageParam[] {
-    const collectIds = (
-      msg: Anthropic.Messages.MessageParam | undefined,
-      kind: 'tool_use' | 'tool_result',
-    ): Set<string> => {
-      const ids = new Set<string>();
-      if (!msg || typeof msg.content === 'string' || !Array.isArray(msg.content)) {
-        return ids;
-      }
-      for (const block of msg.content) {
-        const b = block as { type?: string; id?: string; tool_use_id?: string };
-        if (kind === 'tool_use' && b.type === 'tool_use' && b.id) ids.add(b.id);
-        if (kind === 'tool_result' && b.type === 'tool_result' && b.tool_use_id) {
-          ids.add(b.tool_use_id);
-        }
-      }
-      return ids;
-    };
+    const repaired: Anthropic.Messages.MessageParam[] = [];
+    let openCallIds = new Set<string>();
+    let index = 0;
 
-    return messages.map((msg, i) => {
-      if (typeof msg.content === 'string' || !Array.isArray(msg.content)) return msg;
+    while (index < messages.length) {
+      const msg = messages[index]!;
+      const blocks = (typeof msg.content === 'string' || !Array.isArray(msg.content))
+        ? undefined
+        : (msg.content as Anthropic.Messages.ContentBlockParam[]);
 
-      let fixed = msg.content as Anthropic.Messages.ContentBlockParam[];
       if (msg.role === 'assistant') {
-        const resultIds = collectIds(messages[i + 1], 'tool_result');
-        fixed = fixed.filter((block) => {
+        const callIds: string[] = [];
+        let idLessToolUse = false;
+        for (const block of blocks ?? []) {
           const b = block as { type?: string; id?: string };
-          return b.type !== 'tool_use' || (!!b.id && resultIds.has(b.id));
-        });
-      } else if (msg.role === 'user') {
-        const useIds = collectIds(messages[i - 1], 'tool_use');
-        fixed = fixed.filter((block) => {
-          const b = block as { type?: string; tool_use_id?: string };
-          return b.type !== 'tool_result' || (!!b.tool_use_id && useIds.has(b.tool_use_id));
-        });
+          if (b.type !== 'tool_use') continue;
+          if (typeof b.id === 'string' && b.id.trim().length > 0) {
+            callIds.push(b.id);
+          } else {
+            // Unanswerable (no usable id) — dropping stays the only option.
+            idLessToolUse = true;
+          }
+        }
+        openCallIds = new Set(callIds);
+
+        // Calls without a pairing scope: nothing to consume — pass through
+        // (dropping only unanswerable id-less tool_use blocks).
+        if (callIds.length === 0) {
+          if (idLessToolUse) {
+            const filtered = (blocks ?? []).filter(
+              (block) => (block as { type?: string }).type !== 'tool_use'
+                || !!(block as { id?: string }).id,
+            );
+            repaired.push(
+              filtered.length === 0
+                ? { ...msg, content: [{ type: 'text', text: '...' }] }
+                : { ...msg, content: filtered },
+            );
+          } else {
+            repaired.push(msg);
+          }
+          index += 1;
+          continue;
+        }
+
+        // Consume the pairing scope: real results are collected per call id
+        // (first occurrence wins, duplicates dropped); other user blocks
+        // (text, images) carry over after the answers so chronology and
+        // user/assistant alternation survive.
+        const answerById = new Map<string, Anthropic.Messages.ToolResultBlockParam>();
+        const carried: Anthropic.Messages.ContentBlockParam[] = [];
+        let cursor = index + 1;
+        while (cursor < messages.length && messages[cursor]!.role !== 'assistant') {
+          const m2 = messages[cursor]!;
+          if (typeof m2.content === 'string') {
+            carried.push({ type: 'text', text: m2.content });
+          } else if (Array.isArray(m2.content)) {
+            for (const block of m2.content) {
+              const b = block as { type?: string; tool_use_id?: string };
+              if (b.type === 'tool_result') {
+                if (typeof b.tool_use_id === 'string'
+                  && openCallIds.has(b.tool_use_id)
+                  && !answerById.has(b.tool_use_id)) {
+                  answerById.set(b.tool_use_id, block as Anthropic.Messages.ToolResultBlockParam);
+                }
+                // Foreign and duplicate results cannot be carried as user content.
+                continue;
+              }
+              carried.push(block as Anthropic.Messages.ContentBlockParam);
+            }
+          }
+          cursor += 1;
+        }
+
+        if (idLessToolUse) {
+          const filtered = (blocks ?? []).filter(
+            (block) => (block as { type?: string }).type !== 'tool_use'
+              || !!(block as { id?: string }).id,
+          );
+          repaired.push(
+            filtered.length === 0
+              ? { ...msg, content: [{ type: 'text', text: '...' }] }
+              : { ...msg, content: filtered },
+          );
+        } else {
+          repaired.push(msg);
+        }
+        const answers = callIds.map((id) => answerById.get(id) ?? {
+          type: 'tool_result',
+          tool_use_id: id,
+          content: KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
+          is_error: true,
+        } as Anthropic.Messages.ToolResultBlockParam);
+        repaired.push({ role: 'user', content: [...answers, ...carried] });
+        index = cursor;
+        continue;
       }
 
-      if (fixed.length === msg.content.length) return msg;
-      if (fixed.length === 0) {
-        return {
-          ...msg,
-          content: [{ type: 'text', text: '...' }],
-        } as Anthropic.Messages.MessageParam;
+      // Non-assistant messages: tool_result blocks that answer nothing are
+      // dropped; everything else passes through.
+      if (msg.role === 'user' && blocks) {
+        const kept = blocks.filter((block) => {
+          const b = block as { type?: string; tool_use_id?: string };
+          return b.type !== 'tool_result'
+            || (typeof b.tool_use_id === 'string' && openCallIds.has(b.tool_use_id));
+        });
+        if (kept.length === blocks.length) {
+          repaired.push(msg);
+        } else if (kept.length > 0) {
+          repaired.push({ ...msg, content: kept } as Anthropic.Messages.MessageParam);
+        }
+        // Fully-emptied user turns are dropped: their only content answered
+        // nothing, and a wire-only '...' here would trail the merged results
+        // turn as a consecutive user message.
+        index += 1;
+        continue;
       }
-      return { ...msg, content: fixed } as Anthropic.Messages.MessageParam;
-    });
+
+      repaired.push(msg);
+      index += 1;
+    }
+
+    return repaired;
   }
 }

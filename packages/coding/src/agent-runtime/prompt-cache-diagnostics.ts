@@ -15,6 +15,7 @@ import {
   KodaXAnthropicCompatProvider,
   KodaXAcpProvider,
   KodaXOpenAICompatProvider,
+  KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
 } from '@kodax-ai/llm';
 import type {
@@ -245,33 +246,30 @@ function repairOpenAIToolHistory(
   let index = 0;
   while (index < messages.length) {
     const message = messages[index]!;
-    if (message.tool_calls === undefined) {
+    if (message.role !== 'assistant') {
       if (message.role !== 'tool') repaired.push(message);
       index += 1;
       continue;
     }
-    const validToolCalls = message.tool_calls.filter((call) => call.id.trim().length > 0);
+    const validToolCalls = (message.tool_calls ?? []).filter((call) => call.id.trim().length > 0);
     const expectedIds = new Set(validToolCalls.map((call) => call.id));
-    const matchedTools: DiagnosticOpenAIWireMessage[] = [];
-    const seenIds = new Set<string>();
+    const answers = new Map<string, DiagnosticOpenAIWireMessage>();
+    const carried: DiagnosticOpenAIWireMessage[] = [];
     let nextIndex = index + 1;
-    while (nextIndex < messages.length && messages[nextIndex]!.role === 'tool') {
+    while (validToolCalls.length > 0 && nextIndex < messages.length && messages[nextIndex]!.role !== 'assistant') {
       const toolMessage = messages[nextIndex]!;
-      if (
-        toolMessage.tool_call_id !== undefined
+      if (toolMessage.role !== 'tool') {
+        carried.push(toolMessage);
+      } else if (toolMessage.tool_call_id !== undefined
         && expectedIds.has(toolMessage.tool_call_id)
-        && !seenIds.has(toolMessage.tool_call_id)
+        && !answers.has(toolMessage.tool_call_id)
       ) {
-        seenIds.add(toolMessage.tool_call_id);
-        matchedTools.push(toolMessage);
+        answers.set(toolMessage.tool_call_id, toolMessage);
       }
       nextIndex += 1;
     }
-    const matchedToolCalls = validToolCalls.filter((call) => seenIds.has(call.id));
-    if (matchedToolCalls.length === validToolCalls.length && validToolCalls.length > 0) {
-      repaired.push(message);
-    } else if (matchedToolCalls.length > 0) {
-      repaired.push({ ...message, tool_calls: matchedToolCalls });
+    if (validToolCalls.length > 0) {
+      repaired.push({ ...message, tool_calls: validToolCalls });
     } else {
       const { tool_calls: _toolCalls, ...withoutToolCalls } = message;
       repaired.push({
@@ -279,7 +277,9 @@ function repairOpenAIToolHistory(
         content: message.content == null || message.content === '' ? '...' : message.content,
       });
     }
-    if (matchedToolCalls.length > 0) repaired.push(...matchedTools);
+    repaired.push(...validToolCalls.map((call) => answers.get(call.id) ?? {
+      role: 'tool' as const, tool_call_id: call.id, content: KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
+    }), ...carried);
     index = nextIndex;
   }
   return repaired;
@@ -307,8 +307,9 @@ function projectAnthropicMessages(
     }
     const blocks = message.content.filter((block) => block.type !== 'cache-boundary');
     const content: Array<Readonly<Record<string, unknown>>> = [];
-    const crossProviderReasoning: string[] = [];
-    for (const block of blocks) {
+    // Match assistant serialization: keep text/reasoning in source order,
+    // then append calls. User messages emit results before ordinary content.
+    for (const block of role === 'assistant' ? blocks : []) {
       if (block.type === 'thinking') {
         const trusted = !strictSignature
           || (typeof block.signature === 'string' && block.signature.length > 0);
@@ -319,17 +320,13 @@ function projectAnthropicMessages(
             signature: block.signature ?? '',
           });
         } else if (block.thinking) {
-          crossProviderReasoning.push(block.thinking);
+          content.push({ type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` });
         }
       } else if (block.type === 'redacted_thinking' && !strictSignature) {
         content.push({ type: 'redacted_thinking', data: block.data });
+      } else if (block.type === 'text') {
+        content.push({ type: 'text', text: block.text });
       }
-    }
-    if (crossProviderReasoning.length > 0 && role === 'assistant') {
-      content.push({
-        type: 'text',
-        text: `<prior_reasoning>\n${crossProviderReasoning.join('\n\n')}\n</prior_reasoning>`,
-      });
     }
     if (role === 'user') {
       for (const block of blocks) {
@@ -352,7 +349,7 @@ function projectAnthropicMessages(
         });
       }
     }
-    for (const block of blocks) {
+    for (const block of role === 'user' ? blocks : []) {
       if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });
       } else if (block.type === 'image' && role === 'user') {
@@ -383,34 +380,42 @@ function projectAnthropicMessages(
 function repairAnthropicToolHistory(
   messages: readonly DiagnosticAnthropicWireMessage[],
 ): readonly DiagnosticAnthropicWireMessage[] {
-  const ids = (
-    message: DiagnosticAnthropicWireMessage | undefined,
-    type: 'tool_use' | 'tool_result',
-  ): Set<string> => {
-    if (!message || typeof message.content === 'string') return new Set();
-    return new Set(message.content.flatMap((block) => {
-      if (block.type !== type) return [];
-      const value = type === 'tool_use' ? block.id : block.tool_use_id;
-      return typeof value === 'string' && value.length > 0 ? [value] : [];
-    }));
-  };
-  return messages.map((message, index) => {
-    if (typeof message.content === 'string') return message;
-    const adjacentIds = message.role === 'assistant'
-      ? ids(messages[index + 1], 'tool_result')
-      : ids(messages[index - 1], 'tool_use');
-    const type = message.role === 'assistant' ? 'tool_use' : 'tool_result';
-    const filtered = message.content.filter((block) => {
-      if (block.type !== type) return true;
-      const value = type === 'tool_use' ? block.id : block.tool_use_id;
-      return typeof value === 'string' && adjacentIds.has(value);
-    });
-    if (filtered.length === message.content.length) return message;
-    return {
-      ...message,
-      content: filtered.length > 0 ? filtered : [{ type: 'text', text: '...' }],
-    };
-  });
+  const repaired: DiagnosticAnthropicWireMessage[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (typeof message.content === 'string') {
+      repaired.push(message);
+      continue;
+    }
+    const filtered = message.content.filter((block) => message.role === 'assistant'
+      ? block.type !== 'tool_use' || !!block.id : block.type !== 'tool_result');
+    if (filtered.length > 0 || filtered.length === message.content.length) {
+      repaired.push({ ...message, content: filtered });
+    } else if (message.role === 'assistant') {
+      repaired.push({ ...message, content: [{ type: 'text', text: '...' }] });
+    }
+    if (message.role !== 'assistant') continue;
+    const callIds = message.content.flatMap((block) => block.type === 'tool_use'
+      && typeof block.id === 'string' && block.id.trim().length > 0 ? [block.id] : []);
+    if (callIds.length === 0) continue;
+    const answers = new Map<string, Readonly<Record<string, unknown>>>();
+    const carried: Readonly<Record<string, unknown>>[] = [];
+    while (index + 1 < messages.length && messages[index + 1]!.role !== 'assistant') {
+      const next = messages[++index]!;
+      const blocks = typeof next.content === 'string' ? [{ type: 'text', text: next.content }] : next.content;
+      for (const block of blocks) {
+        if (block.type !== 'tool_result') carried.push(block);
+        else if (typeof block.tool_use_id === 'string' && callIds.includes(block.tool_use_id)
+          && !answers.has(block.tool_use_id)) answers.set(block.tool_use_id, block);
+      }
+    }
+    repaired.push({ role: 'user', content: [
+      ...callIds.map((id) => answers.get(id) ?? {
+        type: 'tool_result', tool_use_id: id, content: KODAX_INTERRUPTED_TOOL_RESULT_MARKER, is_error: true,
+      }), ...carried,
+    ] });
+  }
+  return repaired;
 }
 
 export function hashProviderVisibleMessages(

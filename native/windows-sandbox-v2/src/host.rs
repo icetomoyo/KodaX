@@ -463,6 +463,8 @@ struct SetupMarkerCapability {
     setup_read_roots: Vec<String>,
     #[serde(default)]
     state: Option<String>,
+    #[serde(default)]
+    legacy_acl_cleanup: Option<crate::LegacyAclCleanup>,
 }
 
 fn setup_read_roots_are_bounded(roots: &[String]) -> bool {
@@ -486,7 +488,8 @@ fn setup_marker_matches(
         .context("decode Windows sandbox setup generation nonce")?;
     let capability_nonce = uuid::Uuid::parse_str(&marker.filesystem_capability_nonce)
         .context("decode Windows sandbox filesystem capability nonce")?;
-    Ok(marker.version == 10
+    Ok(marker.version == 11
+        && (marker.legacy_acl_cleanup.is_none() || marker.state.as_deref() == Some("installing"))
         && marker.protocol == PROTOCOL_VERSION
         && generation_nonce.get_version_num() == 4
         && capability_nonce.get_version_num() == 4
@@ -1145,7 +1148,7 @@ mod tests {
     #[test]
     fn setup_marker_requires_the_exact_generation_identity_and_phase() {
         let ready: SetupMarkerCapability = serde_json::from_str(
-            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#,
+            r#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#,
         )
         .unwrap();
         assert!(
@@ -1172,7 +1175,7 @@ mod tests {
         );
 
         let installing: SetupMarkerCapability = serde_json::from_str(
-            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#,
+            r#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#,
         )
         .unwrap();
         assert!(
@@ -1187,11 +1190,11 @@ mod tests {
             .unwrap()
         );
         assert!(serde_json::from_str::<SetupMarkerCapability>(
-            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"unexpected":true}"#,
+            r#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"unexpected":true}"#,
         )
         .is_err());
         let relative_root: SetupMarkerCapability = serde_json::from_str(
-            r#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["relative"]}"#,
+            r#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000002","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["relative"]}"#,
         )
         .unwrap();
         assert!(
@@ -1301,7 +1304,7 @@ mod tests {
             uuid::Uuid::new_v4(),
         ));
         let capability_nonce = "00000000-0000-4000-8000-000000000003";
-        let payload = br#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#;
+        let payload = br#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"]}"#;
         std::fs::write(&path, payload).unwrap();
         let digest = format!("{:x}", Sha256::digest(payload));
 
@@ -1332,7 +1335,7 @@ mod tests {
             .map(|index| format!(r"C:\Users\admin\profile-root-{index:03}"))
             .collect::<Vec<_>>();
         let payload = serde_json::json!({
-            "version": 10,
+            "version": 11,
             "protocol": 10,
             "generationNonce": "00000000-0000-4000-8000-000000000001",
             "filesystemCapabilityNonce": capability_nonce,
@@ -1368,7 +1371,7 @@ mod tests {
             uuid::Uuid::new_v4(),
         ));
         let capability_nonce = "00000000-0000-4000-8000-000000000003";
-        let payload = br#"{"version":10,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#;
+        let payload = br#"{"version":11,"protocol":10,"generationNonce":"00000000-0000-4000-8000-000000000001","filesystemCapabilityNonce":"00000000-0000-4000-8000-000000000003","hostUserSid":"S-1-5-21-1","sandboxUserSid":"S-1-5-21-2","sandboxGroupSid":"S-1-5-21-3","setupReadRoots":["C:\\Runtime"],"state":"installing"}"#;
         let digest = format!("{:x}", Sha256::digest(payload));
 
         assert!(

@@ -9870,10 +9870,11 @@ function createRuntimeRunService(deps: {
     };
     releaseAbortSignalSubscription(record);
     record.providerCredentialScope?.close(reason);
-    record.running?.abort(new Error(reason));
-    record.abortController?.abort(new Error(reason));
+    const abortError = new DOMException(reason, "AbortError");
+    record.running?.abort(abortError);
+    record.abortController?.abort(abortError);
     void requestManagedActorCancellation(record, reason);
-    record.actorFinalizationAbortController?.abort(new Error(reason));
+    record.actorFinalizationAbortController?.abort(abortError);
     deps.permissions.rejectForRun(record.runId, reason);
     deps.userInputs.rejectForRun(record.runId, reason);
     if (!wasQueued) {
@@ -11358,7 +11359,7 @@ function createRuntimeRunService(deps: {
     applyAuthoritativeRunStatus(run, stop.status);
     if (stop.status.stop !== undefined) {
       run.actorFinalizationAbortController?.abort(
-        new Error(reason),
+        new DOMException(reason, "AbortError"),
       );
     }
     if (stop.status.stop?.state === "unknown") {
@@ -11372,8 +11373,8 @@ function createRuntimeRunService(deps: {
         removeQueuedRun(queueBySession, run);
       }
       releaseAbortSignalSubscription(run);
-      run.running?.abort(new Error(reason));
-      run.abortController?.abort(new Error(reason));
+      run.running?.abort(new DOMException(reason, "AbortError"));
+      run.abortController?.abort(new DOMException(reason, "AbortError"));
       const actorCancellation = requestManagedActorCancellation(
         run,
         reason,

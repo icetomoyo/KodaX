@@ -298,9 +298,22 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+beta.6 让 prompt-cache 诊断与真实 provider wire 对齐：保留的孤立 `tool_use`
+调用在其配对范围内以 interrupted-tool 标记应答，assistant 投影保持源顺序，
+诊断哈希因此描述实际发送的消息。新增 224 个 wire 契约用例，验证投影包络在
+全部内置与自定义 Anthropic/OpenAI provider 上等于真实 provider 请求。
+
+beta.5 将内置 `deepseek` provider 迁移到 DeepSeek 官方 Anthropic 兼容协议
+（`api.deepseek.com/anthropic`），新默认模型 `deepseek-flash`
+（DeepSeek-V4.1-Flash，1M 上下文，原生图片理解），并修复恢复会话重放时的
+历史校验：孤立的 `tool_use` 调用会以显式的 interrupted-tool 标记应答而不是
+被丢弃，类型化 `AbortError` 取消优先于 provider 文本匹配。Windows sandbox
+setup 升级到 generation 11（Issue 333），对齐 Codex 的 profile 与 SSH 依赖
+ACL 排除，同时保留普通 home/tool 读取与现有并发机制。
+
 beta.4 统一了手动与自动压缩的摘要策略：`compaction.reasoning` 同时作用于两条路径，与主回合 effort 无关（默认在支持时关闭思考）。手动压缩遵循生效的 Session provider/model，不会把切换前 provider 的 model 带入请求；REPL `/compact` 仅在持久化保存成功后清空 UI；成功报告按每次物理摘要调用记录有界 `summaryRequests` 与 `commitMs`。
 
-**v0.7.96-beta.4 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
+**v0.7.96-beta.6 发布**：Windows shell 准入现在遵循 Codex 的并发边界：
 版本化 setup 只执行一次 legacy 迁移；普通准入在 capability 已存在时只读，只有缺失
 精确 root restricted capability 时才用 `SET_ACCESS` 与 DACL 回读收敛，且不等待任何
 跨进程目标互斥锁。稳定 filesystem capability SID 保留在对象上，每条命令的 token
@@ -339,7 +352,7 @@ scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留�
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.4 发布清单](docs/release.md#v0796-beta4-release-preparation)。
+维护者手动执行。详见 [v0.7.96-beta.6 发布清单](docs/release.md#v0796-beta6-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
@@ -891,7 +904,7 @@ Verifier 的 `revise` / `blocked` 可执行消息；JSONL 输出使用同形
 
 `imageInput: true` 会在 KodaX 所有层面（provider 实例、能力查询、policy gate）强制 `capabilityProfile.multimodalSupport: "image-input"`，显式写了 `"none"` 也会被覆盖。进阶写法 —— 手写 `capabilityProfile` 块并设 `"multimodalSupport": "image-input"` —— 同样有效，详见 [Custom Providers](public_docs/configuration/custom-providers.md)。纯文本模型保持不设即可，图片 artifact 会在请求发出前被 `MODEL_INPUT_UNSUPPORTED` 拒绝。
 
-内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了图片输入。DeepSeek V4 默认模型（`deepseek-v4-flash` / `deepseek-v4-pro`）和 Codex-CLI 是纯文本 —— 内置 `deepseek` 只有 `deepseek-v4-flash-vision-exp` 这一个路由收图；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
+内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了图片输入。内置 `deepseek` 的默认模型 `deepseek-flash`（DeepSeek-V4.1-Flash）原生支持图片理解；兼容名 `deepseek-v4-pro` 和 Codex-CLI 是纯文本；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
 
 序列化层（Anthropic-compat 走 `packages/llm/src/providers/anthropic.ts:1431`，OpenAI-compat 走 `openai.ts:1496`）通过基类继承自动转发 image block —— OpenAI-compatible 端点收到的是标准 `image_url` 块。这个 flag 只控制 KodaX 自身是否预先拒绝多模态请求 —— 上游模型到底支不支持 vision 由 provider 自己决定。如果模型实际是 text-only，你会看到真实的上游 API 错误，而不是 KodaX 一侧的 `[Provider Policy] multimodal requests are unsupported` 预拦截。
 
@@ -1011,7 +1024,7 @@ dist/binary/linux-x64/
 | mimo | `MIMO_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo 按量计费，Anthropic 协议） |
 | mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo Token Plan，Anthropic 协议） |
 | ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3（火山方舟 Coding Plan — GLM-5.3（1M ctx、128K out） · GLM-5.2（别名 `glm-latest`） · Kimi K2.7 Code / K2.6 · MiniMax M3 / M2.7 · DeepSeek V4 Pro / V4 Flash · Doubao Seed 2.0 Code / Pro / Lite · Doubao Seed Code） |
-| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash（可 `/model` 切换 `deepseek-v4-pro` 及视觉模型 `deepseek-v4-flash-vision-exp`，后者支持图片输入） |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-flash（Anthropic 协议；DeepSeek-V4.1-Flash，1M ctx，原生图片理解；可 `/model` 切换纯文本兼容名 `deepseek-v4-pro`） |
 | gemini-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 gemini CLI） |
 | codex-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 codex CLI） |
 

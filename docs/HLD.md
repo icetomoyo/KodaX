@@ -4,8 +4,8 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current release: `v0.7.96-beta.4`
-> (`@kodax-ai/kodax@0.7.96-beta.4`; Windows `sandboxRuntime:11`,
+> Current release: `v0.7.96-beta.6`
+> (`@kodax-ai/kodax@0.7.96-beta.6`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
 >
@@ -142,12 +142,16 @@ authorized clauses. The restricted target's enabled traverse privilege reaches e
 allowed roots without persistent private-ancestor ACEs or profile-DACL
 propagation. Because `WRITE_RESTRICTED` does not enforce restricting SIDs for
 reads, Windows per-command `denyRead` fails closed as `unsupported_policy`
-before setup, DACL mutation, or target start. Windows setup generation 10
+before setup, DACL mutation, or target start. Windows setup generation 11
 upgrades a healthy generation-8 or released generation-9 identity in place without replaying the
 generation-8 legacy ACL migration proof. One setup-only elevated native parent
 receives a small explicit base64 envelope, validates its versioned digest-bound
 `installing` marker inside the protected control directory, and synchronously
-converges NUL compatibility plus profile read capabilities. The setup caller
+converges NUL compatibility plus profile read capabilities. Profile and SSH
+configuration dependency ACL exclusions match Codex; ordinary tool reads remain
+supported. Generation-10 SSH ACL cleanup is setup-only and preserves exact old
+SID/nonce/root ownership across retries. It does not change the fixed ACL or
+per-command token/concurrency mechanism. The setup caller
 atomically publishes the ready marker only after that parent succeeds; no helper
 overlaps ordinary admission. The bare interactive Windows CLI verifies this
 generation before creating its REPL Runtime. A stale generation reuses that

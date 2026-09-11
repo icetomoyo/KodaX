@@ -113,6 +113,7 @@ export {
   KODAX_API_MIN_INTERVAL,
   KODAX_CAPPED_MAX_OUTPUT_TOKENS,
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
+  KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
 } from './constants.js';
 
 // ============== Timeout config ==============

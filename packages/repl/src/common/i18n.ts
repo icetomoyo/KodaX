@@ -142,6 +142,7 @@ const translations = {
 
     // Cancellation
     "cancelled": "[Cancelled] Operation cancelled by user",
+    "cancellationRequested": "[Cancelling] Stop requested for the current reply",
   },
 
   zh: {
@@ -231,6 +232,7 @@ const translations = {
     "todo.summary.more": "另有 {count} 项",
 
     "cancelled": "[已取消] 操作已被用户取消",
+    "cancellationRequested": "[正在取消] 已请求停止当前回复",
   },
 } as const;
 

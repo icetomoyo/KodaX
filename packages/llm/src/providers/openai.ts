@@ -9,6 +9,7 @@ import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
 import { parseToolInputWithSalvageTracked } from './tool-input-parser.js';
 import { isCleanStop } from '../stop-reason.js';
+import { KODAX_INTERRUPTED_TOOL_RESULT_MARKER } from '../constants.js';
 import {
   KodaXContentBlock,
   KodaXNormalizedReasoningRequest,
@@ -1598,50 +1599,72 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   private repairToolCallHistory(
     messages: OpenAI.Chat.ChatCompletionMessageParam[],
   ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    // Pairing scope mirrors the Anthropic side: an assistant tool_calls turn
+    // owns everything up to the NEXT assistant message. Real tool messages
+    // are hoisted next to their calls in call order — real output is never
+    // discarded; calls with no result anywhere in scope get the synthetic
+    // "status unknown" tool message. Foreign/duplicate tool messages are
+    // dropped. Never mutates the input array.
     const repaired: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    let openCallIds = new Set<string>();
     let index = 0;
 
     while (index < messages.length) {
       const message = messages[index]!;
-      const toolCalls = getAssistantWireToolCalls(message);
+      const role = getWireRole(message);
 
-      if (toolCalls === undefined) {
-        if (getWireRole(message) !== 'tool') {
-          repaired.push(message);
+      if (role === 'assistant') {
+        const toolCalls = getAssistantWireToolCalls(message) ?? [];
+        openCallIds = new Set(toolCalls.map((toolCall) => toolCall.id));
+        const assistant = rewriteAssistantWireToolCalls(message, toolCalls);
+
+        if (toolCalls.length === 0) {
+          repaired.push(assistant);
+          index += 1;
+          continue;
         }
+
+        const answerById = new Map<string, OpenAI.Chat.ChatCompletionMessageParam>();
+        const carried: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+        let cursor = index + 1;
+        while (cursor < messages.length && getWireRole(messages[cursor]!) !== 'assistant') {
+          const m2 = messages[cursor]!;
+          if (getWireRole(m2) === 'tool') {
+            const toolCallId = getToolWireCallId(m2);
+            if (toolCallId !== undefined && openCallIds.has(toolCallId)) {
+              if (!answerById.has(toolCallId)) {
+                answerById.set(toolCallId, m2);
+              }
+            }
+            // Foreign and duplicate results cannot be carried as user messages.
+          } else {
+            carried.push(m2);
+          }
+          cursor += 1;
+        }
+
+        repaired.push(assistant);
+        for (const toolCall of toolCalls) {
+          repaired.push(answerById.get(toolCall.id) ?? {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
+          } as OpenAI.Chat.ChatCompletionToolMessageParam);
+        }
+        repaired.push(...carried);
+        index = cursor;
+        continue;
+      }
+
+      // Tool messages that answer nothing are dropped; everything else
+      // passes through.
+      if (role === 'tool') {
         index += 1;
         continue;
       }
 
-      const expectedIds = new Set(toolCalls.map((toolCall) => toolCall.id));
-      const seenIds = new Set<string>();
-      const matchedToolMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
-      let nextIndex = index + 1;
-
-      while (nextIndex < messages.length && getWireRole(messages[nextIndex]!) === 'tool') {
-        const toolMessage = messages[nextIndex]!;
-        const toolCallId = getToolWireCallId(toolMessage);
-        if (
-          toolCallId !== undefined &&
-          expectedIds.has(toolCallId) &&
-          !seenIds.has(toolCallId)
-        ) {
-          seenIds.add(toolCallId);
-          matchedToolMessages.push(toolMessage);
-        }
-        nextIndex += 1;
-      }
-
-      const matchedToolCalls = toolCalls.filter((toolCall) => seenIds.has(toolCall.id));
-      const assistantMessage = matchedToolCalls.length === toolCalls.length && toolCalls.length > 0
-        ? message
-        : rewriteAssistantWireToolCalls(message, matchedToolCalls);
-
-      repaired.push(assistantMessage);
-      if (matchedToolCalls.length > 0) {
-        repaired.push(...matchedToolMessages);
-      }
-      index = nextIndex;
+      repaired.push(message);
+      index += 1;
     }
 
     return repaired;

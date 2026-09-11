@@ -8,6 +8,78 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-beta.6] - 2026-09-11
+
+Sixth beta pre-release of the v0.7.96 line: a review-hardening pass that
+makes prompt-cache diagnostics describe the actual provider wire, retaining
+every beta.5 contract. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Prompt-cache diagnostics now mirror the provider wire: the Anthropic
+  diagnostic repair mirrors the provider's pairing semantics — a retained
+  orphan `tool_use` is answered with the interrupted-tool marker inside its
+  pairing scope, real non-adjacent answers are hoisted, foreign and
+  duplicate results are dropped, and other user blocks carry after the
+  answers. The OpenAI diagnostic repair gains the same full pairing scope,
+  and assistant projection keeps source order to match the
+  order-preserving serialization, so the diagnostic hash describes the
+  messages actually sent.
+- A new prompt-cache wire contract suite (224 cases) proves the projected
+  diagnostic envelope equals the real provider request across every
+  built-in and custom Anthropic/OpenAI provider, including retained
+  orphan calls that must stay distinct from a thinking-only placeholder.
+- The native SDDL auto-inherited flag normalization parses the flag field
+  instead of a blind string replace, preserving P/AR flags and S: sections,
+  with its own regression test (89 native tests). `@kodax-ai/llm` exports
+  `KODAX_INTERRUPTED_TOOL_RESULT_MARKER` as the shared wire-contract
+  constant.
+
+---
+
+## [0.7.96-beta.5] - 2026-09-10
+
+Fifth beta pre-release of the v0.7.96 line. Two change streams: the built-in
+`deepseek` provider moves to DeepSeek's official Anthropic-compatible
+endpoint with a new default model and replayed-history repair, and Windows
+sandbox setup advances to generation 11 with Codex-compatible profile/SSH
+ACL exclusions (Issue 333). All earlier beta.4 contracts are retained. npm
+publication remains a manual maintainer action.
+
+### Added
+
+- `deepseek-flash` (DeepSeek-V4.1-Flash, 2026-09-10): the new default on the
+  built-in `deepseek` alias, speaking the official
+  `api.deepseek.com/anthropic` wire with the `deepseek-v4-anthropic`
+  reasoning preset (thinking adaptive, `output_config.effort`, signed
+  thinking-block replay, count_tokens verification), 1M context, 384000 max
+  output tokens, and native image input. The legacy text-only
+  `deepseek-v4-pro` id stays selectable via `/model`. Cost rates use
+  converted official CNY idle rates with recorded peak-hour equivalents.
+
+### Fixed
+
+- Replayed restored-session histories no longer 400 on strict endpoints:
+  `repairToolCallHistory` answers an orphaned `tool_use` call with an
+  explicit interrupted-tool marker instead of dropping it, Anthropic
+  serialization keeps assistant blocks in their stored order while preserving
+  the required `tool_result`-first user grouping, and error classification
+  recognizes both wire dialects' pairing errors. Typed `AbortError`
+  cancellation now takes precedence over provider message matching; the
+  runner preserves the observed provider failure over a plain abort reason;
+  SDK Runtime aborts use typed `DOMException` aborts; and the REPL
+  distinguishes user cancellation from session-recovery cleanup.
+- Issue 333: Windows sandbox setup generation 11 matches Codex's profile and
+  SSH dependency ACL exclusions on read and write roots, keeping ordinary
+  home/tool reads and the existing fixed ACL plus per-command
+  token/concurrency mechanism. Generation-10 SSH ACE cleanup is setup-only,
+  removes provably owned entries, preserves owner and unrelated ACEs, and
+  retains the old SID/nonce/roots across interrupted retries. Generation-8/9
+  protocol-only in-place upgrades keep their behavior. See
+  `docs/test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md`.
+
+---
+
 ## [0.7.96-beta.4] - 2026-09-08
 
 Fourth beta pre-release of the v0.7.96 line, retaining the beta.3 Windows WFP

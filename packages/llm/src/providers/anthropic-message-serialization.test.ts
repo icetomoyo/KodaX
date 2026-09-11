@@ -825,7 +825,7 @@ describe('anthropic message serialization', () => {
     expect(hasOrphanResult).toBe(false);
   });
 
-  it('drops an orphan tool_use with no following tool_result and replaces the emptied turn with a wire "..."', async () => {
+  it('answers an orphan tool_use with a synthetic tool_result (interrupted turn)', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     const provider = new TestAnthropicProvider({ messages: { create } });
     const messages: KodaXMessage[] = [
@@ -841,11 +841,18 @@ describe('anthropic message serialization', () => {
     const toolUses = (assistant.content as Array<{ type: string }>).filter(
       (b) => b.type === 'tool_use',
     );
-    expect(toolUses).toHaveLength(0);
-    expect(assistant.content).toEqual([{ type: 'text', text: '...' }]);
+    // The call stays on the wire; the follow-up user turn answers it.
+    expect(toolUses).toHaveLength(1);
+    const followUp = kwargs.messages[kwargs.messages.length - 1];
+    expect(followUp.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_orphan',
+      is_error: true,
+    });
+    expect(followUp.content[1]).toMatchObject({ type: 'text', text: 'continue' });
   });
 
-  it('keeps matched tool_use/tool_result pairs and drops only the unmatched', async () => {
+  it('keeps matched pairs and answers unmatched siblings synthetically', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     const provider = new TestAnthropicProvider({ messages: { create } });
     const messages: KodaXMessage[] = [
@@ -868,7 +875,18 @@ describe('anthropic message serialization', () => {
     const ids = (assistant.content as Array<{ type: string; id?: string }>)
       .filter((b) => b.type === 'tool_use')
       .map((b) => b.id);
-    expect(ids).toEqual(['call_a']);
+    expect(ids).toEqual(['call_a', 'call_b']);
+    // The adjacent result turn answers call_a with the real output and call_b
+    // with the synthetic interrupted marker.
+    const results = kwargs.messages[2].content.filter(
+      (b: { type: string }) => b.type === 'tool_result',
+    );
+    expect(results).toHaveLength(2);
+    expect(results.find((b: { tool_use_id?: string }) => b.tool_use_id === 'call_a')?.content).toBe('a');
+    expect(
+      results.find((b: { tool_use_id?: string; is_error?: boolean }) => b.tool_use_id === 'call_b')
+        ?.is_error,
+    ).toBe(true);
   });
 
   it('replaces an all-empty-text USER turn with a wire "..." (empty-marker on user role)', async () => {
@@ -936,4 +954,259 @@ describe('anthropic message serialization', () => {
       });
     },
   );
+});
+
+describe('interrupted tool-turn repair (cross-provider switching)', () => {
+  const baseMessages = [
+    { role: 'user', content: 'Run the checks.' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'plan', signature: 'sig-a' },
+        { type: 'text', text: 'Running both checks.' },
+        { type: 'tool_use', id: 'call_a', name: 'bash', input: { command: 'a' } },
+        { type: 'tool_use', id: 'call_b', name: 'bash', input: { command: 'b' } },
+      ],
+    },
+  ] as KodaXMessage[];
+
+  it('answers interrupted tool_use turns with synthetic tool_results (stream)', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+
+    await provider.stream(
+      [...baseMessages, { role: 'user', content: 'continue' }],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    // Both calls stay on the wire — dropping them would silently rewrite
+    // history behind a provider switch.
+    const assistant = wire.messages[1];
+    expect(assistant.content.filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['call_a', 'call_b']);
+    // The follow-up user turn carries synthetic error results FIRST, then text.
+    const followUp = wire.messages[2];
+    expect(followUp.content[0]).toMatchObject({
+      type: 'tool_result', tool_use_id: 'call_a', is_error: true,
+    });
+    expect(followUp.content[1]).toMatchObject({
+      type: 'tool_result', tool_use_id: 'call_b', is_error: true,
+    });
+    expect(followUp.content[2]).toMatchObject({ type: 'text', text: 'continue' });
+  });
+
+  it('keeps real partial results and synthesizes only the unanswered siblings', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+
+    await provider.stream(
+      [
+        { role: 'user', content: 'Run three checks.' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+            { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+            { type: 'tool_use', id: 'call_c', name: 'bash', input: {} },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call_a', content: 'a-output' }],
+        },
+      ] as KodaXMessage[],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    expect(
+      wire.messages[1].content.filter((b: any) => b.type === 'tool_use').map((b: any) => b.id),
+    ).toEqual(['call_a', 'call_b', 'call_c']);
+    const results = wire.messages[2].content.filter((b: any) => b.type === 'tool_result');
+    expect(results).toHaveLength(3);
+    expect(results.find((b: any) => b.tool_use_id === 'call_a')?.content).toBe('a-output');
+    expect(results.find((b: any) => b.tool_use_id === 'call_b')?.is_error).toBe(true);
+    expect(results.find((b: any) => b.tool_use_id === 'call_c')?.is_error).toBe(true);
+  });
+
+  it('appends a synthetic result turn when the history ends on an interrupted call', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+
+    await provider.stream(
+      [
+        { role: 'user', content: 'Run it.' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'call_a', name: 'bash', input: {} }],
+        },
+      ] as KodaXMessage[],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    expect(wire.messages).toHaveLength(3);
+    expect(wire.messages[2]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'call_a', is_error: true }],
+    });
+  });
+});
+
+describe('assistant block ordering (deepseek trailing-text 400 regression)', () => {
+  it('preserves stored text-before-tool_use order in assistant messages', async () => {
+    // DeepSeek's Anthropic-compat endpoint 400s when a text block trails
+    // tool_use blocks in an assistant message, even with complete results in
+    // the next message (verified live 2026-09-10). The stored order — the
+    // model's natural output order — must reach the wire unchanged.
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Run two checks.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'plan', signature: 'sig' },
+          { type: 'text', text: 'Running both checks.' },
+          { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+          { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_a', content: 'a' },
+          { type: 'tool_result', tool_use_id: 'call_b', content: 'b' },
+        ],
+      },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system');
+
+    const wire = create.mock.calls[0]?.[0];
+    const assistant = wire.messages[1];
+    expect(assistant.content.map((b: any) => b.type)).toEqual([
+      'thinking',
+      'text',
+      'tool_use',
+      'tool_use',
+    ]);
+  });
+
+  it('keeps tool_result-first grouping for user messages', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'run a' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_a', name: 'bash', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'results below' },
+          { type: 'tool_result', tool_use_id: 'call_a', content: 'a' },
+        ],
+      },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system');
+
+    const wire = create.mock.calls[0]?.[0];
+    const resultsTurn = wire.messages[wire.messages.length - 1];
+    expect(resultsTurn.content.map((b: any) => b.type)).toEqual([
+      'tool_result',
+      'text',
+    ]);
+  });
+});
+
+describe('non-adjacent results and input safety (cross-provider switching)', () => {
+  it('preserves non-adjacent real results instead of synthesizing (stream)', async () => {
+    // Results split away from their calls (recovery/compaction splits) must
+    // be MOVED next to the calls with their real output — not replaced by a
+    // synthetic "interrupted" answer.
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'do x' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Running both checks.' },
+          { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+          { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+        ],
+      },
+      { role: 'user', content: 'hold on' },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_a', content: 'real-a' },
+          { type: 'tool_result', tool_use_id: 'call_b', content: 'real-b' },
+        ],
+      },
+    ];
+    const snapshot = JSON.stringify(messages);
+
+    await provider.stream(messages, TOOLS, 'system');
+
+    // Original history untouched (wire repair is request-only).
+    expect(JSON.stringify(messages)).toBe(snapshot);
+
+    const wire = create.mock.calls[0]?.[0];
+    const assistant = wire.messages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistant.content.map((b: any) => b.type)).toEqual(['text', 'tool_use', 'tool_use']);
+    // Merged results turn: real output first, then the carried user text.
+    const resultsTurn = wire.messages[wire.messages.length - 1];
+    expect(resultsTurn.role).toBe('user');
+    expect(resultsTurn.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_a',
+      content: 'real-a',
+    });
+    expect(resultsTurn.content[1]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_b',
+      content: 'real-b',
+    });
+    expect(resultsTurn.content[2]).toMatchObject({ type: 'text', text: 'hold on' });
+    // No synthetic interruption markers when real results exist.
+    expect(JSON.stringify(wire)).not.toContain('[Tool Error]');
+  });
+
+  it('hoists trailing text before tool_use in assistant messages', async () => {
+    // SDK-supplied histories can arrive with text AFTER tool calls
+    // ([tool_use → text → tool_use]); the wire normalizes to
+    // [text → tool_use …] so strict endpoints never see trailing text.
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({ messages: { create } });
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'go' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+          { type: 'text', text: 'halfway done.' },
+          { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+        ],
+      },
+      { role: 'user', content: 'ok' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system');
+
+    const wire = create.mock.calls[0]?.[0];
+    const assistant = wire.messages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistant.content.map((b: any) => b.type)).toEqual(['text', 'tool_use', 'tool_use']);
+    expect(assistant.content[0]).toMatchObject({ text: 'halfway done.' });
+  });
 });

@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
+import { KODAX_PROVIDERS } from './registry.js';
 import { sideQuery } from '../side-query.js';
 import type {
   KodaXMessage,
@@ -527,6 +528,34 @@ describe('anthropic reasoning capability', () => {
     expect(create.mock.calls[0]?.[1]).toMatchObject({
       headers: { 'anthropic-beta': 'effort-2025-11-24' },
     });
+  });
+
+  it('routes the built-in deepseek provider through the Anthropic output_config dialect', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key');
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = KODAX_PROVIDERS.deepseek();
+    Reflect.set(provider, '_client', { messages: { create } });
+
+    await provider.stream(MESSAGES, TOOLS, 'system', { ...reasoning, effort: 'xhigh' });
+
+    const kwargs = create.mock.calls[0]?.[0];
+    expect(kwargs.model).toBe('deepseek-flash');
+    // deepseek-v4-anthropic preset shape: thinking enabled + Claude's
+    // output_config.effort. Official endpoint parses output_config.effort
+    // with a typed enum (verified live 2026-09-10); xhigh aliases to max.
+    expect(kwargs.thinking).toMatchObject({ type: 'enabled' });
+    expect(kwargs.output_config).toEqual({ effort: 'max' });
+  });
+
+  it('lowers built-in deepseek auto effort to the ladder default', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key');
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = KODAX_PROVIDERS.deepseek();
+    Reflect.set(provider, '_client', { messages: { create } });
+
+    await provider.stream(MESSAGES, TOOLS, 'system', { ...reasoning, effort: 'auto' });
+
+    expect(create.mock.calls[0]?.[0].output_config).toEqual({ effort: 'high' });
   });
 
   it('sends GLM-5.2 top-level reasoning_effort with aliases through reasoning metadata', async () => {

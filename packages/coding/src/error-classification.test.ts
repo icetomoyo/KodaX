@@ -3,6 +3,13 @@ import { KodaXProviderError } from '@kodax-ai/llm';
 import { classifyError, ErrorCategory } from './error-classification.js';
 
 describe('classifyError', () => {
+  it('prioritizes typed cancellation over incomplete-stream wording', () => {
+    const error = new DOMException('Stream incomplete: request aborted', 'AbortError');
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.USER_ABORT, retryable: false, maxRetries: 0,
+    });
+  });
+
   it('treats provider connection errors as transient', () => {
     const error = new KodaXProviderError(
       'minimax-coding API error: Connection error.',

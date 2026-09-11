@@ -150,10 +150,10 @@ Leave `imageInput` unset for text-only models — image artifacts are then
 rejected with `MODEL_INPUT_UNSUPPORTED` before the request is sent.
 
 Built-in vision-capable aliases (Anthropic, OpenAI, Kimi, Qwen, Zhipu, MiniMax,
-MiMo, Ark, plus Gemini-CLI) already ship with image input enabled. DeepSeek V4's
-default models (`deepseek-v4-flash` / `deepseek-v4-pro`) and Codex-CLI are
-text-only — on the built-in `deepseek` alias only `deepseek-v4-flash-vision-exp`
-takes images; custom providers need to opt in.
+MiMo, Ark, plus Gemini-CLI) already ship with image input enabled. On the
+built-in `deepseek` alias the default `deepseek-flash` (DeepSeek-V4.1-Flash)
+takes images natively; the legacy `deepseek-v4-pro` id and Codex-CLI are
+text-only; custom providers need to opt in.
 
 ## See also
 

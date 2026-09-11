@@ -781,6 +781,33 @@ describe('Runner', () => {
       expect(executionEnd).not.toHaveBeenCalled();
     });
 
+    it.each(['This operation was aborted', 'host requested stop'])(
+      'preserves cancellation during a rejected generation with reason %s',
+      async (reason) => {
+        const controller = new AbortController();
+        const llm = vi.fn(async () => {
+          controller.abort(new Error(reason));
+          throw new DOMException('This operation was aborted', 'AbortError');
+        });
+        await expect(Runner.run(createAgent({ name: 'cancel-probe', instructions: 'test' }), 'hello', {
+          llm, abortSignal: controller.signal, tracer: null,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        expect(llm).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('preserves an independent generation failure racing with caller cancellation', async () => {
+      const controller = new AbortController();
+      const failure = new Error('independent generation failure');
+      await expect(Runner.run(createAgent({ name: 'failure-probe', instructions: 'test' }), 'hello', {
+        tracer: null, abortSignal: controller.signal,
+        llm: async () => {
+          controller.abort(new Error('host requested stop'));
+          throw failure;
+        },
+      })).rejects.toBe(failure);
+    });
+
     it('fires onToolCall + onToolResult around each invocation', async () => {
       const echoTool = makeLocalEchoTool();
       const agent = createAgent({ name: 'obs-agent', instructions: 'sys', tools: [echoTool] });

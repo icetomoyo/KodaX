@@ -68,6 +68,17 @@ function matchesTransientMessage(message: string): boolean {
  * 分类错误以确定适当的恢复策略
  */
 export function classifyError(error: Error): ErrorClassification {
+  // Typed cancellation takes precedence over provider-specific message text.
+  if (error.name === 'AbortError') {
+    return {
+      category: ErrorCategory.USER_ABORT,
+      retryable: false,
+      maxRetries: 0,
+      retryDelay: 0,
+      shouldCleanup: true,
+    };
+  }
+
   // Issue 084: Stream incomplete error - network disconnection during streaming
   if (error.name === 'StreamIncompleteError' || error.message.includes('Stream incomplete')) {
     return {
@@ -79,21 +90,15 @@ export function classifyError(error: Error): ErrorClassification {
     };
   }
 
-  // 用户中断
-  if (error.name === 'AbortError') {
-    return {
-      category: ErrorCategory.USER_ABORT,
-      retryable: false,
-      maxRetries: 0,
-      retryDelay: 0,
-      shouldCleanup: true,
-    };
-  }
-
   // Tool call ID 不匹配错误
+  // Patterns cover both wire dialects: OpenAI-style "tool_call_id" /
+  // "tool result" and Anthropic-style "tool_use' ids were found without
+  // 'tool_result' blocks" (DeepSeek anthropic-compat, Anthropic proper).
   if (error instanceof KodaXToolCallIdError ||
       error.message.includes('tool_call_id') ||
-      error.message.includes('tool result')) {
+      error.message.includes('tool result') ||
+      error.message.includes('tool_use') ||
+      error.message.includes('tool_result')) {
     return {
       category: ErrorCategory.TOOL_CALL_ID,
       retryable: true,  // 清理后重试

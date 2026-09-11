@@ -763,7 +763,7 @@ describe('openai message serialization', () => {
     expect(JSON.stringify(kwargs)).not.toContain('C:/private/full-output.txt');
   });
 
-  it('repairs orphan assistant tool_calls before replaying history', async () => {
+  it('answers orphan assistant tool_calls with a synthetic tool message before replaying history', async () => {
     const completion = {
       choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
@@ -787,14 +787,23 @@ describe('openai message serialization', () => {
     const assistant = kwargs.messages.find(
       (message: { role: string }) => message.role === 'assistant',
     ) as Record<string, unknown>;
-    expect(assistant.tool_calls).toBeUndefined();
-    expect(assistant.content).toBe('...');
-    expect(
-      kwargs.messages.some((message: { role: string }) => message.role === 'tool'),
-    ).toBe(false);
+    // The call stays on the wire and is answered synthetically — dropping it
+    // would silently rewrite what the model issued behind a provider switch.
+    const toolCalls = assistant.tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_orphan']);
+    const toolMessages = kwargs.messages.filter(
+      (message: { role: string }) => message.role === 'tool',
+    ) as Array<Record<string, unknown>>;
+    expect(toolMessages).toHaveLength(1);
+    expect(toolMessages[0].tool_call_id).toBe('call_orphan');
+    expect(toolMessages[0].content).toContain('[Tool Error]');
+    expect(kwargs.messages[kwargs.messages.length - 1]).toMatchObject({
+      role: 'user',
+      content: 'continue',
+    });
   });
 
-  it('keeps matched tool calls and drops only missing tool-call pairs', async () => {
+  it('keeps matched tool calls and answers missing pairs synthetically', async () => {
     const completion = {
       choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
@@ -829,13 +838,14 @@ describe('openai message serialization', () => {
     const toolMessages = kwargs.messages.filter(
       (message: { role: string }) => message.role === 'tool',
     ) as Array<Record<string, unknown>>;
-    expect(toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a']);
-    expect(toolMessages.map((message) => message.tool_call_id)).toEqual(['call_a']);
+    expect(toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a', 'call_b']);
+    expect(toolMessages.map((message) => message.tool_call_id)).toEqual(['call_a', 'call_b']);
+    // call_a keeps its real output; unmatched call_b is answered synthetically
+    // instead of being silently erased from the assistant turn.
+    expect(toolMessages.find((message) => message.tool_call_id === 'call_a')?.content).toBe('a contents');
     expect(
-      kwargs.messages.some(
-        (message: Record<string, unknown>) => message.tool_call_id === 'call_b',
-      ),
-    ).toBe(false);
+      toolMessages.find((message) => message.tool_call_id === 'call_b')?.content as string,
+    ).toContain('[Tool Error]');
   });
 
   it('drops orphan tool messages without a preceding assistant tool_call', async () => {
@@ -987,5 +997,162 @@ describe('openai message serialization', () => {
     expect(kwargs.messages[0]).toEqual({ role: 'system', content: '' });
     expect(kwargs.messages[1]).toMatchObject({ role: 'user' });
     expect(kwargs.messages).toHaveLength(2);
+  });
+});
+
+describe('interrupted tool-turn repair (cross-provider switching)', () => {
+  it('answers interrupted tool_calls with synthetic tool messages (stream)', async () => {
+    async function* streamChunks() {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+    }
+    const create = vi.fn().mockImplementation((params: { stream?: boolean }) => (
+      params.stream
+        ? Promise.resolve(streamChunks())
+        : Promise.resolve({
+            choices: [
+              { message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+    ));
+    const provider = new TestOpenAIProvider({ chat: { completions: { create } } });
+
+    await provider.stream(
+      [
+        { role: 'user', content: 'Run the checks.' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Running both checks.' },
+            { type: 'tool_use', id: 'call_a', name: 'bash', input: { command: 'a' } },
+            { type: 'tool_use', id: 'call_b', name: 'bash', input: { command: 'b' } },
+          ],
+        },
+        { role: 'user', content: 'continue' },
+      ] as KodaXMessage[],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    expect(wire.messages.map((m: any) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+    ]);
+    expect(wire.messages[2].tool_calls.map((tc: any) => tc.id)).toEqual(['call_a', 'call_b']);
+    expect(wire.messages[3]).toMatchObject({ tool_call_id: 'call_a' });
+    expect(wire.messages[4]).toMatchObject({
+      tool_call_id: 'call_b',
+      content: expect.stringContaining('[Tool Error]'),
+    });
+    expect(wire.messages[5]).toMatchObject({ role: 'user', content: 'continue' });
+  });
+
+  it('keeps real partial results and synthesizes only the unanswered siblings', async () => {
+    const create = vi.fn().mockImplementation((params: { stream?: boolean }) => (
+      params.stream
+        ? Promise.resolve((async function* () {
+            yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+          })())
+        : Promise.resolve({
+            choices: [
+              { message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+    ));
+    const provider = new TestOpenAIProvider({ chat: { completions: { create } } });
+
+    await provider.stream(
+      [
+        { role: 'user', content: 'Run three checks.' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+            { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+            { type: 'tool_use', id: 'call_c', name: 'bash', input: {} },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call_a', content: 'a-output' }],
+        },
+      ] as KodaXMessage[],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    expect(wire.messages[2].tool_calls.map((tc: any) => tc.id)).toEqual([
+      'call_a',
+      'call_b',
+      'call_c',
+    ]);
+    const toolMessages = wire.messages.filter((m: any) => m.role === 'tool');
+    expect(toolMessages).toHaveLength(3);
+    expect(toolMessages.find((m: any) => m.tool_call_id === 'call_a')?.content).toBe('a-output');
+    expect(toolMessages.find((m: any) => m.tool_call_id === 'call_b')?.content)
+      .toContain('[Tool Error]');
+    expect(toolMessages.find((m: any) => m.tool_call_id === 'call_c')?.content)
+      .toContain('[Tool Error]');
+  });
+});
+
+describe('non-adjacent results (cross-provider switching)', () => {
+  it('hoists non-adjacent real tool messages next to their calls', async () => {
+    async function* streamChunks() {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+    }
+    const create = vi.fn().mockImplementation((params: { stream?: boolean }) => (
+      params.stream
+        ? Promise.resolve(streamChunks())
+        : Promise.resolve({
+            choices: [
+              { message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+    ));
+    const provider = new TestOpenAIProvider({ chat: { completions: { create } } });
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'do x' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+          { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+        ],
+      },
+      { role: 'user', content: 'hold on' },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_a', content: 'real-a' },
+          { type: 'tool_result', tool_use_id: 'call_b', content: 'real-b' },
+        ],
+      },
+    ];
+    const snapshot = JSON.stringify(messages);
+
+    await provider.stream(messages, TOOLS, 'system');
+
+    expect(JSON.stringify(messages)).toBe(snapshot);
+    const wire = create.mock.calls[0]?.[0];
+    const toolMessages = wire.messages.filter((m: any) => m.role === 'tool');
+    expect(toolMessages.map((m: any) => m.tool_call_id)).toEqual(['call_a', 'call_b']);
+    expect(toolMessages[0].content).toBe('real-a');
+    expect(toolMessages[1].content).toBe('real-b');
+    expect(JSON.stringify(wire)).not.toContain('[Tool Error]');
+    expect(wire.messages[wire.messages.length - 1]).toMatchObject({
+      role: 'user',
+      content: 'hold on',
+    });
   });
 });

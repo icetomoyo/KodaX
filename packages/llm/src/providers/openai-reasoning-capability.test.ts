@@ -3,7 +3,6 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KodaXOpenAICompatProvider } from './openai.js';
-import { KODAX_PROVIDERS } from './registry.js';
 import { runWithScopedConfig } from '../run-scoped-config.js';
 import type {
   KodaXMessage,
@@ -530,78 +529,6 @@ describe('openai reasoning capability', () => {
       reasoning_effort: 'max',
     });
   });
-
-  it('serializes the built-in DeepSeek Flash xhigh mapping on the streaming path', async () => {
-    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-    const provider = KODAX_PROVIDERS.deepseek();
-    Reflect.set(provider, '_client', { chat: { completions: { create } } });
-
-    await provider.stream(
-      MESSAGES,
-      TOOLS,
-      'system',
-      { ...reasoning, effort: 'xhigh' },
-      { modelOverride: 'deepseek-v4-flash', maxOutputTokensOverride: 1024 },
-    );
-
-    expect(create.mock.calls[0]?.[0]).toMatchObject({
-      model: 'deepseek-v4-flash',
-      max_tokens: 1024,
-      thinking: { type: 'enabled' },
-      reasoning_effort: 'high',
-    });
-  });
-
-  it('serializes the built-in DeepSeek Pro xhigh mapping on the non-streaming path', async () => {
-    const create = vi.fn().mockResolvedValue({
-      choices: [
-        {
-          message: { role: 'assistant', content: 'ok', tool_calls: [] },
-          finish_reason: 'stop',
-        },
-      ],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
-    const provider = KODAX_PROVIDERS.deepseek();
-    Reflect.set(provider, '_client', { chat: { completions: { create } } });
-
-    await provider.complete(
-      MESSAGES,
-      TOOLS,
-      'system',
-      { ...reasoning, effort: 'xhigh' },
-      { modelOverride: 'deepseek-v4-pro', maxOutputTokensOverride: 1024 },
-    );
-
-    expect(create.mock.calls[0]?.[0]).toMatchObject({
-      model: 'deepseek-v4-pro',
-      max_tokens: 1024,
-      thinking: { type: 'enabled' },
-      reasoning_effort: 'max',
-    });
-  });
-
-  it.each(['deepseek-v4-flash', 'deepseek-v4-pro'])(
-    'lowers built-in %s auto effort to its configured default',
-    async (model) => {
-      const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-      const provider = KODAX_PROVIDERS.deepseek();
-      Reflect.set(provider, '_client', { chat: { completions: { create } } });
-
-      await provider.stream(
-        MESSAGES,
-        TOOLS,
-        'system',
-        { ...reasoning, effort: 'auto' },
-        { modelOverride: model, maxOutputTokensOverride: 1024 },
-      );
-
-      expect(create.mock.calls[0]?.[0]).toMatchObject({
-        thinking: { type: 'enabled' },
-        reasoning_effort: 'high',
-      });
-    },
-  );
 
   it('resolves GLM-5.2 auto effort to the reasoning model default before lowering', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());

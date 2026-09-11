@@ -59,14 +59,20 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'gpt-5.3-codex-spark': { inputPer1M: 10.0, outputPer1M: 40.0 },
   },
   deepseek: {
-    // Official USD rates per 1M tokens, published 2026-07-31. Peak-hour
-    // pricing has been announced but has no effective date yet, so these are
-    // the current base rates rather than a speculative time-of-day schedule.
-    'deepseek-v4-flash': { inputPer1M: 0.14, outputPer1M: 0.28, cachePer1M: 0.0028 },
-    'deepseek-v4-pro': { inputPer1M: 0.435, outputPer1M: 0.87, cachePer1M: 0.003625 },
-    // Vision model (announced 2026-08-21) is priced identically to flash;
-    // images are billed as size-derived tokens (≤384/image) at text rates.
-    'deepseek-v4-flash-vision-exp': { inputPer1M: 0.14, outputPer1M: 0.28, cachePer1M: 0.0028 },
+    // Official CNY rates per 1M tokens (https://api-docs.deepseek.com/zh-cn/quick_start/pricing,
+    // accessed 2026-09-10), converted at ¥1 ≈ $0.14 — matching the Kimi
+    // convention. Pricing is time-of-day (peak = Beijing Mon–Fri 9:00–12:00
+    // and 14:00–18:00, idle = half of peak); this table records IDLE rates.
+    // Peak equivalents: flash input 0.28 / output 1.12, v4-pro input 1.26 /
+    // output 3.78. `deepseek-flash` = DeepSeek-V4.1-Flash (released
+    // 2026-09-10, native image input); the legacy `deepseek-v4-flash` ids
+    // remain callable and are served by the same backing model at flash
+    // rates. NOTE: from 2026-09-14 12:00 Beijing, `deepseek-v4-pro`
+    // requests are routed to V4.1-Flash and billed at flash rates until
+    // V4.1 Pro ships — revisit the pro entry then.
+    'deepseek-flash': { inputPer1M: 0.14, outputPer1M: 0.56, cachePer1M: 0.0028 },
+    // Official pro price until the 2026-09-14 routing change above.
+    'deepseek-v4-pro': { inputPer1M: 0.63, outputPer1M: 1.89, cachePer1M: 0.021 },
   },
   kimi: {
     // Official prices are published in CNY; converted at ¥1 ≈ $0.14,

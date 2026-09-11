@@ -245,7 +245,7 @@ function migrateLegacyDeepSeekPreset(
 ): KodaXModelDescriptor['reasoningPreset'] {
   if (preset !== 'deepseek-v4-openai') return preset;
   const upstreamModel = wireModel ?? modelId;
-  if (upstreamModel === 'deepseek-v4-flash') {
+  if (upstreamModel === 'deepseek-v4-flash' || upstreamModel === 'deepseek-flash') {
     return 'deepseek-v4-flash-openai';
   }
   if (upstreamModel === 'deepseek-v4-pro') {

@@ -367,7 +367,7 @@ If your custom provider's underlying model supports image input (vision), set `"
 
 `imageInput: true` forces `capabilityProfile.multimodalSupport: "image-input"` on every KodaX surface (provider instance, capability queries, policy gates), overriding an explicit `"none"`. The advanced alternative — a hand-written `capabilityProfile` block with `"multimodalSupport": "image-input"` — works too; see [Custom Providers](public_docs/configuration/custom-providers.md). Leave it unset for text-only models and image artifacts are rejected with `MODEL_INPUT_UNSUPPORTED` before the request is sent.
 
-Built-in vision-capable aliases (Anthropic, OpenAI, compatible aliases such as Kimi, Qwen, Zhipu, MiniMax, MiMo, Ark, plus Gemini-CLI via the CLI's `@<path>` file-include syntax) already ship with image input enabled. DeepSeek V4's default models (`deepseek-v4-flash` / `deepseek-v4-pro`) and Codex-CLI are text-only — on the built-in `deepseek` alias only `deepseek-v4-flash-vision-exp` takes images; custom providers need to opt in when their underlying model supports image input.
+Built-in vision-capable aliases (Anthropic, OpenAI, compatible aliases such as Kimi, Qwen, Zhipu, MiniMax, MiMo, Ark, plus Gemini-CLI via the CLI's `@<path>` file-include syntax) already ship with image input enabled. On the built-in `deepseek` alias the default `deepseek-flash` (DeepSeek-V4.1-Flash) takes images natively; the legacy `deepseek-v4-pro` id and Codex-CLI are text-only; custom providers need to opt in when their underlying model supports image input.
 
 The serializer layer (`packages/llm/src/providers/anthropic.ts:1431` for Anthropic-compat, `openai.ts:1496` for OpenAI-compat) forwards image blocks automatically through base-class inheritance — OpenAI-compatible endpoints receive standard `image_url` blocks. The flag only gates whether KodaX's policy layer pre-rejects multimodal requests — the model-level vision contract remains your upstream provider's responsibility. If the model is actually text-only, you'll see the real upstream API error instead of a KodaX-side rejection.
 
@@ -757,6 +757,23 @@ permission UI, and recovers stale prepared Session tails through an
 authoritative merge. Background persistence failures are surfaced as
 diagnostics rather than hidden.
 
+Beta.6 makes prompt-cache diagnostics mirror the provider wire: retained
+orphan `tool_use` calls are answered with the interrupted-tool marker inside
+their pairing scope and assistant projection keeps source order, so the
+diagnostic hash describes the messages actually sent. A 224-case wire
+contract suite proves the projected envelope equals the real provider
+request across built-in and custom Anthropic/OpenAI providers.
+
+Beta.5 moves the built-in `deepseek` provider to DeepSeek's official
+Anthropic-compatible endpoint (`api.deepseek.com/anthropic`) with new default
+model `deepseek-flash` (DeepSeek-V4.1-Flash, 1M context, native image input)
+and repairs replayed restored-session histories: orphaned `tool_use` calls
+are answered with an explicit interrupted-tool marker instead of being
+dropped, and typed `AbortError` cancellation takes precedence over provider
+message matching. Windows sandbox setup advances to generation 11
+(Issue 333), matching Codex's profile and SSH dependency ACL exclusions while
+keeping ordinary home/tool reads and the existing concurrency mechanism.
+
 Beta.4 shares manual and automatic compaction summary policy:
 `compaction.reasoning` applies to both paths independent of the main turn's
 effort, defaulting to disabled thinking where supported. Manual compaction
@@ -765,7 +782,7 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
-**v0.7.96-beta.4 release:** Windows shell admission now follows the
+**v0.7.96-beta.6 release:** Windows shell admission now follows the
 Codex concurrency boundary: versioned setup performs legacy migration once,
 while ordinary admission accepts effective inherited normal-token access and
 only converges a missing exact-root restricted capability using `SET_ACCESS`
@@ -814,7 +831,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta4-release-preparation).
+[release checklist](docs/release.md#v0796-beta6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
@@ -2008,7 +2025,7 @@ await runInkInteractiveMode({ provider: 'zhipu-coding', effort: 'auto' });
 | mimo | `MIMO_API_KEY` | Native | mimo-v2.5-pro (Xiaomi MiMo pay-per-token, Anthropic-compat) |
 | mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.5-pro (Xiaomi Token Plan, Anthropic-compat) |
 | ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3 (Volcengine Ark Coding Plan — GLM-5.3 (1M ctx, 128K out) · GLM-5.2 (alias: `glm-latest`) · Kimi K2.7 Code / K2.6 · MiniMax M3 / M2.7 · DeepSeek V4 Pro / V4 Flash · Doubao Seed 2.0 Code / Pro / Lite · Doubao Seed Code) |
-| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash (`deepseek-v4-pro` plus vision model `deepseek-v4-flash-vision-exp` with image input, via `/model`) |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-flash (Anthropic-compat; DeepSeek-V4.1-Flash, 1M ctx, native image input; legacy text-only `deepseek-v4-pro`, via `/model`) |
 | gemini-cli | Provider CLI authentication (no KodaX API-key variable) | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | Provider CLI authentication (no KodaX API-key variable) | Prompt-only / CLI bridge | (via codex CLI) |
 

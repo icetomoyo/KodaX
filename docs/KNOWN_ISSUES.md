@@ -1,12 +1,96 @@
 # Known Issues
 
-_Last Updated: 2026-09-09_
+_Last Updated: 2026-09-10_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## Open — Restart long-running REPL processes after KodaX updates (2026-09-10)
+
+A REPL process keeps its provider/serializer code in memory from startup. After
+a KodaX update that changes the provider wire (e.g. the 2026-09-10 DeepSeek
+move to the official Anthropic-compat endpoint), a resumed session in an
+old process keeps using the old wire while reading new capability data — and
+model/provider switches inside that process do not reload either. Restart the
+REPL after updating KodaX before switching providers on restored sessions.
+
+## Resolved 2026-09-10 — DeepSeek Anthropic wire 400 on replayed tool history
+
+Two independent defects surfaced when restored sessions were replayed on the
+new `api.deepseek.com/anthropic` wire, both producing
+"`tool_use` ids were found without `tool_result` blocks immediately after"
+400s:
+
+1. **Assistant block reordering (root cause of the reported incident).**
+   `convertMessages` regrouped assistant blocks to
+   `thinking → tool_use → text`, moving text after tool calls. DeepSeek's
+   endpoint rejects that shape even when the next user message carries every
+   result — the error path (`messages.N.M`) points at the trailing text block.
+   Fix: assistant messages are now emitted order-preserving (the stored
+   `thinking → text → tool_use` order, i.e. the model's natural output order);
+   user messages keep the required `tool_result`-first grouping. Regression
+   tests in `anthropic-message-serialization.test.ts`
+   ("assistant block ordering"); live endpoint probes confirmed
+   regrouped → 400, stored order → 200.
+2. **Interrupted tool turns (separate hardening, same error text).** A
+   cancelled run or mid-run provider switch can leave `tool_use` blocks with
+   no recorded result. Both serializers previously dropped such calls; they
+   now keep them and inject synthetic `[Tool Error]` tool_results
+   (`is_error: true` on the Anthropic wire), so the wire stays valid AND the
+   model learns the call was abandoned. Matrix coverage in
+   `anthropic-message-serialization.test.ts` / `openai-message-serialization.test.ts`
+   (interrupted turn / partial results / trailing interrupted call × both
+   wire families, including custom providers via both protocol families).
+
+Diagnostic note: the REPL's "Cleaned incomplete tool calls" banner reflects
+pairing-based cleanup and does not detect defect 1; the error classifier maps
+this 400 to a permanent failure, so it surfaced as a manual-intervention
+banner. With both fixes in, replayed sessions serialize wire-valid.
+
+## v0.7.96-beta.6 Release Corrections
+
+The beta.6 review pass closes a diagnostics fidelity gap in the beta.5
+history repair: prompt-cache diagnostics kept erasing orphaned `tool_use`
+calls while the provider wire retained them with an interrupted-tool answer,
+so the diagnostic hash described a different prompt than the one actually
+sent. The Anthropic diagnostic repair now mirrors the provider's pairing
+semantics (retained orphan calls answered with the marker, real
+non-adjacent answers hoisted, foreign and duplicate results dropped), the
+OpenAI diagnostic repair gains the same full pairing scope, and assistant
+projection keeps source order. A 224-case wire contract suite asserts the
+projected envelope equals the real provider request across built-in and
+custom Anthropic/OpenAI providers, including retained orphan calls that
+must stay distinct from a thinking-only placeholder. The native SDDL
+auto-inherited normalization parses the flag field instead of a blind
+string replace. No sandbox, trusted-text, permission, credential, or
+provider wire behavior changed.
+
+## v0.7.96-beta.5 Release Corrections
+
+Issue 333 (setup generation 11) keeps the fixed ACL and per-command
+token/concurrency contract while matching Codex's profile and SSH dependency
+ACL exclusions on read and write roots. Ordinary home/tool reads remain
+supported; no new denyRead policy is added. Setup removes provably owned
+generation-10 SSH ACEs while preserving owner and unrelated entries; pending
+cleanup retains the old SID, nonce, and roots across retries, and only that
+cleanup requires idle sandbox processes. Generation-8/9 protocol-only
+in-place upgrades retain their existing behavior. A long-running REPL keeps
+its provider wire code in memory: after updating KodaX, restart the REPL
+before switching providers on restored sessions.
+
+Two defects surfaced when restored sessions were replayed on the new
+`api.deepseek.com/anthropic` wire, both producing "`tool_use` ids were found
+without `tool_result` blocks" 400s. Assistant block reordering was the root
+cause: `convertMessages` regrouped assistant blocks to
+`thinking → tool_use → text`, which DeepSeek rejects even when the next user
+message carries every result; assistant messages are now emitted
+order-preserving while user messages keep the required `tool_result`-first
+grouping. Separately, dropping orphaned `tool_use` calls from replayed
+histories silently rewrote what the model issued; `repairToolCallHistory` now
+answers them with an explicit interrupted-tool marker so strict endpoints
+receive a wire-valid history without fabricated results.
 ## v0.7.97 产品入口验收未关闭项
 
 - **多客户端设置显示同步**：另一 Client 修改 Session 的模型或权限后，Host/SDK 视图已更新，但当前 REPL 的本地配置和状态栏没有随之刷新。本轮修复了显式设置写入与确认顺序，并避免未修改字段覆盖其他客户端的设置；这不等于完成反向同步。需通过既有 Session 视图更新本地显示，并验证两个真实客户端的一致性。2026-09-09 再扫描经真实 SDK + PTY 两次复现：Host 改为 `other-client-model` / `plan` 后，Ink 仍显示原模型 / Edits；证据见复查报告，本项仍阻塞相关验收。
@@ -367,6 +451,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
 | 330 | High | Resolved | Child Agent provider failures after tool execution collapse to `failed without output` | v0.7.95 and earlier | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
@@ -586,6 +671,51 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 333: Windows sandbox ACL grants break host OpenSSH
+
+- **Priority**: High
+- **Status**: Resolved in the working tree; not released
+- **Introduced**: confirmed in v0.7.96-beta.4 source; first affected release not established
+- **Fixed**: v0.7.96-beta.5
+- **Created**: 2026-09-10
+
+**Problem**: Windows setup and read admission included the user's `.ssh` in
+stable sandbox group/capability ACL installation. The resulting Modify grants
+caused host OpenSSH to reject its configuration and private keys.
+
+**Resolution**: Match local Codex `9688359977` profile exclusions and SSH config
+Include/IdentityFile dependencies on both read and write grant roots. Ordinary
+home/tool reads remain supported. Native admission also filters these ACL
+exclusions, including roots otherwise introduced by denyWrite. Keep the existing
+fixed four-ACE, token, IPC, WFP and independent-command concurrency mechanism;
+Codex's RX helper with its read ACL mutex was not copied.
+
+Setup generation 11 retires attributable generation-10 ACEs using old roots,
+nonce and SID, including explicit SSH child-file grants. Pending cleanup retains
+its old identity across interruption/rotation. Junctions and their descendants
+are skipped without following targets. Group membership alone is insufficient
+provenance to remove a grant. Owner, unrelated permissions and inheritance remain
+unchanged. Migration runs only in setup; ordinary admission does not clean ACLs.
+Existing generation-8/9 live-account protocol upgrades retain their behavior.
+
+**Validation**: 88 native tests passed, including actual OpenSSH rejection of a
+disposable polluted key and acceptance after cleanup, owner/DACL restoration,
+junction handling, unrelated group-grant preservation, concurrent read/write
+and warm admission. Affected TypeScript suites: 106 passed, 40 existing
+platform-conditioned skips. Source/test typechecks passed. No customer SSH file
+or account was modified; provisioning tests mock setup and are not a full
+ASRT/WFP installed-machine upgrade test.
+
+**Limits**: Unknown historical nonces, moved files or unattributable extra ACEs
+are not guessed or deleted by SID prefix. This does not grant the independent
+account transparent access to user credentials; existing host authorization
+remains available. Installed-build/customer confirmation is still required.
+
+See [final scope and evidence](research/windows-sandbox-acl-design-alternatives.md),
+[concurrency comparison](research/windows-read-acl-concurrency.md), and
+[regression guide](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
+
 <!-- Full details for each issue - REQUIRED for all issues -->
 
 ### 332: Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys
@@ -14387,7 +14517,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 211 (34 Open, 177 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 212 (34 Open, 178 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

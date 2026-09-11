@@ -38,30 +38,32 @@ describe('provider registry', () => {
   });
 
   it('returns model-specific reasoning capabilities from snapshots', () => {
+    expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-flash')).toBe('native-effort');
     expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-v4-pro')).toBe('native-effort');
     expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-v4-flash')).toBe('native-effort');
     expect(getProviderConfiguredReasoningCapability('unknown-provider')).toBe('unknown');
   });
 
-  it('tracks the current per-model DeepSeek V4 reasoning effort mapping', () => {
-    const flash = getModelCapabilities('deepseek', 'deepseek-v4-flash')?.reasoningProfile;
+  it('tracks the DeepSeek anthropic-wire effort mapping (flash and pro share one ladder)', () => {
+    const flash = getModelCapabilities('deepseek', 'deepseek-flash')?.reasoningProfile;
     const pro = getModelCapabilities('deepseek', 'deepseek-v4-pro')?.reasoningProfile;
 
-    expect(flash?.reasoningPreset).toBe('deepseek-v4-flash-openai');
-    expect(flash?.effortAliases).toEqual({
-      medium: 'high',
-      xhigh: 'high',
-    });
-    expect(pro?.reasoningPreset).toBe('deepseek-v4-pro-openai');
-    expect(pro?.effortAliases).toEqual({
-      low: 'high',
-      medium: 'high',
-      xhigh: 'max',
-    });
+    // The official Anthropic-compat endpoint parses output_config.effort
+    // with a typed enum (verified live 2026-09-10), so every selectable
+    // DeepSeek id rides the same deepseek-v4-anthropic ladder.
+    for (const profile of [flash, pro]) {
+      expect(profile?.reasoningPreset).toBe('deepseek-v4-anthropic');
+      expect(profile?.effortStrategy).toBe('anthropic-output-effort');
+      expect(profile?.effortAliases).toEqual({
+        low: 'high',
+        medium: 'high',
+        xhigh: 'max',
+      });
+    }
   });
 
   it.each([
-    ['deepseek', 'deepseek-v4-flash'],
+    ['deepseek', 'deepseek-flash'],
     ['deepseek', 'deepseek-v4-pro'],
     ['kimi-code', 'k3'],
     ['kimi-code', 'k3-256k'],
@@ -313,12 +315,11 @@ describe('provider registry', () => {
 
   // OpenAI-compat thinking-mode providers that share the deepseek
   // reasoning_content convention all opt into the replayReasoningContent
-  // flag for max fault-tolerance (deepseek empirically verified;
-  // kimi/qwen/zhipu unverified but identical failure-mode shape).
-  // OpenAI proper stays off — different protocol, would 400 on unknown
-  // field.
-  it('opts kimi/qwen/zhipu/deepseek into replayReasoningContent (and excludes openai)', () => {
-    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key');
+  // flag for max fault-tolerance (kimi/qwen/zhipu; deepseek moved to the
+  // Anthropic-compat wire on 2026-09-10 and replays thinking blocks
+  // natively). OpenAI proper stays off — different protocol, would 400
+  // on unknown field.
+  it('opts kimi/qwen/zhipu into replayReasoningContent (and excludes openai)', () => {
     vi.stubEnv('KIMI_API_KEY', 'test-key');
     vi.stubEnv('QWEN_API_KEY', 'test-key');
     vi.stubEnv('ZHIPU_API_KEY', 'test-key');
@@ -328,7 +329,6 @@ describe('provider registry', () => {
     const flagOf = (name: string): boolean | undefined =>
       (getProvider(name) as unknown as ConfigCarrier).config.replayReasoningContent;
 
-    expect(flagOf('deepseek')).toBe(true);
     expect(flagOf('kimi')).toBe(true);
     expect(flagOf('qwen')).toBe(true);
     expect(flagOf('zhipu')).toBe(true);

@@ -221,6 +221,15 @@ describe('custom providers', () => {
       model: 'deepseek-v4-flash',
       reasoningPreset: 'deepseek-v4-openai',
     });
+    // The official V4.1-Flash id gets the same flash effort ladder.
+    const flashOfficial = createCustomProvider({
+      name: 'custom-deepseek-flash-official',
+      protocol: 'openai',
+      baseUrl: 'https://deepseek.example/v1',
+      apiKeyEnv: 'CUSTOM_DEEPSEEK_FLASH_OFFICIAL_API_KEY',
+      model: 'deepseek-flash',
+      reasoningPreset: 'deepseek-v4-openai',
+    });
     const pro = createCustomProvider({
       name: 'custom-deepseek-pro',
       protocol: 'openai',
@@ -240,6 +249,10 @@ describe('custom providers', () => {
     });
 
     expect(flash.getReasoningProfile()?.effortAliases).toEqual({
+      medium: 'high',
+      xhigh: 'high',
+    });
+    expect(flashOfficial.getReasoningProfile()?.effortAliases).toEqual({
       medium: 'high',
       xhigh: 'high',
     });
@@ -1085,5 +1098,175 @@ describe('custom provider imageInput', () => {
       ...cloneConfig(OPENAI_CUSTOM),
       imageInput: 'yes' as unknown as boolean,
     })).toThrowError(/imageInput/);
+  });
+});
+
+describe('interrupted tool-turn repair reaches custom providers (cross-provider switching)', () => {
+  function anthropicStream(): AsyncIterable<unknown> {
+    return {
+      [Symbol.asyncIterator]() {
+        let index = 0;
+        const events = [{ type: 'message_start' }, { type: 'message_stop' }];
+        return {
+          next: async () => (index >= events.length
+            ? { done: true, value: undefined }
+            : { done: false, value: events[index++] }),
+        };
+      },
+    };
+  }
+
+  const interruptedHistory = [
+    { role: 'user', content: 'Run the checks.' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Running both checks.' },
+        { type: 'tool_use', id: 'call_a', name: 'bash', input: { command: 'a' } },
+        { type: 'tool_use', id: 'call_b', name: 'bash', input: { command: 'b' } },
+      ],
+    },
+    { role: 'user', content: 'continue' },
+  ];
+
+  it('synthesizes tool_results on anthropic-protocol custom providers', async () => {
+    vi.stubEnv('CUSTOM_DS_ANTHROPIC_KEY', 'test-key');
+    const create = vi.fn().mockResolvedValue(anthropicStream());
+    const provider = createCustomProvider({
+      name: 'custom-ds-anthropic',
+      protocol: 'anthropic',
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      apiKeyEnv: 'CUSTOM_DS_ANTHROPIC_KEY',
+      model: 'deepseek-flash',
+    });
+    Reflect.set(provider, '_client', { messages: { create } });
+
+    await provider.stream(interruptedHistory, [], 'system', undefined);
+
+    const wire = create.mock.calls[0]?.[0];
+    const assistant = wire.messages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistant.content.filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['call_a', 'call_b']);
+    const followUp = wire.messages[wire.messages.length - 1];
+    expect(followUp.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_a',
+      is_error: true,
+    });
+    expect(followUp.content[1]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_b',
+      is_error: true,
+    });
+  });
+
+  it('synthesizes tool messages on openai-protocol custom providers', async () => {
+    vi.stubEnv('CUSTOM_DS_OPENAI_KEY', 'test-key');
+    async function* streamChunks() {
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+    }
+    const create = vi.fn().mockImplementation((params: { stream?: boolean }) => (
+      params.stream
+        ? Promise.resolve(streamChunks())
+        : Promise.resolve({
+            choices: [
+              { message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+    ));
+    const provider = createCustomProvider({
+      name: 'custom-ds-openai',
+      protocol: 'openai',
+      baseUrl: 'https://api.deepseek.com',
+      apiKeyEnv: 'CUSTOM_DS_OPENAI_KEY',
+      model: 'deepseek-flash',
+      maxOutputTokensField: 'max_tokens',
+    });
+    Reflect.set(provider, '_client', { chat: { completions: { create } } });
+
+    await provider.stream(interruptedHistory, [], 'system', undefined);
+
+    const wire = create.mock.calls[0]?.[0];
+    expect(wire.messages.map((m: any) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+    ]);
+    expect(wire.messages[2].tool_calls.map((tc: any) => tc.id)).toEqual(['call_a', 'call_b']);
+    expect(wire.messages[3]).toMatchObject({
+      tool_call_id: 'call_a',
+      content: expect.stringContaining('[Tool Error]'),
+    });
+    expect(wire.messages[4]).toMatchObject({
+      tool_call_id: 'call_b',
+      content: expect.stringContaining('[Tool Error]'),
+    });
+  });
+});
+
+describe('non-adjacent results reach custom providers (cross-provider switching)', () => {
+  it('preserves real non-adjacent results on anthropic-protocol custom providers', async () => {
+    vi.stubEnv('CUSTOM_DS_ANTHROPIC_KEY', 'test-key');
+    let index = 0;
+    const events = [{ type: 'message_start' }, { type: 'message_stop' }];
+    const create = vi.fn().mockResolvedValue({
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => (index >= events.length
+            ? { done: true, value: undefined }
+            : { done: false, value: events[index++] }),
+        };
+      },
+    });
+    const provider = createCustomProvider({
+      name: 'custom-ds-anthropic-nonadjacent',
+      protocol: 'anthropic',
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      apiKeyEnv: 'CUSTOM_DS_ANTHROPIC_KEY',
+      model: 'deepseek-flash',
+    });
+    Reflect.set(provider, '_client', { messages: { create } });
+
+    await provider.stream(
+      [
+        { role: 'user', content: 'do x' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call_a', name: 'bash', input: {} },
+            { type: 'tool_use', id: 'call_b', name: 'bash', input: {} },
+          ],
+        },
+        { role: 'user', content: 'hold on' },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'call_a', content: 'real-a' },
+            { type: 'tool_result', tool_use_id: 'call_b', content: 'real-b' },
+          ],
+        },
+      ] as never[],
+      [],
+      'system',
+      undefined,
+    );
+
+    const wire = create.mock.calls[0]?.[0];
+    const resultsTurn = wire.messages[wire.messages.length - 1];
+    expect(resultsTurn.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_a',
+      content: 'real-a',
+    });
+    expect(resultsTurn.content[1]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_b',
+      content: 'real-b',
+    });
+    expect(JSON.stringify(wire)).not.toContain('[Tool Error]');
   });
 });
