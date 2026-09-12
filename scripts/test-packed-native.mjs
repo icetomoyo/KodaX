@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,10 +90,20 @@ try {
   } catch {
     throw new Error('Installed npm native text gate did not emit one JSON doctor report.');
   }
+  // The expected protocol is read from the source constant so the gate
+  // stays exact across protocol bumps instead of pinning a stale number.
+  const trustedTextSource = readFileSync(
+    path.join(root, 'src', 'windows-text-transaction.ts'),
+    'utf8',
+  );
+  const expectedProtocol = Number(
+    /TRUSTED_TEXT_TRANSACTION_PROTOCOL = (\d+)/.exec(trustedTextSource)?.[1],
+  );
   if (
     result.status !== 0
     || report?.trustedTextNative?.ready !== true
-    || report.trustedTextNative.protocol !== 4
+    || report.trustedTextNative.protocol !== expectedProtocol
+    || !Number.isInteger(expectedProtocol)
   ) {
     throw new Error(
       `Installed npm trusted text native gate failed (exit ${result.status}): `

@@ -216,8 +216,20 @@ function assertNativeArtifacts(dir, platformFilter = null) {
         throw new Error('ASRT runner hash does not match its manifest');
       }
     }
+    // The expected protocol is read from the source constant so the audit
+    // stays exact across protocol bumps instead of pinning a stale number.
+    const trustedTextSource = readFileSync(
+      path.join(repoRoot, 'src', 'windows-text-transaction.ts'),
+      'utf8',
+    );
+    const textTransactionProtocol = Number(
+      /TRUSTED_TEXT_TRANSACTION_PROTOCOL = (\d+)/.exec(trustedTextSource)?.[1],
+    );
+    if (!Number.isInteger(textTransactionProtocol)) {
+      throw new Error('Cannot resolve TRUSTED_TEXT_TRANSACTION_PROTOCOL from src/windows-text-transaction.ts');
+    }
     const expected = [
-      ['textTransaction', 4, textFilename],
+      ['textTransaction', textTransactionProtocol, textFilename],
       ...(platform === 'win32'
         ? [['shellSandbox', 10, 'kodax-windows-sandbox.exe']]
         : []),
