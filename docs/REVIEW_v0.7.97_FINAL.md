@@ -1,6 +1,6 @@
 # v0.7.97 交付复查（2026-09-08）
 
-> 下方保留历次评审。最新结论见文末“真实产品入口自动化验收”；此前 build/单测通过不等于实际 REPL 已验收。
+> 下方保留历次评审，旧段落中的“未修复”只描述该段固定快照。最新核验见文末“GLM 扫描报告的当前快照复核”；此前通过记录只证明其实际覆盖的场景，不能解释为所有客户端能力已对齐。
 
 **当前不能按“35/35 已完成、REPL 能力和体验不退步”验收。** 实现已有实质进展，但完成标记超出了代码和验收证据。应修复现有切片、补齐消费者，不需要再引入恢复框架。
 
@@ -729,3 +729,33 @@ Host 在现有预览总预算内先为每个保留字段预留可读片段，再
 | 最后修复后的完整 Vitest | **1,060 文件通过、1 文件跳过；15,596 passed、77 skipped、21 todo，零失败**；719.72 秒，exit 0，`.regression-full-complete.log`。第二轮的两个失败均已修复并在本轮通过。 |
 
 以上 PTY 结果均核对 `results.json` 的通过/失败计数及进程 exit 0。源码与打包入口分别验收，不以一个入口替代另一个；不把启动、退出与单元测试数相加冒充功能覆盖率。最后生产增量经独立 Standards、Spec 复查，各为 0 项发现，随后冻结生产代码，重新构建、类型检查、完整 Vitest 与三组 PTY 均通过。临时诊断和专用验证 HOME 已清理，用户原有 Host/Session 未重启或改写；本节不豁免上节记录的强制 legacy renderer 搜索、跨平台实机和覆盖率等验收边界。
+
+## 2026-09-12：GLM 扫描报告的当前快照复核
+
+本节只复核报告，没有修改产品代码或正式测试。固定实现 `2c6cbffb`；本地主分支 `c61914bf`（12:52 的 FEATURE_299），共同基线 `6886f96f`。当前提交关系为主线独有 1 / 本分支独有 181，未 fetch、未合并。三路只读复核分别检查显示链、命令/计划交互和执行/one-shot，主 Agent 核对历史状态及队列产物。
+
+| GLM 项目 | 当前判断 | 核验依据与最小处理方向 |
+| --- | --- | --- |
+| A Todo、children、AMA 后台条、cost、模型 workflow | **存在实质遗漏**，但不能全部归为 Ink 没消费 | `session-view.ts:301/353/383` 已投 cost/children/todos；Ink 的对应面板与 `/cost` 仍依赖旧本地 refs/state（`InkREPL.tsx:2286/2437/4178/10641`），plane 分支绕过其更新。AMA 后台条还缺旧展示必需的 childFanoutClass；模型 `run_workflow` 的进度只到 workflow 事件域、digest 只到外部 callback（`sdk-runtime.ts:18770/18777`），未进入对应产品展示链。应复用已有面板和 workflow 订阅，补事实及接线。AMA 主状态栏和显式 `/workflow` 已有消费，不能称全部失效。 |
+| B UI idle、Host busy | **存在 UI 事实消费缺口**；Host 忙时保护仍正确 | `InkREPL.tsx:1830–1838` observe 更新 view/history，却不更新本地 isLoading；输入提示及提交分支仍读该状态（3754/9638）。重新挂接或另一 Client 启动同 Session 可显示 idle；后继 Run 晚于 `client-plane.ts:300–309` 的 600ms 观察窗也有同类条件窗口，尚未复现 GLM 所指具体自动续跑时序。Host-only 命令帮助另被放在 idle gate 内。应消费 Host 活跃事实、分开帮助读取与执行；不能删除 review/compact/goal 修改的 busy 保护。 |
+| C `/mcp`、`/extensions` 不可用 | **成立** | `commands.ts:844/1003` 仍读客户端本地 extension runtime，旧默认 CLI 的初始化已迁到 Host。MCP 已有 ProductClient face（`client-runtime-adapter.ts:188`），需接消费者；扩展诊断须承接 Host 的现有注册事实，不能在 CLI 再建 runtime。 |
+| D `!command` 回退直连 exec | **当前与新主线有差异，回归归因错误** | 当前 `shell-executor.ts` 与共同基线完全相同；主分支 FEATURE_299 才新增 owner callback/bash 工具轮。本版原设计 344 仍描述本地只读捷径。将其列为待合入主线能力和合并保护项，不能把它算成本轮删除旧实现；合并时应保持新主线执行、权限、记录语义。 |
+| E one-shot | **需拆开判断** | busy immediate 在 `sdk-runtime.ts:10934` 已直接 conflict，并非先接受后丢 runId；现契约明确此边界，主线本身会排队，也非无限制直跑。无交互审批等待则成立：旧默认 CLI 立即拒绝，当前 `run-progress-events.ts:381` 不应答，one-shot 只 await；确需人工、无人回答/停止且未覆盖超时时会等默认五分钟。应明确无交互处理，不能自动放行或修改全局权限。 |
+| F 计划批准正文 | **能力承接不足，比单一正文映射更深** | inputPreview 已投射，但 Ink/classic 将其包装为 input 字段，旧确认渲染器读取 plan（`tool-confirmation.ts:225`）。上游 `sdk-runtime.ts:13088/13280` 还因没有 exitPlanMode callback 隐藏官方工具；旧默认入口有真实批准处理。需要把计划审批与正文承接到已有 Host Interaction，并由 Host 改模式；仅解析截断 preview 不足以修复。 |
+| G 队列两路径竞争 | **当前证据不足，不能确认为仍存竞态** | 两份 GLM 产物生成于 12:38/13:01，跨越修复过程，未记录可比的构建身份。当前明确存在 `consumePendingInputs → SessionInputQueue.consumePlainBatch` 的 SA/AMA 交付链，不再是找不到路径。当前固定构建下的重复结果见下文。 |
+
+### Standards
+
+D 的回归归因不成立；E 的无交互审批等待是一个已确认行为风险。未发现需要增加锁、升级选举或第二执行器的理由。此轴确认 1 组当前行为问题（E 的无交互审批），优先级 P1；该计数不把已合规的 busy 拒绝算作问题。
+
+### Spec
+
+确认 A/B/C/F 共 4 组当前缺口，最高 P1。对应 FEATURE_298 的显示不退步（266/448/819）、批准计划后由 Host 改模式（459）与 MCP/extensions 实际资源承接（1091）。这些接线大多不在上一轮修复 diff 内；上一轮两轴对该 diff 的 0 finding，不能覆盖此次跨主线行为复核。
+
+### 队列复验与旧台账更正
+
+原脚本在当前 110 列 standalone 模式的一次失败产物为 `kodax-repl-acceptance-cwmOVO`：Host 已是 AMA，终端页脚只显示 `AM`，等待完整 `AMA` 字样超时；尚无 Run、无排队输入。该失败不是消费失败。诊断副本仅固定 160 列，保留全部队列断言，连续三次 startup / 同 Run 下一模型请求收到且仅收到一次输入 / 正常退出均通过：`dlXuM2`、`fEl7AQ`、`3f7yc5`。执行前后 HEAD 一致，`dist/sdk-runtime.js` SHA-256 均为 `494C445D4066FDAE29E0DAF6C22ACB655E23AE2BDA647F64E87F75491742B1ED`。没有修改正式脚本；其 standalone 窄屏前置检查仍需修正。三次通过不能证明不存在任何竞态，但不能用此次宽度失败支持 G 的“两路径竞争”推断。
+
+报告所列“约 15 项仍未修复”不能整体沿用。例如 R2 观察状态、R3 上下文预算、R4 搜索全文和 R5 steer 附件已接入当前契约，`2c6cbffb` 完整测试中的 observe/history/steer 用例分别 5/5 通过，另有 resubscribe 7/7、tool-results 5/5。unknown、Run 模型可变性、stop/failed 保留队列和 steer 不可撤回也已写入当前说明；跨页 call/result 已有相邻读取。其余旧台账应逐项对当前实现核销，不能据此声称全部关闭；legacy renderer 历史跳转仍保留原记录。
+
+后续应先将新主线 FEATURE_299 列入合并基线，再按 A/B/C/E/F 的真实消费者逐项补最小接线及端到端验收。尤其补 Todo/children/cost、模型 workflow、重新挂接活动 Run、MCP/extensions、计划批准正文和 headless 权限的实际出口；不再以“字段到达 SDK”或手工 props 的组件测试替代整链行为验证。
