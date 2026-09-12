@@ -282,6 +282,7 @@ describe("createKodaXRuntime", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     _resetMessageQueueForTests();
     _resetActiveRootQueueRoutesForTests();
     await fs.rm(tempRoot, {
@@ -19073,6 +19074,7 @@ describe("createKodaXRuntime", () => {
   it("runs Full Access without a sandbox or Auto reviewer while enforcing Exec Policy", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const configHome = path.join(tempRoot, ".kodax");
+    vi.stubEnv("KODAX_HOME", configHome);
     await fs.mkdir(configHome, { recursive: true });
     await fs.writeFile(
       path.join(configHome, "exec-policy.jsonc"),
@@ -19137,6 +19139,19 @@ describe("createKodaXRuntime", () => {
       gitRoot: runOptions.context?.gitRoot ?? undefined,
     });
     expect(directResult).toContain("full-access-direct");
+    const generatedPath = path.join(tempRoot, "full-access-generated.txt");
+    await fs.writeFile(generatedPath, "disposable Full Access regression fixture");
+    const cleanupCommand = process.platform === "win32"
+      ? `powershell -NoProfile -Command "Remove-Item -LiteralPath '${generatedPath.replaceAll("'", "''")}' -Force"`
+      : `rm -f -- '${generatedPath.replaceAll("'", "'\\''")}'`;
+    const cleanupResult = await toolBash({ command: cleanupCommand }, {
+      backups: new Map(),
+      toolCallId: "bash_full_cleanup",
+      ...runOptions.context,
+      gitRoot: runOptions.context?.gitRoot ?? undefined,
+    });
+    expect(cleanupResult).not.toContain("[Blocked]");
+    await expect(fs.access(generatedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(callerPrepare).not.toHaveBeenCalled();
     expect(replMock.bootstrapAutoMode).not.toHaveBeenCalled();
     await expect(runOptions.events?.beforeToolExecute?.(
@@ -19149,7 +19164,7 @@ describe("createKodaXRuntime", () => {
       { command: "git push --force origin main" },
       { sessionId: session.id, toolId: "bash_full_forbidden" },
     )).resolves.toBe(true);
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
+    const forbidden = await runOptions.context?.authorizeShellHostExecution?.({
       toolCallId: "bash_full_forbidden",
       toolInput: { command: "git push --force origin main" },
       command: "git push --force origin main",
@@ -19157,7 +19172,13 @@ describe("createKodaXRuntime", () => {
       executable: "git",
       args: ["push", "--force", "origin", "main"],
       reason: "direct-host",
-    })).resolves.toMatch(/Exec Policy forbids/i);
+    });
+    expect(JSON.parse(String(forbidden))).toMatchObject({
+      code: "exec_policy_forbidden", denialSource: "explicit_rule", source: "user",
+      sourcePath: path.join(configHome, "exec-policy.jsonc"), permissionMode: "full-access",
+      retryable: false, matchedRules: [expect.objectContaining({ decision: "forbidden" }), expect.any(Object)],
+      remediation: [{ action: "contact_policy_owner" }],
+    });
     await expect(runOptions.context?.authorizeShellHostExecution?.({
       toolCallId: "bash_full_qualified",
       toolInput: { command: "git status --short" },
@@ -19181,7 +19202,9 @@ describe("createKodaXRuntime", () => {
       args: ["push", "origin", "main"],
       reason: "direct-host",
     });
-    await expect(prompted).resolves.toMatch(/cannot prompt under Full Access/i);
+    expect(JSON.parse(String(await prompted))).toMatchObject({
+      code: "exec_policy_prompt_unavailable", source: "user", permissionMode: "full-access",
+    });
     await expect(runtime.permissions.listPending({ runId: handle.runId }))
       .resolves.toEqual([]);
 
@@ -19190,6 +19213,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("re-routes Bash through live permission mode changes within an active Run", async () => {
+    vi.stubEnv("KODAX_HOME", path.join(tempRoot, ".kodax"));
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const projectRoot = path.join(tempRoot, "live-permission-mode");
     await fs.mkdir(projectRoot, { recursive: true });

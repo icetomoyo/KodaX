@@ -25,6 +25,14 @@ pub fn validate_windows_target(
     trusted_root: &str,
     target: &str,
 ) -> Result<ValidatedWindowsTarget, TextTransactionError> {
+    validate_windows_target_with_policy(trusted_root, target, false)
+}
+
+pub fn validate_windows_target_with_policy(
+    trusted_root: &str,
+    target: &str,
+    allow_git_metadata: bool,
+) -> Result<ValidatedWindowsTarget, TextTransactionError> {
     let root = screen_absolute_path(trusted_root)?;
     let target = screen_absolute_path(target)?;
     if !root.drive.eq_ignore_ascii_case(&target.drive)
@@ -41,9 +49,10 @@ pub fn validate_windows_target(
         ));
     }
     let relative_components = target.components[root.components.len()..].to_vec();
-    if relative_components
-        .iter()
-        .any(|component| windows_namespace_key(component) == ".GIT")
+    if !allow_git_metadata
+        && relative_components
+            .iter()
+            .any(|component| windows_namespace_key(component) == ".GIT")
     {
         return Err(TextTransactionError::new(
             TextTransactionErrorCode::UnauthorizedPath,

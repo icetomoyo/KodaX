@@ -3,6 +3,7 @@
  */
 
 import * as readline from 'readline';
+import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -21,6 +22,7 @@ import {
   KodaXReasoningMode,
   mergeArtifactLedger,
   runManagedTask,
+  runToolInvocation,
   resolveRepoIntelligenceRuntimeConfig,
   KodaXError,
   KodaXRateLimitError,
@@ -141,7 +143,7 @@ import { getSkillRegistry, initializeSkillRegistry } from '@kodax-ai/agent';
 import { ReadlineUIContext } from '../ui/readline-ui.js';
 import { extractLastAssistantText, extractTitle as extractSessionTitle } from '../ui/utils/message-utils.js';
 import { prepareRootCompactionLineage } from '../ui/utils/compaction-commit.js';
-import { executeShellCommand, isShellCommandHandled } from '../ui/utils/shell-executor.js';
+import { executeShellCommand, isShellCommandHandled, type ShellExecutorConfig } from '../ui/utils/shell-executor.js';
 import { prepareInvocationExecution } from './invocation-runtime.js';
 import {
   resolveConfirm,
@@ -483,7 +485,7 @@ export async function saveClassicSession(
 }
 
 // REPL options - REPL 选项
-export interface ReplRuntimeRunnerInput {
+export interface ReplRuntimeRunnerInput extends RuntimeStopCallbacks {
   readonly options: KodaXOptions;
   readonly prompt: string;
   readonly sessionId: string;
@@ -530,6 +532,17 @@ const costReportRef: { current: (() => string) | null } = { current: null };
 
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
+  let activeStop: RuntimeStopControl | undefined;
+  const hostRunner = options.runtimeRunner;
+  if (hostRunner) {
+    options = { ...options, runtimeRunner: (input) => hostRunner({ ...input,
+      onStopControl: (control) => { activeStop = control; },
+      onStopState: (state, detail) => {
+        if (state === 'rejected') process.stderr.write(`\n[Stop rejected] ${detail ?? ''}\n`);
+        else process.stdout.write(`\n[Stop ${state}] ${detail ?? ''}\n`);
+      },
+    }) };
+  }
   const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
   const startupGitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
@@ -1568,6 +1581,32 @@ Keyboard Shortcuts:
     ui: new ReadlineUIContext(rl),
   };
 
+  const executeOwnedTool: NonNullable<CommandCallbacks['executeToolInvocation']> = async (invocation, prompt) => {
+    const controller = new AbortController();
+    const invocationOptions = { ...(callbacks.createKodaXOptions?.() ?? currentOptions),
+      toolInvocation: invocation, abortSignal: controller.signal };
+    const localControl: RuntimeStopControl = { request: async () => {
+      controller.abort(new Error('Stopped by user'));
+      process.stdout.write('\n[Stop accepted]\n');
+      return { state: 'unknown' };
+    } };
+    if (!options.runtimeRunner) activeStop = localControl;
+    try {
+      const result = await runAgentRound(invocationOptions, context, prompt, context.messages,
+        undefined, options.runtimeRunner, currentPermissionMode, requestRuntimePermission);
+      context.messages = result.messages;
+      context.lineage = createSessionLineage(result.messages, context.lineage);
+      applyRuntimeSessionSnapshot(context, result);
+      if (!options.runtimeRunner) await callbacks.saveSession?.();
+      if (controller.signal.aborted) process.stdout.write('\n[Stop confirmed]\n');
+      return result;
+    } finally { if (activeStop === localControl) activeStop = undefined; }
+  };
+
+  callbacks.executeToolInvocation = executeOwnedTool;
+  const executeManualShell: NonNullable<ShellExecutorConfig['execute']> = (command) =>
+    executeOwnedTool({ name: 'bash', input: { command } }, `!${command}`);
+
   const appendPersistedUiHistoryItem = async (item: KodaXSessionUiHistoryItem): Promise<void> => {
     context.uiHistory = [...(context.uiHistory ?? []), item];
     const title = context.title || extractTitle(context.messages);
@@ -1626,6 +1665,14 @@ Keyboard Shortcuts:
 
   // Handle Ctrl+C - 处理 Ctrl+C
   rl.on('SIGINT', async () => {
+    if (activeStop) {
+      try { await activeStop.request(); }
+      catch (error: unknown) {
+        emitKodaXDiagnostic({ source: 'repl:stop', level: 'error',
+          message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
     console.log(chalk.dim('\n\n[Press /exit to quit]'));
     rl.prompt();
   });
@@ -1864,6 +1911,7 @@ Keyboard Shortcuts:
         const processed = await processSpecialSyntax(
           trimmed,
           currentOptions.context?.executionCwd,
+          executeManualShell,
         );
         if (trimmed.startsWith('!') && isShellCommandHandled(processed)) {
           continue;
@@ -2048,6 +2096,7 @@ Keyboard Shortcuts:
     const processed = await processSpecialSyntax(
       trimmed,
       currentOptions.context?.executionCwd,
+      executeManualShell,
     );
 
     // Shell command handling: Warp style - Shell 命令处理：Warp 风格
@@ -2156,6 +2205,7 @@ Keyboard Shortcuts:
 export async function processSpecialSyntax(
   input: string,
   executionCwd: string = process.cwd(),
+  execute?: ShellExecutorConfig['execute'],
 ): Promise<string> {
   // @path syntax: attach image artifacts to context - @path 语法：将图片工件附加到上下文
   const fileRefs = input.match(/@[\w./-]+/g);
@@ -2170,7 +2220,7 @@ export async function processSpecialSyntax(
   // !command syntax: execute shell command - !command 语法：执行 shell 命令
   if (input.startsWith('!')) {
     const command = input.slice(1).trim();
-    return executeShellCommand(command, { cwd: executionCwd });
+    return executeShellCommand(command, { cwd: executionCwd, execute });
   }
 
   return input;
@@ -2319,7 +2369,9 @@ async function runAgentRound(
       legacyPermissionHook: true,
     });
   }
-  return runManagedTask(runOptions, prompt);
+  return runOptions.toolInvocation
+    ? runToolInvocation(runOptions, runOptions.toolInvocation, prompt)
+    : runManagedTask(runOptions, prompt);
 }
 
 // Extract title from messages - 从消息中提取标题

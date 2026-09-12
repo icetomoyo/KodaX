@@ -647,171 +647,26 @@ describe('Context Management Detailed', () => {
 // ============== 特殊语法处理测试 ==============
 
 describe('processSpecialSyntax', () => {
-  it('should return input unchanged for normal text', async () => {
-    const result = await processSpecialSyntax('hello world');
-    expect(result).toBe('hello world');
+  it.each(['hello world', 'how do I fix this bug?', '@./src/file.ts', 'check @./src/file.ts'])('preserves ordinary input: %s', async (input) => {
+    expect(await processSpecialSyntax(input)).toBe(input);
   });
-
-  it('should return input unchanged for code questions', async () => {
-    const result = await processSpecialSyntax('how do I fix this bug?');
-    expect(result).toBe('how do I fix this bug?');
+  it.each(['echo hello', 'node -e "void(0)"', 'Remove-Item -Force file', 'echo one | more'])('requires a Session execution owner for %s', async (command) => {
+    expect(await processSpecialSyntax(`!${command}`)).toContain('runtime_execution_unavailable');
   });
-
-  it('should execute shell command with ! prefix', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!echo hello');
-
-    expect(result).toContain('[Shell command executed: echo hello]');
-    expect(result).toContain('hello');
-    expect(consoleSpy).toHaveBeenCalled();
-
-    consoleSpy.mockRestore();
+  it('delegates the exact command and surfaces the owned result', async () => {
+    const execute = vi.fn(async () => ({ success: true, lastText: 'hello' }));
+    expect(await processSpecialSyntax('!echo hello', undefined, execute)).toContain('[Shell command executed: echo hello]');
+    expect(execute).toHaveBeenCalledExactlyOnceWith('echo hello');
   });
-
-  it('should block direct shell commands that execute arbitrary code', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!node -e "void(0)"');
-
-    expect(result).toContain('[Blocked]');
-    expect(result).toContain('safe read-only commands');
-
-    consoleSpy.mockRestore();
+  it('surfaces a rejected owned command without trying another spelling', async () => {
+    const execute = vi.fn(async () => ({ success: false, lastText: '[Blocked] explicit rule' }));
+    expect(await processSpecialSyntax('!Remove-Item -Force file', undefined, execute)).toContain('[Shell command failed: Remove-Item -Force file]');
+    expect(execute).toHaveBeenCalledTimes(1);
   });
-
-  it('should report failures for safe read-only shell commands', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!git show definitely-not-a-real-ref-12345');
-
-    expect(result).toContain('[Shell command failed: git show definitely-not-a-real-ref-12345]');
-    expect(result).toContain('Error:');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle empty shell command', async () => {
-    const result = await processSpecialSyntax('!');
-    expect(result).toBe('[Shell: No command provided]');
-  });
-
-  it('should handle shell command with only whitespace', async () => {
-    const result = await processSpecialSyntax('!   ');
-    expect(result).toBe('[Shell: No command provided]');
-  });
-
-  it('should handle shell command with arguments', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!echo test1 test2');
-
-    expect(result).toContain('[Shell command executed: echo test1 test2]');
-    expect(result).toContain('test1 test2');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle multi-line shell output', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!echo line1 && echo line2');
-
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('line1');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should block direct shell commands that rely on custom stderr-producing code', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!node -e "console.error(\'stderr output\')"');
-
-    expect(result).toContain('[Blocked]');
-    expect(result).toContain('safe read-only commands');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle shell command with special characters', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!echo "hello $WORLD"');
-
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('hello');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle shell command with quotes', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!echo "hello world"');
-
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('hello world');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should block shell commands that use pipes', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!node -e "console.log(\'hello\')"');
-
-    expect(result).toContain('[Blocked]');
-    expect(result).toContain('safe read-only commands');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should block direct shell commands that are not on the read-only allowlist', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!nonexistentcommand12345');
-
-    expect(result).toContain('[Blocked]');
-    expect(result).toContain('safe read-only commands');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should return @file syntax unchanged (not implemented yet)', async () => {
-    const result = await processSpecialSyntax('@./src/file.ts');
-    // @file syntax is not implemented yet, so it should return unchanged
-    expect(result).toBe('@./src/file.ts');
-  });
-
-  it('should handle input with @file and normal text', async () => {
-    const result = await processSpecialSyntax('check @./src/file.ts for bugs');
-    // @file syntax is not implemented yet, so it should return unchanged
-    expect(result).toBe('check @./src/file.ts for bugs');
-  });
-
-  it('should handle shell command with cd', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!cd . && echo success');
-
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('success');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle git command', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!git rev-parse --is-inside-work-tree');
-
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('true');
-
-    consoleSpy.mockRestore();
-  });
-
-  it('should handle npm command', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!npm --version');
-
-    expect(result).toContain('[Shell command executed:');
-    // npm version should be a number-like string
-    expect(result).toMatch(/\d+\.\d+\.\d+/);
-
-    consoleSpy.mockRestore();
+  it.each(['!', '!   '])('handles an empty command: %s', async (input) => {
+    expect(await processSpecialSyntax(input)).toBe('[Shell: No command provided]');
   });
 });
-
 // ============== Shell 命令跳过逻辑测试 (Bug 1 修复验证) ==============
 // Warp 风格：成功执行 → 跳过，空命令 → 跳过，失败/错误 → 发送给 LLM
 
@@ -828,7 +683,7 @@ describe('Shell Command Skip Logic (Warp Style)', () => {
 
   it('should skip successful shell command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const processed = await processSpecialSyntax('!echo hello');
+    const processed = await processSpecialSyntax('!echo hello', undefined, async () => ({ success: true, lastText: 'hello' }));
 
     expect(shouldSkipShellCommand('!echo hello', processed)).toBe(true);
     consoleSpy.mockRestore();

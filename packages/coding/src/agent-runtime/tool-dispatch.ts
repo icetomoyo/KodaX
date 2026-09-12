@@ -122,9 +122,12 @@ import {
   type ToolGuardrail,
 } from '@kodax-ai/agent';
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
+import { randomUUID } from 'node:crypto';
+import { getExtensionExecutionScope, withExtensionExecutionScope } from '../extensions/execution-scope.js';
 import {
   executeTool,
   getToolDefinition,
+  getRegisteredToolDefinition,
   resolveToolBridgeTarget,
   TOOL_CALL_NAME,
   TOOL_DESCRIBE_NAME,
@@ -267,6 +270,9 @@ export async function executeToolCall(
     return `[Tool Error] ${toolCall.name}: Host tool lease was revoked or the tool is no longer bound to this run.`;
   }
   const ctxWithToolHooks = createContextForToolCall(events, toolCall, ctx);
+  ctxWithToolHooks.invokeCheckedTool = ctx.invokeCheckedTool ?? ((name, input) => executeToolCall(
+    events, { id: randomUUID(), name, input }, ctx, runtimeSessionState, activeToolNames, abortSignal,
+  ));
 
   events.onToolExecutionStart?.(
     { id: toolCall.id, name: toolCall.name },
@@ -274,9 +280,10 @@ export async function executeToolCall(
   );
   let result: ToolResult;
   try {
-    result = runScopedDefinition === undefined
-      ? await executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
-      : await executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {});
+    const execute = () => runScopedDefinition === undefined
+      ? executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
+      : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {});
+    result = await executeInExtensionScope(toolCall, ctxWithToolHooks, abortSignal, events, execute);
 
     // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
     if (toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
@@ -294,6 +301,24 @@ export async function executeToolCall(
     );
   }
   return result;
+}
+
+function executeInExtensionScope(
+  call: RunnableToolCall, ctx: KodaXToolExecutionContext, signal: AbortSignal | undefined,
+  events: KodaXEvents, execute: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  if (!ctx.sessionId || !ctx.runtimeRunId || !ctx.invokeCheckedTool) return execute();
+  const identity = { version: 1 as const, sessionId: ctx.sessionId, runId: ctx.runtimeRunId,
+    invocationId: call.id, extensionId: getRegisteredToolDefinition(call.name)?.source.id ?? `tool:${call.name}` };
+  return withExtensionExecutionScope({ ...identity, signal: signal ?? ctx.abortSignal ?? new AbortController().signal,
+    actors: ctx.actorControl, invokeTool: ctx.invokeCheckedTool,
+    reportProgress: (progress) => {
+      if (events.onToolProgress) events.onToolProgress({ id: call.id, message: progress.message,
+        extension: { ...identity, extensionId: getExtensionExecutionScope()?.extensionId ?? identity.extensionId,
+          data: progress.data } }, createToolEventMeta(events, call.id));
+      else ctx.reportToolProgress?.(progress.message);
+    },
+  }, (scope) => { ctx.extensionExecution = scope; return execute(); });
 }
 
 export function createToolEventMeta(
@@ -450,6 +475,10 @@ async function executeBridgeToolCall(input: {
   }
 
   const ctxWithToolHooks = createContextForToolCall(input.events, targetCall, input.ctx);
+  ctxWithToolHooks.invokeCheckedTool = input.ctx.invokeCheckedTool ?? ((name, parameters) => executeToolCall(
+    input.events, { id: randomUUID(), name, input: parameters }, input.ctx, input.runtimeSessionState,
+    input.activeToolNames ? [...input.activeToolNames] : undefined, input.abortSignal,
+  ));
   const recordTargetArtifact = ctxWithToolHooks.recordToolResultArtifact;
   if (recordTargetArtifact !== undefined) {
     ctxWithToolHooks.recordToolResultArtifact = (toolCallId, outputPath) => {
@@ -467,9 +496,10 @@ async function executeBridgeToolCall(input: {
   );
   let result: ToolResult;
   try {
-    result = runScopedTarget === undefined
-      ? await executeTool(targetName, targetInput, ctxWithToolHooks)
-      : await executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput);
+    result = await executeInExtensionScope(targetCall, ctxWithToolHooks, input.abortSignal, input.events,
+      () => runScopedTarget === undefined
+        ? executeTool(targetName, targetInput, ctxWithToolHooks)
+        : executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput));
     if (toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(targetName, targetInput, input.ctx);
       if (fallbackResult !== undefined) result = fallbackResult;
@@ -675,10 +705,18 @@ async function executePreparedToolCall(
   input: RunToolDispatchInput,
   call: RunnerToolCall,
 ): Promise<ToolResult> {
+  const ctx = { ...input.ctx, invokeCheckedTool: async (name: string, parameters: Record<string, unknown>) => {
+    const id = randomUUID();
+    const results = await runToolDispatch({ ...input,
+      toolBlocks: [{ type: 'tool_use', id, name, input: parameters }],
+      finalToolBlocks: undefined, onToolCallsPrepared: undefined,
+    });
+    return results.get(id) ?? '[Tool Error] Nested tool did not return a result.';
+  } };
   let content = await executeToolCall(
     input.events,
     call,
-    input.ctx,
+    ctx,
     input.runtimeSessionState,
     input.activeToolNames,
     input.abortSignal,

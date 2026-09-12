@@ -2129,6 +2129,7 @@ describe('workflowCommand saved capsule preflight', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'wf-command-'));
+    vi.stubEnv('KODAX_HOME', join(dir, '.kodax'));
     workflowRunsDir = getAgentConfigPath('workflow-runs', deriveProjectKeyFromRoot(dir).key);
     previousCwd = process.cwd();
     process.chdir(dir);
@@ -2140,6 +2141,7 @@ describe('workflowCommand saved capsule preflight', () => {
     process.chdir(previousCwd);
     rmSync(dir, { recursive: true, force: true });
     rmSync(workflowRunsDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it('refuses non-terminal persisted workflow runs unless --force is explicit', async () => {

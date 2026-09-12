@@ -1,4 +1,5 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type {
   LocalToolDefinition,
@@ -14,6 +15,21 @@ import { BUILTIN_TOOL_DEFINITIONS } from './tool-definitions.js';
 import { safeFallbackToClassifierInput } from './classifier-projection.js';
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
 const TOOL_REGISTRY: ToolRegistry = new Map();
+const toolSnapshots = new AsyncLocalStorage<ReadonlyMap<string, RegisteredToolDefinition>>();
+const runtimeToolOwners = new WeakMap<RegisteredToolDefinition, object>();
+
+export function withToolRegistrySnapshot<T>(execute: () => Promise<T>, owners?: readonly object[]): Promise<T> {
+  const snapshot = new Map<string, RegisteredToolDefinition>();
+  for (const [name, records] of TOOL_REGISTRY) {
+    const newestFirst = [...records].reverse();
+    let active = owners === undefined ? records.at(-1) : newestFirst.find((record) => !runtimeToolOwners.has(record));
+    for (const owner of owners ?? []) {
+      active = newestFirst.find((record) => runtimeToolOwners.get(record) === owner) ?? active;
+    }
+    if (active) snapshot.set(name, active);
+  }
+  return toolSnapshots.run(snapshot, execute);
+}
 let nextToolRegistrationId = 0;
 
 const VALID_SIDE_EFFECTS = new Set<ToolSideEffect>([
@@ -76,6 +92,8 @@ function toToolDefinition(definition: RegisteredToolDefinition): KodaXToolDefini
 }
 
 function getActiveToolRegistration(name: string): RegisteredToolDefinition | undefined {
+  const snapshot = toolSnapshots.getStore();
+  if (snapshot) return snapshot.get(name);
   const registrations = TOOL_REGISTRY.get(name);
   if (!registrations || registrations.length === 0) {
     return undefined;
@@ -122,6 +140,7 @@ function registerToolInternal(
   };
 
   const existing = TOOL_REGISTRY.get(normalized.name) ?? [];
+  if (options.runtimeOwner) runtimeToolOwners.set(registration, options.runtimeOwner);
   TOOL_REGISTRY.set(normalized.name, [...existing, registration]);
 
   return () => {
@@ -380,7 +399,7 @@ export function getRequiredToolParams(name: string): string[] {
 }
 
 export function listTools(): string[] {
-  return Array.from(TOOL_REGISTRY.keys())
+  return Array.from((toolSnapshots.getStore() ?? TOOL_REGISTRY).keys())
     .filter((name) => getActiveToolRegistration(name) !== undefined)
     .sort((left, right) => left.localeCompare(right));
 }
@@ -478,6 +497,9 @@ export async function executeTool(
     // Standard tool (Promise<ToolResult>): await as before
     return await (result as Promise<ToolResult>);
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'text_mutation_policy_denied') {
+      return `[Blocked] ${JSON.stringify({ ...error, message: error.message, retryable: false })}`;
+    }
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (errorMsg.includes('ENOENT')) {
       return `[Tool Error] ${name}: File or directory not found`;

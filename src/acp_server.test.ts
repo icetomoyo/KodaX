@@ -142,6 +142,7 @@ import {
   type KodaXAcpServerOptions,
 } from './acp_server.js';
 import { createKodaXRuntime } from './sdk-runtime.js';
+import { FileSessionStorage } from '@kodax-ai/repl';
 
 type PromptRequestWithEffort = PromptRequest & {
   effort?: string;
@@ -166,7 +167,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
   const testServers = new Set<KodaXAcpServer>();
 
   function createTestServer(options: KodaXAcpServerOptions): KodaXAcpServer {
-    const server = new KodaXAcpServer({ homeDir: testHome, ...options });
+    const server = new KodaXAcpServer({ homeDir: testHome, storage: new FileSessionStorage({ sessionsDir: path.join(testHome, 'sessions'), configHome: testHome }), ...options });
     testServers.add(server);
     return server;
   }
@@ -421,7 +422,12 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
         return runs.length === 2 && runs.some((run) => run.phase === 'queued');
       });
 
+      const cancel = vi.spyOn(runtime.sessions, 'cancel');
+      cancel.mockRejectedValueOnce(new Error('control transport unavailable'));
+      await expect(server.cancel({ sessionId })).rejects.toThrow('control transport unavailable');
+      expect(abortSpies[0]).not.toHaveBeenCalled();
       await server.cancel({ sessionId });
+      expect(cancel.mock.calls[1]?.[0]).toEqual(cancel.mock.calls[0]?.[0]);
 
       await expect(expectSettles(first, 'first cancelled prompt')).resolves.toMatchObject({
         stopReason: 'cancelled',

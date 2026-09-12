@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseBashCommand } from './bash-ast.js';
+import type { KodaXShellPermissionMode } from '../types.js';
 
 export type ExecPolicyDecision = 'allow' | 'prompt' | 'forbidden';
 export type ExecPolicySource = 'admin' | 'user' | 'project' | 'bundled';
@@ -36,16 +37,95 @@ export type ExecPolicyRuleInput = Omit<
 
 export interface ExecPolicyOperation {
   readonly tokens: readonly string[];
+  readonly permissionMode?: KodaXShellPermissionMode;
   readonly hostExecutable?: string;
   readonly network?: readonly string[];
   readonly compound?: boolean;
 }
+
+type ShellPolicyFacts = Pick<ExecPolicyOperation, 'hostExecutable' | 'network' | 'permissionMode'>;
 
 export interface ExecPolicyEvaluation {
   readonly decision: ExecPolicyDecision | 'unmatched';
   readonly justification?: string;
   readonly matched: readonly ExecPolicyRule[];
   readonly criticalFallback: boolean;
+}
+
+/** JSON returned as the Bash tool's text result by Runtime and standalone hosts. */
+export interface ExecPolicyRejection {
+  readonly code: 'exec_policy_forbidden' | 'exec_policy_prompt_unavailable' | 'exec_policy_invalid';
+  readonly message: string;
+  readonly denialSource: 'explicit_rule' | 'builtin_fallback' | 'policy_configuration';
+  readonly source?: ExecPolicySource;
+  readonly sourcePath?: string;
+  readonly permissionMode?: KodaXShellPermissionMode;
+  readonly matchedRules: readonly ExecPolicyRule[];
+  readonly retryable: false;
+  readonly remediation: readonly {
+    readonly action: 'contact_policy_owner' | 'change_permission_mode' | 'request_explicit_authorization' | 'repair_policy';
+    readonly description: string;
+  }[];
+  readonly guidance: string;
+}
+
+const EXEC_POLICY_REJECTION_GUIDANCE = 'This is a KodaX Exec Policy decision, not evidence of an OS or machine restriction. '
+  + 'Do not rewrite commands, switch interpreters, or create scripts to bypass this rejection. '
+  + 'Do not edit policy or change permission mode without explicit user authorization.';
+
+export function formatExecPolicyRejection(
+  evaluation: ExecPolicyEvaluation,
+  permissionMode?: KodaXShellPermissionMode,
+): string {
+  const rule = evaluation.matched[0];
+  const builtin = rule?.source === 'bundled';
+  const prompt = evaluation.decision === 'prompt';
+  const ownerAction = {
+    action: 'contact_policy_owner' as const,
+    description: `Ask the ${rule?.source ?? 'configured'} policy owner to review the matched rule at ${rule?.sourcePath ?? 'its source'}. Start a new Run after an authorized policy change.`,
+  };
+  const rejection: ExecPolicyRejection = {
+    code: prompt ? 'exec_policy_prompt_unavailable' : 'exec_policy_forbidden',
+    message: prompt
+      ? `[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access. ${evaluation.justification ?? ''}`
+      : `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? 'no justification supplied'}`,
+    denialSource: builtin ? 'builtin_fallback' : 'explicit_rule',
+    source: rule?.source,
+    sourcePath: rule?.sourcePath,
+    permissionMode,
+    matchedRules: evaluation.matched,
+    retryable: false,
+    remediation: builtin ? [{
+      action: 'request_explicit_authorization',
+      description: 'Ask the user to select Full Access or authorize a scoped Exec Policy allow rule for the intended operation.',
+    }] : prompt ? [{
+      action: 'change_permission_mode',
+      description: 'Ask the user to select Edits so the explicit approval request can be presented.',
+    }, ownerAction] : [ownerAction],
+    guidance: EXEC_POLICY_REJECTION_GUIDANCE,
+  };
+  return JSON.stringify(rejection);
+}
+
+export function formatExecPolicyConfigurationError(
+  error: { readonly path: string; readonly message: string },
+  permissionMode?: KodaXShellPermissionMode,
+): string {
+  const rejection: ExecPolicyRejection = {
+    code: 'exec_policy_invalid',
+    message: `[Blocked] Exec Policy could not be loaded from ${error.path}: ${error.message}`,
+    denialSource: 'policy_configuration',
+    sourcePath: error.path,
+    permissionMode,
+    matchedRules: [],
+    retryable: false,
+    remediation: [{
+      action: 'repair_policy',
+      description: 'Ask the policy owner to repair or restore this configuration, then start a new Run.',
+    }],
+    guidance: EXEC_POLICY_REJECTION_GUIDANCE,
+  };
+  return JSON.stringify(rejection);
 }
 
 export type ParseExecPolicyResult =
@@ -152,16 +232,27 @@ export function evaluateExecPolicy(
   operation: ExecPolicyOperation,
   rules: readonly ExecPolicyRule[],
 ): ExecPolicyEvaluation {
-  return evaluateOperation(operation, rules, criticalEffect(operation.tokens));
+  const direct = evaluateOperation(operation, rules, operation.permissionMode === 'full-access'
+    ? undefined
+    : criticalEffect(operation.tokens));
+  // Destination facts describe this operation, not a nested shell body. Infer
+  // each child's destinations from its own tokens (outer shell args may be $0).
+  return evaluateNestedRestrictions(
+    operation.tokens, rules, {
+      hostExecutable: operation.hostExecutable,
+      permissionMode: operation.permissionMode,
+    }, operation.compound ?? false,
+  ).reduce(strictestEvaluation, direct);
 }
 
 export function createExecPolicyOperation(
   tokens: readonly string[],
-  facts: Pick<ExecPolicyOperation, 'hostExecutable' | 'network' | 'compound'> = {},
+  facts: ShellPolicyFacts & Pick<ExecPolicyOperation, 'compound'> = {},
 ): ExecPolicyOperation {
   const network = facts.network ?? literalNetworkDestinations(tokens);
   return {
     tokens,
+    ...(facts.permissionMode === undefined ? {} : { permissionMode: facts.permissionMode }),
     compound: facts.compound ?? false,
     ...(facts.hostExecutable === undefined
       ? {}
@@ -203,7 +294,7 @@ function evaluateOperation(
 export function evaluateShellExecPolicy(
   command: string,
   rules: readonly ExecPolicyRule[],
-  facts: Pick<ExecPolicyOperation, 'hostExecutable' | 'network'> = {},
+  facts: ShellPolicyFacts = {},
 ): ExecPolicyEvaluation {
   const tree = parseBashCommand(command);
   if (tree.unparseable) {
@@ -211,14 +302,10 @@ export function evaluateShellExecPolicy(
   }
   const stages = tree.statements.flatMap((statement) => statement.stages);
   const compound = tree.statements.length > 1 || stages.length > 1;
-  const evaluations = stages.flatMap((stage) => {
+  const evaluations = stages.map((stage) => {
     const tokens = normalizeHostShellTokens(stage.argv, facts.hostExecutable);
     const operation = createExecPolicyOperation(tokens, { ...facts, compound });
-    const direct = evaluateExecPolicy(operation, rules);
-    return [
-      direct,
-      ...evaluateNestedAdministratorForbidden(tokens, rules, facts, compound),
-    ];
+    return evaluateExecPolicy(operation, rules);
   });
   return evaluations.reduce(strictestEvaluation, {
     decision: 'unmatched',
@@ -249,14 +336,14 @@ function unescapeCmdCarets(token: string): string {
   return normalized;
 }
 
-function evaluateAdministratorForbidden(
+function evaluateExplicitRestriction(
   operation: ExecPolicyOperation,
   rules: readonly ExecPolicyRule[],
 ): ExecPolicyEvaluation | undefined {
   const matched = rules
     .filter((rule) => (
-      rule.source === 'admin'
-      && rule.decision === 'forbidden'
+      rule.source !== 'bundled'
+      && rule.decision !== 'allow'
       && ruleMatches(rule, operation)
     ))
     .sort(compareRules);
@@ -265,10 +352,10 @@ function evaluateAdministratorForbidden(
     : decisionResult(matched[0], matched, false);
 }
 
-function evaluateNestedAdministratorForbidden(
+function evaluateNestedRestrictions(
   tokens: readonly string[],
   rules: readonly ExecPolicyRule[],
-  facts: Pick<ExecPolicyOperation, 'hostExecutable' | 'network'>,
+  facts: ShellPolicyFacts,
   compound: boolean,
 ): ExecPolicyEvaluation[] {
   const evaluations: ExecPolicyEvaluation[] = [];
@@ -277,9 +364,9 @@ function evaluateNestedAdministratorForbidden(
       ...facts,
       compound: nestedCompound,
     });
-    const administratorForbidden = evaluateAdministratorForbidden(operation, rules);
-    if (administratorForbidden !== undefined) evaluations.push(administratorForbidden);
-    evaluations.push(...evaluateNestedAdministratorForbidden(
+    const restriction = evaluateExplicitRestriction(operation, rules);
+    if (restriction !== undefined) evaluations.push(restriction);
+    evaluations.push(...evaluateNestedRestrictions(
       effectiveTokens,
       rules,
       facts,
@@ -439,7 +526,7 @@ function wrapperCommandIndex(executable: string, args: readonly string[]): numbe
 function evaluateUnparseableShellCommand(
   command: string,
   rules: readonly ExecPolicyRule[],
-  facts: Pick<ExecPolicyOperation, 'hostExecutable' | 'network'>,
+  facts: ShellPolicyFacts,
 ): ExecPolicyEvaluation {
   const tokenized = tokenizeShellCommand(command);
   const normalizedTokens = normalizeHostShellTokens(
@@ -454,7 +541,6 @@ function evaluateUnparseableShellCommand(
   });
   const evaluations: ExecPolicyEvaluation[] = [
     evaluateExecPolicy(operation, rules),
-    ...evaluateNestedAdministratorForbidden(normalizedTokens, rules, facts, true),
   ];
 
   // Unsupported shell syntax must not make nested administrator forbids or
@@ -987,8 +1073,8 @@ function containsHttpUrl(token: string): boolean {
 
 function criticalFallbackRule(effect: ExecPolicyCriticalEffect): ExecPolicyRule {
   const justification: Readonly<Record<ExecPolicyCriticalEffect, string>> = {
-    forced_rm: 'rm -f style commands are not permitted. Use a safer approach.',
-    windows_dangerous_command: 'Unmatched command is blocked by the Windows dangerous-command policy.',
+    forced_rm: 'KodaX built-in fallback blocks forced deletion outside Full Access.',
+    windows_dangerous_command: 'KodaX built-in fallback blocks this Windows deletion or URL-launch pattern outside Full Access.',
   };
   return {
     prefix: [],

@@ -14,20 +14,21 @@
 | Current released version | `v0.7.96-beta.8` (Git tag / GitHub pre-release) |
 | Current package version | `@kodax-ai/kodax@0.7.96-beta.8` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — implemented and verified; release pending |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
-| Total tracked features | `82` |
+| Total tracked features | `83` |
 | InProgress | `1` |
 | Planned | `17` |
-| Completed | `58` |
+| Completed | `59` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 58 | `297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` is implemented and verified for v0.7.96 (release pending); `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -1721,6 +1722,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 10 + setup generation 10 (with generation 8 retained only as the legacy-migration proof), stable capability SIDs, setup-owned broad roots that are verify-only during ordinary admission, protected two-phase synchronous setup with no overlapping helper, cold interactive startup self-healing through the setup-only boundary, additive command-root convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, OS-arbitrated exact-authority brokers, and a real dual-Runtime overlap gate. |
 | `296` | Capacity-Debt Tool Result Admission and Bounded Context Recovery | `v0.7.96-alpha.1` | [v0.7.96](features/v0.7.96.md#feature_296-capacity-debt-tool-result-admission-and-bounded-context-recovery) | Replaces the local tool-result capacity hard gate with capacity-debt admission, a bounded recovery ladder, floor-bounded output reserve, paged oversized-input degradation, and `context_capacity` terminal classification (ADR-067). |

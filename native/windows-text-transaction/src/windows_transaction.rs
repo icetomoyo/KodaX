@@ -12,9 +12,8 @@ use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
     FILE_OPEN_REQUIRING_OPLOCK, FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION,
     FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS, FILE_STREAM_INFORMATION,
-    FILE_SYNCHRONOUS_IO_NONALERT,
-    FileRenameInformationEx, FileStreamInformation, NtCreateFile, NtQueryInformationFile,
-    NtSetInformationFile,
+    FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformationEx, FileStreamInformation, NtCreateFile,
+    NtQueryInformationFile, NtSetInformationFile,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER,
@@ -30,9 +29,9 @@ use windows_sys::Win32::Security::{
     ACE_HEADER, ACL, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, AclSizeInformation,
     AddAce, DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorControl,
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, InitializeAcl, IsValidSid,
-    LABEL_SECURITY_INFORMATION,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SCOPE_SECURITY_INFORMATION,
-    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    LABEL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    SCOPE_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_ENCRYPTED,
@@ -70,6 +69,7 @@ use crate::path_policy::windows_namespace_key;
 use crate::{
     CommitOutcome, CommitReceipt, ResourceState, TextSnapshot, TextTransactionError,
     TextTransactionErrorCode, ValidatedWindowsTarget, validate_windows_target,
+    validate_windows_target_with_policy,
 };
 
 const DRIVE_REMOTE: u32 = 4;
@@ -192,6 +192,7 @@ impl OplockedTemp {
 }
 
 pub struct TrustedRoot {
+    allow_git_metadata: bool,
     root: OwnedHandle,
     root_text: String,
     identity: FileIdentity,
@@ -201,6 +202,10 @@ unsafe impl Send for TrustedRoot {}
 unsafe impl Sync for TrustedRoot {}
 
 impl TrustedRoot {
+    pub fn with_git_metadata_authority(mut self, allowed: bool) -> Self {
+        self.allow_git_metadata = allowed;
+        self
+    }
     pub fn open(root_path: &str) -> Result<Self, TextTransactionError> {
         // Reuse the complete lexical screen without allowing the root itself as a mutation target.
         let sentinel = format!(
@@ -241,12 +246,14 @@ impl TrustedRoot {
             root,
             root_text: canonical_root,
             identity,
+            allow_git_metadata: false,
         })
     }
 
     pub fn snapshot(&self, target: &str) -> Result<TextSnapshot, TextTransactionError> {
         self.ensure_root_location()?;
-        let validated = validate_windows_target(&self.root_text, target)?;
+        let validated =
+            validate_windows_target_with_policy(&self.root_text, target, self.allow_git_metadata)?;
         let canonical_path = self.canonical_target(&validated);
         let slot_id = self.slot_id(&canonical_path);
         let Some((parents, leaf)) = self.open_parent(&validated, false)? else {
@@ -277,7 +284,8 @@ impl TrustedRoot {
                 "text transaction payload exceeds the 64 MiB bound",
             ));
         }
-        let validated = validate_windows_target(&self.root_text, target)?;
+        let validated =
+            validate_windows_target_with_policy(&self.root_text, target, self.allow_git_metadata)?;
         let canonical_path = self.canonical_target(&validated);
         let slot_id = self.slot_id(&canonical_path);
         let mutex = TransactionMutex::acquire(&slot_id, timeout_ms)?;
@@ -352,11 +360,7 @@ impl TrustedRoot {
             // non-delete-sharing readers cannot enter the narrow replace window and a writer
             // cannot open after CAS but before the namespace commit.
             let _replace_reservation = if before.state == ResourceState::Present {
-                Some(acquire_replace_reservation(
-                    parent.raw(),
-                    leaf,
-                    timeout_ms,
-                )?)
+                Some(acquire_replace_reservation(parent.raw(), leaf, timeout_ms)?)
             } else {
                 None
             };
@@ -506,7 +510,11 @@ impl TrustedRoot {
     ) -> Result<(), TextTransactionError> {
         let parent_path = canonical_dos_path(parent)?;
         let actual_path = format!("{}\\{leaf}", parent_path.trim_end_matches('\\'));
-        let actual = validate_windows_target(&self.root_text, &actual_path)?;
+        let actual = validate_windows_target_with_policy(
+            &self.root_text,
+            &actual_path,
+            self.allow_git_metadata,
+        )?;
         if actual.normalized_relative != expected.normalized_relative {
             return Err(TextTransactionError::new(
                 TextTransactionErrorCode::UnauthorizedPath,
@@ -1293,15 +1301,19 @@ fn copy_sacl_class(
             return Err(error);
         }
     };
-    if expected.as_ref().is_none_or(|bytes| bytes.len() <= size_of::<ACL>()) {
+    if expected
+        .as_ref()
+        .is_none_or(|bytes| bytes.len() <= size_of::<ACL>())
+    {
         unsafe { LocalFree(source_descriptor) };
         return Ok(());
     }
     if security_information == LABEL_SECURITY_INFORMATION {
         let integrity = mandatory_label_rid(source_acl);
-        if integrity.as_ref().is_ok_and(|rid| {
-            rid.is_some_and(|value| value <= SECURITY_MANDATORY_LOW_RID as u32)
-        }) {
+        if integrity
+            .as_ref()
+            .is_ok_and(|rid| rid.is_some_and(|value| value <= SECURITY_MANDATORY_LOW_RID as u32))
+        {
             // Legacy ASRT targets could stamp workspace files with an explicit
             // untrusted/low label. Reapplying that label requires a privilege
             // an ordinary host intentionally does not hold and would keep the
@@ -1394,7 +1406,9 @@ fn mandatory_label_rid(acl: *mut ACL) -> Result<Option<u32>, TextTransactionErro
         }
         let sid = unsafe { ace.cast::<u8>().add(8) }.cast::<c_void>();
         if unsafe { IsValidSid(sid) } == 0 {
-            return Err(metadata_error("mandatory label ACE contains an invalid SID"));
+            return Err(metadata_error(
+                "mandatory label ACE contains an invalid SID",
+            ));
         }
         let count = unsafe { GetSidSubAuthorityCount(sid) };
         if count.is_null() || unsafe { *count } == 0 {
@@ -1675,10 +1689,9 @@ fn atomic_rename(
             // require a fallible clear/restore window. Windows may canonicalize DACL
             // inheritance/protection control at this namespace commit; effective
             // ACEs are verified by the native release tests.
-            (*info).Anonymous.Flags =
-                FILE_RENAME_REPLACE_IF_EXISTS
-                    | FILE_RENAME_POSIX_SEMANTICS
-                    | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+            (*info).Anonymous.Flags = FILE_RENAME_REPLACE_IF_EXISTS
+                | FILE_RENAME_POSIX_SEMANTICS
+                | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
         } else {
             (*info).Anonymous.Flags = 0;
         }
@@ -2391,12 +2404,7 @@ mod tests {
         let mut defaulted = 0;
         assert_ne!(
             unsafe {
-                GetSecurityDescriptorSacl(
-                    descriptor,
-                    &mut present,
-                    &mut acl,
-                    &mut defaulted,
-                )
+                GetSecurityDescriptorSacl(descriptor, &mut present, &mut acl, &mut defaulted)
             },
             0
         );

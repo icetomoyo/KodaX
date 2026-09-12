@@ -194,8 +194,12 @@ export function createWorkflowRunManager(
           runDir: input.runDir,
           meta: input.module.meta,
           hostPolicy: input.options.workflowHostPolicy,
-          processMetadata: input.processMetadata,
-          signal: input.signal,
+          processMetadata: { ...input.processMetadata, hostMetadata: {
+            ...input.processMetadata?.hostMetadata,
+            ownerSessionId: input.options.session?.id ?? '',
+            ownerRunId: input.options.context?.runtimeRunId ?? '',
+          } },
+          signal: input.signal ?? input.options.abortSignal,
         },
         (hooks) =>
           runWorkflowFromOptions({
@@ -221,6 +225,19 @@ export function createWorkflowRunManager(
 }
 
 let defaultWorkflowRunManager: WorkflowRunManager | undefined;
+
+/** UI control is scoped to the Session that admitted the workflow. */
+export function requestSessionWorkflowStop(
+  manager: WorkflowRunManager, sessionId: string, runId: string, reason = 'stopped by user',
+): { runId: string; accepted: boolean; state: 'unknown' | 'confirmed' } {
+  if (!sessionId || manager.getWorkflowProcessSnapshot(runId)?.hostMetadata?.ownerSessionId !== sessionId) {
+    throw Object.assign(new Error(JSON.stringify({ code: 'forbidden', denialSource: 'session_scope',
+      runId, remediation: 'Stop the workflow from the Session that owns it.' })),
+    { code: 'forbidden', denialSource: 'session_scope' });
+  }
+  const accepted = manager.stop(runId, reason);
+  return { runId, accepted, state: manager.get(runId)?.stop?.state ?? 'unknown' };
+}
 
 export function getDefaultWorkflowRunManager(): WorkflowRunManager {
   defaultWorkflowRunManager ??= createWorkflowRunManager({}, getDefaultAgentWorkflowRunManager());

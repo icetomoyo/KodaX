@@ -27,6 +27,10 @@ export class KodaXTrustedTextMutationError extends Error {
   readonly osCode?: number;
   readonly commitReceipt?: KodaXTrustedTextCommitUncertainReceipt;
 
+  readonly denialSource?: 'builtin_fallback' | 'runtime_integrity';
+  readonly matchedRule?: string;
+  readonly remediation?: string;
+
   constructor(input: {
     readonly code: KodaXTrustedTextMutationErrorCode;
     readonly path: string;
@@ -36,6 +40,9 @@ export class KodaXTrustedTextMutationError extends Error {
     readonly osCode?: number;
     readonly commitReceipt?: KodaXTrustedTextCommitUncertainReceipt;
     readonly cause?: unknown;
+    readonly denialSource?: 'builtin_fallback' | 'runtime_integrity';
+    readonly matchedRule?: string;
+    readonly remediation?: string;
   }) {
     super(input.message, input.cause === undefined ? undefined : { cause: input.cause });
     this.name = 'KodaXTrustedTextMutationError';
@@ -45,6 +52,9 @@ export class KodaXTrustedTextMutationError extends Error {
     this.actualRevision = input.actualRevision;
     this.osCode = input.osCode;
     this.commitReceipt = input.commitReceipt;
+    this.denialSource = input.denialSource;
+    this.matchedRule = input.matchedRule;
+    this.remediation = input.remediation;
   }
 }
 
@@ -53,6 +63,7 @@ export function assertTrustedTextMutationPolicy(
   filePath: string,
   _executionCwd = process.cwd(),
   protectedPaths: readonly string[] = [],
+  allowGitMetadata = false,
 ): void {
   const windowsPath = filePath.replaceAll('/', '\\');
   if (
@@ -74,16 +85,21 @@ export function assertTrustedTextMutationPolicy(
   const caseFold = (value: string): string => (
     process.platform === 'win32' ? value.toLowerCase() : value
   );
+  const protectedControl = protectedPaths.some((candidate) =>
+    caseFold(path.resolve(candidate)) === caseFold(canonicalTarget));
   if (
-    components.some((component) => component.toLowerCase() === '.git')
-    || protectedPaths.some((candidate) => (
-      caseFold(path.resolve(candidate)) === caseFold(canonicalTarget)
-    ))
+    (!allowGitMetadata && components.some((component) => component.toLowerCase() === '.git'))
+    || protectedControl
   ) {
     throw new KodaXTrustedTextMutationError({
       code: 'text_mutation_policy_denied',
       path: filePath,
-      message: `Trusted text mutation targets protected KodaX state: ${filePath}`,
+      message: protectedControl ? `Trusted text mutation targets protected KodaX state: ${filePath}`
+        : `Current permission mode protects Git metadata: ${filePath}`,
+      denialSource: protectedControl ? 'runtime_integrity' : 'builtin_fallback',
+      matchedRule: protectedControl ? 'protected_control_path' : 'protected_git_metadata',
+      remediation: protectedControl ? 'Use the owning configuration/control API. Do not rewrite this operation through Shell.'
+        : 'Ask the user to grant Full Access for the intended Git metadata edit; do not rewrite the command to evade this decision.',
     });
   }
 }

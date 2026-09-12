@@ -201,6 +201,7 @@ export function withTextFileMutation<T>(
   assertTrustedTextMutationPolicy(
     filePath,
     ctx.executionCwd ?? ctx.gitRoot ?? process.cwd(),
+    [], ctx.resolveShellPermissionMode?.() === 'full-access',
   );
   if (trustedHost !== undefined) {
     return trustedHost.snapshot({
@@ -211,6 +212,7 @@ export function withTextFileMutation<T>(
       assertTrustedTextMutationPolicy(
         snapshot.canonicalPath,
         ctx.executionCwd ?? ctx.gitRoot ?? process.cwd(),
+        [], ctx.resolveShellPermissionMode?.() === 'full-access',
       );
       return operation({
         state: snapshot.state,

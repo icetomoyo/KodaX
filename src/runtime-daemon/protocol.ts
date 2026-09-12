@@ -38,6 +38,7 @@ export type RuntimeDaemonMethod =
   | 'session.compact'
   | 'session.archive'
   | 'session.unarchive'
+  | 'session.cancel'
   | 'session.delete'
   | 'session.settings.get'
   | 'session.settings.getVersioned'
@@ -171,6 +172,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.compact'
   | 'session.archive'
   | 'session.unarchive'
+  | 'session.cancel'
   | 'session.delete'
   | 'session.settings.update'
   | 'session.settings.updateVersioned'
@@ -345,6 +347,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.compact',
   'session.archive',
   'session.unarchive',
+  'session.cancel',
   'session.delete',
   'session.settings.get',
   'session.settings.getVersioned',
@@ -467,6 +470,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.compact',
   'session.archive',
   'session.unarchive',
+  'session.cancel',
   'session.delete',
   'session.settings.update',
   'session.settings.updateVersioned',

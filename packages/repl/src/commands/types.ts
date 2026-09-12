@@ -11,6 +11,7 @@ import type {
   KodaXAgentMode,
   KodaXRepoIntelligenceMode,
   KodaXOptions,
+  KodaXResult,
   KodaXReasoningMode,
   KodaXSkillInvocationContext,
 } from '@kodax-ai/coding';
@@ -113,6 +114,7 @@ export interface CommandCallbacks {
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
   createKodaXOptions?: () => KodaXOptions;
+  executeToolInvocation?: (invocation: { name: string; input: Record<string, unknown> }, prompt: string) => Promise<KodaXResult>;
   /** Opens a path in the host's external editor/file browser. */
   openExternalPath?: (targetPath: string) => Promise<void>;
   reloadAgentsFiles?: () => Promise<AgentsFile[]>;

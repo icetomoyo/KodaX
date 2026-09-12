@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { TrustedTextTransactionRoot, textTransactionProtocol } from './index.mjs';
 
-assert.equal(textTransactionProtocol, 4);
+assert.equal(textTransactionProtocol, 5);
 
 if (process.env.KODAX_NATIVE_TEXT_SMOKE_WORKER === '1') {
   const root = new TrustedTextTransactionRoot(

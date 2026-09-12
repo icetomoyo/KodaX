@@ -8,6 +8,8 @@ import type {
 } from '@kodax-ai/agent';
 import {
   evaluateShellExecPolicy,
+  formatExecPolicyConfigurationError,
+  formatExecPolicyRejection,
   KodaXTrustedTextMutationError,
   loadExecPolicy,
   type AutoModeToolGuardrail,
@@ -115,27 +117,29 @@ export function createStandaloneShellPermissionBoundary(
     return mode === 'auto-in-project' ? 'auto' : mode;
   };
   const authorizeShellHostExecution: KodaXShellHostExecutionAuthorizer = async (request) => {
+    const mode = request.permissionMode
+      ?? (request.reason === 'direct-host' ? 'full-access' : resolveShellPermissionMode());
     const policy = await policySnapshot;
     const invalid = policy.errors[0];
     if (invalid !== undefined) {
-      return `[Blocked] Exec Policy could not be loaded from ${invalid.path}: ${invalid.message}`;
+      return formatExecPolicyConfigurationError(invalid, mode);
     }
     const evaluation = evaluateShellExecPolicy(request.command, policy.rules, {
       hostExecutable: request.executable,
+      permissionMode: mode,
     });
     if (evaluation.decision === 'allow') return true;
     if (evaluation.decision === 'prompt') {
       if (request.reason === 'direct-host') {
-        return '[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access.';
+        return formatExecPolicyRejection(evaluation, mode);
       }
       return options.requestUserPermission(request, 'exec_policy_prompt');
     }
     if (evaluation.decision === 'forbidden') {
-      return `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? 'no justification supplied'}`;
+      return formatExecPolicyRejection(evaluation, mode);
     }
 
     if (request.reason === 'direct-host') return true;
-    const mode = request.permissionMode ?? options.getPermissionMode();
     if (mode === 'accept-edits') {
       return options.requestUserPermission(request, 'mode_boundary');
     }

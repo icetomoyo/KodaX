@@ -9,7 +9,7 @@ use crate::{CommitOutcome, TrustedRoot};
 #[napi]
 #[allow(dead_code)] // This protocol probe is consumed by the JavaScript loader.
 pub fn text_transaction_protocol() -> u32 {
-    4
+    5
 }
 
 #[napi(object)]
@@ -41,10 +41,16 @@ pub struct NativeTrustedRoot {
 #[napi]
 impl NativeTrustedRoot {
     #[napi(constructor)]
-    pub fn new(root_path: String, state_root: Option<String>) -> napi::Result<Self> {
+    pub fn new(
+        root_path: String,
+        state_root: Option<String>,
+        allow_git_metadata: Option<bool>,
+    ) -> napi::Result<Self> {
         Ok(Self {
             inner: Arc::new(
-                open_trusted_root(&root_path, state_root.as_deref()).map_err(native_error)?,
+                open_trusted_root(&root_path, state_root.as_deref())
+                    .map_err(native_error)?
+                    .with_git_metadata_authority(allow_git_metadata.unwrap_or(false)),
             ),
         })
     }

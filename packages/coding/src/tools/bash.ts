@@ -1047,6 +1047,7 @@ async function executeToolBash(
       abortSignal.addEventListener('abort', onAbort, { once: true });
     }
 
+    ctx.reportShellExecutionOutcome?.({ success: true });
     return `Command started in background.\nPID: ${proc.pid}\nOutput: ${outputFile}\n\nUse the read tool to check output when done. A final [Exit: ...] footer confirms capture completed; if it is absent, the command is still running or capture failed.`;
   }
 
@@ -1406,6 +1407,7 @@ async function executeToolBash(
             ctx,
           );
           if (oversizedResult) {
+            ctx.reportShellExecutionOutcome?.({ success: code === 0 });
             settle(oversizedResult);
             return;
           }
@@ -1449,6 +1451,7 @@ async function executeToolBash(
           }
 
           disposeCollectors();
+          ctx.reportShellExecutionOutcome?.({ success: code === 0 });
           settle(out);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

@@ -125,6 +125,8 @@ export interface RunScopedToolDefinition {
   readonly planModeAllowed: boolean;
 }
 export interface ExtensionRuntimeContract extends CapabilityRuntimeContract {
+  pinExecutionContributions?(): void;
+  getToolRegistrationOwners?(): readonly object[];
   getDefaults?(): RuntimeDefaultsSnapshot;
   bindController?(controller: BoundExtensionRuntimeController): (() => void) | void;
   hydrateSession?(sessionId: string): Promise<void>;

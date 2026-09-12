@@ -584,6 +584,59 @@ describe('Runtime conversation history', () => {
     }
   });
 
+  it.each(['prepared', 'fallback'])('pages legacy metadata over 64 KiB on cold start and restart (%s)', async (mode) => {
+    if (mode === 'fallback') {
+      vi.spyOn(FileSessionStorage.prototype, 'prepareConversationPageCache')
+        .mockRejectedValue(new Error('cache storage unavailable'));
+      vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+    }
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-large-metadata-'));
+    tempRoots.push(root);
+    const sessionsDir = path.join(root, 'sessions');
+    const sessionId = 'large-metadata-history';
+    const baseSnapshot = acceptedActorSnapshot();
+    const actorSnapshot: AgentActorSnapshot = {
+      ...baseSnapshot,
+      turns: baseSnapshot.turns.map((turn) => ({
+        ...turn, objective: '保留完整任务上下文🙂'.repeat(8_000),
+      })),
+    };
+    const metadata = JSON.stringify({
+      _type: 'meta', id: sessionId, title: 'Large legacy metadata',
+      createdAt: timestamp, scope: 'user', actorSnapshot,
+      runtimeInfo: { surface: 'repl' }, activeMessageCount: 4,
+    });
+    expect(Buffer.byteLength(metadata)).toBeGreaterThan(64 * 1024);
+    const messages = ['first request', 'first answer', 'second request', 'second answer']
+      .map((content, index) => ({ role: index % 2 === 0 ? 'user' : 'assistant', content }));
+    const source = [metadata, ...messages.map((message) => JSON.stringify(message)), ''].join('\n');
+    await mkdir(sessionsDir, { recursive: true });
+    const sessionPath = path.join(sessionsDir, `${sessionId}.jsonl`);
+    await writeFile(sessionPath, source, 'utf8');
+
+    for (let startup = 0; startup < 2; startup += 1) {
+      const runtime = await createKodaXRuntime({ homeDir: root, sessionsDir });
+      try {
+        const first = await runtime.sessions.conversationPage({ sessionId, limit: 2 });
+        expect(first?.entries.map((item) => item.entry?.message.content)).toEqual([
+          'second request', 'second answer',
+        ]);
+        if (first?.nextCursor === undefined) throw new Error('continuation cursor missing');
+        const second = await runtime.sessions.conversationPage({
+          sessionId, limit: 2, cursor: first.nextCursor,
+        });
+        expect(second?.entries.map((item) => item.entry?.message.content)).toEqual([
+          'first request', 'first answer',
+        ]);
+        expect(second?.revision).toBe(first.revision);
+        expect(second?.nextCursor).toBeUndefined();
+      } finally {
+        await runtime.close();
+      }
+      expect(await readFile(sessionPath, 'utf8')).toBe(source);
+    }
+  });
+
   it('upgrades a cache-less existing session once and reuses its bounded pages', async () => {
     const { root, runtime, sessionId } = await fixture();
     const sessionsDir = path.join(root, 'sessions');

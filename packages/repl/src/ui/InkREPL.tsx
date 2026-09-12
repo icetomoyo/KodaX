@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import type { RuntimeStopCallbacks, RuntimeStopControl } from '../interactive/runtime-stop.js';
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -122,6 +123,7 @@ import {
   KodaXSessionUiToolCallStatus,
   mergeArtifactLedger,
   runManagedTask,
+  runToolInvocation,
   drainPendingSwaps,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
@@ -143,6 +145,7 @@ import {
   decideWorkflowInvocation,
   workflowStartOutcomeConsumesTurn,
   getDefaultWorkflowRunManager,
+  requestSessionWorkflowStop,
   resolveProvider,
   prewarmRepoIntelligenceCaches,
   actorQueueId,
@@ -646,7 +649,7 @@ function applyRuntimeSessionSnapshot(context: InteractiveContext, result: KodaXR
 }
 
 // REPL options
-export interface InkRuntimeRunnerInput {
+export interface InkRuntimeRunnerInput extends RuntimeStopCallbacks {
   readonly options: KodaXOptions;
   readonly prompt: string;
   readonly sessionId: string;
@@ -1846,7 +1849,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     peekPendingInputDelivery,
     shiftPendingInput,
     consumePendingInputs,
+    capturePendingInputCancellation,
   } = useStreamingActions();
+  const runtimeStopRef = useRef<RuntimeStopControl | undefined>(undefined);
 
   // State
   const [isLoading, setIsLoading] = useState(false);
@@ -5583,49 +5588,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   const stopActiveWorkflowRuns = useCallback((reason: string): boolean => {
-    const manager = getDefaultWorkflowRunManager();
-    const activeRuns = manager
-      .list()
-      .filter((run) => run.status === "running" || run.status === "paused");
-
-    if (activeRuns.length === 0) {
-      return false;
+    if (runtimeStopRef.current) {
+      const cancelCaptured = capturePendingInputCancellation();
+      void runtimeStopRef.current.request().then(() => cancelCaptured()).catch((error: unknown) => {
+        emitKodaXDiagnostic({ source: 'repl:stop', level: 'error',
+          message: error instanceof Error ? error.message : String(error) });
+      });
+      return true;
     }
-
-    for (const run of activeRuns) {
-      manager.stop(run.runId, reason);
+    const current = workflowLiveStatusRef.current;
+    if (!current) return false;
+    try {
+      const receipt = requestSessionWorkflowStop(getDefaultWorkflowRunManager(), context.sessionId ?? '', current.runId, reason);
+      emitInfoItemToCorrectLayer({ type: 'info', text: receipt.state === 'confirmed'
+        ? `Workflow ${current.runId} stop confirmed.`
+        : `Workflow ${current.runId} stop requested; waiting for cleanup.` }, 'workflow-stop');
+    } catch (error) {
+      emitInfoItemToCorrectLayer({ type: 'info', text: error instanceof Error ? error.message : String(error) }, 'workflow-stop');
     }
-
-    updateWorkflowLiveStatus((current) => {
-      if (!current || current.status !== "running") {
-        return current;
-      }
-      if (!activeRuns.some((run) => run.runId === current.runId)) {
-        return current;
-      }
-      return {
-        ...current,
-        status: "stopped",
-        activeAgents: [],
-        message: "Workflow stopped by user.",
-      };
-    });
-
-    const firstRun = activeRuns[0];
-    if (activeRuns.length === 1 && firstRun) {
-      emitInfoItemToCorrectLayer({
-        type: "info",
-        text: `Stopped workflow ${firstRun.workflow} (${firstRun.runId}).`,
-      }, "workflow-stop");
-    } else {
-      emitInfoItemToCorrectLayer({
-        type: "info",
-        text: `Stopped ${activeRuns.length} active workflows.`,
-      }, "workflow-stop");
-    }
-
     return true;
-  }, [emitInfoItemToCorrectLayer, updateWorkflowLiveStatus]);
+  }, [capturePendingInputCancellation, context.sessionId, emitInfoItemToCorrectLayer]);
 
   useEffect(() => {
     if (!workflowLiveViewModel.shouldRender) {
@@ -5696,6 +5678,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       switch (interruptAction.kind) {
         case "interrupt":
+          if (runtimeStopRef.current) {
+            const cancelCaptured = capturePendingInputCancellation();
+            void runtimeStopRef.current.request().then(() => cancelCaptured()).catch((error: unknown) => {
+              emitKodaXDiagnostic({ source: 'repl:stop', level: 'error',
+                message: error instanceof Error ? error.message : String(error) });
+            });
+            return true;
+          }
           queueInterruptedPersistence();
           resetInterruptedPromptState();
           addHistoryItem({ type: "info", text: t("cancellationRequested") });
@@ -5719,6 +5709,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       removeLastPendingInput,
       queueInterruptedPersistence,
       resetInterruptedPromptState,
+      capturePendingInputCancellation,
       addHistoryItem,
       stopActiveWorkflowRuns,
       transcriptModeTextSelection,
@@ -8177,9 +8168,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           autoModeSettings,
           requestPermission: requestRuntimePermission,
           legacyPermissionHook: true,
+          onStopControl: (control) => { runtimeStopRef.current = control; },
+          onStopState: (state, detail) => {
+            const text = state === 'rejected' ? `${t('cancellationRejected')} ${detail ?? ''}`
+              : state === 'confirmed' ? `${t('cancellationConfirmed')} ${detail ?? ''}`
+                : state === 'accepted' ? t('cancellationAccepted') : t('cancellationRequested');
+            emitInfoItemToCorrectLayer({ type: 'info', text }, 'runtime-stop');
+          },
         });
       }
-      return await runManagedTask(runOptions, prompt);
+      return runOptions.toolInvocation
+        ? await runToolInvocation(runOptions, runOptions.toolInvocation, prompt)
+        : await runManagedTask(runOptions, prompt);
     } finally {
       // FEATURE_090 (v0.7.32) — drain self-modify pending resolver swaps
       // at the conversation-turn boundary. The G1 deferred-swap guarantee
@@ -9905,6 +9905,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             // (set at session init for FEATURE_246 A5).
             events: createStreamingEvents(), // Include streaming events for /project commands
           }),
+          executeToolInvocation: async (toolInvocation, prompt) => {
+            const result = await runAgentRound({ ...currentOptionsRef.current, toolInvocation }, prompt);
+            context.messages = result.messages;
+            context.lineage = createSessionLineage(result.messages, context.lineage);
+            applyRuntimeSessionSnapshot(context, result);
+            return result;
+          },
           reloadAgentsFiles: async (): Promise<AgentsFile[]> => {
             const fresh = await loadAgentsFiles({
               cwd: process.cwd(),
@@ -10074,7 +10081,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Process special syntax (shell `!...`, @image-path expansion, etc.)
       // against the EXPANDED input so paste placeholders don't get misparsed
       // as literal text (Issue 121).
-      const processed = await processSpecialSyntax(fullText.trim());
+      const processed = await processSpecialSyntax(fullText.trim(), {
+        execute: async (command) => {
+          const result = await runAgentRound({ ...currentOptionsRef.current,
+            toolInvocation: { name: 'bash', input: { command } } }, `!${command}`);
+          context.messages = result.messages;
+          context.lineage = createSessionLineage(result.messages, context.lineage);
+          applyRuntimeSessionSnapshot(context, result);
+          return result;
+        },
+        onOutput: (text) => appendHistoryItemsWithPersistence([{ type: 'info', text }]),
+      });
 
       // Skip if shell command was executed successfully
       if (

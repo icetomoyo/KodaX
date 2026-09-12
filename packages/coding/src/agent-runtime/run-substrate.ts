@@ -302,6 +302,7 @@ import {
 } from './middleware/extension-queue.js';
 import {
   bindActiveExtensionExecutionRuntime,
+  withExtensionRuntimeContext,
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
   setActiveExtensionRuntime,
@@ -706,6 +707,17 @@ function attributeProviderRequest(events: KodaXEvents, providerRequestId: string
 }
 
 export async function runSubstrate(
+  options: KodaXOptions,
+  prompt: string,
+  declaredAgent?: Agent,
+): Promise<KodaXResult> {
+  const { randomUUID } = await import('node:crypto');
+  const boundOptions = { ...options, context: { ...options.context,
+    runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  return withExtensionRuntimeContext(() => runSubstrateInContext(boundOptions, prompt, declaredAgent), options.extensionRuntime ?? getActiveExtensionRuntime());
+}
+
+async function runSubstrateInContext(
   options: KodaXOptions,
   prompt: string,
   declaredAgent?: Agent,

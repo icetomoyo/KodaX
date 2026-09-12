@@ -12,6 +12,34 @@ import {
 } from './exec-policy.js';
 
 describe('FEATURE_297 Exec Policy', () => {
+  it('matches nested network restrictions against the nested command rather than shell arguments', () => {
+    const restriction = {
+      ...rule(['curl'], 'forbidden'), network: ['api.example.com'],
+    };
+    expect(evaluateShellExecPolicy(
+      'bash -c "curl https://api.example.com" https://other.example.com',
+      [restriction], { permissionMode: 'full-access' },
+    )).toMatchObject({ decision: 'forbidden', matched: [restriction] });
+  });
+
+  it.each(['admin', 'user', 'project'] as const)(
+    'keeps explicit %s restrictions inside shell wrappers in Full Access', (source) => {
+      for (const decision of ['forbidden', 'prompt'] as const) {
+        const restriction = { ...rule(['git', 'push'], decision), source };
+        for (const command of [
+          'git push', 'cmd /c "git push"', 'powershell -Command "git push"',
+          'env X=1 git push', 'bash -c "git push"',
+        ]) {
+          expect(evaluateShellExecPolicy(command, [restriction], {
+            permissionMode: 'full-access',
+          }), command).toMatchObject({
+            decision, criticalFallback: false, matched: [restriction],
+          });
+        }
+      }
+    },
+  );
+
   it('parses JSONC prefix rules with finite token unions and trailing commas', () => {
     const parsed = parseExecPolicy(`{
       // Codex-shaped deterministic host policy

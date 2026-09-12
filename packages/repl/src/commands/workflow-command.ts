@@ -23,6 +23,7 @@ import {
   discoverSavedWorkflows,
   generateWorkflowFromOptions,
   getDefaultWorkflowRunManager,
+  requestSessionWorkflowStop,
   loadGeneratedWorkflowFromRun,
   loadSavedWorkflow,
   loadSavedWorkflowCapsule,
@@ -348,14 +349,22 @@ export const workflowCommand: Command = {
     }
 
     if (invocation.kind === 'stop') {
-      const runId = invocation.runId || selectDefaultActiveWorkflowRunId(manager.list());
+      const runId = invocation.runId || selectDefaultActiveWorkflowRunId(manager.list().filter((run) =>
+        manager.getWorkflowProcessSnapshot(run.runId)?.hostMetadata?.ownerSessionId === context.sessionId));
       if (!runId) {
         console.log(chalk.yellow('\nNo active workflow to stop.\n'));
         return;
       }
       if (!ensureSafeRunId(runId)) return;
-      const ok = await lifecycle.stopWorkflow(runId, 'stopped by user');
       const snapshot = manager.get(runId);
+      let ok = false;
+      if (snapshot && isActiveManagedWorkflowRun(snapshot)) {
+        try { ok = requestSessionWorkflowStop(manager, context.sessionId ?? '', runId).accepted; }
+        catch (error) {
+          process.stdout.write(`${error instanceof Error ? error.message : String(error)}\n`);
+          return;
+        }
+      }
       const detail = readWorkflowRunDetail(baseDir, runId);
       const processSnapshot = lifecycle.getWorkflowProcessSnapshot(runId);
       const status = snapshot?.status ?? detail?.status ?? processSnapshot?.status;
@@ -369,7 +378,7 @@ export const workflowCommand: Command = {
         canRerunWorkflowRun(snapshot, detail),
       );
       console.log(ok
-        ? chalk.dim(`Stopped workflow ${runId}.\n`)
+        ? chalk.dim(`Stop requested for workflow ${runId}; waiting for cleanup.\n`)
         : status && alreadyTerminal
           ? chalk.yellow(`Workflow ${runId} is already ${status}. Next: ${nextActions}.\n`)
           : chalk.yellow(`No active workflow ${runId}.\n`));

@@ -10,6 +10,7 @@
 // FEATURE_221: SDK consumers inject their own product manual topics.
 import type { KodaXManualTopicId, KodaXManualTopicInput } from './self-knowledge/types.js';
 import type { KodaXTimeoutConfig } from './timeouts.js';
+import type { ExtensionExecutionScope, ExtensionToolResult } from './extensions/execution-contract.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { RuntimeToolExposurePlan } from './agent-runtime/tool-exposure-planner.js';
 import type { KodaXOutputSegmentStarted } from './output-segments.js';
@@ -555,7 +556,9 @@ export interface KodaXEvents {
   ) => void;
   /** FEATURE_067 v2: Real-time tool execution progress update. Updates the tool's display in the REPL transcript. */
   onToolProgress?: (
-    update: { id: string; message: string },
+    update: { id: string; message: string; extension?: {
+      version: 1; sessionId: string; runId: string; invocationId: string; extensionId: string; data?: KodaXJsonValue;
+    } },
     meta?: KodaXToolEventMeta,
   ) => void;
   /**
@@ -1867,6 +1870,8 @@ export interface KodaXWorkspaceSandboxRootRegistry {
 }
 
 export interface KodaXContextOptions {
+  /** Host-owned Run identity for extension effects; standalone runs mint their own. */
+  runtimeRunId?: string;
   /**
    * Runtime-authenticated authority for permission review. Child runtimes must
    * preserve the root request and add delegation metadata instead of treating
@@ -2190,6 +2195,8 @@ export interface KodaXSkillDynamicContextPolicy {
 }
 
 export interface KodaXOptions {
+  /** Explicit host request; Runtime runs it through ordinary tool permissions without an LLM. */
+  toolInvocation?: { readonly name: string; readonly input: Record<string, unknown> };
   provider: string;
   model?: string;
   modelOverride?: string;
@@ -2631,6 +2638,10 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  runtimeRunId?: string;
+  extensionExecution?: ExtensionExecutionScope;
+  /** Host callback re-entering the complete tool/guardrail dispatch route. */
+  invokeCheckedTool?: (name: string, input: Record<string, unknown>) => Promise<ExtensionToolResult>;
   /** File backups for undo functionality - 文件备份用于撤销功能 */
   backups: Map<string, string>;
   /** Runtime-minted collaboration principal; model inputs cannot replace its caller path. */
@@ -2804,6 +2815,8 @@ export interface KodaXToolExecutionContext {
   workspaceSandboxRoots?: KodaXWorkspaceSandboxRootRegistry;
   /** Structured containment metadata; never model-visible or persisted as conversation text. */
   reportToolSandboxObservation?: (observation: KodaXShellSandboxObservation) => void;
+  /** Structured Shell outcome for explicit host invocations; output text is not authority. */
+  reportShellExecutionOutcome?: (outcome: { success: boolean }) => void;
   /** Fail-closed host policy applied to every concrete file a read tool opens. */
   assertReadablePath?: (candidate: string) => void;
   /** Host tool visibility ceiling inherited by child agents. */

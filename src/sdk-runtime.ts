@@ -28,6 +28,8 @@ import {
   classifyResilienceError,
   createExternalActorTurnExecutor,
   evaluateShellExecPolicy,
+  formatExecPolicyConfigurationError,
+  formatExecPolicyRejection,
   createOutputSegmentProjection,
   effectiveOutputSegmentText,
   generateSessionId,
@@ -40,6 +42,7 @@ import {
   resolveToolBridgeTarget,
   reduceOutputSegmentProjection,
   runManagedTask,
+  runToolInvocation,
   runScopedToolMap,
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
@@ -49,6 +52,7 @@ import {
   type CodingActorCredentialAccessFactory,
   type ExecPolicyRule,
   type ExecPolicyRuleInput,
+  type KodaXShellPermissionMode,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -1735,6 +1739,7 @@ export interface RuntimeObservationInvalidation {
 }
 
 export interface RuntimeSessionService {
+  cancel(input: RuntimeSessionCancelInput): Promise<RuntimeSessionCancelReceipt>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -2035,6 +2040,7 @@ export type RuntimeDaemonKodaXOptions = Pick<
   | "reasoningMode"
   | "agentMode"
   | "maxIter"
+  | "toolInvocation"
   | "workflowHostPolicy"
   | "workflowRunsBaseDir"
   | "modelTiers"
@@ -2176,6 +2182,24 @@ export interface RuntimeRunStopReceipt {
   readonly revision: number;
 }
 
+export interface RuntimeSessionCancelInput {
+  readonly sessionId: string;
+  readonly expectedRunId: string;
+  readonly requestId: string;
+}
+
+export interface RuntimeSessionCancelReceipt extends RuntimeSessionCancelInput {
+  readonly frontier: number;
+  readonly receipts: readonly RuntimeRunStopReceipt[];
+}
+
+interface RuntimeSessionStopRecord extends RuntimeSessionCancelInput {
+  readonly version: 1;
+  readonly frontier: number;
+  readonly runIds: readonly string[];
+  readonly identity: { readonly surface?: string; readonly profileId?: string };
+}
+
 export type RuntimeTerminalCode =
   | "completed"
   | "run_failed"
@@ -2306,6 +2330,11 @@ export interface RuntimeRunService {
   await(runId: string): Promise<RuntimeRunResult>;
   get(runId: string): Promise<RuntimeRunStatus>;
   list(filter?: RuntimeRunFilter): Promise<readonly RuntimeRunStatus[]>;
+  /**
+   * Requests Stop for this Run and its owned work; successor Runs are retained.
+   * accepted means the request was recorded, not that effects have stopped.
+   * Observe state/outcome for confirmation; repeated requests are idempotent.
+   */
   abort(runId: string): Promise<RuntimeRunStopReceipt>;
   setModel(runId: string, model: string | undefined): Promise<void>;
   setProvider(runId: string, provider: string): Promise<void>;
@@ -2400,7 +2429,7 @@ export interface RuntimeToolStartedEventPayload {
 
 export type RuntimeToolProgressEventPayload =
   | {
-      readonly update: { readonly id: string; readonly message: string };
+      readonly update: Parameters<NonNullable<KodaXEvents['onToolProgress']>>[0];
       readonly meta?: KodaXToolEventMeta;
     }
   | {
@@ -3707,6 +3736,7 @@ type RuntimeUserInputRegistry = ReturnType<
 type RuntimeArtifactStore = ReturnType<typeof createRuntimeArtifactStore>;
 
 interface RuntimeRunServiceInternal extends RuntimeRunService {
+  cancelSession(input: RuntimeSessionCancelInput): Promise<RuntimeSessionCancelReceipt>;
   inspect(
     filter?: RuntimeRunFilter,
   ): Promise<readonly RuntimeRunStatus[]>;
@@ -4163,6 +4193,8 @@ export async function createKodaXRuntime(
       rollback: true,
     },
     actorControlPlane: { version: 1, methodNamespace: "agents" },
+    sessionCancellation: { version: 1, durableFrontier: true },
+    toolInvocation: { version: 1 },
     effectiveConfig: {
       version: 1,
       credentialValues: false,
@@ -4641,6 +4673,7 @@ export async function createKodaXRuntime(
       beginCloseTranscriptSnapshots = beginClose;
       closeTranscriptSnapshots = cleanup;
     },
+    (input) => runService.cancelSession(input),
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -6258,6 +6291,7 @@ function createRuntimeSessionService(
     beginClose: () => void,
     cleanup: () => Promise<void>,
   ) => void,
+  cancel: RuntimeSessionService["cancel"],
 ): RuntimeSessionService {
   const creatingSessionIds = new Set<string>();
   const toRuntimeSession = (
@@ -7380,6 +7414,7 @@ function createRuntimeSessionService(
     });
 
   return {
+    cancel,
     async create(input = {}) {
       ensureOpen();
       admission.assertCreate(input);
@@ -8537,6 +8572,8 @@ function createRuntimeRunService(deps: {
   >();
   const autoModeStates = new Map<string, AutoModeSharedState>();
   const queueBySession = new Map<string, string[]>();
+  const sessionStopGate = createRuntimeSessionOperationGate();
+  const stoppingSessions = new Map<string, Set<string>>();
 
   const getRecord = (runId: string): RuntimeRunRecord => {
     const run = deps.runs.get(runId);
@@ -9884,7 +9921,9 @@ function createRuntimeRunService(deps: {
         handleUpstreamAbort();
       }
       const managedOperation = () =>
-        runManagedTask(
+        runOptions.toolInvocation !== undefined
+        ? runToolInvocation({ ...runOptions, abortSignal: abortController.signal }, runOptions.toolInvocation, record.start!.prompt)
+        : runManagedTask(
           {
             ...runOptions,
             abortSignal: abortController.signal,
@@ -10102,6 +10141,7 @@ function createRuntimeRunService(deps: {
   };
 
   const drainNext = (sessionId: string): void => {
+    if (stoppingSessions.has(sessionId)) return;
     const queue = queueBySession.get(sessionId);
     if (!queue || queue.length === 0 || activeRunBySession.has(sessionId))
       return;
@@ -10507,7 +10547,8 @@ function createRuntimeRunService(deps: {
     }
     const sessionOrder = deps.persistence.nextSessionOrder(input.sessionId);
     const isQueued =
-      requiredAfterRun !== undefined || activeRunBySession.has(input.sessionId);
+      requiredAfterRun !== undefined || activeRunBySession.has(input.sessionId)
+      || stoppingSessions.has(input.sessionId);
     const record: RuntimeRunRecord = {
       runId,
       sessionId: input.sessionId,
@@ -10540,7 +10581,7 @@ function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: input.mode
+      mode: options.toolInvocation !== undefined ? "managed_task" : input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
         ?? "coding",
       ...(requiredAfterRun !== undefined && input.mode === undefined
@@ -10617,8 +10658,92 @@ function createRuntimeRunService(deps: {
     );
   };
 
+  const prepareSessionStop = async (
+    input: RuntimeSessionCancelInput,
+  ): Promise<RuntimeSessionStopRecord> => {
+    if (!input.requestId.trim() || !input.sessionId.trim() || !input.expectedRunId.trim()) {
+      throw new Error("Session Stop requires nonempty sessionId, expectedRunId and requestId");
+    }
+    const digest = createHash("sha256").update(JSON.stringify([input.sessionId, input.requestId])).digest("hex");
+    const file = path.join(deps.persistence.runtimeDir, "session-stops", `${digest}.json`);
+    const existing = readRuntimeSessionStopRecord(file);
+    if (existing !== undefined) {
+      assertSessionStopBinding(existing, input);
+      deps.sessionAdmission.assertCachedIdentity(input.sessionId, existing.identity);
+      return existing;
+    }
+    const expected = deps.runs.get(input.expectedRunId);
+    const persisted = deps.persistence.loadRunStatus(input.expectedRunId);
+    if ((expected?.sessionId ?? persisted?.status.sessionId) !== input.sessionId) {
+      throw sessionStopConflict("Expected Run does not belong to the requested Session", "session_binding");
+    }
+    if (!expected?.ownedByRuntime || expected.admittedSessionContext === undefined) {
+      throw sessionStopConflict("Session Stop requires the Runtime that admitted the Run", "run_ownership");
+    }
+    await assertRunRecordAccess(expected, true);
+    const candidates = [...deps.runs.values()].filter((run) => run.sessionId === input.sessionId
+      && (run.runId === expected.runId || !isTerminalRunPhase(run.phase)));
+    for (const candidate of candidates) assertRuntimeOwnsRun(candidate, deps.runOwner);
+    const runtimeInfo = expected.admittedSessionContext.runtimeInfo;
+    const record: RuntimeSessionStopRecord = { ...input, version: 1,
+      frontier: Math.max(...candidates.map((run) => run.sessionOrder)),
+      runIds: candidates.sort((a, b) => Number(b.phase === "queued") - Number(a.phase === "queued")
+        || b.sessionOrder - a.sessionOrder).map((run) => run.runId),
+      identity: { surface: runtimeInfo?.surface, profileId: runtimeInfo?.profileId } };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return withRuntimeStatusFileLock(file, () => {
+      const raced = readRuntimeSessionStopRecord(file);
+      if (raced !== undefined) { assertSessionStopBinding(raced, input); return raced; }
+      writeRuntimeJsonAtomic(file, record);
+      return record;
+    });
+  };
+
   return {
     start,
+
+    cancelSession(input) {
+      return sessionStopGate.run(input.sessionId, async () => {
+        deps.ensureOpen();
+        const requests = stoppingSessions.get(input.sessionId) ?? new Set<string>();
+        const alreadyRequested = requests.has(input.requestId);
+        let recorded = false;
+        let completed = false;
+        requests.add(input.requestId);
+        stoppingSessions.set(input.sessionId, requests);
+        try {
+          const record = await prepareSessionStop(input);
+          recorded = true;
+          const targets = record.runIds.map((runId) => {
+            const entry = deps.persistence.loadRunStatus(runId);
+            if (entry === undefined || entry.status.sessionId !== input.sessionId || entry.status.sessionOrder === undefined
+              || entry.status.sessionOrder > record.frontier) {
+              throw sessionStopConflict("Session Stop control history is inconsistent", "control_record");
+            }
+            if (!isTerminalRunPhase(entry.status.phase) && entry.owner?.ownerId !== deps.runOwner.ownerId) {
+              throw sessionStopConflict("Session Stop target has another Runtime owner", "run_ownership");
+            }
+            return entry;
+          });
+          const receipts: RuntimeRunStopReceipt[] = [];
+          for (const entry of targets) {
+            receipts.push(isTerminalRunPhase(entry.status.phase)
+              ? runtimeRunStopReceipt({ ...entry, accepted: false, effectDeliveryAllowed: false })
+              : await this.abort(entry.status.runId));
+          }
+          completed = true;
+          return { ...input, frontier: record.frontier, receipts };
+        } finally {
+          // A partially delivered durable Stop must not launch its remaining
+          // targets. Replaying the same request repairs it and releases the fence.
+          if (completed || (!recorded && !alreadyRequested)) requests.delete(input.requestId);
+          if (requests.size === 0) {
+            stoppingSessions.delete(input.sessionId);
+            if (!deps.isClosed()) drainNext(input.sessionId);
+          }
+        }
+      });
+    },
 
     async submitInput(input) {
       deps.ensureOpen();
@@ -10828,7 +10953,7 @@ function createRuntimeRunService(deps: {
       const persisted = deps.persistence.loadRunStatus(runId);
       if (persisted) {
         if (run !== undefined) {
-          await assertRunRecordAccess(run);
+          await assertRunRecordAccess(run, true);
         } else {
           await deps.sessionAdmission.assertRunAccess(
             persisted.status.sessionId,
@@ -10843,7 +10968,7 @@ function createRuntimeRunService(deps: {
         }
       }
       if (run) {
-        await assertRunRecordAccess(run);
+        await assertRunRecordAccess(run, true);
         return statusFromRecord(run);
       }
       throw new Error(`Runtime run not found: ${runId}`);
@@ -10930,8 +11055,26 @@ function createRuntimeRunService(deps: {
       if (sessionId === undefined) {
         throw new Error(`Runtime run not found: ${runId}`);
       }
-      await deps.sessionAdmission.assertRunAccess(sessionId);
-      if (run !== undefined) assertRuntimeOwnsRun(run, deps.runOwner);
+      // An observer can predate the Run and only have its durable control record.
+      // Reject its foreign owner before falling back to Session admission reads.
+      if (
+        persisted?.owner !== undefined
+        && persisted.owner.ownerId !== deps.runOwner.ownerId
+        && !isTerminalRunPhase(persisted.status.phase)
+      ) {
+        throw createRuntimeConflictError(
+          `Runtime ${deps.runOwner.runtimeId} does not own run ${runId}`,
+          persisted.revision,
+        );
+      }
+      if (run !== undefined) {
+        // Stop controls an already admitted Run, including a terminal race.
+        // Its authority must not depend on reading mutable Session history.
+        assertRuntimeOwnsRun(run, deps.runOwner);
+        await assertRunRecordAccess(run, true);
+      } else {
+        await deps.sessionAdmission.assertRunAccess(sessionId);
+      }
       if (
         run?.terminalEmitted === true
         && persisted?.owner?.ownerId === deps.runOwner.ownerId
@@ -11958,7 +12101,9 @@ function buildRunOptions(input: {
       canonicalTarget,
       executionCwd,
       [trustedProjectExecPolicyPath],
+      resolveShellPermissionMode() === "full-access",
     ),
+    () => resolveShellPermissionMode() === "full-access",
   );
   const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
@@ -12087,6 +12232,7 @@ function buildRunOptions(input: {
     events,
     context: {
       ...ownerSafeContext,
+      runtimeRunId: record.runId,
       configHome: input.defaultConfigHome,
       shellSandbox: restrictedModeShellSandbox,
       resolveShellPermissionMode,
@@ -19600,6 +19746,12 @@ function normalizeRuntimeRunInput(
   artifacts: RuntimeArtifactStore,
   operation: RuntimeRunInputOperation,
 ): NormalizedRuntimeRunInput {
+  const invocation: unknown = input.options?.toolInvocation;
+  if (invocation !== undefined && (!isRecord(invocation) || typeof invocation.name !== 'string'
+    || !invocation.name.trim() || !isRecord(invocation.input))) {
+    throw Object.assign(new Error('toolInvocation requires a nonempty tool name and an object input.'),
+      { code: 'invalid_argument', denialSource: 'runtime_contract' });
+  }
   const items =
     input.input === undefined
       ? []
@@ -21151,9 +21303,16 @@ async function authorizeRuntimeShellHostExecution(input: {
   readonly request: KodaXShellHostExecutionRequest;
   readonly runtimeAutoGuardrail?: RuntimeOwnedAutoModeGuardrail;
 }): Promise<boolean | string> {
+  const mode = input.request.permissionMode
+    ?? (input.request.reason === "direct-host"
+      ? "full-access"
+      : replApi.normalizePermissionMode(input.record.permissionMode));
   const trustedProjectPolicy = input.record.trustedProjectExecPolicySnapshotPath;
   if (trustedProjectPolicy !== undefined && !fs.existsSync(trustedProjectPolicy)) {
-    return `[Blocked] Trusted project Exec Policy snapshot disappeared during this Run: ${trustedProjectPolicy}. Start a new Run after restoring or intentionally removing the policy.`;
+    return formatExecPolicyConfigurationError({
+      path: trustedProjectPolicy,
+      message: "Trusted project Exec Policy snapshot disappeared during this Run.",
+    }, mode);
   }
   const call: RunnerToolCall = {
     id: input.request.toolCallId
@@ -21164,22 +21323,18 @@ async function authorizeRuntimeShellHostExecution(input: {
   const policy = resolveRuntimeShellExecPolicy(
     input.record,
     input.request.command,
-    input.request.executable === undefined
-      ? undefined
-      : { hostExecutable: input.request.executable },
+    {
+      hostExecutable: input.request.executable,
+      permissionMode: mode,
+    },
   );
   if (policy === true) return true;
   if (policy === "prompt") {
-    if (input.request.reason === "direct-host") {
-      return "[Blocked] Exec Policy requires approval, but it cannot prompt under Full Access.";
-    }
     return requestRuntimeForcedPermission(input.events, input.record, call);
   }
   if (typeof policy === "string") return policy;
 
   if (input.request.reason === "direct-host") return true;
-  const mode = input.request.permissionMode
-    ?? replApi.normalizePermissionMode(input.record.permissionMode);
   if (mode === "full-access") return true;
   if (mode === "accept-edits") {
     return requestRuntimeForcedPermission(input.events, input.record, call);
@@ -21225,11 +21380,14 @@ async function requestRuntimeForcedPermission(
 function resolveRuntimeShellExecPolicy(
   record: RuntimeRunRecord,
   command: string,
-  facts?: Readonly<{ readonly hostExecutable?: string }>,
+  facts?: Readonly<{
+    readonly hostExecutable?: string;
+    readonly permissionMode?: KodaXShellPermissionMode;
+  }>,
 ): true | "prompt" | string | undefined {
   const invalid = record.execPolicyErrors?.[0];
   if (invalid !== undefined) {
-    return `[Blocked] Exec Policy could not be loaded from ${invalid.path}: ${invalid.message}`;
+    return formatExecPolicyConfigurationError(invalid, facts?.permissionMode);
   }
   const evaluation = evaluateShellExecPolicy(
     command,
@@ -21237,9 +21395,13 @@ function resolveRuntimeShellExecPolicy(
     facts,
   );
   if (evaluation.decision === "allow") return true;
-  if (evaluation.decision === "prompt") return "prompt";
+  if (evaluation.decision === "prompt") {
+    return facts?.permissionMode === "full-access"
+      ? formatExecPolicyRejection(evaluation, facts.permissionMode)
+      : "prompt";
+  }
   if (evaluation.decision === "forbidden") {
-    return `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? "no justification supplied"}`;
+    return formatExecPolicyRejection(evaluation, facts?.permissionMode);
   }
   return undefined;
 }
@@ -21945,6 +22107,40 @@ function createRuntimePublicError(message: string): Error {
   const error = new Error(message);
   error.stack = undefined;
   return error;
+}
+
+function sessionStopConflict(message: string, denialSource: string): Error {
+  return Object.assign(createRuntimeConflictError(message, 0), {
+    denialSource, retryable: false, operation: "sessions.cancel",
+    data: { denialSource, retryable: false, operation: "sessions.cancel" },
+  });
+}
+
+function assertSessionStopBinding(record: RuntimeSessionStopRecord, input: RuntimeSessionCancelInput): void {
+  if (record.sessionId !== input.sessionId || record.expectedRunId !== input.expectedRunId
+    || record.requestId !== input.requestId) {
+    throw sessionStopConflict("Session Stop request identity cannot be rebound", "session_binding");
+  }
+}
+
+function readRuntimeSessionStopRecord(file: string): RuntimeSessionStopRecord | undefined {
+  if (!fs.existsSync(file)) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw sessionStopConflict("Session Stop control record contains invalid JSON", "control_record");
+  }
+  if (!isRecord(value) || value.version !== 1 || typeof value.sessionId !== "string"
+    || typeof value.expectedRunId !== "string" || typeof value.requestId !== "string"
+    || typeof value.frontier !== "number" || !Number.isSafeInteger(value.frontier) || value.frontier < 0
+    || !Array.isArray(value.runIds) || !value.runIds.length
+    || !value.runIds.every((id: unknown) => typeof id === "string") || !isRecord(value.identity)
+    || (value.identity.surface !== undefined && typeof value.identity.surface !== "string")
+    || (value.identity.profileId !== undefined && typeof value.identity.profileId !== "string")) {
+    throw sessionStopConflict("Session Stop control record is invalid", "control_record");
+  }
+  return value as unknown as RuntimeSessionStopRecord;
 }
 
 function runtimeRunStopReceipt(

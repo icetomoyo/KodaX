@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Command } from 'commander';
+import { Option, type Command } from 'commander';
 import {
   createExecPolicyOperation,
   evaluateExecPolicy,
@@ -7,11 +7,13 @@ import {
   loadExecPolicy,
   type ExecPolicyDecision,
   type ExecPolicyRule,
+  type KodaXShellPermissionMode,
 } from '@kodax-ai/coding';
 import { getGitRoot, KODAX_DIR } from '@kodax-ai/repl';
 
 export interface ExecPolicyCheckReport {
   readonly command: readonly string[];
+  readonly permissionMode?: KodaXShellPermissionMode;
   readonly decision: ExecPolicyDecision | 'unmatched';
   readonly criticalFallback: boolean;
   readonly matchedRules: readonly ExecPolicyRule[];
@@ -33,6 +35,8 @@ export function configureKodaXExecPolicyCommand(
   execPolicy
     .command('check')
     .description('Check a command without executing it')
+    .addOption(new Option('--mode <mode>', 'Permission profile (omitted: conservative built-in fallbacks)')
+      .choices(['plan', 'accept-edits', 'auto', 'full-access']))
     .option('--cwd <dir>', 'Repository directory used to locate project policy')
     .option(
       '--trust-project-policy',
@@ -49,6 +53,7 @@ export function configureKodaXExecPolicyCommand(
       command: string[],
       options: {
         readonly cwd?: string;
+        readonly mode?: KodaXShellPermissionMode;
         readonly hostExecutable?: string;
         readonly trustProjectPolicy?: boolean;
         readonly pretty?: boolean;
@@ -66,9 +71,10 @@ export function configureKodaXExecPolicyCommand(
           .map((error) => `${error.path}: ${error.message}`)
           .join('\n'));
       }
-      const hostFacts = options.hostExecutable === undefined
-        ? {}
-        : { hostExecutable: options.hostExecutable };
+      const hostFacts = {
+        ...(options.hostExecutable === undefined ? {} : { hostExecutable: options.hostExecutable }),
+        ...(options.mode === undefined ? {} : { permissionMode: options.mode }),
+      };
       const evaluated = command.length === 1
         ? evaluateShellExecPolicy(command[0]!, loaded.rules, hostFacts)
         : evaluateExecPolicy(
@@ -77,6 +83,7 @@ export function configureKodaXExecPolicyCommand(
           );
       const report: ExecPolicyCheckReport = {
         command,
+        ...(options.mode === undefined ? {} : { permissionMode: options.mode }),
         decision: evaluated.decision,
         criticalFallback: evaluated.criticalFallback,
         matchedRules: evaluated.matched,

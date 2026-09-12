@@ -263,6 +263,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.settings.updateVersioned",
   ]),
   ...scopeEntries("run:control", [
+    "session.cancel",
     "run.start",
     "run.input.submit",
     "run.abort",
@@ -1774,6 +1775,12 @@ async function dispatchRuntimeDaemonRequest(
     }
     case "run.abort":
       return runtime.runs.abort(requireStringParam(request.params, "runId"));
+    case "session.cancel":
+      return runtime.sessions.cancel({
+        sessionId: requireStringParam(request.params, "sessionId"),
+        expectedRunId: requireStringParam(request.params, "expectedRunId"),
+        requestId: requireStringParam(request.params, "requestId"),
+      });
     case "run.model.set": {
       return setRunModel(runtime, request.params);
     }

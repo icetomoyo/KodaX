@@ -1137,7 +1137,7 @@ Exec Policy and the Edits user decision or Auto[LLM] reviewer. Auto review has
 fixed 90/180-second attempt bounds and never falls back to Rules, Edits, or an
 automatic user prompt. Full Access samples the profile once per Bash call and
 runs directly on the host without sandbox or approval prompts. Explicit
-forbidden rules and the Codex dangerous-command policy still block. Runtime permission prompts
+forbidden rules still block; built-in dangerous-command fallbacks do not apply. Runtime permission prompts
 offer opaque, exact
 allow-once/session/persistent grant suggestions; persistent grants are
 daemon-owned and revisioned. Host plan exit is exposed only when the host
@@ -1648,7 +1648,7 @@ KodaX provides 4 permission profiles:
 | `plan` | Read-only planning mode | All modification tools blocked |
 | `accept-edits` | Sandbox-first edits; user decides an exact host boundary | Host-boundary operations |
 | `auto` | Sandbox-first execution; LLM reviews an exact host boundary | No automatic prompt; denied calls return a safer-route reason |
-| `full-access` | Direct host execution without sandbox or approval prompts | Never prompts; explicit forbidden/dangerous policy can block |
+| `full-access` | Direct host execution without sandbox or approval prompts | Explicit forbidden/prompt rules still block; no built-in dangerous-command fallback |
 
 ```bash
 # In REPL, use /mode command
@@ -1676,10 +1676,10 @@ KodaX provides 4 permission profiles:
 - Shift-Tab cycles `Plan -> Edits -> Auto[LLM] -> Full Access`; Shift+Enter
   inserts a newline. Legacy `auto-in-project` and Auto[RULES] state normalize
   to Auto[LLM] and are never persisted again.
-- Full Access skips sandbox and all approval paths. Explicit forbidden rules
-  and the Codex dangerous-command policy remain enforced; an Exec Policy
+- Full Access skips sandbox, all approval paths, and built-in dangerous-command
+  fallbacks. Explicit forbidden rules remain enforced; an Exec Policy
   `prompt` rule is rejected under Never approval semantics. Use
-  `kodax execpolicy check -- <command>` to inspect host policy without running it.
+  `kodax execpolicy check --mode full-access -- <command>` to inspect that profile without running it.
 - Runtime-backed prompts can offer exact `allow once`, `allow this session`,
   and `always allow` choices. Return the Runtime-issued opaque suggestion;
   never derive or widen a permission rule from the displayed command or path.

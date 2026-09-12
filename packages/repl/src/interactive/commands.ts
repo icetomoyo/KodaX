@@ -3008,6 +3008,7 @@ async function executeExtensionCommand(
   command: ExtensionCommandDefinition,
   args: string[],
   context: InteractiveContext,
+  callbacks: CommandCallbacks,
 ): Promise<CommandResult> {
   const runtime = getActiveExtensionRuntime();
   if (!runtime) {
@@ -3015,7 +3016,14 @@ async function executeExtensionCommand(
     return false;
   }
 
-  const result = await command.handler(args, {
+  let result: ExtensionCommandResult | void;
+  if (command.execution !== 'configuration') {
+    if (!callbacks.executeToolInvocation) throw new Error(JSON.stringify({ code: 'runtime_execution_unavailable',
+      denialSource: 'runtime_capability', remediation: 'Connect the Session execution owner before invoking this extension command.' }));
+    const outcome = await callbacks.executeToolInvocation({ name: `extension_command__${command.name}`, input: { args } }, `/${command.name} ${args.join(' ')}`);
+    if (!outcome.success) throw new Error(outcome.lastText);
+    result = JSON.parse(outcome.lastText) as ExtensionCommandResult;
+  } else result = await command.handler(args, {
     sessionId: context.sessionId,
     gitRoot: context.gitRoot,
     workingDirectory: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
@@ -3155,7 +3163,7 @@ export async function executeCommand(
     }
 
     try {
-      return await executeExtensionCommand(extensionCommand, parsed.args, context);
+      return await executeExtensionCommand(extensionCommand, parsed.args, context, callbacks);
     } catch (error) {
       console.log(chalk.red(`\n[Extension command failed: ${error instanceof Error ? error.message : String(error)}]`));
       return false;

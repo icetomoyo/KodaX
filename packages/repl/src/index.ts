@@ -7,6 +7,7 @@
  */
 
 // === 主入口：Ink UI ===
+export type { RuntimeStopControl, RuntimeStopCallbacks } from './interactive/runtime-stop.js';
 export { runInkInteractiveMode } from "./ui/index.js";
 export type {
   InkREPLOptions,

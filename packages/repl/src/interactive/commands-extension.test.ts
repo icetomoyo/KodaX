@@ -7,6 +7,7 @@ import {
   createExtensionRuntime,
   getActiveExtensionRuntime,
   registerOfficialSandboxExtension,
+  runToolInvocation,
 } from '@kodax-ai/coding';
 import { BUILTIN_COMMANDS, executeCommand, getCommandRegistry } from './commands.js';
 
@@ -46,6 +47,7 @@ describe('extension command host adapters', () => {
           description: 'Review a plan through the agent runtime',
           usage: '/review-plan <topic>',
           handler: async (args) => ({
+            data: api.getExecutionScope().runId,
             message: 'reviewing ' + (args[0] ?? 'nothing'),
             invocation: {
               prompt: 'Review plan for ' + (args[0] ?? 'general'),
@@ -65,7 +67,9 @@ describe('extension command host adapters', () => {
     const result = await executeCommand(
       { command: 'rp', args: ['auth'] },
       { sessionId: 'session-1', gitRoot: tempDir } as never,
-      {} as never,
+      { executeToolInvocation: (invocation: { name: string; input: Record<string, unknown> }, prompt: string) =>
+        runToolInvocation({ provider: 'unconfigured-provider', extensionRuntime: runtime,
+          session: { id: 'session-1' }, context: { executionCwd: tempDir } }, invocation, prompt) } as never,
       {} as never,
     );
 

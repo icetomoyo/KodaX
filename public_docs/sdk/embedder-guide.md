@@ -5744,10 +5744,18 @@ single host retry; a tool implementation must never fall through and execute
 the command itself.
 
 Full Access samples the current profile once when each Bash call starts, then
-skips both the sandbox and every approval path. Explicit `forbidden` rules and
-the Codex dangerous-command policy still block; ordinary unmatched commands and
+skips the sandbox, every approval path, and built-in dangerous-command fallbacks.
+Explicit `forbidden` rules still block; unmatched commands and
 explicit `allow` rules run directly. An explicit `prompt` rule is rejected
 under Never approval semantics and creates no Runtime permission event.
+
+Exec Policy denials remain Bash text results, encoded as JSON with `code`,
+`denialSource`, `source`, `sourcePath`, `permissionMode`, `matchedRules`,
+`retryable: false`, `remediation`, and `guidance`. Sources distinguish explicit
+administrator/user/trusted-project rules, built-in fallbacks in other profiles,
+and policy configuration errors. Preserve these fields when displaying or passing
+the denial to a model; do not label a KodaX rule as an OS restriction or recommend
+rewriting the command to evade it.
 
 Auto review uses a fixed reviewer role/output schema. The optional
 `config.json#autoReview.policy` replaces only its security-policy body. The
@@ -6721,6 +6729,104 @@ backward-compatible shorthand for the same user scope. Unknown, duplicate, or
 unsupported options fail before the Runtime mutation.
 
 ---
+
+## Managed extension execution and Session Stop (FEATURE_299, v0.7.96)
+
+A Stop button uses one owner-side operation:
+
+```ts
+const request = { sessionId, expectedRunId: activeRunId, requestId: crypto.randomUUID() };
+const receipt = await runtime.sessions.cancel(request);
+// Retry this exact request after a transport failure; keep requestId and binding.
+// receipt.frontier and receipt.receipts describe the original accepted queue.
+```
+
+Require `runtime.capabilities.sessionCancellation.version === 1`. Unsupported
+owners require an upgrade; clients must not replace this operation with a
+list/abort loop. The Runtime fixes a durable Session order frontier, cancels its
+queued Runs before its active Run, and preserves later submissions. It authorizes
+from admitted Session/Profile/Run identity and the Runtime owner, independently
+of Session history write locks. An incomplete delivery retains a request-specific
+queue fence until the same request is repaired. Other successful requests cannot
+release that fence.
+
+`accepted` means a first durable cancellation request. A duplicate has
+`accepted: false` without being denied. `state: 'unknown'` means cleanup has not
+been confirmed. Await the Run result or observe Run lifecycle events for the
+actual terminal outcome. Natural completion/failure wins a terminal race. Stop
+covers owned child turns, running tools and pending interactions/interrupt
+inputs; already delivered inputs remain in the audit trail. Independent earlier
+Actor turns, other Sessions and Runs submitted after the frontier are outside
+this request. CLI Ctrl+C and ACP Stop use the same Session operation; input
+redirection retains the narrower `runs.abort` scope.
+
+For an explicit tool operation without a model turn, require
+`runtime.capabilities.toolInvocation.version === 1` and start a normal Run:
+
+```ts
+const run = await runtime.runs.start({
+  sessionId,
+  prompt: '!git status',
+  options: { toolInvocation: { name: 'bash', input: { command: 'git status' } } },
+});
+const result = await run.result;
+```
+
+This uses ordinary tool visibility, permission rules, Run queue, events,
+persistence and cancellation. `!command` uses this path. A nonzero Shell exit
+is a failed tool invocation. No available execution owner is a structured
+capability failure, rather than permission to execute a separate process.
+Standalone Coding hosts use `runToolInvocation(options, invocation, prompt)`
+and supply their normal host boundaries.
+
+Existing extension registrations remain available. Managed tool handlers receive
+`ctx.extensionExecution`; command handlers receive `context.extensionExecution`;
+file capability provider `execute`, `read` and `getPrompt` handlers receive it as
+a third argument. `api.getExecutionScope()` retrieves the same current scope.
+`api.capabilities.executionScope` and `scopedSessionState` are version 1.
+
+```ts
+export default function activate(api: KodaXExtensionAPI) {
+  api.registerCommand({
+    name: 'inspect-source',
+    description: 'Inspect a source file through host policy',
+    handler: async (args) => {
+      const scope = api.getExecutionScope();
+      if (!scope) throw new Error('Managed execution is unavailable');
+      scope.reportProgress({ message: 'Reading source', data: { path: args[0] ?? '' } });
+      const content = await scope.invokeTool('read', { path: args[0] });
+      return { message: String(content) };
+    },
+  });
+}
+```
+
+The scope contains version, Session/Run/invocation/extension identity, the owning
+AbortSignal, optional scoped Actor client and checked `invokeTool`. Nested tools
+re-enter normal policy. Accepted managed tool effects are joined before the
+handler settles, including calls the extension did not await. Progress is
+versioned metadata on standard `tool.progress` events. An extension cannot
+self-confirm Run settlement, manufacture owner authority, or use completion
+hooks to veto user Stop.
+
+Effectful slash commands run through their registered
+`extension_command__<name>` tool and the Session owner. REPL embedders provide
+`CommandCallbacks.executeToolInvocation`; both shipped terminal hosts do this.
+Commands that only configure or inspect the extension host can declare
+`execution: 'configuration'`; these run without a fabricated Run scope. Extension
+activation also has no execution scope. Legacy `api.exec` and `api.webhook` are
+trusted Node host utilities, not a sandbox or managed permission boundary; use
+scope tools/Actor clients for managed work and never rewrite a rejected operation
+through those legacy helpers.
+
+Concurrent Sessions and Runtime instances retain their own controllers, tool
+versions and extension state. Combined runtimes pin all participating members
+before asynchronous admission. Reload changes future Runs; active handlers and
+providers drain before disposal. Session records are JSON checkpoints, not
+permission grants or authority to replay effects after restart. Current workflow
+host APIs propagate the same owner identity/signal and distinguish requested
+from confirmed Stop, including paused and already-cancelled owners. Moving the
+workflow implementation and its distribution into an extension is a later task.
 
 ## See also
 

@@ -170,6 +170,7 @@ interface KodaXAcpSessionState {
   permissionMode: AcpPermissionMode;
   mcpServers: McpServer[];
   activeRunIds: Set<string>;
+  stopRequest?: { expectedRunId: string; requestId: string };
   /** Created lazily on the first valid prompt so handshake-only sessions stay in memory. */
   runtimeSessionReady?: Promise<void>;
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
@@ -494,12 +495,6 @@ function isAbortLikeError(error: unknown): boolean {
     error.message.includes('aborted') ||
     error.message.includes('ABORTED')
   );
-}
-
-function acpAbortPhaseRank(phase: RuntimeRunPhase): number {
-  if (phase === 'queued') return 0;
-  if (phase === 'running' || phase === 'waiting_permission' || phase === 'waiting_user_input') return 1;
-  return 2;
 }
 
 function toAcpUsage(snapshot: KodaXContextTokenSnapshot | undefined): PromptResponse['usage'] | undefined {
@@ -986,27 +981,12 @@ export class KodaXAcpServer implements Agent {
     if (session.activeRunIds.size === 0) return;
 
     const runtime = await this.runtimeReady;
-    const runIds = [...session.activeRunIds];
-    const abortTargets = await Promise.all(
-      runIds.map(async (runId) => {
-        try {
-          const status = await runtime.runs.get(runId);
-          return { runId, rank: acpAbortPhaseRank(status.phase) };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(`ACP runtime run status lookup failed for ${runId}: ${message}`);
-          return { runId, rank: acpAbortPhaseRank('cancelled') };
-        }
-      }),
-    );
-
-    abortTargets.sort((left, right) => left.rank - right.rank);
-    await Promise.all(
-      abortTargets.map(({ runId }) => runtime.runs.abort(runId).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`ACP runtime run abort failed for ${runId}: ${message}`);
-      })),
-    );
+    const expectedRunId = session.activeRunIds.values().next().value;
+    if (expectedRunId === undefined) return;
+    if (session.stopRequest?.expectedRunId !== expectedRunId) {
+      session.stopRequest = { expectedRunId, requestId: randomUUID() };
+    }
+    await runtime.sessions.cancel({ sessionId: session.sessionId, ...session.stopRequest });
   }
 
   private requireSession(sessionId: string): KodaXAcpSessionState {

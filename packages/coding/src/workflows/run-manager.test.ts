@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkflowAgentBackend, WorkflowModule, WorkflowProcessEvent } from '@kodax-ai/agent';
 
-import { createWorkflowRunManager } from './run-manager.js';
+import { createWorkflowRunManager, requestSessionWorkflowStop } from './run-manager.js';
 
 function deferred<T>(): {
   readonly promise: Promise<T>;
@@ -59,6 +59,25 @@ describe('WorkflowRunManager', () => {
     dir = mkdtempSync(join(tmpdir(), 'wf-manager-'));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('rejects another Session stop and confirms only after owned workflow cleanup', async () => {
+    const manager = createWorkflowRunManager();
+    const cleanup = deferred<void>();
+    const started = deferred<void>();
+    const run = manager.start({ runId: 'owned', runDir: dir, args: {}, backend: fakeBackend().backend,
+      processMetadata: { hostMetadata: { ownerSessionId: 'session-a' } },
+      module: { meta: { name: 'owned', description: 'owned', readOnly: true },
+        run: async () => { started.resolve(); await cleanup.promise; return 'done'; } },
+    });
+    await started.promise;
+    expect(() => requestSessionWorkflowStop(manager, 'session-b', run.runId)).toThrow(/session_scope/);
+    expect(manager.get(run.runId)?.stop).toBeUndefined();
+    expect(requestSessionWorkflowStop(manager, 'session-a', run.runId)).toEqual({ runId: 'owned', accepted: true, state: 'unknown' });
+    expect(requestSessionWorkflowStop(manager, 'session-a', run.runId)).toEqual({ runId: 'owned', accepted: false, state: 'unknown' });
+    cleanup.resolve();
+    await run.done;
+    expect(requestSessionWorkflowStop(manager, 'session-a', run.runId).state).toBe('confirmed');
+  });
 
   it('starts a workflow in the background and records the terminal snapshot', async () => {
     const manager = createWorkflowRunManager();

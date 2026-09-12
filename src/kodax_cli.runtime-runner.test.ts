@@ -15,6 +15,53 @@ import {
 } from './kodax_cli.js';
 
 describe('interactive daemon runtime bridge', () => {
+  it('reports natural completion confirmed when Stop loses the race', async () => {
+    let finish!: (value: import('./sdk-runtime.js').RuntimeRunResult) => void;
+    const result = new Promise<import('./sdk-runtime.js').RuntimeRunResult>((resolve) => { finish = resolve; });
+    const runtime = { identity: { mode: 'embedded' },
+      sessions: { load: async () => ({ id: 'session-1' }), cancel: async () => ({ receipts: [
+        { runId: 'run-1', state: 'confirmed', outcome: 'completed', accepted: false },
+      ] }) },
+      runs: { start: async () => ({ runId: 'run-1', sessionId: 'session-1', result }) },
+      events: { subscribe: () => ({ close() {} }) },
+    } as unknown as KodaXRuntime;
+    let control: import('@kodax-ai/repl').RuntimeStopControl | undefined;
+    const onStopState = vi.fn();
+    const pending = createInteractiveRuntimeRunner(runtime)({ sessionId: 'session-1', prompt: 'work', options: { provider: 'openai' },
+      onStopControl: (next) => { control = next; }, onStopState });
+    await vi.waitFor(() => expect(control).toBeDefined());
+    await control!.request();
+    finish({ runId: 'run-1', sessionId: 'session-1', phase: 'completed', result: successfulResult() });
+    await pending;
+    expect(onStopState).toHaveBeenLastCalledWith('confirmed', 'completed');
+  });
+  it('keeps a rejected Session Stop visible and retryable without settling the active runner', async () => {
+    let finish!: (result: import('./sdk-runtime.js').RuntimeRunResult) => void;
+    const result = new Promise<import('./sdk-runtime.js').RuntimeRunResult>((resolve) => { finish = resolve; });
+    const cancel = vi.fn().mockRejectedValueOnce(Object.assign(new Error('wrong owner'), { code: 'conflict' }))
+      .mockResolvedValue({ receipts: [{ state: 'unknown' }] });
+    const runtime = {
+      identity: { mode: 'embedded' },
+      sessions: { load: async () => ({ id: 'session-1' }), cancel },
+      runs: { start: async () => ({ runId: 'run-1', sessionId: 'session-1', result }) },
+      events: { subscribe: () => ({ close() {} }) },
+    } as unknown as KodaXRuntime;
+    let control: import('@kodax-ai/repl').RuntimeStopControl | undefined;
+    const onStopState = vi.fn();
+    const pending = createInteractiveRuntimeRunner(runtime)({ sessionId: 'session-1', prompt: 'work', options: { provider: 'openai' },
+      onStopControl: (next) => { control = next; }, onStopState });
+    await vi.waitFor(() => expect(control).toBeDefined());
+    await expect(control!.request()).rejects.toThrow('wrong owner');
+    expect(onStopState).toHaveBeenLastCalledWith('rejected', 'wrong owner');
+    await expect(control!.request()).resolves.toEqual({ state: 'unknown' });
+    expect(cancel.mock.calls[1]?.[0]).toEqual(cancel.mock.calls[0]?.[0]);
+    expect(onStopState).toHaveBeenLastCalledWith('accepted');
+    finish({ runId: 'run-1', sessionId: 'session-1', phase: 'interrupted',
+      stop: { state: 'confirmed', outcome: 'interrupted', requestedAt: new Date().toISOString(), reason: 'stop' } });
+    await expect(pending).resolves.toMatchObject({ interrupted: true });
+    expect(onStopState).toHaveBeenLastCalledWith('confirmed', 'interrupted');
+    expect(control).toBeUndefined();
+  });
   it('projects only committed daemon compactions as legacy successes', () => {
     const onCompact = vi.fn();
     const onCompactEnd = vi.fn();

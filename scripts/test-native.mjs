@@ -44,8 +44,8 @@ for (const crate of crates) {
 
 const nativeDirectory = path.join(root, 'dist', 'native', `${process.platform}-${process.arch}`);
 const manifest = JSON.parse(readFileSync(path.join(nativeDirectory, 'manifest.json'), 'utf8'));
-if (manifest.textTransaction?.protocol !== 4) {
-  throw new Error('Staged native text transaction protocol is not 4');
+if (manifest.textTransaction?.protocol !== 5) {
+  throw new Error('Staged native text transaction protocol is not 5');
 }
 const expectedLegalFiles = [
   'LICENSE-APACHE.txt',

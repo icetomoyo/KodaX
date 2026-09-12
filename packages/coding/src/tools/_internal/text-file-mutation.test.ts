@@ -278,7 +278,8 @@ describe('trusted text file mutation boundary', () => {
       { path: filePath },
       ctx,
       async () => undefined,
-    ))).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
+    ))).rejects.toMatchObject({ code: 'text_mutation_policy_denied', denialSource: 'builtin_fallback',
+      matchedRule: 'protected_git_metadata', remediation: expect.stringContaining('Full Access') });
     expect(snapshot).not.toHaveBeenCalled();
   });
 

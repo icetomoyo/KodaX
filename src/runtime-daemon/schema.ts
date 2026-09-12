@@ -297,6 +297,13 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'run.list': { params: runFilterSchema(), result: arraySchema(runStatusSchema()) },
   'run.await': { params: runIdParamsSchema(), result: runResultSchema() },
   'run.abort': { params: runIdParamsSchema(), result: runStopReceiptSchema() },
+  'session.cancel': {
+    params: objectSchema({ sessionId: stringSchema, expectedRunId: stringSchema, requestId: stringSchema },
+      ['sessionId', 'expectedRunId', 'requestId']),
+    result: objectSchema({ sessionId: stringSchema, expectedRunId: stringSchema, requestId: stringSchema,
+      frontier: integerSchema, receipts: { type: 'array', items: runStopReceiptSchema() } },
+      ['sessionId', 'expectedRunId', 'requestId', 'frontier', 'receipts']),
+  },
   'run.model.set': {
     params: objectSchema({ runId: stringSchema, model: stringSchema }, ['runId'], true),
     result: okSchema,

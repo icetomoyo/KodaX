@@ -38,6 +38,7 @@ if (
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'node:os';
@@ -202,6 +203,7 @@ import {
   initializeSetupConfiguration,
   renderSetupGuide,
   type ReplRuntimeAutoModeControl,
+  type RuntimeStopCallbacks,
   type ReplRuntimeAutoModeSettings,
   type CanonicalPermissionMode,
   type PermissionMode,
@@ -560,7 +562,7 @@ async function getInteractiveRuntimeStatus(input: {
   };
 }
 
-interface InteractiveRuntimeRunnerInput {
+interface InteractiveRuntimeRunnerInput extends RuntimeStopCallbacks {
   readonly options: KodaXOptions;
   readonly prompt: string;
   readonly sessionId: string;
@@ -718,6 +720,15 @@ export function createInteractiveRuntimeRunner(
     const bridge = createRuntimeReplEventBridge(runtime, input);
     const abortSignal = input.options.abortSignal;
     let abortRun: (() => void) | undefined;
+    let stopRequested = false;
+    let confirmedOutcome: string | undefined;
+    let confirmationReported = false;
+    const reportStopConfirmation = (): void => {
+      if (stopRequested && confirmedOutcome && !confirmationReported) {
+        confirmationReported = true;
+        input.onStopState?.('confirmed', confirmedOutcome);
+      }
+    };
     try {
       const handle = await runtime.runs.start({
         sessionId: input.sessionId,
@@ -728,8 +739,33 @@ export function createInteractiveRuntimeRunner(
         options: startOptions,
       });
       bridge.setRunId(handle.runId);
+      const stopRequestId = randomUUID();
+      let pendingStop: Promise<{ state: 'unknown' | 'confirmed' }> | undefined;
+      const reportStopFailure = (error: unknown): void => {
+        const message = normalizeCliError(error).message;
+        input.onStopState?.('rejected', message);
+        emitKodaXDiagnostic({ source: 'cli:runtime-stop', level: 'error', message });
+      };
+      input.onStopControl?.({ request: () => {
+        if (pendingStop !== undefined) return pendingStop;
+        input.onStopState?.('requesting');
+        pendingStop = runtime.sessions.cancel({ sessionId: input.sessionId,
+          expectedRunId: handle.runId, requestId: stopRequestId }).then((receipt) => {
+          stopRequested = true;
+          input.onStopState?.('accepted');
+          const target = receipt.receipts.find((item) => item.runId === handle.runId);
+          if (target?.state === 'confirmed') confirmedOutcome = target.outcome;
+          reportStopConfirmation();
+          return { state: receipt.receipts.every((item) => item.state === 'confirmed')
+            ? 'confirmed' as const : 'unknown' as const };
+        }).catch((error: unknown) => { reportStopFailure(error); throw error; })
+          .finally(() => { pendingStop = undefined; });
+        return pendingStop;
+      } });
       abortRun = () => {
-        void runtime.runs.abort(handle.runId).catch(() => undefined);
+        // Input redirection retains its single-Run scope. Explicit user Stop
+        // uses the Session control above and may cancel its accepted successors.
+        void runtime.runs.abort(handle.runId).catch(reportStopFailure);
       };
       if (abortSignal?.aborted) {
         abortRun();
@@ -738,6 +774,10 @@ export function createInteractiveRuntimeRunner(
       }
 
       const result = await handle.result;
+      if (result.stop?.state === 'confirmed' || result.phase === 'completed' || result.phase === 'failed') {
+        confirmedOutcome = result.stop?.state === 'confirmed' ? result.stop.outcome : result.phase;
+        reportStopConfirmation();
+      }
       if (result.error) throw normalizeCliError(result.error);
       if (!result.result) {
         if (result.phase === 'cancelled' || result.phase === 'interrupted') {
@@ -747,6 +787,7 @@ export function createInteractiveRuntimeRunner(
       }
       return result.result;
     } finally {
+      input.onStopControl?.(undefined);
       if (abortRun) abortSignal?.removeEventListener('abort', abortRun);
       await bridge.close();
     }

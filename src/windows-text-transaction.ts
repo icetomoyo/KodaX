@@ -16,7 +16,7 @@ import {
   resolveTrustedTextNativeArtifact,
 } from './windows-native-artifacts.js';
 
-export const TRUSTED_TEXT_TRANSACTION_PROTOCOL = 4;
+export const TRUSTED_TEXT_TRANSACTION_PROTOCOL = 5;
 /** @deprecated Use TRUSTED_TEXT_TRANSACTION_PROTOCOL. */
 export const WINDOWS_TEXT_TRANSACTION_PROTOCOL = TRUSTED_TEXT_TRANSACTION_PROTOCOL;
 
@@ -55,6 +55,7 @@ interface NativeTextTransactionBinding {
   TrustedTextTransactionRoot: new (
     rootPath: string,
     stateRoot?: string,
+    allowGitMetadata?: boolean,
   ) => NativeTextTransactionRoot;
 }
 
@@ -142,11 +143,20 @@ function normalizedRootCandidates(roots: readonly string[]): readonly string[] {
   return [...unique.values()].sort((left, right) => right.length - left.length);
 }
 
-function authorizeTarget(target: string, roots: readonly string[]): AuthorizedTarget {
+function authorizeTarget(target: string, roots: readonly string[], fullAccess = false): AuthorizedTarget {
   assertSupportedAbsolutePath(target, 'target');
   for (const root of roots) assertSupportedAbsolutePath(root, 'write root');
   const resolvedTarget = path.resolve(target);
-  const candidates = normalizedRootCandidates(roots);
+  const candidates = [...normalizedRootCandidates(roots)];
+  if (fullAccess) {
+    let anchor = path.dirname(resolvedTarget);
+    while (!fs.existsSync(anchor)) {
+      const parent = path.dirname(anchor);
+      if (parent === anchor) break;
+      anchor = parent;
+    }
+    candidates.unshift(anchor);
+  }
   const lexicalRoot = candidates.find((candidate) => (
     candidate !== resolvedTarget && sameOrInside(candidate, resolvedTarget)
   ));
@@ -262,12 +272,14 @@ function loadNativeBindingFile(bindingPath: string): Partial<NativeTextTransacti
 function createNativeRoot(
   binding: NativeTextTransactionBinding,
   canonicalRoot: string,
+  allowGitMetadata: boolean,
 ): NativeTextTransactionRoot {
   return process.platform === 'win32'
-    ? new binding.TrustedTextTransactionRoot(canonicalRoot)
+    ? new binding.TrustedTextTransactionRoot(canonicalRoot, undefined, allowGitMetadata)
     : new binding.TrustedTextTransactionRoot(
       canonicalRoot,
       ensureUnixTrustedTextCoordinationRoot(),
+      allowGitMetadata,
     );
 }
 
@@ -390,16 +402,19 @@ function requireWrittenOutcome(
 export function createTrustedTextMutationHost(
   roots: () => readonly string[],
   authorizeCanonicalTarget: (canonicalTarget: string) => void,
+  hasFullAccess: () => boolean = () => false,
 ): KodaXTrustedTextMutationHost {
   return {
     async snapshot(input) {
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
-      const target = authorizeTarget(input.path, roots());
+      const fullAccess = hasFullAccess();
+      const target = authorizeTarget(input.path, roots(), fullAccess);
       authorizeCanonicalTarget(target.canonicalTarget);
+      assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {
         const binding = loadNativeBinding(roots());
-        const nativeRoot = createNativeRoot(binding, target.canonicalRoot);
+        const nativeRoot = createNativeRoot(binding, target.canonicalRoot, fullAccess);
         return publicSnapshot(await nativeRoot.snapshot(target.canonicalTarget));
       } catch (error: unknown) {
         translateNativeError(target.canonicalTarget, error);
@@ -408,11 +423,13 @@ export function createTrustedTextMutationHost(
     async commit(input: KodaXTrustedTextCommitInput) {
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
-      const target = authorizeTarget(input.path, roots());
+      const fullAccess = hasFullAccess();
+      const target = authorizeTarget(input.path, roots(), fullAccess);
       authorizeCanonicalTarget(target.canonicalTarget);
+      assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {
         const binding = loadNativeBinding(roots());
-        const nativeRoot = createNativeRoot(binding, target.canonicalRoot);
+        const nativeRoot = createNativeRoot(binding, target.canonicalRoot, fullAccess);
         const outcome = await nativeRoot.commit(
           target.canonicalTarget,
           input.expectedRevision,

@@ -494,6 +494,7 @@ export {
   executeRunScopedTool,
 } from './agent-runtime/run-scoped-tools.js';
 export type { RunScopedToolDefinition } from './extensions/runtime-contract.js';
+export { runToolInvocation } from './agent-runtime/tool-invocation.js';
 // ============== Repo Intelligence ==============
 
 export type {
@@ -776,6 +777,8 @@ export type {
   ExtensionDiscoveryResult,
   ExtensionDiscoverySkipReason,
   ExtensionRuntimeContract,
+  ExtensionExecutionScope,
+  ExtensionCapabilityProvider,
   RuntimeDefaultsSnapshot,
   SkippedExtensionDiscoveryEntry,
 } from './extensions/index.js';

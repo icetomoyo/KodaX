@@ -59,6 +59,24 @@ describe('Windows trusted text transaction integration', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  portableIt('uses Full Access authority for Git metadata and external targets while keeping explicit protected paths', async () => {
+    const workspace = path.join(root, 'workspace');
+    const outside = path.join(root, 'external');
+    await fs.mkdir(workspace);
+    await fs.mkdir(outside);
+    const protectedPath = path.join(workspace, '.kodax', 'exec-policy.jsonc');
+    const host = createWindowsTrustedTextMutationHost(() => [workspace],
+      (target) => assertTrustedTextMutationPolicy(target, workspace, [protectedPath], true), () => true);
+    const ctx: KodaXToolExecutionContext = { backups: new Map(), executionCwd: workspace,
+      gitRoot: workspace, trustedTextMutationHost: host, resolveShellPermissionMode: () => 'full-access' };
+    for (const target of [path.join(workspace, '.git', 'config'), path.join(outside, 'nested', 'result.txt')]) {
+      await expect(toolWrite({ path: target, content: 'authorized' }, ctx)).resolves.toContain('File created');
+      await expect(toolEdit({ path: target, old_string: 'authorized', new_string: 'updated' }, ctx)).resolves.toContain('File edited');
+      await expect(fs.readFile(target, 'utf8')).resolves.toBe('updated');
+    }
+    await expect(toolWrite({ path: protectedPath, content: '{}' }, ctx)).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
+  });
+
   portableIt('keeps every controlled text tool usable without consulting a failed shell provider', async () => {
     const failedShellPreparation = vi.fn(async () => {
       throw new Error('injected shell setup failure');
@@ -192,7 +210,7 @@ describe('Windows trusted text transaction integration', () => {
         async snapshot(): Promise<never> { throw new Error('not used'); }
         async commit(): Promise<never> { throw new Error('not used'); }
       },
-    })).toThrow(/protocol 4/i);
+    })).toThrow(/protocol 5/i);
   });
 
   portableIt('keeps the native undo receipt when an intervening shell write makes it stale', async () => {

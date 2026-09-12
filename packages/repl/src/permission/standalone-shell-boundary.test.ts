@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDefaultCodingAgent, toolBash } from '@kodax-ai/coding';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStandaloneShellPermissionBoundary } from './standalone-shell-boundary.js';
 
 const request = {
@@ -18,6 +18,16 @@ const request = {
 };
 
 describe('standalone REPL shell permission boundary', () => {
+  let testHome: string;
+  beforeEach(async () => {
+    testHome = await mkdtemp(join(tmpdir(), 'kodax-standalone-home-'));
+    vi.stubEnv('KODAX_HOME', testHome);
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(testHome, { recursive: true, force: true });
+  });
+
   it('defers Auto review until the sandbox reports a real host boundary', async () => {
     const configHome = await mkdtemp(join(tmpdir(), 'kodax-repl-shell-'));
     const reviewHostBoundary = vi.fn(async () => ({ action: 'allow' as const }));
@@ -71,7 +81,66 @@ describe('standalone REPL shell permission boundary', () => {
     expect(reviewHostBoundary).toHaveBeenCalledOnce();
   });
 
-  it('keeps Full Access off sandbox and approval paths while enforcing dangerous policy', async () => {
+  it.each([
+    'rm -f generated.txt',
+    'bash -c "rm -rf generated"',
+    'powershell -Command "Remove-Item generated.txt -Force"',
+    'cmd /c del /f generated.txt',
+    'cmd /c rmdir /s /q generated',
+    'cmd /c start https://example.com',
+  ])('Full Access does not apply a bundled syntax fallback to %s', async (command) => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-full-access-policy-'));
+    const requestUserPermission = vi.fn(async () => false);
+    const boundary = createStandaloneShellPermissionBoundary({
+      getPermissionMode: () => 'full-access',
+      getAutoGuardrail: () => { throw new Error('Full Access must not review'); },
+      requestUserPermission,
+      userConfigDir: configHome,
+    });
+    // Only evaluate admission: these commands must never execute in the test.
+    await expect(boundary.authorizeShellHostExecution({
+      ...request, command, toolInput: { command }, reason: 'direct-host',
+      permissionMode: 'full-access',
+    })).resolves.toBe(true);
+    expect(requestUserPermission).not.toHaveBeenCalled();
+  });
+
+  it('reports malformed policy as configuration failure even in Full Access', async () => {
+    const policyPath = join(testHome, 'exec-policy.jsonc');
+    await writeFile(policyPath, '{"rules": invalid}');
+    const boundary = createStandaloneShellPermissionBoundary({
+      getPermissionMode: () => 'full-access',
+      getAutoGuardrail: () => { throw new Error('No reviewer expected'); },
+      requestUserPermission: async () => { throw new Error('No prompt expected'); },
+      userConfigDir: testHome,
+    });
+    const result = await boundary.authorizeShellHostExecution({ ...request, reason: 'direct-host' });
+    expect(JSON.parse(String(result))).toMatchObject({
+      code: 'exec_policy_invalid', denialSource: 'policy_configuration',
+      sourcePath: policyPath, permissionMode: 'full-access', matchedRules: [],
+      remediation: [{ action: 'repair_policy' }], retryable: false,
+    });
+  });
+
+  it('identifies a bundled fallback outside Full Access without mislabeling it as administrator policy', async () => {
+    const boundary = createStandaloneShellPermissionBoundary({
+      getPermissionMode: () => 'accept-edits',
+      getAutoGuardrail: () => { throw new Error('No reviewer expected'); },
+      requestUserPermission: async () => { throw new Error('Fallback must not prompt'); },
+      userConfigDir: testHome,
+    });
+    const result = await boundary.authorizeShellHostExecution({
+      ...request, command: 'rm -f generated.txt',
+      toolInput: { command: 'rm -f generated.txt' },
+    });
+    expect(JSON.parse(String(result))).toMatchObject({
+      code: 'exec_policy_forbidden', denialSource: 'builtin_fallback', source: 'bundled',
+      sourcePath: 'builtin:critical-effects/forced_rm', permissionMode: 'accept-edits',
+      remediation: [{ action: 'request_explicit_authorization' }],
+    });
+  });
+
+  it('keeps Full Access off sandbox and approval paths while enforcing explicit policy', async () => {
     const configHome = await mkdtemp(join(tmpdir(), 'kodax-repl-shell-'));
     const prepare = vi.fn();
     const getAutoGuardrail = vi.fn(() => {
@@ -117,19 +186,30 @@ describe('standalone REPL shell permission boundary', () => {
       command: 'rm -rf /',
       toolInput: { command: 'rm -rf /' },
       reason: 'direct-host',
-    })).resolves.toContain('[Blocked] Exec Policy forbids');
-    await expect(boundary.authorizeShellHostExecution({
+    })).resolves.toBe(true);
+    const forbidden = await boundary.authorizeShellHostExecution({
       ...request,
       command: 'git push',
       toolInput: { command: 'git push' },
       reason: 'direct-host',
-    })).resolves.toContain('administrator blocks publishing');
-    await expect(boundary.authorizeShellHostExecution({
+    });
+    expect(JSON.parse(String(forbidden))).toMatchObject({
+      code: 'exec_policy_forbidden', denialSource: 'explicit_rule', source: 'admin',
+      sourcePath: 'host:admin', permissionMode: 'full-access', retryable: false,
+      matchedRules: [expect.objectContaining({ prefix: ['git', 'push'], decision: 'forbidden' })],
+      remediation: [{ action: 'contact_policy_owner' }],
+    });
+    const prompt = await boundary.authorizeShellHostExecution({
       ...request,
       command: 'git fetch',
       toolInput: { command: 'git fetch' },
       reason: 'direct-host',
-    })).resolves.toContain('cannot prompt under Full Access');
+    });
+    expect(JSON.parse(String(prompt))).toMatchObject({
+      code: 'exec_policy_prompt_unavailable', source: 'admin',
+      remediation: [{ action: 'change_permission_mode' }, { action: 'contact_policy_owner' }],
+    });
+    expect(String(prompt)).toContain('Do not rewrite');
     expect(getAutoGuardrail).not.toHaveBeenCalled();
     expect(requestUserPermission).not.toHaveBeenCalled();
   });

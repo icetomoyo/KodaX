@@ -1,6 +1,10 @@
 import path from 'path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { withToolRegistrySnapshot } from '../tools/registry.js';
 import { pathToFileURL } from 'url';
 import { createHash } from 'node:crypto';
+import { getExtensionExecutionScope, withExtensionExecutionScope } from './execution-scope.js';
+import type { ExtensionExecutionScope } from './execution-contract.js';
 import type { KodaXMessage, KodaXWireReasoningEffort } from '@kodax-ai/llm';
 import { exec as extensionExec, webhook as extensionWebhook } from './helpers.js';
 import {
@@ -94,6 +98,7 @@ interface LoadedExtensionRecord {
   label: string;
   loadSource: ExtensionLoadSource;
   disposeAll: () => Promise<void>;
+  deactivate: () => Promise<void>;
 }
 
 function formatExtensionLogArgs(args: readonly unknown[]): string {
@@ -235,7 +240,27 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   private readonly config: Readonly<Record<string, unknown>>;
   private readonly runtimeController: BoundExtensionRuntimeController;
   private nextRecordId = 0;
-  private boundController: BoundExtensionRuntimeController | null = null;
+  private legacyController: BoundExtensionRuntimeController | null = null;
+  private readonly extensionUses = new Map<LoadedExtensionRecord, number>();
+  private readonly retiredExtensions = new Set<LoadedExtensionRecord>();
+  private readonly idleWaiters = new Set<() => void>();
+  private readonly defaultLayers = {
+    tools: [] as DefaultLayer<string[] | undefined>[],
+    model: [] as DefaultLayer<ExtensionModelSelection>[],
+    thinking: [] as DefaultLayer<KodaXWireReasoningEffort | undefined>[],
+  };
+  private get boundController(): BoundExtensionRuntimeController | null {
+    const frame = executionFrames.getStore();
+    if (frame?.closed) throw new Error('Extension Run context is closed.');
+    return frame ? frame.controllers.get(this) ?? null : this.legacyController;
+  }
+  private set boundController(controller: BoundExtensionRuntimeController | null) {
+    const frame = executionFrames.getStore();
+    if (frame) {
+      if (controller) frame.controllers.set(this, controller);
+      else frame.controllers.delete(this);
+    } else this.legacyController = controller;
+  }
   private defaultActiveTools: string[] | undefined;
   private defaultModelSelection: ExtensionModelSelection = {};
   private defaultThinkingLevel: KodaXWireReasoningEffort | undefined;
@@ -257,6 +282,8 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   }
 
   getDefaults(): RuntimeDefaultsSnapshot {
+    const pinned = executionFrames.getStore()?.snapshots.get(this)?.defaults;
+    if (pinned) return { ...pinned, activeTools: pinned.activeTools && [...pinned.activeTools], modelSelection: { ...pinned.modelSelection } };
     return {
       activeTools: this.defaultActiveTools === undefined
         ? undefined
@@ -267,6 +294,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   }
 
   bindController(controller: BoundExtensionRuntimeController): () => void {
+    this.pinExecutionContributions();
     const previous = this.boundController;
     this.boundController = controller;
     return () => {
@@ -274,11 +302,47 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     };
   }
 
+  pinExecutionContributions(): void {
+    const frame = executionFrames.getStore();
+    if (!frame || frame.snapshots.has(this)) return;
+    frame.snapshots.set(this, {
+      defaults: this.getDefaults(),
+      providers: copyRecords(this.capabilityProviders), commands: copyRecords(this.commands),
+      events: copyRecords(this.eventHandlers), hooks: copyRecords(this.hookHandlers),
+    });
+    const records = [...this.loadedExtensions.values()];
+    for (const record of records) this.extensionUses.set(record, (this.extensionUses.get(record) ?? 0) + 1);
+    frame.cleanups.push(async () => {
+      try { await drainDisposables(records.map((record) => async () => {
+        const count = (this.extensionUses.get(record) ?? 1) - 1;
+        if (count > 0) { this.extensionUses.set(record, count); return; }
+        this.extensionUses.delete(record);
+        if (this.retiredExtensions.delete(record)) await record.disposeAll();
+      })); } finally {
+        if (this.extensionUses.size === 0) {
+          for (const resolve of this.idleWaiters) resolve();
+          this.idleWaiters.clear();
+        }
+      }
+    });
+  }
+
+  getToolRegistrationOwners(): readonly object[] { return [this]; }
+
+  private async retireExtension(record: LoadedExtensionRecord): Promise<void> {
+    await record.deactivate();
+    if (this.extensionUses.has(record)) this.retiredExtensions.add(record);
+    else await record.disposeAll();
+  }
+
   async dispose(): Promise<void> {
     for (const loaded of Array.from(this.loadedExtensions.values()).reverse()) {
-      await loaded.disposeAll();
+      await this.retireExtension(loaded);
     }
     this.loadedExtensions.clear();
+    if (this.extensionUses.size > 0 && !executionFrames.getStore()?.snapshots.has(this)) {
+      await new Promise<void>((resolve) => { this.idleWaiters.add(resolve); });
+    }
     for (const dispose of this.runtimeDisposables.reverse()) {
       await dispose();
     }
@@ -349,20 +413,24 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
 
       try {
         const disposables: Disposable[] = [];
-        const api = this.createExtensionApi(resolvedPath, disposables, loadSource);
+        const registrations: Disposable[] = [];
+        const deactivate = async () => {
+          for (const unregister of registrations.splice(0).reverse()) await unregister();
+        };
+        const api = this.createExtensionApi(resolvedPath, disposables, loadSource, registrations);
         const nextRecord: LoadedExtensionRecord = {
           path: resolvedPath,
           label: getExtensionLabel(resolvedPath),
           loadSource,
-          disposeAll: async () => {
-            for (const dispose of disposables.reverse()) {
-              await dispose();
-            }
-          },
+          deactivate,
+          disposeAll: () => executionFrames.exit(async () => {
+            await deactivate();
+            await drainDisposables(disposables.splice(0).reverse());
+          }),
         };
 
         try {
-          const cleanup = await activate(api);
+          const cleanup = await executionFrames.exit(() => activate(api));
           if (typeof cleanup === 'function') {
             disposables.push(cleanup);
           }
@@ -373,7 +441,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
 
         if (existing) {
           try {
-            await existing.disposeAll();
+            await this.retireExtension(existing);
           } catch (error) {
             await nextRecord.disposeAll();
             throw error;
@@ -522,7 +590,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
       id: `runtime:tool:${definition.name}`,
       label: definition.name,
     };
-    const dispose = registerTool(definition, { source });
+    const dispose = registerTool(definition, { source, runtimeOwner: this });
     this.runtimeDisposables.push(dispose);
     return dispose;
   }
@@ -556,7 +624,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   }
 
   listCommands(): ExtensionCommandDefinition[] {
-    return Array.from(this.commands.values())
+    return Array.from((executionFrames.getStore()?.snapshots.get(this)?.commands ?? this.commands).values())
       .map((records) => records[records.length - 1]?.value)
       .filter((command): command is ExtensionCommandDefinition => command !== undefined);
   }
@@ -687,7 +755,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   }
 
   getCapabilityProvider(providerId: string): CapabilityProvider | undefined {
-    const records = this.capabilityProviders.get(providerId);
+    const records = (executionFrames.getStore()?.snapshots.get(this)?.providers ?? this.capabilityProviders).get(providerId);
     if (!records || records.length === 0) {
       return undefined;
     }
@@ -833,7 +901,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   }
 
   async hydrateSession(sessionId: string): Promise<void> {
-    const handlers = this.hookHandlers.get('session:hydrate');
+    const handlers = (executionFrames.getStore()?.snapshots.get(this)?.hooks ?? this.hookHandlers).get('session:hydrate');
     if (!handlers || handlers.length === 0) {
       return;
     }
@@ -903,7 +971,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     event: TEvent,
     payload: ExtensionEventMap[TEvent],
   ): Promise<void> {
-    const handlers = this.eventHandlers.get(event);
+    const handlers = (executionFrames.getStore()?.snapshots.get(this)?.events ?? this.eventHandlers).get(event);
     if (!handlers || handlers.length === 0) {
       return;
     }
@@ -925,7 +993,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     hook: THook,
     payload: Parameters<ExtensionHookMap[THook]>[0],
   ): Promise<Awaited<ReturnType<ExtensionHookMap[THook]>> | undefined> {
-    const handlers = this.hookHandlers.get(hook);
+    const handlers = (executionFrames.getStore()?.snapshots.get(this)?.hooks ?? this.hookHandlers).get(hook);
     if (!handlers || handlers.length === 0) {
       return undefined;
     }
@@ -994,6 +1062,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     extensionPath: string,
     disposables: Disposable[],
     loadSource: ExtensionLoadSource = 'api',
+    registrations: Disposable[] = disposables,
   ): KodaXExtensionAPI {
     const logger = this.createLogger(extensionPath);
     const source = this.createExtensionSource(extensionPath, loadSource);
@@ -1002,24 +1071,39 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
       registerTool: (definition) => {
         const dispose = registerTool(definition, {
           source,
+          runtimeOwner: this,
         });
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       getTool: (name) => getRegisteredToolDefinition(name),
+      getExecutionScope: () => getExtensionExecutionScope(source.id),
+      capabilities: { executionScope: 1, scopedSessionState: 1 },
       getBuiltinTool: (name) => getBuiltinRegisteredToolDefinition(name),
       registerModelProvider: (registration: ModelProviderRegistration) => {
         const dispose = registerModelProvider(registration.name, registration.factory);
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       registerCapabilityProvider: (provider) => {
+        const invoke = <T>(execute: (scope?: ExtensionExecutionScope) => Promise<T>): Promise<T> => {
+          const scope = getExtensionExecutionScope();
+          return scope ? withExtensionExecutionScope({ ...scope, extensionId: source.id }, execute) : execute();
+        };
+        const scopedProvider = { ...provider,
+          ...(provider.execute ? { execute: (id: string, input: Record<string, unknown>) =>
+            invoke((scope) => provider.execute!(id, input, scope)) } : {}),
+          ...(provider.read ? { read: (id: string, options?: Record<string, unknown>) =>
+            invoke((scope) => provider.read!(id, options, scope)) } : {}),
+          ...(provider.getPrompt ? { getPrompt: (id: string, args?: Record<string, unknown>) =>
+            invoke((scope) => provider.getPrompt!(id, args, scope)) } : {}),
+        };
         const dispose = this.registerRecord(
           this.capabilityProviders,
           provider.id,
-          provider,
+          scopedProvider,
           source,
-          disposables,
+          registrations,
         );
         if (provider.dispose) {
           disposables.push(() => provider.dispose?.());
@@ -1027,20 +1111,42 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
         return dispose;
       },
       registerCommand: (command) => {
-        return this.registerRecord(
+        let disposeTool: (() => void) | undefined;
+        const scopedCommand: ExtensionCommandDefinition = { ...command, handler: (args, context) => {
+          const scope = context.extensionExecution;
+          return scope ? withExtensionExecutionScope({ ...scope, extensionId: source.id }, async (bound) =>
+            command.handler(args, { ...context, extensionExecution: bound })) : command.handler(args, context);
+        } };
+        if (command.execution !== 'configuration') {
+          disposeTool = registerTool({ name: `extension_command__${command.name}`,
+            description: `Execute extension command /${command.name}: ${command.description}`,
+            toClassifierInput: () => '',
+            sideEffect: 'readonly', input_schema: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' } } } },
+            handler: async (input, ctx) => {
+              const args = Array.isArray(input.args) ? input.args.filter((arg): arg is string => typeof arg === 'string') : [];
+              if (!ctx.extensionExecution) return '[Blocked] Extension command requires a managed execution scope.';
+              return JSON.stringify(await scopedCommand.handler(args, { sessionId: ctx.sessionId,
+                gitRoot: ctx.gitRoot, workingDirectory: ctx.executionCwd ?? process.cwd(), extensionExecution: ctx.extensionExecution,
+                reloadExtensions: () => this.reloadExtensions(), getDiagnostics: () => this.getDiagnostics(), logger }) ?? {});
+            },
+          }, { source, runtimeOwner: this });
+          registrations.push(disposeTool);
+        }
+        const disposeCommand = this.registerRecord(
           this.commands,
           command.name,
-          command,
+          scopedCommand,
           source,
-          disposables,
+          registrations,
         );
+        return () => { disposeCommand(); disposeTool?.(); };
       },
       registerSkillPath: (skillPath) => {
         const resolvedSkillPath = path.isAbsolute(skillPath)
           ? skillPath
           : path.resolve(path.dirname(extensionPath), skillPath);
         const dispose = registerPluginSkillPath(resolvedSkillPath);
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       registerAgent: async (name, content) => {
@@ -1075,17 +1181,17 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
             source: 'extension',
           },
         );
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       on: (event, handler) => {
         const dispose = this.registerEventHandler(event, handler, source);
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       hook: (hook, handler) => {
         const dispose = this.registerHookHandler(hook, handler, source);
-        disposables.push(dispose);
+        registrations.push(dispose);
         return dispose;
       },
       logger,
@@ -1199,49 +1305,12 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     logger: ExtensionLogger,
     disposables: Disposable[],
   ): ExtensionRuntimeController {
-    let capturedActiveTools = false;
-    let previousActiveTools: string[] | undefined;
-    let capturedModelSelection = false;
-    let previousModelSelection: ExtensionModelSelection = {};
-    let capturedThinkingLevel = false;
-    let previousThinkingLevel: KodaXWireReasoningEffort | undefined;
-
-    const captureActiveToolsRestore = () => {
-      if (capturedActiveTools || this.boundController) {
-        return;
-      }
-      capturedActiveTools = true;
-      previousActiveTools = this.defaultActiveTools === undefined
-        ? undefined
-        : [...this.defaultActiveTools];
-      disposables.push(() => {
-        this.defaultActiveTools = previousActiveTools === undefined
-          ? undefined
-          : [...previousActiveTools];
-      });
-    };
-
-    const captureModelSelectionRestore = () => {
-      if (capturedModelSelection || this.boundController) {
-        return;
-      }
-      capturedModelSelection = true;
-      previousModelSelection = { ...this.defaultModelSelection };
-      disposables.push(() => {
-        this.defaultModelSelection = { ...previousModelSelection };
-      });
-    };
-
-    const captureThinkingLevelRestore = () => {
-      if (capturedThinkingLevel || this.boundController) {
-        return;
-      }
-      capturedThinkingLevel = true;
-      previousThinkingLevel = this.defaultThinkingLevel;
-      disposables.push(() => {
-        this.defaultThinkingLevel = previousThinkingLevel;
-      });
-    };
+    const setToolsDefault = scopedDefaultSetter(this.defaultLayers.tools, () => this.defaultActiveTools,
+      (value) => { this.defaultActiveTools = value; }, disposables);
+    const setModelDefault = scopedDefaultSetter(this.defaultLayers.model, () => this.defaultModelSelection,
+      (value) => { this.defaultModelSelection = value; }, disposables);
+    const setThinkingDefault = scopedDefaultSetter(this.defaultLayers.thinking, () => this.defaultThinkingLevel,
+      (value) => { this.defaultThinkingLevel = value; }, disposables);
 
     const recordPersistenceFailure = (
       target: string,
@@ -1287,18 +1356,18 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
       clearSessionRecords: (type) => this.runtimeController.clearSessionRecords(source.id, type),
       getActiveTools: () => this.runtimeController.getActiveTools(),
       setActiveTools: (toolNames) => {
-        captureActiveToolsRestore();
-        this.runtimeController.setActiveTools(toolNames);
+        if (this.boundController) this.runtimeController.setActiveTools(toolNames);
+        else setToolsDefault(dedupeStrings(toolNames));
       },
       getModelSelection: () => this.runtimeController.getModelSelection(),
       setModelSelection: (next) => {
-        captureModelSelectionRestore();
-        this.runtimeController.setModelSelection(next);
+        if (this.boundController) this.runtimeController.setModelSelection(next);
+        else setModelDefault(normalizeModelSelection(next));
       },
       getThinkingLevel: () => this.runtimeController.getThinkingLevel(),
       setThinkingLevel: (level) => {
-        captureThinkingLevelRestore();
-        this.runtimeController.setThinkingLevel(level);
+        if (this.boundController) this.runtimeController.setThinkingLevel(level);
+        else setThinkingDefault(level);
       },
     };
   }
@@ -1435,7 +1504,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
       return;
     }
 
-    await existing.disposeAll();
+    await this.retireExtension(existing);
     this.loadedExtensions.delete(resolvedPath);
   }
 
@@ -1473,6 +1542,13 @@ export class CombinedExtensionRuntime implements ExtensionRuntimeContract {
     private readonly primary: KodaXExtensionRuntime,
     private readonly secondary: KodaXExtensionRuntime,
   ) {}
+
+  pinExecutionContributions(): void {
+    this.secondary.pinExecutionContributions();
+    this.primary.pinExecutionContributions();
+  }
+
+  getToolRegistrationOwners(): readonly object[] { return [this.secondary, this.primary]; }
 
   getDefaults(): RuntimeDefaultsSnapshot {
     const primary = this.primary.getDefaults();
@@ -1739,14 +1815,23 @@ export function createExtensionRuntime(
 export function setActiveExtensionRuntime(
   runtime: KodaXExtensionRuntime | null,
 ): void {
+  const frame = executionFrames.getStore();
+  if (frame) { frame.activeRuntime = runtime; return; }
   activeExtensionRuntime = runtime;
 }
 
 export function getActiveExtensionRuntime(): KodaXExtensionRuntime | null {
-  return activeExtensionRuntime;
+  const frame = executionFrames.getStore();
+  return frame ? frame.activeRuntime : activeExtensionRuntime;
 }
 
 export function bindActiveExtensionExecutionRuntime(runtime: unknown): () => void {
+  const frame = executionFrames.getStore();
+  if (frame) {
+    const previous = frame.activeExecutionRuntime;
+    frame.activeExecutionRuntime = isActiveExtensionExecutionRuntime(runtime) ? runtime : null;
+    return () => { frame.activeExecutionRuntime = previous; };
+  }
   const previous = activeExtensionExecutionRuntime;
   activeExtensionExecutionRuntime = isActiveExtensionExecutionRuntime(runtime)
     ? runtime
@@ -1760,12 +1845,82 @@ export async function emitActiveExtensionEvent<TEvent extends keyof ExtensionEve
   event: TEvent,
   payload: ExtensionEventMap[TEvent],
 ): Promise<void> {
-  await (activeExtensionExecutionRuntime ?? activeExtensionRuntime)?.emit(event, payload);
+  const frame = executionFrames.getStore();
+  await (frame ? frame.activeExecutionRuntime ?? frame.activeRuntime : activeExtensionExecutionRuntime ?? activeExtensionRuntime)?.emit(event, payload);
 }
 
 export async function runActiveExtensionHook<THook extends keyof ExtensionHookMap>(
   hook: THook,
   payload: Parameters<ExtensionHookMap[THook]>[0],
 ): Promise<Awaited<ReturnType<ExtensionHookMap[THook]>> | undefined> {
-  return (activeExtensionExecutionRuntime ?? activeExtensionRuntime)?.runHook(hook, payload);
+  const frame = executionFrames.getStore();
+  return (frame ? frame.activeExecutionRuntime ?? frame.activeRuntime : activeExtensionExecutionRuntime ?? activeExtensionRuntime)?.runHook(hook, payload);
+}
+
+interface ExecutionFrame {
+  closed?: boolean;
+  activeRuntime: KodaXExtensionRuntime | null;
+  activeExecutionRuntime: ActiveExtensionExecutionRuntime | null;
+  controllers: Map<KodaXExtensionRuntime, BoundExtensionRuntimeController>;
+  snapshots: Map<KodaXExtensionRuntime, {
+    defaults: RuntimeDefaultsSnapshot;
+    providers: Map<string, RuntimeRecord<CapabilityProvider>[]>;
+    commands: Map<string, RuntimeRecord<ExtensionCommandDefinition>[]>;
+    events: Map<string, RuntimeRecord<(payload: unknown) => Promise<void> | void>[]>;
+    hooks: Map<string, RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>[]>;
+  }>;
+  cleanups: Array<() => Promise<void>>;
+}
+
+const executionFrames = new AsyncLocalStorage<ExecutionFrame>();
+function copyRecords<T>(records: Map<string, RuntimeRecord<T>[]>): Map<string, RuntimeRecord<T>[]> {
+  return new Map([...records].map(([key, values]) => [key, [...values]]));
+}
+
+/** One asynchronous Run owns one controller/event/registration snapshot. */
+export function withExtensionRuntimeContext<T>(
+  execute: () => Promise<T>, runtime: ExtensionRuntimeContract | null | undefined = getActiveExtensionRuntime(),
+): Promise<T> {
+  const frame: ExecutionFrame = { activeRuntime: runtime instanceof KodaXExtensionRuntime ? runtime : null, activeExecutionRuntime: null,
+    controllers: new Map(), snapshots: new Map(), cleanups: [] };
+  return executionFrames.run(frame, () => withToolRegistrySnapshot(async () => {
+    runtime?.pinExecutionContributions?.();
+    try { return await execute(); }
+    finally {
+      frame.closed = true;
+      await drainDisposables(frame.cleanups.reverse());
+    }
+  }, runtime?.getToolRegistrationOwners?.() ?? []));
+}
+
+async function drainDisposables(disposables: readonly Disposable[]): Promise<void> {
+  const errors: unknown[] = [];
+  for (const dispose of disposables) {
+    try { await dispose(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, 'Extension cleanup failed');
+}
+
+interface DefaultLayer<T> { value: T; baseline: T }
+
+/** Tools, model and thinking defaults share ordered extension ownership. */
+function scopedDefaultSetter<T>(
+  layers: DefaultLayer<T>[], read: () => T, write: (value: T) => void, disposables: Disposable[],
+): (value: T) => void {
+  let layer: DefaultLayer<T> | undefined;
+  return (value) => {
+    if (!layer) {
+      layer = { value, baseline: layers[0] ? layers[0].baseline : read() };
+      layers.push(layer);
+      disposables.push(() => {
+        const index = layers.indexOf(layer!);
+        if (index < 0) return;
+        const wasTop = index === layers.length - 1;
+        layers.splice(index, 1);
+        if (wasTop) write(layers.at(-1) ? layers.at(-1)!.value : layer!.baseline);
+      });
+    }
+    layer.value = value;
+    if (layers.at(-1) === layer) write(value);
+  };
 }
