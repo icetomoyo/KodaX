@@ -813,3 +813,7 @@ beta.9 融合后的完整 Vitest **1,075 文件通过、1 跳过；15,684 passed
 最终无头提问修复后，构建及严格 src/tests 类型检查再次通过（`.headless-final-build.log`、`.headless-final-types.log`）。完整 Vitest **1,076 文件通过、1 跳过；15,688 passed、77 skipped、21 todo，零失败**，718.07 秒，exit 0（`.headless-final-suite.log`）。新增四项真实提问用例在完整运行中通过；该运行包含最后加强的回执顺序断言。
 
 文档终检同时核销 `KNOWN_ISSUES.md` 中 FEATURE_299 实施前的三条 Full Access/手动 Shell 旧记录，保留保护路径、no-follow 与 CAS 边界；更正 Host 自动更新与客户端进程重启的区别。尚未测量本次全仓覆盖率，也未执行其他操作系统实机、真实模型服务联调或正式发布验收；既有 skipped/todo 不计为通过。这些属于明确的验收边界，不以两轴对当前补丁无阻断发现替代。
+
+最后另合入主线 `7a82b0dc`、`d6a7be32`，仅修改三个发布脚本：从源码读取可信文本协议，避免原来的固定协议 4 与当前协议 5 冲突。两轴只读复核无阻断项；Spec 提醒的成功日志旧值已改为实际期望值。Standards 提出三处短解析代码重复的非阻断 P3 建议，本轮保留主线的直接实现，不为构建脚本新增公共模块；该维护建议不计为已修复的功能缺陷。
+
+此增量无运行时改动，未再次重复全仓测试；三个脚本语法检查通过，发布工作流与最终 one-shot **4 文件 31/31**（23.41 秒，exit 0，`.final-merge-targeted.log`）通过。`--skip-build --pack-only` 生成本机测试包并通过 sidecar 内容审计（`.final-local-pack.log`）；随后离线安装到专用临时目录，实际安装入口的 ASRT 检查和 native text doctor 均通过，明确加载 **protocol 5**（exit 0，`.final-packed-native.log`）。测试包保持 `private: true`，没有发布或推送。此处补足本机安装检查，其他平台和正式通用发布仍未验收。
