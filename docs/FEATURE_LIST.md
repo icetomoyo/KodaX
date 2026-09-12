@@ -11,11 +11,11 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.8` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.8` (npm publication remains manual) |
+| Current released version | `v0.7.96-beta.9` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-beta.9` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — implemented and verified; release pending |
-| In development | `v0.7.97` / `FEATURE_298` — core implementation complete; automated entrypoint checks pass; known acceptance gaps remain |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9` |
+| In development | `v0.7.97` / `FEATURE_298` — core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending |
 | Total tracked features | `83` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -28,8 +28,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` is implemented and verified for v0.7.96 (release pending); `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation complete; automated entrypoint checks pass; known acceptance gaps remain. `225` remains the bounded v0.8.25 cleanup. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9; `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.9; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -518,9 +518,26 @@
 
 ---
 
+## v0.7.96-beta.9 Release Record
+
+`v0.7.96-beta.9` is the ninth beta pre-release of the v0.7.96 line and ships
+FEATURE_299. Owned Run controls and atomic Session Stop work independently
+of file locks across direct CLI, SDK, daemon, and ACP hosts under a single
+acceptance-versus-confirmation Stop contract; duplicate and restarted Stop
+requests converge, and owner/profile/scope failures are typed. Full Access
+executes directly on the host without sandbox, approval prompts, or built-in
+dangerous-command fallbacks while explicit forbidden rules stay enforced and
+prompt rules are rejected under Never approval semantics;
+`kodax execpolicy check --mode full-access` inspects the profile without
+running it. Managed extensions gain an execution contract with reload
+isolation, runtime/session separation, and lock-independent effects. Legacy
+oversized `actorSnapshot` metadata pages correctly instead of failing
+Conversation continuation at a 64 KiB first-line boundary. npm publication
+remains a manual maintainer step.
+
 ## v0.7.96-beta.8 Release Record
 
-`v0.7.96-beta.8` is the eighth beta pre-release of the v0.7.96 line. It adds
+`v0.7.96-beta.8` was the eighth beta pre-release of the v0.7.96 line. It adds
 `runtime.sessions.confirmIdentityAlias` for explicitly confirmed legacy
 interrupt identities: registration verifies the original delivery receipt and
 session revision, preserves an immutable audit record, and rejects competing

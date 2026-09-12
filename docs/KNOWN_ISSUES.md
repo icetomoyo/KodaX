@@ -89,34 +89,37 @@ restrictions; then the shared evaluator incorrectly carried outer inferred
 network destinations into a nested shell body. Retained regressions cover both.
 Final re-review found no remaining confirmed requirement defect in this diff.
 
-### Full Access scan — remaining interface differences (2026-09-12)
+### Full Access scan — historical gaps closed by FEATURE_299 (2026-09-12)
 
-The shell contract correction above does not remove the following pre-existing
-constraints. They are recorded as open consistency issues, not as proven OS or
-administrator restrictions:
+These were pre-FEATURE_299 consistency gaps. FEATURE_299, released in beta.9
+and integrated into this branch, closes all three; the table retains the
+historical evidence and records the resulting behavior.
 
-| Surface | Evidence | Remaining work |
+| Surface | Historical evidence | Resolution |
 |---|---|---|
-| Direct text edits under `.git` | `packages/coding/src/trusted-text-mutation.ts` rejects `.git` before the host; native `windows-text-transaction/src/path_policy.rs` and `unix_transaction.rs` independently reject it | Propagate a deliberately scoped Full Access text policy across both host and native transaction boundaries; preserve other profiles and explicit protected policy paths |
-| Direct text edits outside Runtime write roots | `src/sdk-runtime.ts` binds workspace/execution/registered roots; `src/windows-text-transaction.ts:authorizeTarget` has no permission-profile input | Define Full Access text authority consistently with direct-host Bash while retaining no-follow traversal, CAS, and native control-state protection |
-| Manual `!command` | `packages/repl/src/ui/utils/shell-executor.ts` always calls `getDirectShellBypassBlockReason`, which accepts only read-only commands | Route this surface through the same mode-aware owner and Exec Policy before broadening it; removing the check alone would bypass configured policy |
+| Direct text edits under `.git` | Coding and native path guards rejected `.git` before permission-profile evaluation | Full Access text authority now crosses Host and native boundaries and allows ordinary `.git` targets; explicit protected policy/control paths remain protected |
+| Direct text edits outside Runtime write roots | Host authorization had no permission-profile input | Full Access permits outside-root targets while retaining no-follow traversal, CAS, and native control-state protection |
+| Manual `!command` | The local shell shortcut only accepted read-only commands | The product CLI uses Host `runs.startTool` and the existing bash permission, Exec Policy, history and cancellation path |
 
 Additional limits checked: UNC/device/ADS paths, hard links, stale text
 snapshots, and unsupported native filesystems are text-transaction capability
 or integrity constraints. Prefix rules do not analyze arbitrary opaque script
 files or dynamically generated programs; recognized-wrapper enforcement and
 model anti-bypass instructions must not be described as complete semantic
-containment. Long-lived daemon/REPL owners must restart to load changed code;
-their existing processes do not acquire new Full Access semantics automatically.
+containment. Changed code requires a new process: the launcher can normally
+replace an eligible idle daemon after identity checks; busy Hosts are not
+force-stopped, and passive connect does not upgrade. Existing REPL and embedded
+SDK processes must themselves be restarted to load their changed client code.
 
 ## Open — Restart long-running REPL processes after KodaX updates (2026-09-10)
 
-A REPL process keeps its provider/serializer code in memory from startup. After
-a KodaX update that changes the provider wire (e.g. the 2026-09-10 DeepSeek
-move to the official Anthropic-compat endpoint), a resumed session in an
-old process keeps using the old wire while reading new capability data — and
-model/provider switches inside that process do not reload either. Restart the
-REPL after updating KodaX before switching providers on restored sessions.
+A running process does not reload code merely because files were rebuilt.
+The product REPL keeps its UI/client code in memory; Provider execution and
+serialization belong to the Host. Embedded SDK execution keeps both in its
+own process. Restart an old REPL or embedded SDK process after updating its
+code. The product launcher checks Host build identity and can replace an
+eligible idle Host normally; active work blocks replacement instead of being
+force-stopped. A passive SDK connection does not perform this upgrade.
 
 ## Resolved in working tree 2026-09-11 — Multimodal contracts and Runtime failure classification
 
@@ -205,6 +208,23 @@ Diagnostic note: the REPL's "Cleaned incomplete tool calls" banner reflects
 pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
+
+## v0.7.96-beta.9 Release Corrections
+
+The beta.9 FEATURE_299 implementation resolves the unified Stop and
+execution-contract gaps: owned Run controls and atomic Session Stop no
+longer depend on file locks, CLI and ACP hosts converge on one
+acceptance-versus-confirmation Stop contract, and managed extensions run
+under an execution contract with reload isolation and runtime/session
+separation. Full Access now performs direct host execution without sandbox,
+approval prompts, or built-in dangerous-command fallbacks, while explicit
+forbidden rules stay enforced and prompt rules are rejected under Never
+approval semantics — closing the gap where Full Access still applied
+built-in fallbacks that bypassed user policy. A legacy paging bug that made
+snapshot-backed Conversation continuation fail when `actorSnapshot` metadata
+crossed 64 KiB is fixed. Real shared Runtime/socket regressions use actual
+Session and Run control locks; see
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
 
 ## v0.7.96-beta.8 Release Corrections
 

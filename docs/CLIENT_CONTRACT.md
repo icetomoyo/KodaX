@@ -86,7 +86,7 @@
 
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 
-无交互的 one-shot CLI 在订阅视图后提交输入，及时拒绝属于本次 Run、确需人工回答的权限请求，并通过正常终态返回失败。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不拒绝其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
+无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入和 MCP 表单等人工提问使用既有 `cancel` 回答，不代填默认值。工具收到拒绝或取消，Run 仍按正常执行结果结算；不把取消一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
 
 `commands.execute` 接收 `sessionId`、`inputId`、注册 `name` 和可选 `args`；`review.start` 接收 Session/Input 身份及参数，`agents.reviewLean` 接收 Session/Input 身份。三者都要求 `run:control`，实际执行保留忙时拒绝。帮助和命令正文读取不经过执行的空闲门禁。承接 FEATURE_299 后，未声明 `execution: configuration` 的 extension handler 经正常工具执行入口运行，立即返回 `started.runId`；没有模型调用或没有输出也仍有真实工具 Run。Host 保存一次原始输入，并为 handler 提供所属 Run、取消信号及受检工具调用。handler 返回模型 invocation 时在同一 Run 内继续执行，复用原 inputId 和工具历史；模型、工具限制与 fork 仍由 Host 从注册结果解析。声明 `execution: configuration` 的命令才直接返回 `completed`，不伪造执行 scope。`completed.success` 和可选 `message` 是该动作的结果，`started.runId` 只是已启动身份；客户端随后观察 Session、等待 `runs.await`，不能把它重新提交为输入。
 

@@ -194,16 +194,16 @@ export async function runOneShotClientTask(
   let observation: ClientObservation | undefined;
   let acceptedRunId: string | undefined;
   let interactions: readonly ClientInteraction[] = [];
-  const rejected = new Set<string>();
-  const rejectUnattendedPermissions = (): void => {
+  const handled = new Set<string>();
+  const dismissUnattendedInteractions = (): void => {
     for (const interaction of interactions) {
-      if (interaction.kind !== 'permission' || interaction.runId !== acceptedRunId || rejected.has(interaction.requestId)) continue;
-      rejected.add(interaction.requestId);
-      void client.interactions.respond(interaction.requestId, { kind: 'permission', decision: {
+      if (interaction.runId !== acceptedRunId || handled.has(interaction.requestId)) continue;
+      handled.add(interaction.requestId);
+      void client.interactions.respond(interaction.requestId, interaction.kind === 'permission' ? { kind: 'permission', decision: {
         type: 'reject', reason: 'The non-interactive CLI cannot approve permission requests. Run interactively to review this action.',
-      } }).catch((error: unknown) => {
+      } } : { kind: 'cancel', reason: 'The non-interactive CLI cannot answer questions. Run interactively to respond.' }).catch((error: unknown) => {
         emitKodaXDiagnostic({ source: 'kodax.one-shot', level: 'error',
-          message: 'Failed to reject an unattended permission request.', detail: error });
+          message: 'Failed to dismiss an unattended interaction.', detail: error });
         options.events?.onError?.(error instanceof Error ? error : new Error(String(error)));
       });
     }
@@ -211,7 +211,7 @@ export async function runOneShotClientTask(
   try {
     observation = await client.sessions.observe(plan.sessionId, view => {
       interactions = view.interactions;
-      rejectUnattendedPermissions();
+      dismissUnattendedInteractions();
     });
     const accepted = await client.inputs.submit({
       sessionId: plan.sessionId,
@@ -225,7 +225,7 @@ export async function runOneShotClientTask(
       );
     }
     acceptedRunId = accepted.runId;
-    rejectUnattendedPermissions();
+    dismissUnattendedInteractions();
     progress.setRunId(accepted.runId);
 
     const requestStop = (): void => {

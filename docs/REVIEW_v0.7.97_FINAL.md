@@ -792,3 +792,24 @@ D 的回归归因不成立；E 的无交互审批等待是一个已确认行为�
 首份评审固定补丁 SHA-256 为 `519E608594963EFE72F64062247E24002B4DC63410B088F14A112B555260B39F`（119 文件）；随后两轴各自复查修复增量。完整测试及最终构建结果在完成后追加，不将阶段性通过当作最终门禁。
 
 首轮完整 Vitest 为 **1,073 文件通过、2 文件失败、1 跳过；15,679 passed、5 failed、77 skipped、21 todo**（719.34 秒，`.repair-full-suite.log`）。失败均保留归因：新增 dispose 测试的一秒准备期限先于满负载子进程进入初始化，尚未执行 dispose；四个旧 CLI 生命周期夹具未提供 one-shot 新消费的 `observeView`。前者只调整测试准备期限，仍断言关闭原因与恰好一个进程；后者补充观察器测试替身，未增加产品兼容回退。两个完整文件复跑 **63/63**（`.repair-fixture-rerun.log`）；没有将首轮称作全绿。
+
+最终融合 `6fcba6df`（beta.9 发布）后重新构建及严格 src/tests 类型检查通过（`.release-merge-build.log`、`.release-merge-types.log`）；纯 ProductClient 仍通过无 Node ambient types 编译。发布增量两轴各 **0 项发现**，FEATURE_298 仍在独立开发分支，未将它标为主线已发布。
+
+beta.9 融合后的完整 Vitest **1,075 文件通过、1 跳过；15,684 passed、77 skipped、21 todo，零失败**，707.83 秒，exit 0（`.release-merge-full-suite.log`）。此运行先于下述最终无头提问增量，不把它称作该增量后的完整验证。首轮的两个失败文件均在此次完整运行中通过。原生 Rust/Node 门禁在 FEATURE_299 融合后通过（`.merge-native-test.log`），native 源码此后未变；`cargo fmt --check` 通过。所有测试使用专用临时 HOME、真实本地 IPC 或离线 Provider，未停止或改写用户原 Host/Session。
+
+同一 beta.9 融合状态下，真实 Windows 终端验收结果如下，均核对产物和 exit 0：
+
+| 入口 | 结果与产物 |
+| --- | --- |
+| 源码完整 PTY | Ink 21、classic 14，**35/35**；`kodax-repl-acceptance-uULQoK`，`.release-pty-source.log`。 |
+| 打包完整 PTY | Ink 21、classic 14，**35/35**；`kodax-repl-acceptance-he08qV`，`.release-pty-built.log`。 |
+| 源码长会话 PTY | startup、预算饱和历史、正常退出 **3/3**；`kodax-repl-acceptance-WOzHg9`，`.release-pty-long.log`。 |
+| 强制 legacy PTY | 搜索编辑区、旧目标跳转、Ctrl+E 折叠/展开、退出恢复草稿及正常关闭全部通过；`kodax-legacy-search-PeH3gX`，`.release-pty-legacy.log`。 |
+
+最后按 Interaction 的全部已用类型继续检查，发现 one-shot 及时拒绝权限之后，普通人工提问和共享 MCP 表单仍会等待。该缺口在主线 `c61914bf` 也存在，不能归为本次新回归。最小修复只扩展 one-shot 原观察器：本 Run 权限继续 reject，其他人工问题使用既有 cancel；不默认作答，不改变 Host 超时或交互协议，不影响另一 Run。取消结果回到工具，后续 Run 结果仍由正常执行决定。
+
+新增真实 IPC 测试覆盖 askUser、askUserMulti、askUserInput 和共享 stdio MCP 表单，前三类均先复现已进入待答状态后超时；修复后连同既有 one-shot 测试 **3 文件 14/14** 通过。每例检查自身取消、另一 Session 保持待答、不代填默认值、观察器关闭。独立 Standards 增量复核发现 1 项 P2：固定等待不能保证 view 先于 receipt；已改成放行 receipt 前断言观察回调到达，复查 **0 项剩余**。Spec 增量复核 **0 项发现**，同时核对普通 prompt 的实际 CLI 入口。最后生产增量不涉及任何交互式 REPL 代码，上述 PTY 仍覆盖最终交互式实现；无头路径使用新的真实 IPC 回归验证。
+
+最终无头提问修复后，构建及严格 src/tests 类型检查再次通过（`.headless-final-build.log`、`.headless-final-types.log`）。完整 Vitest **1,076 文件通过、1 跳过；15,688 passed、77 skipped、21 todo，零失败**，718.07 秒，exit 0（`.headless-final-suite.log`）。新增四项真实提问用例在完整运行中通过；该运行包含最后加强的回执顺序断言。
+
+文档终检同时核销 `KNOWN_ISSUES.md` 中 FEATURE_299 实施前的三条 Full Access/手动 Shell 旧记录，保留保护路径、no-follow 与 CAS 边界；更正 Host 自动更新与客户端进程重启的区别。尚未测量本次全仓覆盖率，也未执行其他操作系统实机、真实模型服务联调或正式发布验收；既有 skipped/todo 不计为通过。这些属于明确的验收边界，不以两轴对当前补丁无阻断发现替代。
