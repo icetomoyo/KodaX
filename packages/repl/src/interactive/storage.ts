@@ -2489,22 +2489,26 @@ async function readConversationPageAdmission(
 ): Promise<ConversationPageCacheAdmission> {
   const handle = await fs.open(filePath, 'r');
   try {
-    const buffer = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead === 0) {
-      throw new SessionReadError('data_corrupt', 'Session metadata is empty');
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (true) {
+      const buffer = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      const newline = chunk.indexOf(0x0a);
+      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+      if (newline >= 0) break;
+      offset += bytesRead;
     }
-    const head = buffer.toString('utf8', 0, bytesRead);
-    const newline = head.indexOf('\n');
-    if (newline < 0 && bytesRead === buffer.length) {
-      throw new SessionReadError(
-        'data_corrupt',
-        'Session metadata exceeds the bounded page-admission record',
-      );
+    if (chunks.length === 0) {
+      throw new SessionReadError('data_corrupt', 'Session metadata is empty');
     }
     let value: unknown;
     try {
-      value = JSON.parse((newline < 0 ? head : head.slice(0, newline)).trim());
+      // Legacy actor snapshots can span chunks; decode only after joining so
+      // a UTF-8 character split at a read boundary stays intact.
+      value = JSON.parse(Buffer.concat(chunks).toString('utf8').trim());
     } catch (error: unknown) {
       throw new SessionReadError(
         'data_corrupt',

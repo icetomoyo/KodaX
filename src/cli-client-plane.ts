@@ -48,7 +48,7 @@ export function createCliWorkflowControl(client: KodaXProductClient): NonNullabl
     subscribe: (filter, listener) => client.workflows.subscribe(filter, listener),
     pause: runId => client.workflows.pause(runId),
     resume: runId => client.workflows.resume(runId),
-    stop: runId => client.workflows.stop(runId),
+    stop: (runId, options) => client.workflows.stop(runId, options),
   };
 }
 
@@ -56,6 +56,8 @@ export function createCliWorkflowControl(client: KodaXProductClient): NonNullabl
 export function createCliClientPlane(client: KodaXProductClient): InkClientPlane {
   return {
     updateSettings: (sessionId, patch) => client.sessions.updateSettings(sessionId, patch).then(() => undefined),
+    executeTool: input => client.runs.startTool(input),
+    cancelSession: input => client.sessions.cancel(input),
     submit: input => client.inputs.submit(input),
     readInput: (sessionId, inputId) => client.inputs.read(sessionId, inputId),
     withdraw: (sessionId, inputId) => client.inputs.withdraw(sessionId, inputId).then(result => result.text),

@@ -50,6 +50,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   getActiveExtensionRuntime,
+  withExtensionRuntimeContext,
   replaceConfiguredMcpCapabilityProvider,
   buildMcpReverseCapabilities,
   CodingActorSession,
@@ -66,6 +67,8 @@ import {
   classifyResilienceError,
   createExternalActorTurnExecutor,
   evaluateShellExecPolicy,
+  formatExecPolicyConfigurationError,
+  formatExecPolicyRejection,
   createOutputSegmentProjection,
   effectiveOutputSegmentText,
   estimateTokens,
@@ -79,6 +82,7 @@ import {
   resolveSkillModelOverride,
   reduceOutputSegmentProjection,
   runManagedTask,
+  runToolInvocation,
   runScopedToolMap,
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
@@ -99,6 +103,7 @@ import {
   getDefaultWorkflowRunManager,
   parseInlineSkillReferences,
   parseBareInlineSlashReferences,
+  type KodaXShellPermissionMode,
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
@@ -1239,6 +1244,7 @@ export type RuntimeMcpValidateResult =
     };
 
 export interface RuntimeMcpService {
+  status(): Promise<readonly McpServerStatus[]>;
   listServers(): Promise<Record<string, McpServerConfig>>;
   getServer(name: string): Promise<McpServerConfig | undefined>;
   validateServer(
@@ -1738,6 +1744,7 @@ export interface RuntimeSessionService {
     readonly selector: string;
     readonly label?: string;
   }): Promise<ClientLineageSummary>;
+  cancel(input: RuntimeSessionCancelInput): Promise<RuntimeSessionCancelReceipt>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   load(
     sessionId: string,
@@ -1908,6 +1915,8 @@ export type RuntimePermissionBroker = "runtime" | "client";
 
 export interface RuntimeStartRunInput {
   readonly sessionId: string;
+  /** Stable product identity for an explicit tool invocation. */
+  readonly inputId?: string;
   readonly prompt?: string;
   readonly input?: RuntimeInput | readonly RuntimeInput[];
   readonly mode?: RuntimeRunMode;
@@ -1922,6 +1931,7 @@ export interface RuntimeStartRunInput {
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
+  readonly commandInput?: ClientCommandInput;
   /** Host-only deferred work, after the canonical input and Run have been saved. */
   readonly prepare?: (options: KodaXOptions, signal: AbortSignal) => Promise<void>;
   readonly workflow?: Pick<Parameters<typeof startManagedWorkflow>[0], 'source' | 'args' | 'runsBaseDir' | 'processMetadata'> & {
@@ -2038,6 +2048,7 @@ export type RuntimeDaemonKodaXOptions = Pick<
   | "reasoningMode"
   | "agentMode"
   | "maxIter"
+  | "toolInvocation"
   | "workflowHostPolicy"
   | "workflowRunsBaseDir"
   | "modelTiers"
@@ -2179,6 +2190,24 @@ export interface RuntimeRunStopReceipt {
   readonly revision: number;
 }
 
+export interface RuntimeSessionCancelInput {
+  readonly sessionId: string;
+  readonly expectedRunId: string;
+  readonly requestId: string;
+}
+
+export interface RuntimeSessionCancelReceipt extends RuntimeSessionCancelInput {
+  readonly frontier: number;
+  readonly receipts: readonly RuntimeRunStopReceipt[];
+}
+
+interface RuntimeSessionStopRecord extends RuntimeSessionCancelInput {
+  readonly version: 1;
+  readonly frontier: number;
+  readonly runIds: readonly string[];
+  readonly identity: { readonly surface?: string; readonly profileId?: string };
+}
+
 export type RuntimeTerminalCode =
   | "completed"
   | "run_failed"
@@ -2311,6 +2340,11 @@ export interface RuntimeRunService {
   await(runId: string): Promise<RuntimeRunResult>;
   get(runId: string): Promise<RuntimeRunStatus>;
   list(filter?: RuntimeRunFilter): Promise<readonly RuntimeRunStatus[]>;
+  /**
+   * Requests Stop for this Run and its owned work; successor Runs are retained.
+   * accepted means the request was recorded, not that effects have stopped.
+   * Observe state/outcome for confirmation; repeated requests are idempotent.
+   */
   abort(runId: string): Promise<RuntimeRunStopReceipt>;
   setModel(runId: string, model: string | undefined): Promise<void>;
   setProvider(runId: string, provider: string): Promise<void>;
@@ -2405,7 +2439,7 @@ export interface RuntimeToolStartedEventPayload {
 
 export type RuntimeToolProgressEventPayload =
   | {
-      readonly update: { readonly id: string; readonly message: string };
+      readonly update: Parameters<NonNullable<KodaXEvents['onToolProgress']>>[0];
       readonly meta?: KodaXToolEventMeta;
     }
   | {
@@ -2722,6 +2756,8 @@ export interface RuntimePermissionGrantSuggestion {
 }
 
 export interface RuntimePermissionRequest {
+  /** Full finalized plan when the pending operation is exit_plan_mode. */
+  readonly plan?: string;
   readonly id: string;
   readonly sessionId: string;
   readonly runId: string;
@@ -2741,6 +2777,7 @@ export interface RuntimePermissionRequest {
 }
 
 export interface RuntimePermissionRequestInput {
+  readonly plan?: string;
   readonly sessionId: string;
   readonly runId: string;
   readonly turnId?: string;
@@ -3342,7 +3379,7 @@ export interface RuntimeWorkflowService {
   ): RuntimeSubscription;
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
-  stop(runId: string): Promise<boolean>;
+  stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;
   /** FEATURE_298 T22 — start a workflow on the Host manager. */
   start(input: RuntimeWorkflowStartInput): Promise<RuntimeWorkflowStartResult>;
 }
@@ -3737,6 +3774,7 @@ interface RuntimeRunServiceInternal extends RuntimeRunService {
   startAdmitted(input: RuntimeTrustedStartRunInput): Promise<RuntimeRunHandle>;
   startPreparedInvocation(input: ClientCommandInput, invocation: RuntimeCommandInvocation): Promise<RuntimeRunHandle>;
   queuedInputs(sessionId: string): ClientSessionView['queue'];
+  cancelSession(input: RuntimeSessionCancelInput): Promise<RuntimeSessionCancelReceipt>;
   inspect(
     filter?: RuntimeRunFilter,
   ): Promise<readonly RuntimeRunStatus[]>;
@@ -3747,6 +3785,7 @@ interface RuntimeRunServiceInternal extends RuntimeRunService {
 }
 
 interface PendingRunStart {
+  readonly commandInput?: ClientCommandInput;
   readonly prepare?: RuntimeTrustedStartRunInput['prepare'];
   readonly workflow?: RuntimeTrustedStartRunInput['workflow'];
   readonly prompt: string;
@@ -4164,6 +4203,8 @@ async function createKodaXRuntimeInternal(
     // clients gate on this instead of RPC'ing methods an older Host lacks
     // (an unknown method's id-less invalid_frame would never settle).
     invocationPreparation: { version: 1 },
+    sessionCancellation: { version: 1, durableFrontier: true },
+    toolInvocation: { version: 1 },
     effectiveConfig: {
       version: 1,
       credentialValues: false,
@@ -5024,6 +5065,7 @@ async function createKodaXRuntimeInternal(
     integrations,
     sessionMcpStore,
     activeCompactions,
+    (input) => runService.cancelSession(input),
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -5081,6 +5123,18 @@ async function createKodaXRuntimeInternal(
         : { kind: 'completed', success: false, message: started.reason };
     },
     startInvocation: (input, invocation) => runService.startPreparedInvocation(input, invocation),
+    startToolInvocation: (input, toolInvocation) => runService.startAdmitted({
+      sessionId: input.sessionId, inputId: input.inputId,
+      prompt: `/${input.name}${input.args?.length ? ` ${input.args.join(' ')}` : ''}`,
+      commandInput: input, options: { toolInvocation }, permissionBroker: 'runtime',
+    }),
+    withSession: async (sessionId, read) => {
+      ensureOpen();
+      const session = await sessionAdmission.loadRequired(sessionId);
+      const settings = (await settingsOwner.read(sessionId)).value;
+      const projectRoot = resolveSessionPreparationRoot(session, settings);
+      return read({ projectRoot, workingDirectory: settings.executionCwd ?? session.runtimeInfo?.executionCwd ?? projectRoot });
+    },
     withIdleSession: (sessionId, execute) => sessionOperations.run(sessionId, async () => {
       ensureOpen();
       const session = await sessionAdmission.loadExecutable(sessionId);
@@ -6341,6 +6395,7 @@ function createRuntimeSessionService(
   },
   /** FEATURE_298 T31 — shared manual-compaction occupancy (see factory). */
   activeCompactions: Set<string>,
+  cancel: RuntimeSessionService["cancel"],
 ): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
   // FEATURE_298 T31 — in-flight manual compactions register occupancy so
@@ -7633,6 +7688,7 @@ function createRuntimeSessionService(
 
   const service: RuntimeSessionService
     & { deleteTemporary(sessionId: string): Promise<void> } = {
+    cancel,
     async create(input = {}) {
       ensureOpen();
       admission.assertCreate(input);
@@ -8997,6 +9053,8 @@ function createRuntimeRunService(deps: {
   >();
   const autoModeStates = new Map<string, AutoModeSharedState>();
   const queueBySession = new Map<string, string[]>();
+  const sessionStopGate = createRuntimeSessionOperationGate();
+  const stoppingSessions = new Map<string, Set<string>>();
 
   const getRecord = (runId: string): RuntimeRunRecord => {
     const run = deps.runs.get(runId);
@@ -10250,6 +10308,20 @@ function createRuntimeRunService(deps: {
       permissions: deps.permissions,
       userInputs: deps.userInputs,
       enableSharedInteractions: deps.enableSharedInteractions,
+      onPlanApproved: () => deps.sessionOperations.run(record.sessionId, async () => {
+        const stillPlanning = () => record.stop === undefined && !record.abortController?.signal.aborted
+          && record.actorDurabilityFailure === undefined && record.permissionMode === 'plan'
+          && isActiveRunPhase(record.phase) && !stoppingSessions.has(record.sessionId);
+        if (!stillPlanning()) return false;
+        const session = await deps.sessionAdmission.loadExecutable(record.sessionId);
+        if (!stillPlanning()) return false;
+        await deps.settingsOwner.update(record.sessionId, { permissionMode: 'accept-edits' }, undefined,
+          settings => {
+            if (!stillPlanning()) throw new Error('Plan approval no longer applies to the active Run.');
+            assertSessionSettingsAllowed(session, settings);
+          });
+        return true;
+      }),
       record,
       onTurnStarted: () => {
         const state = autoModeStates.get(record.runId);
@@ -10328,13 +10400,13 @@ function createRuntimeRunService(deps: {
         outputInputId = deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds) ?? outputInputId;
       },
     });
-    const runOptions = buildRunOptions({
+    const createRunOptions = () => buildRunOptions({
       agentPlane: deps.agentPlane,
       authorizeForcedPermission,
       defaultConfigHome: deps.defaultConfigHome,
       events,
       model: record.model,
-      options: record.start.options,
+      options: record.start!.options,
       provider: record.provider,
       record,
       sessionManager: deps.sessionManager,
@@ -10346,6 +10418,7 @@ function createRuntimeRunService(deps: {
         return consumed;
       }),
     });
+    const runOptions = createRunOptions();
     deps.bus.emit(
       "config.effective",
       {
@@ -10419,7 +10492,33 @@ function createRuntimeRunService(deps: {
       if (upstreamSignal?.aborted) {
         handleUpstreamAbort();
       }
-      const managedOperation = () => record.start?.workflow
+      const executeCommandTool = (): Promise<KodaXResult> => withExtensionRuntimeContext(async () => {
+        const value = await runToolInvocation({ ...runOptions, abortSignal: abortController.signal },
+          runOptions.toolInvocation!, record.start!.prompt);
+        const command = record.start?.commandInput;
+        if (!command || !value.success || value.interrupted || abortController.signal.aborted || record.stop) return value;
+        const result = JSON.parse(value.lastText) as import('@kodax-ai/coding').ExtensionCommandResult;
+        if (result.success === false) return { ...value, success: false, lastText: result.message ?? value.lastText };
+        if (!result.invocation) return { ...value, lastText: result.message ?? '' };
+        const invocation = result.invocation;
+        const start = record.start!;
+        const model = resolveSkillModelOverride(record.provider, invocation.model);
+        if (model !== undefined) record.model = model;
+        start.options.context = { ...start.options.context, rawUserInput: start.prompt, promptOverlay: invocation.prompt,
+          commandInvocation: { ...invocation, name: invocation.displayName ?? command.name, source: 'extension',
+            runtimePolicy: { enforceAtRuntime: true } } };
+        const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
+        abortController.signal.throwIfAborted();
+        if (continuation.agentMode === 'sa') {
+          record.running = startKodaX(continuation, start.prompt);
+          return record.running.result;
+        }
+        return runManagedTask(continuation, start.prompt);
+      }, runOptions.extensionRuntime, record.runId);
+      const managedOperation = () =>
+        runOptions.toolInvocation !== undefined
+        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
+        : record.start?.workflow
         ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
           record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
         ))
@@ -10672,6 +10771,7 @@ function createRuntimeRunService(deps: {
   };
 
   const drainNext = (sessionId: string): void => {
+    if (stoppingSessions.has(sessionId)) return;
     const queue = queueBySession.get(sessionId);
     if (!queue || queue.length === 0 || activeRunBySession.has(sessionId))
       return;
@@ -10911,10 +11011,17 @@ function createRuntimeRunService(deps: {
   ): Promise<RuntimeRunHandle> => {
     deps.ensureOpen();
     const trustedInput = input as RuntimeTrustedStartRunInput;
-    const productInput = trustedInput.productInput;
+    if (input.inputId !== undefined && (!input.inputId.trim() || input.options?.toolInvocation === undefined || typeof input.prompt !== 'string' || !input.prompt.trim())) {
+      throw new Error('A tool inputId requires a tool invocation and nonempty raw prompt.');
+    }
+    const productInput = trustedInput.productInput ?? (input.inputId === undefined ? undefined : {
+      sessionId: input.sessionId, inputId: input.inputId, text: input.prompt!,
+    });
     const inputDigest = productInput === undefined
       ? undefined
-      : inputIntentDigest(productInput);
+      : input.options?.toolInvocation === undefined
+        ? inputIntentDigest(productInput)
+        : createHash('sha256').update(JSON.stringify([inputIntentDigest(productInput), input.options.toolInvocation])).digest('hex');
     if (productInput !== undefined) {
       const accepted = findAcceptedInput(input.sessionId, productInput.inputId);
       if (accepted !== undefined) {
@@ -11133,7 +11240,8 @@ function createRuntimeRunService(deps: {
     }
     const sessionOrder = deps.persistence.nextSessionOrder(input.sessionId);
     const isQueued =
-      requiredAfterRun !== undefined || activeRunBySession.has(input.sessionId);
+      requiredAfterRun !== undefined || activeRunBySession.has(input.sessionId)
+      || stoppingSessions.has(input.sessionId);
     const record: RuntimeRunRecord = {
       runId,
       sessionId: input.sessionId,
@@ -11168,7 +11276,7 @@ function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: input.mode
+      mode: options.toolInvocation !== undefined ? "managed_task" : input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
         ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
         ?? "coding",
@@ -11210,6 +11318,7 @@ function createRuntimeRunService(deps: {
       interruptInputOpen: false,
       result,
       start: {
+        ...(trustedInput.commandInput !== undefined ? { commandInput: trustedInput.commandInput } : {}),
         ...(trustedInput.prepare ? { prepare: trustedInput.prepare } : {}),
         ...(trustedInput.workflow !== undefined ? { workflow: trustedInput.workflow } : {}),
         prompt: normalizedInput.prompt,
@@ -11557,8 +11666,26 @@ function createRuntimeRunService(deps: {
     if (sessionId === undefined) {
       throw new Error(`Runtime run not found: ${runId}`);
     }
-    await deps.sessionAdmission.assertRunAccess(sessionId);
-    if (run !== undefined) assertRuntimeOwnsRun(run, deps.runOwner);
+    // An observer can predate the Run and only have its durable control record.
+    // Reject its foreign owner before falling back to Session admission reads.
+    if (
+      persisted?.owner !== undefined
+      && persisted.owner.ownerId !== deps.runOwner.ownerId
+      && !isTerminalRunPhase(persisted.status.phase)
+    ) {
+      throw createRuntimeConflictError(
+        `Runtime ${deps.runOwner.runtimeId} does not own run ${runId}`,
+        persisted.revision,
+      );
+    }
+    if (run !== undefined) {
+      // Stop controls an already admitted Run, including a terminal race.
+      // Its authority must not depend on reading mutable Session history.
+      assertRuntimeOwnsRun(run, deps.runOwner);
+      await assertRunRecordAccess(run, true);
+    } else {
+      await deps.sessionAdmission.assertRunAccess(sessionId);
+    }
     if (
       run?.terminalEmitted === true
       && persisted?.owner?.ownerId === deps.runOwner.ownerId
@@ -11668,6 +11795,47 @@ function createRuntimeRunService(deps: {
     return runtimeRunStopReceipt(stop);
   };
 
+  const prepareSessionStop = async (
+    input: RuntimeSessionCancelInput,
+  ): Promise<RuntimeSessionStopRecord> => {
+    if (!input.requestId.trim() || !input.sessionId.trim() || !input.expectedRunId.trim()) {
+      throw new Error("Session Stop requires nonempty sessionId, expectedRunId and requestId");
+    }
+    const digest = createHash("sha256").update(JSON.stringify([input.sessionId, input.requestId])).digest("hex");
+    const file = path.join(deps.persistence.runtimeDir, "session-stops", `${digest}.json`);
+    const existing = readRuntimeSessionStopRecord(file);
+    if (existing !== undefined) {
+      assertSessionStopBinding(existing, input);
+      deps.sessionAdmission.assertCachedIdentity(input.sessionId, existing.identity);
+      return existing;
+    }
+    const expected = deps.runs.get(input.expectedRunId);
+    const persisted = deps.persistence.loadRunStatus(input.expectedRunId);
+    if ((expected?.sessionId ?? persisted?.status.sessionId) !== input.sessionId) {
+      throw sessionStopConflict("Expected Run does not belong to the requested Session", "session_binding");
+    }
+    if (!expected?.ownedByRuntime || expected.admittedSessionContext === undefined) {
+      throw sessionStopConflict("Session Stop requires the Runtime that admitted the Run", "run_ownership");
+    }
+    await assertRunRecordAccess(expected, true);
+    const candidates = [...deps.runs.values()].filter((run) => run.sessionId === input.sessionId
+      && (run.runId === expected.runId || !isTerminalRunPhase(run.phase)));
+    for (const candidate of candidates) assertRuntimeOwnsRun(candidate, deps.runOwner);
+    const runtimeInfo = expected.admittedSessionContext.runtimeInfo;
+    const record: RuntimeSessionStopRecord = { ...input, version: 1,
+      frontier: Math.max(...candidates.map((run) => run.sessionOrder)),
+      runIds: candidates.sort((a, b) => Number(b.phase === "queued") - Number(a.phase === "queued")
+        || b.sessionOrder - a.sessionOrder).map((run) => run.runId),
+      identity: { surface: runtimeInfo?.surface, profileId: runtimeInfo?.profileId } };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return withRuntimeStatusFileLock(file, () => {
+      const raced = readRuntimeSessionStopRecord(file);
+      if (raced !== undefined) { assertSessionStopBinding(raced, input); return raced; }
+      writeRuntimeJsonAtomic(file, record);
+      return record;
+    });
+  };
+
   return {
     start,
     startAdmitted: (input) => startRun(input, 'runtime.runs.start'),
@@ -11768,6 +11936,49 @@ function createRuntimeRunService(deps: {
       return deps.sessionOperations.run(sessionId, async () => {
         await deps.sessionAdmission.assertRunAccess(sessionId);
         return productQueue.withdraw(sessionId, inputId);
+      });
+    },
+
+    cancelSession(input) {
+      return sessionStopGate.run(input.sessionId, async () => {
+        deps.ensureOpen();
+        const requests = stoppingSessions.get(input.sessionId) ?? new Set<string>();
+        const alreadyRequested = requests.has(input.requestId);
+        let recorded = false;
+        let completed = false;
+        requests.add(input.requestId);
+        stoppingSessions.set(input.sessionId, requests);
+        try {
+          const record = await prepareSessionStop(input);
+          recorded = true;
+          const targets = record.runIds.map((runId) => {
+            const entry = deps.persistence.loadRunStatus(runId);
+            if (entry === undefined || entry.status.sessionId !== input.sessionId || entry.status.sessionOrder === undefined
+              || entry.status.sessionOrder > record.frontier) {
+              throw sessionStopConflict("Session Stop control history is inconsistent", "control_record");
+            }
+            if (!isTerminalRunPhase(entry.status.phase) && entry.owner?.ownerId !== deps.runOwner.ownerId) {
+              throw sessionStopConflict("Session Stop target has another Runtime owner", "run_ownership");
+            }
+            return entry;
+          });
+          const receipts: RuntimeRunStopReceipt[] = [];
+          for (const entry of targets) {
+            receipts.push(isTerminalRunPhase(entry.status.phase)
+              ? runtimeRunStopReceipt({ ...entry, accepted: false, effectDeliveryAllowed: false })
+              : await this.abort(entry.status.runId));
+          }
+          completed = true;
+          return { ...input, frontier: record.frontier, receipts };
+        } finally {
+          // A partially delivered durable Stop must not launch its remaining
+          // targets. Replaying the same request repairs it and releases the fence.
+          if (completed || (!recorded && !alreadyRequested)) requests.delete(input.requestId);
+          if (requests.size === 0) {
+            stoppingSessions.delete(input.sessionId);
+            if (!deps.isClosed()) drainNext(input.sessionId);
+          }
+        }
       });
     },
 
@@ -11880,7 +12091,7 @@ function createRuntimeRunService(deps: {
       const persisted = deps.persistence.loadRunStatus(runId);
       if (persisted) {
         if (run !== undefined) {
-          await assertRunRecordAccess(run);
+          await assertRunRecordAccess(run, true);
         } else {
           await deps.sessionAdmission.assertRunAccess(
             persisted.status.sessionId,
@@ -11895,7 +12106,7 @@ function createRuntimeRunService(deps: {
         }
       }
       if (run) {
-        await assertRunRecordAccess(run);
+        await assertRunRecordAccess(run, true);
         return statusFromRecord(run);
       }
       throw new Error(`Runtime run not found: ${runId}`);
@@ -12167,7 +12378,10 @@ function createRuntimeWorkflowService(deps: {
       return manager.resume(runId);
     },
 
-    async stop(runId) {
+    async stop(runId, options) {
+      if (options !== undefined && manager.getWorkflowProcessSnapshot(runId)?.hostMetadata?.ownerSessionId !== options.sessionId) {
+        throw createRuntimeConflictError('Workflow does not belong to the requested Session.', 0);
+      }
       const accepted = await deps.stopRun(runId);
       return manager.stop(runId) || accepted;
     },
@@ -12400,6 +12614,12 @@ function createRuntimeMcpService(
   runtime: KodaXExtensionRuntime,
 ): RuntimeMcpService {
   return {
+    async status() {
+      ensureOpen();
+      const provider = runtime.getCapabilityProvider('mcp');
+      return runtimeMcpServerStatuses(provider instanceof McpCapabilityProvider ? provider : undefined,
+        listRuntimeMcpServers(configFile));
+    },
     async listServers() {
       ensureOpen();
       return listRuntimeMcpServers(configFile);
@@ -12452,14 +12672,20 @@ function createRuntimeMcpService(
       const names =
         filter?.server !== undefined ? [filter.server] : Object.keys(servers);
       const provider = runtime.getCapabilityProvider("mcp");
-      const result: McpServerToolList[] = [];
-      for (const name of names) {
-        const server = provider instanceof McpCapabilityProvider ? provider.getRuntime(name) : undefined;
-        if (!server) throw new Error(`MCP server is not active in this Host: ${name}`);
-        const catalog = await server.getCatalog(filter?.forceRefresh === true);
-        result.push({ serverId: name, tools: catalog.descriptors.filter((item) => item.kind === "tool"), cachedAt: catalog.updatedAt });
+      if (!provider) {
+        if (names.length === 0) return [];
+        throw new Error(`MCP server is not active in this Host: ${names[0]}`);
       }
-      return result;
+      return runtime.withCapabilityProvider(provider, async () => {
+        const result: McpServerToolList[] = [];
+        for (const name of names) {
+          const server = provider instanceof McpCapabilityProvider ? provider.getRuntime(name) : undefined;
+          if (!server) throw new Error(`MCP server is not active in this Host: ${name}`);
+          const catalog = await server.getCatalog(filter?.forceRefresh === true);
+          result.push({ serverId: name, tools: catalog.descriptors.filter((item) => item.kind === "tool"), cachedAt: catalog.updatedAt });
+        }
+        return result;
+      });
     },
   };
 }
@@ -13085,7 +13311,7 @@ function buildRunOptions(input: {
     record,
     sessionManager,
   } = input;
-  const hideUnwiredExitPlanMode = options.events?.exitPlanMode === undefined;
+  const hideUnwiredExitPlanMode = events.exitPlanMode === undefined;
   const {
     configHome: _callerConfigHome,
     authorizeShellHostExecution: _callerHostExecutionAuthorizer,
@@ -13119,7 +13345,9 @@ function buildRunOptions(input: {
       canonicalTarget,
       executionCwd,
       [trustedProjectExecPolicyPath],
+      resolveShellPermissionMode() === "full-access",
     ),
+    () => resolveShellPermissionMode() === "full-access",
   );
   const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
@@ -13252,6 +13480,7 @@ function buildRunOptions(input: {
     session: {
       ...(options.session ?? {}),
       id: record.sessionId,
+      ...(record.productInput !== undefined ? { inputId: record.productInput.inputId } : {}),
       storage: isForkInvocation ? undefined : sessionManager.storage,
       ...(isForkInvocation ? { initialMessages: [] } : {}),
       // The Runtime is the canonical Session owner even when a REPL client
@@ -13261,6 +13490,7 @@ function buildRunOptions(input: {
     events,
     context: {
       ...ownerSafeContext,
+      runtimeRunId: record.runId,
       configHome: input.defaultConfigHome,
       shellSandbox: restrictedModeShellSandbox,
       resolveShellPermissionMode,
@@ -17621,6 +17851,7 @@ function createRuntimePermissionRegistry(
       ...(trustedInputPreview !== undefined
         ? { inputPreview: trustedInputPreview }
         : {}),
+      ...(requestInput.plan !== undefined ? { plan: requestInput.plan } : {}),
       ...(requestInput.executionCwd !== undefined
         ? { executionCwd: requestInput.executionCwd }
         : {}),
@@ -18223,6 +18454,7 @@ async function waitForRuntimeUserInput<T>(
 }
 
 function wrapKodaXEvents(input: {
+  readonly onPlanApproved: () => Promise<boolean>;
   readonly display: KodaXEvents;
   readonly bus: RuntimeEventBus;
   readonly original?: KodaXEvents;
@@ -18768,6 +19000,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onEffectiveConfig?.(config);
     },
     onWorkflowProcessEvent(event) {
+      input.display.onWorkflowProcessEvent?.(event);
       const mapped = workflowEventType(event);
       emit(mapped, event, {
         sessionId: event.snapshot.hostMetadata?.sessionId ?? record.sessionId,
@@ -18775,6 +19008,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onWorkflowProcessEvent?.(event);
     },
     onWorkflowAgentDigest(event) {
+      input.display.onWorkflowAgentDigest?.(event);
       externalCallbacks()?.onWorkflowAgentDigest?.(event);
     },
     onScoutSuspiciousCompletion(payload) {
@@ -18783,13 +19017,26 @@ function wrapKodaXEvents(input: {
     hasPendingInputs() {
       return externalCallbacks()?.hasPendingInputs?.() ?? false;
     },
-    ...(original?.exitPlanMode === undefined
+    ...(original?.exitPlanMode === undefined && !enableSharedInteractions
       ? {}
       : {
-          exitPlanMode: (plan: string): Promise<boolean | "not-in-plan-mode"> =>
-            actorDurabilityFenced()
-              ? Promise.resolve(false)
-              : original.exitPlanMode!(plan),
+          exitPlanMode: async (plan: string): Promise<boolean | "not-in-plan-mode"> => {
+            if (actorDurabilityFenced() || record.stop !== undefined || record.abortController?.signal.aborted) return false;
+            if (!enableSharedInteractions) return original!.exitPlanMode!(plan);
+            if (record.permissionMode !== 'plan') return 'not-in-plan-mode';
+            const previousPhase = record.phase;
+            if (record.phase === 'running') onPhase('waiting_permission');
+            const pending = permissions.trackAndWait({ sessionId: record.sessionId, runId: record.runId,
+              ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
+              toolName: 'exit_plan_mode', plan: redactScopedProviderCredential(plan),
+            });
+            try {
+              const decision = await pending.response;
+              return decision.type === 'allow_once' && await input.onPlanApproved();
+            } finally {
+              if (record.phase === 'waiting_permission') onPhase(previousPhase);
+            }
+          },
         }),
     ...(original?.onMemoryReview === undefined
       ? {}
@@ -19094,6 +19341,12 @@ function normalizeRuntimeRunInput(
   artifacts: RuntimeArtifactStore,
   operation: RuntimeRunInputOperation,
 ): NormalizedRuntimeRunInput {
+  const invocation: unknown = input.options?.toolInvocation;
+  if (invocation !== undefined && (!isRecord(invocation) || typeof invocation.name !== 'string'
+    || !invocation.name.trim() || !isRecord(invocation.input))) {
+    throw Object.assign(new Error('toolInvocation requires a nonempty tool name and an object input.'),
+      { code: 'invalid_argument', denialSource: 'runtime_contract' });
+  }
   const items =
     input.input === undefined
       ? []
@@ -20680,9 +20933,16 @@ async function authorizeRuntimeShellHostExecution(input: {
   readonly request: KodaXShellHostExecutionRequest;
   readonly runtimeAutoGuardrail?: RuntimeOwnedAutoModeGuardrail;
 }): Promise<boolean | string> {
+  const mode = input.request.permissionMode
+    ?? (input.request.reason === "direct-host"
+      ? "full-access"
+      : replApi.normalizePermissionMode(input.record.permissionMode));
   const trustedProjectPolicy = input.record.trustedProjectExecPolicySnapshotPath;
   if (trustedProjectPolicy !== undefined && !fs.existsSync(trustedProjectPolicy)) {
-    return `[Blocked] Trusted project Exec Policy snapshot disappeared during this Run: ${trustedProjectPolicy}. Start a new Run after restoring or intentionally removing the policy.`;
+    return formatExecPolicyConfigurationError({
+      path: trustedProjectPolicy,
+      message: "Trusted project Exec Policy snapshot disappeared during this Run.",
+    }, mode);
   }
   const call: RunnerToolCall = {
     id: input.request.toolCallId
@@ -20693,9 +20953,10 @@ async function authorizeRuntimeShellHostExecution(input: {
   const policy = resolveRuntimeShellExecPolicy(
     input.record,
     input.request.command,
-    input.request.executable === undefined
-      ? undefined
-      : { hostExecutable: input.request.executable },
+    {
+      hostExecutable: input.request.executable,
+      permissionMode: mode,
+    },
   );
   if (policy === true) return true;
   if (policy === "prompt") {
@@ -20707,8 +20968,6 @@ async function authorizeRuntimeShellHostExecution(input: {
   if (typeof policy === "string") return policy;
 
   if (input.request.reason === "direct-host") return true;
-  const mode = input.request.permissionMode
-    ?? replApi.normalizePermissionMode(input.record.permissionMode);
   if (mode === "full-access") return true;
   if (mode === "accept-edits") {
     return input.authorizeForcedPermission(call);
@@ -20736,11 +20995,14 @@ async function authorizeRuntimeShellHostExecution(input: {
 function resolveRuntimeShellExecPolicy(
   record: RuntimeRunRecord,
   command: string,
-  facts?: Readonly<{ readonly hostExecutable?: string }>,
+  facts?: Readonly<{
+    readonly hostExecutable?: string;
+    readonly permissionMode?: KodaXShellPermissionMode;
+  }>,
 ): true | "prompt" | string | undefined {
   const invalid = record.execPolicyErrors?.[0];
   if (invalid !== undefined) {
-    return `[Blocked] Exec Policy could not be loaded from ${invalid.path}: ${invalid.message}`;
+    return formatExecPolicyConfigurationError(invalid, facts?.permissionMode);
   }
   const evaluation = evaluateShellExecPolicy(
     command,
@@ -20748,9 +21010,13 @@ function resolveRuntimeShellExecPolicy(
     facts,
   );
   if (evaluation.decision === "allow") return true;
-  if (evaluation.decision === "prompt") return "prompt";
+  if (evaluation.decision === "prompt") {
+    return facts?.permissionMode === "full-access"
+      ? formatExecPolicyRejection(evaluation, facts.permissionMode)
+      : "prompt";
+  }
   if (evaluation.decision === "forbidden") {
-    return `[Blocked] Exec Policy forbids this host operation: ${evaluation.justification ?? "no justification supplied"}`;
+    return formatExecPolicyRejection(evaluation, facts?.permissionMode);
   }
   return undefined;
 }
@@ -21436,6 +21702,40 @@ function createRuntimePublicError(message: string): Error {
   const error = new Error(message);
   error.stack = undefined;
   return error;
+}
+
+function sessionStopConflict(message: string, denialSource: string): Error {
+  return Object.assign(createRuntimeConflictError(message, 0), {
+    denialSource, retryable: false, operation: "sessions.cancel",
+    data: { denialSource, retryable: false, operation: "sessions.cancel" },
+  });
+}
+
+function assertSessionStopBinding(record: RuntimeSessionStopRecord, input: RuntimeSessionCancelInput): void {
+  if (record.sessionId !== input.sessionId || record.expectedRunId !== input.expectedRunId
+    || record.requestId !== input.requestId) {
+    throw sessionStopConflict("Session Stop request identity cannot be rebound", "session_binding");
+  }
+}
+
+function readRuntimeSessionStopRecord(file: string): RuntimeSessionStopRecord | undefined {
+  if (!fs.existsSync(file)) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw sessionStopConflict("Session Stop control record contains invalid JSON", "control_record");
+  }
+  if (!isRecord(value) || value.version !== 1 || typeof value.sessionId !== "string"
+    || typeof value.expectedRunId !== "string" || typeof value.requestId !== "string"
+    || typeof value.frontier !== "number" || !Number.isSafeInteger(value.frontier) || value.frontier < 0
+    || !Array.isArray(value.runIds) || !value.runIds.length
+    || !value.runIds.every((id: unknown) => typeof id === "string") || !isRecord(value.identity)
+    || (value.identity.surface !== undefined && typeof value.identity.surface !== "string")
+    || (value.identity.profileId !== undefined && typeof value.identity.profileId !== "string")) {
+    throw sessionStopConflict("Session Stop control record is invalid", "control_record");
+  }
+  return value as unknown as RuntimeSessionStopRecord;
 }
 
 function runtimeRunStopReceipt(

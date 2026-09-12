@@ -2996,6 +2996,7 @@ const METHOD_SMOKE_PARAMS = {
   'session.archive': { sessionId: 'session-1' },
   'session.unarchive': { sessionId: 'session-1' },
   'session.delete': { sessionId: 'session-1' },
+  'session.cancel': { sessionId: 'session-1', expectedRunId: 'run-1', requestId: 'stop-1' },
   'session.settings.get': { sessionId: 'session-1' },
   'session.settings.getVersioned': { sessionId: 'session-1' },
   'session.autoMode.getStats': { sessionId: 'session-1' },
@@ -3095,6 +3096,7 @@ const METHOD_SMOKE_PARAMS = {
     },
   },
   'provider.custom.remove': { name: 'custom-openai' },
+  'mcp.server.status': undefined,
   'mcp.server.list': undefined,
   'mcp.server.get': { name: 'local' },
   'mcp.server.validate': { name: 'local', config: { type: 'stdio', command: 'echo' } },
@@ -3237,6 +3239,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       runtimeEventCoalescing: { version: 1 },
     },
     sessions: {
+      async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async create(input) {
         return {
           id: input?.sessionId ?? 'session-1',
@@ -3734,6 +3737,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     mcp: {
+      async status() { return []; },
       async listServers() {
         return {};
       },

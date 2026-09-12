@@ -231,6 +231,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "provider.reasoning.efforts",
     "provider.custom.list",
     "mcp.server.list",
+    "mcp.server.status",
     "mcp.server.get",
     "mcp.tool.list",
     "extension.list",
@@ -287,6 +288,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "invocations.prepareSkill",
     "input.submit",
     "input.withdraw",
+    "session.cancel",
     "run.start",
     "run.input.submit",
     "run.abort",
@@ -984,7 +986,7 @@ async function dispatchRuntimeDaemonRequest(
           options.management !== undefined,
           options.orphanExitEnabled === true,
           runtimeImplementsEventCoalescing(runtime),
-          runtime.capabilities?.productClient,
+          runtime.capabilities,
         ),
         principalId,
         grantedScopes: [
@@ -1038,7 +1040,7 @@ async function dispatchRuntimeDaemonRequest(
         options.management !== undefined,
         options.orphanExitEnabled === true,
         runtimeImplementsEventCoalescing(runtime),
-        runtime.capabilities?.productClient,
+        runtime.capabilities,
       );
     case "config.read":
       return options.config
@@ -1098,6 +1100,8 @@ async function dispatchRuntimeDaemonRequest(
       );
     case "mcp.server.list":
       return runtime.mcp.listServers();
+    case "mcp.server.status":
+      return runtime.mcp.status();
     case "mcp.server.get":
       return runtime.mcp.getServer(requireStringParam(request.params, "name"));
     case "mcp.server.validate": {
@@ -1947,6 +1951,12 @@ async function dispatchRuntimeDaemonRequest(
     }
     case "run.abort":
       return runtime.runs.abort(requireStringParam(request.params, "runId"));
+    case "session.cancel":
+      return runtime.sessions.cancel({
+        sessionId: requireStringParam(request.params, "sessionId"),
+        expectedRunId: requireStringParam(request.params, "expectedRunId"),
+        requestId: requireStringParam(request.params, "requestId"),
+      });
     case "run.model.set": {
       return setRunModel(runtime, request.params);
     }
@@ -2130,6 +2140,8 @@ async function dispatchRuntimeDaemonRequest(
     case "workflow.stop":
       return runtime.workflows.stop(
         requireStringParam(request.params, "runId"),
+        optionalStringField(requireRecord(request.params), "sessionId") === undefined ? undefined
+          : { sessionId: requireStringParam(request.params, "sessionId") },
       );
     case "workflow.start": {
       // FEATURE_298 T22 — trusted Host-side start: the source is declarative
@@ -2398,8 +2410,9 @@ function runtimeDaemonCapabilities(
   daemonManagement = false,
   orphanExitEnabled = false,
   runtimeEventCoalescing = false,
-  productClient?: unknown,
+  runtimeCapabilities: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
+  const { productClient, toolInvocation, sessionCancellation } = runtimeCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2418,6 +2431,8 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.toolInvocation;
+  delete safeOverrides.sessionCancellation;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
   return {
     events: true,
@@ -2439,6 +2454,10 @@ function runtimeDaemonCapabilities(
     invocationPreparation: { version: 1 },
     ...(isRecord(productClient) && productClient.version === 1
       ? { productClient: { version: 1 } } : {}),
+    ...(isRecord(toolInvocation) && toolInvocation.version === 1
+      ? { toolInvocation: { version: 1 } } : {}),
+    ...(isRecord(sessionCancellation) && sessionCancellation.version === 1 && sessionCancellation.durableFrontier === true
+      ? { sessionCancellation: { version: 1, durableFrontier: true } } : {}),
     memoryManagement: { version: 1 },
     sandboxRuntime: sandboxRuntimeCapability(),
     managedRunDurability: {

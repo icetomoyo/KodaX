@@ -249,10 +249,10 @@ function assertHostCommandEffects(state, effects) {
 
 async function checkHostCommandNoOutput(state) {
   const beforeRequests = state.requests.length;
-  const beforeHistory = await state.client.sessions.readHistory(state.sessionId);
   const beforeRuns = state.view.runs.map(run => run.runId);
   const catalog = await state.client.catalog.commands();
   assert.ok(catalog.some(command => command.name === 'acceptance-host-note'), 'Host must advertise its configured extension');
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: 'full-access' });
   await state.terminal.submit('/ah-note silent');
   const effects = await waitFor('Host-only no-output extension effect', async () => {
     const entries = await commandEffects(state);
@@ -263,9 +263,30 @@ async function checkHostCommandNoOutput(state) {
   await delay(500);
   assert.equal((await commandEffects(state)).length, 1, 'No-output commands must execute exactly once');
   assert.equal(state.requests.length, beforeRequests, 'No-output commands must not issue provider requests');
-  assert.deepEqual(state.view.runs.map(run => run.runId), beforeRuns, 'No-output commands must not invent a Run');
-  assert.deepEqual(await state.client.sessions.readHistory(state.sessionId), beforeHistory,
-    'No-output commands must not invent a user or assistant entry');
+  const run = await waitFor('managed no-output command completes', () =>
+    state.view.runs.find(run => !beforeRuns.includes(run.runId) && run.phase === 'completed'));
+  assert.ok(run, 'FEATURE_299 effectful commands require an owned tool Run, even without a model request');
+  const history = await state.client.sessions.readHistory(state.sessionId);
+  assert.equal(history.items.filter(item => item.type === 'user' && item.text === '/ah-note silent').length, 1);
+}
+
+async function checkHostDiagnosticsAndShell(state) {
+  const beforeRequests = state.requests.length;
+  await state.terminal.submit('/mcp');
+  await waitFor('Host MCP status is visible', () => state.terminal.screen().includes('MCP Status')
+    && state.terminal.screen().includes('Servers: 0'));
+  await state.terminal.submit('/extensions');
+  await waitFor('Host extension diagnostics are visible', () => state.terminal.screen().includes('Extension Runtime:')
+    && state.terminal.screen().includes('acceptance-host-note'));
+  await state.terminal.submit('!echo MANUAL_TOOL_ACCEPTED');
+  await waitFor('manual Shell result comes from the Host', () => state.view.items.some(item =>
+    item.type === 'tool' && item.tool?.name === 'bash' && item.tool.status === 'success' && item.text.includes('MANUAL_TOOL_ACCEPTED')));
+  await waitFor('manual Shell is shown in the terminal', () => state.terminal.screen().includes('bash')
+    && state.terminal.screen().includes('MANUAL_TOOL_ACCEPTED'));
+  assert.equal(state.requests.length, beforeRequests, 'Diagnostics and explicit Shell must not request the model');
+  assert.equal(state.view.items.filter(item => item.type === 'user' && item.text === '!echo MANUAL_TOOL_ACCEPTED').length, 1);
+  await waitFor('manual Shell Run settles', () => !state.view.runs.some(run => ['running', 'waiting_permission', 'queued'].includes(run.phase)));
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: 'accept-edits' });
 }
 
 async function checkHostCommandHelp(state) {
@@ -627,6 +648,8 @@ async function checkStop(state) {
 
 async function checkQueueModelBoundary(state) {
   assert.equal(state.mode, 'ink', 'Busy keyboard queue admission is an Ink interaction');
+  // The standalone entry has not run the wide settings check used by the full suite.
+  await state.terminal.resize(160, 32);
   const originalAgentMode = (await state.client.sessions.getSettings(state.sessionId)).agentMode;
   await state.client.sessions.updateSettings(state.sessionId, { agentMode: 'ama' });
   try {
@@ -912,6 +935,7 @@ async function run(mode) {
     }
     await check(state, 'registered-extension-no-output', checkHostCommandNoOutput);
     await check(state, 'registered-extension-help', checkHostCommandHelp);
+    await check(state, 'host-diagnostics-and-manual-shell', checkHostDiagnosticsAndShell);
     await check(state, 'prompt-stream-complete', checkPrompt);
     await check(state, 'session-settings-roundtrip', checkSettings);
     if (mode === 'ink') await check(state, 'ama-presentation', checkAmaPresentation);

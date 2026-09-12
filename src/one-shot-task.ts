@@ -12,6 +12,8 @@ import type {
 } from '@kodax-ai/coding';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type {
+  ClientInteraction,
+  ClientObservation,
   ClientSessionSettings,
   ClientSessionSettingsPatch,
   KodaXProductClient,
@@ -189,7 +191,28 @@ export async function runOneShotClientTask(
     events: options.events,
   });
   const inputId = `cli-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  let observation: ClientObservation | undefined;
+  let acceptedRunId: string | undefined;
+  let interactions: readonly ClientInteraction[] = [];
+  const rejected = new Set<string>();
+  const rejectUnattendedPermissions = (): void => {
+    for (const interaction of interactions) {
+      if (interaction.kind !== 'permission' || interaction.runId !== acceptedRunId || rejected.has(interaction.requestId)) continue;
+      rejected.add(interaction.requestId);
+      void client.interactions.respond(interaction.requestId, { kind: 'permission', decision: {
+        type: 'reject', reason: 'The non-interactive CLI cannot approve permission requests. Run interactively to review this action.',
+      } }).catch((error: unknown) => {
+        emitKodaXDiagnostic({ source: 'kodax.one-shot', level: 'error',
+          message: 'Failed to reject an unattended permission request.', detail: error });
+        options.events?.onError?.(error instanceof Error ? error : new Error(String(error)));
+      });
+    }
+  };
   try {
+    observation = await client.sessions.observe(plan.sessionId, view => {
+      interactions = view.interactions;
+      rejectUnattendedPermissions();
+    });
     const accepted = await client.inputs.submit({
       sessionId: plan.sessionId,
       inputId,
@@ -201,6 +224,8 @@ export async function runOneShotClientTask(
         `One-shot input ${inputId} was not attached to a run (state ${accepted.state}).`,
       );
     }
+    acceptedRunId = accepted.runId;
+    rejectUnattendedPermissions();
     progress.setRunId(accepted.runId);
 
     const requestStop = (): void => {
@@ -224,6 +249,7 @@ export async function runOneShotClientTask(
       input.abortSignal?.removeEventListener('abort', requestStop);
     }
   } finally {
+    observation?.close();
     progress.close();
     if (previousSettings !== undefined) {
       // A failed restore would leave this invocation's flags on the

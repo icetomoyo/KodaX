@@ -17,10 +17,10 @@ export interface CommitOutcome {
   readonly message?: string;
 }
 
-export declare const textTransactionProtocol: 4;
+export declare const textTransactionProtocol: 5;
 
 export declare class TrustedTextTransactionRoot {
-  constructor(rootPath: string, stateRoot?: string);
+  constructor(rootPath: string, stateRoot?: string, allowGitMetadata?: boolean);
   snapshot(target: string): Promise<TextSnapshot>;
   commit(
     target: string,

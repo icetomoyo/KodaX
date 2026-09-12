@@ -426,7 +426,12 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
         return runs.length === 2 && runs.some((run) => run.phase === 'queued');
       });
 
+      const cancel = vi.spyOn(runtime.sessions, 'cancel');
+      cancel.mockRejectedValueOnce(new Error('control transport unavailable'));
+      await expect(server.cancel({ sessionId })).rejects.toThrow('control transport unavailable');
+      expect(abortSpies[0]).not.toHaveBeenCalled();
       await server.cancel({ sessionId });
+      expect(cancel.mock.calls[1]?.[0]).toEqual(cancel.mock.calls[0]?.[0]);
 
       await expect(expectSettles(first, 'first cancelled prompt')).resolves.toMatchObject({
         stopReason: 'cancelled',

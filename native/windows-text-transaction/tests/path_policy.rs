@@ -1,5 +1,17 @@
 use kodax_windows_text_transaction::{TextTransactionErrorCode, validate_windows_target};
 
+#[test]
+fn explicit_host_git_authority_preserves_namespace_checks() {
+    use kodax_windows_text_transaction::validate_windows_target_with_policy;
+    assert!(validate_windows_target_with_policy(r"C:\work", r"C:\work\.git\config", true).is_ok());
+    assert!(
+        validate_windows_target_with_policy(r"C:\work", r"C:\other\.git\config", true).is_err()
+    );
+    assert!(
+        validate_windows_target_with_policy(r"C:\work", r"C:\work\.git\config:ads", true).is_err()
+    );
+}
+
 fn rejected(root: &str, target: &str) -> TextTransactionErrorCode {
     validate_windows_target(root, target).unwrap_err().code
 }

@@ -25,10 +25,14 @@ export function createRuntimeProductCommandService(deps: {
   readonly reviewPreparation: RuntimeReviewPreparationService;
   readonly startReviewWorkflow: (input: ClientReviewInput, projectRoot: string, workflow: Extract<RuntimePreparedReview, {kind: 'workflow'}>['workflow']) => Promise<ClientCommandResult>;
   readonly startInvocation: (input: ClientCommandInput, invocation: RuntimeCommandInvocation) => Promise<{ readonly runId: string }>;
+  readonly startToolInvocation: (input: ClientCommandInput, invocation: {
+    readonly name: string; readonly input: Record<string, unknown>;
+  }) => Promise<{ readonly runId: string }>;
+  readonly withSession: <T>(sessionId: string, read: (context: RuntimeCommandContext) => Promise<T>) => Promise<T>;
   readonly withIdleSession: <T>(sessionId: string, execute: (context: RuntimeCommandContext) => Promise<T>) => Promise<T>;
 }): RuntimeProductCommandService {
   return {
-    readCommandPrompt: (input) => deps.withIdleSession(input.sessionId, async (context) => {
+    readCommandPrompt: (input) => deps.withSession(input.sessionId, async (context) => {
       const prepared = await deps.prepareCommand({ projectRoot: context.projectRoot, name: input.name });
       if (prepared.kind !== 'prepared' || prepared.invocation.userInvocable === false) return null;
       return { title: prepared.invocation.displayName,
@@ -49,8 +53,9 @@ export function createRuntimeProductCommandService(deps: {
       return { kind: 'started', runId: started.runId };
     }),
     async executeCommand(input) {
-      return deps.withIdleSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
-        const helpRequested = ['help', '--help', '-h'].includes(input.args?.[0]?.trim().toLowerCase() ?? '');
+      const helpRequested = ['help', '--help', '-h'].includes(input.args?.[0]?.trim().toLowerCase() ?? '');
+      const withSession = helpRequested ? deps.withSession : deps.withIdleSession;
+      return withSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
         const prompt = await deps.prepareCommand({ projectRoot: context.projectRoot, name: input.name });
         if (prompt.kind === 'prepared') {
           if (prompt.invocation.userInvocable === false) throw new Error(`Command is not user-invocable: ${input.name}`);
@@ -75,6 +80,12 @@ export function createRuntimeProductCommandService(deps: {
           command.description,
           `Usage: ${command.usage ?? `/${command.name}`}`,
         ].filter(Boolean).join('\n\n') };
+        if (command.execution !== 'configuration') {
+          const started = await deps.startToolInvocation(input, {
+            name: `extension_command__${command.name}`, input: { args: [...(input.args ?? [])] },
+          });
+          return { kind: 'started', runId: started.runId };
+        }
         const log = (level: 'debug' | 'info' | 'warn' | 'error', parts: unknown[]) => emitKodaXDiagnostic({
           source: `host:command:${command.name}`, level,
           message: parts.map((part) => typeof part === 'string' ? part : String(part)).join(' '),

@@ -11,7 +11,9 @@ mod windows_transaction;
 
 pub use error::{TextTransactionError, TextTransactionErrorCode};
 pub use model::{CommitOutcome, CommitReceipt, ResourceState, TextSnapshot};
-pub use path_policy::{ValidatedWindowsTarget, validate_windows_target};
+pub use path_policy::{
+    ValidatedWindowsTarget, validate_windows_target, validate_windows_target_with_policy,
+};
 #[cfg(unix)]
 pub use unix_transaction::TrustedRoot;
 #[cfg(windows)]

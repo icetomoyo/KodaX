@@ -13,6 +13,7 @@ export { formatManagedTaskBreadcrumb } from './ui/utils/live-streaming.js';
 export { formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from './commands/workflow-command-results.js';
 export { buildManagedLiveEventDrafts } from './ui/InkREPL-live-event-drafts.js';
 export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot } from './ui/utils/restore-history.js';
+export type { RuntimeStopControl, RuntimeStopCallbacks } from './interactive/runtime-stop.js';
 export { runInkInteractiveMode } from "./ui/index.js";
 // FEATURE_298 T18 — classic plane display/dialog adapters.
 export {

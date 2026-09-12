@@ -1,4 +1,21 @@
 import { expect, it, vi } from 'vitest';
+import { createWorkflowProcessTracker } from '@kodax-ai/agent';
+
+it('retains inline workflow process facts and a readable saved child digest', async () => {
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Workflow' },
+    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async () => undefined);
+  const views: ClientSessionView[] = [];
+  const observation = await owner.observe('session', view => views.push(view));
+  try {
+    const events = owner.events('session', 'parent');
+    const snapshot = createWorkflowProcessTracker({ runId: 'workflow', workflowName: 'review' }).getSnapshot();
+    events.onWorkflowProcessEvent?.({ type: 'workflow_updated', snapshot });
+    events.onWorkflowAgentDigest?.({ runId: 'workflow', event: { type: 'agent_completed', seq: 1,
+      data: { name: 'reviewer', status: 'completed', summary: 'Verified the complete source.', summaryKind: 'digest' } } });
+    await expect.poll(() => views.at(-1)?.activity?.workflow?.runId).toBe('workflow');
+    await expect.poll(() => views.at(-1)?.items.some(item => item.text.includes('Verified the complete source.'))).toBe(true);
+  } finally { observation.close(); await owner.close(); }
+});
 import type { KodaXSessionData } from '@kodax-ai/agent';
 import { runWithProviderCredential } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';

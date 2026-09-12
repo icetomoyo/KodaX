@@ -840,14 +840,16 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['ext'],
     description: 'Show active extension runtime diagnostics',
     usage: '/extensions',
-    handler: async () => {
-      const runtime = getActiveExtensionRuntime();
-      if (!runtime) {
+    handler: async (_args, _context, callbacks) => {
+      const runtime = callbacks.inspectExtensions ? undefined : getActiveExtensionRuntime();
+      const diagnostics = callbacks.inspectExtensions
+        ? (await callbacks.inspectExtensions()).diagnostics
+        : runtime ? getExtensionRuntimeDiagnostics(runtime) : undefined;
+      if (!diagnostics) {
         console.log(chalk.yellow('\n[No active extension runtime]\n'));
         return;
       }
 
-      const diagnostics = getExtensionRuntimeDiagnostics(runtime);
       const extensionTools = diagnostics.tools.filter((tool) => tool.source.kind === 'extension');
 
       console.log(chalk.bold('\nExtension Runtime:\n'));
@@ -999,21 +1001,23 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'mcp',
     description: 'Show MCP server status or refresh catalogs',
     usage: '/mcp [status|refresh]',
-    handler: async (args) => {
-      const extensionRuntime = getActiveExtensionRuntime();
-      if (!extensionRuntime) {
+    handler: async (args, _context, callbacks) => {
+      const mcp = callbacks.mcp;
+      const extensionRuntime = mcp ? undefined : getActiveExtensionRuntime();
+      if (!mcp && !extensionRuntime) {
         console.log(chalk.yellow('\n[No extension runtime active — MCP is not available]'));
         return;
       }
-      const diagnostics = getExtensionRuntimeDiagnostics(extensionRuntime);
-      const mcpProvider = diagnostics.capabilityProviders.find((p) => p.id === 'mcp');
+      const diagnostics = extensionRuntime ? getExtensionRuntimeDiagnostics(extensionRuntime) : undefined;
+      const mcpProvider = diagnostics?.capabilityProviders.find((p) => p.id === 'mcp');
 
       const subcommand = args[0]?.toLowerCase() ?? 'status';
 
       if (subcommand === 'refresh') {
         console.log(chalk.dim('\nRefreshing MCP catalogs...'));
         try {
-          await extensionRuntime.refreshCapabilityProviders('mcp');
+          if (mcp) await mcp.listTools({ forceRefresh: true });
+          else await extensionRuntime!.refreshCapabilityProviders('mcp');
           console.log(chalk.green('MCP catalogs refreshed.'));
         } catch (error) {
           console.log(chalk.red(`Refresh failed: ${error instanceof Error ? error.message : String(error)}`));
@@ -1023,7 +1027,7 @@ export const BUILTIN_COMMANDS: Command[] = [
 
       // Default: status
       console.log(chalk.cyan('\nMCP Status\n'));
-      if (!mcpProvider) {
+      if (!mcp && !mcpProvider) {
         console.log(chalk.yellow('  No MCP provider registered.'));
         console.log(chalk.dim(
           '  Add servers to ~/.kodax/integrations/mcp.json or run `kodax mcp add`.\n',
@@ -1031,8 +1035,8 @@ export const BUILTIN_COMMANDS: Command[] = [
         return;
       }
 
-      const meta = mcpProvider.metadata as Record<string, unknown> | undefined;
-      const servers = (meta?.servers ?? []) as Array<{
+      const meta = mcpProvider?.metadata as Record<string, unknown> | undefined;
+      const servers = mcp ? await mcp.status() : (meta?.servers ?? []) as Array<{
         serverId: string; connect: string; status: string;
         tools: number; resources: number; prompts: number;
         lastError?: string; cachedAt?: string;
@@ -3076,6 +3080,7 @@ async function executeExtensionCommand(
   command: ExtensionCommandDefinition,
   args: string[],
   context: InteractiveContext,
+  callbacks: CommandCallbacks,
 ): Promise<CommandResult> {
   const runtime = getActiveExtensionRuntime();
   if (!runtime) {
@@ -3083,7 +3088,14 @@ async function executeExtensionCommand(
     return false;
   }
 
-  const result = await command.handler(args, {
+  let result: ExtensionCommandResult | void;
+  if (command.execution !== 'configuration') {
+    if (!callbacks.executeToolInvocation) throw new Error(JSON.stringify({ code: 'runtime_execution_unavailable',
+      denialSource: 'runtime_capability', remediation: 'Connect the Session execution owner before invoking this extension command.' }));
+    const outcome = await callbacks.executeToolInvocation({ name: `extension_command__${command.name}`, input: { args } }, `/${command.name} ${args.join(' ')}`);
+    if (!outcome.success) throw new Error(outcome.lastText);
+    result = JSON.parse(outcome.lastText) as ExtensionCommandResult;
+  } else result = await command.handler(args, {
     sessionId: context.sessionId,
     gitRoot: context.gitRoot,
     workingDirectory: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
@@ -3287,7 +3299,7 @@ export async function executeCommand(
           inputId: randomUUID(), name: parsed.command, args: parsed.args });
         return clientCommandResult(result);
       }
-      return await executeExtensionCommand(extensionCommand, parsed.args, context);
+      return await executeExtensionCommand(extensionCommand, parsed.args, context, callbacks);
     } catch (error) {
       console.log(chalk.red(`\n[Extension command failed: ${error instanceof Error ? error.message : String(error)}]`));
       return false;

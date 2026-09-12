@@ -133,25 +133,24 @@ export async function resolveInitialMessages(
 }
 
 /**
- * Push a user message for `prompt` UNLESS the last message in `messages`
- * is already that prompt (canonical text equality). Returns a NEW array
- * either way — input is never mutated.
- *
- * Behaviour preserved verbatim from `agent.ts:1503-1511` baseline.
+ * Reuse the Host's accepted input when its identity is supplied, including
+ * when tool messages follow it. Legacy callers compare only the last
+ * message's canonical text. The input array is never mutated.
  */
 export function appendPromptIfNotDuplicate(
   messages: KodaXMessage[],
   prompt: string,
   inputArtifacts: readonly KodaXInputArtifact[] | undefined,
   turnId?: string,
+  inputId?: string,
 ): KodaXMessage[] {
   const lastMsg = messages[messages.length - 1];
-  if (extractComparableUserMessageText(lastMsg) === prompt) {
-    if (turnId !== undefined && lastMsg !== undefined && lastMsg.turnId === undefined) {
-      return [
-        ...messages.slice(0, -1),
-        { ...lastMsg, turnId },
-      ];
+  const existingIndex = inputId !== undefined
+    ? messages.findIndex(message => message.role === 'user' && message.inputId === inputId)
+    : extractComparableUserMessageText(lastMsg) === prompt ? messages.length - 1 : -1;
+  if (existingIndex >= 0) {
+    if (turnId !== undefined && messages[existingIndex]!.turnId === undefined) {
+      return messages.map((message, index) => index === existingIndex ? { ...message, turnId } : message);
     }
     return messages;
   }
@@ -161,6 +160,7 @@ export function appendPromptIfNotDuplicate(
       role: 'user',
       content: buildPromptMessageContent(prompt, inputArtifacts),
       ...(turnId !== undefined ? { turnId } : {}),
+      ...(inputId !== undefined ? { inputId } : {}),
       // GOAL 2: real submit-time for the user turn (SA/CLI submission path).
       timestamp: new Date().toISOString(),
     },

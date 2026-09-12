@@ -239,6 +239,8 @@ export interface RegisteredToolDefinition extends LocalToolDefinition {
 
 export interface ToolRegistrationOptions {
   source?: ToolDefinitionSource;
+  /** Host identity; never serialized into model-visible tool definitions. */
+  runtimeOwner?: object;
 }
 
 export type ToolRegistry = Map<string, RegisteredToolDefinition[]>;

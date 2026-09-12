@@ -113,7 +113,7 @@ const manifest = {
   arch: targetArch,
   textTransaction: {
     file: path.basename(textOutput),
-    protocol: 4,
+    protocol: 5,
     sha256: sha256(textOutput),
   },
   legal: [{

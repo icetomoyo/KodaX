@@ -386,6 +386,8 @@ const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set([
   '2024-11-05',
 ]);
 
+class McpDisposedError extends Error {}
+
 class McpProtocolVersionError extends Error {
   constructor(version: string | undefined) {
     super(version
@@ -834,7 +836,7 @@ export class McpServerRuntime {
   private async resetTransport(): Promise<void> {
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timeout);
-      pending.reject(new Error(`MCP server "${this.serverId}" disposed during request ${id}.`));
+      pending.reject(new McpDisposedError(`MCP server "${this.serverId}" disposed during request ${id}.`));
       this.pending.delete(id);
     }
     const elicitationWaiters = [...this.elicitationWaiters.values()];
@@ -996,6 +998,7 @@ export class McpServerRuntime {
         this.diagnostics.dirty = this.diagnostics.dirty || initialized?.capabilities !== undefined;
         return; // Success — stop trying other framings.
       } catch (error) {
+        if (error instanceof McpDisposedError) throw error;
         if (error instanceof McpProtocolVersionError) {
           await this.resetTransport();
           throw error;

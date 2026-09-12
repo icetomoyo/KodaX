@@ -2110,8 +2110,11 @@ async function runManagedTaskViaRunnerInner(
     promptWithOverlay,
     options.context?.inputArtifacts,
     liveTurnController.currentTurnId(),
+    options.session?.inputId,
   );
-  const currentUserMessage = initialMessages[initialMessages.length - 1]!;
+  const currentUserIndex = options.session?.inputId === undefined ? initialMessages.length - 1
+    : initialMessages.findIndex(message => message.role === 'user' && message.inputId === options.session!.inputId);
+  const currentUserMessage = initialMessages[currentUserIndex]!;
   const currentMessageTimestamp = currentUserMessage.timestamp ?? new Date().toISOString();
   const canonicalManagedContext = initialManagedContext.full
     ? createManagedRunContextMessage(initialManagedContext.full, {
@@ -2120,9 +2123,9 @@ async function runManagedTaskViaRunnerInner(
       })
     : undefined;
   const runnerInput = [
-    ...initialMessages.slice(0, -1),
+    ...initialMessages.slice(0, currentUserIndex),
     ...(canonicalManagedContext ? [canonicalManagedContext] : []),
-    currentUserMessage,
+    ...initialMessages.slice(currentUserIndex),
   ];
   if (memoryRuntime !== undefined) memoryRuntime.presentationMessages = runnerInput;
 

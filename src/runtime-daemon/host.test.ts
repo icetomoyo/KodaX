@@ -1270,6 +1270,7 @@ function makeRuntime(
       version: "0.7.66",
     },
     sessions: {
+      async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async status(sessionId) {
         return { sessionId, runtimeId: "runtime-test", phase: "idle",
           observedAt: new Date(0).toISOString() };
@@ -1584,6 +1585,7 @@ function makeRuntime(
       },
     },
     mcp: {
+      async status() { return []; },
       async listServers() {
         return {};
       },

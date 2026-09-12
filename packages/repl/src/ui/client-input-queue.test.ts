@@ -10,6 +10,8 @@ describe('client input queue', () => {
     const submit = vi.fn(async () => { throw new Error('acknowledgement lost'); });
     const readInput = vi.fn(async () => null);
     const plane: InkClientPlane = { submit, readInput, withdraw: vi.fn(async () => undefined),
+      executeTool: async () => { throw new Error('Unexpected tool invocation'); },
+      cancelSession: async () => { throw new Error('Unexpected Session Stop'); },
       activeRun: async () => undefined, awaitRun: async () => ({ phase: 'completed' }),
       stop: async () => undefined, observe: async () => () => undefined,
       readItem: async () => null, respondInteraction: async () => true };

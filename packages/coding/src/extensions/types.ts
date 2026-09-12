@@ -13,6 +13,7 @@ import type {
   RegisteredToolDefinition,
 } from '../tools/types.js';
 import type { AgentContent } from '../construction/types.js';
+import type { ExtensionExecutionScope } from './execution-contract.js';
 export type { AgentContent };
 
 import type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
@@ -45,8 +46,16 @@ export interface ModelProviderRegistration {
   factory: () => KodaXBaseProvider;
 }
 
+export interface ExtensionCapabilityProvider extends CapabilityProvider {
+  execute?: (id: string, input: Record<string, unknown>, scope?: ExtensionExecutionScope) => Promise<CapabilityResult>;
+  read?: (id: string, options?: Record<string, unknown>, scope?: ExtensionExecutionScope) => Promise<CapabilityResult>;
+  getPrompt?: (id: string, args?: Record<string, unknown>, scope?: ExtensionExecutionScope) => Promise<unknown>;
+}
+
 export interface ExtensionCommandDefinition {
   name: string;
+  /** Configuration-only commands run without a Session Run; effectful commands use managed execution by default. */
+  execution?: 'configuration' | 'managed';
   aliases?: string[];
   description: string;
   usage?: string;
@@ -168,6 +177,7 @@ export interface ExtensionCommandResult {
 }
 
 export interface ExtensionCommandContext {
+  extensionExecution?: ExtensionExecutionScope;
   sessionId?: string;
   gitRoot?: string;
   workingDirectory: string;
@@ -437,11 +447,14 @@ export interface ExtensionRuntimeController {
 }
 
 export interface KodaXExtensionAPI {
+  readonly capabilities: { readonly executionScope: 1; readonly scopedSessionState: 1 };
+  /** Undefined during registration or legacy host utilities outside an admitted Run. */
+  getExecutionScope(): ExtensionExecutionScope | undefined;
   registerTool: (definition: LocalToolDefinition) => () => void;
   getTool: (name: string) => RegisteredToolDefinition | undefined;
   getBuiltinTool: (name: string) => RegisteredToolDefinition | undefined;
   registerModelProvider: (registration: ModelProviderRegistration) => () => void;
-  registerCapabilityProvider: (provider: CapabilityProvider) => () => void;
+  registerCapabilityProvider: (provider: ExtensionCapabilityProvider) => () => void;
   registerCommand: (command: ExtensionCommandDefinition) => () => void;
   registerSkillPath: (skillPath: string) => () => void;
   /**
@@ -507,7 +520,7 @@ export interface KodaXExtensionAPI {
   runtime: ExtensionRuntimeController;
   /** Extension-scoped key-value store that persists across sessions. */
   persistence: KodaXExtensionStore;
-  /** Run a shell command with sandboxed environment (no API key leakage). */
+  /** Legacy trusted-host helper with filtered environment; not managed Run authority. Use getExecutionScope().invokeTool('bash', ...) for managed effects. */
   exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
   /** Send an HTTP webhook with timeout support. */
   webhook: (url: string, payload: unknown, options?: WebhookOptions) => Promise<WebhookResult>;

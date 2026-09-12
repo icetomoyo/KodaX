@@ -320,6 +320,13 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'run.list': { params: runFilterSchema(), result: arraySchema(runStatusSchema()) },
   'run.await': { params: runIdParamsSchema(), result: runResultSchema() },
   'run.abort': { params: runIdParamsSchema(), result: runStopReceiptSchema() },
+  'session.cancel': {
+    params: objectSchema({ sessionId: stringSchema, expectedRunId: stringSchema, requestId: stringSchema },
+      ['sessionId', 'expectedRunId', 'requestId']),
+    result: objectSchema({ sessionId: stringSchema, expectedRunId: stringSchema, requestId: stringSchema,
+      frontier: integerSchema, receipts: { type: 'array', items: runStopReceiptSchema() } },
+      ['sessionId', 'expectedRunId', 'requestId', 'frontier', 'receipts']),
+  },
   'run.model.set': {
     params: objectSchema({ runId: stringSchema, model: stringSchema }, ['runId'], true),
     result: okSchema,
@@ -426,7 +433,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'workflow.pause': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.resume': { params: runIdParamsSchema(), result: booleanSchema },
-  'workflow.stop': { params: runIdParamsSchema(), result: booleanSchema },
+  'workflow.stop': { params: objectSchema({ runId: stringSchema, sessionId: stringSchema }, ['runId']), result: booleanSchema },
   'workflow.start': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -548,6 +555,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'provider.custom.remove': { params: objectSchema({ name: stringSchema }, ['name']), result: booleanSchema },
 
   'mcp.server.list': { params: noParamsSchema, result: objectAnySchema },
+  'mcp.server.status': { params: noParamsSchema, result: arrayAnySchema },
   'mcp.server.get': { params: objectSchema({ name: stringSchema }, ['name']), result: { oneOf: [objectAnySchema, { type: 'null' }] } },
   'mcp.server.validate': {
     params: objectSchema({
@@ -1363,6 +1371,7 @@ function effectiveConfigSnapshotSchema(): RuntimeDaemonJsonSchema {
 function startRunParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     sessionId: stringSchema,
+    inputId: stringSchema,
     prompt: stringSchema,
     input: {
       oneOf: [objectAnySchema, arraySchema(objectAnySchema)],

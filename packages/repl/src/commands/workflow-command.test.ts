@@ -161,6 +161,12 @@ function writeGeneratedRunSnapshot(baseDir: string, runId: string): void {
  * name→builtin/saved resolution, metadata attached verbatim), so command
  * tests exercise the real Host-side start path without mocks.
  */
+const hostFixtureCompletions: Promise<unknown>[] = [];
+
+afterEach(async () => {
+  await Promise.all(hostFixtureCompletions.splice(0));
+});
+
 function bindHostWorkflowsFixture(runsBaseDirOverride?: string): WorkflowHostControl {
   const manager = createWorkflowRunManager();
   return {
@@ -195,6 +201,7 @@ function bindHostWorkflowsFixture(runsBaseDirOverride?: string): WorkflowHostCon
         ...(input.metadata !== undefined ? { processMetadata: input.metadata } : {}),
         manager,
       });
+      if (result.kind === 'started') hostFixtureCompletions.push(result.managed.done);
       return result.kind === 'started'
         ? { kind: 'started', runId: result.runId }
         : { kind: 'declined', reason: result.reason };
@@ -2428,24 +2435,20 @@ describe('workflowCommand saved capsule preflight', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'wf-command-'));
+    vi.stubEnv('KODAX_HOME', join(dir, '.kodax'));
     workflowRunsDir = getAgentConfigPath('workflow-runs', deriveProjectKeyFromRoot(dir).key);
     previousCwd = process.cwd();
     process.chdir(dir);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(hostFixtureCompletions.splice(0));
     logSpy.mockRestore();
     process.chdir(previousCwd);
-    // FEATURE_298 T22 — Host-started runs finish asynchronously; a lingering
-    // handle can outlive the test on Windows. The temp dir is left for the OS
-    // cleaner rather than failing unrelated assertions.
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    } catch { /* teardown best-effort */ }
-    try {
-      rmSync(workflowRunsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    } catch { /* teardown best-effort */ }
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(workflowRunsDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it('refuses non-terminal persisted workflow runs unless --force is explicit', async () => {
@@ -2547,6 +2550,7 @@ describe('workflowCommand saved capsule preflight', () => {
         return {
           runId,
           workflowName: 'host-audit',
+          hostMetadata: { ownerSessionId: 'current-session' },
           status: 'running' as const,
           startedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2581,13 +2585,13 @@ describe('workflowCommand saved capsule preflight', () => {
     logSpy.mockClear();
     await workflowCommand.handler(
       ['stop', 'run-host-1'],
-      {} as Parameters<typeof workflowCommand.handler>[1],
+      { sessionId: 'current-session' } as Parameters<typeof workflowCommand.handler>[1],
       callbacks,
       {} as Parameters<typeof workflowCommand.handler>[3],
     );
     output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(stopped).toEqual(['run-host-1']);
-    expect(output).toContain('Stopped workflow run-host-1');
+    expect(output).toContain('Stop requested for workflow run-host-1');
   });
 
   it('prefers deleting a unique workflow run when its display name also matches a saved capsule', async () => {
@@ -2797,6 +2801,52 @@ describe('workflowCommand saved capsule preflight', () => {
     );
     output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(output).toContain('workflow controls are unavailable in this runtime');
+  });
+
+  it.each([
+    { requested: 'run-foreign', expected: undefined },
+    { requested: undefined, expected: 'run-owned' },
+  ])('scopes workflow stop to this Session ($requested)', async ({ requested, expected }) => {
+    const snapshot = (runId: string): WorkflowProcessSnapshot => ({
+      runId, workflowName: 'session-owned-workflow', status: 'running',
+      startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      hostMetadata: { ownerSessionId: runId === 'run-owned' ? 'current-session' : 'another-session' },
+      counts: { pending: 0, running: 1, completed: 0, failed: 0, cancelled: 0, skipped: 0 },
+      progress: { spawnedAgents: 1, finishedAgents: 0, activeAgents: 1, failedAgents: 0, stoppedAgents: 0 },
+      items: [],
+    });
+    const stop = vi.fn(async () => true);
+    let stdout = '';
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+    const hostControl: WorkflowHostControl = {
+      async start() { throw new Error('Unexpected workflow start'); },
+      async list() {
+        return ['run-owned', 'run-foreign'].map((runId, index) => ({
+          runId, workflow: 'session-owned-workflow', status: 'running' as const,
+          totalSpawned: 1, eventCount: 0, startedAt: index + 1, runDir: join(workflowRunsDir, runId),
+        }));
+      },
+      async get(runId) { return snapshot(runId); },
+      async pause() { return false; },
+      async resume() { return false; },
+      stop,
+      subscribe() { return { close() {} }; },
+    };
+    await workflowCommand.handler(
+      requested ? ['stop', requested] : ['stop'],
+      { sessionId: 'current-session' } as Parameters<typeof workflowCommand.handler>[1],
+      { workflows: hostControl } as Parameters<typeof workflowCommand.handler>[2],
+      {} as Parameters<typeof workflowCommand.handler>[3],
+    ).finally(() => output.mockRestore());
+    if (expected) {
+      expect(stop).toHaveBeenCalledExactlyOnceWith(expected, { sessionId: 'current-session' });
+    } else {
+      expect(stop).not.toHaveBeenCalled();
+      expect(stdout).toContain('Session that owns it.\n');
+    }
   });
 
   it('reports persisted-only terminal workflow runs as already finished on stop', async () => {
@@ -3339,6 +3389,7 @@ describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'wf-host-start-'));
+    vi.stubEnv('KODAX_HOME', join(dir, '.kodax'));
     workflowRunsDir = getAgentConfigPath('workflow-runs', deriveProjectKeyFromRoot(dir).key);
     previousCwd = process.cwd();
     process.chdir(dir);
@@ -3348,15 +3399,8 @@ describe('workflowCommand Host declarative start (FEATURE_298 T22)', () => {
   afterEach(() => {
     logSpy.mockRestore();
     process.chdir(previousCwd);
-    // FEATURE_298 T22 — Host-started runs finish asynchronously; a lingering
-    // handle can outlive the test on Windows. The temp dir is left for the OS
-    // cleaner rather than failing unrelated assertions.
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    } catch { /* teardown best-effort */ }
-    try {
-      rmSync(workflowRunsDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    } catch { /* teardown best-effort */ }
+    rmSync(dir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it('routes a saved-capsule start through the Host with an inline source and host-minted runId', async () => {

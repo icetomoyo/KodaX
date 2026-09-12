@@ -143,6 +143,9 @@ const translations = {
     // Cancellation
     "cancelled": "[Cancelled] Operation cancelled by user",
     "cancellationRequested": "[Cancelling] Stop requested for the current reply",
+    "cancellationAccepted": "Stop request accepted; waiting for execution to settle.",
+    "cancellationConfirmed": "Stop confirmed:",
+    "cancellationRejected": "Stop request failed:",
   },
 
   zh: {
@@ -233,6 +236,9 @@ const translations = {
 
     "cancelled": "[已取消] 操作已被用户取消",
     "cancellationRequested": "[正在取消] 已请求停止当前回复",
+    "cancellationAccepted": "停止请求已接受，正在等待执行收尾。",
+    "cancellationConfirmed": "停止已确认：",
+    "cancellationRejected": "停止请求失败：",
   },
 } as const;
 

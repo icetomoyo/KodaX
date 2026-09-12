@@ -292,6 +292,7 @@ impl Drop for SlotLock {
 }
 
 pub struct TrustedRoot {
+    allow_git_metadata: bool,
     root: File,
     authorized_root_path: PathBuf,
     root_path: PathBuf,
@@ -307,6 +308,10 @@ unsafe impl Send for TrustedRoot {}
 unsafe impl Sync for TrustedRoot {}
 
 impl TrustedRoot {
+    pub fn with_git_metadata_authority(mut self, allowed: bool) -> Self {
+        self.allow_git_metadata = allowed;
+        self
+    }
     pub fn open(root_path: &str, state_root: &str) -> Result<Self, TextTransactionError> {
         let root_path = validate_absolute_path(root_path)?;
         let canonical = fs::canonicalize(&root_path)
@@ -327,6 +332,7 @@ impl TrustedRoot {
         supported_local_filesystem(&lock_directory)?;
         Ok(Self {
             root,
+            allow_git_metadata: false,
             authorized_root_path: root_path,
             root_path: canonical,
             identity: FileIdentity::from_metadata(&metadata),
@@ -560,6 +566,7 @@ impl TrustedRoot {
                 ));
             }
             if let Component::Normal(value) = component
+                && !self.allow_git_metadata
                 && path_text(Path::new(value))?.eq_ignore_ascii_case(".git")
             {
                 return Err(TextTransactionError::new(

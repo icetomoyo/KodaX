@@ -1113,6 +1113,29 @@ describe('KodaXExtensionRuntime — FEATURE_191 registerAgent', () => {
     expect(resolveConstructedAgent('rejected')).toBeUndefined();
   });
 
+  it.each(['one', 'all'])('drains admitted %s capability refresh before replacement disposal', async (selection) => {
+    const runtime = createExtensionRuntime();
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const dispose = vi.fn();
+    runtime.registerCapabilityProvider({ id: 'refreshing', kinds: ['tool'],
+      refresh: async () => { entered(); await gate; }, dispose });
+    const refreshing = runtime.refreshCapabilityProviders(selection === 'one' ? 'refreshing' : undefined);
+    await started;
+    const replacing = runtime.replaceCapabilityProvider('refreshing', { id: 'refreshing', kinds: ['tool'] });
+    try {
+      expect(dispose).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await refreshing;
+      await replacing;
+      await runtime.dispose();
+    }
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('atomically replaces a capability provider and disposes superseded state once', async () => {
     const runtime = createExtensionRuntime();
     const firstDispose = vi.fn(async () => undefined);

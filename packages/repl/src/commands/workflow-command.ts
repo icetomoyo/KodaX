@@ -469,16 +469,25 @@ export const workflowCommand: Command = {
         return;
       }
       const activeRuns = (await hostControl.list()).filter(isActiveManagedWorkflowRun);
-      const runId = invocation.runId || selectDefaultActiveWorkflowRunId(activeRuns);
+      const ownedRuns = (await Promise.all(activeRuns.map(async (run) => (
+        context.sessionId && (await hostControl.get(run.runId))?.hostMetadata?.ownerSessionId === context.sessionId ? run : undefined
+      )))).filter((run): run is NonNullable<typeof run> => run !== undefined);
+      const runId = invocation.runId || selectDefaultActiveWorkflowRunId(ownedRuns);
       if (!runId) {
         console.log(chalk.yellow('\nNo active workflow to stop.\n'));
         return;
       }
       if (!ensureSafeRunId(runId)) return;
-      const ok = await hostControl.stop(runId);
+      const before = await hostControl.get(runId);
+      if (before && isActiveManagedWorkflowRun(toManagedSnapshot(before)!)
+        && (!context.sessionId || before.hostMetadata?.ownerSessionId !== context.sessionId)) {
+        process.stdout.write(`${chalk.red('Stop the workflow from the Session that owns it.')}\n`);
+        return;
+      }
+      const ok = await hostControl.stop(runId, context.sessionId ? { sessionId: context.sessionId } : undefined);
       const snapshot = toManagedSnapshot(await hostControl.get(runId));
       const detail = readWorkflowRunDetail(baseDir, runId);
-      const processSnapshot = lifecycle.getWorkflowProcessSnapshot(runId);
+      const processSnapshot = await hostControl.get(runId);
       const status = snapshot?.status ?? detail?.status ?? processSnapshot?.status;
       const alreadyTerminal = snapshot
         ? !isActiveManagedWorkflowRun(snapshot)
@@ -490,7 +499,7 @@ export const workflowCommand: Command = {
         canRerunWorkflowRun(snapshot, detail),
       );
       console.log(ok
-        ? chalk.dim(`Stopped workflow ${runId}.\n`)
+        ? chalk.dim(`Stop requested for workflow ${runId}; waiting for cleanup.\n`)
         : status && alreadyTerminal
           ? chalk.yellow(`Workflow ${runId} is already ${status}. Next: ${nextActions}.\n`)
           : chalk.yellow(`No active workflow ${runId}.\n`));

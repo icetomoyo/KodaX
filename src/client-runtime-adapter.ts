@@ -25,6 +25,7 @@ export function toKodaXProductClient(
         : runtime.close().then(() => ({ accepted: true as const })),
     },
     sessions: {
+      cancel: input => runtime.sessions.cancel(input),
       create: (input) => runtime.sessions.create(input),
       list: (filter) => runtime.sessions.list(filter),
       read: (sessionId) => runtime.sessions.load(sessionId),
@@ -126,6 +127,11 @@ export function toKodaXProductClient(
       withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId),
     },
     runs: {
+      startTool: async input => {
+        const handle = await runtime.runs.start({ sessionId: input.sessionId, inputId: input.inputId,
+          prompt: input.rawInput, options: { toolInvocation: { name: input.name, input: input.input } } });
+        return { runId: handle.runId, sessionId: handle.sessionId };
+      },
       read: (runId) => runtime.runs.get(runId),
       stop: (runId) => runtime.runs.abort(runId),
       await: async (runId) => {
@@ -186,6 +192,7 @@ export function toKodaXProductClient(
       reload: async () => ({ ok: true, config: toClientConfig((await runtime.config.reload()).config) }),
     },
     mcp: {
+      status: () => runtime.mcp.status(),
       listServers: () => runtime.mcp.listServers(),
       getServer: (name) => runtime.mcp.getServer(name),
       validateServer: (name, config) => runtime.mcp.validateServer(name, config),
@@ -213,9 +220,32 @@ export function toKodaXProductClient(
       subscribe: (filter, listener) => runtime.workflows.subscribe(filter, listener),
       pause: (runId) => runtime.workflows.pause(runId),
       resume: (runId) => runtime.workflows.resume(runId),
-      stop: (runId) => runtime.workflows.stop(runId),
+      stop: (runId, options) => runtime.workflows.stop(runId, options),
     },
     catalog: {
+      extensions: async () => {
+        const result = await runtime.catalog.extensions();
+        const loaded = ({ path, label, loadSource }: { path: string; label: string; loadSource: string }) => ({ path, label, loadSource });
+        const source = ({ kind, id, label }: { kind: string; id?: string; label?: string }) => ({ kind, id, label });
+        const diagnostics = result.diagnostics;
+        return {
+          active: result.active,
+          extensions: result.extensions.map(loaded),
+          diagnostics: diagnostics && {
+            loadedExtensions: diagnostics.loadedExtensions.map(loaded),
+            capabilityProviders: diagnostics.capabilityProviders.map(({ id, kinds, metadata }) => ({ id, kinds, metadata })),
+            commands: diagnostics.commands.map(({ name, aliases, description }) => ({ name, aliases, description })),
+            tools: diagnostics.tools.map(tool => ({ name: tool.name, source: source(tool.source), shadowedSources: tool.shadowedSources.map(source) })),
+            hooks: diagnostics.hooks.map(hook => ({ hook: hook.hook, order: hook.order, source: source(hook.source) })),
+            failures: diagnostics.failures.map(failure => ({ stage: failure.stage, target: failure.target, message: failure.message, source: source(failure.source) })),
+            defaults: {
+              activeTools: diagnostics.defaults.activeTools,
+              modelSelection: { ...diagnostics.defaults.modelSelection },
+              thinkingLevel: diagnostics.defaults.thinkingLevel,
+            },
+          },
+        };
+      },
       providers: () => runtime.catalog.providers(),
       models: async (filter) => (await runtime.catalog.providers())
         .filter((provider) => filter?.provider === undefined || provider.name === filter.provider)

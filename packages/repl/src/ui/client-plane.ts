@@ -16,6 +16,9 @@ import type {
   ClientItemContent,
   ClientPermissionInteractionOptions,
   ClientRunStopReceipt,
+  ClientSessionCancelInput,
+  ClientSessionCancelReceipt,
+  ClientToolInvocationInput,
   ClientSessionView,
   ClientObserveOptions,
   ClientSessionSettingsPatch,
@@ -35,6 +38,7 @@ import { resolveReplRuntimePermissionDecision } from '../runtime-permission.js';
 import type { ConfirmResult } from '../permission/types.js';
 import type { HistoryItem, ToolCall, ToolCallStatus } from './types.js';
 import { ToolCallStatus as RenderToolStatus } from './types.js';
+import type { RuntimeStopCallbacks } from '../interactive/runtime-stop.js';
 
 /** Terminal projection of one client round; `result` is the legacy shape Ink's loop expects. */
 export interface ClientRoundOutcome {
@@ -44,6 +48,8 @@ export interface ClientRoundOutcome {
 }
 
 export interface InkClientPlane {
+  executeTool(input: ClientToolInvocationInput): Promise<{ readonly runId: string; readonly sessionId: string }>;
+  cancelSession(input: ClientSessionCancelInput): Promise<ClientSessionCancelReceipt>;
   /** Configure the Host-owned Session before starting or changing a round. */
   updateSettings?(sessionId: string, patch: ClientSessionSettingsPatch): Promise<void>;
   /**
@@ -261,6 +267,48 @@ async function pollActiveRun(
   }
 }
 
+/** Session Stop reuses one request identity across retries and never settles the Run locally. */
+export function bindClientPlaneSessionStop(input: RuntimeStopCallbacks & { plane: InkClientPlane; sessionId: string },
+  currentRun: () => string | undefined): { settled: (outcome: ClientRoundOutcome, runId: string) => void; close: () => void } {
+  let target: ClientSessionCancelInput | undefined;
+  let pending: Promise<{ state: 'unknown' | 'confirmed' }> | undefined;
+  let accepted = false;
+  let confirmed = false;
+  let terminalOutcome: { runId: string; phase: string } | undefined;
+  const confirm = (outcome: string): void => {
+    if (accepted && !confirmed) { confirmed = true; input.onStopState?.('confirmed', outcome); }
+  };
+  input.onStopControl?.({ request: () => {
+    if (pending) return pending;
+    const expectedRunId = currentRun();
+    if (!target && !expectedRunId) return Promise.reject(new Error('No active Run is available to stop.'));
+    target ??= { sessionId: input.sessionId, expectedRunId: expectedRunId!, requestId: mintInkInputId() };
+    input.onStopState?.('requesting');
+    pending = input.plane.cancelSession(target).then(receipt => {
+      accepted = true;
+      input.onStopState?.('accepted');
+      const stopped = receipt.receipts.find(item => item.runId === target!.expectedRunId);
+      if (stopped?.state === 'confirmed') confirm(stopped.outcome);
+      else if (terminalOutcome?.runId === target!.expectedRunId) confirm(terminalOutcome.phase);
+      return { state: receipt.receipts.every(item => item.state === 'confirmed') ? 'confirmed' as const : 'unknown' as const };
+    }).catch((error: unknown) => {
+      input.onStopState?.('rejected', error instanceof Error ? error.message : String(error));
+      throw error;
+    }).finally(() => { pending = undefined; });
+    return pending;
+  } });
+  return {
+    settled: (outcome, runId) => {
+      if (target && target.expectedRunId !== runId) return;
+      if (['completed', 'failed', 'interrupted', 'cancelled'].includes(outcome.phase)) {
+        terminalOutcome = { runId, phase: outcome.phase };
+        confirm(outcome.phase);
+      }
+    },
+    close: () => input.onStopControl?.(undefined),
+  };
+}
+
 /** Follow an already accepted command and its queued continuations without submitting it again. */
 export async function followClientPlaneRun(input: {
   readonly plane: InkClientPlane;
@@ -269,8 +317,9 @@ export async function followClientPlaneRun(input: {
   readonly abortSignal?: AbortSignal;
   /** Read the Run already displayed to the user synchronously at interruption. */
   readonly getDisplayedRunId?: () => string | undefined;
-}): Promise<KodaXResult> {
+} & RuntimeStopCallbacks): Promise<KodaXResult> {
   let currentRunId = input.runId;
+  const sessionStop = bindClientPlaneSessionStop(input, () => input.getDisplayedRunId?.() ?? currentRunId);
   const aborted = (): boolean => input.abortSignal?.aborted === true;
   let stopping: Promise<void> | undefined;
   const stop = (): void => {
@@ -293,6 +342,7 @@ export async function followClientPlaneRun(input: {
     for (;;) {
       const awaitedRunId = currentRunId;
       outcome = await input.plane.awaitRun(input.sessionId, awaitedRunId);
+      sessionStop.settled(outcome, awaitedRunId);
       const continuation = await pollActiveRun(input.plane, input.sessionId,
         (runId) => runId !== currentRunId, CONTINUATION_WINDOW_MS, aborted);
       if (aborted()) {
@@ -308,6 +358,7 @@ export async function followClientPlaneRun(input: {
     if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) return interruptedPlaneResult(input.sessionId);
     throw new Error(outcome.error ?? `Run ${currentRunId} ended in phase '${outcome.phase}' without a result.`);
   } finally {
+    sessionStop.close();
     input.abortSignal?.removeEventListener('abort', stop);
   }
 }
@@ -322,7 +373,7 @@ export async function runClientPlaneRound(input: {
   /** Read the Run already displayed to the user synchronously at interruption. */
   readonly getDisplayedRunId?: () => string | undefined;
   readonly inputArtifacts?: readonly KodaXInputArtifact[];
-}): Promise<KodaXResult> {
+} & RuntimeStopCallbacks): Promise<KodaXResult> {
   const inputId = mintInkInputId();
   const aborted = (): boolean => input.abortSignal?.aborted === true;
   let stopping: Promise<unknown> | undefined;
@@ -376,6 +427,7 @@ export async function runClientPlaneRound(input: {
     return interruptedPlaneResult(input.sessionId);
   }
   let currentRunId = accepted.runId;
+  const sessionStop = bindClientPlaneSessionStop(input, () => input.getDisplayedRunId?.() ?? currentRunId);
   let lastOutcome: ClientRoundOutcome | undefined;
   const stop = (): void => {
     if (currentRunId !== undefined) currentRunId = input.getDisplayedRunId?.() ?? currentRunId;
@@ -420,6 +472,7 @@ export async function runClientPlaneRound(input: {
       }
       const awaitedRunId = currentRunId;
       lastOutcome = await input.plane.awaitRun(input.sessionId, awaitedRunId);
+      sessionStop.settled(lastOutcome, awaitedRunId);
       const continuation = await pollActiveRun(
         input.plane,
         input.sessionId,
@@ -444,6 +497,7 @@ export async function runClientPlaneRound(input: {
     }
     throw new Error(outcome.error ?? `Run ${currentRunId} ended in phase '${outcome.phase}' without a result.`);
   } finally {
+    sessionStop.close();
     input.abortSignal?.removeEventListener('abort', stop);
   }
 }

@@ -59,6 +59,12 @@ it('runs one workflow on the Host that both clients observe and control', async 
     expect(started).toMatchObject({ kind: 'started' });
     if (started.kind !== 'started') return;
     const runId = started.runId;
+    // Session-scoped control crosses the public client and real IPC boundary.
+    const foreignSession = await second.sessions.create({ projectPath: homeDir });
+    await expect(secondControl.stop(runId, { sessionId: foreignSession.id }))
+      .rejects.toThrow('Workflow does not belong to the requested Session.');
+    expect((await secondControl.get(runId))?.hostMetadata?.ownerSessionId).toBe(session.id);
+    expect((await runtime.runs.get(runId)).phase).not.toBe('interrupted');
     expect(await runtime.workflows.list({ runId })).toEqual([
       expect.objectContaining({ runId, runDir: expect.stringContaining(path.join('workflow-runs')) }),
     ]);
@@ -94,7 +100,7 @@ it('runs one workflow on the Host that both clients observe and control', async 
     await firstControl.pause(runId);
     const paused = await second.workflows.get(runId);
     expect(['paused', 'pausing', 'completed']).toContain(paused?.status ?? 'completed');
-    await secondControl.stop(runId);
+    await secondControl.stop(runId, { sessionId: session.id });
     // workflows.get projects the WorkflowProcess snapshot; a Host stop settles
     // the process as 'cancelled' (run.status is 'stopped', but that never
     // reaches this view — the process statuses are the contract here).

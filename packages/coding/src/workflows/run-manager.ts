@@ -194,8 +194,12 @@ export function createWorkflowRunManager(
           runDir: input.runDir,
           meta: input.module.meta,
           hostPolicy: input.options.workflowHostPolicy,
-          processMetadata: input.processMetadata,
-          signal: input.signal,
+          processMetadata: { ...input.processMetadata, hostMetadata: {
+            ...input.processMetadata?.hostMetadata,
+            ownerSessionId: input.options.session?.id ?? '',
+            ownerRunId: input.options.context?.runtimeRunId ?? '',
+          } },
+          signal: input.signal ?? input.options.abortSignal,
         },
         (hooks) =>
           runWorkflowFromOptions({

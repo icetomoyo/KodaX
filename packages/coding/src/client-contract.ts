@@ -23,6 +23,37 @@ import type { KodaXResult } from './types.js';
 import type { ClientCompactSessionResult, ClientMemoryService, ClientLearningService, ClientCommandService, ClientReviewService, ClientReviewInput, ClientCommandResult } from './client-domains.js';
 export type * from './client-domains.js';
 
+/** Display facts only; extension handlers and Host execution types stay private. */
+export interface ClientLoadedExtension {
+  readonly path: string;
+  readonly label: string;
+  readonly loadSource: string;
+}
+
+export interface ClientExtensionSource {
+  readonly kind: string;
+  readonly id?: string;
+  readonly label?: string;
+}
+
+export interface ClientExtensionDiagnostics {
+  readonly loadedExtensions: readonly ClientLoadedExtension[];
+  readonly capabilityProviders: readonly {
+    readonly id: string;
+    readonly kinds: readonly string[];
+    readonly metadata?: Record<string, unknown>;
+  }[];
+  readonly commands: readonly { readonly name: string; readonly aliases?: readonly string[]; readonly description: string }[];
+  readonly tools: readonly { readonly name: string; readonly source: ClientExtensionSource; readonly shadowedSources: readonly ClientExtensionSource[] }[];
+  readonly hooks: readonly { readonly hook: string; readonly order: number; readonly source: ClientExtensionSource }[];
+  readonly failures: readonly { readonly stage: string; readonly target: string; readonly message: string; readonly source: ClientExtensionSource }[];
+  readonly defaults: {
+    readonly activeTools?: readonly string[];
+    readonly modelSelection: { readonly provider?: string; readonly model?: string };
+    readonly thinkingLevel?: string;
+  };
+}
+
 export interface ClientSession {
   readonly id: string;
   readonly title: string;
@@ -63,6 +94,7 @@ export interface KodaXProductClient {
     shutdown(): Promise<{ readonly accepted: true }>;
   };
   readonly sessions: {
+    cancel(input: ClientSessionCancelInput): Promise<ClientSessionCancelReceipt>;
     compact(sessionId: string, input?: { readonly customInstructions?: string }): Promise<ClientCompactSessionResult>;
     create(input?: ClientCreateSessionInput): Promise<ClientSession>;
     list(filter?: ClientSessionFilter): Promise<readonly ClientSessionSummary[]>;
@@ -116,6 +148,8 @@ export interface KodaXProductClient {
     withdraw(sessionId: string, inputId: string): Promise<ClientSubmitInput>;
   };
   readonly runs: {
+    /** Explicit tool execution through the Host's ordinary tool gates, without a model prompt. */
+    startTool(input: ClientToolInvocationInput): Promise<{ readonly runId: string; readonly sessionId: string }>;
     /** Current lifecycle facts of one Run; internal stages stay internal. */
     read(runId: string): Promise<ClientRunStatus>;
     /** Request a stop; accepted only means the durable Stop request was created. */
@@ -136,7 +170,7 @@ export interface KodaXProductClient {
     subscribe(filter: { readonly runId?: string }, listener: (event: ClientWorkflowEvent) => void): { close(): void };
     pause(runId: string): Promise<boolean>;
     resume(runId: string): Promise<boolean>;
-    stop(runId: string): Promise<boolean>;
+    stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;
   };
   readonly interactions: {
     /** Answers the Host is currently waiting for. */
@@ -183,6 +217,11 @@ export interface KodaXProductClient {
     reload(): Promise<{ readonly ok: true; readonly config: ClientConfig }>;
   };
   readonly catalog: {
+    extensions(): Promise<{
+      readonly active: boolean;
+      readonly extensions: readonly ClientLoadedExtension[];
+      readonly diagnostics?: ClientExtensionDiagnostics;
+    }>;
     providers(): Promise<readonly ClientProviderInfo[]>;
     models(filter?: { readonly provider?: string }): Promise<readonly ClientModelCatalog[]>;
     reasoningEfforts(input: ClientModelSelection): Promise<readonly string[]>;
@@ -203,6 +242,8 @@ export interface KodaXProductClient {
     skills(input?: { readonly userInvocableOnly?: boolean }): Promise<readonly ClientSkillInfo[]>;
   };
   readonly mcp: {
+    /** Current Host diagnostics; never connects or refreshes a server. */
+    status(): Promise<readonly ClientMcpServerStatus[]>;
     listServers(): Promise<Readonly<Record<string, ClientMcpServerConfig>>>;
     getServer(name: string): Promise<ClientMcpServerConfig | undefined>;
     validateServer(name: string, config: unknown): Promise<{ readonly ok: true; readonly config: ClientMcpServerConfig } | { readonly ok: false; readonly error: string }>;
@@ -448,6 +489,7 @@ export interface ClientContextBudget {
 
 /** Display facts for the latest Run; worker context is distinct from parent context. */
 export interface ClientSessionActivity {
+  readonly workflow?: ClientWorkflowProcess;
   /** Latest execution budget, whose model and scope may differ from the current Session selection. */
   readonly contextBudget?: ClientContextBudget;
   readonly runId: string;
@@ -458,6 +500,7 @@ export interface ClientSessionActivity {
     readonly detail: string; readonly status: 'running' | 'completed'; readonly startedAt: number;
   }[];
   readonly managedTask?: {
+    readonly childFanoutClass?: 'finding-validation' | 'module-triage' | 'evidence-scan' | 'hypothesis-check';
     readonly harnessProfile?: string;
     readonly globalWorkBudget?: number; readonly budgetUsage?: number; readonly budgetApprovalRequired?: boolean;
     readonly phase?: string; readonly workerId?: string; readonly workerTitle?: string;
@@ -583,6 +626,25 @@ export interface ClientRunStopReceipt {
   readonly phase: string;
 }
 
+export interface ClientSessionCancelInput {
+  readonly sessionId: string;
+  readonly expectedRunId: string;
+  readonly requestId: string;
+}
+
+export interface ClientSessionCancelReceipt extends ClientSessionCancelInput {
+  readonly frontier: number;
+  readonly receipts: readonly ClientRunStopReceipt[];
+}
+
+export interface ClientToolInvocationInput {
+  readonly sessionId: string;
+  readonly inputId: string;
+  readonly name: string;
+  readonly input: Record<string, unknown>;
+  readonly rawInput: string;
+}
+
 /**
  * Terminal facts of one Run. `result` is present only for settled runs the
  * Host could observe; `phase: 'unknown'` means settlement could not be
@@ -599,6 +661,8 @@ export interface ClientRunOutcome {
 
 /** Facts of one concrete operation awaiting an approval decision. */
 export interface ClientPermissionInteractionOptions {
+  /** Complete finalized plan for exit_plan_mode approval; never a truncated input preview. */
+  readonly plan?: string;
   readonly toolName: string;
   readonly toolCallId?: string;
   readonly reason?: string;

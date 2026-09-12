@@ -50,6 +50,7 @@ export type WorkflowProcessMetadata = Pick<
 >;
 
 export interface ManagedWorkflowSnapshot {
+  readonly stop?: { readonly state: 'unknown' | 'confirmed' };
   readonly runId: string;
   readonly workflow: string;
   readonly status: ManagedWorkflowStatus;
@@ -139,6 +140,7 @@ interface MutableRun {
 
 function snapshot(run: MutableRun): ManagedWorkflowSnapshot {
   return {
+    ...(run.controller.signal.aborted ? { stop: { state: isTerminalRunStatus(run.status) ? 'confirmed' as const : 'unknown' as const } } : {}),
     runId: run.runId,
     workflow: run.workflow,
     status: run.status,
@@ -221,6 +223,7 @@ export function createWorkflowRunManager(
     input: StartManagedRunInput<TOutcome>,
   ): MutableRun => {
     const controller = new AbortController();
+    if (input.signal?.aborted) controller.abort(input.signal.reason);
     // Forward an external abort onto our controller. `{ once: true }` auto-removes
     // the listener only if the signal FIRES; on a normal completion the run must
     // remove it itself (see settle → detachExternalAbort) so a shared session
@@ -228,7 +231,7 @@ export function createWorkflowRunManager(
     let detachExternalAbort: (() => void) | undefined;
     if (input.signal) {
       const signal = input.signal;
-      const forwardAbort = (): void => controller.abort();
+      const forwardAbort = (): void => { controller.abort(signal.reason); releasePauseWaiters(run); };
       signal.addEventListener('abort', forwardAbort, { once: true });
       detachExternalAbort = () => signal.removeEventListener('abort', forwardAbort);
     }
@@ -391,7 +394,7 @@ export function createWorkflowRunManager(
 
     pause: (runId) => {
       const run = runs.get(runId);
-      if (!run || run.status !== 'running') return false;
+      if (!run || run.status !== 'running' || run.controller.signal.aborted) return false;
       run.status = 'paused';
       notifyProcess(run.process.setStatus('paused', 'workflow paused'));
       return true;
@@ -399,7 +402,7 @@ export function createWorkflowRunManager(
 
     resume: (runId) => {
       const run = runs.get(runId);
-      if (!run || run.status !== 'paused') return false;
+      if (!run || run.status !== 'paused' || run.controller.signal.aborted) return false;
       run.status = 'running';
       notifyProcess(run.process.setStatus('running', 'workflow resumed'));
       releasePauseWaiters(run);
@@ -408,10 +411,9 @@ export function createWorkflowRunManager(
 
     stop: (runId, reason) => {
       const run = runs.get(runId);
-      if (!run || ['completed', 'failed', 'denied', 'stopped'].includes(run.status)) return false;
-      run.status = 'stopped';
-      notifyProcess(run.process.setStatus('cancelled', reason ?? 'workflow stopped'));
-      run.controller.abort();
+      if (!run || isTerminalRunStatus(run.status) || run.controller.signal.aborted) return false;
+      run.controller.abort(reason);
+      notifyProcess(run.process.setStatus(run.status === 'paused' ? 'paused' : 'running', 'Stop requested; waiting for owned work to settle.'));
       releasePauseWaiters(run);
       return true;
     },

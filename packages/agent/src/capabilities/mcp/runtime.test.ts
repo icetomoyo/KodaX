@@ -926,6 +926,28 @@ describe('McpServerRuntime protocol compatibility', () => {
     expect(runtime.getDiagnostics().tools).toBe(1);
   });
 
+  it('does not restart a disposed initializer using another framing', async () => {
+    const dir = await createTempDir();
+    const startsPath = path.join(dir, 'starts.txt');
+    const enteredPath = path.join(dir, 'entered.txt');
+    const scriptPath = await writeScript(dir, createNdjsonServerSource({ startsPath }).replace(
+      "if (method === 'initialize') {",
+      `if (method === 'initialize') { fs.writeFileSync(${JSON.stringify(enteredPath)}, 'entered'); return;`,
+    ));
+    const runtime = new McpServerRuntime('disposed', {
+      type: 'stdio', command: process.execPath, args: [scriptPath], startupTimeoutMs: 10_000,
+    }, path.join(dir, 'cache'));
+    const reading = runtime.getCatalog(true).then(() => 'completed', error => String(error));
+    try {
+      await vi.waitFor(async () => expect(await readFile(enteredPath, 'utf8')).toBe('entered'), { timeout: 5_000 });
+      await runtime.dispose();
+      expect.soft(await reading).toContain('disposed during request');
+      expect((await readFile(startsPath, 'utf8')).trim().split('\n')).toEqual(['start']);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('rejects unsupported server protocol versions instead of trying another framing', async () => {
     const dir = await createTempDir();
     const startsPath = path.join(dir, 'starts.txt');

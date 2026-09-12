@@ -132,6 +132,7 @@ export function buildToolExecutionContext(
     : undefined;
 
   const context: KodaXToolExecutionContext = {
+    runtimeRunId: options.context?.runtimeRunId,
     backups: new Map(),
     actorControl: options.context?.actorControl,
     actorQueueAgentId: options.context?.actorQueueAgentId,

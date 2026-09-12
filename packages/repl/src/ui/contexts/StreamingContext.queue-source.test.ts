@@ -37,6 +37,17 @@ function scopedUserContents(agentId: string): string[] {
 }
 
 describe("StreamingContext queue-as-source-of-truth (FEATURE_159)", () => {
+  it('captures Stop input identities without discarding later submissions or another Session', () => {
+    const manager = createStreamingManager({ getPendingInputAgentId: () => 'session-a' });
+    manager.addPendingInput('old');
+    const cancelCaptured = manager.capturePendingInputCancellation();
+    manager.addPendingInput('later');
+    getMessageQueue().enqueue({ agentId: 'session-b', priority: 'user', mode: 'prompt', content: 'other' });
+    cancelCaptured();
+    expect(scopedUserContents('session-a')).toEqual(['later']);
+    expect(scopedUserContents('session-b')).toEqual(['other']);
+    manager.dispose();
+  });
   beforeEach(() => {
     _resetMessageQueueForTests();
   });

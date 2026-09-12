@@ -15,7 +15,7 @@ try {
 }
 
 const protocol = binding.textTransactionProtocol();
-if (protocol !== 4) {
+if (protocol !== 5) {
   throw new Error(`Unsupported KodaX trusted text transaction protocol: ${protocol}`);
 }
 

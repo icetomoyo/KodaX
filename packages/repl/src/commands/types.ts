@@ -11,6 +11,7 @@ import type {
   KodaXAgentMode,
   KodaXRepoIntelligenceMode,
   KodaXOptions,
+  KodaXResult,
   KodaXReasoningMode,
   KodaXSkillInvocationContext,
 } from '@kodax-ai/coding';
@@ -177,6 +178,8 @@ export interface SessionCompactBinding {
 export interface CommandCallbacks {
   commandClient?: KodaXProductClient['commands'];
   listHostCommands?: KodaXProductClient['catalog']['commands'];
+  inspectExtensions?: KodaXProductClient['catalog']['extensions'];
+  mcp?: Pick<KodaXProductClient['mcp'], 'status' | 'listTools'>;
   startReview?: KodaXProductClient['review']['start'];
   reviewAgentsLean?: KodaXProductClient['agents']['reviewLean'];
   exit: () => void | Promise<void>;
@@ -210,6 +213,7 @@ export interface CommandCallbacks {
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
   createKodaXOptions?: () => KodaXOptions;
+  executeToolInvocation?: (invocation: { name: string; input: Record<string, unknown> }, prompt: string) => Promise<KodaXResult>;
   /** Opens a path in the host's external editor/file browser. */
   openExternalPath?: (targetPath: string) => Promise<void>;
   reloadAgentsFiles?: () => Promise<AgentsFile[]>;
@@ -613,5 +617,5 @@ export interface WorkflowHostControl {
   ): { close(): void };
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
-  stop(runId: string): Promise<boolean>;
+  stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;
 }

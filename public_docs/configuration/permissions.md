@@ -30,19 +30,33 @@ Reviewer infrastructure failures retry once (90 seconds, then 180 seconds).
 Explicit deny does not retry and Auto review never opens its own approval
 prompt.
 
-Full Access bypasses both sandbox and every approval path. Ordinary unmatched
-commands and explicit `allow` rules run directly. Explicit `forbidden` rules
-and the Codex dangerous-command policy block; an explicit `prompt` rule is
+Full Access bypasses sandbox, every approval path, and built-in dangerous-command
+fallbacks (including forced deletion and Windows URL launch patterns). Unmatched
+commands and explicit `allow` rules run directly. Explicit user, administrator,
+and trusted-project `forbidden` rules block; an explicit `prompt` rule is
 rejected because Full Access uses Never approval semantics.
 
-Administrator forbids are also checked inside recognized nested shell entry
+Explicit forbidden and prompt rules are also checked inside recognized nested shell entry
 forms: `cmd /C`/`/K`, PowerShell command selectors and abbreviations, and
 strictly decoded UTF-16LE `EncodedCommand` payloads. If a nested body cannot be
 lowered reliably, KodaX keeps the complete outer argv opaque. Exact
 outer/interpreter policy still applies; otherwise Edits or Auto[LLM] performs
 the normal host-boundary decision. Parse uncertainty alone is not a critical
-effect. Explicit forbidden rules and the Codex dangerous-command policy remain
-effective.
+effect. Built-in dangerous-command fallbacks remain active outside Full Access.
+
+Exec Policy rejection text is JSON containing `code`, `denialSource`, `source`,
+`sourcePath`, `permissionMode`, `matchedRules`, `retryable`, `remediation`, and
+`guidance`. A KodaX built-in or configured rule is not proof of an OS restriction.
+For explicit forbids, ask the policy owner to review the rule. For prompt rules
+under Full Access, ask the user to select Edits or authorize a policy change.
+Malformed policy must be repaired by its owner. Configuration is snapshotted;
+start a new Run after an authorized policy change. Never rewrite the command,
+switch interpreters, or create a script to bypass a refusal.
+
+Use `kodax execpolicy check --mode full-access -- <command>` to inspect Full
+Access policy without execution. Without `--mode`, the checker uses the
+conservative built-in fallback contract. This is a token-prefix policy, not a
+semantic analyzer of arbitrary script files or dynamically generated programs.
 
 ## SDK permission control
 
@@ -69,6 +83,22 @@ development credentials, is inherited; only fixed KodaX/Electron
 execution-control variables and explicit `denyPatterns` are removed.
 
 When `shellExecution` is absent, the established interpreter path is unchanged.
+
+## Full Access text tools and explicit commands
+
+Full Access permits ordinary Git metadata and outside-workspace text targets
+through the trusted transaction host. Each operation rechecks authority; it does
+not permanently add disk roots. Protected Runtime/control files and native
+no-follow, hard-link, revision/CAS and atomicity rules remain enforced. Text
+policy refusals identify `builtin_fallback` versus `runtime_integrity`, the
+matched rule and remedy. The native text protocol is version 5; older native
+bindings must be upgraded together with the host.
+
+Manual `!command`, extension managed commands and nested scope tools enter the
+same Session Run and Shell policy. Handwritten input does not revoke an explicit
+ban. Stop requests cancellation from the owning Runtime and waits for real tool
+cleanup before confirmation. A failed or missing execution owner cannot be
+replaced by an ungoverned child process.
 
 ## See also
 

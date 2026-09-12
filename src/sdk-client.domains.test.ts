@@ -23,7 +23,7 @@ import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
 let requests: KodaXMessage[][] = [];
-let requestOptions: { system: string; model?: string }[] = [];
+let requestOptions: { system: string; model?: string; sidecar: boolean }[] = [];
 let onProviderRequest: ((messages: KodaXMessage[]) => Promise<void>) | undefined;
 class DomainProvider extends KodaXBaseProvider {
   readonly name = 'product-domains-test';
@@ -33,7 +33,9 @@ class DomainProvider extends KodaXBaseProvider {
   };
   async stream(messages: KodaXMessage[], _tools: KodaXToolDefinition[], system: string, _reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
     requests.push(structuredClone(messages));
-    requestOptions.push({ system, model: options?.modelOverride });
+    const sidecar = _tools.some(tool => tool.name === 'emit_sidecar_verdict');
+    requestOptions.push({ system, model: options?.modelOverride, sidecar });
+    if (sidecar) return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'sidecar-accept', name: 'emit_sidecar_verdict', input: { verdict: 'accept' } }], stopReason: 'tool_use' };
     await onProviderRequest?.(messages);
     return { textBlocks: [{ type: 'text', text: 'The user is preparing a release. Preserve the release gate decisions and the supplied evidence. Run the agreed checks before shipping and retain any unresolved verification requirements.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   }
@@ -182,6 +184,79 @@ it('reads a plain editable command draft without execution, hooks, or a committe
   await expect(readFile(path.join(homeDir, 'draft-effect.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
 }, 60_000);
 
+it('reads command help and drafts while the Session is busy without invoking handlers', async () => {
+  await mkdir(path.join(homeDir, '.kodax', 'commands'), { recursive: true });
+  await writeFile(path.join(homeDir, '.kodax', 'commands', 'busy-draft.md'),
+    '---\nname: busy-draft\ndescription: Inspect the busy draft\n---\nDraft remains editable.');
+  const extensionPath = path.join(homeDir, 'busy-help.mjs');
+  await writeFile(extensionPath, `export default api => api.registerCommand({
+    name: 'busy-help', aliases: ['bh'], description: 'Help remains readable',
+    handler: () => { throw new Error('Help must not execute its handler'); }
+  });`);
+  await getActiveExtensionRuntime()!.loadExtension(extensionPath);
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  onProviderRequest = () => held;
+  const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'busy-help-run', text: 'Keep this Run active.' });
+  try {
+    await vi.waitFor(async () => expect(await first.runs.read(accepted.runId!)).toMatchObject({ phase: 'running' }));
+    await expect(second.commands.execute({ sessionId: session.id, inputId: 'help-only', name: 'bh', args: ['--help'] }))
+      .resolves.toMatchObject({ kind: 'completed', success: true, message: expect.stringContaining('Help remains readable') });
+    await expect(second.commands.execute({ sessionId: session.id, inputId: 'prompt-help', name: 'busy-draft', args: ['help'] }))
+      .resolves.toMatchObject({ kind: 'completed', success: true, message: expect.stringContaining('Inspect the busy draft') });
+    await expect(second.commands.readPrompt({ sessionId: session.id, name: 'busy-draft' }))
+      .resolves.toEqual({ title: 'busy-draft', text: 'Draft remains editable.' });
+    expect(await first.runs.read(accepted.runId!)).toMatchObject({ phase: 'running' });
+    expect((await first.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text))
+      .toEqual(['Keep this Run active.']);
+  } finally { release(); await first.runs.await(accepted.runId!); }
+}, 60_000);
+
+it('admits managed extension commands with isolated scopes and stops only the selected Session', async () => {
+  const extensionPath = path.join(homeDir, 'managed-scope.mjs');
+  await writeFile(extensionPath, `import { writeFile } from 'node:fs/promises';
+export default api => api.registerCommand({ name: 'scoped-wait', aliases: ['sw'], description: 'Wait in an admitted scope',
+  handler: async (args, context) => {
+    const scope = api.getExecutionScope();
+    if (!scope || scope !== context.extensionExecution) throw new Error('Missing admitted command scope');
+    api.runtime.setSessionState('label', args[0]);
+    const content = await scope.invokeTool('read', { path: context.workingDirectory + '/scope-input.txt' });
+    await writeFile(context.workingDirectory + '/' + args[0] + '-started.json', JSON.stringify({
+      sessionId: scope.sessionId, runId: scope.runId, content }));
+    await new Promise(resolve => scope.signal.aborted ? resolve() : scope.signal.addEventListener('abort', resolve, { once: true }));
+    await writeFile(context.workingDirectory + '/' + args[0] + '-stopped.txt', api.runtime.getSessionState('label'));
+    return { message: 'Stopped ' + args[0] };
+  }
+});`);
+  await writeFile(path.join(homeDir, 'scope-input.txt'), 'Scoped nested read');
+  await getActiveExtensionRuntime()!.loadExtension(extensionPath);
+  const sessions = await Promise.all([first.sessions.create({ projectPath: homeDir }), second.sessions.create({ projectPath: homeDir })]);
+  await Promise.all(sessions.map(session => first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access', agentMode: 'sa' })));
+  const started: { sessionId: string; runId: string }[] = [];
+  try {
+    for (const [index, session] of sessions.entries()) {
+      const result = await first.commands.execute({ sessionId: session.id, inputId: `scope-${index}`, name: 'sw', args: [String(index)] });
+      if (result.kind !== 'started') throw new Error(JSON.stringify(result));
+      started.push({ sessionId: session.id, runId: result.runId });
+    }
+    for (const [index, run] of started.entries()) {
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(path.join(homeDir, `${index}-started.json`), 'utf8')))
+        .toMatchObject({ ...run, content: expect.stringContaining('Scoped nested read') }), { timeout: 10_000 });
+    }
+    await first.sessions.cancel({ sessionId: started[0]!.sessionId, expectedRunId: started[0]!.runId, requestId: 'stop-scope-zero' });
+    expect(await first.runs.await(started[0]!.runId)).toMatchObject({ phase: 'interrupted' });
+    expect(await readFile(path.join(homeDir, '0-stopped.txt'), 'utf8')).toBe('0');
+    expect(await second.runs.read(started[1]!.runId)).toMatchObject({ phase: 'running' });
+    await expect(readFile(path.join(homeDir, '1-stopped.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(requests).toEqual([]);
+  } finally {
+    await Promise.all(started.map(async run => { await first.runs.stop(run.runId); await first.runs.await(run.runId); }));
+  }
+  expect(await readFile(path.join(homeDir, '1-stopped.txt'), 'utf8')).toBe('1');
+}, 60_000);
+
 it('starts ordinary review and agents lean using Host-owned project contents', async () => {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: homeDir, windowsHide: true });
   git('init'); git('config', 'user.email', 'test@example.invalid'); git('config', 'user.name', 'Test');
@@ -258,7 +333,12 @@ it('executes the Host registered prompt with original arguments and model select
   expect((await second.sessions.readHistory(session.id)).items.some((item) => item.type === 'user' && item.text === '/release focus on auth')).toBe(true);
 }, 60_000);
 
-it.each([false, true])('keeps handler admission atomic and never replays effects after caller disconnect=%s', async (disconnect) => {
+it.each([
+  { agentMode: 'sa' as const, disconnect: false },
+  { agentMode: 'sa' as const, disconnect: true },
+  { agentMode: 'ama' as const, disconnect: false },
+  { agentMode: 'ama' as const, disconnect: true },
+])('keeps handler admission atomic in $agentMode and never replays effects after caller disconnect=$disconnect', async ({ agentMode, disconnect }) => {
   const extensionPath = path.join(homeDir, 'atomic-command.mjs');
   await writeFile(extensionPath, `import { appendFile, access } from 'node:fs/promises';
 export default function(api) {
@@ -273,46 +353,83 @@ export default function(api) {
 }`);
   await getActiveExtensionRuntime()!.loadExtension(extensionPath);
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode, permissionMode: 'full-access' });
   let releaseProvider!: () => void;
   const providerGate = new Promise<void>(resolve => { releaseProvider = resolve; });
   onProviderRequest = async () => providerGate;
   try {
-    const command = first.commands.execute({ sessionId: session.id, inputId: 'atomic-command', name: 'atomic-release', args: ['first'] });
-    const completion = command.then(result => ({ ok: true as const, result }),
-      (error: unknown) => ({ ok: false as const, error }));
+    const started = await first.commands.execute({ sessionId: session.id, inputId: 'atomic-command', name: 'atomic-release', args: ['first'] });
+    if (started.kind !== 'started') throw new Error(JSON.stringify(started));
     await vi.waitFor(async () => expect(await readFile(path.join(homeDir, 'entered.txt'), 'utf8')).toBe('first\n'));
     if (disconnect) await first.disconnect();
     const competing = second.inputs.submit({ sessionId: session.id, inputId: 'competing-input', text: 'Competing turn.' });
     const rejected = expect(competing).rejects.toMatchObject({ code: 'conflict' });
     await writeFile(path.join(homeDir, 'release-handler'), 'continue');
-    const settled = await completion;
     await rejected;
     if (disconnect) {
-      expect(settled).toHaveProperty('error');
       const accepted = await second.inputs.read(session.id, 'atomic-command');
-      expect(accepted?.runId).toBeDefined();
+      expect(accepted?.runId).toBe(started.runId);
       releaseProvider();
       expect(await second.runs.await(accepted!.runId!)).toMatchObject({ phase: 'completed' });
       first = await connectKodaXClient({ homeDir, endpoint: endpointPath });
       const observation = await first.sessions.observe(session.id, () => undefined);
       observation.close();
       expect(await readFile(path.join(homeDir, 'entered.txt'), 'utf8')).toBe('first\n');
-      expect(requests).toHaveLength(1);
+      expect(requestOptions.filter(request => !request.sidecar)).toHaveLength(1);
+      expect(requestOptions.filter(request => request.sidecar)).toHaveLength(agentMode === 'ama' ? 1 : 0);
+      expect((await second.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text)).toEqual(['/atomic-release first']);
       return;
     }
-    if (!settled.ok) throw settled.error;
-    const started = settled.result;
-    if (started.kind !== 'started') throw new Error(JSON.stringify(started));
     await expect(second.commands.execute({ sessionId: session.id, inputId: 'busy-command', name: 'atomic-release', args: ['second'] }))
       .rejects.toMatchObject({ code: 'conflict' });
     expect(await readFile(path.join(homeDir, 'entered.txt'), 'utf8')).toBe('first\n');
     releaseProvider();
     expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'completed' });
+    expect(requestOptions.filter(request => !request.sidecar)).toHaveLength(1);
+    expect(requestOptions.filter(request => request.sidecar)).toHaveLength(agentMode === 'ama' ? 1 : 0);
     expect((await second.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text)).toEqual(['/atomic-release first']);
   } finally {
     releaseProvider();
     await writeFile(path.join(homeDir, 'release-handler'), 'continue');
+  }
+}, 60_000);
+
+it.each(['sa', 'ama'] as const)('pins command contributions across handler reload and %s continuation', async (agentMode) => {
+  const extensionPath = path.join(homeDir, 'pinned-command.mjs');
+  const source = (version: string) => `import { existsSync, writeFileSync } from 'node:fs';
+    import path from 'node:path';
+    export default api => api.registerCommand({ name: 'pinned-command', description: '${version}',
+      handler: async (_args, context) => {
+        writeFileSync(path.join(context.workingDirectory, 'handler-entered'), 'yes');
+        while (!existsSync(path.join(context.workingDirectory, 'handler-release'))) await new Promise(resolve => setTimeout(resolve, 10));
+        return { invocation: { prompt: 'Continue the admitted command.' } };
+      } });`;
+  const extensions = getActiveExtensionRuntime()!;
+  await writeFile(extensionPath, source('old-contribution'));
+  await extensions.loadExtension(extensionPath);
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access' });
+  const observed: string[] = [];
+  onProviderRequest = async (messages) => {
+    if (messages.some(message => message.role === 'user' && message.content === '/pinned-command')) {
+      observed.push(extensions.getCommand('pinned-command')!.description);
+    }
+  };
+  const started = await first.commands.execute({ sessionId: session.id, inputId: 'pinned-command', name: 'pinned-command' });
+  if (started.kind !== 'started') throw new Error(JSON.stringify(started));
+  try {
+    await vi.waitFor(async () => expect(await readFile(path.join(homeDir, 'handler-entered'), 'utf8')).toBe('yes'));
+    await writeFile(extensionPath, source('new-contribution'));
+    await extensions.loadExtension(extensionPath);
+    await writeFile(path.join(homeDir, 'handler-release'), 'continue');
+    expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'completed' });
+    expect(observed).toEqual(['old-contribution']);
+    const next = await first.commands.execute({ sessionId: session.id, inputId: 'next-command', name: 'pinned-command' });
+    if (next.kind !== 'started') throw new Error(JSON.stringify(next));
+    expect(await first.runs.await(next.runId)).toMatchObject({ phase: 'completed' });
+    expect(observed).toEqual(['old-contribution', 'new-contribution']);
+  } finally {
+    await writeFile(path.join(homeDir, 'handler-release'), 'continue');
   }
 }, 60_000);
 
@@ -355,12 +472,17 @@ export default function(api) {
   const help = await first.commands.execute({ sessionId: session.id, inputId: 'note-help', name: 'pn', args: ['--help'] });
   expect(help).toMatchObject({ kind: 'completed', success: true, message: expect.stringContaining('Write an explicit note') });
   await expect(readFile(path.join(homeDir, 'notes.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(await first.commands.execute({ sessionId: session.id, inputId: 'note-one', name: 'pn', args: ['release', 'gate'] }))
-    .toEqual({ kind: 'completed', success: true, message: 'Saved release gate' });
-  expect(await second.commands.execute({ sessionId: session.id, inputId: 'note-two', name: 'product-note', args: ['silent'] }))
-    .toEqual({ kind: 'completed', success: true });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  for (const [inputId, name, args] of [
+    ['note-one', 'pn', ['release', 'gate']], ['note-two', 'product-note', ['silent']],
+  ] as const) {
+    const result = await first.commands.execute({ sessionId: session.id, inputId, name, args: [...args] });
+    if (result.kind !== 'started') throw new Error(JSON.stringify(result));
+    expect(await first.runs.await(result.runId)).toMatchObject({ phase: 'completed', result: { success: true } });
+  }
   expect(await readFile(path.join(homeDir, 'notes.txt'), 'utf8')).toBe('release gate\nsilent\n');
-  expect((await first.sessions.readHistory(session.id)).items).toEqual([]);
+  expect((await first.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text))
+    .toEqual(['/pn release gate', '/product-note silent']);
   expect(requests).toEqual([]);
 }, 60_000);
 

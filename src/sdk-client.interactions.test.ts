@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolUseBlock,
+  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolUseBlock, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import type { ClientInteraction, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
@@ -21,7 +21,8 @@ class InteractionProvider extends KodaXBaseProvider {
     apiKeyEnv: 'KODAX_PRODUCT_INTERACTIONS_TEST_KEY', model: 'product-interactions-test', supportsThinking: false,
   };
   constructor(private readonly script: () => KodaXToolUseBlock[]) { super(); }
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+  async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    exposedTools.push(tools.map(tool => tool.name));
     requests.push(structuredClone(messages));
     return requests.length === 1
       ? { textBlocks: [], thinkingBlocks: [], toolBlocks: this.script(), stopReason: 'tool_use' }
@@ -33,6 +34,7 @@ let homeDir: string;
 let endpointPath: string;
 let scriptedToolCall: () => KodaXToolUseBlock[] = () => [];
 let requests: KodaXMessage[][] = [];
+let exposedTools: string[][] = [];
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
 let first: Awaited<ReturnType<typeof connectKodaXClient>>;
@@ -42,6 +44,7 @@ let reconnect: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-interactions-'));
   requests = [];
+  exposedTools = [];
   scriptedToolCall = () => [];
   registerModelProvider('product-interactions-test', () => new InteractionProvider(() => scriptedToolCall()));
   vi.stubEnv('KODAX_PRODUCT_INTERACTIONS_TEST_KEY', 'test-only');
@@ -84,6 +87,84 @@ function questionToolCall(): KodaXToolUseBlock {
     },
   };
 }
+
+it('exposes the full plan through both Product clients and applies only the first approval on the Host', async () => {
+  const plan = `Final plan\n${'Review the complete implementation and validation details.\n'.repeat(400)}END OF PLAN`;
+  scriptedToolCall = () => [{ type: 'tool_use', id: 'exit-plan', name: 'exit_plan_mode', input: { plan } }];
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'plan' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'plan', text: 'Prepare the plan.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  expect(exposedTools[0]).toContain('exit_plan_mode');
+  let approval: ClientInteraction | undefined;
+  await expect.poll(async () => {
+    approval = (await second.interactions.list({ sessionId: session.id })).find(item => item.kind === 'permission');
+    return approval !== undefined;
+  }, { timeout: 15_000 }).toBe(true);
+  if (approval?.kind !== 'permission') throw new Error('Expected plan approval');
+  expect(approval.options).toMatchObject({ toolName: 'exit_plan_mode', plan });
+  expect((await first.interactions.list({ sessionId: session.id }))[0]).toEqual(approval);
+  expect(await first.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'plan' });
+  expect(await first.interactions.respond(approval.requestId, { kind: 'permission', decision: { type: 'allow_once' } }))
+    .toMatchObject({ accepted: true });
+  expect(await second.interactions.respond(approval.requestId, { kind: 'permission', decision: { type: 'reject' } }))
+    .toMatchObject({ accepted: false, status: 'already_resolved' });
+  await first.runs.await(active.runId!);
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'accept-edits' });
+  expect(JSON.stringify(requests[1])).toContain('User approved the plan');
+});
+
+it.each(['reject', 'cancel', 'stop'] as const)('keeps Host permission in plan mode after plan approval %s', async action => {
+  scriptedToolCall = () => [{ type: 'tool_use', id: 'exit-plan', name: 'exit_plan_mode', input: { plan: 'Review this plan first.' } }];
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'plan' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: `plan-${action}`, text: 'Prepare the plan.' });
+  let approval: ClientInteraction | undefined;
+  await expect.poll(async () => {
+    approval = (await second.interactions.list({ sessionId: session.id })).find(item => item.kind === 'permission');
+    return approval !== undefined;
+  }, { timeout: 15_000 }).toBe(true);
+  if (approval?.kind !== 'permission') throw new Error('Expected plan approval');
+  if (action === 'stop') await second.sessions.cancel({ sessionId: session.id, expectedRunId: active.runId!, requestId: 'stop-plan' });
+  else await second.interactions.respond(approval.requestId, action === 'cancel' ? { kind: 'cancel' }
+    : { kind: 'permission', decision: { type: 'reject' } });
+  await first.runs.await(active.runId!);
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'plan' });
+  expect(await first.interactions.respond(approval.requestId, { kind: 'permission', decision: { type: 'allow_once' } }))
+    .toMatchObject({ accepted: false });
+});
+
+it('invokes an explicit Product tool through IPC once without a model turn', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const file = path.join(homeDir, 'direct-read.txt');
+  await writeFile(file, 'original tool content');
+  const invocation = { sessionId: session.id, inputId: 'direct-read', name: 'read', input: { path: file }, rawInput: '!read direct-read.txt' };
+  const started = await first.runs.startTool(invocation);
+  expect(await second.runs.await(started.runId)).toMatchObject({ phase: 'completed', result: {
+    success: true, lastText: expect.stringContaining('original tool content'),
+  } });
+  expect(await second.runs.startTool(invocation)).toEqual(started);
+  expect(requests).toHaveLength(0);
+  expect(await first.inputs.read(session.id, invocation.inputId)).toMatchObject({ state: 'submitted', runId: started.runId });
+});
+
+it('cancels an explicit tool at its permission boundary through Product Session Stop', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  const marker = path.join(homeDir, '.kodax', 'direct-stop.txt');
+  const started = await first.runs.startTool({ sessionId: session.id, inputId: 'direct-write', name: 'write',
+    input: { path: marker, content: 'must not write' }, rawInput: '!write direct-stop.txt' });
+  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).some(item => item.kind === 'permission'))
+    .toBe(true);
+  const input = { sessionId: session.id, expectedRunId: started.runId, requestId: 'direct-stop' };
+  const receipt = await second.sessions.cancel(input);
+  expect(receipt).toMatchObject(input);
+  expect(receipt.receipts.some(item => item.runId === started.runId)).toBe(true);
+  expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'interrupted' });
+  await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(requests).toHaveLength(0);
+});
 
 function questionToolCallForRace(): KodaXToolUseBlock[] {
   return [{ ...questionToolCall(), id: 'call-question-race' }];

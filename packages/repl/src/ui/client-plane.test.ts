@@ -443,6 +443,9 @@ describe('answerClientPlaneInteraction (T17)', () => {
     const calls: ClientInteractionResponse[] = [];
     return {
       calls,
+      executeTool: async () => { throw new Error('Unexpected tool invocation'); },
+      cancelSession: async () => { throw new Error('Unexpected Session Stop'); },
+      activeRun: async () => undefined,
       submit: () => Promise.resolve({}),
       withdraw: () => Promise.resolve(undefined),
       awaitRun: () => Promise.resolve({ phase: 'completed' }),
@@ -604,6 +607,8 @@ describe('runClientPlaneRound queue chain (T17)', () => {
     let activeRunIndex = 0;
     return {
       stops,
+      executeTool: async () => { throw new Error('Unexpected tool invocation'); },
+      cancelSession: async () => { throw new Error('Unexpected Session Stop'); },
       withdraws,
       submissions,
       submit: (input) => {

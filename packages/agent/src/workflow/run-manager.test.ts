@@ -22,6 +22,42 @@ const ev = (type: WorkflowEvent['type'], seq: number): WorkflowEvent => ({ seq, 
 const tick = (ms = 10): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('createWorkflowRunManager (neutral)', () => {
+  it('preserves an owner signal cancelled before workflow admission', async () => {
+    const manager = createWorkflowRunManager();
+    const owner = new AbortController(); owner.abort('owner stopped');
+    const run = manager.start<Outcome>({ runId: 'pre-aborted', workflow: 'test', signal: owner.signal, classify, onError,
+      runFn: async (hooks) => { expect(hooks.signal.aborted).toBe(true); return { kind: 'completed' }; } });
+    await expect(run.done).resolves.toMatchObject({ kind: 'completed' });
+    expect(manager.get(run.runId)?.status).toBe('stopped');
+  });
+  it('releases a paused workflow when its owning Run signal is aborted', async () => {
+    const manager = createWorkflowRunManager();
+    const owner = new AbortController();
+    let proceed!: () => void;
+    const gate = new Promise<void>((resolve) => { proceed = resolve; });
+    const run = manager.start<Outcome>({ runId: 'paused-owner', workflow: 'test', signal: owner.signal, classify, onError,
+      runFn: async (hooks) => { await gate; await hooks.beforeSpawn(); return { kind: 'completed' }; } });
+    manager.pause(run.runId);
+    proceed();
+    await tick();
+    owner.abort();
+    await expect(Promise.race([run.done, tick(100).then(() => 'still-paused')])).resolves.not.toBe('still-paused');
+    expect(manager.get(run.runId)).toMatchObject({ status: 'stopped', stop: { state: 'confirmed' } });
+  });
+  it('accepts Stop before cleanup but confirms it only after the owned work settles', async () => {
+    const manager = createWorkflowRunManager();
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    const run = manager.start<Outcome>({ runId: 'draining', workflow: 'test', classify, onError,
+      runFn: async () => { await cleanup; return { kind: 'completed' }; } });
+    expect(manager.stop(run.runId)).toBe(true);
+    expect(manager.get(run.runId)).toMatchObject({ status: 'running', stop: { state: 'unknown' } });
+    expect(manager.getWorkflowProcessSnapshot(run.runId)?.status).not.toBe('cancelled');
+    expect(manager.stop(run.runId)).toBe(false);
+    release();
+    await run.done;
+    expect(manager.get(run.runId)).toMatchObject({ status: 'stopped', stop: { state: 'confirmed' } });
+  });
   it('runs a thunk and resolves done to the caller outcome; snapshot reflects completion', async () => {
     const m = createWorkflowRunManager();
     const run = m.start<Outcome>({

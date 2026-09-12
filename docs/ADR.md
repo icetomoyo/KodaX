@@ -6012,8 +6012,9 @@ denial or sandbox unavailability may reach the host boundary, where explicit
 Exec Policy applies and Edits asks the user while Auto[LLM] asks the independent
 reviewer. A target-started or uncertain attempt is never replayed. Full Access
 is sampled once at Bash entry, skips the sandbox and every approval path, and
-executes on the host. Explicit forbidden rules and the Codex dangerous-command
-policy can still block; prompt rules are rejected under Never approval semantics.
+executes on the host. Explicit forbidden rules still block; prompt rules are
+rejected under Never approval semantics. Built-in dangerous-command fallbacks
+do not apply to Full Access (2026-09-12 contract correction below).
 
 Exec Policy is a separate JSONC file with Codex-shaped token-prefix
 `allow`/`prompt`/`forbidden` decisions; KodaX does not embed Starlark. It is
@@ -6025,14 +6026,33 @@ denials, and global-Git disabling are removed. Legacy rules files are ignored
 without parsing or migration; legacy Rules-engine selections normalize to
 Auto[LLM] and never to Full Access.
 
-Administrator forbids are recursively checked through recognized shell entry
+Explicit forbidden and prompt rules are recursively checked through recognized shell entry
 forms, including `cmd /C`/`/K`, PowerShell command selectors and abbreviations,
 and strictly decoded UTF-16LE `EncodedCommand` payloads. If a nested body cannot
 be lowered reliably, KodaX keeps the complete outer argv opaque, matching Codex:
 exact outer/interpreter policy still applies and otherwise the operation reaches
 the normal Edits or Auto[LLM] host boundary. Parser uncertainty alone is not a
-synthetic critical effect. Explicit administrator forbids and concrete critical
-effects remain non-bypassable.
+synthetic critical effect. Explicit restrictions retain their source and remain
+effective through recognized wrappers; critical fallbacks apply only outside
+Full Access.
+
+**2026-09-12 Full Access contract correction**: The beta.8 evaluator had no
+permission-profile input, so its bundled forced-delete/Windows URL-launch
+fallbacks also ran under Full Access. This incorrectly rejected ordinary
+authorized cleanup such as `Remove-Item -Force`, while alternate spellings or
+scripts could behave differently. Full Access now supplies the per-call profile
+to the same evaluator used by Runtime, standalone REPL, and the CLI checker.
+It disables only synthesized fallback rules; user, administrator, and trusted
+project rules retain their normal precedence. A prompt rule remains a refusal
+under Never semantics, never an implicit allow or a hidden interactive prompt.
+
+Exec Policy denials are JSON text tool results with stable codes, denial source,
+policy origin/path, matched rules, profile, and actionable remediation. They
+remain classified as tool errors. A KodaX fallback/configuration rejection is
+not evidence of an OS restriction. The model must obtain the rule owner's action
+or a user-authorized profile change and must not evade a refusal by rewriting a
+command, changing interpreters, or creating scripts. Policy remains a
+token-prefix contract; opaque arbitrary programs are not statically analyzed.
 
 Windows request policy no longer carries a redundant deny on the protected
 native artifact cache. Historical cache-root deny residues are preserved:
@@ -6089,8 +6109,8 @@ instruction is understood semantically and re-reviewed, without a new
 global Git behavior work in the sandbox or through one explicit host-boundary
 decision instead of paying an LLM review on every call. A sandbox bootstrap
 failure is no longer host authority. Full Access is meaningfully full for
-ordinary work while retaining only explicit administrator policy and a narrow
-critical safeguard. The permission implementation becomes smaller by deleting
+ordinary work while retaining explicit configured policy. Other profiles retain
+the built-in critical fallback. The permission implementation becomes smaller by deleting
 the second engine and its configuration/trust graph. Embedders must update to
 the four-profile capability revision; older persisted settings remain readable
 through normalization.
@@ -6235,3 +6255,31 @@ ACL timeout (preserves head-of-line blocking); per-root phase budgets (recreates
 the 75-second multiplication); a protocol-7 hard-timeout drain (blocks setup
 despite fixed-identity reuse); and automatic deletion of ambiguous ACL or
 control state (cannot prove ownership).
+
+### FEATURE_299 v0.7.96 — admitted control and extension execution
+
+Session Stop is a control operation over admitted Run/Session/Profile and owner
+records, independent of mutable conversation history. `sessions.cancel` fixes a
+durable queue frontier and a stable request binding. Incomplete delivery retains
+its own dispatch fence. Stop receipts distinguish durable acceptance from
+confirmed execution/child/tool cleanup; terminal completion/failure remains true.
+CLI/ACP use this operation while `runs.abort` retains single-Run scope.
+
+Extension managed tools, commands and capability calls receive one host-created
+execution scope. Nested tools re-enter normal policy and scope effects drain
+before settlement. Async Run contexts isolate state/events/defaults. Tool
+registrations carry non-serialized Runtime ownership; combined runtimes pin all
+members synchronously before admission. Reload and dynamic command unregister
+change future invocations while active contribution snapshots drain first.
+
+`!command` and effectful extension commands are explicit tool Runs without a
+model turn. Configuration-only commands can declare their distinct host role.
+The native text transaction protocol advances to 5 so Full Access can authorize
+ordinary Git metadata and outside-workspace targets without dropping protected
+control-path, identity, no-follow or CAS guarantees. Existing workflow hosts use
+this owner/signal contract; workflow distribution as an extension is deferred.
+
+Rejected alternatives: history retries before Stop, swallowed control errors,
+optimistic stopped UI, client-side list/abort loops, global workflow cancellation,
+mode-blind dangerous-command blocks, interpreter rewrites after explicit denial,
+and a separate extension permission or lifecycle engine.

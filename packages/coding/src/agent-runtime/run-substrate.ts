@@ -303,6 +303,7 @@ import {
 } from './middleware/extension-queue.js';
 import {
   bindActiveExtensionExecutionRuntime,
+  withExtensionRuntimeContext,
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
   setActiveExtensionRuntime,
@@ -711,6 +712,18 @@ export async function runSubstrate(
   prompt: string,
   declaredAgent?: Agent,
 ): Promise<KodaXResult> {
+  const { randomUUID } = await import('node:crypto');
+  const boundOptions = { ...options, context: { ...options.context,
+    runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  return withExtensionRuntimeContext(() => runSubstrateInContext(boundOptions, prompt, declaredAgent),
+    options.extensionRuntime ?? getActiveExtensionRuntime(), boundOptions.context.runtimeRunId);
+}
+
+async function runSubstrateInContext(
+  options: KodaXOptions,
+  prompt: string,
+  declaredAgent?: Agent,
+): Promise<KodaXResult> {
   const previousActiveRuntime = getActiveExtensionRuntime();
   const runtime = options.extensionRuntime ?? previousActiveRuntime;
   const activeRegistryRuntime = options.extensionRuntime instanceof KodaXExtensionRuntime
@@ -917,6 +930,7 @@ export async function runSubstrate(
     transcriptPrompt,
     options.context?.inputArtifacts,
     liveTurnScopeRef.current.turnId,
+    options.session?.inputId,
   );
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')

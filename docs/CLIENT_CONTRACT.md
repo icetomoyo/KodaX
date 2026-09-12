@@ -66,15 +66,16 @@
 | `sessions` 通知 | `appendNotice` | 由 Host 保存通知正文及可选来源 |
 | `sessions` 分支 | `readLineage`, `labelEntry`, `selectBranch`, `rewindSession`, `forkSession`, `recoverSession` | 读取分支、标签、选择头、回退，以及派生新 Session |
 | `inputs` | `submit`, `read`, `withdraw` | 提交有身份的用户意图、查询接收状态、撤回队列项并取回原始输入 |
-| `runs` | `read`, `stop`, `await` | 读取生命周期、请求停止、等待真实终态 |
+| `runs` | `startTool`, `read`, `stop`, `await` | 显式工具执行、读取生命周期、停止单 Run、等待真实终态 |
+| `sessions` 停止 | `cancel` | 固定已有 Run 的 Session 顺序边界，停止边界内的排队及活动 Run，返回请求接收与清理确认事实 |
 | `workflows` | `start`, `list`, `get`, `subscribe`, `pause`, `resume`, `stop` | Host 内启动和控制声明式工作流；读取完整进度快照，订阅既有工作流事件；控制方法返回是否成功 |
 | `interactions` | `list`, `respond` | 查询待答请求，以精确 requestId 回答；首个有效答案生效 |
 | `permissions` | `listGrants`, `revokeGrant` | 读取显式授权和 revision；按 grantId + expectedRevision 撤销 |
 | `registrations` | `list`, `upsert`, `setEnabled`, `remove` | 管理外部 Agent 注册；保留领域配置 revision 和管理归属约束 |
 | `agents` | `tree`, `detail`, `spawn`, `send`, `followup`, `interrupt`, `output`, `wait` | 查询和控制 Session Actor；`wait` 按 sequence 等待一个事件或超时，支持调用侧 AbortSignal |
 | `config` | `read`, `patch`, `reload` | 读取、修改及重载用户默认配置；独立于 Session 覆盖 |
-| `catalog` | `providers`, `models`, `reasoningEfforts`, `probeReasoningEfforts`, `forgetCapabilities`, `commands`, `skills` | Host 发现的 Provider/模型/推理档位/命令/技能；probe 明确发起 Provider 请求，连接与普通发现不隐式探测 |
-| `mcp` | `listServers`, `getServer`, `validateServer`, `upsertServer`, `deleteServer`, `reloadServers`, `listTools` | 管理纯 MCP 配置和查询工具；可执行连接留在 Host |
+| `catalog` | `extensions`, `providers`, `models`, `reasoningEfforts`, `probeReasoningEfforts`, `forgetCapabilities`, `commands`, `skills` | Host 已加载扩展的诊断及发现的 Provider/模型/推理档位/命令/技能；probe 明确发起 Provider 请求，连接与普通发现不隐式探测 |
+| `mcp` | `status`, `listServers`, `getServer`, `validateServer`, `upsertServer`, `deleteServer`, `reloadServers`, `listTools` | 管理纯 MCP 配置、读取 Host 当前连接状态和查询工具；可执行连接留在 Host |
 | 连接 | `disconnect` | 释放本连接及其资源，保留共享 Host 和工作 |
 
 `workflows.start` 接收 `inline`（manifest + source）、`request` 或 `name` 声明式来源，返回 `declined` 原因或 `started` 的 runId。它不接收预执行模块或函数。MCP 配置允许 stdio、SSE、HTTP 等 MCP transport；这不意味着产品 Client transport 已支持这些协议。
@@ -83,7 +84,11 @@
 
 `catalog.commands/skills` 的 `source` 是 Host 解析出的注册来源字符串。Provider 的 capabilityProfile 描述后端执行特点；客户端不自行猜测 Provider 行为，不将探测失败伪装成不支持。config/Session 设置可选字段及默认规则由类型与 Host 解析决定，不应靠 UI 复制默认值逻辑。
 
-`commands.execute` 接收 `sessionId`、`inputId`、注册 `name` 和可选 `args`；`review.start` 接收 Session/Input 身份及参数，`agents.reviewLean` 接收 Session/Input 身份。三者都要求 `run:control`，且沿用原忙时拒绝行为。注册 extension handler 与其实际需要的 Run 在同一次 Session 准入中衔接；不需要模型或没有输出的 handler 返回 `completed`，不制造用户输入或模型 Run。`completed.success` 和可选 `message` 是该动作的结果，`started.runId` 只是已启动身份；客户端随后观察 Session、等待 `runs.await`，不能把它重新提交为输入。
+`catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
+
+无交互的 one-shot CLI 在订阅视图后提交输入，及时拒绝属于本次 Run、确需人工回答的权限请求，并通过正常终态返回失败。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不拒绝其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
+
+`commands.execute` 接收 `sessionId`、`inputId`、注册 `name` 和可选 `args`；`review.start` 接收 Session/Input 身份及参数，`agents.reviewLean` 接收 Session/Input 身份。三者都要求 `run:control`，实际执行保留忙时拒绝。帮助和命令正文读取不经过执行的空闲门禁。承接 FEATURE_299 后，未声明 `execution: configuration` 的 extension handler 经正常工具执行入口运行，立即返回 `started.runId`；没有模型调用或没有输出也仍有真实工具 Run。Host 保存一次原始输入，并为 handler 提供所属 Run、取消信号及受检工具调用。handler 返回模型 invocation 时在同一 Run 内继续执行，复用原 inputId 和工具历史；模型、工具限制与 fork 仍由 Host 从注册结果解析。声明 `execution: configuration` 的命令才直接返回 `completed`，不伪造执行 scope。`completed.success` 和可选 `message` 是该动作的结果，`started.runId` 只是已启动身份；客户端随后观察 Session、等待 `runs.await`，不能把它重新提交为输入。
 
 prompt/extension 的模型偏好、工具限制、hooks 和 fork 由 Host 从可信注册来源执行。hook shell 沿用正常工具授权路径；PostToolUse 与 Stop/SubagentStop 结算后才报告终态，fork 结果提交回原 Session 后才完成。`disableModelInvocation` 不禁止用户显式调用。低层 daemon 输入也不能携带 Host-only command 描述符来注入这些策略。
 
@@ -367,3 +372,19 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 入口实现应使用同一启动/连接身份规则。底层显式嵌入、Host 内执行适配和产品入口必须分清；不能因为 storage、extension 或回调不可序列化，就在产品 Client 内另建私有执行 owner。入口的当前迁移状态以源码和 FEATURE_298 的验收记录为准，未迁移接缝不构成新的稳定产品能力。
 
 当前没有承诺：浏览器远程传输、Host 崩溃后自动恢复全部执行、跨 Host 全局恰好一次提交、事件无限回放、任意时点全文快照、跨协议完全等价的瞬态输出。新增能力先扩展纯契约及 Host 实现，再让各 UI 消费；不以 UI 私有读取、版本分支或第二份执行状态绕过契约。
+
+## 显式工具执行与 Session Stop（FEATURE_299 合入）
+
+`runs.startTool({sessionId, inputId, name, input, rawInput})` 将用户明确指定的工具交给同一 Host。CLI 的 `!command` 使用这个入口；执行仍经过工具可见性、权限、Shell 边界、记录及取消规则，不直接启动客户端进程。相同 inputId 和意图返回同一 Run；同一身份换工具或参数拒绝。取得 Run 身份后通过 `runs.await` 和 Session 视图消费结果，开始执行不代表成功。
+
+注册扩展命令的 handler 与随后模型接续属于同一个 Run，贡献快照保持到整个 Run 排空；期间热更新只影响之后的 Run。共享 MCP 调用沿用这个 Run 的 Session 归属，表单或 URL 交互进入同一 Interaction 面。MCP 目录查询与显式目录刷新也占用现有 provider 使用保护，替换连接会等待正在进行的读取结束；关闭中的连接不会另起握手进程。
+
+`runs.stop(runId)` 只停止指定 Run，供 redirect 等局部操作使用。用户的整个 Session 停止操作使用 `sessions.cancel({sessionId, expectedRunId, requestId})`；在重试同一次请求时保留三个字段，不能换身份或用客户端 list/stop 循环替代。Host 固定当时的 Run 顺序边界，先处理排队 Run，再处理活动 Run；边界后的新提交不被这次请求取消。尚未消费的产品输入队列继续遵守原保留与撤回语义，不能当作排队 Run 擅自删除。
+
+返回的 `accepted` 与清理确认不同；自然完成可以赢得终态竞态。重复请求不重新执行副作用。`unknown` 表示尚未确认清理，不能显示成已经停止。部分交付失败保留该请求的边界；原请求重试完成后才释放，其他请求不能替它解除。此处复用主线已有的领域停止记录，没有恢复已删除的通用 operation envelope。
+
+## 活动面与批准计划
+
+`activity.todos`、`children`、`managedTask`、`costReport` 是 Host 事实，终端直接消费；本地加载状态不能覆盖另一个客户端启动的活动 Run。`managedTask.childFanoutClass` 与 fanoutCount 共同驱动原 AMA 后台条。模型内调用工作流时，`activity.workflow` 复用已有 `ClientWorkflowProcess`，保留阶段、计数、状态和名称；子代理摘要作为可补读、可保存的显示项提供。临时 Worker 进度仍只属于活动面，不变成用户对话。
+
+计划批准使用已有 permission Interaction，`options.plan` 提供完整计划正文，不从截断的 inputPreview 恢复。首个有效回答生效；Host 确认当前 Run 仍在运行且仍为 Plan 模式后才应用批准结果。拒绝、取消及 Stop 不切换权限模式，客户端不能自行先显示已批准。

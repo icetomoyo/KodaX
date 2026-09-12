@@ -210,6 +210,9 @@ async function importMainWithMocks(options: {
         version: '0.7.66-test',
       },
       sessions: {
+        async observeView() {
+          return { close: vi.fn() };
+        },
         async load() {
           return { id: 'session-1', title: 'Loaded' };
         },

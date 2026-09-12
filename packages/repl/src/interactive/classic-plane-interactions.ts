@@ -120,6 +120,7 @@ export function createClassicPlaneDialogSurface(input: {
         options.toolName,
         {
           ...(options.inputPreview !== undefined ? { input: options.inputPreview } : {}),
+          ...(options.plan !== undefined ? { plan: options.plan } : {}),
           ...(options.reason !== undefined ? { _reason: options.reason } : {}),
           ...(options.executionCwd !== undefined ? { _executionCwd: options.executionCwd } : {}),
           ...(options.risk !== undefined ? { _runtimeRisk: options.risk } : {}),

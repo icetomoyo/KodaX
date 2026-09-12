@@ -1,8 +1,8 @@
 # v0.7.97 交付复查（2026-09-08）
 
-> 下方保留历次评审，旧段落中的“未修复”只描述该段固定快照。最新核验见文末“GLM 扫描报告的当前快照复核”；此前通过记录只证明其实际覆盖的场景，不能解释为所有客户端能力已对齐。
+> 下方保留历次评审，旧段落中的“未修复”只描述该段固定快照。最新修复及验收见文末“GLM 缺口修复与主线融合”；此前通过记录只证明其实际覆盖的场景，不能解释为所有客户端能力已对齐。
 
-**当前不能按“35/35 已完成、REPL 能力和体验不退步”验收。** 实现已有实质进展，但完成标记超出了代码和验收证据。应修复现有切片、补齐消费者，不需要再引入恢复框架。
+**以下初次复查否决的是当时的“35/35 已完成”标记。** 后续修复逐节记录，不用旧结论覆盖新实现，也不把最后一组测试通过扩大为所有客户端能力已验收。
 
 ## 范围
 
@@ -759,3 +759,36 @@ D 的回归归因不成立；E 的无交互审批等待是一个已确认行为�
 报告所列“约 15 项仍未修复”不能整体沿用。例如 R2 观察状态、R3 上下文预算、R4 搜索全文和 R5 steer 附件已接入当前契约，`2c6cbffb` 完整测试中的 observe/history/steer 用例分别 5/5 通过，另有 resubscribe 7/7、tool-results 5/5。unknown、Run 模型可变性、stop/failed 保留队列和 steer 不可撤回也已写入当前说明；跨页 call/result 已有相邻读取。其余旧台账应逐项对当前实现核销，不能据此声称全部关闭；legacy renderer 历史跳转仍保留原记录。
 
 后续应先将新主线 FEATURE_299 列入合并基线，再按 A/B/C/E/F 的真实消费者逐项补最小接线及端到端验收。尤其补 Todo/children/cost、模型 workflow、重新挂接活动 Run、MCP/extensions、计划批准正文和 headless 权限的实际出口；不再以“字段到达 SDK”或手工 props 的组件测试替代整链行为验证。
+
+## 2026-09-12：GLM 缺口修复与主线融合
+
+本轮基于 `03f31864`，融合主线 `c61914bf` 的 FEATURE_299。实现保持一个 Host、同一 ProductClient 契约和既有执行边界；没有增加恢复状态机、第二队列或客户端 Shell 执行器。包版本继承主线，不发布 v0.7.97。此前 GLM D、E busy、G 的归因更正继续有效。
+
+| 范围 | 已修复与验证的行为 |
+| --- | --- |
+| A 显示 | Todo、子代理、AMA 工作条、cost 消费 Host 事实；模型内 workflow 进度进入视图，完整摘要进入可读历史。实际 Host/IPC→CLI plane→Ink/classic 渲染入口验证，不只检查 DTO 字段。 |
+| B 忙闲 | 输入、排队与停止根据 Host 活跃 Run 工作；重新附着不误发 immediate；只读帮助不要求 Session 空闲。实际修改仍保持 Host busy 保护。 |
+| C 集成 | /mcp、/extensions 使用 Host 诊断；扩展 DTO 不泄漏 Node/处理函数。status 不唤醒 lazy server，显式 refresh 才刷新目录。 |
+| FEATURE_299 融合 | 手动 Shell 使用 `runs.startTool`，真实工具权限、记录、取消与零模型调用；Session Stop 使用主线固定顺序边界，redirect 仍是单 Run Stop。保留 Full Access 与显式 forbidden 规则。 |
+| E 无交互 | one-shot 订阅后提交，及时拒绝本 Run 无人处理的权限请求；视图先于接收回复也能处理，不误拒其他 Run，不改全局审批策略。 |
+| F 计划 | 完整 plan 经现有 Interaction 到两个 UI；有效首答由 Host 改模式；拒绝、取消、Stop 均不改。真实 IPC 覆盖长正文。 |
+| 接续与身份 | effectful extension handler 在真实工具 Run 内执行；模型在该 Run 继续。复用已接受 inputId 与工具历史，SA/AMA 原 query 只出现一次；同文新 inputId 仍是新输入。 |
+| legacy 浏览 | transcript 使用已有行窗口，搜索编辑区与跳转目标可见；真实 legacy PTY 验证 Ctrl+E、草稿恢复、正常退出，普通输入保留原生 scrollback。 |
+
+进一步复核发现并修复了三类额外问题：
+
+- MCP 目录读取绕过 provider 使用保护，显式 reload/热更新可能销毁正在初始化的连接。真实 IPC 将 initialize 固定暂停，再由第二客户端替换 provider，旧实现明确 timeout。修复复用现有使用计数和 drain，读取/刷新结束后才销毁；同类 `refreshCapabilityProviders` 一并接入。初始化 dispose 原先还会进入协议 fallback 并再起一个进程；专用关闭错误现在直接传播，真实进程计数测试先 RED 后 GREEN。
+- 独立 Spec 评审发现，handler 返回到模型开始之间会释放贡献快照，热更新可改变同一 Run 的实现。真实 SA/AMA IPC 两项均复现当轮误读新贡献。复用已有 runtimeRunId 在整个接续中固定原贡献，只有相同且未关闭的 Run 复用上下文；之后的新 Run 读取新贡献。没有新增输入恢复语义。
+- 同条接续漏了共享 MCP Session 上下文，表单直接被取消。整个工具→模型路径现在使用既有 `runWithMcpCallContext`；真实 shared stdio MCP 和双 Product 客户端验证 command 受检工具、SA 模型接续均可回答，另一 Session 无交互。
+
+### Standards
+
+首次独立评审 2 项：新增 console 输出不符合项目规范；主线带入的 `requestSessionWorkflowStop` 只有测试调用，实际 Host 另有归属检查。已保持用户可见 stdout 提示，删除无生产调用的辅助函数及镜像测试；归属校验改用真实 Product→IPC→Host 测试。增量独立复查 **剩余 0 项**；复用了既有上下文、provider 使用保护和 MCP 调用上下文，没有新锁、控制面或配置。
+
+### Spec
+
+首次独立评审 2 项 P1：同 Run 贡献寿命与 MCP 交互归属，均已用上述真实失败场景修复。增量独立复查 **剩余 0 项**；核对 SA/AMA 当轮旧贡献、下一轮新贡献以及独立 Session 隔离。此计数只覆盖固定融合修复及其增量，不是全仓所有历史问题的清零声明。
+
+首份评审固定补丁 SHA-256 为 `519E608594963EFE72F64062247E24002B4DC63410B088F14A112B555260B39F`（119 文件）；随后两轴各自复查修复增量。完整测试及最终构建结果在完成后追加，不将阶段性通过当作最终门禁。
+
+首轮完整 Vitest 为 **1,073 文件通过、2 文件失败、1 跳过；15,679 passed、5 failed、77 skipped、21 todo**（719.34 秒，`.repair-full-suite.log`）。失败均保留归因：新增 dispose 测试的一秒准备期限先于满负载子进程进入初始化，尚未执行 dispose；四个旧 CLI 生命周期夹具未提供 one-shot 新消费的 `observeView`。前者只调整测试准备期限，仍断言关闭原因与恰好一个进程；后者补充观察器测试替身，未增加产品兼容回退。两个完整文件复跑 **63/63**（`.repair-fixture-rerun.log`）；没有将首轮称作全绿。

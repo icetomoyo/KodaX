@@ -131,3 +131,24 @@ SDK 对应 `src/sdk-client.queue-boundary.test.ts`，须覆盖 SA 与 AMA：消�
 `src/sdk-runtime.launcher.test.ts` 在真实 IPC 层固定制造四轮临时 launcher 同时连接旧 Host，再检查两个调用连接同一个新 owner、旧进程正常退出、原 Session 保留。`src/sdk-runtime-daemon-upgrade.test.ts` 检查同一个启动期限内退避、取消后释放连接、永久忙碌时不 shutdown，以及期限耗尽后不跳过退出确认。不得通过忽略名称为 launcher 的连接来通过测试。
 
 `src/sdk-client.derive.test.ts` 在 Host 显示 checkpoint 内持有真实 Session 写锁，直接调用会话、lineage、设置、auto stats、fork/recover 接口。请求应等待自身 checkpoint；保存失败必须传递，外部写锁仍明确拒绝。不要在目标调用前额外 readHistory 来预热或同步，也不要增加固定 sleep。Run 终态与显示保存是不同边界，所有出口应在 Host 内复用已有等待机制。
+
+
+## FEATURE_299 融合后的消费者验收
+
+完整 PTY 增加 `host-diagnostics-and-manual-shell`：客户端不加载扩展，`/mcp` 和 `/extensions` 必须显示 Host 诊断；`!echo` 必须产生 Host 的 bash 工具结果、一次原 query、零模型请求。主线已要求 effectful extension 命令具有工具 Run，所以无输出命令改为核对真实 Run 完成、一次输入、零模型调用，不能继续断言不存在 Run。只读帮助仍不能执行 handler。
+
+| 自动测试 | 真实验证范围 |
+| --- | --- |
+| `src/sdk-client.repl-activity.test.ts` | 真实 Host/IPC、ProductClient、CLI plane 与 Ink/classic 渲染入口；替换终端 streams 和执行器事件夹具，核对 Todo、child、AMA 工作条、workflow、完整摘要、附着忙 Run 排队与停止、两端 cost。该测试不是原生 PTY。 |
+| `src/sdk-client.domains.test.ts` | 实际离线 Provider 与共享 Host；扩展 command scope、受检工具、两 Session 隔离、原输入身份、同 Run 模型接续、只读帮助及诊断命令。 |
+| `src/sdk-client.interactions.test.ts` | 实际 IPC；显式工具身份、完整长计划、首答、拒绝/取消/Stop；不把直接赋予组件 props 当作协议验证。 |
+| `src/one-shot-permissions.test.ts` | 无交互 CLI 及时拒绝自己 Run 的权限，处理 view 早于接收回复；其他 Run 不被误拒，不修改全局模式。 |
+| `packages/coding/src/agent-runtime/input-identity.test.ts` | SA/AMA 首次 Provider 请求复用已接受 query，保持 tool call/result 顺序；不同 inputId 的同文输入仍是新输入。 |
+| `packages/repl/src/ui/client-plane.stop-control.test.ts` | Stop 请求失败可按同身份重试；自然终态及迟到 ACK 不丢失确认，旧 Run 不确认新目标。 |
+| `src/sdk-client.integration-diagnostics.test.ts` | 无本地 runtime 的扩展/MCP 命令；lazy 查询不唤醒；真实初始化暂停时，另一客户端 reload 必须等待目录读取结束。 |
+| `src/sdk-client.command-mcp-elicit.test.ts` | command 受检工具与 SA 模型接续两条路径，真实共享 MCP 表单必须归属本 Session，另一 Session 无交互，双客户端可以正常批准。 |
+| `tests/repl-legacy-search-acceptance.mjs` | 强制 legacy 渲染器的真实 Windows PTY：长历史搜索编辑区可见、Enter 目标在屏内、Ctrl+E、草稿恢复、退出。 |
+
+扩展接续还须在 handler 暂停期间真实 reload，再检查当轮 Provider 使用旧贡献、下一个 Run 使用新贡献；SA 与 AMA 都要覆盖。MCP 初始化被 dispose 时应保留关闭原因，不能启动备用握手进程。对应 domains、MCP runtime 与 extension runtime 测试均保留，不以静态接线检查替代。
+
+还需运行 FEATURE_299 回归指南的原生边界与真实 Shell 清理测试。`npm run build` 包含不安装 Node 类型的 ProductClient 使用者编译检查，防止诊断字段泄漏 Host 执行类型；不得添加 Node 类型依赖来掩盖失败。

@@ -7,6 +7,108 @@ _Last Updated: 2026-09-12_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## Implemented 2026-09-12 — Unified Stop and execution contracts (FEATURE_299)
+
+The v0.7.96 implementation adds lock-independent owned Run controls and atomic
+Session Stop, CLI/ACP acceptance versus confirmation, managed extension effects,
+Runtime/Session isolation, Full Access text authority and owned manual Shell.
+See the [specification and tickets](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts)
+and [regression guide](test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md).
+
+Real shared Runtime/socket regressions use actual Session and Run control locks,
+exercise duplicate/restarted requests and owner/profile/scope failures, and check
+actual Shell process cleanup. Additional regressions cover reload during
+admission, concurrent same-name tools, paused/pre-cancelled workflows and natural
+completion races. Final integration evidence is maintained in the feature block.
+
+## Implemented 2026-09-12 — Large legacy metadata breaks Conversation continuation
+
+`readConversationPageAdmission` treated a metadata first line at or beyond
+64 KiB as `data_corrupt`. Valid large `actorSnapshot` records therefore allowed
+the first snapshot-backed `conversationPage` but failed its continuation boundary
+check. Prepared-cache paging bypassed this reader and concealed the regression.
+
+The reader now advances in 64 KiB chunks until the first newline or EOF and
+decodes UTF-8 after joining the bytes. It preserves the existing admission and
+source-revision checks, rejects malformed metadata, and leaves Session data and
+Actor snapshots unchanged.
+
+Regression coverage in `src/sdk-conversation-history.test.ts` exercises a legacy
+Session with a large Actor snapshot through cold start, continuation, and Runtime
+close/reopen, both with prepared pages and with cache preparation unavailable.
+`packages/repl/src/interactive/storage.conversation-page-admission.test.ts`
+covers cross-chunk UTF-8, LF/CRLF/EOF, an exact 64 KiB record, and corrupt input.
+The tests also compare the source bytes before and after reads.
+
+## Implemented 2026-09-12 — Full Access inherited bundled command fallbacks
+
+The beta.8 shell evaluator applied bundled dangerous-command fallbacks without
+knowing the permission profile. With no custom rules, Full Access could refuse
+`rm -f`, nested forced deletion, PowerShell `Remove-Item -Force`, Windows
+`del /f` / `rmdir /s`, and URL launches. This was KodaX behavior, not evidence of
+an administrator rule or an OS restriction.
+
+Full Access now omits synthesized fallbacks while preserving explicit user,
+administrator, and trusted-project restrictions. Recognized wrappers preserve
+both forbidden and prompt decisions. The argv and shell-text CLI checks now
+share that evaluation, and child network qualifiers use the child's arguments.
+`kodax execpolicy check --mode full-access -- <command>` inspects this contract.
+
+Runtime and standalone REPL return JSON rejection text with `code`,
+`denialSource`, policy `source` / `sourcePath`, `permissionMode`, `matchedRules`,
+`retryable: false`, `remediation`, and anti-bypass guidance. The Agent classifies
+these results as errors, not successful tools or user cancellations. Explicit
+prompt rules remain non-interactive refusals in Full Access; malformed policy
+is identified separately. README, configuration templates, built-in manual,
+public SDK documentation, and ADR-069's permission contract were synchronized.
+
+Verification includes real Runtime deletion of a disposable file using
+`Remove-Item -Force`, retained explicit denials/prompts, live mode changes,
+standalone profiles, nested command restrictions, malformed configuration,
+CLI argv/text parity, and structured tool-result classification. No dangerous
+test strings other than deletion of the isolated temporary fixture are executed.
+
+Validation: 265 distinct relevant tests passed across the permission, CLI,
+classification, Bash, manual, REPL, and selected Runtime suites. Focused coverage
+for the evaluator and result classifier is 94.47% lines, 85.58% branches, and
+100% functions. Workspace package build, source/test type checks, and generated
+configuration checks passed. The daemon permission-broker smoke test passed
+outside the execution sandbox after the sandboxed tsx loader failed in
+`os.userInfo()` with `uv_os_get_passwd ENOMEM`, before reaching Runtime code.
+
+#### Standards review
+
+No actionable standards violations or blocking code smells remained in this
+permission diff. Existing repository layering and shared evaluator ownership
+were preserved.
+
+#### Spec review
+
+Two findings were reproduced and fixed: argv-form CLI checks omitted nested
+restrictions; then the shared evaluator incorrectly carried outer inferred
+network destinations into a nested shell body. Retained regressions cover both.
+Final re-review found no remaining confirmed requirement defect in this diff.
+
+### Full Access scan — remaining interface differences (2026-09-12)
+
+The shell contract correction above does not remove the following pre-existing
+constraints. They are recorded as open consistency issues, not as proven OS or
+administrator restrictions:
+
+| Surface | Evidence | Remaining work |
+|---|---|---|
+| Direct text edits under `.git` | `packages/coding/src/trusted-text-mutation.ts` rejects `.git` before the host; native `windows-text-transaction/src/path_policy.rs` and `unix_transaction.rs` independently reject it | Propagate a deliberately scoped Full Access text policy across both host and native transaction boundaries; preserve other profiles and explicit protected policy paths |
+| Direct text edits outside Runtime write roots | `src/sdk-runtime.ts` binds workspace/execution/registered roots; `src/windows-text-transaction.ts:authorizeTarget` has no permission-profile input | Define Full Access text authority consistently with direct-host Bash while retaining no-follow traversal, CAS, and native control-state protection |
+| Manual `!command` | `packages/repl/src/ui/utils/shell-executor.ts` always calls `getDirectShellBypassBlockReason`, which accepts only read-only commands | Route this surface through the same mode-aware owner and Exec Policy before broadening it; removing the check alone would bypass configured policy |
+
+Additional limits checked: UNC/device/ADS paths, hard links, stale text
+snapshots, and unsupported native filesystems are text-transaction capability
+or integrity constraints. Prefix rules do not analyze arbitrary opaque script
+files or dynamically generated programs; recognized-wrapper enforcement and
+model anti-bypass instructions must not be described as complete semantic
+containment. Long-lived daemon/REPL owners must restart to load changed code;
+their existing processes do not acquire new Full Access semantics automatically.
+
 ## Open — Restart long-running REPL processes after KodaX updates (2026-09-10)
 
 A REPL process keeps its provider/serializer code in memory from startup. After
@@ -181,11 +283,11 @@ receive a wire-valid history without fabricated results.
 
 Host 视图、Run 和实时权限现在使用同一配置合并规则。Ink 与 classic 从共享视图更新显示；清除覆盖后恢复 Host 配置，没有明确值时显示 Host default，不把旧值写回。无参数设置查询也使用同一事实。真实 SDK + Windows PTY 已验证模型/权限修改、清除、默认值修改和显式再选择；见本轮复查报告。尚未发布。
 
-## v0.7.97 产品入口验收未关闭项
+## Resolved in working tree 2026-09-12 — legacy 历史跳转
 
-- **旧 legacy 渲染器历史跳转**：Windows 下强制 `KODAX_FORCE_INK=1` 时，搜索界面提示可以跳转，但非 viewport 路径可能把屏幕外历史误判为已可见，Enter 后仍看不到目标消息。当前 owned 渲染器的真实 PTY 搜索/冻结浏览已通过；该结果不覆盖 legacy 路径。
+Windows 下强制 `KODAX_FORCE_INK=1` 的 transcript 现在使用已有行窗口；长历史不再将搜索编辑区挤出屏幕，也不会将屏幕外目标误判为可见。普通输入保留原生 scrollback。独立真实 PTY 脚本 `tests/repl-legacy-search-acceptance.mjs` 已验证搜索后 Enter 目标在屏内、Ctrl+E 展开/收起、q 返回草稿及正常退出。
 
-证据与本轮已修复问题见 [真实产品入口自动化验收](REVIEW_v0.7.97_FINAL.md#真实产品入口自动化验收)。legacy 项保持未关闭，不以自动测试总数豁免。
+证据与本轮已修复问题见 [复查报告](REVIEW_v0.7.97_FINAL.md)。该修复尚未发布。
 
 ## v0.7.96-beta.4 Release Corrections
 

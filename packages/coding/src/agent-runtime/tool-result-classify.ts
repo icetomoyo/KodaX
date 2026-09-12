@@ -27,7 +27,8 @@
  *     <CODE>:` envelope is present, pull out the `<CODE>` token
  *     (`[A-Z_]+`) for downstream policy decisions (e.g. retry-decision
  *     middleware reads `runtimeSessionState.lastToolErrorCode`).
- *     Returns `undefined` if no structured envelope is detected.
+ *     Also recognizes Exec Policy JSON rejection codes so policy failures
+ *     retain error status and provenance. Returns `undefined` otherwise.
  *
  * The three operate as a coherent triple — `isToolResultErrorContent`
  * gates whether to look further; `isCancelledToolResultContent` and
@@ -46,7 +47,9 @@ import { toolResultText } from '../tools/tool-result-content.js';
 import { CANCELLED_TOOL_RESULT_PREFIX } from '../constants.js';
 
 export function isToolResultErrorContent(content: ToolResult): boolean {
-  return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(toolResultText(content));
+  const text = toolResultText(content);
+  return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(text)
+    || execPolicyErrorCode(text) !== undefined;
 }
 
 export function isCancelledToolResultContent(content: ToolResult): boolean {
@@ -54,6 +57,27 @@ export function isCancelledToolResultContent(content: ToolResult): boolean {
 }
 
 export function extractStructuredToolErrorCode(content: ToolResult): string | undefined {
-  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(toolResultText(content).trim());
-  return match?.[1];
+  const text = toolResultText(content).trim();
+  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(text);
+  return match?.[1] ?? execPolicyErrorCode(text);
+}
+
+function execPolicyErrorCode(text: string): string | undefined {
+  if (!text.trimStart().startsWith('{')) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined; // Ordinary tool text is not required to be JSON.
+  }
+  if (value === null || typeof value !== 'object') return undefined;
+  if (!('retryable' in value) || value.retryable !== false
+    || !('denialSource' in value) || !('code' in value)) return undefined;
+  if (!['explicit_rule', 'builtin_fallback', 'policy_configuration'].includes(String(value.denialSource))) {
+    return undefined;
+  }
+  return typeof value.code === 'string'
+    && ['exec_policy_forbidden', 'exec_policy_prompt_unavailable', 'exec_policy_invalid'].includes(value.code)
+    ? value.code
+    : undefined;
 }

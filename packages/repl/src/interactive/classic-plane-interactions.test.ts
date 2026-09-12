@@ -43,6 +43,8 @@ describe('createClassicPlaneDialogSurface via answerClientPlaneInteraction (T18)
 
   function planeWith(calls: unknown[]): InkClientPlane {
     return {
+      executeTool: async () => { throw new Error('Unexpected tool invocation'); },
+      cancelSession: async () => { throw new Error('Unexpected Session Stop'); },
       submit: () => Promise.resolve({}),
       withdraw: () => Promise.resolve(undefined),
       awaitRun: () => Promise.resolve({ phase: 'completed' }),
@@ -65,6 +67,22 @@ describe('createClassicPlaneDialogSurface via answerClientPlaneInteraction (T18)
       confirm: undefined as never,
     });
   }
+
+  it('forwards the complete Host plan to the existing approval renderer', async () => {
+    const plan = 'Step with full context.\n'.repeat(500) + 'FINAL APPROVAL DETAIL';
+    let renderedInput: Record<string, unknown> | undefined;
+    const surface = createClassicPlaneDialogSurface({
+      rl: undefined as never,
+      permissionMode: () => 'plan',
+      confirm: async (_rl, _toolName, input) => {
+        renderedInput = input;
+        return { confirmed: false };
+      },
+    });
+    await surface.permission({ toolName: 'exit_plan_mode', inputPreview: 'bounded preview', plan });
+    expect(renderedInput?.plan).toBe(plan);
+    expect(renderedInput?.input).toBe('bounded preview');
+  });
 
   it('answers a select question with the chosen option value', async () => {
     const calls: unknown[] = [];

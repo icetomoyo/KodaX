@@ -47,6 +47,7 @@ export type RuntimeDaemonMethod =
   | 'session.compact'
   | 'session.archive'
   | 'session.unarchive'
+  | 'session.cancel'
   | 'session.delete'
   | 'session.settings.get'
   | 'session.settings.getVersioned'
@@ -117,6 +118,7 @@ export type RuntimeDaemonMethod =
   | 'provider.custom.upsert'
   | 'provider.custom.remove'
   | 'mcp.server.list'
+  | 'mcp.server.status'
   | 'mcp.server.get'
   | 'mcp.server.validate'
   | 'mcp.server.upsert'
@@ -220,6 +222,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.compact'
   | 'session.archive'
   | 'session.unarchive'
+  | 'session.cancel'
   | 'session.delete'
   | 'session.settings.update'
   | 'session.settings.updateVersioned'
@@ -392,6 +395,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.compact',
   'session.archive',
   'session.unarchive',
+  'session.cancel',
   'session.delete',
   'session.settings.get',
   'session.settings.getVersioned',
@@ -462,6 +466,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'provider.custom.upsert',
   'provider.custom.remove',
   'mcp.server.list',
+  'mcp.server.status',
   'mcp.server.get',
   'mcp.server.validate',
   'mcp.server.upsert',
@@ -547,6 +552,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.compact',
   'session.archive',
   'session.unarchive',
+  'session.cancel',
   'session.delete',
   'session.settings.update',
   'session.settings.updateVersioned',

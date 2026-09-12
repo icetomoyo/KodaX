@@ -2,6 +2,7 @@ export type {
   CapabilityKind,
   CapabilityResult,
   CapabilityProvider,
+  ExtensionCapabilityProvider,
   CapabilitySearchFailure,
   CapabilitySearchFreshness,
   CapabilitySearchOptions,
@@ -30,6 +31,7 @@ export type {
   KodaXExtensionActivationResult,
   KodaXExtensionModule,
 } from './types.js';
+export type { ExtensionExecutionScope } from './execution-contract.js';
 
 export {
   CombinedExtensionRuntime,
@@ -38,6 +40,7 @@ export {
   createExtensionRuntime,
   setActiveExtensionRuntime,
   getActiveExtensionRuntime,
+  withExtensionRuntimeContext,
   emitActiveExtensionEvent,
   runActiveExtensionHook,
 } from './runtime.js';

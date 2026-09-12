@@ -6,6 +6,44 @@ import { describe, expect, it } from 'vitest';
 import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
 
 describe('FEATURE_297 execpolicy CLI', () => {
+  it('checks Full Access without the bundled fallback and reports the selected mode', async () => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-execpolicy-full-'));
+    let output = '';
+    const program = new Command().name('kodax').exitOverride();
+    configureKodaXExecPolicyCommand(program, {
+      configHome, findProjectRoot: async () => null,
+      writeOutput: (text) => { output = text; },
+    });
+    await program.parseAsync([
+      'node', 'kodax', 'execpolicy', 'check', '--mode', 'full-access', '--', 'rm -f generated.txt',
+    ]);
+    expect(JSON.parse(output)).toMatchObject({
+      permissionMode: 'full-access', decision: 'unmatched', criticalFallback: false,
+      matchedRules: [],
+    });
+  });
+
+  it.each([
+    ['bash -c "git push"'],
+    ['bash', '-c', 'git push'],
+  ])('keeps explicit wrapper restrictions for command arguments %j', async (...command) => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-execpolicy-wrapper-'));
+    await writeFile(join(configHome, 'exec-policy.jsonc'), JSON.stringify({
+      rules: [{ prefix: ['git', 'push'], decision: 'forbidden', justification: 'Publishing is disabled' }],
+    }));
+    let output = '';
+    const program = new Command().name('kodax').exitOverride();
+    configureKodaXExecPolicyCommand(program, {
+      configHome, findProjectRoot: async () => null,
+      writeOutput: (text) => { output = text; },
+    });
+    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--mode', 'full-access', '--', ...command]);
+    expect(JSON.parse(output)).toMatchObject({
+      permissionMode: 'full-access', decision: 'forbidden',
+      matchedRules: [expect.objectContaining({ source: 'user' })],
+    });
+  });
+
   it('reports the effective rule without executing the checked command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kodax-execpolicy-cli-'));
     const configHome = join(root, 'home');

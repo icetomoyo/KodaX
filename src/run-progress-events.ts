@@ -378,8 +378,8 @@ export function forwardRunProgressEvent(
 
 /**
  * Forward one run's live runtime events into the CLI output formatters.
- * Permission requests are deliberately not handled: one-shot runs use the
- * runtime permission broker, so there is no client answer to give.
+ * Permission answers belong to the one-shot Product interaction observer;
+ * this adapter only forwards presentation events.
  */
 export function attachRunProgressAdapter(
   runtime: KodaXRuntime,

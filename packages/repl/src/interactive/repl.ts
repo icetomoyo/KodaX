@@ -3,6 +3,8 @@
  */
 
 import * as readline from 'readline';
+import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -22,6 +24,7 @@ import {
   KodaXReasoningMode,
   mergeArtifactLedger,
   runManagedTask,
+  runToolInvocation,
   resolveRepoIntelligenceRuntimeConfig,
   KodaXError,
   KodaXRateLimitError,
@@ -141,7 +144,7 @@ import { getSkillRegistry, initializeSkillRegistry } from '@kodax-ai/agent';
 import { ReadlineUIContext } from '../ui/readline-ui.js';
 import { extractLastAssistantText, extractTitle as extractSessionTitle } from '../ui/utils/message-utils.js';
 import { prepareRootCompactionLineage } from '../ui/utils/compaction-commit.js';
-import { executeShellCommand, isShellCommandHandled } from '../ui/utils/shell-executor.js';
+import { executeShellCommand, isShellCommandHandled, type ShellExecutorConfig } from '../ui/utils/shell-executor.js';
 import { prepareInvocationExecution } from './invocation-runtime.js';
 import {
   resolveConfirm,
@@ -504,6 +507,8 @@ export interface RepLOptions extends KodaXOptions {
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   commandClient?: CommandCallbacks['commandClient'];
   listHostCommands?: CommandCallbacks['listHostCommands'];
+  inspectExtensions?: CommandCallbacks['inspectExtensions'];
+  mcp?: CommandCallbacks['mcp'];
   startReview?: CommandCallbacks['startReview'];
   reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
   goal?: CommandCallbacks['goal'];
@@ -533,6 +538,14 @@ const costReportRef: { current: (() => string) | null } = { current: null };
 
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
+  let activeStop: RuntimeStopControl | undefined;
+  const runtimeStopCallbacks: RuntimeStopCallbacks = {
+    onStopControl: (control) => { activeStop = control; },
+    onStopState: (state, detail) => {
+      if (state === 'rejected') process.stderr.write(`\n[Stop rejected] ${detail ?? ''}\n`);
+      else process.stdout.write(`\n[Stop ${state}] ${detail ?? ''}\n`);
+    },
+  };
   const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
   const startupGitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
@@ -808,6 +821,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let planeDisplayClosed = false;
   let planeDisplaySessionId: string | undefined;
   let displayedPlaneRunId: string | undefined;
+  let displayedPlaneView: ClientSessionView | undefined;
   let attachInFlightSessionId: string | undefined;
   let pendingAssistantNewline = false;
   const planeDisplayWrite = (line: string): void => {
@@ -840,10 +854,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     detachPlaneDisplay = undefined;
     planeDisplaySessionId = sessionId;
     displayedPlaneRunId = undefined;
+    displayedPlaneView = undefined;
     attachInFlightSessionId = sessionId;
     void attachClassicPlaneDisplay(plane, sessionId, {
       onView: view => {
         if (view.session.id !== context.sessionId) return;
+        displayedPlaneView = view;
         displayedPlaneRunId = viewRunsActive(view);
         currentConfig = applyClientSessionViewSettings(currentConfig, view);
         currentPermissionMode = currentConfig.permissionMode;
@@ -895,6 +911,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const runPlaneRoundWithStop = async (
     prompt: string,
     inputArtifacts?: readonly KodaXInputArtifact[],
+    invocation?: KodaXOptions['toolInvocation'],
   ): Promise<KodaXResult> => {
     const plane = options.clientPlane;
     if (plane === undefined) {
@@ -903,7 +920,15 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     const controller = new AbortController();
     activePlaneAbort = controller;
     try {
+      if (invocation) {
+        const started = await plane.executeTool({ sessionId: context.sessionId,
+          inputId: mintInkInputId(), ...invocation, rawInput: prompt });
+        return await followClientPlaneRun({ plane, sessionId: context.sessionId, runId: started.runId,
+          abortSignal: controller.signal, ...runtimeStopCallbacks,
+          getDisplayedRunId: () => displayedPlaneRunId });
+      }
       return await runClientPlaneRound({
+        ...runtimeStopCallbacks,
         plane,
         sessionId: context.sessionId,
         prompt,
@@ -924,7 +949,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
     if (options.clientPlane !== undefined) {
-      return runPlaneRoundWithStop(prompt, inputArtifacts);
+      return runPlaneRoundWithStop(prompt, inputArtifacts, roundOptions.toolInvocation);
     }
     return runAgentRound(roundOptions, context, prompt, initialMessages, inputArtifacts);
   };
@@ -1201,6 +1226,8 @@ Keyboard Shortcuts:
     prepareAgentsLean: options.prepareAgentsLean,
     commandClient: options.commandClient,
     listHostCommands: options.listHostCommands,
+    inspectExtensions: options.inspectExtensions,
+    mcp: options.mcp,
     startReview: options.startReview,
     reviewAgentsLean: options.reviewAgentsLean,
     // FEATURE_298 T34 — goal persistence goes through the Host binding;
@@ -1624,7 +1651,9 @@ Keyboard Shortcuts:
       console.log(chalk.dim(`  Messages: ${rewound.messages.length}`));
       return 'rewound';
     },
-    getCostReport: () => costReportRef.current?.() ?? null,
+    getCostReport: () => options.clientPlane
+      ? (displayedPlaneView?.session.id === context.sessionId ? displayedPlaneView.activity?.costReport ?? null : null)
+      : costReportRef.current?.() ?? null,
     // Auto-mode read-only diagnostics for /auto-denials. The accessor
     // delegate to the lazy guardrail factory — when REPL never enters auto
     // mode, the guardrail is never constructed and the stats are undefined.
@@ -1884,6 +1913,31 @@ Keyboard Shortcuts:
     ui: new ReadlineUIContext(rl),
   };
 
+  const executeOwnedTool: NonNullable<CommandCallbacks['executeToolInvocation']> = async (invocation, prompt) => {
+    const controller = new AbortController();
+    const invocationOptions = { ...(callbacks.createKodaXOptions?.() ?? currentOptions),
+      toolInvocation: invocation, abortSignal: controller.signal };
+    const localControl: RuntimeStopControl = { request: async () => {
+      controller.abort(new Error('Stopped by user'));
+      process.stdout.write('\n[Stop accepted]\n');
+      return { state: 'unknown' };
+    } };
+    if (!options.clientPlane) activeStop = localControl;
+    try {
+      const result = await runAgentRoundWithPlane(prompt, invocationOptions, context.messages);
+      context.messages = result.messages;
+      context.lineage = createSessionLineage(result.messages, context.lineage);
+      applyRuntimeSessionSnapshot(context, result);
+      if (!options.clientPlane) await callbacks.saveSession?.();
+      if (controller.signal.aborted) process.stdout.write('\n[Stop confirmed]\n');
+      return result;
+    } finally { if (activeStop === localControl) activeStop = undefined; }
+  };
+
+  callbacks.executeToolInvocation = executeOwnedTool;
+  const executeManualShell: NonNullable<ShellExecutorConfig['execute']> = (command) =>
+    executeOwnedTool({ name: 'bash', input: { command } }, `!${command}`);
+
   const appendPersistedUiHistoryItem = async (item: KodaXSessionUiHistoryItem): Promise<void> => {
     context.uiHistory = [...(context.uiHistory ?? []), item];
     // FEATURE_298 T34 — the Host owns persisted display history; the
@@ -1945,6 +1999,14 @@ Keyboard Shortcuts:
 
   // Handle Ctrl+C - 处理 Ctrl+C
   rl.on('SIGINT', async () => {
+    if (activeStop) {
+      try { await activeStop.request(); }
+      catch (error: unknown) {
+        emitKodaXDiagnostic({ source: 'repl:stop', level: 'error',
+          message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
     if (activePlaneAbort !== undefined) {
       activePlaneAbort.abort();
       console.log(chalk.dim('\n[Stopping the Host run...]'));
@@ -2065,7 +2127,7 @@ Keyboard Shortcuts:
       const controller = new AbortController();
       activePlaneAbort = controller;
       try {
-        await followClientPlaneRun({ plane: options.clientPlane, sessionId: context.sessionId,
+        await followClientPlaneRun({ ...runtimeStopCallbacks, plane: options.clientPlane, sessionId: context.sessionId,
           runId: result.startedRunId, abortSignal: controller.signal,
           getDisplayedRunId: () => displayedPlaneRunId });
       } finally {
@@ -2209,6 +2271,7 @@ Keyboard Shortcuts:
         const processed = await processSpecialSyntax(
           trimmed,
           currentOptions.context?.executionCwd,
+          executeManualShell,
         );
         if (trimmed.startsWith('!') && isShellCommandHandled(processed)) {
           continue;
@@ -2406,6 +2469,7 @@ Keyboard Shortcuts:
     const processed = await processSpecialSyntax(
       trimmed,
       currentOptions.context?.executionCwd,
+      executeManualShell,
     );
 
     // Shell command handling: Warp style - Shell 命令处理：Warp 风格
@@ -2512,6 +2576,7 @@ Keyboard Shortcuts:
 export async function processSpecialSyntax(
   input: string,
   executionCwd: string = process.cwd(),
+  execute?: ShellExecutorConfig['execute'],
 ): Promise<string> {
   // @path syntax: attach image artifacts to context - @path 语法：将图片工件附加到上下文
   const fileRefs = input.match(/@[\w./-]+/g);
@@ -2526,7 +2591,7 @@ export async function processSpecialSyntax(
   // !command syntax: execute shell command - !command 语法：执行 shell 命令
   if (input.startsWith('!')) {
     const command = input.slice(1).trim();
-    return executeShellCommand(command, { cwd: executionCwd });
+    return executeShellCommand(command, { cwd: executionCwd, execute });
   }
 
   return input;
@@ -2657,7 +2722,9 @@ async function runAgentRound(
         : {}),
     },
   };
-  return runManagedTask(runOptions, prompt);
+  return runOptions.toolInvocation
+    ? runToolInvocation(runOptions, runOptions.toolInvocation, prompt)
+    : runManagedTask(runOptions, prompt);
 }
 
 // Extract title from messages - 从消息中提取标题
@@ -2668,7 +2735,7 @@ function extractTitle(messages: KodaXMessage[]): string {
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
 import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
-import { followClientPlaneRun, runClientPlaneRound, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
+import { followClientPlaneRun, runClientPlaneRound, mintInkInputId, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
 import { attachClassicPlaneDisplay } from './classic-plane-display.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 

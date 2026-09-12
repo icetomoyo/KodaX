@@ -6,7 +6,7 @@ import { createOutputSegmentProjection, reduceOutputSegmentProjection } from '@k
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
-  toolActivityDetail, formatManagedTaskBreadcrumb } from '@kodax-ai/repl';
+  toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
 import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
 
@@ -149,7 +149,8 @@ export class SessionViewOwner {
           budgetUsage: status.budgetUsage, budgetApprovalRequired: status.budgetApprovalRequired,
           breadcrumb: formatManagedTaskBreadcrumb(status), expandedBreadcrumb: formatManagedTaskBreadcrumb(status, { expanded: true }),
           round: status.currentRound, maximumRounds: status.maxRounds, idleWaiting: status.idleWaiting === true,
-          pendingChildren: status.idleWaitingPendingCount, fanoutCount: status.childFanoutCount } });
+          pendingChildren: status.idleWaitingPendingCount, fanoutCount: status.childFanoutCount,
+          childFanoutClass: status.childFanoutClass } });
         for (const draft of buildManagedLiveEventDrafts(status)) {
           // Temporary managed progress belongs to activity, as in the original
           // REPL. Only explicit retained events belong to conversation history.
@@ -169,6 +170,15 @@ export class SessionViewOwner {
         this.checkpoint(sessionId);
       },
       onChildActivityEnd: (meta) => { childActivity('stream', '', meta, true); },
+      onWorkflowProcessEvent: (event) => activity({ workflow: event.snapshot }),
+      onWorkflowAgentDigest: ({ event, runId: workflowRunId }) => {
+        const text = formatWorkflowAgentDigest(event,
+          inferWorkflowLocaleFromParts(typeof event.data?.summary === 'string' ? event.data.summary : undefined,
+            typeof event.data?.name === 'string' ? event.data.name : undefined), workflowRunId);
+        if (!text) return;
+        upsert({ id: `${runId}:workflow:${workflowRunId}:digest:${event.seq}`, type: 'assistant', text, timestamp: Date.now() });
+        this.checkpoint(sessionId);
+      },
     };
   }
 

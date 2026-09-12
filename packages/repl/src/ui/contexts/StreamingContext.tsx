@@ -238,6 +238,7 @@ export interface StreamingActions {
   shiftPendingInput: () => string | undefined;
   clearPendingInputs: () => void;
   consumePendingInputs: () => string[];
+  capturePendingInputCancellation: () => () => void;
 }
 
 /**
@@ -361,6 +362,7 @@ export interface StreamingManager {
   shiftPendingInput: () => string | undefined;
   clearPendingInputs: () => void;
   consumePendingInputs: () => string[];
+  capturePendingInputCancellation: () => () => void;
 
   /**
    * FEATURE_159 (v0.7.40) — release the queue subscription set up at
@@ -883,6 +885,14 @@ export function createStreamingManager(
       });
     },
 
+    capturePendingInputCancellation: () => {
+      const agentId = getPendingInputAgentId();
+      const ids = getPendingPrompts(agentId).map((message) => message.id);
+      return () => {
+        for (const id of ids) getMessageQueue().dequeue({ agentId, maxPriority: "user", mode: "prompt", id });
+      };
+    },
+
     peekPendingInputDelivery: () => {
       return getPendingPrompts(getPendingInputAgentId())[0]?.delivery;
     },
@@ -1088,6 +1098,7 @@ export function StreamingProvider({
   const consumePendingInputs = useCallback(() => {
     return manager.consumePendingInputs();
   }, []);
+  const capturePendingInputCancellation = useCallback(() => manager.capturePendingInputCancellation(), []);
 
   const actions: StreamingActions = {
     startStreaming,
@@ -1120,6 +1131,7 @@ export function StreamingProvider({
     shiftPendingInput,
     clearPendingInputs,
     consumePendingInputs,
+    capturePendingInputCancellation,
   };
 
   return React.createElement(

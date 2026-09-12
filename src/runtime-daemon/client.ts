@@ -658,6 +658,27 @@ export function createRuntimeDaemonClient(
       async delete(sessionId) {
         await request('session.delete', { sessionId });
       },
+      async cancel(input) {
+        const capability = options.capabilities?.sessionCancellation;
+        if (typeof capability !== 'object' || capability === null
+          || !('version' in capability) || capability.version !== 1
+          || !('durableFrontier' in capability) || capability.durableFrontier !== true) {
+          throw Object.assign(new Error('Session Stop requires a Runtime with sessionCancellation v1; upgrade the owner.'),
+            { code: 'client_upgrade_required' });
+        }
+        const value = requireRecord(await request('session.cancel', input));
+        if (value.sessionId !== input.sessionId || value.expectedRunId !== input.expectedRunId
+          || value.requestId !== input.requestId || typeof value.frontier !== 'number'
+          || !Number.isSafeInteger(value.frontier) || !Array.isArray(value.receipts)) {
+          throw new Error('Runtime returned an invalid Session Stop receipt');
+        }
+        const receipts = value.receipts.map((entry: unknown) => {
+          const receipt = parseRuntimeRunStopReceipt(entry, requireStringField(requireRecord(entry), 'runId'));
+          if (receipt.sessionId !== input.sessionId) throw new Error('Session Stop receipt belongs to another Session');
+          return receipt;
+        });
+        return { ...input, frontier: value.frontier, receipts };
+      },
     },
     runs: {
       acceptInput(input) {
@@ -670,17 +691,24 @@ export function createRuntimeDaemonClient(
         return options.transport.request('input.withdraw', { sessionId, inputId }) as ReturnType<KodaXRuntime['runs']['withdrawInput']>;
       },
       async start(input: RuntimeDaemonStartRunInput): Promise<RuntimeRunHandle> {
+        const capability = options.capabilities?.toolInvocation;
+        if (input.options?.toolInvocation && (typeof capability !== 'object' || capability === null
+          || !('version' in capability) || capability.version !== 1)) {
+          throw Object.assign(new Error('Explicit tool invocation requires Runtime toolInvocation v1; upgrade the owner.'),
+            { code: 'client_upgrade_required' });
+        }
         const transportInput = input;
         assertRuntimeTransportSafe(transportInput, 'run.start');
         const started = requireRecord(await request('run.start', transportInput));
         const runId = requireStringField(started, 'runId');
         const sessionId = requireStringField(started, 'sessionId');
         const turnId = optionalStringField(started, 'turnId');
+        let result: RuntimeRunHandle['result'] | undefined;
         return {
           runId,
           sessionId,
           ...(turnId !== undefined ? { turnId } : {}),
-          result: requestRuntimeRunResult(request, runId),
+          get result() { return result ??= requestRuntimeRunResult(request, runId); },
         };
       },
       async submitInput(input) {
@@ -1026,8 +1054,8 @@ export function createRuntimeDaemonClient(
       resume(runId: string) {
         return request('workflow.resume', { runId }) as Promise<boolean>;
       },
-      stop(runId: string) {
-        return request('workflow.stop', { runId }) as Promise<boolean>;
+      stop(runId: string, options?: { readonly sessionId: string }) {
+        return request('workflow.stop', { runId, ...options }) as Promise<boolean>;
       },
       async start(input: RuntimeWorkflowStartInput): Promise<RuntimeWorkflowStartResult> {
         return request('workflow.start', input as unknown as Record<string, unknown>) as Promise<RuntimeWorkflowStartResult>;
@@ -1140,6 +1168,9 @@ export function createRuntimeDaemonClient(
       },
     },
     mcp: {
+      status() {
+        return request('mcp.server.status') as ReturnType<KodaXRuntime['mcp']['status']>;
+      },
       listServers() {
         return request('mcp.server.list') as Promise<Record<string, McpServerConfig>>;
       },
