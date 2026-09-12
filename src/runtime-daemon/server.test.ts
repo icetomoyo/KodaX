@@ -1809,7 +1809,7 @@ describe('runtime daemon dispatcher', () => {
           },
           runtimeEventCoalescing: { version: 1 },
           runtimeAutoModeGuardrail: {
-            version: 5,
+            version: 6,
             owner: 'session-runtime',
             sandboxFirst: true,
             sandboxCompletionAuthority: true,
@@ -1824,6 +1824,8 @@ describe('runtime daemon dispatcher', () => {
             permissionGrantSuggestions: true,
             concretePermissionMatchers: true,
             clientScopeExpansion: false,
+            exactTextMutationApproval: true,
+            livePermissionContext: true,
           },
           sharedSessionSettings: {
             version: 2,

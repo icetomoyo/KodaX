@@ -61,6 +61,7 @@ import {
   CANCELLED_TOOL_RESULT_MESSAGE,
   resolveProviderModelDescriptors,
   toolBash,
+  toolWrite,
 } from "@kodax-ai/coding";
 import {
   getScopedProviderCredential,
@@ -109,7 +110,7 @@ const mutableNodeFs = createRequire(import.meta.url)("node:fs") as {
 const SESSION_EVENT_JOURNAL_CAPABILITY = {
   sessionEventJournal: { version: 1 },
   liveOutputSegments: { version: 1 },
-  runtimeAutoModeGuardrail: { version: 5, owner: "session-runtime" },
+  runtimeAutoModeGuardrail: { version: 6, owner: "session-runtime" },
   sharedSessionSettings: { version: 2 },
   ...(process.platform === "win32" ? { sandboxRuntime: { version: 11 } } : {}),
 } as const;
@@ -298,7 +299,7 @@ describe("createKodaXRuntime", () => {
       "./sdk-runtime.js"
     );
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.conversationHistory).toBe(2);
-    expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(5);
+    expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(6);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.sharedSessionSettings).toBe(2);
     const runtime = await createKodaXRuntime({
       mode: "embedded",
@@ -306,7 +307,7 @@ describe("createKodaXRuntime", () => {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "worker-sessions"),
       requirements: {
-        runtimeAutoModeGuardrail: 5,
+        runtimeAutoModeGuardrail: 6,
         sharedSessionSettings: 2,
       },
     });
@@ -337,7 +338,7 @@ describe("createKodaXRuntime", () => {
       commandLifetimeFilesystemLease: false,
     });
     expect(runtime.capabilities?.runtimeAutoModeGuardrail).toMatchObject({
-      version: 5,
+      version: 6,
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
       hostBoundaryReviewOnly: true,
@@ -899,7 +900,7 @@ describe("createKodaXRuntime", () => {
     ).rejects.toThrow(/does not support.*actorControlPlane/i);
   });
 
-  it("fails closed when an attach-only daemon lacks Runtime-owned Auto guardrails", async () => {
+  it.each([4, 5])("fails closed when an attach-only daemon has outdated text authority (v%s)", async (version) => {
     const { createKodaXRuntime } = await import("./sdk-runtime.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
@@ -910,11 +911,11 @@ describe("createKodaXRuntime", () => {
             mode: "daemon",
             profile: "default",
             startedAt: "2026-07-18T00:00:00.000Z",
-            version: "0.7.72",
+            version: KODAX_VERSION,
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            runtimeAutoModeGuardrail: { version: 4, owner: "session-runtime" },
+            runtimeAutoModeGuardrail: { version, owner: "session-runtime" },
             sharedSessionSettings: { version: 2 },
           },
         };
@@ -949,7 +950,7 @@ describe("createKodaXRuntime", () => {
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
             runtimeAutoModeGuardrail: {
-              version: 5,
+              version: 6,
               owner: "session-runtime",
             },
           },
@@ -968,7 +969,7 @@ describe("createKodaXRuntime", () => {
     ).rejects.toThrow(/does not support.*runtimeEventCoalescing/i);
   });
 
-  it("accepts a newer Runtime Auto guardrail capability for the alpha.4 minimum", async () => {
+  it("accepts a newer Runtime Auto guardrail capability", async () => {
     const { connectKodaXRuntime } = await import("./sdk-runtime.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
@@ -983,7 +984,7 @@ describe("createKodaXRuntime", () => {
           },
           capabilities: {
             ...SESSION_EVENT_JOURNAL_CAPABILITY,
-            runtimeAutoModeGuardrail: { version: 6, owner: "session-runtime" },
+            runtimeAutoModeGuardrail: { version: 7, owner: "session-runtime" },
           },
         };
       },
@@ -994,7 +995,7 @@ describe("createKodaXRuntime", () => {
 
     const runtime = await connectKodaXRuntime({
       transport,
-      requirements: { runtimeAutoModeGuardrail: 5 },
+      requirements: { runtimeAutoModeGuardrail: 6 },
     });
     expect(runtime.identity.runtimeId).toBe("daemon-with-auto-guardrail-v2");
     await runtime.close();
@@ -18683,6 +18684,74 @@ describe("createKodaXRuntime", () => {
       await invocation?.cleanup();
       await runtime.runs.abort(handle.runId);
       await runtime.close();
+    }
+  });
+
+  it("carries exact Auto approvals into external text transactions without granting sibling targets", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const externalRoot = await fs.mkdtemp(path.join(process.cwd(), ".runtime-text-test-"));
+    const projectRoot = path.join(tempRoot, "text-workspace");
+    await fs.mkdir(projectRoot);
+    const fakeGuardrail = {
+      kind: "tool", name: "auto-mode", beforeTool: vi.fn(async () => ({ action: "allow" as const })),
+      getStats: () => ({ classifierHealth: "healthy" as const, denials: {}, breaker: {} }),
+      getStatsForTest: () => ({ classifierHealth: "healthy" as const, denials: {}, breaker: {} }),
+      setProviderForTest: () => undefined,
+    } as unknown as AutoModeToolGuardrail;
+    replMock.bootstrapAutoMode.mockResolvedValue({ getGuardrail: () => fakeGuardrail });
+    let runOptions: KodaXOptions | undefined;
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      runOptions = options;
+      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+    });
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, "sessions"),
+      defaultProvider: "mock-provider", defaultModel: "mock-model", sharedDaemonHost: true });
+    try {
+      const session = await runtime.sessions.create({ projectPath: projectRoot });
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "auto", executionCwd: projectRoot });
+      const handle = await runtime.runs.start({ sessionId: session.id, prompt: "write external file",
+        options: { context: { executionCwd: projectRoot, gitRoot: projectRoot } } });
+      await flushMicrotasks();
+      if (!runOptions) throw new Error("expected Runtime run options");
+      const target = path.join(externalRoot, "approved.txt");
+      const call = { id: "approved-external", name: "write", input: { path: target, content: "approved" } };
+      await authorizeRuntimeAutoCall(runOptions, call);
+      await expect(runOptions.events?.beforeToolExecute?.(call.name, call.input, { toolId: call.id }))
+        .resolves.toBe(true);
+      const ctx = { ...runOptions.context, gitRoot: projectRoot, backups: new Map(), toolCallId: call.id };
+      await expect(toolWrite({ ...call.input, path: path.join(externalRoot, "sibling.txt") }, ctx))
+        .rejects.toMatchObject({ code: "text_mutation_policy_denied" });
+      await expect(toolWrite({ ...call.input, content: "not approved" }, ctx))
+        .rejects.toMatchObject({ code: "text_mutation_policy_denied" });
+      await expect(toolWrite(call.input, ctx)).resolves.toContain("File created");
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("approved");
+      await expect(toolWrite(call.input, ctx)).rejects.toMatchObject({ code: "text_mutation_policy_denied" });
+      const revoked = { id: "revoked-external", name: "write", input: {
+        path: path.join(externalRoot, "revoked.txt"), content: "must not commit",
+      } };
+      await authorizeRuntimeAutoCall(runOptions, revoked);
+      await expect(runOptions.events?.beforeToolExecute?.(revoked.name, revoked.input, { toolId: revoked.id })).resolves.toBe(true);
+      const host = runOptions.context?.trustedTextMutationHost;
+      if (!host) throw new Error("expected native text host");
+      const snapshot = await host.snapshot({ path: revoked.input.path, createParentDirectories: true, toolCall: revoked });
+      // Returning to Auto must not resurrect a grant issued before a mode change.
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "auto" });
+      await expect(host.commit({ path: revoked.input.path, content: revoked.input.content,
+        expectedRevision: snapshot.revision, createParentDirectories: true, toolCall: revoked,
+      })).rejects.toMatchObject({ code: "text_mutation_policy_denied" });
+      await expect(fs.access(revoked.input.path)).rejects.toMatchObject({ code: "ENOENT" });
+      const protectedCall = { id: "protected-text", name: "write", input: {
+        path: path.join(projectRoot, ".kodax", "exec-policy.jsonc"), content: "{}",
+      } };
+      await authorizeRuntimeAutoCall(runOptions, protectedCall);
+      await expect(runOptions.events?.beforeToolExecute?.(protectedCall.name, protectedCall.input, { toolId: protectedCall.id })).resolves.toBe(true);
+      await expect(toolWrite(protectedCall.input, { ...ctx, toolCallId: protectedCall.id }))
+        .rejects.toMatchObject({ code: "text_mutation_policy_denied", denialSource: "runtime_integrity" });
+      await runtime.runs.abort(handle.runId);
+    } finally {
+      await runtime.close();
+      await fs.rm(externalRoot, { recursive: true, force: true });
     }
   });
 

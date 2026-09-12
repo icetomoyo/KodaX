@@ -609,7 +609,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
@@ -667,7 +667,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
@@ -711,7 +711,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
@@ -788,7 +788,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonManagement: { version: 1 },
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
@@ -859,7 +859,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         conversationHistory: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
       },
@@ -903,7 +903,7 @@ describe('Runtime daemon capability upgrade', () => {
       daemonManagement: { version: 1 },
       managedRunDurability: { version: 1 },
       liveOutputSegments: { version: 1 },
-      runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+      runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
       sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
@@ -1021,7 +1021,7 @@ describe('Runtime daemon capability upgrade', () => {
         daemonShutdownVerification: { version: 1 },
         liveOutputSegments: { version: 1 },
         managedRunDurability: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
@@ -1114,7 +1114,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: { version: 2 },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: sandboxVersion, asrtVersion: '0.0.65' },
           sessionEventJournal: { version: 1 },
@@ -1166,7 +1166,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         crashOutcomeModel: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -1216,7 +1216,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         crashOutcomeModel: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
     })));
@@ -1245,7 +1245,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: { version: 2 },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: sandboxVersion, asrtVersion: '0.0.65' },
           sessionEventJournal: { version: 1 },
@@ -1278,7 +1278,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
     });
@@ -1320,7 +1320,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         managedRunDurability: undefined,
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -1366,7 +1366,7 @@ describe('Runtime daemon capability upgrade', () => {
           actorSettlementConvergence: version === undefined ? undefined : { version },
           daemonManagement: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
         onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -1414,7 +1414,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonManagement: { version: 1 },
           sandboxRuntime: { version: 2 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
         onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
@@ -1460,7 +1460,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonManagement: { version: 1 },
           sandboxRuntime: { version: 2 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
         },
       });
@@ -1503,7 +1503,7 @@ describe('Runtime daemon capability upgrade', () => {
       liveOutputSegments: 1,
       managedRunDurability: 1,
       runtimeExitSettlement: 2,
-      runtimeAutoModeGuardrail: 5,
+      runtimeAutoModeGuardrail: 6,
       sandboxRuntime: 11,
       sharedSessionSettings: 2,
       runtimeEventCoalescing: 1,
@@ -1528,7 +1528,7 @@ describe('Runtime daemon capability upgrade', () => {
           daemonShutdownVerification: { version: 1 },
           liveOutputSegments: { version: 1 },
           managedRunDurability: { version: 1 },
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: 10 },
           sessionEventJournal: { version: 1 },
@@ -1574,7 +1574,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       },
       onRollback: () => upgradeMocks.readLockOwner.mockReturnValue(undefined),
     });
@@ -1618,7 +1618,7 @@ describe('Runtime daemon capability upgrade', () => {
       actorSettlementConvergence: { version: 2 },
       daemonManagement: { version: 1 },
       managedRunDurability: { version: 1 },
-      runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+      runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       runtimeEventCoalescing: { version: 1 },
       sandboxRuntime: { version: 11 },
       sessionEventJournal: { version: 1 },
@@ -1692,7 +1692,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: undefined,
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
       },
@@ -1724,7 +1724,7 @@ describe('Runtime daemon capability upgrade', () => {
         capabilities: {
           daemonManagement: { version: 1 },
           daemonShutdownVerification: undefined,
-          runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+          runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
           runtimeEventCoalescing: { version: 1 },
           sandboxRuntime: { version: 11 },
         },
@@ -1767,7 +1767,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
       },
@@ -1845,7 +1845,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       },
       onInitialize: (params) => initializedParams.push(params),
     });
@@ -1971,7 +1971,7 @@ describe('Runtime daemon capability upgrade', () => {
       omitLiveOutputSegments: true,
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       },
     });
 
@@ -2042,7 +2042,7 @@ describe('Runtime daemon capability upgrade', () => {
       capabilities: {
         conversationHistory: { version: 1 },
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         sandboxRuntime: { version: 11 },
       },
@@ -2082,7 +2082,7 @@ describe('Runtime daemon capability upgrade', () => {
       close: vi.fn(async () => undefined),
       capabilities: {
         daemonManagement: { version: 1 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
       },
     });
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(
@@ -2320,7 +2320,7 @@ function createCurrentTransport(
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         ...(process.platform === 'win32'
           ? { daemonShutdownVerification: { version: 1 } }

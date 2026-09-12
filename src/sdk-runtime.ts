@@ -246,6 +246,7 @@ import {
   sandboxRuntimeCapability,
 } from "./sandbox-runtime.js";
 import { createTrustedTextMutationHost } from "./windows-text-transaction.js";
+import { createTrustedTextApprovals } from "./trusted-text-approvals.js";
 import type {
   RuntimeAgentBindingService,
   RuntimeAgentOwnerSession,
@@ -851,7 +852,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   daemonShutdownVerification: 1,
   effectiveConfig: 1,
   managedRunDurability: 1,
-  runtimeAutoModeGuardrail: 5,
+  runtimeAutoModeGuardrail: 6,
   runtimeExitSettlement: 2,
   sandboxRuntime: 11,
   sessionEventJournal: 1,
@@ -923,7 +924,7 @@ export interface RuntimeCapabilityRequirements {
   /** Require the sandbox-first execution chain and permission fallback revision. */
   readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   /** Runtime owns Auto[LLM] review at the proven host boundary. */
-  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5;
+  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5 | 6;
 }
 
 export type RuntimeOperationState =
@@ -3624,6 +3625,7 @@ interface RuntimeRunRecord {
   execPolicyErrors?: readonly { readonly path: string; readonly message: string }[];
   readonly trustedProjectExecPolicySnapshotPath?: string;
   forcedPermissionCalls?: Set<string>;
+  trustedTextApprovals?: ReturnType<typeof createTrustedTextApprovals>;
   reasoning?: KodaXReasoningMode;
   error?: string;
   failureDetail?: RuntimeFailureDetail;
@@ -4113,7 +4115,7 @@ export async function createKodaXRuntime(
         ...options.requirements,
         sessionEventJournal: 1 as const,
         liveOutputSegments: 1 as const,
-        runtimeAutoModeGuardrail: 5 as const,
+        runtimeAutoModeGuardrail: 6 as const,
         sharedSessionSettings: 2 as const,
         ...(autoStart
           ? {
@@ -4229,7 +4231,7 @@ export async function createKodaXRuntime(
     },
     runtimeEventCoalescing: { version: 1 },
     runtimeAutoModeGuardrail: {
-      version: 5,
+      version: 6,
       owner: "session-runtime",
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
@@ -4244,6 +4246,8 @@ export async function createKodaXRuntime(
       permissionGrantSuggestions: true,
       concretePermissionMatchers: true,
       clientScopeExpansion: false,
+      exactTextMutationApproval: true,
+      livePermissionContext: true,
     },
     sharedSessionSettings: {
       version: 2,
@@ -5315,7 +5319,7 @@ function daemonCapabilityRequirements(
     ...options.requirements,
     sessionEventJournal: 1,
     liveOutputSegments: 1,
-    runtimeAutoModeGuardrail: 5,
+    runtimeAutoModeGuardrail: 6,
     sharedSessionSettings: 2,
     ...(process.platform === "win32" ? { sandboxRuntime: 11 } : {}),
     ...(options.autoStart === true
@@ -9580,6 +9584,7 @@ function createRuntimeRunService(deps: {
     void requestManagedActorCancellation(record, reason);
     record.actorFinalizationAbortController?.abort(abortError);
     deps.permissions.rejectForRun(record.runId, reason);
+    record.trustedTextApprovals?.clear();
     deps.userInputs.rejectForRun(record.runId, reason);
     record.start?.options.guardrails
       ?.find(isRuntimeAutoModeGuardrail)
@@ -10301,6 +10306,7 @@ function createRuntimeRunService(deps: {
           (record.phase !== "queued" && !isActiveRunPhase(record.phase))
         )
           continue;
+        if (record.permissionMode !== current.value.permissionMode) record.trustedTextApprovals?.clear();
         record.permissionMode = current.value.permissionMode;
         record.autoModeClassifierModel = current.value.autoModeClassifierModel;
         publishRunUpdate(record);
@@ -12091,6 +12097,9 @@ function buildRunOptions(input: {
     sessionManager,
     workspaceRoot,
   });
+  const textApprovals = createTrustedTextApprovals(executionCwd, () =>
+    replApi.normalizePermissionMode(record.permissionMode) === "auto");
+  record.trustedTextApprovals = textApprovals;
   const runtimeTrustedTextMutationHost = createTrustedTextMutationHost(
     () => [
       workspaceRoot,
@@ -12104,6 +12113,7 @@ function buildRunOptions(input: {
       resolveShellPermissionMode() === "full-access",
     ),
     () => resolveShellPermissionMode() === "full-access",
+    textApprovals.authorize,
   );
   const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
@@ -19144,7 +19154,7 @@ function wrapKodaXEvents(input: {
       record.activeEffectCount = (record.activeEffectCount ?? 0) + 1;
     },
     onToolExecutionEnd(tool, meta) {
-      void tool;
+      record.trustedTextApprovals?.revoke(tool.id);
       void meta;
       record.activeEffectCount = Math.max(0, (record.activeEffectCount ?? 0) - 1);
       if ((record.activeEffectCount ?? 0) === 0) {
@@ -19516,6 +19526,7 @@ function wrapKodaXEvents(input: {
         if (!allowed) {
           return "[Blocked] Runtime auto mode did not classify this concrete tool call.";
         }
+        record.trustedTextApprovals?.grant(exactCall);
         return true;
       }
       if (
@@ -22365,6 +22376,7 @@ function markRunTerminal(
   run.phase = phase;
   if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();
+  run.trustedTextApprovals?.clear();
   run.stage = "terminal";
   run.stageChangedAt = endedAt;
   run.activeSubtaskCount = 0;

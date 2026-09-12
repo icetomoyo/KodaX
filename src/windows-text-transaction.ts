@@ -8,6 +8,7 @@ import type {
   KodaXTrustedTextCommitOutcome,
   KodaXTrustedTextFileSnapshot,
   KodaXTrustedTextMutationHost,
+  KodaXTrustedTextToolCall,
 } from '@kodax-ai/coding';
 import { KodaXTrustedTextMutationError } from '@kodax-ai/coding';
 import {
@@ -143,12 +144,12 @@ function normalizedRootCandidates(roots: readonly string[]): readonly string[] {
   return [...unique.values()].sort((left, right) => right.length - left.length);
 }
 
-function authorizeTarget(target: string, roots: readonly string[], fullAccess = false): AuthorizedTarget {
+function authorizeTarget(target: string, roots: readonly string[], allowOutsideRoots = false): AuthorizedTarget {
   assertSupportedAbsolutePath(target, 'target');
   for (const root of roots) assertSupportedAbsolutePath(root, 'write root');
   const resolvedTarget = path.resolve(target);
   const candidates = [...normalizedRootCandidates(roots)];
-  if (fullAccess) {
+  if (allowOutsideRoots) {
     let anchor = path.dirname(resolvedTarget);
     while (!fs.existsSync(anchor)) {
       const parent = path.dirname(anchor);
@@ -403,13 +404,17 @@ export function createTrustedTextMutationHost(
   roots: () => readonly string[],
   authorizeCanonicalTarget: (canonicalTarget: string) => void,
   hasFullAccess: () => boolean = () => false,
+  authorizeApprovedTarget?: (
+    call: KodaXTrustedTextToolCall | undefined, target: string, phase: 'snapshot' | 'commit',
+  ) => boolean,
 ): KodaXTrustedTextMutationHost {
   return {
     async snapshot(input) {
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
       const fullAccess = hasFullAccess();
-      const target = authorizeTarget(input.path, roots(), fullAccess);
+      const approved = authorizeApprovedTarget?.(input.toolCall, input.path, 'snapshot') === true;
+      const target = authorizeTarget(input.path, roots(), fullAccess || approved);
       authorizeCanonicalTarget(target.canonicalTarget);
       assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {
@@ -424,7 +429,8 @@ export function createTrustedTextMutationHost(
       if (input.signal?.aborted) throw input.signal.reason;
       assertSupportedAbsolutePath(input.path, 'target');
       const fullAccess = hasFullAccess();
-      const target = authorizeTarget(input.path, roots(), fullAccess);
+      const approved = authorizeApprovedTarget?.(input.toolCall, input.path, 'commit') === true;
+      const target = authorizeTarget(input.path, roots(), fullAccess || approved);
       authorizeCanonicalTarget(target.canonicalTarget);
       assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {

@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Unify trusted text authority across Runtime Sessions and direct SDK entries.
+  Full Access now reaches native text transactions through `runKodaX`,
+  `runManagedTask`, and each `KodaXClient.send`. Auto-approved concrete text
+  calls can write their exact external target, including portable `tool_call`
+  dispatch, without granting a directory or reusing approval across operations
+  or Runs. Explicit denials and native integrity checks remain enforced.
+- Include live host permission facts in direct and managed provider requests,
+  including retries, independently of configuration defaults and prompt
+  overrides. Runtime permission capability 6 fences older daemon authority.
+
 ---
 
 ## [0.7.96-beta.9] - 2026-09-12

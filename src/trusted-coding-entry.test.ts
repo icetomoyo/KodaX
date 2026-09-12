@@ -4,6 +4,7 @@ import type { KodaXOptions, KodaXTrustedTextMutationHost } from '@kodax-ai/codin
 
 const mocks = vi.hoisted(() => ({
   clientOptions: [] as KodaXOptions[],
+  clientRunners: [] as Array<(options: KodaXOptions, prompt: string) => Promise<unknown>>,
   createTaskRunner: vi.fn(),
   createDefaultAgent: vi.fn(),
   host: {
@@ -19,8 +20,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@kodax-ai/coding', () => ({
   KodaXClient: class {
-    constructor(options: KodaXOptions) {
+    constructor(options: KodaXOptions, run: (options: KodaXOptions, prompt: string) => Promise<unknown>) {
       mocks.clientOptions.push(options);
+      mocks.clientRunners.push(run);
     }
   },
   assertTrustedTextMutationPolicy: vi.fn(),
@@ -52,6 +54,7 @@ function options(context: KodaXOptions['context'] = {}): KodaXOptions {
 describe('KodaX direct coding entries', () => {
   beforeEach(() => {
     mocks.clientOptions.length = 0;
+    mocks.clientRunners.length = 0;
     mocks.createHost.mockReset().mockReturnValue(mocks.host);
     mocks.createDefaultAgent.mockReset().mockImplementation((overrides) => ({
       name: 'kodax/coding/default',
@@ -102,15 +105,19 @@ describe('KodaX direct coding entries', () => {
     expect(roots()).toEqual(['C:\\repo', 'C:\\repo', 'C:\\linked-worktree']);
   });
 
-  it('binds the same default authority to startKodaX and KodaXClient', () => {
+  it('binds startKodaX immediately and a fresh Client authority per send', async () => {
     startKodaX(options({ executionCwd: 'C:\\repo' }), 'write');
     new KodaXClient(options({ executionCwd: 'C:\\repo' }));
     new Client(options({ executionCwd: 'C:\\repo' }));
 
     expect(mocks.start.mock.calls[0]?.[0].context?.trustedTextMutationHost).toBe(mocks.host);
-    expect(mocks.clientOptions[0]?.context?.trustedTextMutationHost).toBe(mocks.host);
-    expect(mocks.clientOptions[1]?.context?.trustedTextMutationHost).toBe(mocks.host);
+    expect(mocks.clientOptions[0]?.context?.trustedTextMutationHost).toBeUndefined();
+    expect(mocks.clientOptions[1]?.context?.trustedTextMutationHost).toBeUndefined();
+    await mocks.clientRunners[0]!(mocks.clientOptions[0]!, 'first');
+    await mocks.clientRunners[0]!(mocks.clientOptions[0]!, 'second');
     expect(mocks.createHost).toHaveBeenCalledTimes(3);
+    expect(mocks.run.mock.calls[0]?.[0].context?.trustedTextMutationHost).toBe(mocks.host);
+    expect(mocks.run.mock.calls[1]?.[0].context?.trustedTextMutationHost).toBe(mocks.host);
   });
 
   it('binds the native authority to the public managed-task entry', async () => {

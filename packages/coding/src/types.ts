@@ -1825,6 +1825,14 @@ export interface KodaXTrustedTextCommitInput {
   readonly content: string;
   readonly createParentDirectories: boolean;
   readonly signal?: AbortSignal;
+  readonly toolCall?: KodaXTrustedTextToolCall;
+}
+
+/** Exact tool invocation identity; only host-issued approval can give it authority. */
+export interface KodaXTrustedTextToolCall {
+  readonly id: string;
+  readonly name: string;
+  readonly input: Readonly<Record<string, unknown>>;
 }
 
 export type KodaXTrustedTextCommitOutcome =
@@ -1858,6 +1866,7 @@ export interface KodaXTrustedTextMutationHost {
     readonly path: string;
     readonly createParentDirectories: boolean;
     readonly signal?: AbortSignal;
+    readonly toolCall?: KodaXTrustedTextToolCall;
   }): Promise<KodaXTrustedTextFileSnapshot>;
   commit(input: KodaXTrustedTextCommitInput): Promise<KodaXTrustedTextCommitOutcome>;
 }

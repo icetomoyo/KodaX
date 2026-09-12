@@ -2376,7 +2376,7 @@ function runtimeDaemonCapabilities(
       ? { runtimeEventCoalescing: { version: 1 } }
       : {}),
     runtimeAutoModeGuardrail: {
-      version: 5,
+      version: 6,
       owner: "session-runtime",
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
@@ -2391,6 +2391,8 @@ function runtimeDaemonCapabilities(
       permissionGrantSuggestions: true,
       concretePermissionMatchers: true,
       clientScopeExpansion: false,
+      exactTextMutationApproval: true,
+      livePermissionContext: true,
     },
     ...(orphanExitEnabled
       ? {

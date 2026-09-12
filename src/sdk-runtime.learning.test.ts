@@ -278,7 +278,7 @@ describe('runtime.learning inline facade', () => {
               sessionEventJournal: { version: 1 },
               liveOutputSegments: { version: 1 },
               sandboxRuntime: { version: 11 },
-              runtimeAutoModeGuardrail: { version: 5 },
+              runtimeAutoModeGuardrail: { version: 6 },
               sharedSessionSettings: { version: 2 },
               skillLearningLoop: {
                 version: 1,

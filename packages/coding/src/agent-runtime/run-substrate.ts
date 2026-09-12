@@ -5,6 +5,7 @@
  */
 
 import { buildLocalExecutionFailure } from '../execution-failure.js';
+import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
 ﻿import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
@@ -1634,7 +1635,7 @@ async function runSubstrateInContext(
       };
       // CAP-064: provider-policy gate — throws on block status, produces
       // the effective system prompt with any policy issue notes appended.
-      const { effectiveSystemPrompt } = applyProviderPolicyGate({
+      const { effectiveSystemPrompt: policySystemPrompt } = applyProviderPolicyGate({
         providerName: turnState.currentProviderName,
         model: turnState.currentModelOverride,
         provider: streamProvider,
@@ -1645,6 +1646,7 @@ async function runSubstrateInContext(
         executionMode: effectiveReasoningPlan.decision.recommendedMode,
         baseSystemPrompt: preparedProviderState.systemPrompt,
       });
+      let effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
       validateInputArtifactsForModel(
         currentExecution.effectiveOptions.context?.inputArtifacts ?? [],
         {
@@ -1946,6 +1948,7 @@ async function runSubstrateInContext(
       });
       let capacityRecoveryUsed = false;
       while (true) {
+        effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
         // same fixed request overhead onto the exact messages sent next.
@@ -2116,6 +2119,7 @@ async function runSubstrateInContext(
             // failure, fall through to recovery-action branches with
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
+            effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
             const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,

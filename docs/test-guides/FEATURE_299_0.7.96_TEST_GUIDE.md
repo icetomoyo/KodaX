@@ -8,12 +8,16 @@ repair a user's Session by deleting Actor snapshots or changing its bytes.
 ```powershell
 npm run build:packages
 npm run typecheck
+npx vitest run src/trusted-coding-permissions.test.ts src/trusted-coding-entry.test.ts src/windows-text-transaction.test.ts packages/coding/src/client.test.ts
+npx vitest run src/sdk-runtime.test.ts -t "Auto|auto|permission|Permission|Full Access|setting|outdated text authority"
+npx vitest run src/sdk-runtime-daemon-upgrade.test.ts
 npx vitest run src/sdk-runtime.stop-admission.test.ts src/sdk-runtime.tool-invocation.test.ts src/sdk-conversation-history.test.ts packages/repl/src/interactive/storage.conversation-page-admission.test.ts
 npx vitest run packages/coding/src/extensions/managed-execution.test.ts packages/coding/src/extensions/session-isolation.test.ts packages/coding/src/extensions/command-lifecycle.test.ts packages/repl/src/interactive/commands-extension.test.ts
 npx vitest run packages/coding/src/permissions/exec-policy.test.ts packages/repl/src/permission/standalone-shell-boundary.test.ts src/exec-policy-cli.test.ts src/windows-text-transaction.test.ts
 npm test
 npm run test:native
 npm run build
+node --test tests/bundled-text-permissions.test.mjs
 cargo fmt --manifest-path native/windows-text-transaction/Cargo.toml -- --check
 git diff --check
 ```
@@ -36,6 +40,9 @@ OS; Windows execution does not prove Unix handle/CAS behavior.
 | Extension isolation | Separate Sessions and Runtime instances, same-name tools, null Runtime, combined Runtime, reload during admission, delayed cleanup, default restoration and command unregister/override restoration |
 | Workflow | Session-owned stop only; no global enumeration/optimistic stopped state; paused and already-cancelled owner signals propagate; confirmation follows cleanup |
 | Text transactions | Full Access edits ordinary .git metadata and external temporary targets through native host authority; protected controls, unsafe paths, link identity, stale revisions and atomicity still enforced; protocol 5 capability required |
+| SDK text authority | Actual provider-driven `runKodaX` and `runManagedTask` writes/edits outside both the effective workspace and system Temp; Full Access and explicit Auto review; native `tool_call` writes; absent approval, reviewer deny, and host veto remain denied |
+| Approval isolation | Different path/content and replay cannot consume an approval; Client sends with the same tool ID have independent authority; vetoed execution cannot leave a reusable grant; Runtime mode round-trip revokes even an already-snapshotted grant |
+| Live permission facts | Actual Runtime provider requests follow Session mode switches over caller defaults; direct requests and managed role requests refresh their mode, including retry; no stale mode is added to stored conversation messages |
 
 ## Manual client check
 

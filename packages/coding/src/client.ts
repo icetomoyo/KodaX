@@ -18,7 +18,7 @@ export class KodaXClient {
   private messages: KodaXMessage[] = [];
   private contextTokenSnapshot: KodaXContextTokenSnapshot | undefined;
 
-  constructor(options: KodaXOptions) {
+  constructor(options: KodaXOptions, private readonly runAgent: typeof runKodaX = runKodaX) {
     this.options = options;
     this.sessionId = options.session?.id ?? '';
     this.messages = options.session?.initialMessages
@@ -32,7 +32,7 @@ export class KodaXClient {
       ? this.messages
       : this.options.session?.initialMessages;
 
-    const result = await runKodaX(
+    const result = await this.runAgent(
       {
         ...this.options,
         session: {
