@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/coding",
-  "version": "0.7.96-beta.9",
+  "version": "0.7.96-rc.1",
   "description": "KodaX Coding Agent - Coding 工具 + Prompts",
   "private": true,
   "type": "module",

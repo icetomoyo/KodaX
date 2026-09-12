@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-beta.9`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.1`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,17 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-beta.9 release carries FEATURE_297 and FEATURE_299 and completes the Windows
-sandbox concurrency regression tracked as Issue 326. Ordinary shell admission
+The v0.7.96-rc.1 release carries FEATURE_297 and FEATURE_299 and unifies
+trusted text authority across Runtime Sessions and direct SDK entries: Full
+Access reaches native text transactions through `runKodaX`, `runManagedTask`,
+and each `KodaXClient.send`; auto-approved concrete text calls write their
+exact external target, including portable `tool_call` dispatch, without
+granting a directory or reusing approval across operations or Runs; explicit
+denials and native integrity checks remain enforced. Direct and managed
+provider requests carry live host permission facts, refreshed on retries, and
+runtime permission capability 6 fences older daemon authority. The release
+keeps the stabilized Windows sandbox concurrency regression fix tracked as
+Issue 326. Ordinary shell admission
 does not run setup, legacy ACL migration, synchronous provisioning, or a
 command-lifetime filesystem-effect coordinator. Warm ACL policy is read-only;
 effective inherited normal-token grants are accepted and only a missing exact

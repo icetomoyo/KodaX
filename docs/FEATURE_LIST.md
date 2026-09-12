@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.9` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.9` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.1` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.1` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9` |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended in `v0.7.96-rc.1` |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Total tracked features | `83` |
 | InProgress | `1` |
@@ -28,7 +28,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9; `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.9; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.1; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -518,9 +518,23 @@
 
 ---
 
+## v0.7.96-rc.1 Release Record
+
+`v0.7.96-rc.1` is the first release candidate of the v0.7.96 line. It
+unifies trusted text authority across Runtime Sessions and direct SDK
+entries: Full Access reaches native text transactions through `runKodaX`,
+`runManagedTask`, and each `KodaXClient.send`; auto-approved concrete text
+calls write their exact external target, including portable `tool_call`
+dispatch, without granting a directory or reusing approval across operations
+or Runs; explicit denials and native integrity checks remain enforced.
+Direct and managed provider requests carry live host permission facts,
+refreshed on retries, and runtime permission capability 6 fences older
+daemon authority. Every beta.9 contract is retained. npm publication remains
+a manual maintainer step.
+
 ## v0.7.96-beta.9 Release Record
 
-`v0.7.96-beta.9` is the ninth beta pre-release of the v0.7.96 line and ships
+`v0.7.96-beta.9` was the ninth beta pre-release of the v0.7.96 line and ships
 FEATURE_299. Owned Run controls and atomic Session Stop work independently
 of file locks across direct CLI, SDK, daemon, and ACP hosts under a single
 acceptance-versus-confirmation Stop contract; duplicate and restarted Stop

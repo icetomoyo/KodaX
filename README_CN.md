@@ -296,6 +296,13 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.1 发布**：v0.7.96 线首个发布候选。统一 Runtime Session 与直接
+SDK 入口的可信文本授权：Full Access 通过 `runKodaX`、`runManagedTask` 与每个
+`KodaXClient.send` 覆盖原生文本事务；自动批准的具体文本调用可写入其确切外部
+目标（包括可移植的 `tool_call` 分发），但不授予目录权限，也不会跨操作或跨 Run
+复用批准；显式拒绝与原生完整性校验继续生效。直接与托管 provider 请求携带实时
+宿主权限事实并在重试时刷新，runtime 权限 capability 6 阻止旧 daemon 提供该授权。
+
 **v0.7.96-beta.9 发布**：交付 FEATURE_299——统一 Stop、Full Access 与扩展
 执行契约。owned Run 控制与原子 Session Stop 不依赖文件锁，跨直接 CLI、SDK、
 daemon 与 ACP 宿主在单一"受理 vs 确认"Stop 契约下工作。Full Access 直接在
@@ -369,8 +376,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.9 发布清单](docs/release.md#v0796-beta9-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.1 发布清单](docs/release.md#v0796-rc1-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

@@ -7,9 +7,9 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide tracks the `v0.7.96-beta.9` release; npm publication remains a
+This guide tracks the `v0.7.96-rc.1` release; npm publication remains a
 separate manual maintainer step. The SDK
-advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:5`,
+advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:6`,
 `sharedSessionSettings:2`, `runtimeExitSettlement:2`, and
 `crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
@@ -4743,7 +4743,7 @@ const runtime = await connectKodaXRuntime({
     daemonManagement: 1,
     runtimeEventCoalescing: 1,
     liveOutputSegments: 1,
-    runtimeAutoModeGuardrail: 5,
+    runtimeAutoModeGuardrail: 6,
   },
 });
 ```
@@ -4756,7 +4756,7 @@ Coder. Products that depend on same-Run delivery should require
 (for example, SA execution) still return `unsupported_capability`; do not
 silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
-The SDK requires `runtimeAutoModeGuardrail:5` and
+The SDK requires `runtimeAutoModeGuardrail:6` and
 `sharedSessionSettings:2` automatically for ordinary `autoStart: true`.
 The capability gate prevents an alpha.6 client from attaching to an alpha.3
 daemon that advertises the older permission-before-sandbox contract. Supplying
@@ -4800,7 +4800,7 @@ Require it before auto-start so an idle daemon that still exposes the legacy
 ordinary-history projection is replaced; a busy or otherwise unsafe owner
 produces the normal capability-upgrade error.
 
-`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-beta.9
+`KODAX_RUNTIME_SDK_CAPABILITIES.sandboxRuntime` is `11` in v0.7.96-rc.1
 and `crashOutcomeModel` remains `2`. Windows auto-start requires
 `sandboxRuntime:11`, so an idle v10-or-older daemon is replaced. Concurrent
 authenticated upgrade clients converge on one fenced replacement, including
@@ -5395,6 +5395,10 @@ secret-redacted operator label. Clients must not keep separate persistent
 permission rule stores. Runtime capability `runtimeAutoModeGuardrail` v5
 advertises sandbox completion as authority, host-boundary-only Auto review,
 one bounded host retry, and no automatic user prompt on reviewer denial.
+Capability v6 adds the corrected concrete text-call approval and live
+permission context contracts: Auto approvals bind to one exact text call
+without granting a directory, and direct plus managed provider requests carry
+the live permission mode refreshed on retries.
 `sharedSessionSettings` v2 advertises the four canonical profiles and the
 input-only `auto-in-project` alias. Embedded, Worker, and daemon hosts expose
 the same contract; restart or upgrade an older daemon instead of falling back

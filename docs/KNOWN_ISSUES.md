@@ -206,6 +206,24 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-rc.1 Release Corrections
+
+The rc.1 corrections close the trusted-text authority gap between Runtime
+Sessions and direct SDK entries: Full Access previously gated native text
+transactions only on the Runtime path, so `runKodaX`, `runManagedTask`, and
+`KodaXClient.send` entries could not write approved external targets under
+the same policy. Auto approvals are now bound to the concrete tool ID,
+complete input, and resolved target — one snapshot/commit transaction each,
+including via portable `tool_call` dispatch — without granting a writable
+directory or reusing an approval across operations or Runs; explicit denials,
+protected files, native link/path validation, and revision/CAS checks stay
+enforced. Provider requests previously inferred permission context from
+`config.json` defaults or stale persisted messages; direct and managed
+requests now include the live host permission mode refreshed on retries.
+Runtime permission capability 6 (`runtimeAutoModeGuardrail`) fences older
+daemons from serving the corrected authority. See
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
+
 ## v0.7.96-beta.9 Release Corrections
 
 The beta.9 FEATURE_299 implementation resolves the unified Stop and

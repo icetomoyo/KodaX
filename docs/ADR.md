@@ -2,7 +2,18 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-03
+> Last updated: 2026-09-12
+>
+> **v0.7.96-rc.1 release addendum:** Under ADR-066's separate-authority model,
+> trusted text authority now behaves identically for Runtime Sessions and
+> direct SDK entries: Full Access reaches native text transactions through
+> `runKodaX`, `runManagedTask`, and each `KodaXClient.send`, and auto-approved
+> concrete text calls authorize their exact external target — including
+> portable `tool_call` dispatch — without granting a directory or reusing an
+> approval across operations or Runs; explicit denials and native integrity
+> checks stay enforced. Direct and managed provider requests carry live host
+> permission facts refreshed on retries, and runtime permission capability 6
+> fences older daemon authority.
 >
 > **v0.7.96-beta.9 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native

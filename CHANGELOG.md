@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.1] - 2026-09-12
+
+First release candidate of the v0.7.96 line: trusted text authority is
+unified across Runtime Sessions and direct SDK entries, and provider requests
+carry live permission facts. Every beta.9 contract is retained. npm
+publication remains a manual maintainer action.
+
 ### Fixed
 
 - Unify trusted text authority across Runtime Sessions and direct SDK entries.
