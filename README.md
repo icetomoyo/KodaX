@@ -784,6 +784,17 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-beta.9 release:** Ships FEATURE_299 — unified Stop, Full Access
+and extension execution contracts. Owned Run controls and atomic Session
+Stop work independently of file locks across direct CLI, SDK, daemon, and
+ACP hosts under a single acceptance-versus-confirmation Stop contract.
+Full Access executes directly on the host without sandbox, approval prompts,
+or built-in dangerous-command fallbacks while explicit forbidden rules stay
+enforced; `kodax execpolicy check --mode full-access` inspects that profile
+without running it. Managed extensions gain an execution contract with
+reload isolation, and legacy oversized `actorSnapshot` metadata pages
+correctly instead of failing Conversation continuation.
+
 **v0.7.96-beta.8 release:** Adds `runtime.sessions.confirmIdentityAlias`
 for explicitly confirmed legacy interrupt identities: registration verifies
 the original delivery receipt and session revision, preserves an immutable
@@ -849,7 +860,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta8-release-preparation).
+[release checklist](docs/release.md#v0796-beta9-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

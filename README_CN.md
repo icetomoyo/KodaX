@@ -296,6 +296,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-beta.9 发布**：交付 FEATURE_299——统一 Stop、Full Access 与扩展
+执行契约。owned Run 控制与原子 Session Stop 不依赖文件锁，跨直接 CLI、SDK、
+daemon 与 ACP 宿主在单一"受理 vs 确认"Stop 契约下工作。Full Access 直接在
+宿主执行，无沙箱、无审批提示、不套用内置危险命令回退，同时显式禁止规则
+仍然生效；`kodax execpolicy check --mode full-access` 可在不执行的情况下
+检查该 profile。托管扩展获得带重载隔离的执行契约；超大 legacy
+`actorSnapshot` 元数据正确分页，不再中断 Conversation 续读。
+
 **v0.7.96-beta.8 发布**：新增 `runtime.sessions.confirmIdentityAlias`，
 用于显式确认的遗留中断标识：注册时验证原始投递回执与 session revision，
 保留不可变审计记录并拒绝竞争声明。别名跨保存、压缩、重启与分页生效；
@@ -362,7 +370,7 @@ scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留�
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.8 发布清单](docs/release.md#v0796-beta8-release-preparation)。
+维护者手动执行。详见 [v0.7.96-beta.9 发布清单](docs/release.md#v0796-beta9-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

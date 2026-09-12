@@ -8,6 +8,35 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-beta.9] - 2026-09-12
+
+Ninth beta pre-release of the v0.7.96 line, carrying FEATURE_299 (unified
+Stop, Full Access and extension execution contracts) plus a legacy-metadata
+paging fix. Every beta.8 contract is retained. npm publication remains a
+manual maintainer action.
+
+### Added
+
+- FEATURE_299: unified Stop, Full Access and extension execution contracts.
+  Owned Run controls and atomic Session Stop work independently of file locks
+  across direct CLI, SDK, daemon, and ACP hosts with a single acceptance-versus-
+  confirmation Stop contract. Full Access executes directly on the host without
+  sandbox or approval prompts and without built-in dangerous-command fallbacks,
+  while explicit forbidden rules stay enforced and prompt rules are rejected
+  under Never approval semantics; `kodax execpolicy check --mode full-access`
+  inspects that profile without running it. Managed extensions gain an
+  execution contract with reload isolation, runtime/session separation, and
+  lock-independent effects.
+
+### Fixed
+
+- Legacy large metadata no longer breaks Conversation continuation:
+  `readConversationPageAdmission` pages oversized `actorSnapshot` metadata
+  instead of misreading a >=64 KiB first line as `data_corrupt`, so
+  snapshot-backed pages continue across the previous failure boundary.
+
+---
+
 ## [0.7.96-beta.8] - 2026-09-11
 
 Eighth beta pre-release of the v0.7.96 line: an explicit, audited opt-in for

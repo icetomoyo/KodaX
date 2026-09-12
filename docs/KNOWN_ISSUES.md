@@ -206,6 +206,23 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-beta.9 Release Corrections
+
+The beta.9 FEATURE_299 implementation resolves the unified Stop and
+execution-contract gaps: owned Run controls and atomic Session Stop no
+longer depend on file locks, CLI and ACP hosts converge on one
+acceptance-versus-confirmation Stop contract, and managed extensions run
+under an execution contract with reload isolation and runtime/session
+separation. Full Access now performs direct host execution without sandbox,
+approval prompts, or built-in dangerous-command fallbacks, while explicit
+forbidden rules stay enforced and prompt rules are rejected under Never
+approval semantics — closing the gap where Full Access still applied
+built-in fallbacks that bypassed user policy. A legacy paging bug that made
+snapshot-backed Conversation continuation fail when `actorSnapshot` metadata
+crossed 64 KiB is fixed. Real shared Runtime/socket regressions use actual
+Session and Run control locks; see
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
+
 ## v0.7.96-beta.8 Release Corrections
 
 The beta.8 addition closes the confirmed-identity gap left by beta.7's

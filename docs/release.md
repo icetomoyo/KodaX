@@ -137,9 +137,52 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-beta.9 release preparation
+
+Release state: `v0.7.96-beta.9` is the GitHub pre-release for the exact
+tagged commit, shipping FEATURE_299 (unified Stop, Full Access and extension
+execution contracts). The tag-triggered Release workflow builds every
+platform archive and the universal npm tarball, publishes checksums, and
+creates the GitHub pre-release. npm registry publication remains a separate
+manual maintainer action.
+
+On top of beta.8 it includes:
+
+- FEATURE_299: owned Run controls and atomic Session Stop independent of
+  file locks across CLI, SDK, daemon, and ACP hosts under one
+  acceptance-versus-confirmation Stop contract; Full Access direct host
+  execution without sandbox, approval prompts, or built-in
+  dangerous-command fallbacks while explicit forbidden rules stay enforced;
+  `kodax execpolicy check --mode full-access`; managed extension execution
+  with reload isolation; legacy large `actorSnapshot` metadata paging.
+
+All root/workspace package versions and lockfile entries are `0.7.96-beta.9`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, FEATURE_299 stop-admission/extension/text-transaction regressions,
+   prompt-cache diagnostics/wire regressions, bundle/ASRT regressions, and
+   package/declaration builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-beta.9`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=beta` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "beta"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2` and `crashOutcomeModel:2`
+remain unchanged.
+
 ## v0.7.96-beta.8 release preparation
 
-Release state: `v0.7.96-beta.8` is the GitHub pre-release for the exact
+Release state: `v0.7.96-beta.8` was the GitHub pre-release for the exact
 tagged commit. The tag-triggered Release workflow builds every platform
 archive and the universal npm tarball, publishes checksums, and creates the
 GitHub pre-release. npm registry publication remains a separate manual
