@@ -531,13 +531,24 @@ async function verifyHostBinary(binaryPath) {
     } catch {
       throw new Error('Standalone native text smoke must emit one JSON doctor report.');
     }
+    // The expected protocol is read from the source constant so the smoke
+    // stays exact across protocol bumps instead of pinning a stale number.
+    const trustedTextSource = readFileSync(
+      resolve(ROOT, 'src', 'windows-text-transaction.ts'),
+      'utf8',
+    );
+    const expectedProtocol = Number(
+      /TRUSTED_TEXT_TRANSACTION_PROTOCOL = (\d+)/.exec(trustedTextSource)?.[1],
+    );
     if (
       nativeTextResult.status !== 0
       || nativeTextReport?.trustedTextNative?.ready !== true
-      || nativeTextReport.trustedTextNative.protocol !== 4
+      || nativeTextReport.trustedTextNative.protocol !== expectedProtocol
+      || !Number.isInteger(expectedProtocol)
     ) {
       throw new Error(
-        `Standalone trusted text native smoke failed (exit ${nativeTextResult.status}): `
+        `Standalone trusted text native smoke failed (exit ${nativeTextResult.status}, `
+        + `protocol ${nativeTextReport?.trustedTextNative?.protocol}, expected ${expectedProtocol}): `
         + `${nativeTextResult.stderr.trim()}\n${nativeTextResult.stdout.trim()}`,
       );
     }
