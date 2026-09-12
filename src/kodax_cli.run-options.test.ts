@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { KodaXOptions } from '@kodax-ai/coding';
+import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import type { KodaXRuntime, RuntimeEvent } from './sdk-runtime.js';
 import {
   createReplRuntimeAutoModeControl,
-  toDaemonRuntimeRunOptions,
-  toPreparedRunStartOptions,
-  toRuntimeOwnedInteractiveOptions,
 } from './kodax_cli.js';
 import { forwardDaemonCompactionEvent, forwardRunProgressEvent } from './run-progress-events.js';
 
@@ -77,10 +74,10 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
   });
 
   it('synchronizes Auto reviewer settings without writing an engine selector', async () => {
-    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({ permissionMode: 'auto' }));
+    const updateSettings = vi.fn<KodaXProductClient['sessions']['updateSettings']>(async () => ({ permissionMode: 'auto' }));
     const runtime = {
       sessions: {
-        load: vi.fn(async () => ({ id: 'session-1' })),
+        read: vi.fn(async () => ({ id: 'session-1' })),
         getSettings: vi.fn(async () => ({ permissionMode: 'auto' })),
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
@@ -89,7 +86,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
           breaker: {},
         })),
       },
-    } as unknown as KodaXRuntime;
+    } as unknown as KodaXProductClient;
     const control = createReplRuntimeAutoModeControl(runtime);
 
     await control.syncSettings?.('session-1', 'auto', {
@@ -105,13 +102,13 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
   });
 
   it('ignores a persisted legacy Rules engine when a fresh REPL control synchronizes', async () => {
-    const updateSettings = vi.fn<KodaXRuntime['sessions']['updateSettings']>(async () => ({
+    const updateSettings = vi.fn<KodaXProductClient['sessions']['updateSettings']>(async () => ({
       permissionMode: 'auto',
       autoModeEngine: 'rules' as const,
     }));
     const runtime = {
       sessions: {
-        load: vi.fn(async () => ({ id: 'session-1' })),
+        read: vi.fn(async () => ({ id: 'session-1' })),
         getSettings: vi.fn(async () => ({
           permissionMode: 'auto',
           autoModeEngine: 'rules' as const,
@@ -123,7 +120,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
           breaker: {},
         })),
       },
-    } as unknown as KodaXRuntime;
+    } as unknown as KodaXProductClient;
 
     const control = createReplRuntimeAutoModeControl(runtime);
     await control.syncSettings?.('session-1', 'auto', {});
@@ -141,7 +138,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
     const updateSettings = vi.fn(async () => ({ permissionMode: 'auto' }));
     const runtime = {
       sessions: {
-        load: vi.fn(async () => {
+        read: vi.fn(async () => {
           throw new Error('Session not found: new-session');
         }),
         create,
@@ -153,7 +150,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
           breaker: {},
         })),
       },
-    } as unknown as KodaXRuntime;
+    } as unknown as KodaXProductClient;
 
     const control = createReplRuntimeAutoModeControl(runtime);
     const stats = await control.syncSettings?.('new-session', 'auto', {});
@@ -179,7 +176,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
     });
     const runtime = {
       sessions: {
-        load: vi.fn(async () => ({ id: 'session-1' })),
+        read: vi.fn(async () => ({ id: 'session-1' })),
         getSettings: vi.fn(async () => ({ permissionMode: persistedMode })),
         updateSettings,
         getAutoModeStats: vi.fn(async () => ({
@@ -188,7 +185,7 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
           breaker: {},
         })),
       },
-    } as unknown as KodaXRuntime;
+    } as unknown as KodaXProductClient;
     const control = createReplRuntimeAutoModeControl(runtime);
 
     const first = control.syncSettings?.('session-1', 'plan', {});
@@ -202,182 +199,4 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
     expect(persistedMode).toBe('auto');
   });
 
-  it('builds an explicit JSON-safe run-options DTO for bridged callbacks', () => {
-    const controller = new AbortController();
-    const options = {
-      provider: 'mock-provider',
-      model: 'mock-model',
-      abortSignal: controller.signal,
-      events: {
-        workflowCorrelation: { runId: 'workflow-1' },
-        onTextDelta: () => undefined,
-        beforeToolExecute: async () => true,
-      },
-      session: {
-        id: 'session-1',
-        storage: { load: async () => null },
-        initialMessages: [{ role: 'user', content: 'hello' }],
-      },
-      context: {
-        executionCwd: 'C:/workspace',
-        configHome: 'C:/attacker-controlled-home',
-        memoryIdentity: {
-          configHome: 'C:/attacker-controlled-home',
-          tenantId: 'attacker-tenant',
-          agentId: 'attacker-agent',
-          projectId: 'attacker-project',
-          sessionId: 'attacker-session',
-        },
-        shellExecution: {
-          version: 1,
-          shell: { kind: 'pwsh', profile: 'none' },
-          environment: { inherit: 'filtered' },
-        },
-        skillRegistry: {
-          has: () => true,
-          loadFull: async () => ({ name: 'host-only' }),
-        },
-      },
-      skillDynamicContext: {
-        disable: true,
-      },
-      sandbox: { envPass: ['GH_TOKEN'] },
-    } as unknown as KodaXOptions;
-
-    const wire = toDaemonRuntimeRunOptions(toRuntimeOwnedInteractiveOptions(
-      options,
-      { omitLegacyBeforeToolExecute: true },
-    ));
-    const encoded = JSON.stringify(wire);
-
-    expect(wire).toMatchObject({
-      provider: 'mock-provider',
-      model: 'mock-model',
-      session: {
-        id: 'session-1',
-        initialMessages: [{ role: 'user', content: 'hello' }],
-      },
-      context: {
-        executionCwd: 'C:/workspace',
-        shellExecution: {
-          version: 1,
-          shell: { kind: 'pwsh', profile: 'none' },
-          environment: { inherit: 'filtered' },
-        },
-      },
-      events: { workflowCorrelation: { runId: 'workflow-1' } },
-      skillDynamicContext: { disable: true },
-      sandbox: { envPass: ['GH_TOKEN'] },
-    });
-    expect(encoded).not.toContain('abortSignal');
-    expect(encoded).not.toContain('storage');
-    expect(encoded).not.toContain('attacker-controlled');
-    expect(wire.context).not.toHaveProperty('configHome');
-    expect(wire.context).not.toHaveProperty('memoryIdentity');
-    expect(wire.context).not.toHaveProperty('skillRegistry');
-  });
-
-  it('rejects host-only bindings that the daemon cannot reproduce', () => {
-    expect(() => toDaemonRuntimeRunOptions({
-      provider: 'mock-provider',
-      extensionRuntime: { activate: () => undefined },
-    } as unknown as KodaXOptions)).toThrow(/extensionRuntime.*cannot cross/i);
-
-    expect(() => toDaemonRuntimeRunOptions({
-      provider: 'mock-provider',
-      context: { planModeBlockCheck: () => null },
-    } as unknown as KodaXOptions)).toThrow(/context\.planModeBlockCheck.*cannot cross/i);
-
-    expect(() => toDaemonRuntimeRunOptions({
-      provider: 'mock-provider',
-      memoryRecallRunner: async () => ({ selectedRefIds: [] }),
-    } as unknown as KodaXOptions)).toThrow(/memoryRecallRunner.*cannot cross/i);
-  });
-
-  it('preserves custom host policy hooks unless the REPL marks its legacy permission hook', () => {
-    const beforeToolExecute = vi.fn(async () => true);
-    const onTextDelta = vi.fn();
-    const customGuardrail = { kind: 'tool' as const, name: 'custom-policy' };
-    const preserved = toRuntimeOwnedInteractiveOptions({
-      guardrails: [{ kind: 'tool', name: 'auto-mode' }, customGuardrail],
-      events: { beforeToolExecute, onTextDelta },
-    } as unknown as KodaXOptions);
-
-    expect(preserved.guardrails).toEqual([customGuardrail]);
-    expect(preserved.events?.beforeToolExecute).toBe(beforeToolExecute);
-    expect(preserved.events?.onTextDelta).toBe(onTextDelta);
-
-    const sanitized = toRuntimeOwnedInteractiveOptions(
-      {
-        guardrails: [{ kind: 'tool', name: 'auto-mode' }, customGuardrail],
-        events: { beforeToolExecute, onTextDelta },
-      } as unknown as KodaXOptions,
-      { omitLegacyBeforeToolExecute: true },
-    );
-    expect(sanitized.guardrails).toEqual([customGuardrail]);
-    expect(sanitized.events?.beforeToolExecute).toBeUndefined();
-    expect(sanitized.events?.onTextDelta).toBe(onTextDelta);
-  });
-
-  it('rejects a custom beforeToolExecute policy that cannot cross the daemon boundary', () => {
-    expect(() => toDaemonRuntimeRunOptions({
-      events: { beforeToolExecute: async () => true },
-    } as unknown as KodaXOptions)).toThrow(/events\.beforeToolExecute.*cannot cross/i);
-
-    expect(() => toDaemonRuntimeRunOptions({
-      learningReviewer: async () => ({
-        schemaVersion: 1,
-        summary: 'custom review',
-        memoryPlan: { actions: [], warnings: [] },
-        skillPlan: { actions: [], warnings: [] },
-      }),
-    } as unknown as KodaXOptions)).toThrow(/learningReviewer.*cannot cross/i);
-  });
-
-  it('wraps Skill policy and strips callbacks for a daemon prepared run', () => {
-    const shaped = toPreparedRunStartOptions(
-      { mode: 'daemon', isolation: 'process' },
-      {
-        provider: 'mock-provider',
-        events: { beforeToolExecute: async () => true },
-        context: {
-          skillInvocation: {
-            name: 'transport-skill',
-            path: 'C:/skills/transport-skill/SKILL.md',
-            expandedContent: '<skill name="transport-skill">test</skill>',
-            runtimePolicy: {},
-          },
-        },
-      } as unknown as KodaXOptions,
-    );
-
-    expect(shaped).toMatchObject({
-      context: {
-        skillInvocation: {
-          runtimePolicy: { enforceAtRuntime: true },
-        },
-      },
-    });
-    const serialized = JSON.stringify(shaped);
-    expect(serialized).not.toContain('beforeToolExecute');
-  });
-
-  it('keeps run options intact for an inline embedded runtime', () => {
-    const beforeToolExecute = vi.fn(async () => true);
-    const extensionRuntime = { activate: async () => undefined };
-    const options = {
-      provider: 'mock-provider',
-      extensionRuntime,
-      events: { beforeToolExecute },
-    } as unknown as KodaXOptions;
-
-    const shaped = toPreparedRunStartOptions(
-      { mode: 'embedded', isolation: 'inline' },
-      options,
-    );
-
-    expect(shaped).toMatchObject({ provider: 'mock-provider', extensionRuntime });
-    expect((shaped as { events?: { beforeToolExecute?: unknown } }).events?.beforeToolExecute)
-      .toBe(beforeToolExecute);
-  });
 });

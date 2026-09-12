@@ -145,12 +145,13 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
  * resolves as not accepted.
  */
 export async function attachClassicPlaneDisplay(
-  plane: InkClientPlane,
+  plane: Pick<InkClientPlane, 'observe' | 'readItem' | 'respondInteraction'>,
   sessionId: string,
   options: {
     write?: WriteLine;
     dialogs?: ClientPlaneDialogSurface;
     onNotice?: (text: string) => void;
+    onView?: (view: ClientSessionView) => void;
   } = {},
 ): Promise<() => void> {
   let closed = false;
@@ -161,6 +162,8 @@ export async function attachClassicPlaneDisplay(
   let dialogChain: Promise<void> = Promise.resolve();
   let displayChain: Promise<void> = Promise.resolve();
   const observation = await plane.observe(sessionId, (view: ClientSessionView) => {
+    if (closed) return;
+    options.onView?.(view);
     displayChain = displayChain.then(() => closed ? undefined : differ(view.items)).catch((error: unknown) => {
       const message = `Console output read failed: ${error instanceof Error ? error.message : String(error)}`;
       emitKodaXDiagnostic({ source: 'repl:classic-display', level: 'warn', message });

@@ -14,6 +14,7 @@ import type {
   KodaXReasoningMode,
   KodaXSkillInvocationContext,
 } from '@kodax-ai/coding';
+import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import type * as readline from 'readline';
 import type { InteractiveContext } from '../interactive/context.js';
 import type { PermissionMode } from '../permission/types.js';
@@ -52,6 +53,8 @@ export interface CommandExecutionMetadata {
 }
 
 export interface CurrentConfig {
+  /** Present on Host-bound displays; omitted values remain unknown rather than local defaults. */
+  hostSettings?: import('@kodax-ai/coding/client-contract').ClientSessionSettings;
   provider: string;
   model?: string;
   effort?: string;
@@ -172,6 +175,10 @@ export interface SessionCompactBinding {
 }
 
 export interface CommandCallbacks {
+  commandClient?: KodaXProductClient['commands'];
+  listHostCommands?: KodaXProductClient['catalog']['commands'];
+  startReview?: KodaXProductClient['review']['start'];
+  reviewAgentsLean?: KodaXProductClient['agents']['reviewLean'];
   exit: () => void | Promise<void>;
   /** Compaction supplies authoritative lineage; ordinary saves may omit it. */
   saveSession: (compactionLineage?: KodaXSessionLineage) => Promise<void>;
@@ -331,12 +338,22 @@ export interface CommandCallbacks {
 }
 
 export interface CommandResultData {
+  startedRunId?: string;
   success?: boolean;
   message?: string;
   data?: unknown;
   skillContent?: string;
   invocation?: CommandInvocationRequest;
   workflow?: CommandWorkflowInvocationRequest;
+}
+
+export function clientCommandResult(
+  result: Awaited<ReturnType<KodaXProductClient['commands']['execute']>>,
+): CommandResultData {
+  const message = result.message !== undefined ? { message: result.message } : {};
+  return result.kind === 'started'
+    ? { startedRunId: result.runId, ...message }
+    : { success: result.success, ...message };
 }
 
 export interface CommandInvocationRequest extends CommandExecutionMetadata {

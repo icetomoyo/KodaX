@@ -323,7 +323,7 @@ export function buildToolResultMessage(
       type: 'tool_result',
       tool_use_id: call.id,
       content: result.content,
-      ...(result.isError === true ? { is_error: true } : {}),
+      is_error: result.isError === true,
       ...(result.metadata ? { metadata: result.metadata } : {}),
     };
     blocks.push(block);

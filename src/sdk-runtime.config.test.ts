@@ -177,12 +177,16 @@ describe('runtime config patch validation', () => {
 async function shutdownRuntimeDaemon(homeDir: string, profile: string): Promise<void> {
   const {
     readRuntimeDaemonState,
+    readRuntimeDaemonLockOwner,
     readRuntimeDaemonToken,
     resolveRuntimeDaemonPaths,
   } = await import('./runtime-daemon/state.js');
   const paths = resolveRuntimeDaemonPaths(homeDir, profile);
   const state = readRuntimeDaemonState(paths);
   if (!state) return;
+  const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+  if (!owner) throw new Error(`Runtime daemon profile ${profile} has no verifiable owner.`);
+  const { waitForRuntimeDaemonShutdown } = await import('./runtime-daemon/shutdown-verifier.js');
   const { runtimeDaemonEndpointFromState } = await import('./runtime-daemon/lifecycle.js');
   const { createRuntimeDaemonSocketClientTransport } = await import('./runtime-daemon/transport.js');
   const transport = await createRuntimeDaemonSocketClientTransport(runtimeDaemonEndpointFromState(state));
@@ -195,11 +199,12 @@ async function shutdownRuntimeDaemon(homeDir: string, profile: string): Promise<
   } finally {
     await transport.close?.();
   }
-  const deadline = Date.now() + 5_000;
-  while (readRuntimeDaemonState(paths) !== undefined) {
-    if (Date.now() >= deadline) {
-      throw new Error(`Runtime daemon profile ${profile} did not shut down.`);
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
-  }
+  // Ownership files disappear before the daemon finishes process cleanup and
+  // writes its final outcome/log. Wait for that exact process tree before rm.
+  const result = await waitForRuntimeDaemonShutdown({
+    configHome: paths.configHome,
+    profile,
+    owner,
+  });
+  expect(result.status).toBe('succeeded');
 }

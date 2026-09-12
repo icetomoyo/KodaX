@@ -58,7 +58,11 @@ export function normalizePersistedUiHistory(
 function toCreatableTextHistoryItem(
   item: Exclude<KodaXSessionUiHistoryItem, { type: "tool_group" }>,
 ): CreatableHistoryItem {
-  const timestamp = item.timestamp === undefined ? {} : { timestamp: item.timestamp };
+  const metadata = {
+    ...(item.timestamp === undefined ? {} : { timestamp: item.timestamp }),
+    ...(item.inputId ? { inputId: item.inputId } : {}),
+    ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
+  };
   const presentationOnly = item.presentationOnly === true
     ? { isSessionUiOnly: true as const }
     : {};
@@ -67,7 +71,7 @@ function toCreatableTextHistoryItem(
       return {
         type: "assistant",
         text: item.text,
-        ...timestamp,
+        ...metadata,
         ...presentationOnly,
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
@@ -75,7 +79,7 @@ function toCreatableTextHistoryItem(
       return {
         type: "thinking",
         text: item.text,
-        ...timestamp,
+        ...metadata,
         ...presentationOnly,
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
@@ -83,7 +87,7 @@ function toCreatableTextHistoryItem(
       return {
         type: "event",
         text: item.text,
-        ...timestamp,
+        ...metadata,
         ...presentationOnly,
         ...(item.icon ? { icon: item.icon } : {}),
         ...(item.compactText ? { compactText: item.compactText } : {}),
@@ -92,19 +96,19 @@ function toCreatableTextHistoryItem(
       return {
         type: "info",
         text: item.text,
-        ...timestamp,
+        ...metadata,
         ...presentationOnly,
         ...(item.icon ? { icon: item.icon } : {}),
         ...(item.compactText ? { compactText: item.compactText } : {}),
       };
     case "user":
-      return { type: "user", text: item.text, ...timestamp, ...presentationOnly };
+      return { type: "user", text: item.text, ...metadata, ...presentationOnly };
     case "system":
-      return { type: "system", text: item.text, ...timestamp, ...presentationOnly };
+      return { type: "system", text: item.text, ...metadata, ...presentationOnly };
     case "error":
-      return { type: "error", text: item.text, ...timestamp, ...presentationOnly };
+      return { type: "error", text: item.text, ...metadata, ...presentationOnly };
     case "hint":
-      return { type: "hint", text: item.text, ...timestamp, ...presentationOnly };
+      return { type: "hint", text: item.text, ...metadata, ...presentationOnly };
     case "sidecar": {
       // The icon slot carries the encoded verdict/delivery (see toPersistedUiHistoryItem).
       const encoded = item.icon;
@@ -113,12 +117,12 @@ function toCreatableTextHistoryItem(
           type: "sidecar",
           text: item.text,
           delivery: "budget-exhausted",
-          ...timestamp,
+          ...metadata,
           ...presentationOnly,
         };
       }
       const verdict = encoded === "blocked" ? "blocked" : "revise";
-      return { type: "sidecar", text: item.text, verdict, ...timestamp, ...presentationOnly };
+      return { type: "sidecar", text: item.text, verdict, ...metadata, ...presentationOnly };
     }
   }
 }
@@ -134,6 +138,7 @@ function persistedUiHistoryItemToCreatableHistoryItem(
   return tools.length > 0
     ? {
         type: "tool_group",
+        ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
         tools,
         ...(item.timestamp === undefined ? {} : { timestamp: item.timestamp }),
       }
@@ -404,11 +409,20 @@ function collectUiOnlyInsertions(
     if (isLegacyToolSummary(item, canonicalItems, previousDerivedIndex, nextDerivedIndex)) continue;
     const uiOnly = markUiOnlyItem(item, canonicalToolIds, allowOrdinaryText);
     if (!uiOnly) continue;
-    const boundary = anchors.size === 0 || index > lastAnchorIndex
+    let boundary = anchors.size === 0 || index > lastAnchorIndex
       ? canonicalItems.length
       : previousDerivedIndex === undefined
         ? nextDerivedIndex ?? 0
         : previousDerivedIndex + 1;
+    // An interrupted response has no canonical assistant anchor. Retain its
+    // proven input boundary instead of letting the preceding response pull it
+    // ahead of its own query. Legacy items retain their existing placement.
+    const sourceIndex = item.afterInputId === undefined ? -1
+      : canonicalItems.findIndex(candidate => candidate.type === 'user' && candidate.inputId === item.afterInputId);
+    if (sourceIndex >= 0) {
+      const nextInput = canonicalItems.findIndex((candidate, position) => position > sourceIndex && candidate.type === 'user');
+      boundary = Math.min(Math.max(boundary, sourceIndex + 1), nextInput < 0 ? canonicalItems.length : nextInput);
+    }
     const boundaryItems = insertions.get(boundary) ?? [];
     boundaryItems.push(uiOnly);
     insertions.set(boundary, boundaryItems);
@@ -467,9 +481,13 @@ export function restoreHistoryItemsFromSession(
     return dedupeToolGroups(derivedItems);
   }
 
+  const inputAliases = new Map(input.messages.flatMap(message => message.inputId
+    ? (message.inputIds ?? []).map(inputId => [inputId, message.inputId!] as const) : []));
   const persistedItems = dedupeToolGroups(persistedHistory
     .map(persistedUiHistoryItemToCreatableHistoryItem)
-    .filter((item): item is CreatableHistoryItem => Boolean(item)));
+    .filter((item): item is CreatableHistoryItem => Boolean(item))
+    .map(item => item.afterInputId && inputAliases.has(item.afterInputId)
+      ? { ...item, afterInputId: inputAliases.get(item.afterInputId) } : item));
 
   const firstWindowItem = derivedItems[0];
   const windowStartIndex = firstWindowItem === undefined

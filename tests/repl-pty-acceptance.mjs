@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +99,7 @@ async function respondToModelRequest(state, request, response) {
   for await (const chunk of request) body += chunk;
   const data = JSON.parse(body);
   state.requests.push(data);
-  const token = lastUserText(data.messages).match(/^ACCEPT_[A-Z_]+/)?.[0] ?? 'AUXILIARY';
+  const token = lastUserText(data.messages).match(/^(?:\/ah-run\s+)?(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   if (token === 'ACCEPT_QUESTION' && data.messages.at(-1).role !== 'tool') {
     respondWithQuestion(response);
@@ -157,6 +157,132 @@ async function setupProvider(state) {
       contextWindow: 65536, maxOutputTokens: 1024,
     }],
   }));
+}
+
+async function setupHostCommands(state) {
+  const configHome = path.join(state.homeDir, '.kodax');
+  const extensionPath = path.join(configHome, 'acceptance-commands.mjs');
+  state.commandEffectsPath = path.join(state.homeDir, 'command-effects.jsonl');
+  // The Host extension alias must keep precedence over a same-name project Skill.
+  const conflictingSkillDir = path.join(configHome, 'skills', 'ah-run');
+  await mkdir(conflictingSkillDir, { recursive: true });
+  await writeFile(path.join(conflictingSkillDir, 'SKILL.md'), [
+    '---', 'name: ah-run', 'description: Same-name Skill for command precedence acceptance',
+    '---', 'SKILL_ALIAS_MUST_NOT_REPLACE_HOST_COMMAND',
+  ].join('\n'));
+  await writeFile(extensionPath, `import { appendFile } from 'node:fs/promises';
+const effectsPath = ${JSON.stringify(state.commandEffectsPath)};
+export default function(api) {
+  // The fixture deliberately has no registration in the client process.
+  if (process.env.KODAX_DAEMON_SERVE !== '1') return;
+  const record = (name, args, context) => appendFile(effectsPath, JSON.stringify({
+    name, args, sessionId: context.sessionId, pid: process.pid,
+    daemon: process.env.KODAX_DAEMON_SERVE,
+  }) + '\\n');
+  api.registerCommand({ name: 'acceptance-host-note', aliases: ['ah-note'],
+    description: 'Record an acceptance note without a model call',
+    handler: async (args, context) => { await record('note', args, context); },
+  });
+  api.registerCommand({ name: 'acceptance-host-run', aliases: ['ah-run'],
+    description: 'Run the acceptance review on the Host',
+    handler: async (args, context) => {
+      await record('run', args, context);
+      return { invocation: { source: 'extension', displayName: 'acceptance-host-run',
+        prompt: 'Follow the original acceptance input and retain its exact marker.' } };
+    },
+  });
+}`);
+  await mkdir(path.join(configHome, 'integrations'), { recursive: true });
+  await writeFile(path.join(configHome, 'integrations', 'extensions.json'),
+    JSON.stringify({ version: 1, paths: [extensionPath] }));
+}
+
+async function commandEffects(state) {
+  try {
+    return (await readFile(state.commandEffectsPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+function assertHostCommandEffects(state, effects) {
+  for (const effect of effects) {
+    assert.equal(effect.sessionId, state.sessionId);
+    assert.equal(effect.daemon, '1', 'Only the independent Host may execute the extension');
+    assert.notEqual(effect.pid, state.terminal.child.pid, 'The terminal process must not execute a local extension fallback');
+  }
+}
+
+async function checkHostCommandNoOutput(state) {
+  const beforeRequests = state.requests.length;
+  const beforeHistory = await state.client.sessions.readHistory(state.sessionId);
+  const beforeRuns = state.view.runs.map(run => run.runId);
+  const catalog = await state.client.catalog.commands();
+  assert.ok(catalog.some(command => command.name === 'acceptance-host-note'), 'Host must advertise its configured extension');
+  await state.terminal.submit('/ah-note silent');
+  const effects = await waitFor('Host-only no-output extension effect', async () => {
+    const entries = await commandEffects(state);
+    return entries.length === 1 ? entries : undefined;
+  });
+  assert.deepEqual(effects.map(({ name, args }) => ({ name, args })), [{ name: 'note', args: ['silent'] }]);
+  assertHostCommandEffects(state, effects);
+  await delay(500);
+  assert.equal((await commandEffects(state)).length, 1, 'No-output commands must execute exactly once');
+  assert.equal(state.requests.length, beforeRequests, 'No-output commands must not issue provider requests');
+  assert.deepEqual(state.view.runs.map(run => run.runId), beforeRuns, 'No-output commands must not invent a Run');
+  assert.deepEqual(await state.client.sessions.readHistory(state.sessionId), beforeHistory,
+    'No-output commands must not invent a user or assistant entry');
+}
+
+async function checkHostCommandHelp(state) {
+  const beforeRequests = state.requests.length;
+  const beforeEffects = await commandEffects(state);
+  await state.terminal.submit('/ah-note --help');
+  await waitFor('Host-only command help', () => state.terminal.screen().includes('Record an acceptance note'));
+  assert.deepEqual(await commandEffects(state), beforeEffects, 'Help must not call the registered handler');
+  assert.equal(state.requests.length, beforeRequests, 'Help must not call a provider');
+}
+
+async function checkHostCommandRun(state) {
+  const commandText = '/ah-run ACCEPT_HOLD_COMMAND';
+  await state.terminal.submit(commandText);
+  await waitFor('Host command streaming through CLI', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_COMMAND'));
+  const commandRunId = await waitFor('existing Host command Run identity', () =>
+    state.view.items.some(item => item.type === 'user' && item.text === commandText)
+      && state.view.activity?.runId);
+  const effects = await commandEffects(state);
+  assert.equal(effects.filter(effect => effect.name === 'run').length, 1, 'The invocation handler must execute once');
+  assertHostCommandEffects(state, effects);
+  assert.equal(state.requests.filter(request => lastUserText(request.messages) === commandText).length, 1,
+    'The CLI must follow the admitted Run rather than resubmit its prompt');
+  const commandRequest = state.requests.find(request => lastUserText(request.messages) === commandText);
+  assert.ok(!JSON.stringify(commandRequest.messages).includes('SKILL_ALIAS_MUST_NOT_REPLACE_HOST_COMMAND'),
+    'A same-name project Skill must not replace the registered Host extension alias');
+  assert.equal(state.view.items.filter(item => item.type === 'user' && item.text === commandText).length, 1);
+  if (state.mode === 'ink') {
+    await state.terminal.submit('ACCEPT_HOLD_COMMAND_NEXT');
+    await waitFor('follow-up queued while the command runs', () => state.view.queue.some(input => input.text === 'ACCEPT_HOLD_COMMAND_NEXT'));
+    assert.equal(received(state, 'ACCEPT_HOLD_COMMAND_NEXT').length, 0);
+    state.pending.get('ACCEPT_HOLD_COMMAND')();
+    await waitFor('queued continuation streams in CLI', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_COMMAND_NEXT'));
+    const continuationRunId = await waitFor('current continuation Host identity', () =>
+      state.view.activity?.runId && state.view.activity.runId !== commandRunId ? state.view.activity.runId : undefined);
+    assert.equal((await state.client.runs.read(commandRunId)).phase, 'completed');
+    await state.terminal.type('\x1b\x1b');
+    await waitFor('double Esc stops the current continuation', async () =>
+      (await state.client.runs.read(continuationRunId)).phase === 'interrupted');
+    await waitFor('Ink prompt after continuation stop', () => /^>\s+Type a message/m.test(state.terminal.screen()));
+    await delay(300);
+  } else {
+    state.pending.get('ACCEPT_HOLD_COMMAND')();
+    await waitFor('classic command completes', () => state.terminal.screen().includes('END_ACCEPT_HOLD_COMMAND'));
+    await waitFor('classic prompt after Host command', () => /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
+  }
+  await state.terminal.submit('ACCEPT_COMMAND_AFTER');
+  await waitFor('normal input after Host command', () => state.terminal.screen().includes('END_ACCEPT_COMMAND_AFTER'));
+  assert.equal(received(state, 'ACCEPT_COMMAND_AFTER').length, 1);
+  assert.equal((await commandEffects(state)).filter(effect => effect.name === 'run').length, 1);
 }
 
 function received(state, token) {
@@ -237,6 +363,8 @@ async function assertSelectedSettings(state) {
 }
 
 async function checkSettings(state) {
+  // Read complete labels here; narrow/resize rendering is exercised separately.
+  if (state.mode === 'ink') await state.terminal.resize(220, 32);
   for (const [command, field, expected] of [
     ['/agent-mode ama', 'agentMode', 'ama'], ['/agent-mode sa', 'agentMode', 'sa'],
     ['/mode plan', 'permissionMode', 'plan'], ['/mode accept-edits', 'permissionMode', 'accept-edits'],
@@ -245,11 +373,56 @@ async function checkSettings(state) {
     await waitFor(`${command} updates Host`, async () =>
       (await state.client.sessions.getSettings(state.sessionId))[field] === expected);
   }
-  await state.client.sessions.updateSettings(state.sessionId, { model: 'another-client-model' });
+  await state.client.sessions.updateSettings(state.sessionId, { model: 'peer-model', permissionMode: 'plan' });
+  if (state.mode === 'ink') {
+    await waitFor('other client settings reach the REPL footer', () => {
+      const footer = state.terminal.screen().split('\n').slice(-2).join('\n');
+      return footer.includes('peer-model') && /plan/i.test(footer);
+    });
+  } else {
+    await state.terminal.submit('/status');
+    await waitFor('other client settings reach classic status', () => {
+      const screen = state.terminal.screen();
+      return screen.includes('peer-model') && /Permission:\s+plan/.test(screen);
+    });
+  }
+  await delay(500);
+  const peerSettings = await state.client.sessions.getSettings(state.sessionId);
+  assert.equal(peerSettings.model, 'peer-model', 'Rendering must not write stale model settings back');
+  assert.equal(peerSettings.permissionMode, 'plan', 'Rendering must not write stale permission settings back');
+  // /mode also saves the user's default; remove that fixture default to exercise unset policy.
+  const configPath = path.join(state.homeDir, '.kodax', 'config.json');
+  const profileConfig = JSON.parse(await readFile(configPath, 'utf8'));
+  delete profileConfig.permissionMode;
+  await writeFile(configPath, JSON.stringify(profileConfig));
+  await state.client.config.reload();
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: null });
+  await waitFor('Host view clears the permission override', () => state.view.settings.permissionMode === undefined);
+  if (state.mode === 'classic') await state.terminal.submit('/status');
+  await waitFor('cleared permission is displayed without inventing a policy', () => {
+    const screen = state.terminal.screen();
+    return state.mode === 'ink' ? screen.split('\n').slice(-2).join('\n').includes('Host default')
+      : /Permission:\s+Host default/.test(screen);
+  });
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).permissionMode, undefined);
+  await state.client.config.patch({ permissionMode: 'accept-edits' });
+  await waitFor('Host view resolves the profile permission', () => state.view.settings.permissionMode === 'accept-edits');
+  if (state.mode === 'classic') await state.terminal.submit('/status');
+  await waitFor('profile permission becomes the effective Host selection', () => {
+    const screen = state.terminal.screen();
+    return state.mode === 'ink' ? /Edits/.test(screen.split('\n').slice(-2).join('\n'))
+      : /Permission:\s+accept-edits/.test(screen);
+  });
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).permissionMode, undefined,
+    'Displaying profile defaults must not persist a Session override');
   await state.terminal.submit('/model /acceptance-model');
   await waitFor('explicit old model selection reaches Host', async () =>
     (await state.client.sessions.getSettings(state.sessionId)).model === 'acceptance-model');
+  await state.terminal.submit('/mode accept-edits');
+  await waitFor('explicit permission selection reaches Host', async () =>
+    (await state.client.sessions.getSettings(state.sessionId)).permissionMode === 'accept-edits');
   await assertSelectedSettings(state);
+  if (state.mode === 'ink') await state.terminal.resize(110, 32);
 }
 
 async function checkPrompt(state) {
@@ -404,6 +577,13 @@ async function checkStop(state) {
   await state.terminal.submit('ACCEPT_AFTER_STOP');
   await waitFor('next prompt after stop', () => state.terminal.screen().includes('END_ACCEPT_AFTER_STOP'));
   assert.equal(received(state, 'ACCEPT_AFTER_STOP').length, 1);
+  const stoppedInput = state.view.items.findIndex(item => item.type === 'user' && item.text === 'ACCEPT_HOLD_STOP');
+  const stoppedOutput = state.view.items.findIndex(item => item.type === 'assistant' && item.text === 'BEGIN_ACCEPT_HOLD_STOP');
+  assert.ok(stoppedInput >= 0 && stoppedOutput > stoppedInput,
+    'The interrupted reply must remain after its user input in the shared Host view');
+  if (state.mode === 'ink') assert.ok(state.terminal.screen().split('\n')
+    .filter(line => line.trim() === 'ACCEPT_HOLD_STOP').length <= 1,
+  'Stopping must not leave duplicate query rows in the terminal');
 }
 
 async function checkFrozenHistory(state) {
@@ -568,6 +748,7 @@ async function cleanupHost(state) {
 async function cleanup(state) {
   state.observation?.close();
   state.terminal?.dispose();
+  if (state.terminal) await state.terminal.exit;
   try { await cleanupHost(state); }
   finally {
     state.server?.closeAllConnections();
@@ -583,8 +764,11 @@ async function run(mode) {
     views: new Map(), runEvents: [], providerErrors: [] };
   try {
     await setupProvider(state);
+    await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    await check(state, 'registered-extension-no-output', checkHostCommandNoOutput);
+    await check(state, 'registered-extension-help', checkHostCommandHelp);
     await check(state, 'prompt-stream-complete', checkPrompt);
     await check(state, 'session-settings-roundtrip', checkSettings);
     if (mode === 'ink') await check(state, 'ama-presentation', checkAmaPresentation);
@@ -596,6 +780,7 @@ async function run(mode) {
     if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
     if (mode === 'ink') await check(state, 'transcript-control-character-paint', checkTranscriptPaint);
     await check(state, 'stop-and-next-input', checkStop);
+    await check(state, 'registered-extension-run-and-follow-up', checkHostCommandRun);
     await check(state, 'new-session-isolation', checkNewSession);
     await check(state, 'exit', checkExit);
     await check(state, 'resume-persisted-session', checkResume);

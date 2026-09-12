@@ -235,6 +235,7 @@ export interface LearningBinding {
 }
 
 export interface StatusBarProps {
+  hostSettings?: import('@kodax-ai/coding/client-contract').ClientSessionSettings;
   sessionId: string;
   permissionMode: PermissionMode;
   agentMode: KodaXAgentMode;
@@ -268,6 +269,9 @@ export interface StatusBarProps {
   maxIter?: number;
   /** Context usage info - Issue 070: 显示上下文使用情况 */
   contextUsage?: {
+    /** Host configuration cannot supply a physical trigger before execution resolves its envelope. */
+    hostBudget?: boolean;
+    effectiveTriggerTokens?: number;
     /** Current token count in context */
     currentTokens: number;
     /** Context window size (effective contextWindow) */
@@ -279,6 +283,8 @@ export interface StatusBarProps {
     /** Provider output capacity reserved from the physical context window. */
     reservedResponseTokens?: number;
   };
+  /** Scope-specific quantity when no matching budget is known. */
+  contextTokens?: { currentTokens: number; scope: 'parent' | 'worker' };
   /** Client-specific Learning Center projection. Inventory alone stays hidden. */
   learning?: LearningSurfaceSnapshot;
   /** Whether current busy/thinking status should be visible in the bar */
@@ -423,6 +429,8 @@ export type HistoryItemType =
  * History item base class - 历史项基类
  */
 export interface HistoryItemBase {
+  /** Source input boundary for retained Host output. */
+  afterInputId?: string;
   id: string;
   /** Accepted input identity used to join saved history to a frozen browse snapshot. */
   inputId?: string;

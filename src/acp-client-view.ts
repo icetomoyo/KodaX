@@ -45,7 +45,7 @@ export async function observeAcpClientPrompt(
   }
 
   async function projectItem(item: ClientViewItem): Promise<void> {
-    if (priorItems.has(item.id)) return;
+    if (closed || priorItems.has(item.id)) return;
     if (item.type === 'tool' && item.tool) {
       const tool = item.tool;
       if (!toolFingerprints.has(tool.callId)) {
@@ -92,6 +92,7 @@ export async function observeAcpClientPrompt(
   }
 
   function receive(view: ClientSessionView): void {
+    if (closed) return;
     latest = view;
     if (!initialized) {
       initialized = true;
@@ -105,7 +106,11 @@ export async function observeAcpClientPrompt(
     chain = chain.then(async () => { for (const item of view.items) await projectItem(item); })
       .catch(fail);
   }
-  const observation = await client.sessions.observe(sessionId, receive);
+  const observation = await client.sessions.observe(sessionId, receive, { onStatus(status) {
+    if (closed || status.state === 'live' || (status.state === 'closed' && status.reason === 'client')) return;
+    closed = true;
+    fail(new Error(status.message ?? `ACP Host observation ${status.state === 'interrupted' ? 'was interrupted' : 'is unavailable'}.`));
+  } });
   return {
     failed,
     async flush() {

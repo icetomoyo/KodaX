@@ -1,15 +1,15 @@
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type { LearningBinding } from '@kodax-ai/repl';
 
-import type { KodaXRuntime } from './sdk-runtime.js';
+import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 
-export function createReplLearningBinding(runtime: KodaXRuntime): LearningBinding {
+export function createReplLearningBinding(client: Pick<KodaXProductClient, 'learning'>): LearningBinding {
   return {
-    getSnapshot: () => runtime.learning.getSnapshot(),
-    list: (query) => runtime.learning.list(query),
-    get: (nameOrSlug) => runtime.learning.get(nameOrSlug),
+    getSnapshot: () => client.learning.getSnapshot(),
+    list: (query) => client.learning.list(query),
+    get: (nameOrSlug) => client.learning.get(nameOrSlug),
     subscribe(listener, options) {
-      const iterator = runtime.learning.subscribe(options)[Symbol.asyncIterator]();
+      const iterator = client.learning.subscribe(options)[Symbol.asyncIterator]();
       let active = true;
       void consumeLearningEvents(iterator, () => active, listener);
       return {
@@ -19,19 +19,19 @@ export function createReplLearningBinding(runtime: KodaXRuntime): LearningBindin
         },
       };
     },
-    acknowledge: (nameOrSlug) => runtime.learning.acknowledge(nameOrSlug),
-    snooze: (nameOrSlug, until) => runtime.learning.snooze(nameOrSlug, until),
-    reject: (nameOrSlug) => runtime.learning.reject(nameOrSlug),
-    disable: (nameOrSlug) => runtime.learning.disable(nameOrSlug),
-    rollback: (nameOrSlug) => runtime.learning.rollback(nameOrSlug),
-    promote: (nameOrSlug, scope) => runtime.learning.promote(nameOrSlug, scope),
-    review: (nameOrSlug) => runtime.learning.review(nameOrSlug),
-    trust: (nameOrSlug) => runtime.learning.trust(nameOrSlug),
+    acknowledge: (nameOrSlug) => client.learning.acknowledge(nameOrSlug),
+    snooze: (nameOrSlug, until) => client.learning.snooze(nameOrSlug, until),
+    reject: (nameOrSlug) => client.learning.reject(nameOrSlug),
+    disable: (nameOrSlug) => client.learning.disable(nameOrSlug),
+    rollback: (nameOrSlug) => client.learning.rollback(nameOrSlug),
+    promote: (nameOrSlug, scope) => client.learning.promote(nameOrSlug, scope),
+    review: (nameOrSlug) => client.learning.review(nameOrSlug),
+    trust: (nameOrSlug) => client.learning.trust(nameOrSlug),
   };
 }
 
 async function consumeLearningEvents(
-  iterator: AsyncIterator<Awaited<ReturnType<KodaXRuntime['learning']['events']>>[number]>,
+  iterator: AsyncIterator<Awaited<ReturnType<KodaXProductClient['learning']['events']>>[number]>,
   isActive: () => boolean,
   listener: Parameters<LearningBinding['subscribe']>[0],
 ): Promise<void> {

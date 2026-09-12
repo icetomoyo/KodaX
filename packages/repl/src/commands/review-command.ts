@@ -4,7 +4,8 @@ import { promisify } from 'node:util';
 import chalk from 'chalk';
 import { writeReviewPackets, type ReviewPacketMetadata } from '@kodax-ai/coding';
 
-import type { Command } from './types.js';
+import { clientCommandResult, type Command } from './types.js';
+import { randomUUID } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
 const MAX_DIFF_CHARS = 100_000;
@@ -296,6 +297,10 @@ export const reviewCommand: Command = {
   argumentHint: '[--lean] [--workflow] [base | sha <hash>] [prompt...]',
   detailedHelp: printReviewHelp,
   handler: async (args, context, callbacks) => {
+    if (callbacks?.startReview) {
+      const result = await callbacks.startReview({ sessionId: context.sessionId, inputId: randomUUID(), args });
+      return clientCommandResult(result);
+    }
     const cwd = context.gitRoot ?? process.cwd();
     // FEATURE_298 T37 — with a Host binding the git capture and packet
     // writing happen Host-side; the client sends only the parsed flags.

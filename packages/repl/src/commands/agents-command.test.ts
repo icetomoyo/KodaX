@@ -28,6 +28,14 @@ describe('/agents command', () => {
     vi.restoreAllMocks();
   });
 
+  it('starts lean review in the Host and leaves its prompt there', async () => {
+    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# Instructions', 'utf8');
+    const reviewAgentsLean = vi.fn(async () => ({ kind: 'started', runId: 'lean-1' }));
+    expect(await agentsCommand.handler(['lean'], { ...buildContext(cwd), sessionId: 's1' } as never,
+      { reviewAgentsLean } as never, {} as never)).toEqual({ startedRunId: 'lean-1' });
+    expect(reviewAgentsLean).toHaveBeenCalledWith({ sessionId: 's1', inputId: expect.any(String) });
+  });
+
   it('creates AGENTS.md with KodaX Lean Mode when absent', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const reloadAgentsFiles = vi.fn(async () => []);

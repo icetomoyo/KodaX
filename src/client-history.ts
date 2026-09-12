@@ -76,8 +76,9 @@ export async function readConversationHistoryEntry(
     readonly cursor?: string;
   }) => Promise<RuntimeConversationHistoryEntryChunk | null>,
   options: ClientItemReadOptions = {},
+  namespace: 'history' | 'transcript' = 'history',
 ): Promise<ClientItemContent | null> {
-  const parsed = parseHistoryEntryItemId(sessionId, itemId);
+  const parsed = parseHistoryEntryItemId(sessionId, itemId, namespace);
   if (parsed === undefined) return null;
   const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex);
   if (entry === null) return null;
@@ -163,11 +164,13 @@ function historyEntryItemId(sessionId: string, revision: string, entryIndex: num
 function parseHistoryEntryItemId(
   sessionId: string,
   itemId: string,
+  namespace: 'history' | 'transcript',
 ): { revision: string; entryIndex: number; ordinal?: number } | undefined {
-  const prefix = `${sessionId}:history:`;
+  const prefix = `${sessionId}:${namespace}:`;
   if (!itemId.startsWith(prefix)) return undefined;
   const [base = '', ordinal, extra] = itemId.slice(prefix.length).split('#');
   if (extra !== undefined) return undefined;
+  if (namespace === 'transcript' && ordinal !== undefined) return undefined;
   if (ordinal !== undefined && !/^\d+$/u.test(ordinal)) return undefined;
   // Parse from the right: the revision itself contains a colon
   // ("sha256:<digest>"), so only the trailing index segment is structural.

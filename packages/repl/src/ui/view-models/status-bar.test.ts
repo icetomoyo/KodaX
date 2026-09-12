@@ -30,6 +30,13 @@ const baseProps = (overrides: Partial<StatusBarProps> = {}): StatusBarProps => (
 });
 
 describe("status-bar (Ink view-model) reasoning effort display", () => {
+  it('shows unknown Host defaults instead of stale local mode labels', () => {
+    const viewModel = buildStatusBarViewModel(baseProps({ permissionMode: 'plan', agentMode: 'ama', reasoningMode: 'deep',
+      reasoningEffortLabel: 'high', thinking: true, hostSettings: {} }));
+    expect(viewModel.segments.find(segment => segment.id === 'permission-mode')?.text).toBe('Host default');
+    expect(viewModel.segments.find(segment => segment.id === 'agent-mode')?.text).toBe('KodaX - Host default');
+    expect(viewModel.segments.find(segment => segment.id === 'reasoning-mode')?.text).toBe('Host default');
+  });
   it("renders effort-first status instead of internal capability letters", () => {
     const viewModel = buildStatusBarViewModel(baseProps({
       reasoningMode: "auto",

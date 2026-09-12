@@ -17,6 +17,7 @@ import type {
   ClientPermissionInteractionOptions,
   ClientRunStopReceipt,
   ClientSessionView,
+  ClientObserveOptions,
   ClientSessionSettingsPatch,
   ClientViewItem,
 } from '@kodax-ai/coding/client-contract';
@@ -77,6 +78,7 @@ export interface InkClientPlane {
   observe(
     sessionId: string,
     onView: (view: ClientSessionView) => void,
+    options?: ClientObserveOptions,
   ): Promise<() => void>;
   /** Page the complete content of a bounded view item by stable id. */
   readItem(
@@ -252,32 +254,81 @@ async function pollActiveRun(
   for (;;) {
     if (bail?.()) return undefined;
     const active = await plane.activeRun(sessionId);
+    if (bail?.()) return undefined;
     if (active !== undefined && accept(active)) return active;
     if (Date.now() >= deadline) return undefined;
     await sleep(CHAIN_POLL_INTERVAL_MS);
   }
 }
 
-/**
- * FEATURE_298 T17 — run one round over the client plane. A submitted input
- * may start its run immediately or sit in the Host queue (the Host batches
- * queued text into continuation runs once the active run settles), so the
- * round follows the whole chain: the Esc abort always stops the run
- * currently in flight and withdraws the input while it is still queued.
- */
+/** Follow an already accepted command and its queued continuations without submitting it again. */
+export async function followClientPlaneRun(input: {
+  readonly plane: InkClientPlane;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly abortSignal?: AbortSignal;
+  /** Read the Run already displayed to the user synchronously at interruption. */
+  readonly getDisplayedRunId?: () => string | undefined;
+}): Promise<KodaXResult> {
+  let currentRunId = input.runId;
+  const aborted = (): boolean => input.abortSignal?.aborted === true;
+  let stopping: Promise<void> | undefined;
+  const stop = (): void => {
+    const runId = input.getDisplayedRunId?.() ?? currentRunId;
+    currentRunId = runId;
+    stopping = input.plane.stop(runId).then((receipt) => {
+      if (receipt?.accepted === false) {
+        emitKodaXDiagnostic({ source: 'client.plane', level: 'warn',
+          message: `The Host did not accept the stop request for run ${runId}.` });
+      }
+    }).catch((error: unknown) => {
+      emitKodaXDiagnostic({ source: 'client.plane', level: 'warn',
+        message: `The stop request for run ${runId} failed.`, detail: error });
+    });
+  };
+  input.abortSignal?.addEventListener('abort', stop, { once: true });
+  try {
+    if (input.abortSignal?.aborted) stop();
+    let outcome: ClientRoundOutcome;
+    for (;;) {
+      const awaitedRunId = currentRunId;
+      outcome = await input.plane.awaitRun(input.sessionId, awaitedRunId);
+      const continuation = await pollActiveRun(input.plane, input.sessionId,
+        (runId) => runId !== currentRunId, CONTINUATION_WINDOW_MS, aborted);
+      if (aborted()) {
+        await stopping;
+        if (currentRunId !== awaitedRunId) continue;
+        break;
+      }
+      if (continuation === undefined) break;
+      currentRunId = continuation;
+    }
+    if (outcome.error !== undefined) throw new Error(outcome.error);
+    if (outcome.result !== undefined) return outcome.result;
+    if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) return interruptedPlaneResult(input.sessionId);
+    throw new Error(outcome.error ?? `Run ${currentRunId} ended in phase '${outcome.phase}' without a result.`);
+  } finally {
+    input.abortSignal?.removeEventListener('abort', stop);
+  }
+}
+
+/** Submit one input, following its Run and the Host's queued continuations. */
 export async function runClientPlaneRound(input: {
   readonly plane: InkClientPlane;
   readonly submit?: InkClientPlane['submit'];
   readonly sessionId: string;
   readonly prompt: string;
   readonly abortSignal?: AbortSignal;
+  /** Read the Run already displayed to the user synchronously at interruption. */
+  readonly getDisplayedRunId?: () => string | undefined;
   readonly inputArtifacts?: readonly KodaXInputArtifact[];
 }): Promise<KodaXResult> {
   const inputId = mintInkInputId();
   const aborted = (): boolean => input.abortSignal?.aborted === true;
+  let stopping: Promise<unknown> | undefined;
   const stopRun = (runId: string | undefined): void => {
     if (runId !== undefined) {
-      void input.plane.stop(runId).then(
+      stopping = input.plane.stop(runId).then(
         (receipt) => {
           if (receipt?.accepted === false) {
             emitKodaXDiagnostic({
@@ -297,7 +348,7 @@ export async function runClientPlaneRound(input: {
         },
       );
     } else {
-      void input.plane.withdraw(input.sessionId, inputId).catch((error: unknown) => {
+      stopping = input.plane.withdraw(input.sessionId, inputId).catch((error: unknown) => {
         emitKodaXDiagnostic({
           source: 'client.plane',
           level: 'warn',
@@ -326,7 +377,10 @@ export async function runClientPlaneRound(input: {
   }
   let currentRunId = accepted.runId;
   let lastOutcome: ClientRoundOutcome | undefined;
-  const stop = (): void => stopRun(currentRunId);
+  const stop = (): void => {
+    if (currentRunId !== undefined) currentRunId = input.getDisplayedRunId?.() ?? currentRunId;
+    stopRun(currentRunId);
+  };
   input.abortSignal?.addEventListener('abort', stop, { once: true });
   try {
     for (;;) {
@@ -339,7 +393,10 @@ export async function runClientPlaneRound(input: {
           aborted,
         );
         if (currentRunId === undefined) {
-          if (aborted()) return interruptedPlaneResult(input.sessionId);
+          if (aborted()) {
+            await stopping;
+            return interruptedPlaneResult(input.sessionId);
+          }
           // The input never started; take it back so it cannot run later
           // after the caller has already surfaced the failure. A failed
           // withdraw must not be silent: the input would stay runnable
@@ -361,7 +418,8 @@ export async function runClientPlaneRound(input: {
           );
         }
       }
-      lastOutcome = await input.plane.awaitRun(input.sessionId, currentRunId);
+      const awaitedRunId = currentRunId;
+      lastOutcome = await input.plane.awaitRun(input.sessionId, awaitedRunId);
       const continuation = await pollActiveRun(
         input.plane,
         input.sessionId,
@@ -369,11 +427,17 @@ export async function runClientPlaneRound(input: {
         CONTINUATION_WINDOW_MS,
         aborted,
       );
+      if (aborted()) {
+        await stopping;
+        if (currentRunId !== awaitedRunId) continue;
+        break;
+      }
       if (continuation === undefined) break;
       currentRunId = continuation;
     }
     const outcome = lastOutcome;
     if (outcome === undefined) throw new Error('The client-plane round ended without a run outcome.');
+    if (outcome.error !== undefined) throw new Error(outcome.error);
     if (outcome.result !== undefined) return outcome.result;
     if (INTERRUPTED_RUN_PHASES.has(outcome.phase)) {
       return interruptedPlaneResult(input.sessionId);
@@ -593,6 +657,7 @@ export async function answerClientPlaneInteraction(
   surface: ClientPlaneDialogSurface,
   signal?: AbortSignal,
 ): Promise<boolean> {
+  if (signal?.aborted) return false;
   let response: ClientInteractionResponse;
   switch (interaction.kind) {
     case 'question': {
@@ -641,5 +706,7 @@ export async function answerClientPlaneInteraction(
       break;
     }
   }
+  // Observation cleanup is not a user cancellation or permission decision.
+  if (signal?.aborted) return false;
   return plane.respondInteraction(interaction.requestId, response);
 }

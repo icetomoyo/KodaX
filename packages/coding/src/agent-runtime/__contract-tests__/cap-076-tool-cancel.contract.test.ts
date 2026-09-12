@@ -130,6 +130,8 @@ describe('CAP-076: checkPreToolAbort — signal aborted', () => {
         id: 't1',
         name: 'read',
         content: CANCELLED_TOOL_RESULT_MESSAGE,
+        toolResult: { type: 'tool_result', tool_use_id: 't1', content: CANCELLED_TOOL_RESULT_MESSAGE,
+          is_error: true, metadata: { cancelled: true } },
       },
       {
         toolId: 't1',

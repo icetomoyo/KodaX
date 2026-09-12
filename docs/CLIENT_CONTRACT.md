@@ -15,7 +15,7 @@
 | 底层被动连接 | `/runtime` 的 `connectKodaXRuntime(options)` | `autoStart: true` 明确拒绝；启动必须使用 ensure |
 | 显式嵌入 | `/runtime` 的 `createKodaXRuntime({ mode: 'embedded' })` | 独立库/受信任宿主的执行接缝；不能作为产品连接失败后的私有 owner 回退 |
 
-两个产品入口都返回 `Promise<KodaXProductClient>`；选项可以全部省略。
+两个产品入口都返回 `Promise<KodaXProductClient>`；选项可以全部省略。连接时要求 Host 宣告整体 `productClient` v1 契约，覆盖统一业务入口和输出事实；不按单个方法维护客户端能力矩阵。旧 Host 缺少该契约时被动 connect 明确拒绝，ensure 仅沿用现有空闲升级机制，不能强停忙碌 Host 或回退私有执行。
 
 | 选项 | `connectKodaXClient` | `ensureKodaXClient` | 含义 |
 | --- | --- | --- | --- |
@@ -49,8 +49,15 @@
 | 域 | 方法 | 语义与结果 |
 | --- | --- | --- |
 | `host` | `shutdown` | 请求正常关闭空闲 Host |
+| `commands` | `execute`, `readPrompt` | 按注册名称/参数执行，或只取可编辑纯文本；可信 hooks/model/tools/fork 元数据不返回客户端 |
+| `review` | `start` | Host 捕获 git diff、构造普通 review 或既有 scoped-review workflow，并返回对应 Run |
+| `agents` 审查 | `reviewLean` | Host 读取该 Session 项目的 AGENTS.md 并启动精简审查；缺文件明确返回失败消息 |
+| `sessions` 压缩 | `compact` | 手动压缩接受自定义指令；Host 检查 idle、执行并提交，返回 tokens/messages/report 或明确失败原因 |
+| `memory` | `forProject` | Host 派生项目身份；返回 refs/inbox/proposal/reviews 查询、remember/forget/approve/reject、rebuild 和可信 open target |
+| `learning` | `list`, `get`, `getSnapshot`, `events`, `subscribe`, `acknowledge`, `snooze`, `reject`, `disable`, `rollback`, `promote`, `review`, `trust` | 客户端通知状态保持原作用域；治理动作修改 Host 共享事实，沿用已有订阅流 |
 | `sessions` 基本管理 | `create`, `list`, `read`, `delete`, `archive`, `unarchive` | 创建、查询、删除和归档 Host 所有的 Session；`list` 接受项目、scope、归档、分页、tag、surface 过滤 |
-| `sessions` 设置 | `getSettings`, `updateSettings` | Session 专属设置；下一次物理请求采用新选择，patch 的 `null` 清除覆盖 |
+| `sessions` 设置 | `getSettings`, `updateSettings` | 返回原始 Session 覆盖；下一次物理请求采用新选择，patch 的 `null` 清除覆盖并恢复 Host profile 配置，缺失不制造新的执行默认值 |
+| `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
 | `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory` | 规范对话分页、超大项正文和全 Session 搜索 |
 | `sessions` 目标 | `readGoal`, `createGoal`, `pauseGoal`, `resumeGoal`, `clearGoal` | 读取及修改共享持久目标；创建、状态转换和预算遵守领域约束 |
@@ -58,7 +65,7 @@
 | `sessions` 分支 | `readLineage`, `labelEntry`, `selectBranch`, `rewindSession`, `forkSession`, `recoverSession` | 读取分支、标签、选择头、回退，以及派生新 Session |
 | `inputs` | `submit`, `read`, `withdraw` | 提交有身份的用户意图、查询接收状态、撤回队列项并取回原始输入 |
 | `runs` | `read`, `stop`, `await` | 读取生命周期、请求停止、等待真实终态 |
-| `workflows` | `start`, `list`, `get`, `pause`, `resume`, `stop` | Host 内启动和控制声明式工作流；控制方法返回是否成功 |
+| `workflows` | `start`, `list`, `get`, `subscribe`, `pause`, `resume`, `stop` | Host 内启动和控制声明式工作流；读取完整进度快照，订阅既有工作流事件；控制方法返回是否成功 |
 | `interactions` | `list`, `respond` | 查询待答请求，以精确 requestId 回答；首个有效答案生效 |
 | `permissions` | `listGrants`, `revokeGrant` | 读取显式授权和 revision；按 grantId + expectedRevision 撤销 |
 | `registrations` | `list`, `upsert`, `setEnabled`, `remove` | 管理外部 Agent 注册；保留领域配置 revision 和管理归属约束 |
@@ -70,7 +77,25 @@
 
 `workflows.start` 接收 `inline`（manifest + source）、`request` 或 `name` 声明式来源，返回 `declined` 原因或 `started` 的 runId。它不接收预执行模块或函数。MCP 配置允许 stdio、SSE、HTTP 等 MCP transport；这不意味着产品 Client transport 已支持这些协议。
 
+`workflows.get` 返回现有工作流进程的完整数据快照，包括 items、counts、progress 与 lineage；`list` 保留计数、起止时间和 runDir，不让 UI 从摘要推算进度。`subscribe` 复用已有事件流，返回可关闭的订阅，不代表断线期间事件会无限重放。客户端重新连接后应重新读取快照。所有这些类型都是数据，不暴露 Host 执行对象。
+
 `catalog.commands/skills` 的 `source` 是 Host 解析出的注册来源字符串。Provider 的 capabilityProfile 描述后端执行特点；客户端不自行猜测 Provider 行为，不将探测失败伪装成不支持。config/Session 设置可选字段及默认规则由类型与 Host 解析决定，不应靠 UI 复制默认值逻辑。
+
+`commands.execute` 接收 `sessionId`、`inputId`、注册 `name` 和可选 `args`；`review.start` 接收 Session/Input 身份及参数，`agents.reviewLean` 接收 Session/Input 身份。三者都要求 `run:control`，且沿用原忙时拒绝行为。注册 extension handler 与其实际需要的 Run 在同一次 Session 准入中衔接；不需要模型或没有输出的 handler 返回 `completed`，不制造用户输入或模型 Run。`completed.success` 和可选 `message` 是该动作的结果，`started.runId` 只是已启动身份；客户端随后观察 Session、等待 `runs.await`，不能把它重新提交为输入。
+
+prompt/extension 的模型偏好、工具限制、hooks 和 fork 由 Host 从可信注册来源执行。hook shell 沿用正常工具授权路径；PostToolUse 与 Stop/SubagentStop 结算后才报告终态，fork 结果提交回原 Session 后才完成。`disableModelInvocation` 不禁止用户显式调用。低层 daemon 输入也不能携带 Host-only command 描述符来注入这些策略。
+
+注册命令的第一个参数为 `help`、`--help` 或 `-h` 时，沿用原帮助语义，只返回说明，不执行 handler 或模型。客户端使用 Host 命令目录的名称及 aliases 判定注册命令，不能因为本地没有 extension runtime 就当作未知命令，也不能让同名 Skill 抢占已注册命令；`/skill:name` 保留显式 Skill 含义。
+
+交互式 CLI 和单次 CLI 都把 Skill 原文通过 `inputs.submit` 交给 Host，不在客户端预先执行动态上下文或 hooks。单次调用的既有 repoIntelligenceMode/Trace 参数与模型、effort 等参数通过 Session 设置表达；持久 Session 在调用结束后恢复原覆盖，临时 Session 由 Host 按既有生命周期清理。设置恢复失败会明确诊断。单次 CLI 为保留原 JSON/text 进度格式，仍使用底层只读进度适配器；它不执行任务、不提交输入、不裁决终态，产品结算由 `runs.await` 决定。
+
+`commands.readPrompt` 是明确的 SDK 纯读取能力，返回 `{title, text}` 或 `null`。它不会调用 extension handler、运行 hooks、保存输入或启动模型；取消读取后的本地草稿没有执行效果，编辑后通过普通 `inputs.submit` 提交也不携带原命令的权限元数据。当前 CLI 没有新增草稿按钮或 `--manual` 标志；旧 hook 阻止执行的 manual output 是结果提示，不被解释成编辑器模式。
+
+命令或 review 的回复丢失时不能透明重放：extension 副作用可能已发生，即使没有 Run 或用户输入可查询。若收到 started 身份，直接跟随原 Run；没有收到身份时只能检查已知领域事实、显示结果不确定并由用户决定后续操作，不能自动重跑 handler。
+
+`memory.forProject` 返回的 controller 仅含已有用户操作。proposal 预览附带 `revision` 和 `expectedFingerprints`，批准/拒绝应回传所见版本，forget 应传已读正文指纹；Host 重新校验精确引用，过期预览不能批准新内容。`reviewerProviderConfigured()` 是取得 plane 时的状态；需要刷新时重新调用 `forProject`。doctor 使用这些查询事实，`ensureOpenTarget` 只验证路径和必要目录，本地编辑器由 UI 打开。Learning 的 acknowledge/snooze 只改变调用客户端的通知状态，disable/promote 等治理动作则对其他客户端可见。
+
+手动 compact 和领域修改丢失回复后不能自动重放。调用方应读当前历史、预览或领域状态；`compacted: false` 的 `reason` 需原样处理，不能把 Provider 失败显示为“无需压缩”。
 
 ## 身份、状态与事实权威
 
@@ -89,11 +114,24 @@
 
 接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待槽位；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
-`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示结算前断连，绝不是成功或取消。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败或 Actor 结算不确定；连接可能仍然健康。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+
+delivery 的队列行为如下；空 queue 不能证明所有已知输入已经交付。
+
+| delivery | 行为与确认 |
+| --- | --- |
+| immediate | 尝试开始 Run；Session 忙时冲突，不先执行动态准备 |
+| after_turn | 保存到可撤回队列；多条输入可能合成一个 user 展示项和同一 Run，展示项仅保留首 inputId，其余逐 inputs.read 确认 submitted/runId |
+| redirect | 保存新输入并停止目标 Run，沿用显式 redirect 的后续调度 |
+| steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在可撤回 view.queue 中；通过 inputs.read 确认 submitted/dropped |
+
+普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
 
 Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限；取消用 `kind: 'cancel'`。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
 
 `readLineage` 在尚无 lineage 的旧 Session 可返回 null。标签和分支选择的未知 selector 必须明确冲突。rewind 需要 expectedHead，只允许空闲 Session，且不会撤销文件副作用；fork 可使用带 sourceRevision 的 historyBoundary，源 Session 保持不变。recover 从确定性恢复种子派生新 Session，不执行 LLM 调用；继续运行仍通过普通 input submit。
+
+`selectBranch` 的可选第三参数 `summarizeCurrentBranch` 保留原分支切换时的摘要行为。REPL 若尚未持有 rewind 的 expectedHead，会先读取当前 lineage，再把该身份提交给 Host 校验；这不会取消并发冲突保护。
 
 ## 输出、全文与冻结浏览
 
@@ -108,14 +146,15 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `session.gitRoot?`, `session.workspaceRoot?` | Host 保存的仓库/工作区定位 | 不从标题或浏览器目录推断路径 |
 | `session.surface?`, `session.profileId?` | Session 的界面/配置归属元数据 | 不是 Host 权限凭据 |
 | `session.createdAt?` | Session 保存的创建时间字符串 | 缺失时显示未知，不用连接时间代替 |
-| `settings` | Host 当前 Session 设置投影 | provider/model/effort/thinking/reasoningMode/permissionMode/agentMode 等以共享设置为准；可选值保留默认解析语义 |
+| `settings` | Host 当前 profile 配置与 Session 覆盖合并后的有效选择，复用执行侧解析 | 与 getSettings/updateSettings 的原始覆盖区分；清除覆盖后恢复 profile 值，两层均无值时保持缺失。UI 显示 Host default，不把旧模式或本地默认值冒充 Host 事实 |
 | `items` | canonical 历史与当前运行显示项合并后的有序、有界列表 | 每帧替换，保持 Host 顺序；窗口外的项不等于被删除的历史 |
 | `queue` | Host 当前等待交付的输入 | 不是本地草稿；顺序和撤回目标以 Host 为准 |
 | `queue[].inputId`, `queue[].text`, `queue[].enqueuedAt` | 输入身份、有界预览、入队 Unix 毫秒时间 | 同文本可有不同身份；编辑全文通过 withdraw 返回值获取 |
 | `interactions` | Host 当前等待答案的精确请求集合 | 用 requestId 呈现/回答；另一 Client 回答后可从下一帧消失 |
 | `runs` | 当前 Host 记录中本 Session 的非终态 Run，以及最近一个 Run | 不是持久的全部 Run 历史；重启后缺失不表示过去没有运行 |
 | `runs[].runId`, `runs[].phase` | 运行身份与实际生命周期字符串 | 以 Run 事实判断完成，不通过工具状态/文本推断；未知 phase 保留为未知 |
-| `runs[].provider`, `runs[].model?`, `runs[].error?` | 该 Run 记录中的 Provider、可选模型和错误文本 | 与当前 settings 区分，改设置不会改写已执行 Run 的选择 |
+| `runs[].provider`, `runs[].model?`, `runs[].error?` | 该 Run 记录中的 Provider、可选模型和错误文本 | 这是 Run 当前可变选择；活动 Run 可随 Session 设置变化更新，不能作为已经发送的物理请求或各 worker 模型的历史凭证 |
+| `contextBudget?` | Host 解析当前父 Session 选择对应的有效配置，见下方预算规则 | 缺失表示预算未知；不能从客户端 Provider 或启动快照补算 |
 | `parentContextTokens?` | Host 对已保存父会话 data.messages 的 token 估计；非历史重读时可沿用上次值 | 空闲/resume 时也可显示；不是账单用量或 transcript 总长度 |
 | `activity?` | Host 收集到的最近 Run 的显示活动 | 可缺失、可保留最近终态活动；存在不证明仍在运行 |
 
@@ -147,6 +186,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `ClientSessionActivity` 字段 | 来源与含义 | 消费规则 |
 | --- | --- | --- |
 | `runId` | 产生这组活动的 Run | 不把其它 Session/Run 的活动混入当前状态栏 |
+| `contextBudget?` | 执行器在真实压缩准入/请求点发出的预算；含 provider/model/contextId、scope、窗口、响应与 Memory 预留、压缩阈值和物理输入容量 | 与顶层当前选择的配置预算分开；只与同一执行上下文的 token 数量计算比例 |
 | `costReport?` | 当前 Run 的既有 getCostReport 回调在视图刷新时返回的报告文本 | 可直接展示；不是结构化计费 API，不解析成精确金额 |
 | `iteration?.current`, `iteration?.maximum` | Runner 的迭代开始/结束事件 | 当前迭代与本次执行上限；maximum=0 是底层无界调用约定，不除以零 |
 | `compacting?` | compact start/end 事件投影的压缩状态 | 未收到信息时保留未知；false 表示该活动已结束压缩状态 |
@@ -172,29 +212,31 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `todos[].id`, `todos[].subject`, `todos[].status` | Todo 身份、主题与 pending/in_progress/completed/failed/skipped/cancelled 状态 | Todo 完成不意味着 Run 完成 |
 | `todos[].description?`, `todos[].owner?`, `todos[].note?`, `todos[].activeForm?` | 描述、归属、备注及进行时文案 | 保留可选性，不凭缺失字段推断领域状态 |
 
-状态栏的“选择的模型”“实际 Run 模型”“上下文占用”“本次 usage”是不同事实：
+状态栏的“Session 当前选择”“Run 当前选择”“上下文占用”“本次 usage”是不同事实：
 
 | 显示项 | 实际取值来源与边界 |
 | --- | --- |
-| 当前选择 | 产品读取 view.settings 或 sessions.getSettings；具体 Run 使用的 provider/model 读取 view.runs。当前 Ink 标题栏取 currentConfig（本地 Session 设置），model 未显式设置时使用 Provider 默认名称回退；不能当作每个 worker 实际请求的模型 |
+| 当前选择 | 产品显示读取 view.settings 的有效选择，编辑覆盖读取 sessions.getSettings；Run 当前可变 provider/model 读取 view.runs，它不是已发出请求的快照。Ink 从 Host view 同步显示配置和现有引用，模型默认名取 Host contextBudget；不会把观察同步写回 Host。显式本地设置仍先等待确认，并保留该等待期间确认的字段。Classic 从现有显示观察同步配置，后续提示符和命令读取同源状态。未指定的模式/推理选择显示 Host default；显式切换报告新选择，不能据此反推 Host 未报告的默认策略 |
 | 父上下文候选值 | 当前 [surface-status.ts](../packages/repl/src/ui/view-models/surface-status.ts) 依次取 activity.parentContextTokens、scope=parent 的 activity.context.tokenCount、view.parentContextTokens |
 | 运行中的上下文 | Ink 优先显示 activity.context.tokenCount（可能来自 worker），缺失再取父候选值；Web 应标明 scope，避免将 worker 值说成父会话长度 |
 | 空闲上下文 | SA 使用父候选值；AMA/AMAW 优先 view.parentContextTokens 的保存态估计，再回退父候选值，避免结束后留下 worker 数字 |
-| 上下文窗口/占比 | ClientSessionView 没有 contextWindow、reservedResponseTokens 或完整压缩阈值结构。当前 Ink 从既有 compactionInfo/Provider 元数据解析：用户窗口覆盖优先，其次模型窗口，再回退启动值；纯 Client UI 不能仅凭 tokenCount 编造窗口分母或精确百分比 |
+| 上下文窗口/占比 | 产品 Ink 读取 view.contextBudget，包含 scope=parent、解析后的 provider/model、contextWindow、reservedResponseTokens，以及 compaction.enabled=true、triggerPercent、可选 absoluteTriggerTokens。Host 复用现有窗口与压缩配置解析，设置或 config reload 后刷新同一 view。worker 没有匹配预算时仅显示数量与 scope，不除以父窗口 |
 | usage/cost | usage 来自最近响应快照，costReport 是单独的可选报告；不与上下文占用或工作预算混算。usage 没有独立 scope 字段，不能断言为父会话总账 |
 | 冻结/空闲状态 | Ink 冻结浏览停用实时 managed/iteration/compacting 的活动投影，使用冻结显示状态；终态后不因残留 activity 继续显示忙碌。未知数值用“—”或省略，未知状态显示通用文字，不补 0、不默认 success |
 
-这些状态栏取值描述当前消费者行为，不扩展纯接口。若未来需要完整远端窗口元数据，应先扩展正式契约，不能让 Web 读取本机 Provider 实例。缓存 usage 名称失配已在本轮字段核对中修复：只输出上述公共字段并保留 thoughtTokens。
+顶层 contextBudget 描述当前选择的有效配置，空闲时不能冒充某次请求的最终容量。activity.contextBudget 来自既有执行预算事件，保留执行器实际使用的 compaction.triggerTokens/physicalCapacityTokens、reservedResponseTokens 和 reservedMemoryTokens；SA 父执行有 Memory 时包含其预留，worker 的预算沿自己的上下文发出，不能套用父预留。物理容量包含执行器既有安全余量；当前上下文计数包含其 system/tool envelope，客户端不重算阈值。这里的响应预留属于压缩准入策略，不能当作之后每次 Provider 请求实际 max_tokens 的不可变凭证。
+
+产品 Ink 在运行时优先使用匹配 scope 的执行预算，未知 worker 预算只显示数量与归属；空闲使用父配置窗口。最终阈值未知时不显示推算的压力颜色。配置预留、上下文占用与 usage 不混算。独立嵌入 REPL 保留本地配置解析路径。压缩常开，没有新增可写开关。
 
 ### 两条短时序示例
 
 首轮输入到终态（下面表达因果，不保证一次内部事件对应一次观察回调）：
 
 1. Client 对 Session 建立 observe，先收到当前 view；随后用新 inputId submit。先 submit 后 observe 也能取得当前态，但不能要求补发错过的瞬态步骤。
-2. submit 返回 submitted/runId，后续 view.items 出现带相同 inputId 的 user 项，runs 给出实际 phase；只用该 ID 消除本地乐观输入重复。
+2. submit 返回 submitted/runId，后续 view.items 出现 user 项，runs 给出实际 phase；单条输入可由 inputId 关联，after_turn 合批必须逐 inputs.read 确认各 ID，不能要求每个输入各有一个展示项。
 3. Host 更新 thinking/assistant 项；工具以稳定 item.id 和 callId 出现，status=running、inputText 为参数，后续 progress 或结果替换同项。
 4. 若需要权限，view.interactions 出现 requestId；任一 Client respond 后后续视图移除请求。工具最终 success/error/cancelled，不能据此结束整轮。
-5. runs.await 返回真实终态，view.runs/最后正文收敛；Client 去掉本地流式标记。若 await 返回 unknown，显示断连并重新查询，不发布成功。
+5. runs.await 返回真实终态，view.runs/最后正文收敛；Client 去掉本地流式标记。若 await 返回 unknown，显示终态无法确认及 error 原因，不发布成功；连接错误的 Promise rejection 单独处理。
 
 继续旧 Session 与冻结历史：
 
@@ -205,11 +247,13 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 
 ### 全文读取规则
 
-`sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 activity/parentContextTokens。Activity 的父上下文与 worker 上下文不可混为一个计数。
+`sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens。Activity 的父上下文与 worker 上下文不可混为一个计数。
+
+取消后保留的半截输出可能只有 display checkpoint，没有 canonical assistant message。Host 为新输出保留可选 `afterInputId` 来源锚，恢复时将其放在对应 canonical 用户输入之后、下一轮输入之前；合批输入的已记录身份映射到同一用户项。同一 Run 的 steer 以已交付输入事实更新后续输出来源；segment 开始和工具项创建时捕获来源，既有项的延迟 delta/result 保留原锚。该字段是 Host 恢复元数据，客户端仍只使用 Host 给出的项顺序，不自行排序。旧记录缺失来源时保持旧恢复规则，不按正文或时间猜测所属输入。
 
 显示窗口是有界的。`textOffset`/`totalTextLength` 表示正文省略的前缀和总长；工具 inputText 可由 totalInputLength 标明不完整。调用 `readItem(sessionId, itemId, { part: 'text' | 'input', offset })` 补齐。offset、totalLength、nextOffset 均以 UTF-16 字符单元计数，不是 UTF-8 字节；应按返回的 nextOffset 续读，验证项 ID、偏移连续性和长度，直到结束。null、无进展或读取变化是失败，不能把部分原文当全文。
 
-历史与实时 view 不同：`readHistory` 首次给最新页，页内由旧到新，nextCursor 指向更旧页；拼接完整历史要反转页顺序，不能反转页内顺序。cursor 是不透明值。每页必须属于同一 revision；变更时重新从最新页读。`oversized` 给出超大条目的 itemId/byteLength，page.items 保留可定位的有界投影；这些正文须由 `readHistoryEntry` 读取，不能静默遗漏或用截断预览冒充。搜索可按角色过滤，scope 为 all 或 compacted；hit 的 snippet 是检索预览，不是复制原文。当前搜索索引属于 transcript 修订空间，不能直接当作 conversation 页数组下标或 fork 的 entryId；产品面尚未提供按该搜索索引读取任意 transcript 块的方法。
+历史与实时 view 不同：`readHistory` 首次给最新页，页内由旧到新，nextCursor 指向更旧页；拼接完整历史要反转页顺序，不能反转页内顺序。cursor 是不透明值。每页必须属于同一 revision；变更时重新从最新页读。`oversized` 给出超大条目的 itemId/byteLength，page.items 保留可定位的有界投影；这些正文须由 `readHistoryEntry` 读取，不能静默遗漏或用截断预览冒充。搜索可按角色过滤，scope 为 all 或 compacted；hit 的 snippet 是检索预览，不是复制原文。每个命中包含不透明 itemId，可直接交给 readHistoryEntry 分页读取原文，包括压缩前长正文。命中身份使用 transcript 修订空间，与 conversation 身份分开；entryIndex 不能当作 conversation 页数组下标或 fork 的 entryId。现有快照过期时 reader 明确报 resync_required，调用方须重新搜索，不按全文匹配恢复身份。
 
 冻结浏览属于 UI 操作：进入浏览时捕获项身份、顺序和已显示长度，补读所捕获长度内的正文/工具输入，拒绝读取中缩短、替换或不连续的内容。新产生输出不能改变冻结页的滚动位置与搜索结果；退出后再回当前 view。现有 Ink 通过 [client-plane.ts](../packages/repl/src/ui/client-plane.ts) 的 frozen reader 实现，不新增 Host 租约或另一套恢复框架。产品 `readItem` 本身没有任意时点不可变快照参数，不能据此承诺任意并发替换时仍可取回旧正文。
 
@@ -223,7 +267,9 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 
 普通产品消费者将错误视为 unknown，收窄后展示错误消息；不需要导入底层诊断错误类。低层 Node 宿主可从 `/runtime` 导入既有 `RuntimeDaemonCapabilityUpgradeError`：其 code 为 `daemon_capability_upgrade_required`，包含 capability、recoverable、restartRequired 和可选 preflight。例如构建或旧启动器问题可标为 runtimeBuild/launcherBuild；应展示具体原因，不据这些字符串构建 UI 业务能力矩阵。recoverable/restartRequired 不授权强停忙碌 Host，也不意味着可以自动重试所有操作。该类不从 `/client` 导出，不属于纯数据契约，也不覆盖全部连接/执行错误。
 
-断连后重新建立连接，再 observe/read 获取 Host 当前事实；不要依赖错过的事件推导终态。`ClientObservation` 当前只有 close，没有专门的 error/closed 回调或自动重连保证。调用方需要在连接/请求失败时显式提供断连状态和重试入口，不能宣称观察回调永久有效。`agents.wait` 的局部 sequence 等待也不构成跨 Host 的全局恢复日志。
+断连后重新建立连接，再 observe/read 获取 Host 当前事实；不要依赖错过的事件推导终态。`observe(sessionId, onView, { onStatus })` 报告 live、interrupted、closed。只有完整新 view 已交付后才报告 live；可恢复传输中断先报告 interrupted，复用现有重订阅和有限重试，耗尽或永久断连报告 closed/reason=unavailable。Host 视图读取失败也报告 interrupted，即使连接仍然健康；后续成功刷新再恢复 live。Session 删除或 Host 释放观察报告 closed/reason=unavailable；主动 close 报告 closed/reason=client。首次建立失败仍 reject。该回调不是执行恢复或请求重放承诺。Ink 在 interrupted 时保留正文、已打开的弹窗及草稿，不新开对话；只有新完整视图确认请求消失或观察永久关闭时，才清理本地弹窗。观察清理不等同用户 Esc、取消或拒绝，不能向 Host 自动发送答案。已打开弹窗的明确用户答案仍按 requestId 由 Host 裁决；传输失败须显式提示，不能自动重答。`agents.wait` 的局部 sequence 等待也不构成跨 Host 的全局恢复日志。
+
+ACP 在观察中断或失效时报告当前 prompt 的投影失败，沿原有失败收尾请求停止该 Run；迟到的权限答复不会再提交。它不会把观察丢失转换成正常完成。
 
 ## 使用示例
 
@@ -259,13 +305,13 @@ try {
   const session = await client.sessions.create({ projectPath: process.cwd() });
   const observation = await client.sessions.observe(session.id, (view: ClientSessionView) => {
     renderCurrentView(view); // 本应用提供的完整替换渲染函数
-  });
+  }, { onStatus: (status) => renderObservationStatus(status) });
   try {
     const inputId = randomUUID();
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId, text: '解释这个项目' });
     if (accepted.runId) {
       const outcome = await client.runs.await(accepted.runId);
-      if (outcome.phase === 'unknown') throw new Error('连接中断，请重新读取 Run 状态。');
+      if (outcome.phase === 'unknown') throw new Error(outcome.error ?? 'Run 终态无法确认。');
       showRunOutcome(outcome); // 依 phase/error 显示真实结果
     }
   } finally {

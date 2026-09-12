@@ -20,13 +20,20 @@ describe("surface-status", () => {
         managedTask: { phase: "worker", workerTitle: "Scout", round: 2, maximumRounds: 4, idleWaiting: true, pendingChildren: 2 } },
     };
     const props = buildSurfaceStatusBarProps(options);
-    expect(props.contextUsage?.currentTokens).toBe(900);
-    expect(props.contextUsage?.contextWindow).toBe(1_000_000);
+    expect(props.contextUsage).toBeUndefined();
+    expect(props.contextTokens).toEqual({ currentTokens: 900, scope: 'worker' });
     expect(props).toMatchObject({ currentIteration: 3, maxIter: 7, isCompacting: true,
       managedPhase: "worker", managedWorkerTitle: "Scout", managedRound: 2, managedMaxRounds: 4,
       managedIdleWaiting: true, managedIdleWaitingPendingCount: 2 });
     const text = getStatusBarText(props);
-    expect(text).toContain("900/1.0M");
+    expect(text).toContain("worker ctx 900");
+    expect(text).not.toContain("900/1.0M");
+    const workerBudget = buildSurfaceStatusBarProps({ ...options, clientActivity: {
+      ...options.clientActivity, contextBudget: { scope: 'worker', provider: 'worker-provider', model: 'worker-model',
+        contextWindow: 32_000, reservedResponseTokens: 4000, reservedMemoryTokens: 0,
+        compaction: { enabled: true, triggerPercent: 75, triggerTokens: 24_000, physicalCapacityTokens: 27_000 } },
+    } });
+    expect(workerBudget.contextUsage).toMatchObject({ currentTokens: 900, contextWindow: 32_000, effectiveTriggerTokens: 24_000 });
     expect(text).toContain("11000→1000 (12000)");
     expect(text).toContain("Iter 3/7");
     const frozen = buildSurfaceStatusBarProps({ ...options, isTranscriptMode: true });
@@ -34,7 +41,7 @@ describe("surface-status", () => {
     expect(frozen.isCompacting).toBe(false);
     const childOnly = buildSurfaceStatusBarProps({ ...options,
       clientActivity: { runId: "run", context: options.clientActivity.context } });
-    expect(childOnly.contextUsage?.currentTokens).toBe(900);
+    expect(childOnly.contextUsage).toBeUndefined();
     const parentOnly = buildSurfaceStatusBarProps({ ...options,
       clientActivity: { runId: "run", context: { tokenCount: 600, tokenSource: "estimate", scope: "parent" } } });
     expect(parentOnly.contextUsage?.currentTokens).toBe(600);

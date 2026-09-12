@@ -55,6 +55,16 @@ describe('status workspace output', () => {
     expect(output).toContain('managed');
   });
 
+  it.each(['thinking', 'reasoning', 'mode', 'agent-mode'])('reports Host default in /%s after a peer clears the override', async name => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    currentConfig.hostSettings = {};
+    const command = BUILTIN_COMMANDS.find(candidate => candidate.name === name)!;
+    await command.handler([], context, {} as CommandCallbacks, currentConfig);
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain(name === 'mode' ? 'Current mode: Host default'
+      : name === 'agent-mode' ? 'Agent mode: Host default' : 'Reasoning effort: Host default');
+  });
+
   it('shows SDK runtime identity and daemon counters for runtime detail status', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const statusCommand = BUILTIN_COMMANDS.find((command) => command.name === 'status');

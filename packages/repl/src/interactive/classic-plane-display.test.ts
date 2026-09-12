@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
-import { createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
+import type { ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
+import { attachClassicPlaneDisplay, createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
+import { applyClientSessionViewSettings } from '../ui/client-session-settings.js';
+import type { CurrentConfig } from '../commands/types.js';
+
+it('updates classic settings from its existing display observation without writing them back', async () => {
+  let config: CurrentConfig = { provider: 'anthropic', model: 'startup', permissionMode: 'accept-edits',
+    agentMode: 'sa', thinking: false, reasoningMode: 'off' };
+  let receive: ((view: ClientSessionView) => void) | undefined;
+  let subscriptions = 0;
+  const close = await attachClassicPlaneDisplay({
+    observe: async (_sessionId, listener) => { subscriptions += 1; receive = listener; return () => undefined; },
+    readItem: async () => null,
+    respondInteraction: async () => false,
+  }, 'session', { onView: view => { config = applyClientSessionViewSettings(config, view); } });
+  const view: ClientSessionView = { session: { id: 'session', title: '' }, settings: { model: 'peer-model', permissionMode: 'plan' },
+    items: [], queue: [], runs: [], interactions: [] };
+  receive?.(view);
+  expect(config).toMatchObject({ model: 'peer-model', permissionMode: 'plan' });
+  expect(subscriptions).toBe(1);
+  close();
+  receive?.({ ...view, settings: { model: 'too-late' } });
+  expect(config.model).toBe('peer-model');
+});
 
 function item(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | 'type' | 'text'>): ClientViewItem {
   return { timestamp: 1_700_000_000_000, ...overrides };

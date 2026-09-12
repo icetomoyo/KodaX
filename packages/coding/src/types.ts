@@ -541,7 +541,11 @@ export interface KodaXEvents {
     meta?: KodaXToolEventMeta,
   ) => void;
   onToolResult?: (
-    result: { id: string; name: string; content: string },
+    result: {
+      id: string; name: string; content: string;
+      /** Canonical typed output; is_error and metadata.cancelled take precedence over display text. */
+      toolResult?: KodaXToolResultBlock;
+    },
     meta?: KodaXToolEventMeta,
   ) => void;
   /** Internal execution lease boundary; fires immediately around tool.execute. */
@@ -703,7 +707,7 @@ export interface KodaXEvents {
     effort: string;
   } & Partial<KodaXLiveEventMeta>) => void;
   onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent & Partial<KodaXLiveEventMeta>) => void;
-  /** Optional bounded context diagnostics. Emitted only when context.contextDiagnostics is true. */
+  /** Bounded request context and the execution owner's resolved compaction capacity. */
   onContextBudgetSnapshot?: (
     event: RuntimeContextBudgetSnapshot & Partial<KodaXLiveEventMeta>,
   ) => void;
@@ -1101,6 +1105,19 @@ export interface KodaXSkillInvocationContext {
   /** Marker requesting trusted policy rehydration inside daemon/worker transports. */
   runtimePolicy?: KodaXSkillInvocationRuntimePolicy;
   expandedContent: string;
+}
+
+/** Host-only trusted descriptor for a registered prompt or extension invocation. */
+export interface KodaXCommandInvocationContext {
+  readonly name: string;
+  readonly source: 'prompt' | 'extension';
+  readonly path?: string;
+  readonly allowedTools?: string;
+  readonly context?: 'fork';
+  readonly agent?: string;
+  readonly model?: string;
+  readonly hooks?: import('@kodax-ai/agent').SkillHooks;
+  readonly runtimePolicy?: KodaXSkillInvocationRuntimePolicy;
 }
 
 export interface KodaXSkillMap {
@@ -2011,6 +2028,8 @@ export interface KodaXContextOptions {
   skillScriptRunner?: KodaXSkillScriptRunner;
   rawUserInput?: string;
   skillInvocation?: KodaXSkillInvocationContext;
+  /** Trusted Host execution only; never accepted from the product wire. */
+  commandInvocation?: KodaXCommandInvocationContext;
   /** Optional repository-intelligence snapshot injected into the system prompt. */
   repoIntelligenceContext?: string;
   /** Optional user-supplied artifacts carried with the current prompt. */

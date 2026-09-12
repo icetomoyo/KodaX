@@ -15,11 +15,16 @@ import { KodaXBaseProvider } from '@kodax-ai/llm';
 import { clearRuntimeModelProviders } from '@kodax-ai/llm';
 import { runKodaX } from './agent.js';
 import { createExtensionRuntime, getActiveExtensionRuntime } from './extensions/index.js';
+import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
+import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
 const TEST_PROVIDER_NAME = 'feature-034-test-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'FEATURE_034_TEST_PROVIDER_API_KEY';
 
 class Feature034TestProvider extends KodaXBaseProvider {
+  static beforeReview: (() => Promise<void>) | undefined;
+  static reviewsInFlight = 0;
+  static completedReviews = 0;
   static calls: Array<{
     messages: KodaXMessage[];
     tools: KodaXToolDefinition[];
@@ -43,6 +48,17 @@ class Feature034TestProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     _signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
+    if (tools.some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) {
+      Feature034TestProvider.reviewsInFlight += 1;
+      try {
+        await Feature034TestProvider.beforeReview?.();
+        Feature034TestProvider.completedReviews += 1;
+        return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
+          type: 'tool_use', id: 'learning-review', name: LEARNING_REVIEW_TOOL.name,
+          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+        }] };
+      } finally { Feature034TestProvider.reviewsInFlight -= 1; }
+    }
     Feature034TestProvider.calls.push({
       messages,
       tools,
@@ -173,13 +189,21 @@ describe('runKodaX extension runtime integration', () => {
   let tempDir: string;
 
   beforeEach(async () => {
+    expect(Feature034TestProvider.reviewsInFlight).toBe(0);
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-034-'));
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
     Feature034TestProvider.calls = [];
+    Feature034TestProvider.beforeReview = undefined;
+    Feature034TestProvider.completedReviews = 0;
     Feature034ManagedProtocolProvider.calls = [];
   });
 
   afterEach(async () => {
+    // Persisted foreground runs leave a real review drain behind. Keep its
+    // provider/environment alive until settlement instead of leaking it into
+    // the next test's foreground call snapshot.
+    await awaitLatestCodingMemoryReviewDrain(5_000);
+    expect(Feature034TestProvider.reviewsInFlight).toBe(0);
     clearRuntimeModelProviders();
     delete process.env[TEST_PROVIDER_API_KEY_ENV];
     delete (globalThis as typeof globalThis & {
@@ -564,6 +588,50 @@ describe('runKodaX extension runtime integration', () => {
     expect(toolNames).not.toContain('impact_estimate');
 
     await runtime.dispose();
+  }, 30_000);
+
+  it('settles a delayed background review without polluting the next foreground call snapshot', async () => {
+    let releaseReview: () => void = () => {};
+    let startedReview: () => void = () => {};
+    const gate = new Promise<void>(resolve => { releaseReview = resolve; });
+    const started = new Promise<void>(resolve => { startedReview = resolve; });
+    Feature034TestProvider.beforeReview = async () => { startedReview(); await gate; };
+    const extensionPath = path.join(tempDir, 'late-review.mjs');
+    await writeFile(extensionPath, `export default function(api) {
+      api.registerModelProvider({ name: '${TEST_PROVIDER_NAME}',
+        factory: () => new (globalThis.__feature034ProviderClass)() });
+    }`);
+    (globalThis as typeof globalThis & { __feature034ProviderClass?: typeof Feature034TestProvider })
+      .__feature034ProviderClass = Feature034TestProvider;
+    const snapshots = new Map<string, KodaXSessionData>();
+    const storage: KodaXSessionStorage = {
+      async save(id, data) { snapshots.set(id, structuredClone(data)); },
+      async load(id) { return structuredClone(snapshots.get(id) ?? null); },
+    };
+    const runtime = createExtensionRuntime();
+    await runtime.loadExtension(extensionPath);
+    try {
+      await runKodaX({ provider: TEST_PROVIDER_NAME, extensionRuntime: runtime,
+        context: { executionCwd: tempDir }, session: { id: path.basename(tempDir), storage } }, 'A persisted foreground request');
+      await started;
+      expect(Feature034TestProvider.calls).toHaveLength(1);
+      // Reproduce the next beforeEach reset while the previous review is late.
+      Feature034TestProvider.calls = [];
+      let drained = false;
+      const draining = awaitLatestCodingMemoryReviewDrain(5_000).then(() => { drained = true; });
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      expect(Feature034TestProvider.reviewsInFlight).toBe(1);
+      releaseReview();
+      await draining;
+      expect(Feature034TestProvider.reviewsInFlight).toBe(0);
+      expect(Feature034TestProvider.completedReviews).toBe(1);
+      expect(Feature034TestProvider.calls).toHaveLength(0);
+    } finally {
+      releaseReview();
+      await awaitLatestCodingMemoryReviewDrain(5_000);
+      await runtime.dispose();
+    }
   }, 30_000);
 
   // FEATURE_193 (v0.7.43) deep V1 cleanup: the "captures hidden managed

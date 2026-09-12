@@ -1,4 +1,5 @@
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
 
@@ -11,6 +12,11 @@ export function toKodaXProductClient(
   runtime: KodaXRuntime,
 ): KodaXProductClient {
   return {
+    commands: {
+      execute: (input) => runtime.invocations.executeCommand(input),
+      readPrompt: (input) => runtime.invocations.readCommandPrompt(input),
+    },
+    review: { start: (input) => runtime.invocations.startReview(input) },
     host: {
       shutdown: () => runtime.daemon !== undefined
         ? runtime.daemon.shutdown()
@@ -25,9 +31,10 @@ export function toKodaXProductClient(
       delete: (sessionId) => runtime.sessions.delete(sessionId),
       archive: (sessionId) => runtime.sessions.archive(sessionId),
       unarchive: (sessionId) => runtime.sessions.unarchive(sessionId),
+      getAutoModeStats: async sessionId => (await runtime.sessions.getAutoModeStats(sessionId)) ?? undefined,
       getSettings: async (sessionId) => toClientSessionSettings(await runtime.sessions.getSettings(sessionId)),
       updateSettings: async (sessionId, patch) => toClientSessionSettings(await runtime.sessions.updateSettings(sessionId, patch)),
-      observe: (sessionId, onView) => runtime.sessions.observeView(sessionId, onView),
+      observe: (sessionId, onView, options) => runtime.sessions.observeView(sessionId, onView, options),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
       readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
       readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
@@ -42,7 +49,7 @@ export function toKodaXProductClient(
       },
       readLineage: (sessionId) => runtime.sessions.readLineage(sessionId),
       labelEntry: (sessionId, input) => runtime.sessions.labelEntry({ sessionId, ...input }),
-      selectBranch: (sessionId, selector) => runtime.sessions.setActiveEntry({ sessionId, entryId: selector })
+      selectBranch: (sessionId, selector, options) => runtime.sessions.setActiveEntry({ sessionId, entryId: selector, ...options })
         .then((session) => {
           // Same-version Hosts throw conflict themselves; null only survives
           // from an older Host that predates the explicit-conflict contract.
@@ -60,6 +67,58 @@ export function toKodaXProductClient(
           return session;
         }),
       recoverSession: (sessionId, input) => runtime.sessions.recover({ sessionId, ...(input ?? {}) }),
+      compact: async (sessionId, input) => {
+        const result = await runtime.sessions.compact({ sessionId, ...input });
+        return {
+          compacted: result.compacted, messages: result.messages,
+          tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter,
+          ...(result.report !== undefined ? { report: result.report } : {}),
+          ...(result.reason !== undefined ? { reason: result.reason } : {}),
+        };
+      },
+    },
+    learning: {
+      list: (query) => runtime.learning.list(query),
+      get: (nameOrSlugOrId) => runtime.learning.get(nameOrSlugOrId),
+      getSnapshot: () => runtime.learning.getSnapshot(),
+      events: (afterRevision) => runtime.learning.events(afterRevision),
+      subscribe: (options) => runtime.learning.subscribe(options),
+      acknowledge: (nameOrSlugOrId) => runtime.learning.acknowledge(nameOrSlugOrId),
+      snooze: (nameOrSlugOrId, until) => runtime.learning.snooze(nameOrSlugOrId, until),
+      reject: (nameOrSlugOrId) => runtime.learning.reject(nameOrSlugOrId),
+      disable: (nameOrSlugOrId) => runtime.learning.disable(nameOrSlugOrId),
+      rollback: (nameOrSlugOrId) => runtime.learning.rollback(nameOrSlugOrId),
+      promote: (nameOrSlugOrId, scope) => runtime.learning.promote(nameOrSlugOrId, scope),
+      review: (nameOrSlugOrId) => runtime.learning.review(nameOrSlugOrId),
+      trust: (nameOrSlugOrId) => runtime.learning.trust(nameOrSlugOrId),
+    },
+    memory: {
+      async forProject(projectRoot) {
+        const plane = await runtime.memory.forProject(projectRoot);
+        return {
+          memoryRoot: plane.memoryRoot,
+          entrypointPath: plane.entrypointPath,
+          listReviews: () => plane.listReviews(),
+          reviewerProviderConfigured: () => plane.reviewerProviderConfigured(),
+          rebuild: () => plane.rebuild(),
+          ensureOpenTarget: (targetPath) => plane.ensureOpenTarget(targetPath),
+          controller: {
+            listRefs: (filter) => plane.controller.listRefs(filter),
+            readRef: (ref) => plane.controller.readRef(ref),
+            remember: (input) => plane.controller.remember(input),
+            forgetRef: (id, fingerprint) => plane.controller.forgetRef(id, fingerprint),
+            approveProposal: (id, fingerprints, revision) => plane.controller.approveProposal(id, fingerprints, revision),
+            rejectProposal: (id, reason, revision) => plane.controller.rejectProposal(id, reason, revision),
+            listInbox: async () => (await plane.controller.listInbox()).map((proposal) => ({
+              ...proposal, revision: memoryProposalRevision(proposal),
+            })),
+            showProposal: async (id) => {
+              const proposal = await plane.controller.showProposal(id);
+              return proposal === undefined ? undefined : { ...proposal, revision: memoryProposalRevision(proposal) };
+            },
+          },
+        };
+      },
     },
     inputs: {
       submit: (input) => runtime.runs.acceptInput(input),
@@ -106,6 +165,7 @@ export function toKodaXProductClient(
       remove: (agentId, options) => runtime.admin.agentRegistrations.remove(agentId, options),
     },
     agents: {
+      reviewLean: (input) => runtime.invocations.startAgentsLean(input),
       tree: (sessionId) => runtime.agents.tree(sessionId),
       detail: (sessionId, actorPath) => runtime.agents.detail(sessionId, actorPath),
       spawn: (sessionId, input) => runtime.agents.spawn(sessionId, input),
@@ -140,6 +200,8 @@ export function toKodaXProductClient(
         runId: run.runId,
         workflowName: run.workflow,
         status: run.status,
+        totalSpawned: run.totalSpawned, eventCount: run.eventCount, runDir: run.runDir,
+        ...(run.endedAt !== undefined ? { endedAt: new Date(run.endedAt).toISOString() } : {}),
         startedAt: new Date(run.startedAt).toISOString(),
         updatedAt: run.endedAt !== undefined
           ? new Date(run.endedAt).toISOString()
@@ -147,19 +209,8 @@ export function toKodaXProductClient(
         ...(run.resultText !== undefined ? { resultSummary: run.resultText } : {}),
         ...(run.error !== undefined ? { error: run.error } : {}),
       })),
-      get: async (runId) => {
-        const snapshot = await runtime.workflows.get(runId);
-        return snapshot === undefined ? undefined : {
-          runId: snapshot.runId,
-          workflowName: snapshot.workflowName,
-          status: snapshot.status,
-          startedAt: snapshot.startedAt,
-          updatedAt: snapshot.updatedAt,
-          ...(snapshot.displayName !== undefined ? { displayName: snapshot.displayName } : {}),
-          ...(snapshot.resultSummary !== undefined ? { resultSummary: snapshot.resultSummary } : {}),
-          ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
-        };
-      },
+      get: (runId) => runtime.workflows.get(runId),
+      subscribe: (filter, listener) => runtime.workflows.subscribe(filter, listener),
       pause: (runId) => runtime.workflows.pause(runId),
       resume: (runId) => runtime.workflows.resume(runId),
       stop: (runId) => runtime.workflows.stop(runId),
@@ -174,6 +225,7 @@ export function toKodaXProductClient(
       forgetCapabilities: (input) => runtime.catalog.forgetCapabilities(input),
       commands: async (workspaceRoot) => (await runtime.catalog.commands(workspaceRoot)).map((command) => ({
         name: command.name,
+        ...(command.aliases !== undefined ? { aliases: command.aliases } : {}),
         description: command.description,
         source: String(command.source),
         ...(command.userInvocable !== undefined ? { userInvocable: command.userInvocable } : {}),

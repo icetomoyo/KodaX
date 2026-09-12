@@ -320,6 +320,8 @@ describe.each([
     expect(snapshots).toHaveLength(2);
     for (const snapshot of snapshots) {
       expect(snapshot.tokenBreakdown.skillCatalog).toBeGreaterThan(0);
+      expect(snapshot.compactionBudget).toMatchObject({ reservedMemoryTokens: 0,
+        triggerTokens: expect.any(Number), physicalCapacityTokens: expect.any(Number) });
     }
   }, 30_000);
 });

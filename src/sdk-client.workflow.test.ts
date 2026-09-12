@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
+import { createCliWorkflowControl } from './cli-client-plane.js';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -43,9 +44,13 @@ it('runs one workflow on the Host that both clients observe and control', async 
   const first = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   const second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   try {
+    const firstControl = createCliWorkflowControl(first);
+    const secondControl = createCliWorkflowControl(second);
+    const events: string[] = [];
+    const subscription = secondControl.subscribe({}, event => events.push(event.type));
     // Client A starts a declarative (inline) workflow on the Host.
     const session = await first.sessions.create({ projectPath: homeDir });
-    const started = await first.workflows.start({
+    const started = await firstControl.start({
       sessionId: session.id,
       projectRoot: homeDir,
       source: { kind: 'inline', manifest: MANIFEST, source: SOURCE },
@@ -70,6 +75,14 @@ it('runs one workflow on the Host that both clients observe and control', async 
     // verbatim to the Host-minted run.
     const seenDetail = await second.workflows.get(runId);
     expect(seenDetail?.displayName).toBe('Dual-client audit');
+    const detailed = await secondControl.get(runId);
+    expect(detailed?.items).toEqual(expect.any(Array));
+    expect(detailed?.counts).toBeDefined();
+    expect(detailed?.progress).toBeDefined();
+    expect(await secondControl.list()).toEqual(expect.arrayContaining([expect.objectContaining({
+      runId, workflow: MANIFEST.name, runDir: expect.stringContaining('workflow-runs'),
+      totalSpawned: expect.any(Number), eventCount: expect.any(Number), startedAt: expect.any(Number),
+    })]));
 
     // A declines an unknown name without any Host-side run.
     await expect(first.workflows.start({
@@ -78,10 +91,10 @@ it('runs one workflow on the Host that both clients observe and control', async 
     })).resolves.toMatchObject({ kind: 'declined' });
 
     // Control crosses clients: A pauses, B observes and stops, both settle.
-    await first.workflows.pause(runId);
+    await firstControl.pause(runId);
     const paused = await second.workflows.get(runId);
     expect(['paused', 'pausing', 'completed']).toContain(paused?.status ?? 'completed');
-    await second.workflows.stop(runId);
+    await secondControl.stop(runId);
     // workflows.get projects the WorkflowProcess snapshot; a Host stop settles
     // the process as 'cancelled' (run.status is 'stopped', but that never
     // reaches this view — the process statuses are the contract here).
@@ -92,6 +105,8 @@ it('runs one workflow on the Host that both clients observe and control', async 
           || settled.status === 'cancelled'
           || settled.status === 'failed');
     }, { timeout: 20_000 }).toBe(true);
+    await expect.poll(() => events.includes('workflow_finished')).toBe(true);
+    subscription.close();
     const terminal = await first.workflows.get(runId);
     expect(terminal).toBeDefined();
     const runTerminal = await runtime.runs.await(runId);

@@ -2,11 +2,51 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import type { ClientSessionView, ClientObservationStatus, ClientPermissionDecision } from '@kodax-ai/coding/client-contract';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
+
+it.each(['interrupted', 'closed'] as const)('fails ACP projection when observation is %s and ignores a late permission answer', async state => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-status-'));
+  const runtime = await createKodaXRuntime({ homeDir });
+  const client = toKodaXProductClient(runtime);
+  const session = await client.sessions.create({ projectPath: homeDir });
+  const view: ClientSessionView = { session, settings: {}, items: [], queue: [], interactions: [], runs: [] };
+  let listener: ((view: ClientSessionView) => void) | undefined;
+  let onStatus: ((status: ClientObservationStatus) => void) | undefined;
+  vi.spyOn(client.sessions, 'observe').mockImplementation(async (_id, onView, options) => {
+    listener = onView;
+    onStatus = options?.onStatus;
+    onView(view);
+    options?.onStatus?.({ state: 'live' });
+    return { close() { options?.onStatus?.({ state: 'closed', reason: 'client' }); } };
+  });
+  let answer: ((decision: ClientPermissionDecision) => void) | undefined;
+  const pendingDecision = new Promise<ClientPermissionDecision>(resolve => { answer = resolve; });
+  const permission = vi.fn(() => pendingDecision);
+  const respond = vi.spyOn(client.interactions, 'respond');
+  const projection = await observeAcpClientPrompt(client, session.id, async () => undefined, permission, () => ({}));
+  const failures: unknown[] = [];
+  void projection.failed.then(error => { failures.push(error); });
+  try {
+    listener?.({ ...view, interactions: [{ kind: 'permission', requestId: 'approval', sessionId: session.id,
+      runId: 'run', createdAt: new Date().toISOString(), options: { toolName: 'read' } }] });
+    expect(permission).toHaveBeenCalledOnce();
+    onStatus?.(state === 'closed' ? { state, reason: 'unavailable' } : { state });
+    await expect.poll(() => failures[0]).toMatchObject({ message: expect.stringContaining('observation') });
+    answer?.({ type: 'allow_once' });
+    await pendingDecision;
+    await expect(projection.flush()).rejects.toThrow('observation');
+    expect(respond).not.toHaveBeenCalled();
+  } finally {
+    answer?.({ type: 'reject' });
+    projection.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
 
 it('projects full current text and explicit revisions without replaying bounded prior history', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-projection-'));

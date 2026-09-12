@@ -116,6 +116,7 @@ it('hard-disables `!`cmd`` dynamic context when no host executor is bound', asyn
 
 it.each(['session', 'profile', 'legacy-session'] as const)('executes read-only dynamic context under the admitted %s policy', async (policy) => {
   const projectRoot = await seedSkillProject();
+  vi.stubEnv('KODAX_HOME', path.join(projectRoot, '.kodax'));
   const file = path.join(projectRoot, '.kodax', 'skills', 'dyn-context', 'SKILL.md');
   await writeFile(file, '---\nname: dyn-context\ndescription: context test\n---\nValue !`echo dynamic-context-ok`\nDenied !`echo unsafe > forbidden.txt`\n');
   if (policy === 'profile') await writeFile(path.join(projectRoot, '.kodax', 'config.json'), JSON.stringify({ permissionMode: 'full-access' }));
@@ -134,6 +135,7 @@ it.each(['session', 'profile', 'legacy-session'] as const)('executes read-only d
     expect(prepared.invocation.prompt).toContain('read-only');
   } finally {
     await runtime.close();
+    vi.unstubAllEnvs();
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
@@ -235,6 +237,107 @@ class ProbeProvider extends KodaXBaseProvider {
     };
   }
 }
+
+it('admits and saves a Skill input before dynamic execution, and rejects busy input without executing it', async () => {
+  const projectRoot = await seedSkillProject();
+  registerModelProvider('t37-probe', () => new ProbeProvider(() => undefined));
+  vi.stubEnv('KODAX_T37_PROBE_KEY', 'test-key');
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true, defaultProvider: 't37-probe' });
+  let release: (() => void) | undefined;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const observed: { saved: boolean; run: boolean }[] = [];
+  const shell = vi.spyOn(coding, 'toolBash').mockImplementation(async () => {
+    const session = await runtime.sessions.transcript(sessionId);
+    const accepted = await runtime.runs.getInput(sessionId, 'dynamic-first');
+    observed.push({ saved: session?.messages.some(message => message.inputId === 'dynamic-first') === true, run: accepted?.runId !== undefined });
+    await waiting;
+    return 'Command: pwd\nExit: 0\nDYNAMIC-CONTEXT';
+  });
+  let sessionId = '';
+  let submitting: ReturnType<typeof runtime.runs.acceptInput> | undefined;
+  try {
+    const session = await runtime.sessions.create({ projectPath: projectRoot });
+    sessionId = session.id;
+    await runtime.sessions.updateSettings(sessionId, { agentMode: 'sa', permissionMode: 'full-access' });
+    submitting = runtime.runs.acceptInput({ sessionId, inputId: 'dynamic-first', text: '/skill:dyn-context' });
+    await expect.poll(() => observed.length).toBe(1);
+    expect(observed).toEqual([{ saved: true, run: true }]);
+    const accepted = await submitting;
+    await expect(runtime.runs.acceptInput({ sessionId, inputId: 'dynamic-busy', text: '/skill:dyn-context' }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    expect(shell).toHaveBeenCalledTimes(1);
+    release?.();
+    expect((await runtime.runs.await(accepted.runId!)).phase).toBe('completed');
+  } finally {
+    release?.();
+    await Promise.allSettled(submitting ? [submitting] : []);
+    await runtime.close();
+    shell.mockRestore();
+    clearRuntimeModelProviders();
+    vi.unstubAllEnvs();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 60_000);
+
+it('does not execute dynamic Skill context if saving its accepted user input fails', async () => {
+  const projectRoot = await seedSkillProject();
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true, defaultProvider: 'anthropic' });
+  const shell = vi.spyOn(coding, 'toolBash').mockResolvedValue('Unexpected execution');
+  const save = FileSessionStorage.prototype.save;
+  const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function (this: FileSessionStorage, id, data) {
+    if (data.messages.some(message => message.inputId === 'unsaved-skill')) throw new Error('Injected input write failure');
+    return save.call(this, id, data);
+  });
+  try {
+    const session = await runtime.sessions.create({ projectPath: projectRoot });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+    await expect(runtime.runs.acceptInput({ sessionId: session.id, inputId: 'unsaved-skill', text: '/skill:dyn-context' }))
+      .rejects.toThrow('Injected input write failure');
+    expect(shell).not.toHaveBeenCalled();
+  } finally {
+    saveSpy.mockRestore();
+    shell.mockRestore();
+    await runtime.close();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it.each(['sa', 'ama'] as const)('stops dynamic Skill preparation in %s before invoking the model', async (agentMode) => {
+  const projectRoot = await seedSkillProject();
+  const capture = vi.fn();
+  registerModelProvider('t37-probe', () => new ProbeProvider(capture));
+  vi.stubEnv('KODAX_T37_PROBE_KEY', 'test-key');
+  const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true, defaultProvider: 't37-probe' });
+  let signal: AbortSignal | undefined;
+  const shell = vi.spyOn(coding, 'toolBash').mockImplementation(async (_input, context) => {
+    signal = context.abortSignal;
+    if (!signal) throw new Error('Preparation lost cancellation signal');
+    await new Promise<void>(resolve => {
+      if (signal!.aborted) resolve();
+      else signal!.addEventListener('abort', () => resolve(), { once: true });
+    });
+    signal.throwIfAborted();
+    return '';
+  });
+  try {
+    const session = await runtime.sessions.create({ projectPath: projectRoot });
+    await runtime.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access' });
+    const accepted = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'stop-preparation', text: '/skill:dyn-context' });
+    await expect.poll(() => signal).toBeDefined();
+    await runtime.runs.abort(accepted.runId!);
+    expect(signal!.aborted).toBe(true);
+    const result = await runtime.runs.await(accepted.runId!);
+    expect(result.phase).toBe('interrupted');
+    expect(capture).not.toHaveBeenCalled();
+    expect((await runtime.sessions.transcript(session.id))?.messages.some(message => message.inputId === 'stop-preparation')).toBe(true);
+  } finally {
+    await runtime.close();
+    shell.mockRestore();
+    clearRuntimeModelProviders();
+    vi.unstubAllEnvs();
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 60_000);
 
 it.each(['immediate', 'after_turn'] as const)('expands a %s Skill Host-side at actual consumption', async (delivery) => {
   const projectRoot = await seedSkillProject();

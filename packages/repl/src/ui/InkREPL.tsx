@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
+import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -219,8 +219,10 @@ import {
 } from "../interactive/context.js";
 import {
   parseCommand,
+  parseHostCommand,
   executeCommand,
   isRegisteredUserCommand,
+  isRegisteredHostCommand,
   CommandCallbacks,
   CurrentConfig,
   SessionCommandBinding,
@@ -534,13 +536,14 @@ import {
   readClientPlaneHistory,
   mintInkInputId,
   runClientPlaneRound,
+  followClientPlaneRun,
   viewRunsActive,
   type ClientPlaneDialogSurface,
   type ClientViewItemMemo,
   type InkClientPlane,
 } from "./client-plane.js";
 import { createClientInputQueue } from "./client-input-queue.js";
-import type { ClientSessionView, ClientSessionSettingsPatch } from "@kodax-ai/coding/client-contract";
+import type { ClientSessionView, ClientSessionSettingsPatch, ClientObservationStatus } from "@kodax-ai/coding/client-contract";
 import { SessionReadError } from "../interactive/storage.js";
 import type {
   PreparedSessionAppendBaseline,
@@ -768,6 +771,10 @@ export interface InkREPLOptions extends KodaXOptions {
   prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
+  commandClient?: CommandCallbacks['commandClient'];
+  listHostCommands?: CommandCallbacks['listHostCommands'];
+  startReview?: CommandCallbacks['startReview'];
+  reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
   goal?: CommandCallbacks['goal'];
   sessionCommands?: SessionCommandBinding;
   compactSession?: CommandCallbacks['compactSession'];
@@ -1807,6 +1814,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // the display authority (items replace wholesale) and rounds travel the
   // Host input/run faces instead of the in-process runner.
   const [clientView, setClientView] = useState<ClientSessionView | null>(null);
+  const [clientObservationStatus, setClientObservationStatus] = useState<ClientObservationStatus | null>(null);
   const clientViewRef = useRef<ClientSessionView | null>(null);
   const clientViewItemMemoRef = useRef<ClientViewItemMemo>({ entries: new Map() });
   useEffect(() => {
@@ -1827,7 +1835,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             memo: clientViewItemMemoRef.current,
           }),
         );
-      }).then((close) => {
+      }, { onStatus: (status) => { if (!closed) setClientObservationStatus(status); } }).then((close) => {
         if (closed) {
           close();
           return;
@@ -1850,6 +1858,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (retry !== undefined) clearTimeout(retry);
       clientViewRef.current = null;
       setClientView(null);
+      setClientObservationStatus(null);
     };
   }, [options.clientPlane, context.sessionId, replaceHistoryItems]);
   // FEATURE_298 T17 — pending Host interactions drive the Ink dialogs; the
@@ -1895,7 +1904,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
-    const pending = clientView?.interactions ?? [];
+    // A missing observation is not evidence that a request disappeared.
+    // Keep the existing dialog and draft until a fresh baseline resolves it.
+    if (clientObservationStatus?.state === 'interrupted') return;
+    const pending = clientObservationStatus?.state === 'live' ? clientView?.interactions ?? [] : [];
     const pendingIds = new Set(pending.map((interaction) => interaction.requestId));
     for (const [requestId, controller] of clientPlaneOpenInteractionsRef.current) {
       if (pendingIds.has(requestId)) continue;
@@ -1913,11 +1925,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clientPlaneOpenInteractionsRef.current.set(interaction.requestId, controller);
       void answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal)
         .then((accepted) => {
-          if (accepted) return;
+          if (accepted || controller.signal.aborted) return;
           clientPlaneOpenInteractionsRef.current.delete(interaction.requestId);
           controller.abort();
         })
         .catch(() => {
+          if (controller.signal.aborted) return;
           clientPlaneOpenInteractionsRef.current.delete(interaction.requestId);
           controller.abort();
           pushClientPlaneNotice(
@@ -1926,7 +1939,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           );
         });
     }
-  }, [clientView, options.clientPlane, clientPlaneNotices.length, pushClientPlaneNotice]);
+  }, [clientView, clientObservationStatus, options.clientPlane, clientPlaneNotices.length, pushClientPlaneNotice]);
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
     serializeUiHistorySnapshot(history),
@@ -2044,12 +2057,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // fallback). Status bar + live banners consume this; the Static top
   // banner is render-once by Ink design and stays at session start.
   const effectiveCompactionInfo = useMemo(
-    () => resolveEffectiveCompactionInfo(
+    () => options.clientPlane ? (clientView?.contextBudget ? {
+      contextWindow: clientView.contextBudget.contextWindow,
+      reservedResponseTokens: clientView.contextBudget.reservedResponseTokens,
+      triggerPercent: clientView.contextBudget.compaction.triggerPercent,
+      triggerTokens: clientView.contextBudget.compaction.absoluteTriggerTokens,
+      enabled: clientView.contextBudget.compaction.enabled,
+    } : undefined) : resolveEffectiveCompactionInfo(
       compactionInfo,
       { provider: currentConfig.provider, model: currentConfig.model },
       resolveProvider,
     ),
-    [compactionInfo, currentConfig.provider, currentConfig.model],
+    [options.clientPlane, clientView?.contextBudget, compactionInfo, currentConfig.provider, currentConfig.model],
   );
   const [isRunning, setIsRunning] = useState(true);
   const [showBanner, setShowBanner] = useState(true); // Show banner in Ink UI
@@ -3428,8 +3447,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       triggerPercent,
       triggerTokens,
       reservedResponseTokens,
+      ...(options.clientPlane ? { hostBudget: true,
+        effectiveTriggerTokens: clientView?.contextBudget?.compaction.triggerTokens } : {}),
     };
-  }, [context.messages, context.contextTokenSnapshot, effectiveCompactionInfo, liveTokenCount]);
+  }, [context.messages, context.contextTokenSnapshot, effectiveCompactionInfo, liveTokenCount, options.clientPlane, clientView?.contextBudget]);
 
   const confirmInstruction = useMemo(() => {
     if (!confirmRequest) return undefined;
@@ -4442,10 +4463,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () =>
       buildSurfaceStatusBarProps({
         sessionId: context.sessionId,
+        hostSettings: currentConfig.hostSettings,
         permissionMode: currentConfig.permissionMode,
         agentMode: currentConfig.agentMode,
         provider: currentConfig.provider,
-        model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
+        model: currentConfig.model ?? (options.clientPlane ? '—' : getProviderModel(currentConfig.provider) ?? currentConfig.provider),
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
         effort: configuredEffort,
@@ -4480,6 +4502,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }),
     [
       context.sessionId,
+      currentConfig.hostSettings,
       currentConfig.permissionMode,
       currentConfig.agentMode,
       currentConfig.provider,
@@ -4631,13 +4654,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // FEATURE_298 T17 — plane notices (lost interaction answers, failed
     // queue withdrawals) live here because plane mode replaces history
     // items wholesale; history-routed notices would be wiped by the next view.
-    return [...base, ...learningNotices, ...clientPlaneNotices];
+    const observationNotice = clientObservationStatus?.state === 'interrupted'
+      ? 'Host observation interrupted; displayed state may be outdated.'
+      : clientObservationStatus?.state === 'closed' && clientObservationStatus.reason === 'unavailable'
+        ? 'Host observation unavailable; displayed state may be outdated.' : undefined;
+    return [...base, ...learningNotices, ...clientPlaneNotices,
+      ...(observationNotice ? [{ id: 'host-observation', text: observationNotice }] : [])];
   }, [
     historySearchMatches.length,
     historySearchQuery,
     isHistorySearchActive,
     learningNotices,
     clientPlaneNotices,
+    clientObservationStatus,
     displayPendingInputs.length,
   ]);
   const footerNotificationSummary = useMemo(
@@ -5730,6 +5759,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     currentConfigRef.current = currentConfig;
   }, [currentConfig]);
+  useEffect(() => {
+    if (!options.clientPlane || clientView?.session.id !== context.sessionId) return;
+    const selectionAtView = settingsSelectionRef.current;
+    const pending = settingsWriteRef.current;
+    let active = true;
+    const apply = (): void => {
+      if (!active || pending !== settingsWriteRef.current) return;
+      const confirmed = selectionAtView.sessionId === settingsSelectionRef.current.sessionId
+        ? changedClientSessionSettings(selectionAtView.patch, settingsSelectionRef.current.patch) : {};
+      const next = applyClientSessionViewSettings(currentConfigRef.current, clientView, confirmed);
+      if (next === currentConfigRef.current) return;
+      // Advance the existing write baseline first: observing a peer must not
+      // create another mutation or rebuild a local permission executor.
+      settingsSelectionRef.current = { sessionId: context.sessionId,
+        patch: { ...settingsSelectionRef.current.patch, ...clientSessionSettings(next, options.maxIter) } };
+      currentConfigRef.current = next;
+      permissionModeRef.current = next.permissionMode;
+      setCurrentConfig(next);
+    };
+    void pending.then(apply, apply);
+    return () => { active = false; };
+  }, [clientView, context.sessionId, options.clientPlane, options.maxIter]);
   const bashPrefixExtractorRef = useRef<BashPrefixExtractor | null>(null);
   if (bashPrefixExtractorRef.current === null) {
     bashPrefixExtractorRef.current = createBashPrefixExtractor({
@@ -5763,7 +5814,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const plane = options.clientPlane;
       const sessionId = context.sessionId;
       const patch = { permissionMode: canonicalMode };
-      const write = () => plane.updateSettings!(sessionId, patch);
+      const write = async () => {
+        await plane.updateSettings!(sessionId, patch);
+        settingsSelectionRef.current = { sessionId, patch: { ...settingsSelectionRef.current.patch, ...patch } };
+      };
       settingsWriteRef.current = settingsWriteRef.current.then(write, write);
       await settingsWriteRef.current;
     } else {
@@ -8380,6 +8434,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         sessionId: context.sessionId,
         prompt,
         abortSignal: getSignal(),
+        getDisplayedRunId: () => clientViewRef.current?.session.id === context.sessionId
+          ? viewRunsActive(clientViewRef.current) : undefined,
         ...(inputArtifacts !== undefined && inputArtifacts.length > 0
           ? { inputArtifacts }
           : {}),
@@ -8928,6 +8984,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const runQueuedUserSkillRound = useCallback(async (
     rawInput: string,
   ): Promise<KodaXResult | undefined> => {
+    if (options.clientPlane) return undefined;
     const mainContextTokenSnapshot = context.contextTokenSnapshot;
     let invocation;
     try {
@@ -9031,6 +9088,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfig.reasoningMode,
     currentConfig.thinking,
     runAgentRound,
+    options.clientPlane,
   ]);
 
   const runQueueableAgentSequence = useCallback(async (
@@ -9599,10 +9657,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const queuedSlash = slashAtHead ? parseCommand(fullText.trim()) : null;
         const targetsRegisteredCommand = queuedSlash !== null
           && queuedSlash.skillInvocation === undefined
-          && isRegisteredUserCommand(queuedSlash.command, context.gitRoot ?? undefined);
-        // Queue admission is synchronous against the preloaded registry.
-        // Dynamic expansion still happens only after the active round yields,
-        // avoiding both an async enqueue race and unknown-slash interception.
+          && (options.clientPlane
+            ? await isRegisteredHostCommand(queuedSlash, context.gitRoot ?? undefined, options.listHostCommands)
+            : isRegisteredUserCommand(queuedSlash.command, context.gitRoot ?? undefined));
+        // Host command names and aliases retain priority over same-named Skills.
+        // Skill membership uses the preloaded registry without dynamic expansion.
         const queuedSkillRegistry = getSkillRegistry(context.gitRoot);
         let queuedSkillReference;
         try {
@@ -9925,10 +9984,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       };
 
-      const parsed = parseCommand(fullText.trim());
+      const parsed = options.clientPlane
+        ? await parseHostCommand(fullText.trim(), context.gitRoot ?? undefined, options.listHostCommands)
+        : parseCommand(fullText.trim());
       let inlineSkillInvocation;
       try {
-        inlineSkillInvocation = parsed || fullText.trim().startsWith('!')
+        inlineSkillInvocation = options.clientPlane || parsed || fullText.trim().startsWith('!')
           ? undefined
           : await prepareUserSkillInvocationFromInput(
             { prepareSkillInvocation: options.prepareSkillInvocation },
@@ -9982,6 +10043,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           prepareCommandInvocation: options.prepareCommandInvocation,
           prepareReview: options.prepareReview,
           prepareAgentsLean: options.prepareAgentsLean,
+          commandClient: options.commandClient,
+          listHostCommands: options.listHostCommands,
+          startReview: options.startReview,
+          reviewAgentsLean: options.reviewAgentsLean,
           // FEATURE_298 T34 — goal persistence goes through the Host
           // binding; after a bound mutation the local view re-reads the
           // lineage the Host wrote instead of mutating it here.
@@ -10672,8 +10737,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         let invocationToExecute: CommandInvocationRequest | undefined = inlineSkillInvocation;
         let workflowToExecute: CommandWorkflowInvocationRequest | undefined = undefined;
+        let startedRunId: string | undefined;
 
         try {
+          if (options.clientPlane) await settingsWriteRef.current;
           const result = parsed
             ? await executeCommand(parsed, context, callbacks, currentConfig, fullText.trim())
             : undefined;
@@ -10684,6 +10751,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
           if (typeof result === 'object' && result !== null && 'workflow' in result) {
             workflowToExecute = result.workflow;
+          }
+          if (typeof result === 'object' && result !== null) {
+            startedRunId = result.startedRunId;
+            if (result.message) capturedOutput.push(result.message);
           }
         } finally {
           setWorkflowBuilderMessage(null);
@@ -10697,6 +10768,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             type: "info",
             text: capturedText,
           });
+        }
+
+        if (startedRunId && options.clientPlane) {
+          setCanQueueFollowUps(true);
+          try {
+            await followClientPlaneRun({ plane: options.clientPlane, sessionId: context.sessionId,
+              runId: startedRunId, abortSignal: getSignal(),
+              getDisplayedRunId: () => clientViewRef.current?.session.id === context.sessionId
+                ? viewRunsActive(clientViewRef.current) : undefined });
+          } catch (error: unknown) {
+            addHistoryItem({ type: 'error', text: error instanceof Error ? error.message : String(error) });
+          } finally {
+            setCanQueueFollowUps(false);
+            setIsLoading(false);
+            stopStreaming();
+            clearThinkingContent();
+          }
+          return;
         }
 
         if (workflowToExecute) {
@@ -11603,7 +11692,7 @@ const InkREPL: React.FC<InkREPLProps> = (props) => {
       >
         <KeypressProvider>
           <ShortcutsProvider>
-            <AutocompleteContextProvider cwd={cwd} gitRoot={gitRoot}>
+            <AutocompleteContextProvider cwd={cwd} gitRoot={gitRoot} listHostCommands={props.options.listHostCommands}>
               <InkREPLInner {...props} />
             </AutocompleteContextProvider>
           </ShortcutsProvider>

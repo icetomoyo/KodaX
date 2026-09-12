@@ -12,6 +12,35 @@ import {
   tryAcquireRuntimeDaemonLock,
 } from './runtime-daemon/state.js';
 
+it('rejects an older Host before exposing an incomplete product contract', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-old-product-'));
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
+  const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId,
+    pid: process.pid, createdAt: runtime.identity.startedAt });
+  if (!lock) throw new Error('Isolated old Host lock unavailable');
+  const endpoint = process.platform === 'win32'
+    ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-old-product-${randomUUID()}` }
+    : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
+  const capabilities = { ...runtime.capabilities };
+  delete capabilities.productClient;
+  const host = await startRuntimeDaemonHost({ runtime: { ...runtime, capabilities }, paths, lock, endpoint });
+  let unexpected: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
+  try {
+    await expect(connectKodaXClient({ homeDir, endpoint: endpoint.path }).then(client => {
+      unexpected = client;
+      return client;
+    })).rejects.toThrow(/productClient/);
+    // Passive rejection leaves the existing owner and its data available.
+    expect(await runtime.sessions.list()).toEqual([]);
+  } finally {
+    await unexpected?.disconnect();
+    await host.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it('reads actual Host sessions through the product SDK without owning their lifetime', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-'));
   const profile = 'client-contract';

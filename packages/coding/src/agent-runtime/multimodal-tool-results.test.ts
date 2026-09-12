@@ -77,7 +77,7 @@ describe('multimodal tool delivery', () => {
     const processed = await applyPostToolProcessing({ toolBlocks, resultMap, events, ctx,
       runtimeSessionState, emitActiveExtensionEvent: vi.fn() });
     expect(processed.toolResults[0]?.content).toEqual(expected);
-    expect(processed.toolResults[0]?.is_error).toBeUndefined();
+    expect(processed.toolResults[0]?.is_error).toBe(false);
     expect(runtimeSessionState.lastToolErrorCode).toBeUndefined();
     expect(runtimeSessionState.lastToolResultBytes).toBeGreaterThan(0);
     expect(onToolResult).toHaveBeenCalled();

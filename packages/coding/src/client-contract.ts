@@ -20,6 +20,8 @@ import type {
   KodaXSessionEntry,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
+import type { ClientCompactSessionResult, ClientMemoryService, ClientLearningService, ClientCommandService, ClientReviewService, ClientReviewInput, ClientCommandResult } from './client-domains.js';
+export type * from './client-domains.js';
 
 export interface ClientSession {
   readonly id: string;
@@ -52,11 +54,16 @@ export interface ClientSessionFilter {
 }
 
 export interface KodaXProductClient {
+  readonly commands: ClientCommandService;
+  readonly review: ClientReviewService;
+  readonly memory: ClientMemoryService;
+  readonly learning: ClientLearningService;
   readonly host: {
     /** Request an idle Host to shut down. Acceptance does not prove cleanup has completed. */
     shutdown(): Promise<{ readonly accepted: true }>;
   };
   readonly sessions: {
+    compact(sessionId: string, input?: { readonly customInstructions?: string }): Promise<ClientCompactSessionResult>;
     create(input?: ClientCreateSessionInput): Promise<ClientSession>;
     list(filter?: ClientSessionFilter): Promise<readonly ClientSessionSummary[]>;
     read(sessionId: string): Promise<ClientSession>;
@@ -64,10 +71,12 @@ export interface KodaXProductClient {
     archive(sessionId: string): Promise<void>;
     unarchive(sessionId: string): Promise<void>;
     getSettings(sessionId: string): Promise<ClientSessionSettings>;
+    /** Existing Host Auto reviewer diagnostics; undefined when Auto mode is not selected. */
+    getAutoModeStats(sessionId: string): Promise<ClientAutoModeStats | undefined>;
     /** Change this Session only. The next physical request uses the updated selection. */
     updateSettings(sessionId: string, patch: ClientSessionSettingsPatch): Promise<ClientSessionSettings>;
     /** Delivers the current view first, then replacements; no event cursor is needed. */
-    observe(sessionId: string, onView: (view: ClientSessionView) => void): Promise<ClientObservation>;
+    observe(sessionId: string, onView: (view: ClientSessionView) => void, options?: ClientObserveOptions): Promise<ClientObservation>;
     /** Read the original content behind a bounded display item. Offsets are UTF-16 characters. */
     readItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Newest page of the canonical conversation first; older pages via nextCursor. */
@@ -93,7 +102,7 @@ export interface KodaXProductClient {
     /** Label (or unlabel when `label` is omitted) one entry by id or existing label; unknown selectors conflict. */
     labelEntry(sessionId: string, input: ClientLineageLabelInput): Promise<ClientLineageSummary>;
     /** Move the active head to an entry by id or label; stale selectors conflict, never silently no-op. */
-    selectBranch(sessionId: string, selector: string): Promise<ClientSession>;
+    selectBranch(sessionId: string, selector: string, options?: { readonly summarizeCurrentBranch?: boolean }): Promise<ClientSession>;
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
     rewindSession(sessionId: string, input: { readonly selector?: string; readonly expectedHead: string | null }): Promise<ClientSession>;
     /** Derive a new Session from this idle session's history; the source stays unchanged. */
@@ -111,7 +120,7 @@ export interface KodaXProductClient {
     read(runId: string): Promise<ClientRunStatus>;
     /** Request a stop; accepted only means the durable Stop request was created. */
     stop(runId: string): Promise<ClientRunStopReceipt>;
-    /** Resolve when the Run reaches a terminal phase; `phase: 'unknown'` is disconnect, never success. */
+    /** Resolve at a terminal phase; `unknown` means the outcome could not be confirmed, never success. */
     await(runId: string): Promise<ClientRunOutcome>;
   };
   /**
@@ -122,7 +131,9 @@ export interface KodaXProductClient {
   readonly workflows: {
     start(input: ClientWorkflowStartInput): Promise<ClientWorkflowStartResult>;
     list(filter?: { readonly runId?: string; readonly limit?: number }): Promise<readonly ClientWorkflowRun[]>;
-    get(runId: string): Promise<ClientWorkflowRun | undefined>;
+    get(runId: string): Promise<ClientWorkflowProcess | undefined>;
+    /** Existing Host process events; subscriptions carry facts, never executable workflow modules. */
+    subscribe(filter: { readonly runId?: string }, listener: (event: ClientWorkflowEvent) => void): { close(): void };
     pause(runId: string): Promise<boolean>;
     resume(runId: string): Promise<boolean>;
     stop(runId: string): Promise<boolean>;
@@ -155,6 +166,7 @@ export interface KodaXProductClient {
    * Reads return the actual domain objects; `wait` resolves one Agent event.
    */
   readonly agents: {
+    reviewLean(input: Omit<ClientReviewInput, 'args'>): Promise<ClientCommandResult>;
     tree(sessionId: string): Promise<AgentTreeSnapshot>;
     detail(sessionId: string, actorPath: string): Promise<AgentDetail>;
     spawn(sessionId: string, input: AgentSpawnInput): Promise<AgentTurnRef>;
@@ -207,6 +219,16 @@ export interface ClientObservation {
   close(): void;
 }
 
+export type ClientObservationStatus =
+  | { readonly state: 'live' }
+  | { readonly state: 'interrupted'; readonly message?: string }
+  | { readonly state: 'closed'; readonly reason: 'client' | 'unavailable'; readonly message?: string };
+
+export interface ClientObserveOptions {
+  /** Live is emitted only after delivery of a complete current view. */
+  readonly onStatus?: (status: ClientObservationStatus) => void;
+}
+
 export interface ClientModelSelection {
   readonly provider: string;
   readonly model?: string;
@@ -220,6 +242,7 @@ export interface ClientModelCatalog {
 /** `source`: registry origin — "builtin" | "user" | "project" | "learned" | "extension". */
 export interface ClientCommandInfo {
   readonly name: string;
+  readonly aliases?: readonly string[];
   readonly description: string;
   /** Where the Host discovered the command (builtin/project/extension/...). */
   readonly source: string;
@@ -365,6 +388,8 @@ export interface ClientSessionRecoverInput {
 export interface ClientHistorySearchResult {
   readonly revision: string;
   readonly hits: readonly {
+    /** Opaque reference readable through readHistoryEntry; expired snapshots require a new search. */
+    readonly itemId: string;
     /** Stable within this revision; indexes the transcript at that revision. */
     readonly entryIndex: number;
     readonly role: 'user' | 'assistant';
@@ -382,12 +407,15 @@ export interface ClientItemContent {
 }
 
 export interface ClientSessionView {
+  /** Effective configuration for the current parent selection; not a physical request receipt. */
+  readonly contextBudget?: ClientContextBudget;
   /** Host estimate of the saved parent context, available without a live Run. */
   readonly parentContextTokens?: number;
   readonly activity?: ClientSessionActivity;
   readonly queue: readonly ClientQueuedInput[];
   readonly session: ClientSession;
   readonly items: readonly ClientViewItem[];
+  /** Effective Host profile values plus Session overrides; getSettings/updateSettings retain raw overrides. */
   readonly settings: ClientSessionSettings;
   /** Pending answers in this Session; all observers see the same identities. */
   readonly interactions: readonly ClientInteraction[];
@@ -400,8 +428,28 @@ export interface ClientSessionView {
   }[];
 }
 
+export interface ClientContextBudget {
+  readonly scope: 'parent' | 'worker';
+  readonly provider: string;
+  readonly model: string;
+  readonly contextWindow: number;
+  readonly reservedResponseTokens: number;
+  readonly reservedMemoryTokens?: number;
+  readonly contextId?: string;
+  readonly compaction: {
+    readonly enabled: true;
+    readonly triggerPercent: number;
+    readonly absoluteTriggerTokens?: number;
+    /** Present only when execution has supplied its Memory and provider-envelope capacity. */
+    readonly triggerTokens?: number;
+    readonly physicalCapacityTokens?: number;
+  };
+}
+
 /** Display facts for the latest Run; worker context is distinct from parent context. */
 export interface ClientSessionActivity {
+  /** Latest execution budget, whose model and scope may differ from the current Session selection. */
+  readonly contextBudget?: ClientContextBudget;
   readonly runId: string;
   readonly costReport?: string;
   readonly children?: readonly {
@@ -433,6 +481,8 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** Host recovery metadata; clients render the supplied item order. */
+  readonly afterInputId?: string;
   readonly id: string;
   /** Accepted input identity of a canonical user message; absent on legacy history. */
   readonly inputId?: string;
@@ -535,8 +585,9 @@ export interface ClientRunStopReceipt {
 
 /**
  * Terminal facts of one Run. `result` is present only for settled runs the
- * Host could observe; `phase: 'unknown'` means the connection ended before
- * settlement and must never be read as success or cancellation.
+ * Host could observe; `phase: 'unknown'` means settlement could not be
+ * confirmed, even on a healthy connection. Preserve error; transport failures
+ * reject separately. Unknown is never success or cancellation.
  */
 export interface ClientRunOutcome {
   readonly runId: string;
@@ -613,6 +664,8 @@ export interface ClientPermissionGrants {
 }
 
 export interface ClientSessionSettings {
+  readonly repoIntelligenceMode?: 'auto' | 'off' | 'light' | 'full';
+  readonly repoIntelligenceTrace?: boolean;
   /** Shared manual/automatic summary policy, independent of main-turn effort. */
   readonly compactionReasoning?: boolean | { readonly effort: string };
   readonly provider?: string;
@@ -742,13 +795,28 @@ export type ClientWorkflowStartResult =
   | { readonly kind: 'declined'; readonly reason: string }
   | { readonly kind: 'started'; readonly runId: string };
 
+export type ClientWorkflowProcess = import('@kodax-ai/agent').WorkflowProcessSnapshot;
+export type ClientWorkflowEvent = import('@kodax-ai/agent').WorkflowProcessEvent;
+
 export interface ClientWorkflowRun {
   readonly runId: string;
   readonly workflowName: string;
-  readonly status: string;
+  readonly status: import('@kodax-ai/agent').ManagedWorkflowStatus;
+  readonly totalSpawned: number;
+  readonly eventCount: number;
+  readonly runDir: string;
+  readonly endedAt?: string;
   readonly startedAt: string;
   readonly updatedAt: string;
   readonly displayName?: string;
   readonly resultSummary?: string;
   readonly error?: string;
+}
+
+/** Read-only Auto review facts; changing permissions still uses Session settings. */
+export interface ClientAutoModeStats {
+  readonly classifierHealth: 'healthy' | 'degraded';
+  readonly classifierModel?: string;
+  readonly denials: import('./guardrails/auto-mode/denial-tracker.js').DenialTracker;
+  readonly breaker: import('./guardrails/auto-mode/circuit-breaker.js').CircuitBreaker;
 }

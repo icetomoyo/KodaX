@@ -289,6 +289,7 @@ describe('CAP-072: checkAndRetryIncompleteTools — truncated-input guard', () =
     expect(result.outcome).toBe('maxed_out');
     expect(onToolResult).toHaveBeenCalledOnce();
     expect((onToolResult.mock.calls[0]![0] as { id: string }).id).toBe('trunc-1');
+    expect(onToolResult.mock.calls[0]?.[0]).toMatchObject({ toolResult: { tool_use_id: 'trunc-1', is_error: true } });
   });
 
   it('CAP-INCOMPLETE-TOOL-TRUNC-004: a _salvaged (clean-stop) MUTATING tool is treated incomplete → retry', async () => {

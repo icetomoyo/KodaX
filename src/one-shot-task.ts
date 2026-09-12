@@ -43,7 +43,7 @@ function isSessionNotFound(error: unknown): boolean {
  * Terminal outcome → legacy result. An executor-produced result passes
  * through untouched; a run that settles cancelled/interrupted without one
  * gets the synthesized interrupted shape; anything else (including the
- * disconnect `unknown` phase) is an error, never success.
+ * outcome-unconfirmed `unknown` phase) is an error, never success.
  */
 export function projectOneShotOutcome(
   outcome: { readonly phase: string; readonly result?: KodaXResult; readonly error?: string },
@@ -115,6 +115,8 @@ function toOneShotSettingsPatch(
 ): ClientSessionSettingsPatch {
   return {
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
+    ...(options.context?.repoIntelligenceMode !== undefined ? { repoIntelligenceMode: options.context.repoIntelligenceMode } : {}),
+    ...(options.context?.repoIntelligenceTrace !== undefined ? { repoIntelligenceTrace: options.context.repoIntelligenceTrace } : {}),
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.effort !== undefined ? { effort: options.effort } : {}),
     ...(options.thinking !== undefined ? { thinking: options.thinking } : {}),
@@ -229,6 +231,8 @@ export async function runOneShotClientTask(
       await client.sessions
         .updateSettings(plan.sessionId, restoreSettingsPatch(previousSettings, patch))
         .catch((error: unknown) => {
+          emitKodaXDiagnostic({ source: 'kodax.one-shot', level: 'warn',
+            message: `Failed to restore settings for session ${plan.sessionId}; invocation flags may remain active.`, detail: error });
           options.events?.onError?.(
             error instanceof Error ? error : new Error(String(error)),
           );

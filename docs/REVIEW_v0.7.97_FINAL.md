@@ -497,3 +497,171 @@ Windows 清理竞态修复并完成最终构建后，再用同一 ensure 将 `rt
 ### Spec
 
 初审发现 ACP 默认目录与取消准入窗口两项 P1，均经历 RED→GREEN 并经独立复核关闭。最终本轮修复剩余 finding 0。先前已记录的多 Client 设置反向同步与强制 legacy 搜索仍未关闭，不据本轮门禁宣称整个版本无条件验收通过。未 push、未发布。
+
+## 2026-09-10：统一接口说明书独立复审
+
+审查对象为 `99ad85e3` 的 `CLIENT_CONTRACT.md`，新增文档基线为 `28e47ed971`；历史能力以 `7b1d1ffb`（beta.4 主线）及 FEATURE_298 规格为对照。三名独立子 Agent 分别检查文档事实、历史能力/Spec、抽象边界/Standards，再交叉质询；主 Agent 复读关键传递链。本次不修改产品代码。
+
+**结论更正：71 个域方法的清单与当前 ProductClient 类型相符，但不证明原有产品能力已完整进入这套契约。当前实现统一了业务 Host，产品接口仍有未闭合的业务面和观察/读取出口。说明书可作现状导览，尚不能作为“统一访问、体验不退步”的完整验收规范。** 上一节的构建和回归成绩仍有效；此前针对实现 diff 的零 finding 不能替代本次跨历史能力的复审。
+
+### 已确认问题与最小处理方向
+
+以下行号均对应 `99ad85e3`；历史位置以 `提交:path:行` 表示。
+
+| 编号/优先级 | 问题、证据与实际影响 | 最小处理方向 |
+|---|---|---|
+| R1 / P1 | **业务面未闭合。** 文档 52–69 列出当前方法，但 CLI 仍通过 `src/kodax_cli.ts:5178–5206` 旁接 Runtime Memory、Learning、注册命令/review/agents lean，通过 5227–5234 调用手动 compact。纯 `KodaXProductClient` 与 adapter 没有这些操作。Spec 334 要求手动压缩、710 要求 Memory list/show/doctor/reviews/remember/forget/approve/reject/rebuild、718 要求注册命令与 review 普通/工作流路径。历史 `7b1d1ffb:packages/repl/src/interactive/commands.ts:596` 已支持带指令压缩；`memory-command.ts:862/876/922/929` 有记忆写入、忘记及精确批准/拒绝；`review-command.ts:306/319/359` 有真实 diff 与 review packet 准备。第二 UI 不能仅凭纯 Client 完成这些动作。 | 投影确有产品消费者的现有业务面；注册命令/review 传名称和参数，由 Host 准备并执行。CLI 也改为消费同一产品契约。现有 Skill 原文 submit 已在 Host prepare，不能因缺少 prepareSkill 方法而再造一条入口；不回传可执行对象或把全部 Runtime 公开。 |
+| R2 / P1 | **观察失效对消费者不可见。** 文档 226 承认 `ClientObservation` 仅有 close；类型在 `packages/coding/src/client-contract.ts:206–208`，daemon 的 `src/runtime-daemon/client.ts:1659–1681` 在不可恢复断连后仅关闭观察。空闲页面没有在途 RPC/await，Host 异常退出或传输永久断开时，页面无法得知旧 view 已失效。文档要求调用方显示断连，却没有提供相应事实。 | 在观察结果中暴露一个结束/失效结果或回调，转发现有 transport 生命周期；包含主动关闭与失效的区别即可。无需事件回放、自动恢复执行、重连账本。 |
+| R3 / P2 | **有效上下文预算缺失被误归为未来需求。** 文档 183–187 说缺窗口、响应预留、完整阈值。当前 `InkREPL.tsx:2046–2051`、`compaction-info.ts:40–68` 已依赖本地 Provider 与启动快照解析这些信息；纯 `ClientModelCatalog` 只有模型字符串列表，ClientConfig 不含完整 compaction 覆盖，不能据当前接口重算。Spec 266 明确要求上下文预算/压缩结果，858 要求显示信息不退步。 | 由 Host 投影已解析的有效窗口、响应预留、压缩开关/阈值及适用模型，复用现有数据结构；UI 只计算展示比例。区分 Session 覆盖、当前选择与有效配置，不增加新用户配置。 |
+| R4 / P2 | **搜索命中无法通过同一契约读取原文。** 文档 212 承认 search hit 是 transcript 索引；`sdk-runtime.ts:8055–8072` 返回该索引，8026–8052 的 history/entry reader 却只接受 conversation 身份；readItem 接受 view itemId。旧 `7b1d1ffb:src/sdk-runtime.test.ts:7628–7643` 已验证搜索压缩前条目后用 revision+entryIndex 读取原文。纯 Client 搜到压缩前命中后不能可靠打开/复制该条全文。 | 返回可读取的稳定命中引用，由现有全文 reader 或一个小型命中 reader 解析，复用 Host 已有 transcript 读取能力。不能用全文匹配或把 transcript 索引当 conversation 下标。此问题不等于所有 Ink 本地搜索都失效。 |
+| R5 / P1 | **steer 接受附件身份却丢失实际附件。** 文档 88 与 ClientSubmitInput 未排除 steer 附件。`sdk-runtime.ts:11443–11448` 保留 inputArtifacts，但 `11268–11274` 只构造 text 输入；`11167–11172` 标准化它，`18814–18824` 对 text 产生空附件，`11184–11189` 向执行队列传空附件。同一附件仍参与 `session-input-queue.ts:28–35` 的意图摘要。结果是身份已接收、内容未交付。 | 把附件贯通已有中断输入路径；不能支持时在接收前明确拒绝。优先测试真实执行端收到的附件内容，不能只测 schema 和摘要。不能把静默丢失写成接口限制。 |
+| R6 / P2 | **unknown 被错误等同于断连。** 文档 92、时序及 SDK 示例据 unknown 提示重新连接。`sdk-runtime.ts:9182/9512` 会在终态持久化失败或 Actor 结算不确定时返回 unknown，连接可以仍健康；daemon `client.ts:2164` 直接转发 run.await，`transport.ts:331/749` 对断连中的请求执行 reject，并不转换成 unknown。 | unknown 定义为终态无法确认，保留 error 原因；单独处理 Promise rejection 的连接错误。不要以重新连接承诺解决持久化失败，不增加恢复票据。 |
+| R7 / P2 | **Run 模型被误写为不可变执行事实。** 文档 118、179 把 runs.provider/model 用作实际执行选择，并称设置变化不会改写。`sdk-runtime.ts:10605–10615` 在活动 Run 收到 Session 设置变化时立即改 record.provider/model，10631 发布更新；4316–4324 直接生成 view。因此模型 A 的物理请求尚在运行时，view 可已经显示 B。 | 更正文档为 Run 当前可变选择，不能当作已发送请求或全部 worker 的模型证据。现有状态栏若显示当前选择应明确命名；不为修正文案建立请求级账本。 |
+| R8 / P2 | **输入生命周期与多对一身份说明不完整。** `sdk-runtime.ts:11089–11119` 将多条 after_turn 合批，11001–11007 只给合并 user 项首个 inputId，其他身份存内部 inputIds；`message-utils.ts:531–532` 仅投影单数 inputId。文档 194 的逐项乐观确认建议不充分。此外普通 stop/failed 不自动 drain（8947–8963）；steer 返回 queued 但不在可撤回 view.queue 中（11281、`session-input-queue.ts:94–102/124–143/178–184`）。 | 文档增加 delivery 行为表和多 Input 对一 user 项关系。先利用现有 inputs.read 确认各已知 ID 的 submitted/runId；若 UI 确需逐展示项关联全部输入，再投影已有 inputIds。说明 stop/failed 后队列保留、steer 不可 withdraw，不能从 view.queue 为空推断全部已投递；不按全文去重。 |
+
+### Standards
+
+独立报告：纯类型依赖边界成立。发现文档对 Run 模型的事实错述；观察失效缺口为 P1；有效 compaction 仍由 UI 私有解析为 P2 抽象边界问题。后两项是有实际消费场景的判断性缺口，不以 Fowler 标签作为硬性加抽象依据。icon、compactText、breadcrumb 是合理共享展示投影，不应仅因格式化而删除。
+
+本轴 3 项可行动发现，最高 P1。与其他轴重复的问题仅在上表保留一次，独立报告计数不作相加。
+
+### Spec
+
+独立报告：P1 业务面未闭合，对应规格的手动 compact、Memory、注册命令/review 保留要求；P2 搜索命中到原文的链路缺失；P2 有效上下文预算缺失。Skill 文本提交已经实现，不列为缺项；旧 Runtime 的全部服务不应自动升级成产品承诺。
+
+本轴 3 项发现，最高 P1。详细历史动作与原文依据见上表 R1/R3/R4。
+
+### 事实核对与验证边界
+
+文档事实轴另核实 R5/R6/R7/R8。现有两个测试经过定向重跑：终态保存失败仍返回 unknown、关闭 transport 后 pending 请求 reject，**2 passed、306 未匹配而跳过**；这不是新一轮全量回归。steer 附件为完整可达静态传递链结论，尚未在本轮新增执行探针；原有合批及 stop 后保留队列测试提供 R8 行为证据。
+
+没有把以下候选升级成确定缺陷：任意同 ID 等长正文替换造成混页（缺少充分真实触发证据）、退出时 owned-resource 清理、全部附件类型支持情况。这些需要专项验证。ACP 全文 reader 的 ID/跨页长度校验差异也是后续定向验证点，不能据合成坏页就宣称正常 Host 已产生错页。
+
+### 建议的收敛顺序
+
+1. 先修 R5 的静默附件丢失，以及 R6/R7/R8 的错误消费说明。
+2. 以当前纯 Client 为唯一产品入口补齐 R1/R2/R3/R4；复用已有 Host 业务实现，保持启动器/进程诊断的低层边界，不公开整个 Runtime。
+3. 用纯 Client 类型编写“立即压缩、命令/review、记忆精确批准、断连可见、压缩历史命中全文、有效窗口、带附件 steer、合批确认”行为验收，再让 CLI 绑定接受同一 ProductClient。把需要 Runtime 旁路才能通过的产品验收视为尚未完成。
+4. 最后同步说明书：区分稳定契约、当前实现行为、未完成缺口及有意不承诺的能力。没有依据要求恢复递归执行、批准回流、通用 mutation 回执、退出恢复票据或事件回放框架。
+
+## 2026-09-12：统一契约最小收敛方案与主线回归边界
+
+**后续 Host 对照补充：** [HOST_ARCHITECTURE_REVIEW.md](HOST_ARCHITECTURE_REVIEW.md) 对 Codex、deepseek-harness、pi 的实际源码进行独立研究与交叉复核。确认 Skill 动态准备早于输入/Run 准入保存，且准备方法的观察/取消/draining 分类与真实执行不一致；另确认工具结构化结果在显示事件中丢失。以下方案不作废，但实施顺序调整为先闭合这些 Host 边界，再补产品接口；具体顺序、手动草稿及无 LLM 命令保护见该报告。
+
+本节是方案复核，不是修复完成记录。基线为 `f43f149a`，三名子 Agent 分别复查业务入口、输出与读取、Bash/sandbox 回归边界，并交叉讨论准备阶段的副作用与输入身份。主 Agent 核对关键源码后作以下取舍；本轮没有修改产品代码、运行验收、重启用户 Host 或合并分支。
+
+### 分支与已合入工作
+
+当前仍为 `codex/product-client-refactor`，没有合回 `KodaX`。本地 `KodaX` 及已抓取的 `origin/KodaX` 都在 `6886f96f`，`KodaX...HEAD` 的主线独有/当前分支独有提交数为 **0 / 179**。因此是独立开发分支，但当前提交关系不是双向分叉：本分支包含上述主线的全部提交，包括 beta.5–beta.8。此次没有 fetch，不据此判断远端是否又有新提交。
+
+主仓库另有未提交的 `src/sdk-conversation-history.test.ts` 改动，不在已合入提交范围内。features 子模块处于同名开发分支，HEAD 为 `dc1e54f`。本工作树原有的本报告修改继续保留。
+
+`31b3aed1` 已补重订阅重试、连接代次隔离、旧快照清除及显示身份修复，方案复用它们。前述 R2 剩余缺口是向产品消费者公开观察失效，不是再造重连系统。R8 所需逐 inputId 查询已在 Ink 的队列消费链中实现，主要补说明与行为验证，不预先增加 `inputIds` 展示字段。
+
+### 设计取舍：统一业务事实，不统一成万能操作
+
+产品客户端继续只有一套 `KodaXProductClient`；CLI、SDK 和未来 Web 使用相同业务意图与输出事实。Node 启动器负责启动/更新，被动连接不承担更新；浏览器 transport 仍不是本次新增目标。
+
+1. **复用已有领域服务。** 手动压缩、Memory、Learning、注册命令、review 等已有产品能力补到纯 Client，Host 执行，CLI 移除对应 Runtime 旁路。只开放已有用户动作需要的方法，不将整个 Runtime、Controller、执行函数或可信权限对象导出。
+2. **保留 Input 的含义。** 普通输入和现有 delivery 继续使用 inputId、现有队列与 Run。注册命令及 review 使用具体业务接口；手动草稿、空结果、领域失败不强行转换为用户输入。暂不采用把所有业务操作塞进 Input 并增加 `preparing/handled` 通用状态的方案，也不新增通用操作账本。
+3. **承认副作用的不确定性。** 连接恢复只重开观察，不重放提交、命令、hook、review 或 Memory 修改。已有 Run 可承载的准备/执行优先归入其生命周期；不能绑定已有 Run 的领域操作保留具体结果和错误，丢失回复不能冒充未执行或成功。此处不承诺跨 Host 重启的 exactly-once。
+4. **准备窗口必须验证，不能用原则代替修复。** 当前即时 Skill 在 `prepareSkillInput` 后才 `startRun`，准备可能先执行动态上下文。重复相同 inputId 是否再次产生副作用，需要失败注入验证。若已产生副作用但尚无 Run 接受事实，不可盲目重提。优先调整现有 Run 内的执行顺序；只有具体用例证明现有生命周期不足，才补局部领域事实，不先扩大全部 Input 状态。
+
+### R1：补齐已有业务面，保留原交互
+
+以下是能力分组，新增方法最终以纯类型及实际调用点为准，不将候选命名视为已实现 API。
+
+| 能力 | 最小产品边界 | 必须保留的行为 |
+| --- | --- | --- |
+| 手动 compact | Session 域调用已有压缩服务，接受现有自定义指令 | 运行准入、失败结果及压缩后视图保持统一 |
+| Memory | 公开现有 refs/inbox/proposal/reviews/status、remember/forget/approve/reject/rebuild 等所需查询与操作 | Host 校验项目归属；精确 fingerprint/revision；过期批准冲突；doctor/open 等原命令仍可用，本地编辑器由 UI 打开 |
+| Learning | 复用现有快照、记录查询、订阅和具体治理动作 | acknowledge/snooze 等原作用域不扩大；不暴露内部授权构造；不并列增加重复事件流 |
+| 注册 prompt/extension 命令 | 传注册名称及参数，Host 从受信任注册表解析并执行 | 参数、model、allowedTools、hooks、fork、manual 等现有行为；不把所有内置 slash 命令塞进字符串分发器 |
+| review、agents lean | 复用已有 git 捕获、packet 准备和普通/工作流执行路径 | Host 保存准备产物，沿用写权限；取消和错误清楚可见；不把可信准备对象交给 UI 后再回传执行 |
+| 手动 prompt 草稿 | 返回可编辑的纯文本及必要标题，用户确认后按普通输入提交 | 不自动发模型，不从草稿携带 hooks 或权限升级；后续主动执行注册命令仍由 Host 重新解析 |
+
+Skill 原文提交已在 Host 准备，不为“方法看起来齐全”再公开一套 prepareSkill。注册 extension 的实际 handler 仍在 UI 的残留必须迁移，不能仅转发现有 `prepareCommand` 就宣称 R1 完成。
+
+### R2–R8：输出与身份的最小补充
+
+| 项目 | 选定方案 | 不应引入的额外机制 |
+| --- | --- | --- |
+| R2 观察失效 | 现有 observe 增加状态回调：`live`、`interrupted`、`closed`；closed 区分主动关闭与不可用。首次建立失败仍 reject。只有完整新 view 已交付才恢复 live；重订阅耗尽明确关闭。 | 不新增连接 owner、第二套重试、事件回放或执行恢复。UI 保留正文/草稿但标明旧状态；本地弹窗等待结束不等于向 Host 回答取消。 |
+| R3 有效预算 | 在现有 Session view 投影 Host 解析后的模型、窗口、响应预留及压缩阈值，复用现有预算/压缩策略。 | 不新增压缩开关或独立预算服务。当前压缩常开，不能照旧方案增加可写 enabled。 |
+| R4 搜索全文 | search hit 提供不透明 itemId；现有 history entry reader 按身份命名空间读取 transcript，复用已有 revision/快照和正文分页。 | 不把 transcript index 当 conversation index；不新增随机读取索引、租约或全文匹配身份。快照失效明确要求重新搜索。 |
+| R5 steer 附件 | 将 inputArtifacts 贯通现有中断输入及实际 Provider 请求；不支持的附件在接受前明确拒绝。 | 不把附件路径/OCR 文本冒充原附件；不只修 digest/schema 而遗漏执行内容。 |
+| R6 unknown | 更正为终态无法确认，保留原因；连接错误的 Promise rejection 单独处理。 | 不把 unknown 等同断连，也不承诺重连解决保存失败。 |
+| R7 Run 模型 | 明确 provider/model 是 Run 当前可变选择，不是每次物理请求的历史凭证。 | 不为了改正文案建立请求级账本。 |
+| R8 合批身份 | 记录多 inputId 可对应一个 user 展示项和 Run；复用 inputs.read 确认每个已知 ID。普通 stop/failed 保留队列；steer 不在可撤回队列。 | 不按文本去重、不由 queue 为空推断全部已投递、不无条件扩展展示字段。 |
+
+R3 的预算还需区分已解析配置和实际执行容量：Memory evidence reserve、provider/system/tool envelope 会影响可用空间。Host 有实际事实时才提供最终触发容量；UI 不自行用窗口减最大输出冒充精确预算。worker 的用量只可与相同 scope 的预算计算比例，匹配预算未知时显示数量及归属，不除以父 Session 的窗口。跨客户端设置变化必须刷新同一 view，不能继续显示启动时的私有快照。
+
+### Bash、sandbox、权限与主线修复的保护条件
+
+- 新业务入口继续走既有 Host Session 准入、实时权限、Bash 工具及沙箱执行链。动态上下文没有受控 executor 时保持禁用，不恢复 execSync 直连；Plan 限制仍生效，不能统一粗暴改成只有 FullAccess 才能使用。
+- 沙箱失败后的 Host 执行仅允许沿用既有“可证明尚未开始”的条件及明确批准。已开始或是否开始不明时不重跑；批准后不循环回退。此次不重写 Bash 分类器、shell 拼接、批准或 sandbox fallback。
+- review 捕获/packet 准备涉及写入，不能因名称含 prepare 降为只读权限。Memory 的精确批准保留 fingerprint/revision，客户端提供的权限 metadata 不构成授权。
+- 继续覆盖 beta.5 的 Windows 沙箱 profile/SSH ACL 修复与 setup generation 11：只处理自身权限项，不触及其他主体或所有者，不追随重解析点扩大写域。
+- 保留主线已合入的 Provider 缓存统计、typed multimodal tool result 和 interrupt identity/legacy alias 确认行为。输入身份确认不构成工具权限提升。
+
+### 实现顺序与可判定验收
+
+1. **输入完整性与事实说明：R5、R6/R7/R8。** 先写真实 Host → 离线 Provider 探针，检查 steer 附件内容、inputId、同 ID 冲突及不支持时零接受；补合批三个输入逐 ID submitted、stop 留队验证。同步修正文档事实。
+2. **观察与读取：R2、R4。** 空闲永久断连也通知关闭；临时中断经既有重订阅后交付新 view 才恢复；旧代次不能覆盖；主动 close 不报失联。压缩前长正文经 search hit 完整读取/复制；相同数字 index 不串源，过期引用明确失败。
+3. **有效预算与设置同步：R3。** 两客户端修改模型/窗口/阈值后得到一致 view；覆盖默认模型、用户窗口覆盖、Memory 预留、worker scope 和未知预算。CLI 状态栏消费这份事实，再删除重复预算解析。
+4. **逐业务迁移：R1。** compact → Memory/Learning → 注册命令/review/agents lean；每个切片先以纯 ProductClient 在真实 daemon 上完成原动作，再替换 CLI 旁路。手动编辑、fork、工作流、hooks、取消和失败均有行为对照，不以方法存在作为完成标准。
+5. **副作用与安全回归。** 注入 review packet 已写但回复丢失、hook 已执行而启动失败、Run 已接受但确认丢失、观察重连四个场景，核对实际执行次数和错误/不确定结果；另验过期 Memory 批准、只读身份 review 零写入、实时权限变化及 sandbox 已开始后断连不重跑。准备窗口问题在此闭合前不能宣称安全验收通过。
+6. **端到端门禁与说明书同步。** build、无 Node ambient types 的发布声明消费者、相关 Runtime/权限/沙箱套件及完整测试通过后，执行真实 Windows PTY：resume 用户 query、临时 AMA 提示、工具正文/状态栏、Ctrl+O/Ctrl+E、搜索/取消/复制、缩放后页脚无残留。保留之前已记录的多 Client 设置同步及强制 legacy 搜索问题，逐项有证据才能关闭。
+
+现有定向测试优先扩展 `sdk-runtime.test.ts`、`sdk-invocations.test.ts`、`sdk-client.permissions.test.ts`、`runtime-daemon/client.resubscribe.test.ts`、`sdk-runtime.memory.test.ts`、`standalone-shell-boundary.test.ts`、`sandbox-runtime.test.ts` 及 identity 相关套件。测试必须穿过被修改的公开契约和实际消费链，避免只验证 mock 返回同一字段。最后在 [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md) 区分已实现行为、稳定保证和明确限制；未完成项不能提前写成产品承诺。
+
+## 2026-09-12：Host 与统一产品接口实施及验收
+
+本节记录用户批准后的实际实施，基线为 `f43f149a`；上面的审查和方案保留为修改前证据。H1–H5 与 R1–R8 的实现说明见 [Host 审查的实施记录](HOST_ARCHITECTURE_REVIEW.md#实施记录2026-09-12以上审查保留为修改前证据)，对外接口以 [CLIENT_CONTRACT.md](CLIENT_CONTRACT.md) 为准。
+
+### 本次闭合的执行与消费链
+
+- Skill 元数据读取与动态执行分开。先接受、保存输入并建立 Run，才执行动态准备；取消、关闭及工具收尾沿既有生命周期完成，保存失败和忙时拒绝不会先执行动态工具。
+- CLI 交互、单次输入、Session/Goal/Workflow、Auto 诊断、compact、Memory、Learning、注册命令、review 和 agents lean 使用 ProductClient 的现有领域划分。单次 CLI 的流式格式转换保留只读进度适配，不再负责准备、提交或结算。
+- 注册命令保留 alias、help、Tab、原忙时限制及与同名 Skill 的优先级。没有输出的命令不制造 user/模型轮次；命令已启动的 Run 由 UI 跟随。真实 IPC 在 handler 已写文件后断开回复连接，第二客户端继续观察原 Run，验证 handler 和模型均只执行一次。
+- 工具结构化结果贯通实时显示及历史；当前配置预算与实际执行预算按 scope/contextId 区分。观察中断明确可见，恢复新快照前不清除草稿或代用户回答交互。搜索命中可由同一全文 reader 读取。
+- 两客户端设置同步覆盖显式设置、清除覆盖后继承 profile、没有 profile 默认三种情况。UI 显示 Host 的有效设置；未指定权限显示 `Host default`，不凭空构造执行权限，也不把显示默认值写回 Host。
+
+### 真实终端验收中追加修复
+
+1. **取消等待的竞态。** 下一 Run 已显示时，上一 Run 的 await 回复可能仍在传递。按键时冻结当前显示的 Run 身份，stop 和 await 只针对该身份；拒绝或迟到回复不能追停其他 Run。尚未准入时只撤回自身输入。失败结果优先于残留的 result，不能显示为成功。
+2. **中断后的 query/partial 排序。** 在较长历史中，未完成回答可能被显示检查点放到自己的 query 之前。复用已证明的 inputId，在输出开始时记录 `afterInputId`；Host 合并及恢复按身份放置 partial，客户端直接消费 Host 顺序，不按文字或时间猜测。
+3. **同一 Run 的 steer。** steer 已交付后，新 segment/tool 捕获新输入来源；旧 segment、迟到 delta/toolResult 保留原来源。真实 IPC 覆盖 steer → partial → stop → 关闭 Host → 新 Host 恢复。没有已知来源时保持未知，不在后续更新中补猜。
+
+验收脚本也更正了两处测试假设：110 列状态栏会正常折行，应在宽屏核对设置并另测窄屏；原有停止手势是双 Esc，不能把单 Esc 无动作判为产品缺陷。脚本继续测试原快捷键，不修改产品手势迎合验收。
+
+### 门禁与验证边界
+
+| 门禁 | 结果与证据 |
+| --- | --- |
+| 最终 `npm run build` | 通过，包括原生组件、14 个 SDK 声明及不依赖 Node ambient types 的真实 `/client` 类型消费者。日志 `.verified-build.log`。 |
+| 最终 `npm run typecheck` | src 和 tests 均通过。日志 `.verified-typecheck.log`。仓库没有 lint script，另执行 `git diff --check`。 |
+| 最终构建的 Windows PTY | **32/32 通过：Ink 19、classic 13**。覆盖 query/resume、AMA 提示、工具显示、设置同步、交互、排队撤回、transcript 冻结/搜索/快捷键/控制字符重绘、中断排序、命令续跑停止及新 Session 隔离。日志 `.verified-pty.log`；临时产物目录 `kodax-repl-acceptance-LPDbgJ`。 |
+| Host 构建身份与更新 | **7/7 通过**，在最后的 steer 来源锚增量之前运行；该增量不改启动/更新链。覆盖空闲更新、连接观察者时拒绝替换、旧 launcher、普通 CLI 及唯一写入所有者。冻结 dist 副本以合法 JS 注释模拟文件字节替换，不宣称执行了第二次编译。日志 `.verified-host-build.log`；临时产物目录 `kodax-host-build-wj9qgD`。 |
+| 最终完整离线 Vitest | **1,056 文件通过、1 文件跳过；15,560 passed、77 skipped、21 todo；0 failed、0 unhandled errors**。运行 666.31 秒，exit 0。包括 src、全部 workspace 与默认离线 tests/benchmark harness 自测，不调用付费模型。日志 `.verified-full.log`。 |
+
+开发中曾有一轮全套测试跨越源码/构建修改且继承外层 `KODAX_HOME`，出现 50 项失败；该次结果不作为最终门禁，也不笼统归因于环境。首次冻结全套为 15,536 passed、23 failed、77 skipped、21 todo，另有一个 Vitest `onTaskUpdate` RPC 超时；日志保留为 `.verified-full-first.log`。逐项排查结果：
+
+- 20 项权限断言：验收 HOME 放在系统 Temp，测试用 HOME 构建的“非 Temp 路径”实际落入临时目录豁免。改用 Temp 外的专用 HOME；权限分析 968 项对照全部通过，不修改生产权限规则。
+- 1 项 NUL ACE 断言：FNM 的 Node 链接路径与生产代码的真实路径不同；原 HOME 通过、Temp HOME 失败、相同隔离 HOME 配合真实 Node 可执行路径通过。最终使用 canonical Node，不改变 native 路径保护。
+- 1 项 config daemon 清理：测试只等状态文件消失就删除目录，进程仍在写退出 outcome/log。单项定向重现，改用已有精确 owner 与 shutdown outcome verifier 后再清理，不加 sleep 或删除重试。
+- 1 项 extension 工具列表：上一持久化用例的后台 Learning review 混入静态前景调用统计；落盘 review 的 provider、objective 和时间确认其身份。测试 fixture 应答合法 review，并等待既有 review drain 后再清理；保留前景调用次数和工具列表断言。
+
+最终运行固定构建，移除外层 `KODAX_HOME`，使用系统 Temp 外的专用 HOME/USERPROFILE 与真实 Node 路径。上述失败在最终完整套件中均通过，Vitest RPC 超时也未复现；没有跳过失败用例或放宽业务断言。最后两项改动仅为测试修复，因此继续使用已通过 build/PTY 的相同生产构建，另重跑 src/tests typecheck 通过。PTY 与 Host 构建验收也使用独立临时配置和离线 Provider，不使用用户 API key 或会话。
+
+独立评审固定在同一基线至冻结工作树的 diff，评审者不参与相应修复：
+
+#### Standards
+
+硬违反 0；可行动 smell 0。复用现有身份、生命周期及领域服务；没有新增恢复 owner、操作账本、追停状态机、shell backend 或 sandbox fallback。评审建议的 metadata 命名与 getter 单一形式已落实。最后两项测试清理增量另经复查，仍为 0；后台 drain 仅证明等待结束，不独自证明 review 业务成功。
+
+#### Spec
+
+发现 0；此前业务旁路、设置同步和同 Run steer 来源锚问题已关闭。最后两项测试增量未修改生产行为、未删除或放宽原前景断言，独立复查仍为 0。该独立结论来自源码及测试接缝核验；实际构建、完整回归和 PTY 由主 Agent 执行，分别记录，不把静态评审当作运行验收。
+
+仍保留明确边界：强制 legacy renderer 的历史搜索跳转问题见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)，不由默认 owned renderer 验收豁免；缺少可证明来源的旧历史不按文本自动修复；未来 Web transport、远程认证、多租户隔离未实现。本轮使用离线 Provider，不认证商业模型回答质量，未做 macOS/Linux 实机及 Electron GUI 验收，也未重新测量覆盖率。用户原有 Host/session 没有重启或改写，没有推送、发布或版本号变更。

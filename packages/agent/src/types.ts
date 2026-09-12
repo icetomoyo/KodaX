@@ -396,6 +396,8 @@ export type KodaXSessionUiHistoryItemType =
   | 'tool_group';
 
 export interface KodaXSessionUiTextHistoryItem {
+  /** Source input boundary for retained output without a canonical message. */
+  afterInputId?: string;
   /** Stable display identity, retained when a live item becomes history. */
   id?: string;
   type: KodaXSessionUiTextHistoryItemType;
@@ -429,6 +431,7 @@ export interface KodaXSessionUiToolCall {
 }
 
 export interface KodaXSessionUiToolGroupHistoryItem {
+  afterInputId?: string;
   id?: string;
   type: 'tool_group';
   /** Original UI event time in epoch milliseconds. Absent on older sessions. */

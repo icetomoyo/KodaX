@@ -6591,9 +6591,10 @@ describe("createKodaXRuntime", () => {
         projectPath: tempRoot,
       });
       const manager = createSessionManager({ sessionsDir });
+      const historicalBody = `The exact historical code is ZX-4401. ${'x'.repeat(150_000)}`;
       const lineage = applySessionCompaction(
         createSessionLineage([
-          { role: "user", content: "The exact historical code is ZX-4401." },
+          { role: "user", content: historicalBody },
           {
             role: "assistant",
             content: "ZX-4401 was verified before compaction.",
@@ -6627,6 +6628,29 @@ describe("createKodaXRuntime", () => {
       expect(Buffer.from(exact!.data, "base64").toString("utf8")).toContain(
         "ZX-4401",
       );
+      const { toKodaXProductClient } = await import('./client-runtime-adapter.js');
+      const client = toKodaXProductClient(runtime);
+      const search = await client.sessions.searchHistory(session.id, { query: 'ZX-4401', role: 'user' });
+      const hit = search.hits[0]!;
+      expect(hit.itemId).toEqual(expect.any(String));
+      let offset = 0;
+      let body = '';
+      for (;;) {
+        const chunk = await client.sessions.readHistoryEntry(session.id, hit.itemId, { offset });
+        expect(chunk?.id).toBe(hit.itemId);
+        body += chunk!.text;
+        if (chunk!.nextOffset === undefined) break;
+        offset = chunk!.nextOffset;
+      }
+      expect(body).toBe(historicalBody);
+      const activeHistory = await client.sessions.readHistory(session.id);
+      expect(activeHistory.items.some((item) => item.text === 'active follow-up')).toBe(true);
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 6 * 60_000);
+      try {
+        await expect(client.sessions.readHistoryEntry(session.id, hit.itemId))
+          .rejects.toMatchObject({ code: 'resync_required' });
+      } finally { clock.mockRestore(); }
     } finally {
       await runtime.close();
     }
@@ -16167,6 +16191,10 @@ describe("createKodaXRuntime", () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const projectRoot = path.join(tempRoot, "live-auto-reviewer-settings");
     await fs.mkdir(projectRoot, { recursive: true });
+    await fs.mkdir(path.join(tempRoot, '.kodax'), { recursive: true });
+    await fs.writeFile(path.join(tempRoot, '.kodax', 'config.json'), JSON.stringify({
+      permissionMode: 'auto', autoModeClassifierModel: 'mock-provider:profile-reviewer',
+    }));
     const reviewedModels: Array<string | undefined> = [];
     replMock.bootstrapAutoMode.mockImplementation(async (deps: AutoModeBootstrapDeps) => ({
       getGuardrail: () => ({
@@ -16240,6 +16268,17 @@ describe("createKodaXRuntime", () => {
       "mock-provider:reviewer-a",
       "mock-provider:reviewer-b",
     ]);
+
+    await runtime.sessions.updateSettings(session.id, { permissionMode: null, autoModeClassifierModel: null });
+    expect((await runtime.sessions.getSettings(session.id)).permissionMode).toBeUndefined();
+    expect(await runtime.sessions.getAutoModeStats(session.id)).toMatchObject({ classifierModel: 'mock-provider:profile-reviewer' });
+    const profileCall = { ...bashCall, id: 'bash_after_clear_to_profile' };
+    await authorizeRuntimeAutoCall(runOptions, profileCall);
+    await expect(runOptions.context?.authorizeShellHostExecution?.({
+      toolCallId: profileCall.id, toolInput: profileCall.input, command: profileCall.input.command,
+      cwd: projectRoot, executable: 'git', args: ['config', '--global', 'user.name', 'KodaX'], reason: 'sandbox_denied',
+    })).resolves.toBe(true);
+    expect(reviewedModels.at(-1)).toBe('mock-provider:profile-reviewer');
 
     await runtime.runs.abort(handle.runId);
     await runtime.close();

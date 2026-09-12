@@ -64,6 +64,42 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('does not let an observe-only client execute dynamic Skill preparation', async () => {
+    const runtime = makeRuntime();
+    const prepare = vi.spyOn(runtime.invocations, 'prepareSkill');
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime, grantedScopes: ['session:observe'] });
+    try {
+      await dispatcher.handle(createRuntimeDaemonRequest('init-skill-observer', 'initialize'));
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('read-skill', 'invocations.prepareSkill', {
+        projectRoot: process.cwd(), sessionId: 'session-1', name: 'dynamic',
+      }))).toMatchObject({ kind: 'error', error: { code: 'unauthorized' } });
+      expect(prepare).not.toHaveBeenCalled();
+    } finally { dispatcher.close(); }
+  });
+
+  it('cancels dynamic preparation through its executor signal before settling the request', async () => {
+    const runtime = makeRuntime();
+    let signal: AbortSignal | undefined;
+    vi.spyOn(runtime.invocations, 'prepareSkill').mockImplementation(async (_input, options) => {
+      signal = options?.signal;
+      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }));
+      signal?.throwIfAborted();
+      return { kind: 'unknown' };
+    });
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    try {
+      await dispatcher.handle(createRuntimeDaemonRequest('init-preparation', 'initialize'));
+      const preparing = dispatcher.handle(createRuntimeDaemonRequest('prepare-cancel', 'invocations.prepareSkill', {
+        projectRoot: process.cwd(), sessionId: 'session-1', name: 'dynamic',
+      }));
+      await expect.poll(() => signal !== undefined).toBe(true);
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('cancel-preparation', 'request.cancel', { requestId: 'prepare-cancel' })))
+        .toMatchObject({ kind: 'response', result: { ok: true } });
+      expect(signal?.aborted).toBe(true);
+      expect(await preparing).toMatchObject({ kind: 'error', error: { code: 'read_cancelled' } });
+    } finally { dispatcher.close(); }
+  });
+
   it('retires the old RPC connection when the same stable identity takes over', async () => {
     const hub = createRuntimeDaemonReverseBridgeHub();
     const runtime = makeRuntime();
@@ -1400,6 +1436,7 @@ describe('runtime daemon dispatcher', () => {
     const runtime: KodaXRuntime = {
       ...makeRuntime(),
       invocations: {
+        ...makeRuntime().invocations,
         async prepareSkill(input) {
           calls.push({ method: 'prepareSkill', input: { ...input } });
           return {
@@ -3089,6 +3126,10 @@ const METHOD_SMOKE_PARAMS = {
   'invocations.prepareCommand': { projectRoot: process.cwd(), name: 'help' },
   'invocations.prepareReview': { projectRoot: process.cwd(), sessionId: 'session-1', args: [] },
   'invocations.prepareAgentsLean': { projectRoot: process.cwd() },
+  'invocations.readCommandPrompt': { sessionId: 'session-1', name: 'audit' },
+  'invocations.executeCommand': { sessionId: 'session-1', inputId: 'command-1', name: 'audit' },
+  'invocations.startReview': { sessionId: 'session-1', inputId: 'review-1', args: [] },
+  'invocations.startAgentsLean': { sessionId: 'session-1', inputId: 'lean-1' },
   'artifact.create': { kind: 'file', path: '/tmp/runtime-daemon-smoke.txt' },
   'artifact.get': { artifactId: 'art-1' },
   'artifact.delete': { artifactId: 'art-1' },
@@ -3543,6 +3584,10 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async trust() {},
     },
     invocations: {
+      async readCommandPrompt() { return null; },
+      async executeCommand() { return { kind: 'completed' as const, success: true }; },
+      async startReview() { return { kind: 'completed' as const, success: true }; },
+      async startAgentsLean() { return { kind: 'completed' as const, success: false }; },
       async prepareSkill() { return { kind: 'unknown' as const }; },
       async prepareCommand() { return { kind: 'local' as const }; },
       async prepareReview() { return { kind: 'empty' as const }; },

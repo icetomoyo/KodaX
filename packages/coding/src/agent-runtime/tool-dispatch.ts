@@ -138,7 +138,7 @@ import {
   maybeBlockExistingFileWrite,
   buildEditRecoveryUserMessage,
 } from './middleware/edit-recovery.js';
-import { isToolResultErrorContent } from './tool-result-classify.js';
+import { isCancelledToolResultContent, isToolResultErrorContent } from './tool-result-classify.js';
 import type { RuntimeSessionState } from './runtime-session-state.js';
 import { applyToolResultBatchGuardrail } from '../tools/tool-result-policy.js';
 import type { ToolResultBudget } from '../tools/tool-result-budget.js';
@@ -161,7 +161,8 @@ export function createToolResultBlock(
     tool_use_id: toolUseId,
     content,
     ...(isToolResultErrorContent(content) ? { is_error: true } : {}),
-    ...(metadata ? { metadata } : {}),
+    ...(metadata || isCancelledToolResultContent(content)
+      ? { metadata: { ...metadata, ...(isCancelledToolResultContent(content) ? { cancelled: true } : {}) } } : {}),
   };
 }
 
@@ -870,7 +871,8 @@ async function admitAndEmitVisibleToolResults(
     recoveryMessageTokens,
   );
   const guardedById = new Map(guardedBatch.entries.map((entry) => [entry.id, entry]));
-  const finalResults = toolResults.map((result) => {
+  const finalResults = toolResults.map((sourceResult) => {
+    const result = { ...sourceResult, is_error: sourceResult.is_error === true };
     const guarded = guardedById.get(result.tool_use_id);
     if (!guarded || guarded.content === result.content) {
       // FEATURE_296 (ADR-067): an over-budget batch admits with debt metadata
@@ -901,7 +903,7 @@ async function admitAndEmitVisibleToolResults(
       content: displayContent,
     });
     input.events.onToolResult?.(
-      { id: toolBlock.id, name: toolBlock.name, content: displayContent },
+      { id: toolBlock.id, name: toolBlock.name, content: displayContent, toolResult: result },
       createToolEventMeta(input.events, toolBlock.id),
     );
   }

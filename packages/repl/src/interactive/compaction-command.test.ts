@@ -111,6 +111,21 @@ describe('/compact command', () => {
     logSpy.mockRestore();
   });
 
+  it('surfaces a Host compact failure instead of reporting a successful no-op', async () => {
+    callbacks.compactSession = { compact: async () => ({
+      compacted: false, messages: [], tokensBefore: 50_000, tokensAfter: 50_000,
+      reason: 'Summary provider unavailable',
+    }) };
+    const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === 'compact');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await command!.handler([], context, callbacks, currentConfig);
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('Compaction failed: Summary provider unavailable');
+      expect(logSpy.mock.calls.flat().join('\n')).not.toContain('No compaction needed');
+      expect(callbacks.stopCompacting).toHaveBeenCalledOnce();
+    } finally { logSpy.mockRestore(); }
+  });
+
   it('documents the always-on bounded trigger contract', () => {
     const compactCommand = BUILTIN_COMMANDS.find(command => command.name === 'compact');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -308,7 +323,7 @@ describe('/compact Host binding (T34)', () => {
       tokensBefore: 40000,
       tokensAfter: 40000,
       messages: context.messages,
-      reason: 'below-threshold',
+      reason: 'no compaction needed',
     }));
 
     try {

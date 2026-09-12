@@ -1,10 +1,8 @@
 #!/usr/bin/env node
+import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
-import { attachRunProgressAdapter } from './run-progress-events.js';
 import {
   exitCodeForOneShotResult,
-  projectOneShotOutcome,
-  resolveOneShotSession,
   runOneShotClientTask,
 } from './one-shot-task.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
@@ -56,7 +54,6 @@ import {
   createKodaXRuntime,
   ensureKodaXRuntime,
   type KodaXRuntime,
-  type RuntimeKodaXOptions,
 } from './sdk-runtime.js';
 import {
   isRuntimeDaemonPidAlive,
@@ -169,7 +166,7 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
-import { createCliClientPlane, createCliSessionCommands } from './cli-client-plane.js';
+import { createCliClientPlane, createCliSessionCommands, createCliWorkflowControl } from './cli-client-plane.js';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -194,8 +191,6 @@ import {
   KODAX_DIR,
   ensureExampleConfigFiles,
   resolveInteractiveSurfacePreference,
-  resolveUserSkillInvocation,
-  prepareInvocationExecution,
   mintInkInputId,
   runInteractiveMode,
   runInkInteractiveMode,
@@ -210,7 +205,6 @@ import {
   type ReplRuntimeAutoModeControl,
   type ReplRuntimeAutoModeSettings,
   type CanonicalPermissionMode,
-  type PreparedInvocation,
   type SessionPickerItem,
   type SessionDedupeReport,
 } from '@kodax-ai/repl';
@@ -572,7 +566,7 @@ async function getInteractiveRuntimeStatus(input: {
 }
 
 export function createReplRuntimeAutoModeControl(
-  runtime: KodaXRuntime,
+  client: KodaXProductClient,
 ): ReplRuntimeAutoModeControl {
   const pendingSettingsUpdates = new Map<string, Promise<unknown>>();
   const enqueueSettingsUpdate = <T>(
@@ -592,7 +586,7 @@ export function createReplRuntimeAutoModeControl(
   };
   const readStats = async (sessionId: string) => {
     try {
-      return await runtime.sessions.getAutoModeStats(sessionId);
+      return await client.sessions.getAutoModeStats(sessionId);
     } catch (error: unknown) {
       emitKodaXDiagnostic({
         source: 'cli:runtime-auto-mode',
@@ -610,7 +604,7 @@ export function createReplRuntimeAutoModeControl(
     async syncSettings(sessionId, permissionMode, settings) {
       return enqueueSettingsUpdate(sessionId, async () => {
         try {
-          await runtime.sessions.load(sessionId);
+          await client.sessions.read(sessionId);
         } catch (error: unknown) {
           if (
             error instanceof Error &&
@@ -620,61 +614,14 @@ export function createReplRuntimeAutoModeControl(
           }
           throw error;
         }
-        await runtime.sessions.updateSettings(sessionId, {
+        await client.sessions.updateSettings(sessionId, {
           permissionMode,
           autoModeClassifierModel: settings.classifierModel ?? null,
         });
         return readStats(sessionId);
       });
     },
-    subscribe(sessionId, listener) {
-      let active = true;
-      const subscription = runtime.events.subscribe(
-        { sessionId, type: 'session.settings.updated' },
-        () => {
-          void readStats(sessionId).then((stats) => {
-            if (active) listener(stats);
-          });
-        },
-      );
-      return {
-        close() {
-          active = false;
-          subscription.close();
-        },
-      };
-    },
   };
-}
-
-/** Keep the shared Session Runtime as the sole owner of Auto receipts. */
-export function toRuntimeOwnedInteractiveOptions(
-  options: KodaXOptions,
-  sanitization: {
-    readonly omitLegacyBeforeToolExecute?: boolean;
-  } = {},
-): KodaXOptions {
-  const guardrails = options.guardrails?.filter(
-    (guardrail) => guardrail.kind !== 'tool' || guardrail.name !== 'auto-mode',
-  );
-  const events = sanitization.omitLegacyBeforeToolExecute
-    ? omitBeforeToolExecute(options.events)
-    : options.events;
-  return {
-    ...options,
-    ...(guardrails !== undefined
-      ? { guardrails: guardrails.length > 0 ? guardrails : undefined }
-      : {}),
-    ...(events !== undefined ? { events } : {}),
-  };
-}
-
-function omitBeforeToolExecute(
-  events: KodaXOptions['events'],
-): KodaXOptions['events'] {
-  if (events === undefined) return undefined;
-  const { beforeToolExecute: _beforeToolExecute, ...rest } = events;
-  return rest;
 }
 
 /**
@@ -701,23 +648,15 @@ async function runOneShotOwnedProcess(
 }
 
 /**
- * FEATURE_298 T35 — plain one-shot runs (no prepared Skill/command overlay)
+ * FEATURE_298 T35 — one-shot runs, including raw Skill invocations,
  * travel the product client face: the Host owns session lifecycle, input
  * acceptance, and settlement; CLI flags become session settings.
- * Repo-intelligence overrides ride the runs.start seam below: they are
- * per-run options with no session-settings home (F1 parity).
  */
 async function runCliTaskViaClient(
   runtime: KodaXRuntime,
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
-  const needsRunOptionsSeam =
-    options.context?.repoIntelligenceMode !== undefined
-    || options.context?.repoIntelligenceTrace !== undefined;
-  if (needsRunOptionsSeam) {
-    return runCliTaskWithPreparedOptions(runtime, options, prompt);
-  }
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
     client: toKodaXProductClient(runtime),
     runtime,
@@ -725,189 +664,6 @@ async function runCliTaskViaClient(
     prompt,
     abortSignal,
   }));
-}
-
-/**
- * FEATURE_298 T35 — transport shaping for the prepared runs.start seam:
- * transport-isolated runs wrap the Skill runtime policy with
- * enforceAtRuntime and strip callbacks the boundary cannot reproduce;
- * inline embedded runs keep their options intact.
- */
-export function toPreparedRunStartOptions(
-  identity: Pick<KodaXRuntime['identity'], 'mode' | 'isolation'>,
-  options: KodaXOptions,
-): RuntimeKodaXOptions | KodaXOptions {
-  const transportIsolated = identity.mode === 'daemon';
-  const skillInvocation = options.context?.skillInvocation;
-  const invocationPolicy = skillInvocation?.runtimePolicy;
-  const policyOptions: KodaXOptions = transportIsolated && skillInvocation && invocationPolicy
-    ? {
-        ...options,
-        context: {
-          ...options.context,
-          skillInvocation: {
-            ...skillInvocation,
-            runtimePolicy: { ...invocationPolicy, enforceAtRuntime: true },
-          },
-        },
-      }
-    : options;
-  const runtimeOptions = toRuntimeOwnedInteractiveOptions(policyOptions, {
-    // Daemon transport keeps callbacks for loud validation below.
-    omitLegacyBeforeToolExecute:
-      transportIsolated && invocationPolicy !== undefined,
-  });
-  return transportIsolated
-    ? toDaemonRuntimeRunOptions(runtimeOptions)
-    : runtimeOptions;
-}
-
-/**
- * FEATURE_298 T35 — per-run options the product input face intentionally
- * does not transport (prepared Skill/command overlays: prompt overlay,
- * model override, serialized runtime policy; plus repo-intelligence
- * overrides from flags/env) keep runs.start as the narrow seam. Session
- * lifecycle, progress forwarding, stop, and exit codes are identical to
- * the product path.
- */
-async function runCliTaskWithPreparedOptions(
-  runtime: KodaXRuntime,
-  options: KodaXOptions,
-  prompt: string,
-): Promise<KodaXResult> {
-  const client = toKodaXProductClient(runtime);
-  return runOneShotOwnedProcess(async (abortSignal) => {
-    const plan = await resolveOneShotSession(client, options, prompt);
-    const startOptions = toPreparedRunStartOptions(runtime.identity, options);
-    // Daemon runs get progress through the event bus (their options cross
-    // without callbacks); embedded runs keep receiving the callbacks
-    // directly through startOptions, so an adapter there would double-print.
-    const progress = runtime.identity.mode === 'daemon'
-      ? attachRunProgressAdapter(runtime, {
-          sessionId: plan.sessionId,
-          events: options.events,
-        })
-      : undefined;
-    try {
-      const handle = await runtime.runs.start({
-        sessionId: plan.sessionId,
-        prompt,
-        mode: 'managed_task',
-        permissionBroker: 'runtime',
-        options: startOptions,
-      });
-      progress?.setRunId(handle.runId);
-      const requestStop = (): void => {
-        void client.runs.stop(handle.runId).catch(() => undefined);
-      };
-      abortSignal.addEventListener('abort', requestStop, { once: true });
-      if (abortSignal.aborted) requestStop();
-      try {
-        const outcome = await client.runs.await(handle.runId);
-        return projectOneShotOutcome(outcome, handle.runId, plan.sessionId);
-      } finally {
-        abortSignal.removeEventListener('abort', requestStop);
-      }
-    } finally {
-      progress?.close();
-    }
-  });
-}
-
-export async function prepareCliSkillInvocation(
-  userPrompt: string,
-  options: KodaXOptions,
-  emit: (message: string) => void = () => {},
-): Promise<PreparedInvocation | undefined> {
-  const invocation = await resolveUserSkillInvocation(userPrompt, {
-    workingDirectory: options.context?.executionCwd ?? process.cwd(),
-    projectRoot: options.context?.gitRoot ?? (await getGitRoot()) ?? process.cwd(),
-    environment: {},
-    executeDynamicContext: options.skillDynamicContext?.execute,
-    disableDynamicContext: options.skillDynamicContext?.disable,
-  });
-  return invocation
-    ? prepareInvocationExecution(options, invocation, userPrompt, emit)
-    : undefined;
-}
-
-export function toDaemonRuntimeRunOptions(
-  options: KodaXOptions,
-): RuntimeKodaXOptions {
-  assertDaemonHostBindingsAbsent(options);
-  const {
-    events,
-    session,
-    context,
-    abortSignal: _abortSignal,
-    extensionRuntime: _extensionRuntime,
-    sessionControl: _sessionControl,
-    memoryReviewer: _memoryReviewer,
-    learningReviewer: _learningReviewer,
-    memoryRecallRunner: _memoryRecallRunner,
-    guardrails: _guardrails,
-    skillDynamicContext,
-    ...wireOptions
-  } = options;
-  const { storage: _storage, ...wireSession } = session ?? {};
-  const {
-    configHome: _configHome,
-    memoryIdentity: _memoryIdentity,
-    agentScope: _agentScope,
-    mutationTracker: _mutationTracker,
-    toolVisibilityPolicy: _toolVisibilityPolicy,
-    planModeBlockCheck: _planModeBlockCheck,
-    goalRuntime: _goalRuntime,
-    lspService: _lspService,
-    skillRegistry: _skillRegistry,
-    ...wireContext
-  } = context ?? {};
-  const candidate: RuntimeKodaXOptions = {
-    ...wireOptions,
-    ...(Object.keys(wireSession).length > 0 ? { session: wireSession } : {}),
-    ...(Object.keys(wireContext).length > 0 ? { context: wireContext } : {}),
-    ...(events?.workflowCorrelation !== undefined
-      ? { events: { workflowCorrelation: events.workflowCorrelation } }
-      : {}),
-    ...(skillDynamicContext?.disable !== undefined
-      ? { skillDynamicContext: { disable: skillDynamicContext.disable } }
-      : {}),
-  };
-  try {
-    const encoded = JSON.stringify(candidate);
-    const cloned: unknown = JSON.parse(encoded);
-    if (!isRecord(cloned)) throw new Error('expected an object');
-    return cloned as RuntimeKodaXOptions;
-  } catch (error: unknown) {
-    throw new Error(
-      `Daemon runtime options are not JSON serializable: ${normalizeCliError(error).message}`,
-    );
-  }
-}
-
-function assertDaemonHostBindingsAbsent(options: KodaXOptions): void {
-  const unsupported: Array<readonly [string, unknown]> = [
-    ['extensionRuntime', options.extensionRuntime],
-    ['sessionControl', options.sessionControl],
-    ['memoryReviewer', options.memoryReviewer],
-    ['learningReviewer', options.learningReviewer],
-    ['memoryRecallRunner', options.memoryRecallRunner],
-    ['guardrails', options.guardrails],
-    ['events.beforeToolExecute', options.events?.beforeToolExecute],
-    ['skillDynamicContext.execute', options.skillDynamicContext?.execute],
-    ['context.agentScope', options.context?.agentScope],
-    ['context.mutationTracker', options.context?.mutationTracker],
-    ['context.toolVisibilityPolicy', options.context?.toolVisibilityPolicy],
-    ['context.planModeBlockCheck', options.context?.planModeBlockCheck],
-    ['context.goalRuntime', options.context?.goalRuntime],
-    ['context.lspService', options.context?.lspService],
-  ];
-  const binding = unsupported.find(([, value]) => value !== undefined);
-  if (!binding) return;
-  throw new Error(
-    `KodaX daemon run option '${binding[0]}' cannot cross the process boundary. ` +
-      'Configure the capability in the daemon owner or use embedded mode.',
-  );
 }
 
 function isActiveDaemonRunStatus(value: unknown): boolean {
@@ -4867,6 +4623,7 @@ complete -c kodax -l version -d 'Show version'`);
     cliRuntime = await createKodaXRuntime({
       mode: 'daemon',
       profile: 'default',
+      requirements: { productClient: 1 },
       autoStartDaemon: true,
       clientInfo: {
         name: 'kodax-cli',
@@ -5129,6 +4886,7 @@ complete -c kodax -l version -d 'Show version'`);
 
         const runtimeProfile = 'default';
         const interactiveRuntime = await getCliRuntime();
+        const interactiveClient = toKodaXProductClient(interactiveRuntime);
         // FEATURE_298 T18 — resume selection reads the Host sessions face
         // (newest-first); the resolved id keeps the same-file local load.
         let interactiveKodaXOptions = kodaXOptions;
@@ -5137,7 +4895,7 @@ complete -c kodax -l version -d 'Show version'`);
           // per-project layout): without projectRoot, -c in project B could
           // resume project A's newest session.
           const projectRoot = (await getGitRoot()) ?? undefined;
-          const candidates = await interactiveRuntime.sessions.list({
+          const candidates = await interactiveClient.sessions.list({
             ...(projectRoot !== undefined ? { projectRoot } : {}),
             scope: 'user',
             limit: 1000,
@@ -5151,7 +4909,7 @@ complete -c kodax -l version -d 'Show version'`);
           }
         }
         const runtimeAutoModeControl =
-          createReplRuntimeAutoModeControl(interactiveRuntime);
+          createReplRuntimeAutoModeControl(interactiveClient);
 
         const interactiveOptions = {
           provider: interactiveKodaXOptions.provider,
@@ -5175,59 +4933,40 @@ complete -c kodax -l version -d 'Show version'`);
           validateSetupA2AConfig: parseA2AIntegrationDocument,
           prepareSetupSandbox: prepareSetupSandboxReport,
           inspectSandbox: inspectSandboxReport,
-          learning: createReplLearningBinding(interactiveRuntime),
+          learning: createReplLearningBinding(interactiveClient),
           // FEATURE_298 T36 — the Host owns the Memory plane; the UI names
           // the project root and presents/launches only.
-          memory: (projectRoot: string) => interactiveRuntime.memory.forProject(projectRoot),
+          memory: (projectRoot: string) => interactiveClient.memory.forProject(projectRoot),
           // FEATURE_298 T22 — workflow run/control routes to the Host
           // manager (daemon client or in-process service alike).
-          workflows: interactiveRuntime.workflows,
-          // FEATURE_298 T37 — Skill preparation runs in the Host against
-          // the trusted registry; the UI sends only name + argument text.
-          // Slice 4: the daemon face carries the same service over RPC, so
-          // every interactive runtime (embedded or daemon-connected) binds.
-          prepareSkillInvocation: {
-            prepare: (input: {
-              projectRoot: string;
-              name: string;
-              argumentsText?: string;
-              sessionId?: string;
-            }) => interactiveRuntime.invocations.prepareSkill(input),
-          },
-          prepareCommandInvocation: {
-            prepare: (input: { projectRoot: string; name: string }) =>
-              interactiveRuntime.invocations.prepareCommand(input),
-          },
-          prepareReview: {
-            prepare: (input: { projectRoot: string; sessionId: string; args: readonly string[] }) =>
-              interactiveRuntime.invocations.prepareReview(input),
-          },
-          prepareAgentsLean: (input: { projectRoot: string }) =>
-            interactiveRuntime.invocations.prepareAgentsLean(input),
+          workflows: createCliWorkflowControl(interactiveClient),
+          commandClient: interactiveClient.commands,
+          listHostCommands: (workspaceRoot: string) => interactiveClient.catalog.commands(workspaceRoot),
+          startReview: (input: Parameters<typeof interactiveClient.review.start>[0]) => interactiveClient.review.start(input),
+          reviewAgentsLean: (input: Parameters<typeof interactiveClient.agents.reviewLean>[0]) => interactiveClient.agents.reviewLean(input),
           // FEATURE_298 T34 — goal persistence is Host-owned; the command
           // plane sends the session id and objective only.
           goal: {
-            read: (sessionId: string) => interactiveRuntime.sessions.readGoal(sessionId),
+            read: (sessionId: string) => interactiveClient.sessions.readGoal(sessionId),
             create: (input: { sessionId: string; objective: string; tokenBudget?: number }) =>
-              interactiveRuntime.sessions.createGoal(input),
-            pause: (sessionId: string) => interactiveRuntime.sessions.pauseGoal(sessionId),
-            resume: (sessionId: string) => interactiveRuntime.sessions.resumeGoal(sessionId),
-            clear: (sessionId: string) => interactiveRuntime.sessions.clearGoal(sessionId),
+              interactiveClient.sessions.createGoal(input.sessionId, { objective: input.objective, ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}) }),
+            pause: (sessionId: string) => interactiveClient.sessions.pauseGoal(sessionId),
+            resume: (sessionId: string) => interactiveClient.sessions.resumeGoal(sessionId),
+            clear: (sessionId: string) => interactiveClient.sessions.clearGoal(sessionId),
           },
           // FEATURE_298 T34 — session-command mutations are Host-owned; the
           // REPL sends ids/selectors and re-reads the session file the Host
           // wrote. deleteAll composes existing Host list + delete (no bulk RPC).
-          sessionCommands: createCliSessionCommands(interactiveRuntime),
+          sessionCommands: createCliSessionCommands(interactiveClient),
           // FEATURE_298 T17 — the client plane: Ink submits through the
           // Host input face, renders from the live session view, and stops
           // via run receipts. Works in-process and over the daemon face.
-          clientPlane: createCliClientPlane(interactiveRuntime),
+          clientPlane: createCliClientPlane(interactiveClient),
           // FEATURE_298 T34 — manual /compact replays the Host journal
           // through the compaction domain and persists there.
           compactSession: {
             compact: (input: { sessionId: string; customInstructions?: string }) =>
-              interactiveRuntime.sessions.compact({
-                sessionId: input.sessionId,
+              interactiveClient.sessions.compact(input.sessionId, {
                 ...(input.customInstructions !== undefined
                   ? { customInstructions: input.customInstructions }
                   : {}),
@@ -5292,34 +5031,9 @@ complete -c kodax -l version -d 'Show version'`);
         taskSurface: 'cli',
       },
     };
-    const prepared = await prepareCliSkillInvocation(
-      userPrompt,
-      cliOptions,
-      (message) => console.error(chalk.dim(message)),
-    );
-    if (prepared?.mode === 'manual' || (prepared && (!prepared.prompt || !prepared.options))) {
-      if (prepared.manualOutput) console.error(prepared.manualOutput);
-      await prepared.finalize();
-      return;
-    }
-
-    try {
-      const cliRuntime = await getCliRuntime();
-      const result = await (prepared !== undefined
-        ? runCliTaskWithPreparedOptions(
-            cliRuntime,
-            prepared.mode === 'fork'
-              ? { ...prepared.options!, session: undefined }
-              : prepared.options ?? cliOptions,
-            prepared.prompt ?? userPrompt,
-          )
-        : runCliTaskViaClient(cliRuntime, cliOptions, userPrompt));
-      emitJsonRunResultIfNeeded(options.outputMode, result);
-      await prepared?.finalize();
-    } catch (error) {
-      await prepared?.finalize(error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
+    const cliRuntime = await getCliRuntime();
+    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt);
+    emitJsonRunResultIfNeeded(options.outputMode, result);
   } finally {
     if (shouldHardExitAfterInteractiveCleanup) {
       const runtime = cliRuntime;

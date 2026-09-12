@@ -1,3 +1,4 @@
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,7 +61,7 @@ it('prints a plane-bound classic round from the live session view', async () => 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't18-probe',
   });
-  const plane = createCliClientPlane(runtime);
+  const plane = createCliClientPlane(toKodaXProductClient(runtime));
   try {
     const session = await runtime.sessions.create({ title: 'T18 classic', surface: 'repl' });
     await runtime.sessions.updateSettings(session.id, {
@@ -112,7 +113,7 @@ it('keeps the classic display view-only when no dialogs are provided', async () 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't18-probe',
   });
-  const plane = createCliClientPlane(runtime);
+  const plane = createCliClientPlane(toKodaXProductClient(runtime));
   try {
     const session = await runtime.sessions.create({ title: 'T18 plain', surface: 'repl' });
     const views: ClientSessionView[] = [];

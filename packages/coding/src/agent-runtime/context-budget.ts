@@ -27,6 +27,15 @@ export interface RuntimeContextBudgetBreakdown {
 }
 
 export interface RuntimeContextBudgetSnapshot {
+  /** The policy used by the execution owner, including its actual physical reserves. */
+  readonly compactionBudget?: {
+    readonly triggerPercent: number;
+    readonly absoluteTriggerTokens?: number;
+    readonly triggerTokens: number;
+    readonly physicalCapacityTokens: number;
+    readonly reservedResponseTokens: number;
+    readonly reservedMemoryTokens: number;
+  };
   readonly sessionId?: string;
   readonly runId?: string;
   readonly turnId?: string;

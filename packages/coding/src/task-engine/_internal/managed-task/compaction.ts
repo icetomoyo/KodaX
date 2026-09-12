@@ -39,7 +39,7 @@ import type {
 } from '../../../types.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
 import { resolveContextTokenCount, createOverflowContextTokenSnapshot } from '../../../token-accounting.js';
-import { estimateToolSchemaTokens } from '../../../agent-runtime/context-budget.js';
+import { estimateToolSchemaTokens, type RuntimeContextBudgetSnapshot } from '../../../agent-runtime/context-budget.js';
 import { createCompactionPromptCacheObserver } from '../../../agent-runtime/prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from '../../../agent-runtime/prompt-cache-affinity.js';
 import {
@@ -68,6 +68,7 @@ export type RunnerCompactionHook = (
 
 export interface ContextTokenSnapshotRef {
   current: KodaXContextTokenSnapshot | undefined;
+  compactionBudget?: RuntimeContextBudgetSnapshot['compactionBudget'];
 }
 
 export interface BuildManagedTaskCompactionHookOptions {
@@ -971,11 +972,12 @@ export async function buildManagedTaskCompactionHook(
   ): Promise<readonly AgentMessage[] | undefined> => {
     const { provider, activeModel, compactionConfig } = current;
     const reservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel);
-    const effectiveTriggerTokens = resolveCompactionPolicy(
+    const policy = resolveCompactionPolicy(
       compactionConfig,
       contextWindow,
       calculateMaxContextInputTokens(contextWindow, reservedResponseTokens),
-    ).triggerTokens;
+    );
+    const effectiveTriggerTokens = policy.triggerTokens;
     const messages = transcript as unknown as KodaXMessage[];
     const snapshot = initializeEnvelopeEstimate(
       snapshotRef,
@@ -985,6 +987,9 @@ export async function buildManagedTaskCompactionHook(
     const currentTokens = snapshot
       ? resolveContextTokenCount(messages, snapshot)
       : estimateTokens(messages);
+    snapshotRef.compactionBudget = { triggerPercent: policy.config.triggerPercent, absoluteTriggerTokens: policy.absoluteTriggerTokens,
+        triggerTokens: effectiveTriggerTokens, physicalCapacityTokens: policy.physicalCapacityTokens,
+        reservedResponseTokens, reservedMemoryTokens: 0 };
     const admission = admitManagedCompactionAttempt({
       force: rejection !== undefined,
       messages,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -15,10 +15,62 @@ vi.mock('@kodax-ai/coding', async (original) => ({
   ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: executor.start,
 }));
 
+it.each([true, false])('clears active Session overrides to the same Host settings as the next Run (profile=%s)', async hasProfile => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-effective-settings-'));
+  await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
+  const profileSettings = hasProfile ? { permissionMode: 'plan', thinking: true, reasoningMode: 'deep', agentMode: 'sa' } : {};
+  await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify(profileSettings));
+  const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+  let captured: KodaXOptions | undefined;
+  let finish: ((result: KodaXResult) => void) | undefined;
+  const reasoningUpdates = vi.fn();
+  executor.start.mockImplementation((options: KodaXOptions): RunningSession => {
+    captured = options;
+    const result = new Promise<KodaXResult>(resolve => { finish = resolve; });
+    return { id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
+      currentReasoning: options.reasoningMode, aborted: false, attached: true,
+      setProvider() {}, setModel() {}, setReasoning: reasoningUpdates, abort() {}, result };
+  });
+  const session = await runtime.sessions.create({ projectPath: process.cwd() });
+  const views: ClientSessionView[] = [];
+  const observation = await runtime.sessions.observeView(session.id, view => views.push(view));
+  try {
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', thinking: false, reasoningMode: 'off', agentMode: 'sa' });
+    const start = () => runtime.runs.start({ sessionId: session.id, prompt: 'wait',
+      options: { events: { beforeToolExecute: async () => 'original-policy' } } });
+    const active = await start();
+    await runtime.sessions.updateSettings(session.id, { permissionMode: null, thinking: null, reasoningMode: null, agentMode: null });
+    expect(await runtime.sessions.getSettings(session.id)).toEqual({});
+    await expect.poll(() => views.at(-1)?.settings).toEqual(profileSettings);
+    const decide = () => captured!.events!.beforeToolExecute!(hasProfile ? 'edit' : 'bash',
+      hasProfile ? { path: path.join(process.cwd(), 'file.ts'), old_string: 'old', new_string: 'new' } : { command: 'echo test' });
+    const activeDecision = await decide();
+    expect(activeDecision).toEqual(hasProfile ? expect.stringContaining('[Blocked]') : 'original-policy');
+    expect(reasoningUpdates).toHaveBeenLastCalledWith(hasProfile ? 'deep' : undefined, { effort: undefined, thinking: hasProfile ? true : undefined });
+    finish?.({ success: true, lastText: '', messages: [], sessionId: session.id });
+    await active.result;
+    const next = await start();
+    expect(await decide()).toEqual(activeDecision);
+    expect(captured?.thinking).toBe(hasProfile ? true : undefined);
+    expect(captured?.reasoningMode).toBe(hasProfile ? 'deep' : undefined);
+    finish?.({ success: true, lastText: '', messages: [], sessionId: session.id });
+    await next.result;
+  } finally {
+    finish?.({ success: true, lastText: '', messages: [], sessionId: session.id });
+    observation.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it('observes an actual Host current view and replaces settings without event cursors', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-view-'));
   const profile = 'observe';
-  const runtime = await createKodaXRuntime({ homeDir, profile });
+  await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
+  await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({
+    compaction: { contextWindow: 120_000, triggerPercent: 66, triggerTokens: 70_000 },
+  }));
+  const runtime = await createKodaXRuntime({ homeDir, profile, defaultProvider: 'anthropic' });
   const paths = resolveRuntimeDaemonPaths(homeDir, profile);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -37,8 +89,27 @@ it('observes an actual Host current view and replaces settings without event cur
     expect(views[0]).toMatchObject({ session: { id: session.id, title: 'Current view' }, items: [] });
     expect(views[0]).not.toHaveProperty('cursor');
     expect(views[0]).not.toHaveProperty('revision');
-    await runtime.sessions.updateSettings(session.id, { model: 'reviewed-model' });
+    expect(views[0]?.contextBudget).toMatchObject({ provider: 'anthropic', model: expect.any(String), contextWindow: 120_000 });
+    const peer = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+    const peerViews: ClientSessionView[] = [];
+    const peerObservation = await peer.sessions.observe(session.id, (view) => peerViews.push(view));
+    await client.sessions.updateSettings(session.id, { provider: 'anthropic', model: 'reviewed-model', compactionTriggerPercent: 61 });
     await expect.poll(() => views.at(-1)?.settings.model).toBe('reviewed-model');
+    expect(views.at(-1)?.contextBudget).toMatchObject({
+      scope: 'parent', provider: 'anthropic', model: 'reviewed-model', contextWindow: 120_000,
+      compaction: { enabled: true, triggerPercent: 61, absoluteTriggerTokens: 70_000 },
+    });
+    expect(views.at(-1)?.contextBudget?.compaction.triggerTokens).toBeUndefined();
+    await expect.poll(() => peerViews.at(-1)?.contextBudget).toEqual(views.at(-1)?.contextBudget);
+    await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({
+      compaction: { contextWindow: 100_000, triggerPercent: 66, triggerTokens: 70_000 }, memory: { enabled: true },
+    }));
+    await client.config.reload();
+    await expect.poll(() => views.at(-1)?.contextBudget?.contextWindow).toBe(100_000);
+    await expect.poll(() => peerViews.at(-1)?.contextBudget?.contextWindow).toBe(100_000);
+    expect(views.at(-1)?.contextBudget?.compaction.physicalCapacityTokens).toBeUndefined();
+    peerObservation.close();
+    await peer.disconnect();
     expect(views[0]?.settings.model).toBeUndefined();
     await runtime.sessions.appendNotice({ sessionId: session.id, content: 'Historical note.' });
     await expect.poll(() => views.at(-1)?.items.some((item) => item.text.includes('Historical note.'))).toBe(true);
@@ -47,11 +118,30 @@ it('observes an actual Host current view and replaces settings without event cur
     await runtime.sessions.updateSettings(session.id, { model: 'next-model' });
     await expect.poll(() => views.at(-1)?.settings.model).toBe('next-model');
     expect(views.at(-1)!.items.find((item) => item.id === historical.id)).toBe(historical);
+    const statusEvents: string[] = [];
+    const tracked = await client.sessions.observe(session.id, (view) => statusEvents.push(`view:${view.settings.model}`), {
+      onStatus: status => statusEvents.push(status.state === 'closed' ? status.reason : status.state),
+    });
+    const failedRead = vi.spyOn(runtime.interactions, 'list').mockRejectedValueOnce(new Error('Synthetic projection read failure'));
+    try {
+      await client.sessions.updateSettings(session.id, { model: 'during-read-failure' });
+      await expect.poll(() => statusEvents.at(-1)).toBe('interrupted');
+      await client.sessions.updateSettings(session.id, { model: 'recovered-view' });
+      await expect.poll(() => statusEvents.slice(-2)).toEqual(['view:recovered-view', 'live']);
+    } finally { failedRead.mockRestore(); tracked.close(); }
     observation.close();
     const count = views.length;
     await runtime.sessions.updateSettings(session.id, { model: 'later-model' });
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(views).toHaveLength(count);
+    const removed = await client.sessions.create({ title: 'Deleted observation' });
+    const removedStatuses: string[] = [];
+    const removedObservation = await client.sessions.observe(removed.id, () => undefined, {
+      onStatus: status => removedStatuses.push(status.state === 'closed' ? status.reason : status.state),
+    });
+    await client.sessions.delete(removed.id);
+    await expect.poll(() => removedStatuses).toEqual(['live', 'unavailable']);
+    removedObservation.close();
   } finally {
     await client.disconnect();
     await host.close();

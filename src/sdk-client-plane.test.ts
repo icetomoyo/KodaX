@@ -1,3 +1,4 @@
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -68,9 +69,9 @@ it('runs one round over the client plane with view-driven display', async () => 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't17-probe',
   });
-  const plane = wireClientPlane(runtime);
+  const plane = wireClientPlane(toKodaXProductClient(runtime));
   try {
-    const session = await runtime.sessions.create({ title: 'T17 plane', surface: 'repl' });
+    const session = await runtime.sessions.create({ title: 'T17 plane', surface: 'repl', projectPath: homeDir });
     await plane.updateSettings?.(session.id, clientSessionSettings({
       provider: 't17-probe', model: 't17-selected', agentMode: 'sa',
       permissionMode: 'accept-edits', thinking: false, reasoningMode: 'off',
@@ -159,9 +160,9 @@ it('stops a client-plane round with a receipt and maps it to the interrupted res
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't17-probe',
   });
-  const plane = wireClientPlane(runtime);
+  const plane = wireClientPlane(toKodaXProductClient(runtime));
   try {
-    const session = await runtime.sessions.create({ title: 'T17 stop', surface: 'repl' });
+    const session = await runtime.sessions.create({ title: 'T17 stop', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
       agentMode: 'sa', permissionMode: 'full-access',
     });
@@ -200,9 +201,9 @@ it('queues a follow-up Host-side and rides the continuation run to its result', 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't17-probe',
   });
-  const plane = wireClientPlane(runtime);
+  const plane = wireClientPlane(toKodaXProductClient(runtime));
   try {
-    const session = await runtime.sessions.create({ title: 'T17 queue', surface: 'repl' });
+    const session = await runtime.sessions.create({ title: 'T17 queue', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
       agentMode: 'sa', permissionMode: 'full-access',
     });

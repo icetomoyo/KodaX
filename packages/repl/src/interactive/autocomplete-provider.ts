@@ -16,6 +16,7 @@ import { SkillCompleter } from './completers/skill-completer.js';
 import { ArgumentCompleter } from './completers/argument-completer.js';
 import { sortCandidatesCombined } from './fuzzy.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import type { CommandCallbacks } from '../commands/types.js';
 
 /**
  * Autocomplete state for UI binding
@@ -37,6 +38,7 @@ export interface AutocompleteState {
  * AutocompleteProvider 的配置选项
  */
 export interface AutocompleteProviderOptions {
+  listHostCommands?: CommandCallbacks['listHostCommands'];
   /** Working directory for file completion - 文件补全的工作目录 */
   cwd?: string;
   /** Git root for skill discovery - 技能发现的 Git 根目录 */
@@ -55,7 +57,7 @@ export interface AutocompleteProviderOptions {
  * Default options
  * 默认选项
  */
-const DEFAULT_OPTIONS: Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot'>> = {
+const DEFAULT_OPTIONS: Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>> = {
   debounceDelay: 100,
   minTriggerChars: 1,
   maxCompletions: 10,
@@ -72,8 +74,8 @@ type DebounceTimer = ReturnType<typeof setTimeout> | null;
  * Internal options type with required defaults
  * 内部选项类型，包含必需的默认值
  */
-type InternalOptions = Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot'>> &
-  Pick<AutocompleteProviderOptions, 'cwd' | 'gitRoot'>;
+type InternalOptions = Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>> &
+  Pick<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>;
 
 /**
  * Autocomplete Provider - Main orchestrator for autocomplete
@@ -100,7 +102,9 @@ export class AutocompleteProvider {
     this.completers = [
       new SkillCompleter(this.options.gitRoot),
       new ArgumentCompleter(),
-      new CommandCompleter(),
+      new CommandCompleter(async () => await this.options.listHostCommands?.(
+        this.options.gitRoot ?? this.options.cwd ?? process.cwd(),
+      ) ?? []),
       new FileCompleter(this.options.cwd),
     ];
 

@@ -1517,6 +1517,10 @@ function makeRuntime(
       forProject() { throw new Error("Memory is not used by this fixture."); },
     },
     invocations: {
+      async readCommandPrompt() { return null; },
+      async executeCommand() { return { kind: 'completed', success: true }; },
+      async startReview() { return { kind: 'completed', success: true }; },
+      async startAgentsLean() { return { kind: 'completed', success: false }; },
       async prepareSkill() { return { kind: "unknown" }; },
       async prepareCommand() { return { kind: "local" }; },
       async prepareReview() { return { kind: "empty" }; },

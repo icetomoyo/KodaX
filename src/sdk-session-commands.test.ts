@@ -1,3 +1,4 @@
+import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,7 +19,7 @@ it('shows Host missing and operation failures through the production tree comman
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-tree-errors-'));
   const runtime = await createKodaXRuntime({ homeDir });
   const session = await runtime.sessions.create({ title: 'Tree errors', projectPath: homeDir });
-  const binding = createCliSessionCommands(runtime);
+  const binding = createCliSessionCommands(toKodaXProductClient(runtime));
   const context = await createInteractiveContext({ sessionId: session.id, gitRoot: homeDir });
   const config = { provider: 'test', thinking: false, reasoningMode: 'off' as const,
     agentMode: 'sa' as const, permissionMode: 'accept-edits' as const };
@@ -91,7 +92,7 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
   const runtime = await createKodaXRuntime({
     homeDir, sharedDaemonHost: true, defaultProvider: 't34-session-probe',
   });
-  const binding = createCliSessionCommands(runtime);
+  const binding = createCliSessionCommands(toKodaXProductClient(runtime));
   const sessionId = 't34-cmds-session';
   await binding.create({ sessionId, title: 'T34 cmds', surface: 'repl' });
 
@@ -108,6 +109,13 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
   const saveSpy = vi.spyOn(storage, 'save');
 
   try {
+    // Product branch selection preserves the original optional abandoned-branch summary.
+    const originalLineage = (await runtime.sessions.readLineage(sessionId))!;
+    const branchRoot = originalLineage.entries.find(entry => entry.type === 'message')!.id;
+    expect(await binding.setActiveEntry({ sessionId, selector: branchRoot, summarizeCurrentBranch: true })).toBe(true);
+    expect((await runtime.sessions.readLineage(sessionId))!.entries.at(-1)?.type).toBe('branch_summary');
+    await binding.setActiveEntry({ sessionId, selector: originalLineage.activeEntryId! });
+
     // Label: Host writes; another read face observes; local re-read agrees.
     const lineageBefore = await runtime.sessions.readLineage(sessionId);
     expect(lineageBefore).not.toBeNull();

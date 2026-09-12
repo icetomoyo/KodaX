@@ -4,6 +4,37 @@ import { observeDaemonSessionView, type RuntimeDaemonClientTransport, type Runti
 import { createRuntimeDaemonNotification, type RuntimeDaemonNotification } from './protocol.js';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 
+it('reports idle interruption, fresh-view recovery and terminal closure to the consumer', async () => {
+  const transport = createFakeTransport();
+  const events: string[] = [];
+  const observation = await observeDaemonSessionView(transport, 'session',
+    (snapshot) => events.push(snapshot.items[0]!.text), {
+      onStatus: (status) => events.push(status.state === 'closed' ? `${status.state}:${status.reason}` : status.state),
+    });
+  expect(events).toEqual(['view-1', 'live']);
+  transport.lifecycle(disconnected('gen-1'));
+  expect(events.at(-1)).toBe('interrupted');
+  transport.plan({ kind: 'fail' });
+  transport.plan({ kind: 'ok', text: 'fresh' });
+  transport.lifecycle(connected('gen-2'));
+  expect(events.at(-1)).toBe('interrupted');
+  await expect.poll(() => events.slice(-2), { timeout: 4000 }).toEqual(['fresh', 'live']);
+  transport.lifecycle({ state: 'disconnected', connectionId: 'gen-2', reconnectable: false });
+  expect(events.at(-1)).toBe('closed:unavailable');
+  observation.close();
+  expect(events.filter((event) => event.startsWith('closed:'))).toEqual(['closed:unavailable']);
+});
+
+it('reports intentional observation closure separately', async () => {
+  const events: string[] = [];
+  const observation = await observeDaemonSessionView(createFakeTransport(), 'session', () => undefined, {
+    onStatus: (status) => events.push(status.state === 'closed' ? status.reason : status.state),
+  });
+  observation.close();
+  observation.close();
+  expect(events).toEqual(['live', 'client']);
+});
+
 type LifecycleListener = (state: RuntimeDaemonTransportLifecycleState) => void;
 type NotificationListener = (notification: RuntimeDaemonNotification) => void;
 type ObserveOutcome = { kind: 'ok'; text: string } | { kind: 'fail' };
@@ -93,7 +124,7 @@ it('recovers the observation by retrying on the healthy current connection', asy
   }
 });
 
-it('cancels an in-flight resubscribe when the connection generation changes again', async () => {
+it.each([true, false])('cancels an in-flight resubscribe before/after the new generation becomes live (%s)', async (settleBeforeReconnect) => {
   const transport = createFakeTransport();
   const views: ClientSessionView[] = [];
   const observation = await observeDaemonSessionView(transport, 'session', (view) => views.push(view));
@@ -114,10 +145,15 @@ it('cancels an in-flight resubscribe when the connection generation changes agai
     transport.lifecycle(connected('gen-2'));
     await expect.poll(() => gated, { timeout: 2000 }).toBe(true);
     transport.lifecycle(disconnected('gen-2'));
+    if (settleBeforeReconnect) {
+      gateObserve?.({ view: view('late-gen2') });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(views.some((view) => view.items[0]?.text === 'late-gen2')).toBe(false);
+    }
     transport.plan({ kind: 'ok', text: 'gen3-fresh' });
     transport.lifecycle(connected('gen-3'));
     await expect.poll(() => views.at(-1)?.items[0]?.text, { timeout: 4000 }).toBe('gen3-fresh');
-    gateObserve?.({ view: view('late-gen2') });
+    if (!settleBeforeReconnect) gateObserve?.({ view: view('late-gen2') });
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(views.some((view) => view.items[0]?.text === 'late-gen2')).toBe(false);
   } finally {
@@ -129,7 +165,10 @@ it('detaches explicitly after exhausting bounded retries on one connection', asy
   const transport = createFakeTransport();
   const diagnostics: { message: string }[] = [];
   const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
-  const observation = await observeDaemonSessionView(transport, 'session', () => undefined);
+  const statuses: string[] = [];
+  const observation = await observeDaemonSessionView(transport, 'session', () => undefined, {
+    onStatus: (status) => statuses.push(status.state === 'closed' ? status.reason : status.state),
+  });
   try {
     transport.lifecycle(disconnected('gen-1'));
     transport.plan({ kind: 'fail' });
@@ -142,6 +181,7 @@ it('detaches explicitly after exhausting bounded retries on one connection', asy
     const settled = transport.observeCount();
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(transport.observeCount()).toBe(settled);
+    expect(statuses).toEqual(['live', 'interrupted', 'unavailable']);
   } finally {
     restore();
     observation.close();

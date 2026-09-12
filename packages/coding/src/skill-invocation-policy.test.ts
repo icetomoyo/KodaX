@@ -14,6 +14,7 @@ import type { KodaXOptions } from './types.js';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -34,6 +35,7 @@ async function optionsWithSkill(input: {
 }): Promise<{ readonly root: string; readonly options: KodaXOptions }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-policy-'));
   tempDirs.push(root);
+  vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
   const skillDir = path.join(root, '.kodax', 'skills', 'transport-skill');
   await mkdir(skillDir, { recursive: true });
   const hookLines = input.preToolUse || input.postToolUse || input.sessionStart || input.userPromptSubmit || input.stop || input.notification
@@ -91,6 +93,54 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it('does not rewrite settled invocation results when a terminal observer throws', async () => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    try {
+      const policy = await applyRuntimeSkillInvocationPolicy({ provider: 'mock-provider',
+        context: { commandInvocation: { name: 'registered', source: 'prompt', runtimePolicy: { enforceAtRuntime: true } } },
+        events: { onComplete: () => { throw new Error('observer failed'); } },
+      });
+      policy.events?.onComplete?.();
+      await expect(awaitRuntimeSkillInvocationPolicy(policy)).resolves.toBeUndefined();
+      expect(diagnostics).toContainEqual(expect.objectContaining({ level: 'error', message: expect.stringContaining('terminal observer') }));
+    } finally { restore(); }
+  });
+  it.each(['complete', 'error'] as const)('settles command hooks before the %s notification', async (terminal) => {
+    let releasePost!: () => void;
+    let releaseStop!: () => void;
+    const postGate = new Promise<void>(resolve => { releasePost = resolve; });
+    const stopGate = new Promise<void>(resolve => { releaseStop = resolve; });
+    const events: string[] = [];
+    const policy = await applyRuntimeSkillInvocationPolicy({
+      provider: 'mock-provider',
+      context: { commandInvocation: { name: 'registered', source: 'extension',
+        runtimePolicy: { enforceAtRuntime: true },
+        hooks: { PostToolUse: [{ command: 'post-marker' }], Stop: [{ command: 'stop-marker' }] } } },
+      events: {
+        beforeToolExecute: async (_tool, input) => {
+          const command = String(input.command);
+          events.push(command);
+          await (command === 'post-marker' ? postGate : stopGate);
+          return '[Blocked] test permission decision';
+        },
+        onComplete: () => { events.push('complete'); },
+        onError: () => { events.push('error'); },
+      },
+    });
+    policy.events?.onToolResult?.({ id: 'read-1', name: 'read', content: 'read result' });
+    if (terminal === 'complete') policy.events?.onComplete?.();
+    else policy.events?.onError?.(new Error('provider failed'));
+    const finalization = awaitRuntimeSkillInvocationPolicy(policy);
+    expect(events).toEqual(['post-marker']);
+    releasePost();
+    await vi.waitFor(() => expect(events).toEqual(['post-marker', 'stop-marker']));
+    releaseStop();
+    await finalization;
+    await awaitRuntimeSkillInvocationPolicy(policy);
+    expect(events).toEqual(['post-marker', 'stop-marker', terminal]);
+  });
+
   it.each(['hook-message', 'model-preference', 'stderr'] as const)('runs Notification for %s without recursively dispatching its own output', async (source) => {
     const markerRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-notification-hook-'));
     tempDirs.push(markerRoot);

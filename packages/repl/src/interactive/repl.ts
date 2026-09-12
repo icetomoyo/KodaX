@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import chalk from 'chalk';
-import { changedClientSessionSettings, clientSessionSettings } from '../ui/client-session-settings.js';
+import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from '../ui/client-session-settings.js';
 
 // Export Ink UI version entry point - 导出 Ink UI 版本的入口
 export { runInkInteractiveMode } from '../ui/index.js';
@@ -109,6 +109,7 @@ import {
 import { deriveProjectKeyFromRoot } from './project-key.js';
 import {
   parseCommand,
+  parseHostCommand,
   executeCommand,
   CommandCallbacks,
   CurrentConfig,
@@ -501,6 +502,10 @@ export interface RepLOptions extends KodaXOptions {
   prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
   prepareReview?: CommandCallbacks['prepareReview'];
   prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
+  commandClient?: CommandCallbacks['commandClient'];
+  listHostCommands?: CommandCallbacks['listHostCommands'];
+  startReview?: CommandCallbacks['startReview'];
+  reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
   goal?: CommandCallbacks['goal'];
   sessionCommands?: SessionCommandBinding;
   compactSession?: CommandCallbacks['compactSession'];
@@ -746,7 +751,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Detect and show project hint - 检测并显示项目提示
 
   // Create autocomplete - 创建自动补全器
-  const completer = createCompleter(() => context.gitRoot ?? process.cwd());
+  const completer = createCompleter(() => context.gitRoot ?? process.cwd(), options.listHostCommands);
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -802,6 +807,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let detachPlaneDisplay: (() => void) | undefined;
   let planeDisplayClosed = false;
   let planeDisplaySessionId: string | undefined;
+  let displayedPlaneRunId: string | undefined;
   let attachInFlightSessionId: string | undefined;
   let pendingAssistantNewline = false;
   const planeDisplayWrite = (line: string): void => {
@@ -833,8 +839,15 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     detachPlaneDisplay?.();
     detachPlaneDisplay = undefined;
     planeDisplaySessionId = sessionId;
+    displayedPlaneRunId = undefined;
     attachInFlightSessionId = sessionId;
     void attachClassicPlaneDisplay(plane, sessionId, {
+      onView: view => {
+        if (view.session.id !== context.sessionId) return;
+        displayedPlaneRunId = viewRunsActive(view);
+        currentConfig = applyClientSessionViewSettings(currentConfig, view);
+        currentPermissionMode = currentConfig.permissionMode;
+      },
       write: planeDisplayWrite,
       dialogs: createClassicPlaneDialogSurface({
         rl,
@@ -895,6 +908,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         sessionId: context.sessionId,
         prompt,
         abortSignal: controller.signal,
+        getDisplayedRunId: () => displayedPlaneRunId,
         ...(inputArtifacts !== undefined && inputArtifacts.length > 0
           ? { inputArtifacts }
           : {}),
@@ -1185,6 +1199,10 @@ Keyboard Shortcuts:
     prepareCommandInvocation: options.prepareCommandInvocation,
     prepareReview: options.prepareReview,
     prepareAgentsLean: options.prepareAgentsLean,
+    commandClient: options.commandClient,
+    listHostCommands: options.listHostCommands,
+    startReview: options.startReview,
+    reviewAgentsLean: options.reviewAgentsLean,
     // FEATURE_298 T34 — goal persistence goes through the Host binding;
     // after a bound mutation the local view re-reads the lineage the Host
     // wrote (same session file) instead of mutating it here.
@@ -2042,6 +2060,20 @@ Keyboard Shortcuts:
       return;
     }
 
+    if (result.message) planeDisplayWrite(`info:${result.message}`);
+    if (result.startedRunId && options.clientPlane) {
+      const controller = new AbortController();
+      activePlaneAbort = controller;
+      try {
+        await followClientPlaneRun({ plane: options.clientPlane, sessionId: context.sessionId,
+          runId: result.startedRunId, abortSignal: controller.signal,
+          getDisplayedRunId: () => displayedPlaneRunId });
+      } finally {
+        if (activePlaneAbort === controller) activePlaneAbort = undefined;
+      }
+      return;
+    }
+
     if (result.workflow) {
       await startWorkflowInvocation(result.workflow, rawInput);
       return;
@@ -2122,6 +2154,7 @@ Keyboard Shortcuts:
   };
 
   const resolveInlineSkillInvocation = async (input: string) => {
+    if (options.clientPlane) return { invocation: undefined, rejected: false } as const;
     try {
       return {
         invocation: await prepareUserSkillInvocationFromInput(callbacks, input, {
@@ -2158,7 +2191,9 @@ Keyboard Shortcuts:
         autoModeBootstrap.resetTurn();
 
         // Process command - 处理命令
-        const parsed = parseCommand(trimmed);
+        const parsed = options.clientPlane
+          ? await parseHostCommand(trimmed, context.gitRoot ?? undefined, options.listHostCommands)
+          : parseCommand(trimmed);
         if (parsed) {
           const commandResult = await executeCommand(
             parsed,
@@ -2353,7 +2388,9 @@ Keyboard Shortcuts:
     autoModeBootstrap.resetTurn();
 
     // Process command - 处理命令
-    const parsed = parseCommand(trimmed);
+    const parsed = options.clientPlane
+      ? await parseHostCommand(trimmed, context.gitRoot ?? undefined, options.listHostCommands)
+      : parseCommand(trimmed);
     if (parsed) {
       const commandResult = await executeCommand(
         parsed,
@@ -2631,7 +2668,7 @@ function extractTitle(messages: KodaXMessage[]): string {
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
 import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
-import { runClientPlaneRound, type InkClientPlane } from '../ui/client-plane.js';
+import { followClientPlaneRun, runClientPlaneRound, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
 import { attachClassicPlaneDisplay } from './classic-plane-display.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 

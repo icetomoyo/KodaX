@@ -4,6 +4,140 @@ import { runWithProviderCredential } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from './session-view.js';
 
+it('invalidates embedded observations when the Host releases the session', async () => {
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Observe' }, settings: {}, items: [], queue: [], interactions: [], runs: [],
+  }), async () => undefined);
+  const statuses: string[] = [];
+  const observation = await owner.observe('session', () => undefined, {
+    onStatus: (status) => statuses.push(status.state === 'closed' ? status.reason : status.state),
+  });
+  owner.release('session');
+  observation.close();
+  expect(statuses).toEqual(['live', 'unavailable']);
+  await owner.close();
+});
+
+it('closes observations after all pending checkpoints settle even when a checkpoint fails', async () => {
+  let rejectFirst: ((error: Error) => void) | undefined;
+  let finishSecond: (() => void) | undefined;
+  const firstSave = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+  const secondSave = new Promise<void>(resolve => { finishSecond = resolve; });
+  const owner = new SessionViewOwner(async sessionId => ({
+    session: { id: sessionId, title: 'Closing' }, settings: {}, items: [], queue: [], interactions: [], runs: [],
+  }), async sessionId => sessionId === 'first' ? firstSave : secondSave);
+  const statuses: string[] = [];
+  for (const sessionId of ['first', 'second']) {
+    await owner.observe(sessionId, () => undefined, { onStatus: status => statuses.push(`${sessionId}:${status.state}`) });
+    owner.events(sessionId, 'run');
+    owner.checkpoint(sessionId);
+  }
+  const failed = new Error('Checkpoint failed');
+  const closing = owner.close();
+  const settled = closing.catch(error => error);
+  rejectFirst?.(failed);
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  expect(statuses).toEqual(['first:live', 'second:live']);
+  finishSecond?.();
+  expect(await settled).toBe(failed);
+  expect(statuses).toEqual(['first:live', 'second:live', 'first:closed', 'second:closed']);
+  await owner.close();
+});
+
+it('refreshes canonical history after an interrupted history read recovers', async () => {
+  let failNextRead = false;
+  let text = 'Before';
+  const owner = new SessionViewOwner(async (_sessionId, includeHistory) => {
+    if (failNextRead) { failNextRead = false; throw new Error('Temporary read failure'); }
+    return { session: { id: 'session', title: 'Recovery' }, settings: {}, queue: [], interactions: [], runs: [],
+      items: includeHistory ? [{ id: 'item', type: 'assistant' as const, text }] : [] };
+  }, async () => undefined);
+  const views: ClientSessionView[] = [];
+  const statuses: string[] = [];
+  const observation = await owner.observe('session', view => views.push(view), {
+    onStatus: status => statuses.push(status.state),
+  });
+  try {
+    text = 'After';
+    failNextRead = true;
+    owner.changed('session', true);
+    await expect.poll(() => statuses.at(-1)).toBe('interrupted');
+    owner.changed('session');
+    await expect.poll(() => statuses.at(-1)).toBe('live');
+    expect(views.at(-1)?.items[0]?.text).toBe('After');
+  } finally { observation.close(); await owner.close(); }
+});
+
+it('does not pair one worker budget with another worker compaction count', async () => {
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Budget' }, settings: {}, items: [], queue: [], interactions: [], runs: [],
+  }), async () => undefined);
+  const views: ClientSessionView[] = [];
+  const events = owner.events('session', 'run');
+  const observation = await owner.observe('session', view => views.push(view));
+  try {
+    events.onContextBudgetSnapshot?.({
+      contextId: 'worker-one', contextKind: 'child', provider: 'test', model: 'small',
+      contextWindow: 32000, profile: 'off', smallWindow: true, pressure: 'low',
+      usedTokens: 1900, availableTokens: 30100, usedRatio: 0.06, toolSchemaRatio: 0,
+      recommendations: [], createdAt: '2026-09-12T00:00:00.000Z',
+      tokenBreakdown: { systemPrompt: 0, toolSchemas: 0, skillCatalog: 0, mcpCatalog: 0,
+        transcript: 900, pendingInput: 0, recentToolResults: 0, reservedResponse: 1000, total: 1900 },
+      compactionBudget: { triggerPercent: 80, triggerTokens: 24000, physicalCapacityTokens: 30000,
+        reservedResponseTokens: 1000, reservedMemoryTokens: 0 },
+    });
+    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.contextId).toBe('worker-one');
+    events.onCompactStats?.({ tokensBefore: 6000, tokensAfter: 1200, contextKind: 'child', contextId: 'worker-two' });
+    await expect.poll(() => views.at(-1)?.activity?.context?.tokenCount).toBe(1200);
+    expect(views.at(-1)?.activity?.contextBudget).toBeUndefined();
+  } finally { observation.close(); await owner.close(); }
+});
+
+it('projects structured tool failure facts and preserves them when the session reopens', async () => {
+  const data: KodaXSessionData = { title: 'Tools', gitRoot: '', messages: [] };
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: data.title }, settings: {}, queue: [], interactions: [], runs: [], items: [],
+  }), async (_sessionId, _runIds, items) => { data.uiHistory = persistSessionViewItems(items); });
+  try {
+    const events = owner.events('session', 'run');
+    events.onToolUseStart?.({ id: 'failed', name: 'read', input: {} });
+    events.onToolResult?.({ id: 'failed', name: 'read', content: 'Permission denied',
+      toolResult: { type: 'tool_result', tool_use_id: 'failed', content: 'Permission denied', is_error: true } });
+    events.onToolResult?.({ id: 'success', name: 'read', content: '[Error] is a literal example',
+      toolResult: { type: 'tool_result', tool_use_id: 'success', content: '[Error] is a literal example', is_error: false } });
+    const views: ClientSessionView[] = [];
+    const observation = await owner.observe('session', view => views.push(view));
+    expect(views.at(-1)?.items[0]).toMatchObject({ text: 'Permission denied', tool: { status: 'error' } });
+    expect(views.at(-1)?.items[1]?.tool?.status).toBe('success');
+    observation.close();
+    await owner.flush('session');
+    expect(restoreSessionViewItems('session', data)[0]).toMatchObject({ tool: { status: 'error' } });
+    expect(restoreSessionViewItems('session', data)[1]?.tool?.status).toBe('success');
+  } finally { await owner.close(); }
+});
+
+it('restores canonical tool outcome facts ahead of stale display status and error-like success text', () => {
+  const cases = [
+    { id: 'failure', content: 'Permission denied', is_error: true },
+    { id: 'success', content: '[Error] is the literal marker requested', is_error: false },
+    { id: 'cancelled', content: 'Stopped by user', is_error: true, metadata: { cancelled: true } },
+  ];
+  const data: KodaXSessionData = { title: 'Tools', gitRoot: '', messages: [
+    { role: 'assistant', content: cases.map(result => ({ type: 'tool_use', id: result.id, name: 'read', input: {} })) },
+    { role: 'user', content: cases.map(({ id, ...result }) => ({ type: 'tool_result', tool_use_id: id, ...result })) },
+  ], uiHistory: [{ type: 'tool_group', tools: cases.map(result => ({ id: result.id, name: 'read', status: 'error', output: result.content })) }] };
+  expect(restoreSessionViewItems('session', data).map(item => item.tool?.status)).toEqual(['error', 'success', 'cancelled']);
+});
+
+it('locally restores cancellation envelopes from sessions saved before structured cancellation metadata', () => {
+  const data: KodaXSessionData = { title: 'Legacy tools', gitRoot: '', messages: [
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'cancelled', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cancelled', is_error: true,
+      content: '[Cancelled] Operation cancelled by user' }] },
+  ] };
+  expect(restoreSessionViewItems('session', data)[0]?.tool?.status).toBe('cancelled');
+});
+
 it('retires checkpointed replacement output without removing other responses or retry notices', async () => {
   let saved: ClientSessionView['items'] = [];
   const createOwner = () => new SessionViewOwner(async () => ({
@@ -171,6 +305,74 @@ it('keeps canonical round order when saves precede display checkpoints, includin
     ]);
     observation.close();
   } finally { await owner.close(); clock.mockRestore(); }
+});
+
+it('retains a cancelled partial response after its accepted input across checkpoints and recovery', async () => {
+  const data: KodaXSessionData = { title: 'Interrupted', gitRoot: '', messages: [
+    { role: 'user', content: 'Earlier', inputId: 'earlier' },
+    { role: 'assistant', content: 'Completed', timestamp: new Date(100).toISOString() },
+    { role: 'user', content: 'Same query', inputId: 'stopped' },
+  ] };
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(50);
+  const owner = new SessionViewOwner(async (_id, _history, _previous, liveItems) => ({
+    session: { id: 'session', title: data.title }, settings: {}, queue: [], interactions: [], runs: [],
+    items: restoreSessionViewItems('session', data, data.messages, liveItems),
+  }), async (_id, _runs, items) => { data.uiHistory = persistSessionViewItems(items); });
+  const emit = (run: string, inputId: string, text: string) => {
+    const events = owner.events('session', run, undefined, () => inputId);
+    events.onOutputSegmentStart?.({ responseId: run, providerRequestId: run, mode: 'append' });
+    events.onTextDelta?.(text, { providerRequestId: run });
+  };
+  try {
+    emit('earlier', 'earlier', 'Completed');
+    clock.mockReturnValue(200);
+    emit('stopped', 'stopped', 'Partial');
+    owner.checkpoint('session');
+    await owner.flush('session');
+    data.messages.push({ role: 'user', content: 'Same query', inputId: 'next' });
+    clock.mockReturnValue(300);
+    emit('next', 'next', 'Next answer');
+    owner.checkpoint('session');
+    await owner.flush('session');
+    const observed: ClientSessionView[] = [];
+    const observation = await owner.observe('session', view => observed.push(view));
+    const expected = ['Earlier', 'Completed', 'Same query', 'Partial', 'Same query', 'Next answer'];
+    expect(observed.at(-1)?.items.map(item => item.text)).toEqual(expected);
+    data.messages.push({ role: 'assistant', content: 'Next answer', timestamp: new Date(400).toISOString() });
+    owner.changed('session', true);
+    await owner.flush('session');
+    await expect.poll(() => observed.at(-1)?.items.map(item => item.text)).toEqual(expected);
+    expect(restoreSessionViewItems('session', data, data.messages).map(item => item.text)).toEqual(expected);
+    expect(restoreSessionViewItems('session', data, data.messages).find(item => item.text === 'Partial')?.id)
+      .toBe('stopped:stopped:assistant');
+    observation.close();
+  } finally { await owner.close(); clock.mockRestore(); }
+});
+
+it.each(['initial', undefined])('captures delivered input changes only for new segments and tools (initial=%s)', async initial => {
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Steer' }, settings: {}, queue: [], interactions: [], runs: [], items: [],
+  }), async () => {});
+  let delivered = initial;
+  const events = owner.events('session', 'run', undefined, () => delivered);
+  events.onOutputSegmentStart?.({ responseId: 'a', providerRequestId: 'a', mode: 'append' });
+  events.onToolUseStart?.({ id: 'old-tool', name: 'read', input: {} });
+  delivered = 'steer';
+  // The first delta can arrive after delivery although its segment began before it.
+  events.onTextDelta?.('Old output', { providerRequestId: 'a' });
+  events.onOutputSegmentStart?.({ responseId: 'b', providerRequestId: 'b', mode: 'append' });
+  events.onTextDelta?.('New partial', { providerRequestId: 'b' });
+  events.onToolResult?.({ id: 'old-tool', name: 'read', content: 'Late result' });
+  events.onToolUseStart?.({ id: 'new-tool', name: 'read', input: {} });
+  const views: ClientSessionView[] = [];
+  try {
+    const observation = await owner.observe('session', view => views.push(view));
+    expect(views.at(-1)?.items.map(item => [item.id, item.afterInputId])).toEqual([
+      ['run:tool:old-tool', initial], ['run:a:assistant', initial],
+      ['run:b:assistant', 'steer'], ['run:tool:new-tool', 'steer'],
+    ]);
+    observation.close();
+  } finally { await owner.close(); }
 });
 
 it('publishes API usage and rebases parent tokens after root compaction without child contamination', async () => {

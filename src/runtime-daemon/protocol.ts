@@ -145,6 +145,10 @@ export type RuntimeDaemonMethod =
   | 'memory.ensureOpenTarget'
   | 'invocations.prepareSkill'
   | 'invocations.prepareCommand'
+  | 'invocations.readCommandPrompt'
+  | 'invocations.executeCommand'
+  | 'invocations.startReview'
+  | 'invocations.startAgentsLean'
   | 'invocations.prepareReview'
   | 'invocations.prepareAgentsLean'
   | 'artifact.create'
@@ -187,6 +191,10 @@ export type RuntimeDaemonRetiredMethod =
 export type RuntimeDaemonWireMethod = RuntimeDaemonMethod | RuntimeDaemonRetiredMethod;
 
 export type RuntimeDaemonMutationMethod =
+  | 'invocations.executeCommand'
+  | 'invocations.startReview'
+  | 'invocations.startAgentsLean'
+  | 'invocations.prepareSkill'
   | 'runtime.shutdown'
   | 'daemon.stop'
   | 'memory.remember'
@@ -482,6 +490,10 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'memory.ensureOpenTarget',
   'invocations.prepareSkill',
   'invocations.prepareCommand',
+  'invocations.readCommandPrompt',
+  'invocations.executeCommand',
+  'invocations.startReview',
+  'invocations.startAgentsLean',
   'invocations.prepareReview',
   'invocations.prepareAgentsLean',
   'artifact.create',
@@ -506,6 +518,10 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
 ];
 
 export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMethod[] = [
+  'invocations.executeCommand',
+  'invocations.startReview',
+  'invocations.startAgentsLean',
+  'invocations.prepareSkill',
   'runtime.shutdown',
   'daemon.stop',
   'memory.remember',

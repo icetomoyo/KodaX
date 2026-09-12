@@ -272,7 +272,6 @@ import { listRunScopedTools, runScopedToolMap } from '../agent-runtime/run-scope
 import { listToolDefinitions } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
 import {
-  CANCELLED_TOOL_RESULT_MESSAGE,
   MANAGED_RUNNER_PANIC_ITERATIONS,
   MANAGED_TASK_IDLE_YIELD_ITERATIONS,
 } from '../constants.js';
@@ -2261,7 +2260,6 @@ async function runManagedTaskViaRunnerInner(
           options.context?.gitRoot ?? undefined,
         );
         if (override === undefined) return true;
-        if (override === CANCELLED_TOOL_RESULT_MESSAGE) return false;
         return override;
       }
       return true;
@@ -2299,6 +2297,8 @@ async function runManagedTaskViaRunnerInner(
       options.events?.onToolResult?.({
         id: call.id,
         name: call.name,
+        toolResult: { type: 'tool_result', tool_use_id: call.id, content,
+          is_error: result.isError === true, ...(result.metadata ? { metadata: result.metadata } : {}) },
         content:
           typeof content === 'string'
             ? content

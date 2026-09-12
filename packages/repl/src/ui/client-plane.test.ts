@@ -16,6 +16,7 @@ import {
   readClientPlaneHistory,
   readFrozenClientPlaneItems,
   runClientPlaneRound,
+  followClientPlaneRun,
   viewRunsActive,
   type ClientPlaneDialogSurface,
   type ClientRoundOutcome,
@@ -385,6 +386,36 @@ describe('answerClientPlaneInteraction (T17)', () => {
     permission: () => Promise.resolve({ confirmed: true }),
   };
 
+  it.each(['question', 'question_multi', 'question_input', 'permission'] as const)(
+    'does not submit a %s answer when observation cleanup aborts the dialog', async (kind) => {
+      const plane = planeWith([]);
+      const controller = new AbortController();
+      const surface: ClientPlaneDialogSurface = {
+        question: async () => { controller.abort(); return CANCELLED_TOOL_RESULT_MESSAGE as AskUserAnswer; },
+        questionMulti: async () => { controller.abort(); return undefined; },
+        questionInput: async () => { controller.abort(); return undefined; },
+        permission: async () => { controller.abort(); return { confirmed: false }; },
+      };
+      const pending = kind === 'permission' ? interaction(kind, { toolName: 'bash' })
+        : kind === 'question_multi' ? interaction(kind, { questions: [{ question: 'A?' }] })
+          : kind === 'question_input' ? interaction(kind, { question: 'Name?' })
+            : interaction(kind, { question: 'Ship?' });
+      expect(await answerClientPlaneInteraction(plane, pending, surface, controller.signal)).toBe(false);
+      expect(plane.calls).toEqual([]);
+    },
+  );
+
+  it('does not open an interaction after its observation has already closed', async () => {
+    const plane = planeWith([]);
+    const question = vi.fn(baseSurface.question);
+    const controller = new AbortController();
+    controller.abort();
+    expect(await answerClientPlaneInteraction(plane, interaction('question', { question: 'Ship?' }),
+      { ...baseSurface, question }, controller.signal)).toBe(false);
+    expect(question).not.toHaveBeenCalled();
+    expect(plane.calls).toEqual([]);
+  });
+
   it('answers a question with the dialog selection', async () => {
     const plane = planeWith([]);
     const accepted = await answerClientPlaneInteraction(
@@ -541,6 +572,92 @@ describe('runClientPlaneRound queue chain (T17)', () => {
     expect(result.lastText).toBe('queued answer');
   });
 
+  it('follows a command Run without another submission and stops that same Run on Escape', async () => {
+    const controller = new AbortController();
+    const plane = scriptedPlane({ firstAcceptance: { runId: 'duplicate' }, activeRun: ['unrelated'],
+      outcomes: { command: { phase: 'cancelled' } }, onAwait: () => controller.abort() });
+    const result = await followClientPlaneRun({ plane, sessionId: 's1', runId: 'command',
+      abortSignal: controller.signal });
+    expect(result.interrupted).toBe(true);
+    expect(plane.submissions).toEqual([]);
+    expect(plane.withdraws).toEqual([]);
+    expect(plane.stops).toEqual(['command']);
+  });
+
+  it('keeps following a command while a queued input runs, and stops the continuation', async () => {
+    const controller = new AbortController();
+    const awaited: string[] = [];
+    const plane = scriptedPlane({ firstAcceptance: {}, activeRun: ['continuation'],
+      outcomes: {
+        command: { phase: 'completed', result: { success: true, lastText: 'first', messages: [], sessionId: 's1' } },
+        continuation: { phase: 'cancelled' },
+      }, onAwait: (runId) => {
+        awaited.push(runId);
+        if (runId === 'command') {
+          void plane.submit({ sessionId: 's1', inputId: 'follow-up', text: 'Next task', delivery: 'after_turn' });
+        } else controller.abort();
+      } });
+    const result = await followClientPlaneRun({ plane, sessionId: 's1', runId: 'command',
+      abortSignal: controller.signal });
+    expect(awaited).toEqual(['command', 'continuation']);
+    expect(plane.submissions).toEqual([{ inputId: 'follow-up', delivery: 'after_turn' }]);
+    expect(plane.stops).toEqual(['continuation']);
+    expect(result.interrupted).toBe(true);
+  });
+
+  it.each([
+    { mode: 'command', displayedAtAbort: 'continuation', accepted: true },
+    { mode: 'command', displayedAtAbort: 'continuation', accepted: false },
+    { mode: 'command', displayedAtAbort: 'command', accepted: false },
+    { mode: 'input', displayedAtAbort: 'continuation', accepted: true },
+    { mode: 'input', displayedAtAbort: 'continuation', accepted: false },
+    { mode: 'input', displayedAtAbort: 'command', accepted: false },
+  ])('freezes the displayed $displayedAtAbort in $mode at abort when stop accepted=$accepted despite a later unrelated Run', async ({ mode, displayedAtAbort, accepted }) => {
+    const controller = new AbortController();
+    const plane = scriptedPlane({ firstAcceptance: { runId: 'command' }, activeRun: ['unrelated'], outcomes: {} });
+    let displayed = displayedAtAbort;
+    let finishCommand: ((outcome: ClientRoundOutcome) => void) | undefined;
+    const completed: ClientRoundOutcome = { phase: 'completed',
+      result: { success: true, lastText: 'first', messages: [], sessionId: 's1' } };
+    const awaited: string[] = [];
+    plane.awaitRun = (_sessionId, runId) => {
+      awaited.push(runId);
+      return runId !== 'command' ? Promise.resolve({ phase: 'cancelled' })
+        : new Promise((resolve) => { finishCommand = resolve; });
+    };
+    plane.stop = async (runId) => {
+      plane.stops.push(runId);
+      finishCommand?.(completed);
+      displayed = 'unrelated';
+      return { runId, sessionId: 's1', accepted,
+        state: 'submitted', outcome: 'stopped', phase: runId === 'command' ? 'completed' : 'running' };
+    };
+    const input = { plane, sessionId: 's1', abortSignal: controller.signal, getDisplayedRunId: () => displayed };
+    const pending = mode === 'command' ? followClientPlaneRun({ ...input, runId: 'command' })
+      : runClientPlaneRound({ ...input, prompt: 'Run task' });
+    await Promise.resolve();
+    controller.abort();
+    const result = await pending;
+    expect(plane.stops).toEqual([displayedAtAbort]);
+    expect(awaited).toEqual(displayedAtAbort === 'command' ? ['command'] : ['command', 'continuation']);
+    expect(result.interrupted === true).toBe(displayedAtAbort === 'continuation');
+    expect(plane.submissions).toHaveLength(mode === 'command' ? 0 : 1);
+  });
+
+  it.each([
+    { mode: 'command', phase: 'failed' }, { mode: 'command', phase: 'unknown' },
+    { mode: 'input', phase: 'failed' }, { mode: 'input', phase: 'unknown' },
+  ])('preserves $phase errors even with a residual result in the $mode path', async ({ mode, phase }) => {
+    const plane = scriptedPlane({ firstAcceptance: { runId: 'r1' }, activeRun: [], outcomes: {
+      r1: { phase, error: 'Settlement could not be confirmed',
+        result: { success: true, lastText: 'Residual output', messages: [], sessionId: 's1' } },
+    } });
+    const pending = mode === 'command'
+      ? followClientPlaneRun({ plane, sessionId: 's1', runId: 'r1' })
+      : runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Run task' });
+    await expect(pending).rejects.toThrow('Settlement could not be confirmed');
+  });
+
   it('forwards prompt input artifacts with the submission (T27 review)', async () => {
     const plane = scriptedPlane({
       firstAcceptance: { runId: 'r1' },
@@ -612,6 +729,17 @@ describe('runClientPlaneRound queue chain (T17)', () => {
       plane, sessionId: 's1', prompt: 'Later.', abortSignal: controller.signal,
     });
     expect(result.interrupted).toBe(true);
+    expect(plane.withdraws).toEqual([plane.submissions[0]!.inputId]);
+    expect(plane.stops).toEqual([]);
+  });
+
+  it('withdraws its queued input instead of stopping the displayed unrelated Run before admission', async () => {
+    const controller = new AbortController();
+    const plane = scriptedPlane({ firstAcceptance: {}, activeRun: [], outcomes: {} });
+    plane.activeRun = async () => { controller.abort(); return 'unrelated'; };
+    const pending = runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Later.',
+      abortSignal: controller.signal, getDisplayedRunId: () => 'unrelated' });
+    await expect(pending).resolves.toMatchObject({ interrupted: true });
     expect(plane.withdraws).toEqual([plane.submissions[0]!.inputId]);
     expect(plane.stops).toEqual([]);
   });

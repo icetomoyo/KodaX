@@ -10,6 +10,7 @@ import * as path from 'path';
 import type * as readline from 'readline';
 import { getActiveExtensionRuntime } from '@kodax-ai/coding';
 import { getCommandRegistry } from './commands.js';
+import type { CommandCallbacks } from '../commands/types.js';
 import { SkillCompleter } from './completers/skill-completer.js';
 import { getRecentWorkingSetFiles } from './recent-files.js';
 
@@ -219,7 +220,7 @@ export class FileCompleter implements Completer {
 export class CommandCompleter implements Completer {
   private commands: Map<string, { description: string; aliases: string[] }>;
 
-  constructor() {
+  constructor(private readonly readHostCommands?: () => ReturnType<NonNullable<CommandCallbacks['listHostCommands']>>) {
     this.commands = new Map();
     this.loadCommands();
   }
@@ -268,6 +269,10 @@ export class CommandCompleter implements Completer {
 
     this.commands.clear();
     this.loadCommands();
+    for (const command of await this.readHostCommands?.() ?? []) {
+      if (command.userInvocable === false || this.commands.has(command.name)) continue;
+      this.commands.set(command.name, { description: command.description, aliases: [...(command.aliases ?? [])] });
+    }
 
     // Get text after the last /, excluding the / itself
     const partial = beforeCursor.slice(lastSlashIndex + 1).toLowerCase();
@@ -330,10 +335,15 @@ export class CommandCompleter implements Completer {
  *
  * Compatible with Node.js readline completer interface - 与 Node.js readline 的 completer 接口兼容
  */
-export function createCompleter(cwd?: string | (() => string)): (line: string) => Promise<[string[], string]> {
+export function createCompleter(
+  cwd?: string | (() => string),
+  listHostCommands?: CommandCallbacks['listHostCommands'],
+): (line: string) => Promise<[string[], string]> {
   const fileCompleter = new FileCompleter(cwd);
   const skillCompleter = new SkillCompleter();
-  const commandCompleter = new CommandCompleter();
+  const commandCompleter = new CommandCompleter(listHostCommands
+    ? () => listHostCommands(typeof cwd === 'function' ? cwd() : cwd ?? process.cwd())
+    : undefined);
 
   return async (line: string): Promise<[string[], string]> => {
     // Check if completion is needed - 检查是否需要补全

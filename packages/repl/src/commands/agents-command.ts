@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 
 import type { InteractiveContext } from '../interactive/context.js';
-import type { Command } from './types.js';
+import { clientCommandResult, type Command } from './types.js';
+import { randomUUID } from 'node:crypto';
 
 export const KODAX_LEAN_AGENTS_CONTENT = `# KodaX Lean Mode
 
@@ -186,6 +187,11 @@ export const agentsCommand: Command = {
 
     if (!agentsExists) {
       return await initializeAgentsFile(agentsPath, callbacks);
+    }
+
+    if (callbacks?.reviewAgentsLean) {
+      const result = await callbacks.reviewAgentsLean({ sessionId: context.sessionId, inputId: randomUUID() });
+      return clientCommandResult(result);
     }
 
     // FEATURE_298 T37 — with a Host binding the AGENTS.md read and prompt

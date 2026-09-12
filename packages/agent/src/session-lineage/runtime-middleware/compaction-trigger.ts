@@ -27,6 +27,7 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 
 import { needsCompaction } from '../compaction/compaction.js';
 import type { CompactionConfig } from '../compaction/types.js';
+import type { ResolvedCompactionPolicy } from '../compaction/policy.js';
 
 export interface ShouldCompactInput {
   readonly messages: KodaXMessage[];
@@ -34,6 +35,7 @@ export interface ShouldCompactInput {
   readonly contextWindow: number;
   readonly currentTokens: number;
   readonly reservedResponseTokens?: number;
+  readonly onPolicy?: (policy: ResolvedCompactionPolicy) => void;
 }
 
 /**
@@ -48,5 +50,6 @@ export function shouldCompact(input: ShouldCompactInput): boolean {
     input.contextWindow,
     input.currentTokens,
     input.reservedResponseTokens,
+    input.onPolicy,
   );
 }

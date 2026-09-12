@@ -287,6 +287,7 @@ describe('CAP-078: applyPostToolProcessing — visibility events', () => {
         id: 'vis',
         name: 'read',
         content: 'visible result',
+        toolResult: { type: 'tool_result', tool_use_id: 'vis', content: 'visible result', is_error: false },
       },
       {
         toolId: 'vis',

@@ -1,10 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildReviewPrompt,
   buildReviewWorkflowRequest,
   parseReviewInvocation,
+  reviewCommand,
 } from './review-command.js';
+
+it('starts review in the Host with its scope and workflow flags unchanged', async () => {
+  const startReview = vi.fn(async () => ({ kind: 'started', runId: 'review-1' }));
+  const args = ['--lean', '--workflow', 'sha', 'abc123', '--', 'focus here'];
+  expect(await reviewCommand.handler(args, { sessionId: 's1', gitRoot: 'missing-root' } as never,
+    { startReview } as never, {} as never)).toEqual({ startedRunId: 'review-1' });
+  expect(startReview).toHaveBeenCalledWith({ sessionId: 's1', inputId: expect.any(String), args });
+});
 
 describe('parseReviewInvocation', () => {
   it('extracts --workflow while preserving review scope args', () => {

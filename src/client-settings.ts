@@ -5,12 +5,14 @@ export function toClientSessionSettings(settings: ClientSessionSettings): Client
   const {
     provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
     autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
-    compactionReasoning,
+    compactionReasoning, repoIntelligenceMode, repoIntelligenceTrace,
   } = settings;
   return {
     provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
     autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
     ...(compactionReasoning !== undefined ? { compactionReasoning } : {}),
+    ...(repoIntelligenceMode !== undefined ? { repoIntelligenceMode } : {}),
+    ...(repoIntelligenceTrace !== undefined ? { repoIntelligenceTrace } : {}),
   };
 }
 

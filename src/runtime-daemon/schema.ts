@@ -627,6 +627,25 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     params: objectSchema({ projectRoot: stringSchema, name: stringSchema }, ['projectRoot', 'name'], true),
     result: objectAnySchema,
   },
+  'invocations.readCommandPrompt': {
+    params: objectSchema({ sessionId: stringSchema, name: stringSchema,
+      args: { type: 'array', items: stringSchema } }, ['sessionId', 'name']),
+    result: { oneOf: [objectAnySchema, { type: 'null' }] },
+  },
+  'invocations.startReview': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema,
+      args: { type: 'array', items: stringSchema } }, ['sessionId', 'inputId']),
+    result: objectAnySchema,
+  },
+  'invocations.startAgentsLean': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema }, ['sessionId', 'inputId']),
+    result: objectAnySchema,
+  },
+  'invocations.executeCommand': {
+    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, name: stringSchema,
+      args: { type: 'array', items: stringSchema } }, ['sessionId', 'inputId', 'name']),
+    result: objectAnySchema,
+  },
   'invocations.prepareReview': {
     params: objectSchema({
       projectRoot: stringSchema,

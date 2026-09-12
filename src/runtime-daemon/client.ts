@@ -1,7 +1,7 @@
 import type { RuntimeMemoryPlane } from '../runtime-memory.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
+import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
   KodaXDaemonRuntime,
@@ -508,8 +508,8 @@ export function createRuntimeDaemonClient(
       observe(sessionId, listener, readOptions) {
         return observeDaemonSession(options.transport, readRequest, sessionId, listener, readOptions);
       },
-      observeView(sessionId, listener) {
-        return observeDaemonSessionView(options.transport, sessionId, listener);
+      observeView(sessionId, listener, observeOptions) {
+        return observeDaemonSessionView(options.transport, sessionId, listener, observeOptions);
       },
       readViewItem(sessionId, itemId, options) {
         return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
@@ -534,14 +534,16 @@ export function createRuntimeDaemonClient(
         ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
       },
       readHistoryEntry(sessionId, itemId, options) {
+        const transcript = itemId.startsWith(`${sessionId}:transcript:`);
         return readConversationHistoryEntry(
           sessionId,
           itemId,
           async (input) => readRequest(
-            'session.conversation.entryChunk',
+            transcript ? 'session.transcript.entryChunk' : 'session.conversation.entryChunk',
             input as unknown as Readonly<Record<string, unknown>>,
           ) as Promise<RuntimeConversationHistoryEntryChunk | null>,
           options,
+          transcript ? 'transcript' : 'history',
         );
       },
       async searchHistory(sessionId, input) {
@@ -558,6 +560,7 @@ export function createRuntimeDaemonClient(
         return {
           revision: result.revision,
           hits: result.hits.map((hit) => ({
+            itemId: `${sessionId}:transcript:${result.revision}:${hit.entryIndex}`,
             entryIndex: hit.entryIndex,
             role: hit.role === 'user' ? ('user' as const) : ('assistant' as const),
             ...(hit.timestamp !== undefined ? { timestamp: hit.timestamp } : {}),
@@ -974,10 +977,22 @@ export function createRuntimeDaemonClient(
     // Each method gates on the advertised capability so an older Host fails
     // fast with an upgrade-required error instead of an unsettled request.
     invocations: {
-      prepareSkill(input) {
+      readCommandPrompt(input) {
+        return request('invocations.readCommandPrompt', input) as ReturnType<KodaXRuntime['invocations']['readCommandPrompt']>;
+      },
+      startReview(input) {
+        return request('invocations.startReview', input) as ReturnType<KodaXRuntime['invocations']['startReview']>;
+      },
+      startAgentsLean(input) {
+        return request('invocations.startAgentsLean', input) as ReturnType<KodaXRuntime['invocations']['startAgentsLean']>;
+      },
+      executeCommand(input) {
+        return request('invocations.executeCommand', input) as ReturnType<KodaXRuntime['invocations']['executeCommand']>;
+      },
+      prepareSkill(input, options) {
         const unavailable = invocationPreparationError();
         if (unavailable) return Promise.reject(unavailable);
-        return request('invocations.prepareSkill', input) as Promise<RuntimePreparedSkill>;
+        return readRequest('invocations.prepareSkill', input, options) as Promise<RuntimePreparedSkill>;
       },
       prepareCommand(input) {
         const unavailable = invocationPreparationError();
@@ -1583,10 +1598,20 @@ export async function observeDaemonSessionView(
   transport: RuntimeDaemonClientTransport,
   sessionId: string,
   listener: (view: ClientSessionView) => void,
+  options: ClientObserveOptions = {},
 ): Promise<ClientObservation> {
   const subscriptionId = `view_${randomUUID()}`;
   let closed = false;
   let ready = false;
+  let status: ClientObservationStatus | undefined;
+  const report = (next: ClientObservationStatus): void => {
+    if (status?.state === next.state) return;
+    status = next;
+    try { options.onStatus?.(next); }
+    catch (error: unknown) {
+      emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Session observation status listener failed.', detail: error });
+    }
+  };
   let latest: ClientSessionView | undefined;
   let previous: ClientSessionView | undefined;
   let connectionId: string | undefined;
@@ -1604,17 +1629,26 @@ export async function observeDaemonSessionView(
     const sameItems = previous?.items.length === items.length && items.every((item, index) => item === previous?.items[index]);
     previous = { ...view, items: sameItems ? previous!.items : items };
     listener(previous);
+    report({ state: 'live' });
   };
   const local = transport.subscribe((notification) => {
     if (closed || notification.method !== 'session.view') return;
     const payload = requireRecord(notification.params);
     if (payload.subscriptionId !== subscriptionId) return;
+    if (payload.status !== undefined) {
+      const status = requireRecord(payload.status);
+      if (status.state === 'closed') close('unavailable');
+      else if (status.state === 'interrupted') report({ state: 'interrupted' });
+      // A live status alone is insufficient: the accompanying complete view
+      // restores liveness through deliver(), including the initial RPC view.
+      return;
+    }
     const view = requireRecord(payload.view) as unknown as ClientSessionView;
     if (view.session.id !== sessionId) throw new Error('Session view identity did not match its subscription.');
     if (ready) {
       try { deliver(view); }
       catch (error: unknown) {
-        close();
+        close('unavailable');
         emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Session observer failed and was detached.', detail: error });
       }
     }
@@ -1628,9 +1662,9 @@ export async function observeDaemonSessionView(
     }
     if (isCurrent !== undefined && !isCurrent()) {
       // A newer connection generation took ownership while this observe
-      // round trip was in flight; release the stray subscription without
-      // delivering its snapshot onto the newer generation's view.
-      void transport.request('session.view.close', { subscriptionId }).catch(() => undefined);
+      // round trip was in flight; do not deliver its stale snapshot.
+      // The current transport may already own a replacement with this ID.
+      // Closing on it would detach the fresh observation, not the dead one.
       throw new Error('Session view reopen was superseded by a newer connection generation.');
     }
     deliver(latest ?? requireRecord(response.view) as unknown as ClientSessionView);
@@ -1638,6 +1672,7 @@ export async function observeDaemonSessionView(
     ready = true;
   };
   lifecycle = transport.subscribeLifecycle?.((state) => {
+    if (closed) return;
     if (state.state === 'connected') {
       if (connectionId === undefined || connectionId === state.connectionId) {
         connectionId = state.connectionId;
@@ -1680,7 +1715,7 @@ export async function observeDaemonSessionView(
                 message: 'Session view could not reopen after a Runtime reconnect; the observation was detached.',
                 detail: error,
               });
-              close();
+              close('unavailable');
               return;
             }
             await new Promise<void>((resolve) => {
@@ -1699,26 +1734,31 @@ export async function observeDaemonSessionView(
     // holding the subscription and lifecycle listener open forever.
     ready = false;
     latest = undefined;
+    resubscribeToken += 1;
     if (state.reconnectable === false) {
-      close();
+      close('unavailable');
+    } else {
+      report({ state: 'interrupted' });
     }
   });
-  const close = (): void => {
+  function close(reason: 'client' | 'unavailable' = 'client'): void {
     if (closed) { lifecycle?.close(); return; }
     closed = true;
     local.close();
     lifecycle?.close();
     latest = undefined;
     previous = undefined;
+    report({ state: 'closed', reason });
     void transport.request('session.view.close', { subscriptionId }).catch((error: unknown) => {
       emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Unable to release the remote Session observation.', detail: error });
     });
   };
   try {
-    await openRemoteView();
+    const token = resubscribeToken;
+    await openRemoteView(() => token === resubscribeToken);
     return { close };
   } catch (error: unknown) {
-    close();
+    close('unavailable');
     throw error;
   }
 }

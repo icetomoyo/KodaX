@@ -36,6 +36,12 @@ describe('readline helpers', () => {
   });
 
   describe('getPrompt', () => {
+    it('shows Host default after clearing an unspecified permission and reasoning selection', () => {
+      const prompt = stripAnsi(getPrompt('plan', createConfig({ reasoningMode: 'deep', effort: 'high', hostSettings: {} })));
+      expect(prompt).toContain('kodax:Host default');
+      expect(prompt).toContain('[effort:Host default]');
+      expect(prompt).not.toContain('kodax:plan');
+    });
     it('renders the V2 reasoning effort label on wide terminals', () => {
       const prompt = stripAnsi(getPrompt(
         'default',

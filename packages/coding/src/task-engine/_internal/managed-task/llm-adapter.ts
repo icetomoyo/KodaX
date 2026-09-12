@@ -599,14 +599,13 @@ export function buildRunnerLlmAdapter(
         requestReservedResponseTokens = provider.getEffectiveMaxOutputTokens(activeModel),
       ): void => {
         if (
-          options.context?.contextDiagnostics !== true
-          || !options.events?.onContextBudgetSnapshot
+          !options.events?.onContextBudgetSnapshot
         ) {
           return;
         }
         try {
           const diagnosticEnvelope = normalizeDiagnosticEnvelope(system, providerMessages, provider);
-          const contextWindow = contextBudgetCatalogs?.contextWindow
+          const contextWindow = contextTokenSnapshotRef?.current?.capacityWindow ?? contextBudgetCatalogs?.contextWindow
             ?? provider.getEffectiveContextWindow(activeModel);
           const turnId = [...diagnosticEnvelope.messages]
             .reverse()
@@ -636,7 +635,7 @@ export function buildRunnerLlmAdapter(
                 : [],
             },
           );
-          options.events.onContextBudgetSnapshot(createRuntimeContextBudgetSnapshot({
+          options.events.onContextBudgetSnapshot({ ...createRuntimeContextBudgetSnapshot({
             sessionId: options.session?.id,
             turnId,
             ...diagnosticContextIdentity,
@@ -648,7 +647,7 @@ export function buildRunnerLlmAdapter(
             messageTokenBreakdown,
             reservedResponseTokens: requestReservedResponseTokens,
             profile: 'report_only',
-          }));
+          }), compactionBudget: contextTokenSnapshotRef?.compactionBudget });
         } catch (error) {
           emitResilienceDebug('[context-diagnostics:budget-error]', {
             error: error instanceof Error ? error.message : String(error),

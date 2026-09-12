@@ -14,6 +14,27 @@ function persistedSidecar(
 }
 
 describe("restore-history / sidecar items", () => {
+  it('anchors retained output to any recorded input in a batch across a trimmed history window', () => {
+    const messages = Array.from({ length: 60 }, (_, index) => [
+      { role: 'user' as const, content: `Old ${index}`, inputId: `old-${index}` },
+      { role: 'assistant' as const, content: `Answer ${index}` },
+    ]).flat();
+    const result = restoreHistoryItemsFromSession({
+      messages: [...messages,
+        { role: 'user', content: 'Same query', inputId: 'batch-first', inputIds: ['batch-first', 'batch-second'] },
+        { role: 'user', content: 'Same query', inputId: 'next' },
+        { role: 'assistant', content: 'Next answer' }],
+      uiHistory: [
+        { type: 'assistant', text: 'Answer 59' },
+        { type: 'assistant', text: 'Partial', afterInputId: 'batch-second', presentationOnly: true },
+        { type: 'assistant', text: 'Next answer' },
+      ],
+    });
+    expect(result.slice(-4).map(item => item.type === 'tool_group' ? '' : item.text))
+      .toEqual(['Same query', 'Partial', 'Same query', 'Next answer']);
+    expect(result.filter(item => item.type === 'user').length).toBe(50);
+  });
+
   it("restores a 'revise' sidecar item with verdict=revise", () => {
     const result = restoreHistoryItemsFromSession({
       messages: [],

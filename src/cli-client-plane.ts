@@ -1,57 +1,80 @@
-import { firstActiveRunId, type InkClientPlane, type SessionCommandBinding } from '@kodax-ai/repl';
-import type { KodaXRuntime } from './sdk-runtime.js';
+import { firstActiveRunId, type CommandCallbacks, type InkClientPlane, type SessionCommandBinding } from '@kodax-ai/repl';
+import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 
-/** CLI command adapters shared with the public command integration tests. */
-export function createCliSessionCommands(runtime: KodaXRuntime): SessionCommandBinding {
+/** CLI command adapters use the same product contract as external clients. */
+export function createCliSessionCommands(client: KodaXProductClient): SessionCommandBinding {
   return {
-    delete: sessionId => runtime.sessions.delete(sessionId),
+    delete: sessionId => client.sessions.delete(sessionId),
     deleteAll: async ({ gitRoot }) => {
-      const sessions = await runtime.sessions.list({
+      const sessions = await client.sessions.list({
         ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}), limit: Number.MAX_SAFE_INTEGER,
       });
-      for (const session of sessions) await runtime.sessions.delete(session.id);
+      for (const session of sessions) await client.sessions.delete(session.id);
     },
     setActiveEntry: async input => {
-      await runtime.sessions.setActiveEntry({ sessionId: input.sessionId, entryId: input.selector,
-        ...(input.summarizeCurrentBranch === true ? { summarizeCurrentBranch: true } : {}) });
+      await client.sessions.selectBranch(input.sessionId, input.selector,
+        input.summarizeCurrentBranch === undefined ? undefined : { summarizeCurrentBranch: input.summarizeCurrentBranch });
       return true;
     },
-    setLabel: async input => {
-      await runtime.sessions.labelEntry(input);
+    setLabel: async ({ sessionId, ...input }) => {
+      await client.sessions.labelEntry(sessionId, input);
       return true;
     },
-    fork: input => runtime.sessions.fork(input).then(result => result?.id),
-    rewind: input => runtime.sessions.rewind(input).then(result => result !== null),
-    recover: input => runtime.sessions.recover(input).then(result => result.id),
-    create: input => runtime.sessions.create(input).then(() => undefined),
+    fork: ({ sessionId, ...input }) => client.sessions.forkSession(sessionId, input).then(result => result.id),
+    rewind: async ({ sessionId, ...input }) => {
+      const expectedHead = input.expectedHead !== undefined ? input.expectedHead
+        : (await client.sessions.readLineage(sessionId))?.activeEntryId ?? null;
+      await client.sessions.rewindSession(sessionId, { ...input, expectedHead });
+      return true;
+    },
+    recover: ({ sessionId, ...input }) => client.sessions.recoverSession(sessionId, input).then(result => result.id),
+    create: input => client.sessions.create(input).then(() => undefined),
   };
 }
 
-/** The production binding shared by Ink and its runtime integration tests. */
-export function createCliClientPlane(runtime: KodaXRuntime): InkClientPlane {
+/** Keep the REPL's existing workflow presentation shape without executing anything locally. */
+export function createCliWorkflowControl(client: KodaXProductClient): NonNullable<CommandCallbacks['workflows']> {
   return {
-    updateSettings: (sessionId, patch) => runtime.sessions.updateSettings(sessionId, patch).then(() => undefined),
-    submit: input => runtime.runs.acceptInput(input),
-    readInput: (sessionId, inputId) => runtime.runs.getInput(sessionId, inputId),
-    withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId).then(result => result.text),
-    awaitRun: async (_sessionId, runId) => {
-      const outcome = await runtime.runs.await(runId);
-      return {
-        phase: outcome.phase,
-        ...(outcome.result !== undefined ? { result: outcome.result } : {}),
-        ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
-      };
+    start: input => client.workflows.start(input),
+    list: async () => (await client.workflows.list()).map(run => ({
+      runId: run.runId, workflow: run.workflowName, status: run.status,
+      totalSpawned: run.totalSpawned, eventCount: run.eventCount, runDir: run.runDir,
+      startedAt: Date.parse(run.startedAt),
+      ...(run.endedAt !== undefined ? { endedAt: Date.parse(run.endedAt) } : {}),
+      ...(run.resultSummary !== undefined ? { resultText: run.resultSummary } : {}),
+      ...(run.error !== undefined ? { error: run.error } : {}),
+    })),
+    get: runId => client.workflows.get(runId),
+    subscribe: (filter, listener) => client.workflows.subscribe(filter, listener),
+    pause: runId => client.workflows.pause(runId),
+    resume: runId => client.workflows.resume(runId),
+    stop: runId => client.workflows.stop(runId),
+  };
+}
+
+/** The production binding shared by Ink and its product integration tests. */
+export function createCliClientPlane(client: KodaXProductClient): InkClientPlane {
+  return {
+    updateSettings: (sessionId, patch) => client.sessions.updateSettings(sessionId, patch).then(() => undefined),
+    submit: input => client.inputs.submit(input),
+    readInput: (sessionId, inputId) => client.inputs.read(sessionId, inputId),
+    withdraw: (sessionId, inputId) => client.inputs.withdraw(sessionId, inputId).then(result => result.text),
+    awaitRun: (_sessionId, runId) => client.runs.await(runId),
+    stop: runId => client.runs.stop(runId),
+    activeRun: async sessionId => {
+      let runId: string | undefined;
+      const observation = await client.sessions.observe(sessionId, view => { runId = firstActiveRunId(view.runs); });
+      try { return runId; }
+      finally { observation.close(); }
     },
-    stop: runId => runtime.runs.abort(runId),
-    activeRun: sessionId => runtime.runs.list({ sessionId }).then(firstActiveRunId),
-    observe: (sessionId, listener) => runtime.sessions.observeView(sessionId, listener)
+    observe: (sessionId, listener, options) => client.sessions.observe(sessionId, listener, options)
       .then(observation => () => observation.close()),
-    readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(
+    readItem: (sessionId, itemId, options) => client.sessions.readItem(
       sessionId, itemId, typeof options === 'number' ? { offset: options } : options,
     ),
-    readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
-    readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
-    respondInteraction: (requestId, response) => runtime.interactions.respond(requestId, response)
+    readHistory: (sessionId, options) => client.sessions.readHistory(sessionId, options),
+    readHistoryEntry: (sessionId, itemId, options) => client.sessions.readHistoryEntry(sessionId, itemId, options),
+    respondInteraction: (requestId, response) => client.interactions.respond(requestId, response)
       .then(result => result.accepted),
   };
 }

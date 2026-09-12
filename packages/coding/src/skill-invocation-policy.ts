@@ -314,20 +314,25 @@ export async function awaitRuntimeSkillInvocationPolicy(options: KodaXOptions, e
 }
 
 export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, prompt?: string): Promise<KodaXOptions> {
-  const invocation = options.context?.skillInvocation;
-  if (!invocation?.runtimePolicy?.enforceAtRuntime) return options;
-
-  const skill = await loadTrustedInvokedSkill(options, invocation.name);
-  const allowedTools = parseAllowedTools(skill.allowedTools);
+  const skillInvocation = options.context?.skillInvocation;
+  const commandInvocation = options.context?.commandInvocation;
+  if (!skillInvocation?.runtimePolicy?.enforceAtRuntime && !commandInvocation?.runtimePolicy?.enforceAtRuntime) return options;
+  const invocation = commandInvocation?.runtimePolicy?.enforceAtRuntime ? commandInvocation : skillInvocation!;
+  const trustedSkill = invocation === skillInvocation ? await loadTrustedInvokedSkill(options, invocation.name) : undefined;
+  const policy = trustedSkill ? {
+    source: 'skill', path: trustedSkill.skillFilePath, allowedTools: trustedSkill.allowedTools,
+    hooks: trustedSkill.hooks, model: trustedSkill.model, context: trustedSkill.context, agent: trustedSkill.agent,
+  } : commandInvocation!;
+  const allowedTools = parseAllowedTools(policy.allowedTools);
   const baseEvents = options.events ?? {};
   const cwd = options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd();
   let dispatchingNotification = false;
   const notify = async (message: string): Promise<void> => {
-    if (dispatchingNotification || !skill.hooks?.Notification?.length) return;
+    if (dispatchingNotification || !policy.hooks?.Notification?.length) return;
     dispatchingNotification = true;
     try {
-      await runHooks('Notification', skill.hooks.Notification, message,
-        { displayName: invocation.name, source: 'skill', path: skill.skillFilePath, message },
+      await runHooks('Notification', policy.hooks.Notification, message,
+        { displayName: invocation.name, source: policy.source, path: policy.path, message },
         cwd, allowedTools, baseEvents.beforeToolExecute, options, notify);
     } catch (error: unknown) {
       emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
@@ -346,8 +351,8 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
     await notify(`Skill ${invocation.name} has invalid allowed-tools entries: ${allowedTools.invalidEntries.join(', ')}`);
   }
   const started = await runHooks(
-    'SessionStart', skill.hooks?.SessionStart, invocation.name,
-    { displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
+    'SessionStart', policy.hooks?.SessionStart, invocation.name,
+    { displayName: invocation.name, source: policy.source, path: policy.path },
     cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
   );
   if (started.allow === false) {
@@ -357,8 +362,8 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   }
   const rawUserInput = options.context?.rawUserInput ?? prompt ?? '';
   const submitted = await runHooks(
-    'UserPromptSubmit', skill.hooks?.UserPromptSubmit, rawUserInput,
-    { displayName: invocation.name, source: 'skill', path: skill.skillFilePath, prompt: rawUserInput },
+    'UserPromptSubmit', policy.hooks?.UserPromptSubmit, rawUserInput,
+    { displayName: invocation.name, source: policy.source, path: policy.path, prompt: rawUserInput },
     cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
   );
   if (submitted.allow === false) {
@@ -367,15 +372,16 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
     });
   }
   const promptOverlay = [options.context?.promptOverlay,
-    skill.agent ? `Preferred agent: ${skill.agent}` : undefined,
+    policy.agent ? `Preferred agent: ${policy.agent}` : undefined,
     started.additionalContext, submitted.additionalContext]
     .filter((value): value is string => Boolean(value)).join('\n\n');
   const pending = new Set<Promise<void>>();
-  const modelOverride = resolveSkillModelOverride(options.provider, skill.model);
-  if (skill.model?.trim() && modelOverride === undefined) {
+  let terminalNotification: (() => void) | undefined;
+  const modelOverride = resolveSkillModelOverride(options.provider, policy.model);
+  if (policy.model?.trim() && modelOverride === undefined) {
     emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'info',
-      message: `Skill model preference '${skill.model}' is unsupported by '${options.provider}'; using the current model.` });
-    await notify(`Skill model preference '${skill.model}' is unsupported by '${options.provider}'; using the current model.`);
+      message: `Skill model preference '${policy.model}' is unsupported by '${options.provider}'; using the current model.` });
+    await notify(`Skill model preference '${policy.model}' is unsupported by '${options.provider}'; using the current model.`);
   }
   const runtimeOptions: KodaXOptions = {
     ...options,
@@ -384,27 +390,26 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
       ...options.context,
       rawUserInput,
       ...(promptOverlay ? { promptOverlay } : {}),
-      skillInvocation: {
-        ...invocation,
-        path: skill.skillFilePath,
-        allowedTools: skill.allowedTools,
-        model: skill.model,
-        context: skill.context,
-        agent: skill.agent,
+      ...(trustedSkill && skillInvocation ? { skillInvocation: {
+        ...skillInvocation, path: trustedSkill.skillFilePath, allowedTools: policy.allowedTools,
+        model: policy.model, context: policy.context, agent: policy.agent,
         runtimePolicy: { enforceAtRuntime: false },
-      },
+      } } : { commandInvocation: { ...commandInvocation!, runtimePolicy: { enforceAtRuntime: false } } }),
     },
     events: {
       ...baseEvents,
+      // A terminal notification cannot precede the invocation's asynchronous hooks.
+      onComplete: (meta) => { terminalNotification = () => baseEvents.onComplete?.(meta); },
+      onError: (error, meta) => { terminalNotification = () => baseEvents.onError?.(error, meta); },
       beforeToolExecute: async (tool, input, meta) => {
         if (!isToolAllowed(allowedTools, tool, input)) {
           return `[Blocked] Tool '${tool}' is not allowed by ${invocation.name}`;
         }
         if ((await runHooks(
           'PreToolUse',
-          skill.hooks?.PreToolUse,
+          policy.hooks?.PreToolUse,
           tool,
-          { tool, input, displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
+          { tool, input, displayName: invocation.name, source: policy.source, path: policy.path },
           cwd,
           allowedTools,
           baseEvents.beforeToolExecute,
@@ -422,9 +427,9 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
         } finally {
           trackPostHook(runtimeOptions, runHooks(
             'PostToolUse',
-            skill.hooks?.PostToolUse,
+            policy.hooks?.PostToolUse,
             result.name,
-            { ...result, displayName: invocation.name, source: 'skill', path: skill.skillFilePath },
+            { ...result, displayName: invocation.name, source: policy.source, path: policy.path },
             cwd,
             allowedTools,
             baseEvents.beforeToolExecute,
@@ -436,17 +441,25 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   };
   let finalization: Promise<void> | undefined;
   invocationWork.set(runtimeOptions, { pending, finalize: (error) => {
-    const event = skill.context === 'fork' ? 'SubagentStop' : 'Stop';
+    const event = policy.context === 'fork' ? 'SubagentStop' : 'Stop';
     finalization ??= runHooks(
-      event, skill.hooks?.[event], invocation.name,
-      { displayName: invocation.name, source: 'skill', path: skill.skillFilePath,
+      event, policy.hooks?.[event], invocation.name,
+      { displayName: invocation.name, source: policy.source, path: policy.path,
         ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }) },
       cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
     ).then(() => undefined, (failure: unknown) => {
       emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
         message: `Skill ${event} hook failed unexpectedly.`, detail: failure });
     });
-    return finalization;
+    return finalization.then(() => {
+      const notifyTerminal = terminalNotification;
+      terminalNotification = undefined;
+      try { notifyTerminal?.(); }
+      catch (error: unknown) {
+        emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
+          message: 'Invocation terminal observer failed after hook settlement.', detail: error });
+      }
+    });
   } });
   return runtimeOptions;
 }

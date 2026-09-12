@@ -19,6 +19,8 @@ export interface SurfaceStatusContextUsage {
   triggerPercent: number;
   triggerTokens?: number;
   reservedResponseTokens?: number;
+  hostBudget?: boolean;
+  effectiveTriggerTokens?: number;
 }
 
 export interface SurfaceStatusManagedState {
@@ -37,6 +39,7 @@ export interface SurfaceStatusManagedState {
 }
 
 export interface BuildSurfaceStatusBarPropsOptions {
+  hostSettings?: StatusBarProps['hostSettings'];
   sessionId: string;
   permissionMode: StatusBarProps["permissionMode"];
   agentMode: StatusBarProps["agentMode"];
@@ -68,6 +71,16 @@ export function buildSurfaceStatusBarProps(
   const currentTokens = options.isLoading
     ? activity?.context?.tokenCount ?? parentTokens
     : options.agentMode === 'sa' ? parentTokens : options.parentContextTokens ?? parentTokens;
+  const scope = options.isLoading ? activity?.context?.scope ?? 'parent' : 'parent';
+  const executionBudget = options.isLoading && activity?.contextBudget?.scope === scope ? activity.contextBudget : undefined;
+  const contextUsage = executionBudget && currentTokens !== undefined ? {
+    currentTokens, contextWindow: executionBudget.contextWindow,
+    triggerPercent: executionBudget.compaction.triggerPercent,
+    triggerTokens: executionBudget.compaction.absoluteTriggerTokens,
+    reservedResponseTokens: executionBudget.reservedResponseTokens,
+    hostBudget: true, effectiveTriggerTokens: executionBudget.compaction.triggerTokens,
+  } : scope === 'parent' ? options.contextUsage : undefined;
+  const hasMatchingBudget = contextUsage !== undefined;
   const liveActivity = options.isTranscriptMode ? undefined : activity;
   const managed = liveActivity?.managedTask;
   const phase = managed?.phase;
@@ -81,6 +94,7 @@ export function buildSurfaceStatusBarProps(
   } : options.managedState;
   return {
     sessionId: options.sessionId,
+    hostSettings: options.hostSettings,
     permissionMode: options.permissionMode,
     agentMode: options.agentMode,
     provider: options.provider,
@@ -104,8 +118,8 @@ export function buildSurfaceStatusBarProps(
       : "",
     currentIteration: liveActivity?.iteration?.current ?? options.streamingState.currentIteration,
     maxIter: liveActivity?.iteration?.maximum ?? options.maxIter,
-    contextUsage: options.contextUsage && currentTokens !== undefined
-      ? { ...options.contextUsage, currentTokens } : options.contextUsage,
+    contextUsage: contextUsage && currentTokens !== undefined ? { ...contextUsage, currentTokens } : contextUsage,
+    contextTokens: !hasMatchingBudget && currentTokens !== undefined ? { currentTokens, scope } : undefined,
     tokenUsage: activity?.usage ? { input: activity.usage.inputTokens,
       output: activity.usage.outputTokens, total: activity.usage.totalTokens } : undefined,
     learning: options.learning,

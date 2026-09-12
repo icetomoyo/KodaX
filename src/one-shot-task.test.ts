@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 import type {
   KodaXEvents,
   KodaXOptions,
@@ -10,6 +11,7 @@ import type {
   RunningSession,
 } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
+import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -32,6 +34,7 @@ vi.mock('@kodax-ai/coding', async (original) => ({
 interface Harness {
   readonly runtime: KodaXRuntime;
   readonly homeDir: string;
+  readonly endpoint: string;
   readonly close: () => Promise<void>;
 }
 
@@ -52,6 +55,7 @@ async function startHarness(prefix: string): Promise<Harness> {
   return {
     runtime,
     homeDir,
+    endpoint: endpoint.path,
     close: async () => {
       await runtime.close();
       await host.close();
@@ -91,6 +95,7 @@ it('FEATURE_298 T35 — one-shot runs the product path: Host-owned temporary ses
     const options: KodaXOptions = {
       provider: 'flag-provider',
       maxIter: 9,
+      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
       events: cliEvents,
     };
     const result = await runOneShotClientTask({
@@ -104,6 +109,7 @@ it('FEATURE_298 T35 — one-shot runs the product path: Host-owned temporary ses
     expect(executor.options.at(-1)).toMatchObject({
       provider: 'flag-provider',
       maxIter: 9,
+      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
     });
 
     // The temporary session is gone once the run settles (Host-owned delete).
@@ -165,24 +171,76 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
     // test pins the deterministic id path.
     const options: KodaXOptions = {
       provider: 'resume-provider',
+      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true },
       session: { id: seeded.id, scope: 'user' },
     };
-    await client.sessions.updateSettings(seeded.id, { model: 'seed-model' });
+    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
     const result = await runOneShotClientTask({
       client, runtime: harness.runtime, options, prompt: 'Continue here.',
     });
     expect(result).toMatchObject({ success: true });
     expect(executor.options.at(-1)!.session!.id).toBe(seeded.id);
-    expect(executor.options.at(-1)).toMatchObject({ provider: 'resume-provider' });
+    expect(executor.options.at(-1)).toMatchObject({ provider: 'resume-provider',
+      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true } });
 
     // A resumed session keeps its own settings after the invocation.
     await expect.poll(async () => (await client.sessions.getSettings(seeded.id)).provider)
       .toBeUndefined();
     expect((await client.sessions.getSettings(seeded.id)).model).toBe('seed-model');
+    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
   } finally {
     await harness.close();
   }
 }, 120_000);
+
+it('reports settings restoration failure even when no CLI error callback is installed', async () => {
+  const harness = await startHarness('kodax-one-shot-restore-');
+  const client = toKodaXProductClient(harness.runtime);
+  const session = await client.sessions.create({ title: 'Restore', projectPath: harness.homeDir });
+  const update = client.sessions.updateSettings.bind(client.sessions);
+  let calls = 0;
+  client.sessions.updateSettings = async (sessionId, patch) => {
+    if (++calls === 2) throw new Error('restore transport lost');
+    return update(sessionId, patch);
+  };
+  const diagnostics: KodaXDiagnostic[] = [];
+  const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+  mockManagedResult({ success: true, lastText: 'done', messages: [], sessionId: session.id });
+  try {
+    await runOneShotClientTask({ client, runtime: harness.runtime,
+      options: { provider: 'temporary-provider', session: { id: session.id } }, prompt: 'Work' });
+    expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'kodax.one-shot', level: 'warn',
+      message: expect.stringContaining('restore'), detail: expect.objectContaining({ message: 'restore transport lost' }) }));
+  } finally {
+    restoreDiagnostics();
+    await harness.close();
+  }
+}, 120_000);
+
+it('persists validated repo intelligence settings across Host restart and supports clearing them', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-repo-settings-'));
+  let runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  try {
+    let client = toKodaXProductClient(runtime);
+    const session = await client.sessions.create({ title: 'Repo settings', projectPath: homeDir });
+    await expect(client.sessions.updateSettings(session.id, { repoIntelligenceMode: 'invalid' } as never))
+      .rejects.toThrow('repoIntelligenceMode');
+    await expect(client.sessions.updateSettings(session.id, { repoIntelligenceTrace: 'yes' } as never))
+      .rejects.toThrow('repoIntelligenceTrace');
+    await client.sessions.updateSettings(session.id, { repoIntelligenceMode: 'off', repoIntelligenceTrace: false });
+    await runtime.close();
+    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    client = toKodaXProductClient(runtime);
+    expect(await client.sessions.getSettings(session.id)).toMatchObject({ repoIntelligenceMode: 'off', repoIntelligenceTrace: false });
+    await client.sessions.updateSettings(session.id, { repoIntelligenceMode: null, repoIntelligenceTrace: null });
+    const cleared = await client.sessions.getSettings(session.id);
+    expect(cleared.repoIntelligenceMode).toBeUndefined();
+    expect(cleared.repoIntelligenceTrace).toBeUndefined();
+  } finally {
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60_000);
 
 it('FEATURE_298 T35 — a cancelled run projects the interrupted legacy result', async () => {
   const harness = await startHarness('kodax-one-shot-cancel-');
@@ -257,36 +315,39 @@ it('FEATURE_298 T35 — maps one-shot results to process exit codes', async () =
   })).toBe(1);
 });
 
-it('FEATURE_298 T35 — a disconnect settles as unknown, never as completion', async () => {
+it('rejects an unconfirmed Run outcome rather than treating it as completion or interruption', async () => {
+  const { projectOneShotOutcome } = await import('./one-shot-task.js');
+  expect(() => projectOneShotOutcome({ phase: 'unknown' }, 'unconfirmed-run', 'session'))
+    .toThrow('Runtime run unconfirmed-run ended without a result.');
+});
+
+it('rejects the one-shot wait on a real client disconnect while the Host Run retains ownership', async () => {
   const harness = await startHarness('kodax-one-shot-disconnect-');
-  const client = toKodaXProductClient(harness.runtime);
+  const client = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
   let release: ((result: KodaXResult) => void) | undefined;
-  executor.managed.mockImplementation((runOptions: KodaXOptions) => {
-    executor.options.push(runOptions);
+  executor.managed.mockImplementation((options: KodaXOptions) => {
+    executor.options.push(options);
     return new Promise<KodaXResult>((resolve) => { release = resolve; });
   });
-  const runtime = harness.runtime;
-  const baseline = executor.options.length;
+  let pending: Promise<unknown> | undefined;
   try {
-    const pending = runOneShotClientTask({
-      client, runtime,
-      options: { provider: 'disconnect-provider' },
-      prompt: 'Outlive the connection.',
-    });
+    const baseline = executor.options.length;
+    pending = runOneShotClientTask({ client, runtime: harness.runtime,
+      options: { provider: 'disconnect-provider' }, prompt: 'Keep Host ownership.' });
     await expect.poll(() => executor.options.length).toBe(baseline + 1);
-    // Attach the expectation first: the rejection fires DURING close, and an
-    // unattached rejection would leak as an unhandled rejection.
-    const expectation = expect(pending).rejects.toThrow(
-      /ended without a result|closed|unknown/i,
-    );
-    // Closing the Host-owning runtime mid-run is the disconnect: the await
-    // must surface phase unknown as an error, not success or interruption.
-    await runtime.close();
-    await expectation;
-    release?.({
-      success: false, interrupted: true, lastText: '', messages: [], sessionId: 'cleanup',
-    });
+    const runs = await harness.runtime.runs.list();
+    expect(runs).toHaveLength(1);
+    const rejected = expect(pending).rejects.toThrow(/closed|disconnect|transport|socket/i);
+    await client.disconnect();
+    await rejected;
+    expect((await harness.runtime.runs.get(runs[0]!.runId))?.phase).toBe('running');
+    release?.({ success: true, lastText: 'Host finished', messages: [], sessionId: runs[0]!.sessionId });
+    await expect(harness.runtime.runs.await(runs[0]!.runId)).resolves.toMatchObject({ phase: 'completed' });
+    expect(executor.options.length).toBe(baseline + 1);
   } finally {
+    release?.({ success: false, interrupted: true, lastText: '', messages: [], sessionId: 'cleanup' });
+    await Promise.allSettled(pending ? [pending] : []);
+    await client.disconnect();
     await harness.close();
   }
-}, 120_000);
+}, 60_000);

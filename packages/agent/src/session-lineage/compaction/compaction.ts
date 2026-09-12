@@ -29,7 +29,7 @@ import {
   reclaimReservedResponseTokens,
   exceedsContextCapacity,
 } from '../../context-capacity.js';
-import { resolveCompactionPolicy } from './policy.js';
+import { resolveCompactionPolicy, type ResolvedCompactionPolicy } from './policy.js';
 import {
   mergeUserQueryLedger,
   parseUserQueryLedger,
@@ -240,6 +240,7 @@ export function needsCompaction(
   contextWindow: number = DEFAULT_CONTEXT_WINDOW,
   tokenCountOverride?: number,
   reservedResponseTokens = 0,
+  onPolicy?: (policy: ResolvedCompactionPolicy) => void,
 ): boolean {
   const tokens = tokenCountOverride ?? estimateTokens(messages);
   const maxPhysicalInputTokens = calculateMaxContextInputTokens(
@@ -251,6 +252,7 @@ export function needsCompaction(
     contextWindow,
     maxPhysicalInputTokens,
   );
+  onPolicy?.(policy);
   return tokens >= policy.triggerTokens;
 }
 

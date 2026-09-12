@@ -5,6 +5,7 @@
 import type * as readline from 'readline';
 import * as fsSync from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
 import {
@@ -33,6 +34,7 @@ import {
   resolveKodaXManual,
 } from '@kodax-ai/coding';
 import type { AgentsFile } from '@kodax-ai/coding';
+import type { ClientCommandInfo } from '@kodax-ai/coding/client-contract';
 import {
   PermissionMode,
   PERMISSION_MODES,
@@ -88,6 +90,7 @@ import {
 import {
   assertSingleKnownUserSkillReference,
   prepareUserSkillInvocation,
+  resolveUserSkillReference,
   MultipleUserSkillReferencesError,
 } from './user-skill-invocation.js';
 import { CommandRegistry } from '../commands/registry.js';
@@ -109,6 +112,7 @@ import { getActivePasteStore } from '../ui/utils/paste-store.js';
 import { retrievePastedText } from '../ui/utils/paste-cache.js';
 import {
   toCommandDefinition,
+  clientCommandResult,
   type Command as RegisteredCommand,
   type CommandCallbacks,
   type CommandHandler as RegisteredCommandHandler,
@@ -294,7 +298,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['h', '?'],
     description: 'Show all available commands',
     usage: '/help [command]',
-    handler: async (args) => {
+    handler: async (args, context, callbacks) => {
       if (args.length > 0) {
         const name = args[0]!;
         if (commandRegistry.size === 0) {
@@ -305,6 +309,12 @@ export const BUILTIN_COMMANDS: Command[] = [
         if (isKnownCommand) {
           // Show detailed help for a specific command.
           printDetailedHelp(name, args.slice(1));
+        } else if (callbacks?.commandClient && await isRegisteredHostCommand(
+          { command: name.toLowerCase(), args: [] }, context.gitRoot, callbacks.listHostCommands,
+        )) {
+          return clientCommandResult(await callbacks.commandClient.execute({
+            sessionId: context.sessionId, inputId: randomUUID(), name, args: ['--help', ...args.slice(1)],
+          }));
         } else {
           // FEATURE_218 — fall through to the KodaX self-knowledge manual for
           // product topics (/help providers, /help config, ...). Unknown topics
@@ -312,7 +322,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           printManualTopic(name);
         }
       } else {
-        printHelp();
+        printHelp(await callbacks?.listHostCommands?.(context.gitRoot ?? process.cwd()));
       }
     },
     detailedHelp: () => {
@@ -573,6 +583,9 @@ export const BUILTIN_COMMANDS: Command[] = [
               ...(customInstructions !== undefined ? { customInstructions } : {}),
             });
             if (!bound.compacted) {
+              if (bound.reason && bound.reason !== 'no compaction needed') {
+                throw new Error(bound.reason);
+              }
               console.log(chalk.green('\n[No compaction needed]'));
               console.log(chalk.dim(`Current token usage: ${bound.tokensBefore.toLocaleString()}\n`));
               return;
@@ -1248,7 +1261,8 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/mode [plan|accept-edits|auto|full-access]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        const m = normalizePermissionMode(currentConfig.permissionMode, 'accept-edits') ?? 'accept-edits';
+        const m = currentConfig.hostSettings ? currentConfig.hostSettings.permissionMode ?? 'Host default'
+          : normalizePermissionMode(currentConfig.permissionMode, 'accept-edits') ?? 'accept-edits';
         console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(m)}`));
         console.log(chalk.dim('Usage: /mode [plan|accept-edits|auto|full-access]'));
         return;
@@ -1784,7 +1798,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       for (const line of formatProviderCapabilityDetailLines(snapshot)) {
         console.log(chalk.dim(`  - ${line}`));
       }
-      console.log(chalk.dim(`  - Session effort: ${formatReasoningEffortDisplay(currentConfig.effort)}`));
+      console.log(chalk.dim(`  - Session effort: ${currentConfig.hostSettings ? currentConfig.hostSettings.effort ?? 'Host default' : formatReasoningEffortDisplay(currentConfig.effort)}`));
       const learnedRejections = getCachedRejectedEfforts(targetProvider, targetModel);
       if (learnedRejections.length > 0) {
         console.log(chalk.dim(`  - Learned unsupported: ${learnedRejections.join(', ')} (clear with /provider forget-capability)`));
@@ -1884,7 +1898,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/agent-mode [ama|sa|toggle]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        console.log(chalk.dim(`\nAgent mode: ${chalk.cyan(currentConfig.agentMode.toUpperCase())}`));
+        console.log(chalk.dim(`\nAgent mode: ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.agentMode?.toUpperCase() ?? 'Host default' : currentConfig.agentMode.toUpperCase())}`));
         console.log(chalk.dim('Usage: /agent-mode [ama|sa|toggle]\n'));
         return;
       }
@@ -2190,6 +2204,8 @@ function formatReasoningEffortUsage(
 }
 
 function formatCurrentReasoningEffortStatus(config: CurrentConfig): string {
+  if (config.hostSettings) return config.hostSettings.effort ?? config.hostSettings.reasoningMode
+    ?? (config.hostSettings.thinking === undefined ? 'Host default' : config.hostSettings.thinking ? 'on' : 'off');
   const effectiveEffort = resolvePermissionModeEffort(config);
   return formatReasoningEffortStatusLabel({
     provider: config.provider,
@@ -2301,7 +2317,7 @@ async function handleReasoningEffortCommand(
   if (args.length === 0) {
     const effortLabel = formatCurrentReasoningEffortStatus(currentConfig);
     console.log(chalk.dim(`\nReasoning effort: ${chalk.cyan(effortLabel)}`));
-    console.log(chalk.dim(`Compatibility:    ${chalk.cyan(currentConfig.reasoningMode)}`));
+    console.log(chalk.dim(`Compatibility:    ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.reasoningMode ?? 'Host default' : currentConfig.reasoningMode)}`));
     console.log(chalk.dim(`Available:        ${getCanonicalReasoningEffortOptions(currentConfig).join(', ')}`));
     console.log(chalk.dim(`${usage}\n`));
     return;
@@ -2536,7 +2552,7 @@ function printCommandSection(
   console.log();
 }
 
-function printHelp(): void {
+function printHelp(hostCommands: readonly ClientCommandInfo[] = []): void {
   console.log(chalk.bold('\nAvailable Commands:\n'));
   const registry = getCommandRegistry();
   const categorizedNames = new Set<string>();
@@ -2572,6 +2588,7 @@ function printHelp(): void {
 
     const commands = dynamicSections.get(sectionTitle) ?? [];
     commands.push(cmd);
+    categorizedNames.add(cmd.name.toLowerCase());
     dynamicSections.set(sectionTitle, commands);
   }
 
@@ -2586,7 +2603,17 @@ function printHelp(): void {
       aliases: cmd.aliases,
       description: cmd.description,
     });
+    categorizedNames.add(cmd.name.toLowerCase());
     dynamicSections.set('Extensions', commands);
+  }
+
+  for (const cmd of hostCommands) {
+    if (cmd.userInvocable === false || categorizedNames.has(cmd.name.toLowerCase())) continue;
+    const section = cmd.source === 'extension' ? 'Extensions' : 'Prompt Commands';
+    const commands = dynamicSections.get(section) ?? [];
+    commands.push({ name: cmd.name, aliases: [...(cmd.aliases ?? [])], description: cmd.description });
+    dynamicSections.set(section, commands);
+    categorizedNames.add(cmd.name.toLowerCase());
   }
 
   for (const sectionTitle of ['Extensions', 'Skill Commands', 'Prompt Commands', 'Other Commands']) {
@@ -2691,10 +2718,10 @@ async function printStatus(
   );
   console.log(chalk.bold('\nSession Status:\n'));
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
-  console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
-  console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.reasoningMode)}`));
-  console.log(chalk.dim(`  Effort:      ${chalk.cyan(formatReasoningEffortDisplay(currentConfig.effort))}`));
-  console.log(chalk.dim(`  Agent Mode:  ${chalk.cyan(currentConfig.agentMode.toUpperCase())}`));
+  console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.permissionMode ?? 'Host default' : currentConfig.permissionMode)}`));
+  console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.reasoningMode ?? 'Host default' : currentConfig.reasoningMode)}`));
+  console.log(chalk.dim(`  Effort:      ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.effort ?? 'Host default' : formatReasoningEffortDisplay(currentConfig.effort))}`));
+  console.log(chalk.dim(`  Agent Mode:  ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.agentMode?.toUpperCase() ?? 'Host default' : currentConfig.agentMode.toUpperCase())}`));
   if (capabilityProfile) {
     const capabilitySummary = describeProviderCapabilitySummary(capabilityProfile);
     const capabilityColor = capabilityProfile.transport === 'cli-bridge'
@@ -3086,6 +3113,33 @@ async function executeExtensionCommand(
   return true;
 }
 
+/** Bound surfaces only parse commands; Skill expansion belongs to Host input admission. */
+export async function isRegisteredHostCommand(
+  parsed: NonNullable<ReturnType<typeof parseCommand>>,
+  projectRoot?: string,
+  listHostCommands?: CommandCallbacks['listHostCommands'],
+): Promise<boolean> {
+  if (parsed.skillInvocation) return false;
+  if (isRegisteredUserCommand(parsed.command, projectRoot)) return true;
+  const commands = await listHostCommands?.(projectRoot ?? process.cwd());
+  return commands?.some((command) => [command.name, ...(command.aliases ?? [])]
+    .some((name) => name.trim().toLowerCase() === parsed.command)) ?? false;
+}
+
+export async function parseHostCommand(
+  input: string,
+  projectRoot?: string,
+  listHostCommands?: CommandCallbacks['listHostCommands'],
+): Promise<ReturnType<typeof parseCommand>> {
+  const parsed = parseCommand(input);
+  if (!parsed || parsed.skillInvocation) return null;
+  if (await isRegisteredHostCommand(parsed, projectRoot, listHostCommands)) return parsed;
+  const skill = await resolveUserSkillReference(input, {
+    workingDirectory: projectRoot ?? process.cwd(), projectRoot,
+  });
+  return skill ? null : parsed;
+}
+
 export function parseCommand(input: string): { command: string; args: string[]; skillInvocation?: { name: string } } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
@@ -3124,6 +3178,9 @@ function isCommandHelpRequest(args: readonly string[]): boolean {
 
 // Execute command.
 export type CommandResult = boolean | {
+  success?: boolean;
+  message?: string;
+  startedRunId?: string;
   skillContent?: string;
   invocation?: CommandInvocationRequest;
   workflow?: CommandWorkflowInvocationRequest;
@@ -3176,6 +3233,12 @@ export async function executeCommand(
       return true;
     }
 
+    if (callbacks.commandClient && (cmd.source === 'extension' || cmd.source === 'prompt')) {
+      const result = await callbacks.commandClient.execute({ sessionId: context.sessionId,
+        inputId: randomUUID(), name: parsed.command, args: parsed.args });
+      return clientCommandResult(result);
+    }
+
     // FEATURE_298 T37 — discovered prompt commands prepare Host-side when a
     // binding is present: the client sends only the registered name and the
     // Host reads the command file against its trusted discovery order.
@@ -3219,11 +3282,21 @@ export async function executeCommand(
     }
 
     try {
+      if (callbacks.commandClient) {
+        const result = await callbacks.commandClient.execute({ sessionId: context.sessionId,
+          inputId: randomUUID(), name: parsed.command, args: parsed.args });
+        return clientCommandResult(result);
+      }
       return await executeExtensionCommand(extensionCommand, parsed.args, context);
     } catch (error) {
       console.log(chalk.red(`\n[Extension command failed: ${error instanceof Error ? error.message : String(error)}]`));
       return false;
     }
+  }
+
+  if (callbacks.commandClient) {
+    return clientCommandResult(await callbacks.commandClient.execute({ sessionId: context.sessionId,
+      inputId: randomUUID(), name: parsed.command, args: parsed.args }));
   }
 
   const namespacedDirectSkill = await resolveNamespacedDirectSkillCommand(parsed, context);

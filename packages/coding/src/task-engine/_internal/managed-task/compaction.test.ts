@@ -127,6 +127,8 @@ describe('managed history compaction', () => {
 
     await expect(hook?.(messages)).resolves.toBeUndefined();
     expect(compactMock).not.toHaveBeenCalled();
+    expect(ref.compactionBudget).toMatchObject({ triggerPercent: 90, triggerTokens: 87_378, physicalCapacityTokens: 87_378,
+      reservedResponseTokens: 10_000, reservedMemoryTokens: 0 });
   });
 
   it('passes the complete evidence to semantic compaction at hard pressure', async () => {

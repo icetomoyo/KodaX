@@ -76,6 +76,7 @@ export async function checkPreToolAbort(
   const cancelled: KodaXToolResultBlock[] = [];
   for (const tc of input.toolBlocks) {
     if (isVisibleToolName(tc.name)) {
+      const toolResult = createToolResultBlock(tc.id, CANCELLED_TOOL_RESULT_MESSAGE);
       await input.emitActiveExtensionEvent('tool:result', {
         id: tc.id,
         name: tc.name,
@@ -85,8 +86,9 @@ export async function checkPreToolAbort(
         id: tc.id,
         name: tc.name,
         content: CANCELLED_TOOL_RESULT_MESSAGE,
+        toolResult,
       }, createToolEventMeta(input.events, tc.id));
-      cancelled.push(createToolResultBlock(tc.id, CANCELLED_TOOL_RESULT_MESSAGE));
+      cancelled.push(toolResult);
     }
   }
   return cancelled;

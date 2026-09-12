@@ -7,7 +7,7 @@ import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta 
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
   toolActivityDetail, formatManagedTaskBreadcrumb } from '@kodax-ai/repl';
-import type { ClientObservation, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
+import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
 
 interface ObservedSession {
@@ -17,7 +17,7 @@ interface ObservedSession {
   dirty: boolean;
   historyDirty: boolean;
   generation: number;
-  readonly listeners: Set<(view: ClientSessionView) => void>;
+  readonly listeners: Map<(view: ClientSessionView) => void, (status: ClientObservationStatus) => void>;
   items: ClientViewItem[];
   readonly segments: Map<string, KodaXOutputSegmentProjection>;
   history: readonly ClientViewItem[];
@@ -41,24 +41,26 @@ export class SessionViewOwner {
   private state(sessionId: string): ObservedSession {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Set(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
+      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
       this.sessions.set(sessionId, state);
     }
     return state;
   }
 
-  events(sessionId: string, runId: string, costReport: NonNullable<KodaXEvents['getCostReport']> = { current: null }): KodaXEvents {
+  events(sessionId: string, runId: string, costReport: NonNullable<KodaXEvents['getCostReport']> = { current: null }, inputSource?: () => string | undefined): KodaXEvents {
     const state = this.state(sessionId);
     state.costReport = costReport;
     state.runIds.add(runId);
+    let segmentInputId: string | undefined;
     const isPrimary = (meta?: KodaXActivityEventMeta) =>
       meta?.contextKind !== 'child' && !meta?.childAgentId
       && !meta?.workflowCorrelation?.workflowRunId && !meta?.workflowCorrelation?.childAgentId;
-    const upsert = (item: ClientViewItem): void => {
+    const upsert = (item: ClientViewItem, source?: { inputId: string | undefined }): void => {
       // Capture safe display facts while the exact credential scope is active;
       // the later coalesced view/checkpoint runs after that scope may expire.
-      item = redactScopedProviderCredential(item);
       const index = state.items.findIndex((current) => current.id === item.id);
+      const afterInputId = index >= 0 ? state.items[index]!.afterInputId : source ? source.inputId : inputSource?.();
+      item = redactScopedProviderCredential({ ...item, afterInputId });
       if (index < 0) state.items.push(item);
       else state.items[index] = { ...item, timestamp: state.items[index]!.timestamp };
       this.changed(sessionId);
@@ -71,7 +73,7 @@ export class SessionViewOwner {
       if (!reduced.accepted || !reduced.state.active) return;
       state.segments.set(runId, reduced.state);
       upsert({ id: `${runId}:${meta.providerRequestId}:${kind}`, type: kind,
-        text: reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() });
+        text: reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() }, { inputId: segmentInputId });
     };
     const notices = createSessionNoticeEvents(sessionId, (notice) => {
         upsert({ ...notice, id: `${runId}:${notice.id ?? randomUUID()}`, timestamp: Date.now() });
@@ -89,6 +91,7 @@ export class SessionViewOwner {
       onOutputSegmentStart: (segment, meta) => {
         if (!isPrimary(meta)) return;
         const current = state.segments.get(runId) ?? createOutputSegmentProjection();
+        if (current.active?.providerRequestId !== segment.providerRequestId) segmentInputId = inputSource?.();
         if (segment.mode === 'replace' && current.active?.responseId === segment.responseId
           && current.active.providerRequestId !== segment.providerRequestId) {
           const replaced = `${runId}:${current.active.providerRequestId}:`;
@@ -109,7 +112,7 @@ export class SessionViewOwner {
         const current = state.segments.get(runId);
         if (!current?.active || (meta?.providerRequestId && current.active.providerRequestId !== meta.providerRequestId)) return;
         state.segments.set(runId, { ...current, active: { ...current.active, thinkingText: text } });
-        upsert({ id: `${runId}:${current.active.providerRequestId}:thinking`, type: 'thinking', text, timestamp: Date.now() });
+        upsert({ id: `${runId}:${current.active.providerRequestId}:thinking`, type: 'thinking', text, timestamp: Date.now() }, { inputId: segmentInputId });
       },
       onToolUseStart: (tool, meta) => {
         if (!isPrimary(meta)) { childActivity('tool', toolActivityDetail(tool.name, tool.input), meta); return; }
@@ -126,7 +129,9 @@ export class SessionViewOwner {
       onToolResult: (result, meta) => {
         if (!isPrimary(meta)) return;
         const previous = state.items.find((item) => item.id === `${runId}:tool:${result.id}`);
-        const status = /^\[(?:Tool Error|Error)\]/.test(result.content) ? 'error'
+        const status = result.toolResult?.metadata?.cancelled === true ? 'cancelled'
+          : result.toolResult ? (result.toolResult.is_error === true ? 'error' : 'success')
+          : /^\[(?:Tool Error|Error)\]/.test(result.content) ? 'error'
           : /^\[(?:Cancelled|Blocked)\]/.test(result.content) ? 'cancelled' : 'success';
         upsert({ id: `${runId}:tool:${result.id}`, type: 'tool', text: result.content, timestamp: Date.now(),
           tool: { ...previous?.tool, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
@@ -198,6 +203,10 @@ export class SessionViewOwner {
     state.timer.unref();
   }
 
+  configurationChanged(): void {
+    for (const sessionId of this.sessions.keys()) this.changed(sessionId);
+  }
+
   /** Branch changes discard the old live projection, retaining observers. */
   resetHistory(sessionId: string): void {
     const state = this.sessions.get(sessionId);
@@ -213,15 +222,27 @@ export class SessionViewOwner {
     this.changed(sessionId, true);
   }
 
-  async observe(sessionId: string, listener: (view: ClientSessionView) => void): Promise<ClientObservation> {
+  async observe(sessionId: string, listener: (view: ClientSessionView) => void, options: ClientObserveOptions = {}): Promise<ClientObservation> {
     const state = this.state(sessionId);
     await this.refresh(sessionId, state);
     if (!state.view) throw new Error('Session view was not available.');
     // No await separates registering from capturing the latest state.
     listener(structuredClone(state.view));
-    state.listeners.add(listener);
+    let lastState: ClientObservationStatus['state'] | undefined;
+    const report = (status: ClientObservationStatus): void => {
+      if (lastState === status.state) return;
+      lastState = status.state;
+      try { options.onStatus?.(status); }
+      catch (error: unknown) {
+        emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Session observation status listener failed.', detail: error });
+      }
+    };
+    state.listeners.set(listener, report);
+    report({ state: 'live' });
     if (state.dirty) this.changed(sessionId);
-    return { close: () => { state.listeners.delete(listener); } };
+    return { close: () => {
+      if (state.listeners.delete(listener)) report({ state: 'closed', reason: 'client' });
+    } };
   }
 
   async readItem(sessionId: string, itemId: string, options: ClientItemReadOptions = {}): Promise<ClientItemContent | null> {
@@ -238,12 +259,16 @@ export class SessionViewOwner {
   }
 
   async close(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((state) => state.persisting));
+    const checkpoints = await Promise.allSettled([...this.sessions.values()].map((state) => state.persisting));
     for (const state of this.sessions.values()) {
       if (state.timer) clearTimeout(state.timer);
+      for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
       state.listeners.clear();
     }
     this.sessions.clear();
+    const failures = checkpoints.filter(result => result.status === 'rejected').map(result => result.reason as unknown);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Session display checkpoints failed during close.');
   }
 
   async flush(sessionId: string): Promise<void> {
@@ -254,6 +279,7 @@ export class SessionViewOwner {
   release(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (state?.timer) clearTimeout(state.timer);
+    if (state) for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
     state?.listeners.clear();
     this.sessions.delete(sessionId);
   }
@@ -274,13 +300,18 @@ export class SessionViewOwner {
       const items = mergeSessionViewItems(state.history, state.items);
       const costReport = state.costReport?.current?.();
       state.view = { ...view, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
-      for (const listener of state.listeners) {
-        try { listener(structuredClone(state.view)); }
+      for (const [listener, report] of state.listeners) {
+        try { listener(structuredClone(state.view)); report({ state: 'live' }); }
         catch (error: unknown) {
           state.listeners.delete(listener);
+          report({ state: 'closed', reason: 'unavailable' });
           emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Session view observer failed and was detached.', detail: error });
         }
       }
+    }).catch((error: unknown) => {
+      state.historyDirty ||= includeHistory;
+      for (const report of state.listeners.values()) report({ state: 'interrupted' });
+      throw error;
     }).finally(() => {
       state.loading = undefined;
       if (state.dirty && generation === state.generation) this.changed(sessionId);
@@ -306,6 +337,12 @@ function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonl
       items[position] = item;
       nextPosition = position;
     } else {
+      const sourceIndex = item.afterInputId === undefined ? -1
+        : items.findIndex(candidate => candidate.type === 'user' && candidate.inputId === item.afterInputId);
+      if (sourceIndex >= 0) {
+        const nextInput = items.findIndex((candidate, index) => index > sourceIndex && candidate.type === 'user');
+        nextPosition = Math.min(Math.max(nextPosition, sourceIndex + 1), nextInput < 0 ? items.length : nextInput);
+      }
       items.splice(nextPosition, 0, item);
     }
   }
@@ -331,13 +368,26 @@ function sessionActivityEvents(
   update: (patch: Omit<Partial<ClientSessionActivity>, 'runId'>) => void,
   notices: KodaXEvents,
 ): KodaXEvents {
+  let contextBudget: ClientContextBudget | undefined;
   return {
+    onContextBudgetSnapshot: (info) => {
+      if (!info.compactionBudget || !info.provider || !info.model) return;
+      const scope = info.contextKind === 'child' ? 'worker' : 'parent';
+      const { reservedResponseTokens, reservedMemoryTokens, ...compaction } = info.compactionBudget;
+      contextBudget = { scope, provider: info.provider, model: info.model, contextId: info.contextId,
+        contextWindow: info.contextWindow, reservedResponseTokens, reservedMemoryTokens,
+        compaction: { enabled: true, ...compaction } };
+      update({ contextBudget,
+        context: { scope, tokenCount: info.usedTokens - info.tokenBreakdown.reservedResponse, tokenSource: 'estimate' } });
+    },
     onTodoUpdate: (items) => update({ todos: items.map(({ id, subject, status, description, owner, note, activeForm }) =>
       ({ id, subject, status, description, owner, note, activeForm })) }),
     onIterationStart: (current, maximum) => update({ iteration: { current, maximum } }),
     onIterationEnd: (info) => {
       const scope = info.contextKind === 'child' || info.scope === 'worker' ? 'worker' : 'parent';
+      if (contextBudget?.scope !== scope || (info.contextId !== undefined && contextBudget.contextId !== info.contextId)) contextBudget = undefined;
       update({
+        contextBudget,
         iteration: { current: info.iter, maximum: info.maxIter },
         context: { tokenCount: info.tokenCount, tokenSource: info.tokenSource, scope },
         ...(scope === 'parent' ? { parentContextTokens: info.tokenCount } : {}),
@@ -352,7 +402,8 @@ function sessionActivityEvents(
     onCompactStats: (info) => {
       notices.onCompactStats?.(info);
       const scope = info.contextKind === 'child' ? 'worker' : 'parent';
-      update({ context: { tokenCount: info.tokensAfter, tokenSource: 'estimate', scope },
+      if (contextBudget?.scope !== scope || (info.contextId !== undefined && contextBudget.contextId !== info.contextId)) contextBudget = undefined;
+      update({ contextBudget, context: { tokenCount: info.tokensAfter, tokenSource: 'estimate', scope },
         ...(scope === 'parent' ? { parentContextTokens: info.tokensAfter } : {}) });
     },
     onCompact: (tokens, meta) => { notices.onCompact?.(tokens, meta); update({ compacting: false }); },
@@ -386,11 +437,13 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
   return (history ?? []).flatMap((item, index): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => ({
       id: item.id ?? `tool:${tool.id}`, type: 'tool' as const, text: tool.output ?? tool.error ?? '', timestamp: item.timestamp,
+      ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
       tool: { callId: tool.id, name: tool.name, status: tool.status, inputText: tool.preview,
         startedAt: tool.startTime, endedAt: tool.endTime },
     }));
     return [{ id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
       text: item.text, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
+      ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
       ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
       ...(item.icon !== undefined ? { icon: item.icon } : {}), ...(item.compactText !== undefined ? { compactText: item.compactText } : {}) }];
   });
@@ -409,6 +462,8 @@ export function restoreSessionViewItems(
 ): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
+  const toolResults = new Map(historyMessages.flatMap(message => typeof message.content === 'string' ? []
+    : message.content.filter(block => block.type === 'tool_result').map(block => [block.tool_use_id, block] as const)));
   const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
   const savedOutputTime = lastAssistant?.timestamp ? Date.parse(lastAssistant.timestamp) : NaN;
   // A live response can equal an earlier answer before it has been saved.
@@ -448,9 +503,17 @@ export function restoreSessionViewItems(
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
-      return previous ?? { id: `tool:${tool.id}`, type: 'tool', text: String(tool.output ?? tool.error ?? ''), timestamp: item.timestamp,
+      const result = toolResults.get(tool.id);
+      // Older sessions encoded cancellation in text alongside is_error=true.
+      const legacyCancellation = result?.metadata?.cancelled === undefined && result?.is_error !== false
+        && typeof result?.content === 'string' && /^\[(?:Cancelled|Blocked)\]/.test(result.content);
+      const status = result?.metadata?.cancelled === true || legacyCancellation ? 'cancelled'
+        : result?.is_error !== undefined ? (result.is_error ? 'error' : 'success')
+        : previous?.tool?.status ?? (tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled');
+      return previous ? { ...previous, tool: previous.tool ? { ...previous.tool, status } : undefined }
+        : { id: `tool:${tool.id}`, type: 'tool', text: String(tool.output ?? tool.error ?? ''), timestamp: item.timestamp,
         tool: { callId: tool.id, name: tool.name,
-          status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
+          status,
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
     let previous: ClientViewItem | undefined;
@@ -481,7 +544,7 @@ export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaX
   return items.flatMap((item): KodaXSessionUiHistoryItem[] => {
     if (item.type !== 'tool') return [{ ...item, type: item.type, presentationOnly: true }];
     if (!item.tool) return [];
-    return [{ id: item.id, type: 'tool_group', timestamp: item.timestamp, tools: [{
+    return [{ id: item.id, type: 'tool_group', timestamp: item.timestamp, afterInputId: item.afterInputId, tools: [{
       id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' ? 'cancelled' : item.tool.status,
       output: item.text, preview: item.tool.inputText, startTime: item.tool.startedAt, endTime: item.tool.endedAt,
     }] }];

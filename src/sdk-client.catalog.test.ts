@@ -83,6 +83,7 @@ it('lists real Host skills, commands, and effective config through typed queries
   // Commands come from the Host's real command registry for the workspace.
   const commands = await first.catalog.commands(homeDir);
   expect(commands.length).toBeGreaterThan(0);
+  expect(commands.find((command) => command.name === 'help')).toMatchObject({ aliases: ['h', '?'] });
   for (const command of commands) {
     expect(typeof command.name).toBe('string');
     expect(typeof command.description).toBe('string');

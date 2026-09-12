@@ -16,6 +16,7 @@ import {
   initializeSkillRegistry,
   type SkillContext,
   type SkillHooks,
+  type Skill,
 } from "@kodax-ai/agent";
 import type { KodaXSkillInvocationContext } from "@kodax-ai/coding";
 import { commandDiscoveryDirs, discoverCommands } from "@kodax-ai/repl";
@@ -65,7 +66,7 @@ export interface RuntimePreparedCommandInvocation {
 
 export type RuntimePreparedCommand =
   | { readonly kind: "prepared"; readonly invocation: RuntimePreparedCommandInvocation }
-  /** Registry-known non-prompt commands (builtin/skill/extension) stay client-side. */
+  /** Registry-known non-prompt commands have no discovered prompt to prepare. */
   | { readonly kind: "local" }
   | { readonly kind: "unknown" };
 
@@ -75,7 +76,7 @@ export interface RuntimeInvocationService {
     readonly name: string;
     readonly argumentsText?: string;
     readonly sessionId?: string;
-  }): Promise<RuntimePreparedSkill>;
+  }, options?: { readonly signal?: AbortSignal }): Promise<RuntimePreparedSkill>;
   prepareCommand(input: {
     readonly projectRoot: string;
     readonly name: string;
@@ -100,12 +101,14 @@ export function createRuntimeInvocationService(deps: {
   /** Supplies the admitted Session context and its Host-mediated executor. */
   readonly resolveSkillContext?: (
     input: Parameters<RuntimeInvocationService['prepareSkill']>[0],
+    options?: { readonly signal?: AbortSignal },
   ) => Promise<SkillContext>;
 }): RuntimeInvocationService {
   const skillContext = async (
     input: Parameters<RuntimeInvocationService['prepareSkill']>[0],
+    options?: { readonly signal?: AbortSignal },
   ): Promise<SkillContext> => {
-    const context = await deps.resolveSkillContext?.(input) ?? {
+    const context = await (options === undefined ? deps.resolveSkillContext?.(input) : deps.resolveSkillContext?.(input, options)) ?? {
       workingDirectory: input.projectRoot,
       projectRoot: input.projectRoot,
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
@@ -149,57 +152,70 @@ export function createRuntimeInvocationService(deps: {
     prepareCommand,
     prepareReview: deps.reviewPreparation.prepareReview,
     prepareAgentsLean: deps.reviewPreparation.prepareAgentsLean,
-    async prepareSkill(input) {
-      let registry = getSkillRegistry(input.projectRoot);
-      if (registry.size === 0) {
-        registry = await initializeSkillRegistry(input.projectRoot);
-      }
-      if (!registry.has(input.name)) return { kind: "unknown" };
+    async prepareSkill(input, options) {
+      options?.signal?.throwIfAborted();
+      const skill = await loadRuntimeSkill(input.projectRoot, input.name);
+      if (!skill) return { kind: 'unknown' };
+      const result = await expandRuntimeSkill(skill, input, await skillContext(input, options));
+      options?.signal?.throwIfAborted();
+      return result;
+    },
+  };
+}
 
-      const skill = await registry.loadFull(input.name);
-      const argumentsText = input.argumentsText ?? "";
-      const expanded = await expandSkillForLLM(
-        skill,
-        argumentsText,
-        await skillContext(input),
-      );
-      const hookEvents = skill.hooks
-        ? Object.entries(skill.hooks)
-          .filter(([, hooks]) => Array.isArray(hooks) && hooks.length > 0)
-          .map(([eventName]) => eventName)
-        : undefined;
-      return {
-        kind: "prepared",
-        invocation: {
-          prompt: expanded.content,
-          source: "skill",
-          displayName: input.name,
-          path: skill.skillFilePath,
-          ...(skill.disableModelInvocation !== undefined
-            ? { disableModelInvocation: skill.disableModelInvocation }
-            : {}),
-          ...(skill.allowedTools !== undefined ? { allowedTools: skill.allowedTools } : {}),
-          ...(skill.context !== undefined ? { context: skill.context } : {}),
-          ...(skill.agent !== undefined ? { agent: skill.agent } : {}),
-          ...(skill.argumentHint !== undefined ? { argumentHint: skill.argumentHint } : {}),
-          ...(skill.model !== undefined ? { model: skill.model } : {}),
-          ...(skill.hooks !== undefined ? { hooks: skill.hooks } : {}),
-          skillInvocation: {
-            name: input.name,
-            path: skill.skillFilePath,
-            ...(skill.description !== undefined ? { description: skill.description } : {}),
-            ...(argumentsText.length > 0 ? { arguments: argumentsText } : {}),
-            ...(skill.allowedTools !== undefined ? { allowedTools: skill.allowedTools } : {}),
-            ...(skill.context !== undefined ? { context: skill.context } : {}),
-            ...(skill.agent !== undefined ? { agent: skill.agent } : {}),
-            ...(skill.argumentHint !== undefined ? { argumentHint: skill.argumentHint } : {}),
-            ...(skill.model !== undefined ? { model: skill.model } : {}),
-            ...(hookEvents !== undefined ? { hookEvents } : {}),
-            expandedContent: expanded.content,
-            runtimePolicy: { enforceAtRuntime: true },
-          },
-        },
-      };
+/** Pure registry read. Dynamic commands are deferred until the Run owns execution. */
+export async function loadRuntimeSkill(projectRoot: string, name: string): Promise<Skill | undefined> {
+  let registry = getSkillRegistry(projectRoot);
+  if (registry.size === 0) registry = await initializeSkillRegistry(projectRoot);
+  return registry.has(name) ? registry.loadFull(name) : undefined;
+}
+
+export async function expandRuntimeSkill(
+  skill: Skill,
+  input: Parameters<RuntimeInvocationService['prepareSkill']>[0],
+  context: SkillContext,
+): Promise<Extract<RuntimePreparedSkill, { kind: 'prepared' }>> {
+  const argumentsText = input.argumentsText ?? "";
+  const expanded = await expandSkillForLLM(
+    skill,
+    argumentsText,
+    context,
+  );
+  const hookEvents = skill.hooks
+    ? Object.entries(skill.hooks)
+      .filter(([, hooks]) => Array.isArray(hooks) && hooks.length > 0)
+      .map(([eventName]) => eventName)
+    : undefined;
+  return {
+    kind: "prepared",
+    invocation: {
+      prompt: expanded.content,
+      source: "skill",
+      displayName: input.name,
+      path: skill.skillFilePath,
+      ...(skill.disableModelInvocation !== undefined
+        ? { disableModelInvocation: skill.disableModelInvocation }
+        : {}),
+      ...(skill.allowedTools !== undefined ? { allowedTools: skill.allowedTools } : {}),
+      ...(skill.context !== undefined ? { context: skill.context } : {}),
+      ...(skill.agent !== undefined ? { agent: skill.agent } : {}),
+      ...(skill.argumentHint !== undefined ? { argumentHint: skill.argumentHint } : {}),
+      ...(skill.model !== undefined ? { model: skill.model } : {}),
+      ...(skill.hooks !== undefined ? { hooks: skill.hooks } : {}),
+      skillInvocation: {
+        name: input.name,
+        path: skill.skillFilePath,
+        ...(skill.description !== undefined ? { description: skill.description } : {}),
+        ...(argumentsText.length > 0 ? { arguments: argumentsText } : {}),
+        ...(skill.allowedTools !== undefined ? { allowedTools: skill.allowedTools } : {}),
+        ...(skill.context !== undefined ? { context: skill.context } : {}),
+        ...(skill.agent !== undefined ? { agent: skill.agent } : {}),
+        ...(skill.argumentHint !== undefined ? { argumentHint: skill.argumentHint } : {}),
+        ...(skill.model !== undefined ? { model: skill.model } : {}),
+        ...(hookEvents !== undefined ? { hookEvents } : {}),
+        expandedContent: expanded.content,
+        runtimePolicy: { enforceAtRuntime: true },
+      },
     },
   };
 }

@@ -18,6 +18,7 @@ import {
 } from "../../interactive/autocomplete-provider.js";
 import type { Suggestion } from "../types.js";
 import type { Completion } from "../../interactive/autocomplete.js";
+import type { CommandCallbacks } from '../../commands/types.js';
 
 // ============================================================================
 // Autocomplete Context - for sharing state between InputPrompt and InkREPL
@@ -43,12 +44,14 @@ export function AutocompleteContextProvider({
   children,
   cwd,
   gitRoot,
+  listHostCommands,
 }: {
   children: ReactNode;
   cwd?: string;
   gitRoot?: string;
+  listHostCommands?: CommandCallbacks['listHostCommands'];
 }): React.ReactElement {
-  const autocomplete = useAutocomplete({ cwd, gitRoot, enabled: true });
+  const autocomplete = useAutocomplete({ cwd, gitRoot, listHostCommands, enabled: true });
 
   return (
     <AutocompleteContext.Provider value={autocomplete}>
@@ -73,6 +76,7 @@ export function useAutocompleteContext(): AutocompleteContextValue | null {
  * useAutocomplete hook 的选项
  */
 export interface UseAutocompleteOptions {
+  listHostCommands?: CommandCallbacks['listHostCommands'];
   /** Working directory for file completion - 文件补全的工作目录 */
   cwd?: string;
   /** Git root for skill discovery - 技能发现的 Git 根目录 */
@@ -179,7 +183,7 @@ export function useAutocomplete(
 function useAutocompleteImpl(
   options: UseAutocompleteOptions
 ): UseAutocompleteReturn {
-  const { cwd, gitRoot, enabled = true } = options;
+  const { cwd, gitRoot, listHostCommands, enabled = true } = options;
 
   // Create provider instance (memoized)
   // 创建提供者实例（记忆化）
@@ -187,6 +191,7 @@ function useAutocompleteImpl(
     return createAutocompleteProvider({
       cwd,
       gitRoot,
+      listHostCommands,
       debounceDelay: 100,
       minTriggerChars: 1,
       // Scroll window (SuggestionsDisplay) renders only `maxVisible` rows at a
@@ -201,8 +206,8 @@ function useAutocompleteImpl(
   // Update provider options when they change
   // 当选项变化时更新提供者
   useEffect(() => {
-    provider.updateOptions({ cwd, gitRoot });
-  }, [provider, cwd, gitRoot]);
+    provider.updateOptions({ cwd, gitRoot, listHostCommands });
+  }, [provider, cwd, gitRoot, listHostCommands]);
 
   // Local state for UI
   // UI 的本地状态

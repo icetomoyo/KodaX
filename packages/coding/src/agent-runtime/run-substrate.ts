@@ -1762,12 +1762,19 @@ export async function runSubstrate(
         resolveContextTokenCount(messages, contextTokenSnapshot),
         requestBudgetSnapshot.usedTokens,
       );
+      let compactionBudget: import('./context-budget.js').RuntimeContextBudgetSnapshot['compactionBudget'];
       const needsCompact = shouldCompact({
         messages,
         compactionConfig,
         contextWindow,
         currentTokens,
         reservedResponseTokens: physicalReserveTokens,
+        onPolicy: (policy) => {
+          compactionBudget = { triggerPercent: policy.config.triggerPercent,
+            absoluteTriggerTokens: policy.absoluteTriggerTokens, triggerTokens: policy.triggerTokens,
+            physicalCapacityTokens: policy.physicalCapacityTokens, reservedResponseTokens,
+            reservedMemoryTokens: physicalReserveTokens - reservedResponseTokens };
+        },
       });
       const compactionInput = {
         executionContext: ctx,
@@ -1887,13 +1894,13 @@ export async function runSubstrate(
         requestReservedResponseTokens = reservedResponseTokens,
       ): void => {
         if (
-          options.context?.contextDiagnostics !== true
-          || events.onContextBudgetSnapshot === undefined
+          events.onContextBudgetSnapshot === undefined
         ) {
           return;
         }
         try {
           events.onContextBudgetSnapshot({
+            compactionBudget,
             ...createRuntimeContextBudgetSnapshot({
               sessionId,
               turnId: liveTurnScopeRef.current.turnId,

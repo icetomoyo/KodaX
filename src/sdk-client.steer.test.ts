@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
-  KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
+  KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider, registerCustomProviders,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition,
+  type KodaXProviderStreamOptions, type KodaXReasoningRequest,
 } from '@kodax-ai/llm';
 import { LEARNING_REVIEW_TOOL, awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime, RUNTIME_REDIRECT_STOP_REASON } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 
 class SteerProvider extends KodaXBaseProvider {
   readonly name = 'product-steer-test';
@@ -19,8 +21,9 @@ class SteerProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_PRODUCT_STEER_TEST_KEY', model: 'product-steer-test', supportsThinking: false,
   };
-  constructor(private readonly request: (messages: KodaXMessage[]) => Promise<void>) { super(); }
-  async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+  constructor(private readonly request: (messages: KodaXMessage[], options?: KodaXProviderStreamOptions, signal?: AbortSignal) => Promise<void>) { super(); }
+  async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
     // Episode reviews are real background requests, not redirected conversation turns.
     if (tools.some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
       textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
@@ -28,7 +31,7 @@ class SteerProvider extends KodaXBaseProvider {
         input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
       }],
     };
-    await this.request(messages);
+    await this.request(messages, options, signal);
     return {
       textBlocks: [{ type: 'text', text: 'Acknowledged.' }],
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',
@@ -72,6 +75,10 @@ beforeEach(async () => {
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   first = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   second = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
+  // Declare the fixture's media route; execution still uses the offline runtime provider.
+  registerCustomProviders([{ name: 'product-steer-test', protocol: 'openai',
+    baseUrl: 'http://127.0.0.1:1', apiKeyEnv: 'KODAX_PRODUCT_STEER_TEST_KEY',
+    model: 'product-steer-test', imageInput: true }]);
 });
 
 afterEach(async () => {
@@ -81,11 +88,15 @@ afterEach(async () => {
   await runtime.close();
   await awaitLatestCodingMemoryReviewDrain(5_000);
   clearRuntimeModelProviders();
+  registerCustomProviders([]);
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-it('steers into the named active Run at a safety point and rejects invalid or late targets', async () => {
+it.each([false, true])('steers into the named active Run with image=%s at a safety point and rejects invalid or late targets', async (withImage) => {
+  const imagePath = path.join(homeDir, 'steer.png');
+  const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYz8AAAAASUVORK5CYII=';
+  if (withImage) await writeFile(imagePath, Buffer.from(imageData, 'base64'));
   const session = await first.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
@@ -93,6 +104,7 @@ it('steers into the named active Run at a safety point and rejects invalid or la
   const steer = {
     sessionId: session.id, inputId: 'steer-1', text: 'Steered guidance.',
     delivery: 'steer' as const, targetRunId: active.runId!,
+    ...(withImage ? { inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const }] } : {}),
   };
   const accepted = await first.inputs.submit(steer);
   expect(accepted).toMatchObject({ state: 'queued', runId: active.runId });
@@ -104,11 +116,68 @@ it('steers into the named active Run at a safety point and rejects invalid or la
   await runtime.runs.await(active.runId!);
   await expect.poll(async () => (await first.inputs.read(session.id, 'steer-1'))?.state).toBe('submitted');
   await expect.poll(() => requests.filter((messages) => messages
-    .some((message) => message.role === 'user' && message.content === 'Steered guidance.')).length)
+    .some((message) => message.role === 'user' && JSON.stringify(message.content).includes('Steered guidance.'))).length)
     .toBeGreaterThan(0);
+  if (withImage) {
+    const userMessages = requests.flat().filter(message => message.role === 'user');
+    expect(userMessages.some(message => Array.isArray(message.content)
+      && message.content.some(block => block.type === 'image' && block.path === imagePath))).toBe(true);
+    const transcript = await runtime.sessions.transcript(session.id);
+    expect(transcript?.messages.some(message => message.inputId === 'steer-1'
+      && Array.isArray(message.content)
+      && message.content.some(block => block.type === 'image' && block.path === imagePath))).toBe(true);
+    await expect(second.inputs.submit({ ...steer, inputArtifacts: [{ kind: 'image', path: 'changed.png' }] }))
+      .rejects.toMatchObject({ code: 'conflict' });
+  }
   // A late steer toward the finished Run is rejected without queueing new work.
   await expect(second.inputs.submit({ sessionId: session.id, inputId: 'steer-late', text: 'Too late.', delivery: 'steer', targetRunId: active.runId! })).rejects.toMatchObject({ code: 'conflict' });
   expect(await first.inputs.read(session.id, 'steer-late')).toBeNull();
+});
+
+it('retains interrupted same-Run steer output after the delivered canonical input when reopened', async () => {
+  registerCustomProviders([]);
+  clearRuntimeModelProviders();
+  let allowFirst: () => void = () => {};
+  const gate = new Promise<void>(resolve => { allowFirst = resolve; });
+  registerModelProvider('product-steer-test', () => new SteerProvider(async (messages, options, signal) => {
+    requests.push(structuredClone(messages));
+    if (requests.length === 1) { await gate; return; }
+    options?.onTextDelta?.('Partial after steer');
+    await new Promise<void>((_resolve, reject) => {
+      const abort = () => reject(new Error('Interrupted steered output'));
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
+    });
+  }));
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
+  const views: ClientSessionView[] = [];
+  const observation = await first.sessions.observe(session.id, view => views.push(view));
+  try {
+    const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+    await expect.poll(() => requests.length).toBe(1);
+    await first.inputs.submit({ sessionId: session.id, inputId: 'steered', text: 'Continue here.', delivery: 'steer', targetRunId: active.runId! });
+    allowFirst();
+    await expect.poll(() => views.at(-1)?.items.some(item => item.text === 'Partial after steer'), { timeout: 15_000 }).toBe(true);
+    await first.runs.stop(active.runId!);
+    await runtime.runs.await(active.runId!);
+    await expect.poll(() => views.at(-1)?.items.find(item => item.text === 'Partial after steer')?.afterInputId).toBe('steered');
+    const texts = views.at(-1)!.items.map(item => item.text);
+    expect(texts.indexOf('Continue here.')).toBeLessThan(texts.indexOf('Partial after steer'));
+    observation.close();
+    await Promise.all([first.disconnect(), second.disconnect()]);
+    await host.close();
+    await runtime.close();
+    const reopened = await createKodaXRuntime({ homeDir, defaultProvider: 'product-steer-test' });
+    try {
+      const restored: ClientSessionView[] = [];
+      const observing = await reopened.sessions.observeView(session.id, view => restored.push(view));
+      const items = restored.at(-1)!.items;
+      expect(items.find(item => item.text === 'Partial after steer')?.afterInputId).toBe('steered');
+      expect(items.findIndex(item => item.inputId === 'steered')).toBeLessThan(items.findIndex(item => item.text === 'Partial after steer'));
+      observing.close();
+    } finally { await reopened.close(); }
+  } finally { allowFirst(); observation.close(); }
 });
 
 it('redirect accepts the new input first, cancels the old Run, and keeps the requested follow-up', async () => {

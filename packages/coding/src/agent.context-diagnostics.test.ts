@@ -75,7 +75,7 @@ describe('runKodaX context diagnostics', () => {
     delete process.env[TEST_PROVIDER_API_KEY_ENV];
   });
 
-  it('does not compute or emit budget diagnostics unless explicitly enabled', async () => {
+  it('reports execution budget without enabling optional exposure diagnostics', async () => {
     const budgets: RuntimeContextBudgetSnapshot[] = [];
     const exposures: RuntimeToolExposurePlan[] = [];
 
@@ -93,7 +93,8 @@ describe('runKodaX context diagnostics', () => {
       'hello',
     );
 
-    expect(budgets).toEqual([]);
+    expect(budgets).toHaveLength(1);
+    expect(budgets[0]?.compactionBudget).toMatchObject({ reservedMemoryTokens: 3200 });
     expect(exposures).toEqual([]);
   });
 

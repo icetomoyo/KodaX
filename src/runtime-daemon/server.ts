@@ -247,8 +247,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "memory.readRef",
 
     // Review preparation can write workflow packets and requires session:write.
-    "invocations.prepareSkill",
     "invocations.prepareCommand",
+    "invocations.readCommandPrompt",
     "invocations.prepareAgentsLean",
     "artifact.get",
   ]),
@@ -281,6 +281,10 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.lineage.label",
   ]),
   ...scopeEntries("run:control", [
+    "invocations.executeCommand",
+    "invocations.startReview",
+    "invocations.startAgentsLean",
+    "invocations.prepareSkill",
     "input.submit",
     "input.withdraw",
     "run.start",
@@ -666,7 +670,10 @@ export function createRuntimeDaemonDispatcher(
       const inFlight = {
         controller: requestController,
         subscriptionIds: new Set<string>(),
-        cancellable: !isRuntimeDaemonDrainingSensitiveMethod(request.method),
+        // Preparation is an executing mutation, but its shell work consumes
+        // this signal. Unlike a read race, the request still awaits cleanup.
+        cancellable: !isRuntimeDaemonDrainingSensitiveMethod(request.method)
+          || request.method === 'invocations.prepareSkill',
         completed: false,
       };
       inFlightRequests.set(request.id, inFlight);
@@ -977,6 +984,7 @@ async function dispatchRuntimeDaemonRequest(
           options.management !== undefined,
           options.orphanExitEnabled === true,
           runtimeImplementsEventCoalescing(runtime),
+          runtime.capabilities?.productClient,
         ),
         principalId,
         grantedScopes: [
@@ -1030,6 +1038,7 @@ async function dispatchRuntimeDaemonRequest(
         options.management !== undefined,
         options.orphanExitEnabled === true,
         runtimeImplementsEventCoalescing(runtime),
+        runtime.capabilities?.productClient,
       );
     case "config.read":
       return options.config
@@ -1208,6 +1217,29 @@ async function dispatchRuntimeDaemonRequest(
         ...(typeof params.sessionId === "string"
           ? { sessionId: params.sessionId }
           : {}),
+      }, { signal: requestSignal });
+    }
+    case "invocations.readCommandPrompt": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.readCommandPrompt({ sessionId: requireStringField(params, 'sessionId'),
+        name: requireStringField(params, 'name'),
+        ...(params.args !== undefined ? { args: requireStringArrayField(params, 'args') } : {}) });
+    }
+    case "invocations.startReview": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.startReview({ sessionId: requireStringField(params, 'sessionId'), inputId: requireStringField(params, 'inputId'),
+        ...(params.args !== undefined ? { args: requireStringArrayField(params, 'args') } : {}) });
+    }
+    case "invocations.startAgentsLean": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.startAgentsLean({ sessionId: requireStringField(params, 'sessionId'), inputId: requireStringField(params, 'inputId') });
+    }
+    case "invocations.executeCommand": {
+      const params = requireRecord(request.params);
+      return runtime.invocations.executeCommand({
+        sessionId: requireStringField(params, 'sessionId'), inputId: requireStringField(params, 'inputId'),
+        name: requireStringField(params, 'name'),
+        ...(params.args !== undefined ? { args: requireStringArrayField(params, 'args') } : {}),
       });
     }
     case "invocations.prepareCommand": {
@@ -1523,7 +1555,9 @@ async function dispatchRuntimeDaemonRequest(
       const observation = await runtime.sessions.observeView(sessionId, (view) => {
         if (first === undefined) first = view;
         else options.notify?.(createRuntimeDaemonNotification('session.view', { subscriptionId, view }));
-      });
+      }, { onStatus: (status) => {
+        options.notify?.(createRuntimeDaemonNotification('session.view', { subscriptionId, status }));
+      } });
       if (requestSignal.aborted) {
         observation.close();
         throw daemonError('read_cancelled', 'Session observation was cancelled.');
@@ -2267,7 +2301,7 @@ async function bindTrustedRunInput(input: {
           ...transportOptions,
           context: Object.fromEntries(
             Object.entries(transportContext).filter(
-              ([key]) => key !== "configHome" && key !== "memoryIdentity",
+              ([key]) => key !== "configHome" && key !== "memoryIdentity" && key !== "commandInvocation",
             ),
           ),
         };
@@ -2364,6 +2398,7 @@ function runtimeDaemonCapabilities(
   daemonManagement = false,
   orphanExitEnabled = false,
   runtimeEventCoalescing = false,
+  productClient?: unknown,
 ): Record<string, unknown> {
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
@@ -2382,6 +2417,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sharedSessionSettings;
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
+  delete safeOverrides.productClient;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
   return {
     events: true,
@@ -2401,6 +2437,8 @@ function runtimeDaemonCapabilities(
     // dispatches; clients gate on this fact instead of RPC'ing methods an
     // older Host would reject with an unsettled id-less invalid_frame.
     invocationPreparation: { version: 1 },
+    ...(isRecord(productClient) && productClient.version === 1
+      ? { productClient: { version: 1 } } : {}),
     memoryManagement: { version: 1 },
     sandboxRuntime: sandboxRuntimeCapability(),
     managedRunDurability: {

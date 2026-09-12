@@ -223,8 +223,9 @@ export function createRuntimeReviewPreparationService(
       let content: string;
       try {
         content = await readFile(agentsPath, "utf8");
-      } catch {
-        return { kind: "missing" };
+      } catch (error: unknown) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return { kind: "missing" };
+        throw error;
       }
       return {
         kind: "prepared",

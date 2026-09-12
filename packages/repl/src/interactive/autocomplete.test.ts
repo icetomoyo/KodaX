@@ -13,6 +13,7 @@ import {
 import { SkillCompleter } from './completers/skill-completer.js';
 import { getRecentWorkingSetFiles } from './recent-files.js';
 import { getCommandRegistry } from './commands.js';
+import { createAutocompleteProvider } from './autocomplete-provider.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -22,6 +23,19 @@ afterEach(() => {
 
 describe('CommandCompleter boundaries', () => {
   const completer = new CommandCompleter();
+
+  it('completes Host-only names and aliases through Ink and readline without a local runtime', async () => {
+    setActiveExtensionRuntime(null);
+    const listHostCommands = vi.fn(async () => [{ name: 'remote-note', aliases: ['rnote'],
+      description: 'Remote notes', source: 'extension' }]);
+    const provider = createAutocompleteProvider({ gitRoot: '/workspace', listHostCommands });
+    expect((await provider.fetchImmediate('/remote', 7)).map((item) => item.text)).toContain('/remote-note');
+    expect((await provider.fetchImmediate('/rnote', 6)).map((item) => item.text)).toContain('/rnote');
+    const readline = createCompleter('/workspace', listHostCommands);
+    expect((await readline('/rnote'))[0]).toContain('/rnote');
+    expect(listHostCommands).toHaveBeenCalledWith('/workspace');
+    provider.cancel();
+  });
 
   it('triggers at line start and after whitespace', () => {
     expect(completer.canComplete('/help', 5)).toBe(true);

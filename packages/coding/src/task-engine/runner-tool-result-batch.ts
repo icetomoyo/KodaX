@@ -7,6 +7,7 @@ import type {
 import type { KodaXMessage, KodaXToolResultBlock } from '@kodax-ai/llm';
 
 import { estimateTokens } from '../tokenizer.js';
+import { isCancelledToolResultContent } from '../agent-runtime/tool-result-classify.js';
 import { resolveContextTokenCount } from '../token-accounting.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type { ContextTokenSnapshotRef } from './_internal/managed-task/compaction.js';
@@ -111,7 +112,12 @@ function mergeGuardedResults(
   options: RunnerToolResultBatchTransformOptions,
 ): RunnerToolResult[] {
   const guardedById = new Map(guardedEntries.map((entry) => [entry.id, entry]));
-  return batch.results.map((result, index): RunnerToolResult => {
+  return batch.results.map((original, index): RunnerToolResult => {
+    // Coding cancellation envelopes predate typed Runner outcomes. Normalize
+    // once before emitting the result and committing that same result to history.
+    const result = original.metadata?.cancelled === undefined && original.isError === true
+      && isCancelledToolResultContent(original.content)
+      ? { ...original, metadata: { ...original.metadata, cancelled: true } } : original;
     const guarded = guardedById.get(batch.calls[index]!.id);
     const content = guarded?.content ?? result.content;
     if (content === result.content) return result;

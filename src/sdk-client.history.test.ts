@@ -12,6 +12,31 @@ import { createKodaXRuntime } from './sdk-runtime.js';
 import { createCliClientPlane } from './cli-client-plane.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+
+it('projects the actual request compaction capacity including Memory reserve without enabling diagnostics', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const views: ClientSessionView[] = [];
+  const observation = await client.sessions.observe(session.id, view => views.push(view));
+  try {
+    await runRound(session.id, 1);
+    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(3200);
+    const budget = views.at(-1)!.activity!.contextBudget!;
+    expect(budget).toMatchObject({ scope: 'parent', provider: 'product-history-page-test', compaction: {
+      enabled: true, triggerPercent: 75, triggerTokens: expect.any(Number), physicalCapacityTokens: expect.any(Number),
+    } });
+    expect(budget.compaction.physicalCapacityTokens).toBeLessThan(budget.contextWindow - budget.reservedResponseTokens - 3200);
+    const worker = await runtime.runs.start({ sessionId: session.id, prompt: 'Worker request', options: {
+      agentMode: 'sa', context: { currentAgentId: '/root/scout', parentAgentId: '/root' },
+    } });
+    await worker.result;
+    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.scope).toBe('worker');
+    expect(views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(0);
+    expect(views.at(-1)?.activity?.contextBudget?.compaction.physicalCapacityTokens)
+      .toBeGreaterThan(budget.compaction.physicalCapacityTokens!);
+  } finally { observation.close(); }
+}, 30_000);
 
 const ROUNDS = 6;
 // One oversized assistant reply must stay above the Host's 128 KiB inline
@@ -59,6 +84,8 @@ let reconnect: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
 
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-history-'));
+  vi.stubEnv('KODAX_HOME', path.join(homeDir, '.kodax'));
+  vi.stubEnv('KODAX_MAX_OUTPUT_TOKENS', '10000');
   registerModelProvider('product-history-page-test', () => new HistoryProvider(() => undefined));
   vi.stubEnv('KODAX_PRODUCT_HISTORY_PAGE_TEST_KEY', 'test-only');
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-history-page-test' });
@@ -214,7 +241,7 @@ it('pages older history with stable ids, copyable bodies, and oversized entry re
   expect(toolInput).not.toBeNull();
   expect(toolInput!.text).toContain('"command"');
   expect(toolInput!.text).toContain('echo tool-round-ok');
-  const plane = createCliClientPlane(runtime);
+  const plane = createCliClientPlane(client);
   let liveToolId: string | undefined;
   const stopObserving = await plane.observe(session.id, view => {
     liveToolId = view.items.find(item => item.tool?.callId === 'call-history-tool')?.id;
@@ -245,4 +272,6 @@ it('marks old cursors stale after history changes and searches the whole history
   expect(search.hits.length).toBeGreaterThanOrEqual(1);
   expect(search.hits[0]!.snippet).toContain('FACT-4 acknowledged.');
   expect(typeof search.hits[0]!.entryIndex).toBe('number');
+  expect(await client.sessions.readHistoryEntry(session.id, search.hits[0]!.itemId))
+    .toMatchObject({ text: 'FACT-4 acknowledged.' });
 }, 60_000);

@@ -24,7 +24,7 @@ export interface EnsureKodaXClientOptions extends Omit<ConnectKodaXClientOptions
 
 /** Local launcher. All business operations use the same product Client as passive connections. */
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
-  return toKodaXProductClient(await ensureKodaXRuntime(options));
+  return toKodaXProductClient(await ensureKodaXRuntime({ ...options, requirements: { productClient: 1 } }));
 }
 
 /** Connect to an existing compatible Host without starting or replacing one. */
@@ -38,6 +38,7 @@ export async function connectKodaXClient(
     daemonToken: options.token,
     autoStart: false,
     clientInfo: options.clientInfo,
+    requirements: { productClient: 1 },
   });
   return toKodaXProductClient(runtime);
 }

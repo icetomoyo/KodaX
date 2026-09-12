@@ -20,10 +20,14 @@ import { executeShellCommand } from '../ui/utils/shell-executor.js';
 import type { CurrentConfig } from './commands.js';
 
 export function getPrompt(mode: string, config: CurrentConfig): string {
+  if (config.hostSettings) mode = config.hostSettings.permissionMode ?? 'Host default';
   const theme = getCurrentTheme();
   const modeColor = mode === 'plan' ? chalk.hex(theme.colors.warning) : chalk.hex(theme.colors.success);
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
-  const reasoningEffortLabel = formatReasoningEffortStatusLabel({
+  const reasoningEffortLabel = config.hostSettings
+    ? config.hostSettings.effort ?? config.hostSettings.reasoningMode
+      ?? (config.hostSettings.thinking === undefined ? 'Host default' : config.hostSettings.thinking ? 'on' : 'off')
+    : formatReasoningEffortStatusLabel({
     provider: config.provider,
     model: config.model,
     effort: resolvePermissionModeEffort(config),

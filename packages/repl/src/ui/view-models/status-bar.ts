@@ -95,11 +95,12 @@ function getContextColor(
   triggerPercent: number,
   reservedResponseTokens?: number,
   triggerTokens?: number,
+  effectiveTriggerTokens?: number,
 ): string {
   if (contextWindow === 0) {
     return "green";
   }
-  const compactionThreshold = resolveCompactionThresholdTokens(
+  const compactionThreshold = effectiveTriggerTokens ?? resolveCompactionThresholdTokens(
     contextWindow,
     triggerPercent,
     reservedResponseTokens,
@@ -395,8 +396,8 @@ function formatLabeledIterationStatus(
 function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
   const {
     sessionId,
-    permissionMode,
-    agentMode,
+    permissionMode: localPermissionMode,
+    agentMode: localAgentMode,
     provider,
     model,
     tokenUsage,
@@ -414,6 +415,7 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     currentIteration,
     maxIter,
     contextUsage,
+    contextTokens,
     learning,
     showBusyStatus = true,
     managedPhase,
@@ -426,22 +428,26 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     managedIdleWaiting,
     managedIdleWaitingPendingCount,
   } = props;
+  const permissionMode = props.hostSettings ? props.hostSettings.permissionMode : localPermissionMode;
+  const agentMode = props.hostSettings ? props.hostSettings.agentMode : localAgentMode;
 
   const segments: StatusBarSegment[] = [
     {
       id: "agent-mode",
-      text: `KodaX - ${agentMode.toUpperCase()}`,
+      text: `KodaX - ${agentMode?.toUpperCase() ?? 'Host default'}`,
       color: "primary",
       bold: true,
     },
     {
       id: "permission-mode",
-      text: buildPermissionModeText(permissionMode),
-      color: getPermissionModeColor(permissionMode),
+      text: permissionMode === undefined ? 'Host default' : buildPermissionModeText(permissionMode),
+      color: permissionMode === undefined ? 'dim' : getPermissionModeColor(permissionMode),
     },
   ];
 
-  const reasoningText = reasoningEffortLabel
+  const reasoningText = props.hostSettings ? formatEffortShort(props.hostSettings.effort)
+    ?? (props.hostSettings.reasoningMode !== undefined ? formatReasoningModeShort(props.hostSettings.reasoningMode)
+      : props.hostSettings.thinking === undefined ? 'Host default' : props.hostSettings.thinking ? 'on' : 'off') : reasoningEffortLabel
     ?? formatEffortShort(effort)
     ?? formatReasoningModeShort(reasoningMode);
   segments.push({
@@ -450,7 +456,7 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     color: getReasoningColor(reasoningText),
   });
 
-  const iterationSegments = resolveIterationSegments({
+  const iterationSegments = agentMode === undefined ? [] : resolveIterationSegments({
     agentMode,
     managedPhase,
     managedHarnessProfile,
@@ -522,14 +528,19 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     segments.push({
       id: "context-usage",
       text: `${currentStr}/${windowStr} ${progressBar} ${percent}%`,
-      color: getContextColor(
+      color: contextUsage.hostBudget && contextUsage.effectiveTriggerTokens === undefined ? 'dim' : getContextColor(
         contextUsage.currentTokens,
         contextUsage.contextWindow,
         contextUsage.triggerPercent,
         contextUsage.reservedResponseTokens,
         contextUsage.triggerTokens,
+        contextUsage.effectiveTriggerTokens,
       ),
     });
+  }
+
+  if (contextTokens) {
+    segments.push({ id: 'context-quantity', text: `${contextTokens.scope} ctx ${formatTokenCount(contextTokens.currentTokens)}`, color: 'dim' });
   }
 
   if (learning && (learning.ready > 0 || learning.newlyActive > 0 || learning.attention > 0)) {

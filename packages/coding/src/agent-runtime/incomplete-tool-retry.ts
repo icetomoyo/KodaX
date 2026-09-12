@@ -221,11 +221,12 @@ export async function checkAndRetryIncompleteTools(
       name: tc.name,
       content: errorMsg,
     });
+    const toolResult = createToolResultBlock(tc.id, errorMsg);
     input.events.onToolResult?.(
-      { id: tc.id, name: tc.name, content: errorMsg },
+      { id: tc.id, name: tc.name, content: errorMsg, toolResult },
       createToolEventMeta(input.events, tc.id),
     );
-    errorResults.push(createToolResultBlock(tc.id, errorMsg));
+    errorResults.push(toolResult);
   }
   if (errorResults.length === 0) {
     // Hidden-only turn (e.g. the incomplete tool was an invisible todo_update /
