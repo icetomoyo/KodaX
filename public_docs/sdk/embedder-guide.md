@@ -6754,6 +6754,13 @@ of Session history write locks. An incomplete delivery retains a request-specifi
 queue fence until the same request is repaired. Other successful requests cannot
 release that fence.
 
+A first request bound to an already terminal `expectedRunId` is rejected with
+`code: 'conflict'`, `denialSource: 'stale_run'` and `retryable: false`, before
+publishing a new Stop frontier. This check is atomic inside the Runtime; a
+client-side status check is unnecessary. Already accepted requests remain
+replayable after their Run ends, including after Runtime restart. Do not replace
+a stale request's target with a later Run unless the user requests a new Stop.
+
 `accepted` means a first durable cancellation request. A duplicate has
 `accepted: false` without being denied. `state: 'unknown'` means cleanup has not
 been confirmed. Await the Run result or observe Run lifecycle events for the

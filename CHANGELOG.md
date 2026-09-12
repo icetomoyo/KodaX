@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject first `sessions.cancel` requests bound to a terminal Run before
+  publishing a cancellation frontier, preventing delayed requests from stopping
+  successor Runs. Accepted requests retain normal and post-restart replay.
+
 ---
 
 ## [0.7.96-rc.1] - 2026-09-12

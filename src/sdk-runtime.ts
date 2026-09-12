@@ -2185,6 +2185,7 @@ export interface RuntimeRunStopReceipt {
 
 export interface RuntimeSessionCancelInput {
   readonly sessionId: string;
+  /** Must be nonterminal for a first request; accepted requests remain replayable after settlement. */
   readonly expectedRunId: string;
   readonly requestId: string;
 }
@@ -10700,6 +10701,11 @@ function createRuntimeRunService(deps: {
     return withRuntimeStatusFileLock(file, () => {
       const raced = readRuntimeSessionStopRecord(file);
       if (raced !== undefined) { assertSessionStopBinding(raced, input); return raced; }
+      // Check after admission's await, in the synchronous request publication
+      // section. An old Run must not authorize a new frontier after settlement.
+      if (isTerminalRunPhase(expected.phase)) {
+        throw sessionStopConflict("Expected Run has already terminated", "stale_run");
+      }
       writeRuntimeJsonAtomic(file, record);
       return record;
     });

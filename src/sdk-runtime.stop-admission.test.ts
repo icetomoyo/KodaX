@@ -19,9 +19,10 @@ async function fixture(sharedDaemonHost: boolean) {
   const providerName = 'runtime-stop-admission-provider';
   let entered!: () => void;
   let release!: () => void;
+  let releaseNext: (() => void) | undefined;
   let signal: AbortSignal | undefined;
   const started = new Promise<void>((resolve) => { entered = resolve; });
-  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let gate = new Promise<void>((resolve) => { release = resolve; });
   class StopProvider extends KodaXBaseProvider {
     readonly name = providerName;
     readonly supportsThinking = false;
@@ -48,6 +49,11 @@ async function fixture(sharedDaemonHost: boolean) {
   const key = createHash('sha256').update(session.id, 'utf8').digest('hex');
   const lock = path.join(sessionsDir, '.write-locks', `${key}.lock`);
   return { root, sessionsDir, runtime, session, run, release, signal: () => signal,
+    pauseNextRun() {
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      gate = new Promise<void>((resolve) => { releaseNext = resolve; });
+      return { started, release: () => releaseNext?.() };
+    },
     async hold() {
       await mkdir(path.dirname(lock), { recursive: true });
       await writeFile(lock, `${process.pid} stop-admission-test\n`, { flag: 'wx' });
@@ -56,6 +62,7 @@ async function fixture(sharedDaemonHost: boolean) {
     async close() {
       await rm(lock, { force: true });
       release();
+      releaseNext?.();
       await run.result;
       await runtime.close();
       unregister();
@@ -87,6 +94,35 @@ it.each([false, true])('accepts and repeats Stop under a real Session write lock
   } finally { await f.close(); }
 });
 
+it.each([false, true])('rejects an unaccepted Stop bound to a completed Run without stopping its successor (shared=%s)', async (shared) => {
+  const f = await fixture(shared);
+  let later: Awaited<ReturnType<typeof f.runtime.runs.start>> | undefined;
+  try {
+    const input = { sessionId: f.session.id, expectedRunId: f.run.runId, requestId: 'lost-before-admission' };
+    // The first transport attempt never arrived, so this request has no receipt.
+    f.release();
+    await expect(f.run.result).resolves.toMatchObject({ phase: 'completed' });
+    const next = f.pauseNextRun();
+    later = await f.runtime.runs.start({ sessionId: f.session.id, prompt: 'later explicit input',
+      mode: 'managed_task', options: { model: 'stop-test', lsp: false } });
+    await next.started;
+    const queued = await f.runtime.runs.start({ sessionId: f.session.id, prompt: 'later queued input',
+      mode: 'managed_task', options: { model: 'stop-test', lsp: false } });
+    await f.hold();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(f.runtime.sessions.cancel(input)).rejects.toMatchObject({
+        code: 'conflict', denialSource: 'stale_run', retryable: false,
+      });
+    }
+    expect(f.signal()?.aborted).toBe(false);
+    await expect(f.runtime.runs.get(queued.runId)).resolves.toMatchObject({ phase: 'queued' });
+    await f.unlock();
+    next.release();
+    await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
+    await expect(queued.result).resolves.toMatchObject({ phase: 'completed' });
+  } finally { await f.close(); await later?.result; }
+});
+
 it('retains natural completion when Stop loses the terminal race under a real write lock', async () => {
   const f = await fixture(true);
   try {
@@ -98,6 +134,27 @@ it('retains natural completion when Stop loses the terminal race under a real wr
       accepted: false, state: 'confirmed', outcome: 'completed', phase: 'completed',
     });
     expect(f.signal()?.aborted).toBe(false);
+  } finally { await f.close(); }
+});
+
+it('rejects a first Session Stop when its queued target terminates during admission', async () => {
+  const f = await fixture(true);
+  try {
+    const target = await f.runtime.runs.start({ sessionId: f.session.id, prompt: 'queued target',
+      mode: 'managed_task', options: { model: 'stop-test', lsp: false } });
+    // Start Session Stop first; the single-Run abort settles its target while
+    // Session Stop yields for the admitted identity check.
+    const stopped = expect(f.runtime.sessions.cancel({ sessionId: f.session.id,
+      expectedRunId: target.runId, requestId: 'terminal-during-admission' }))
+      .rejects.toMatchObject({ code: 'conflict', denialSource: 'stale_run' });
+    await expect(f.runtime.runs.abort(target.runId)).resolves.toMatchObject({
+      accepted: true, state: 'confirmed', phase: 'cancelled',
+    });
+    await stopped;
+    await expect(target.result).resolves.toMatchObject({ phase: 'cancelled' });
+    expect(f.signal()?.aborted).toBe(false);
+    f.release();
+    await expect(f.run.result).resolves.toMatchObject({ phase: 'completed' });
   } finally { await f.close(); }
 });
 
@@ -228,6 +285,21 @@ it('accepts locked Session Stop over a real socket and replays its frontier afte
     await f.unlock();
     f.release();
     await f.run.result;
+    const next = f.pauseNextRun();
+    const later = await f.runtime.runs.start({ sessionId: f.session.id, prompt: 'after accepted Stop settled',
+      mode: 'managed_task', options: { model: 'stop-test', lsp: false } });
+    await next.started;
+    await f.hold();
+    await expect(client.sessions.cancel(input)).resolves.toMatchObject({ frontier: receipt.frontier,
+      receipts: [expect.objectContaining({ runId: f.run.runId, accepted: false, outcome: 'interrupted' })] });
+    await expect(client.sessions.cancel({ ...input, requestId: 'unaccepted-after-settlement' }))
+      .rejects.toMatchObject({ code: 'conflict', data: {
+        denialSource: 'stale_run', retryable: false, operation: 'sessions.cancel',
+      } });
+    expect(f.signal()?.aborted).toBe(false);
+    await f.unlock();
+    next.release();
+    await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
     await f.runtime.close();
     const restarted = await createKodaXRuntime({ homeDir: f.root, sessionsDir: f.sessionsDir, sharedDaemonHost: true });
     try {

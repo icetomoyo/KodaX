@@ -53,6 +53,10 @@ OS; Windows execution does not prove Unix handle/CAS behavior.
    it must remain available. Repeat Stop with the original request ID.
 3. Try a client with observe-only scope and a mismatched expected Run. Verify a
    structured scope/binding rejection and that no cancellation was delivered.
+   Let Run A finish, start B and queue C, then send a previously unaccepted Stop
+   request bound to A. Expect `conflict` / `stale_run`; B and C must finish
+   normally. Repeating an already accepted Stop after A ends must still replay
+   its original frontier, including over the daemon and after Runtime restart.
 4. In Full Access with no custom policy, use a temporary file and
    `Remove-Item -LiteralPath <temporary-file> -Force`. Repeat via `!command`.
    Add a matching explicit forbidden rule, start a fresh Run, and verify both
