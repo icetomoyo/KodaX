@@ -784,6 +784,13 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.2 release:** Second release candidate of the v0.7.96 line. A
+first Session Stop request bound to an already terminal `expectedRunId` is
+rejected atomically before a new Stop frontier is published — typed
+`code: 'conflict'`, `denialSource: 'stale_run'`, `retryable: false` — so a
+delayed request cannot stop successor Runs. Already accepted requests stay
+replayable, including after Runtime restart. Every rc.1 contract is retained.
+
 **v0.7.96-rc.1 release:** First release candidate of the v0.7.96 line.
 Unifies trusted text authority across Runtime Sessions and direct SDK
 entries: Full Access reaches native text transactions through `runKodaX`,
@@ -871,7 +878,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc1-release-preparation).
+[release checklist](docs/release.md#v0796-rc2-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

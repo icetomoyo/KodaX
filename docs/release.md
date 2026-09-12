@@ -137,9 +137,53 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.2 release preparation
+
+Release state: `v0.7.96-rc.2` is the GitHub pre-release for the exact
+tagged commit — the second release candidate of the v0.7.96 line, closing
+the stale first Session Stop gap. The tag-triggered Release workflow builds
+every platform archive and the universal npm tarball, publishes checksums,
+and creates the GitHub pre-release. npm registry publication remains a
+separate manual maintainer action.
+
+On top of rc.1 it includes:
+
+- A first `sessions.cancel` request whose `expectedRunId` binding is already
+  terminal is rejected atomically inside the Runtime before a new Stop
+  frontier is published — typed `code: 'conflict'`, `denialSource:
+  'stale_run'`, `retryable: false` — so delayed requests cannot stop
+  successor Runs. Accepted request replay, partial-delivery recovery, and
+  restart replay are preserved.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.2`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, trusted-text permission regressions (`src/trusted-coding-permissions.test.ts`,
+   `src/trusted-coding-entry.test.ts`), bundled text permissions
+   (`tests/bundled-text-permissions.test.mjs`), FEATURE_299
+   stop-admission/extension/text-transaction regressions
+   (including `src/sdk-runtime.stop-admission.test.ts`), and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.2`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.1 release preparation
 
-Release state: `v0.7.96-rc.1` is the GitHub pre-release for the exact
+Release state: `v0.7.96-rc.1` was the GitHub pre-release for the exact
 tagged commit — the first release candidate of the v0.7.96 line, unifying
 trusted text authority across Runtime Sessions and direct SDK entries. The
 tag-triggered Release workflow builds every platform archive and the

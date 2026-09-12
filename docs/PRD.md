@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.1`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.2`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,12 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.1 release carries FEATURE_297 and FEATURE_299 and unifies
-trusted text authority across Runtime Sessions and direct SDK entries: Full
+The v0.7.96-rc.2 release carries FEATURE_297 and FEATURE_299, unifies
+trusted text authority across Runtime Sessions and direct SDK entries, and
+rejects a first Stop request bound to an already terminal Run atomically
+before publishing a new Stop frontier, so delayed requests cannot stop
+successor Runs while accepted requests retain normal and post-restart replay.
+The rc.1 trusted text authority contracts hold: Full
 Access reaches native text transactions through `runKodaX`, `runManagedTask`,
 and each `KodaXClient.send`; auto-approved concrete text calls write their
 exact external target, including portable `tool_call` dispatch, without

@@ -4,6 +4,14 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.2 release addendum:** The FEATURE_299 Stop contract is
+> tightened: a first `sessions.cancel` request whose `expectedRunId` binding
+> is already terminal is rejected atomically inside the Runtime before a new
+> Stop frontier is published (`code: 'conflict'`, `denialSource:
+> 'stale_run'`, `retryable: false`). Accepted request replay, partial-delivery
+> recovery, and restart replay are unchanged; no client-side status check and
+> no new lock surface are introduced.
+>
 > **v0.7.96-rc.1 release addendum:** Under ADR-066's separate-authority model,
 > trusted text authority now behaves identically for Runtime Sessions and
 > direct SDK entries: Full Access reaches native text transactions through

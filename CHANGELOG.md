@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.2] - 2026-09-12
+
+Second release candidate of the v0.7.96 line: a stale first Session Stop
+request bound to an already terminal Run is rejected atomically before a new
+Stop frontier is published. Every rc.1 contract is retained. npm publication
+remains a manual maintainer action.
+
 ### Fixed
 
 - Reject first `sessions.cancel` requests bound to a terminal Run before

@@ -206,6 +206,19 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-rc.2 Release Corrections
+
+The rc.2 correction closes the stale first-Stop gap left by beta.9's unified
+Stop contract: a first `sessions.cancel` request whose `expectedRunId` binding
+is already terminal could previously publish a new Stop frontier and stop a
+successor Run. The rejection is now atomic inside the Runtime — typed
+`code: 'conflict'`, `denialSource: 'stale_run'`, `retryable: false` — so no
+client-side status check is needed. Accepted request replay, partial-delivery
+recovery, and restart replay are preserved; a stale request's target is never
+silently retargeted to a later Run. See
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md` for the successor
+protection, admission-race, and daemon regression coverage.
+
 ## v0.7.96-rc.1 Release Corrections
 
 The rc.1 corrections close the trusted-text authority gap between Runtime
