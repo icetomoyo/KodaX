@@ -42,6 +42,12 @@ function makeProps(overrides: Partial<TranscriptRowRendererProps> = {}): Transcr
 }
 
 describe("areTranscriptRowPropsEqual", () => {
+  it('invalidates a reused summary header when its original member identities change', () => {
+    const first = makeProps();
+    const oldHeader = { ...first.row, itemIds: ['first', 'middle', 'last'] };
+    const newHeader = { ...first.row, itemIds: ['first', 'replacement', 'last'] };
+    expect(areTranscriptRowPropsEqual({ ...first, row: oldHeader }, { ...first, row: newHeader })).toBe(false);
+  });
   it("returns true for same reference rows", () => {
     const props = makeProps();
     expect(areTranscriptRowPropsEqual(props, props)).toBe(true);

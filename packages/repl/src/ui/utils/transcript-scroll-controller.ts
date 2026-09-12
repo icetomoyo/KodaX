@@ -252,18 +252,22 @@ export function isTranscriptItemVisible(
     showDetailedTools,
     expandedItemKeys,
   );
-  const targetSection = sections.find((section) => section.key === itemId);
+  const targetSection = sections.find((section) => section.key === itemId || section.itemIds?.includes(itemId));
   if (!targetSection || targetSection.rows.length === 0) {
     return false;
   }
 
+  const targetRows = targetSection.itemIds
+    ? targetSection.rows.filter(row => row.itemIds?.includes(itemId))
+    : targetSection.rows;
+  if (targetRows.length === 0) return false;
   const visibleKeys = new Set(visibleRows.map((row) => row.key));
   const normalizedViewportRows = Math.max(0, viewportRows ?? 0);
-  if (normalizedViewportRows > 0 && targetSection.rows.length <= normalizedViewportRows) {
-    return targetSection.rows.every((row) => visibleKeys.has(row.key));
+  if (normalizedViewportRows > 0 && targetRows.length <= normalizedViewportRows) {
+    return targetRows.every((row) => visibleKeys.has(row.key));
   }
 
-  return visibleKeys.has(targetSection.rows[0]?.key ?? "");
+  return visibleKeys.has(targetRows[0]?.key ?? "");
 }
 
 export function resolveTranscriptSelectionOffset(

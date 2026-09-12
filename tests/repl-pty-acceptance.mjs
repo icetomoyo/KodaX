@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { connectKodaXClient } from '../dist/sdk-client.js';
 
@@ -21,6 +21,9 @@ catch (error) { throw new Error('PTY screen checks require @xterm/addon-unicode1
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = await mkdtemp(path.join(os.tmpdir(), 'kodax-repl-acceptance-'));
 const results = [];
+const sourceEntry = process.argv.includes('--source');
+const longHistoryOnly = process.argv.includes('--long-history-only');
+const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -38,7 +41,10 @@ function openTerminal(homeDir, mode, extraArgs = []) {
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = '11';
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'NO_COLOR'));
-  const child = pty.spawn(process.execPath, [path.join(repo, 'scripts/kodax-bin.cjs'),
+  const bootstrap = sourceEntry ? ['--max-old-space-size=4096', '--require', path.join(repo, 'scripts/production-env.cjs'),
+    '--import', pathToFileURL(path.join(repo, 'node_modules/tsx/dist/loader.mjs')).href,
+    path.join(repo, 'src/kodax_bootstrap.ts')] : [path.join(repo, 'scripts/kodax-bin.cjs')];
+  const child = pty.spawn(process.execPath, [...bootstrap,
     '--provider', 'acceptance-local', '--model', 'acceptance-model', '--effort', 'off',
     '--agent-mode', 'sa', '--max-iter', '7', ...extraArgs], {
     name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
@@ -101,6 +107,23 @@ async function respondToModelRequest(state, request, response) {
   state.requests.push(data);
   const token = lastUserText(data.messages).match(/^(?:\/ah-run\s+)?(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
   response.writeHead(200, { 'content-type': 'text/event-stream' });
+  if ((token === 'ACCEPT_ARCHIVE_EARLY' || token.startsWith('ACCEPT_ARCHIVE_FILL_'))
+    && data.messages.at(-1).role !== 'tool') {
+    response.write(`data: ${JSON.stringify({ id: token, object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { reasoning_content: `THINKING_${token}` }, finish_reason: null }],
+    })}\n\n`);
+    const calls = token === 'ACCEPT_ARCHIVE_EARLY'
+      ? [1, 2].map(index => ({ name: 'bash', input: { command: `echo ACCEPT_OLD_BASH_${index}`,
+        description: `Archive Bash ${index}` } }))
+      : Array.from({ length: 3 }, (_, index) => ({ name: 'read',
+        input: { path: path.join(state.homeDir, `archive-${(token.at(-1).charCodeAt(0) - 65) * 3 + index}.txt`) } }));
+    response.end(`data: ${JSON.stringify({ id: token, object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { tool_calls: calls.map((call, index) => ({ index,
+        id: `${token}-${index}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) },
+      })) }, finish_reason: 'tool_calls' }],
+    })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   if (token === 'ACCEPT_QUESTION' && data.messages.at(-1).role !== 'tool') {
     respondWithQuestion(response);
     return;
@@ -118,6 +141,16 @@ async function respondToModelRequest(state, request, response) {
     id: 'acceptance', object: 'chat.completion.chunk',
     choices: [{ index: 0, delta: { content }, finish_reason: null }],
   })}\n\n`);
+  if (token === 'ACCEPT_BOUNDARY_HOLD' && data.messages.at(-1).role !== 'tool') {
+    send('BEGIN_ACCEPT_BOUNDARY_HOLD');
+    state.pending.set('boundary-tool', () => response.end(`data: ${JSON.stringify({
+      id: 'acceptance-boundary', object: 'chat.completion.chunk', choices: [{ index: 0,
+        delta: { tool_calls: [{ index: 0, id: 'acceptance-boundary-read', type: 'function',
+          function: { name: 'read', arguments: JSON.stringify({ path: path.join(state.homeDir, 'boundary.txt') }) },
+        }] }, finish_reason: 'tool_calls' }],
+    })}\n\ndata: [DONE]\n\n`));
+    return;
+  }
   const finish = () => {
     send(` END_${token}`);
     response.end(`data: ${JSON.stringify({ id: 'acceptance', object: 'chat.completion.chunk',
@@ -133,7 +166,7 @@ async function respondToModelRequest(state, request, response) {
   if (token === 'ACCEPT_HOLD_TRANSCRIPT') {
     state.pending.set('grow', () => send('\nLATE_AFTER_FREEZE_MARKER'));
   }
-  if (token.includes('HOLD')) state.pending.set(token, finish);
+  if (token.includes('HOLD') || token === 'ACCEPT_BOUNDARY_NEXT') state.pending.set(token, finish);
   else setTimeout(finish, 350);
 }
 
@@ -154,7 +187,7 @@ async function setupProvider(state) {
       name: 'acceptance-local', protocol: 'openai',
       baseUrl: `http://127.0.0.1:${state.server.address().port}/v1`,
       apiKeyEnv: 'KODAX_ACCEPTANCE_KEY', model: 'acceptance-model',
-      contextWindow: 65536, maxOutputTokens: 1024,
+      contextWindow: longHistoryOnly ? 262144 : 65536, maxOutputTokens: 1024,
     }],
   }));
 }
@@ -262,17 +295,23 @@ async function checkHostCommandRun(state) {
   assert.equal(state.view.items.filter(item => item.type === 'user' && item.text === commandText).length, 1);
   if (state.mode === 'ink') {
     await state.terminal.submit('ACCEPT_HOLD_COMMAND_NEXT');
-    await waitFor('follow-up queued while the command runs', () => state.view.queue.some(input => input.text === 'ACCEPT_HOLD_COMMAND_NEXT'));
+    const queued = await waitFor('follow-up queued while the command runs', () =>
+      state.view.queue.find(input => input.text === 'ACCEPT_HOLD_COMMAND_NEXT'));
     assert.equal(received(state, 'ACCEPT_HOLD_COMMAND_NEXT').length, 0);
     state.pending.get('ACCEPT_HOLD_COMMAND')();
-    await waitFor('queued continuation streams in CLI', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_COMMAND_NEXT'));
-    const continuationRunId = await waitFor('current continuation Host identity', () =>
-      state.view.activity?.runId && state.view.activity.runId !== commandRunId ? state.view.activity.runId : undefined);
-    assert.equal((await state.client.runs.read(commandRunId)).phase, 'completed');
+    await waitFor('queued follow-up streams in the command Run', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_COMMAND_NEXT'));
+    const delivered = await waitFor('queued input is submitted to the original command Run', async () => {
+      const receipt = await state.client.inputs.read(state.sessionId, queued.inputId);
+      return receipt?.state === 'submitted' ? receipt : undefined;
+    });
+    assert.equal(delivered.runId, commandRunId, 'The queued follow-up must remain in the original command Run');
+    assert.equal((await state.client.runs.read(commandRunId)).phase, 'running');
+    assert.equal(state.view.runs.find(run => run.phase === 'running')?.runId, commandRunId);
+    await waitFor('delivered follow-up leaves the queue', () => !state.view.queue.some(input => input.inputId === queued.inputId));
     await state.terminal.type('\x1b\x1b');
-    await waitFor('double Esc stops the current continuation', async () =>
-      (await state.client.runs.read(continuationRunId)).phase === 'interrupted');
-    await waitFor('Ink prompt after continuation stop', () => /^>\s+Type a message/m.test(state.terminal.screen()));
+    await waitFor('double Esc stops the original command Run during its follow-up', async () =>
+      (await state.client.runs.read(commandRunId)).phase === 'interrupted');
+    await waitFor('Ink prompt after command follow-up stop', () => /^>\s+Type a message/m.test(state.terminal.screen()));
     await delay(300);
   } else {
     state.pending.get('ACCEPT_HOLD_COMMAND')();
@@ -586,6 +625,51 @@ async function checkStop(state) {
   'Stopping must not leave duplicate query rows in the terminal');
 }
 
+async function checkQueueModelBoundary(state) {
+  assert.equal(state.mode, 'ink', 'Busy keyboard queue admission is an Ink interaction');
+  const originalAgentMode = (await state.client.sessions.getSettings(state.sessionId)).agentMode;
+  await state.client.sessions.updateSettings(state.sessionId, { agentMode: 'ama' });
+  try {
+    await waitFor('AMA selection reaches the Host and terminal', () => state.view.settings.agentMode === 'ama'
+      && state.terminal.screen().split('\n').slice(-2).join(' ').includes('AMA'));
+    await writeFile(path.join(state.homeDir, 'boundary.txt'), 'BOUNDARY_TOOL_COMPLETED\n');
+    const beforeRequests = state.requests.length;
+    await state.terminal.submit('ACCEPT_BOUNDARY_HOLD');
+    await waitFor('initial boundary response remains streaming', () => state.terminal.screen().includes('BEGIN_ACCEPT_BOUNDARY_HOLD'));
+    const runId = await waitFor('initial boundary Run identity', () => state.view.runs.find(run => run.phase === 'running')?.runId);
+    await state.terminal.submit('ACCEPT_BOUNDARY_NEXT');
+    const queued = await waitFor('busy keyboard input reaches the Host queue', () =>
+      state.view.queue.find(input => input.text === 'ACCEPT_BOUNDARY_NEXT'));
+    await waitFor('the terminal displays the queued input', () => state.terminal.screen().includes('[1/1] ACCEPT_BOUNDARY_NEXT'));
+    assert.equal(state.requests.length, beforeRequests + 1, 'The first provider response must still be held');
+    state.pending.get('boundary-tool')();
+    const secondRequest = await waitFor('same Run reaches the provider again after its tool', () => state.requests[beforeRequests + 1]);
+    await state.terminal.save('queue-model-boundary');
+    await saveFacts(state, 'queue-model-boundary');
+    const userMessages = secondRequest.messages.filter(message => message.role === 'user');
+    assert.equal((JSON.stringify(userMessages).match(/ACCEPT_BOUNDARY_NEXT/g) ?? []).length, 1,
+      'Queued keyboard input must reach the next provider call, before the current Run ends');
+    await waitFor('consumed input leaves the Host queue while the response is held', () =>
+      !state.view.queue.some(input => input.inputId === queued.inputId));
+    assert.equal((await state.client.runs.read(runId)).phase, 'running', 'The original Run must still own the held response');
+    assert.equal(state.view.runs.find(run => run.phase === 'running')?.runId, runId,
+      'Consuming the queued input must not require starting a continuation Run');
+    await waitFor('next provider response streams through the same terminal', () =>
+      state.terminal.screen().includes('BEGIN_ACCEPT_BOUNDARY_NEXT'));
+    await waitFor('the terminal removes its consumed queue row', () =>
+      !state.terminal.screen().includes('[1/1] ACCEPT_BOUNDARY_NEXT')
+        && !state.terminal.screen().includes('↑ pull all into editor'));
+    await waitFor('AMA keeps the consumed query body in ordinary history', () =>
+      state.terminal.screen().split('\n').some(line => line.trim() === 'ACCEPT_BOUNDARY_NEXT'));
+    await state.terminal.save('queue-model-boundary-consumed');
+    await saveFacts(state, 'queue-model-boundary-consumed');
+    state.pending.get('ACCEPT_BOUNDARY_NEXT')();
+    await waitFor('original boundary Run completes', async () => (await state.client.runs.read(runId)).phase === 'completed');
+  } finally {
+    await state.client.sessions.updateSettings(state.sessionId, { agentMode: originalAgentMode ?? null });
+  }
+}
+
 async function checkFrozenHistory(state) {
   await state.terminal.submit('ACCEPT_HOLD_HISTORY');
   await waitFor('history test streaming', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_HISTORY'));
@@ -707,6 +791,44 @@ async function checkExit(state) {
   assert.equal(state.terminal.exited.exitCode, 0);
 }
 
+async function checkLongHistoryPreviews(state) {
+  assert.equal(state.mode, 'ink', 'The long-history screen regression exercises Ink');
+  await Promise.all(Array.from({ length: 24 }, (_, index) => writeFile(path.join(state.homeDir, `archive-${index}.txt`),
+    Array.from({ length: 100 }, (_, line) => `ARCHIVE_${index}_${line} ${'payload '.repeat(16)}`).join('\n'))));
+  for (const token of ['ACCEPT_ARCHIVE_EARLY', ...'ABCDEFGH'.split('').map(letter => `ACCEPT_ARCHIVE_FILL_${letter}`)]) {
+    await state.terminal.submit(token);
+    await waitFor(`${token} completes`, () => state.view.items.some(item => item.text.includes(`END_${token}`)), 45000);
+    await waitFor(`${token} settles`, () => state.view.runs.every(run => run.phase === 'completed'));
+    await waitFor(`${token} input ready`, () => /^>\s+Type a message/m.test(state.terminal.screen()));
+    await delay(300);
+  }
+  const tools = state.view.items.filter(item => item.tool?.name === 'read');
+  assert.equal(tools.length, 24, 'Twenty-four real tool results must reach the Host');
+  assert.ok(tools.reduce((sum, item) => sum + Math.min(8192, item.totalTextLength ?? item.text.length), 0) > 128 * 1024,
+    'The fixture must exceed the shared preview budget across distinct items');
+  assert.ok(state.view.items.reduce((sum, item) => sum + item.text.length + (item.tool?.inputText?.length ?? 0), 0) <= 128 * 1024,
+    'The preview replacement budget must remain bounded at 128 KiB');
+  const earlyTool = state.view.items.find(item => item.tool?.callId === 'ACCEPT_ARCHIVE_EARLY-0');
+  assert.ok(earlyTool, 'The early Bash item must remain in the 150-item window');
+  const fullInput = await state.client.sessions.readItem(state.sessionId, earlyTool.id, { part: 'input', offset: 0 });
+  assert.ok(fullInput.text.includes('ACCEPT_OLD_BASH_1'), 'The full reader proves the old Bash input was retained');
+  // Resize the normal live surface to force a complete repaint, without Ctrl+O
+  // or readItem hydration that could hide blank previews in the ordinary UI.
+  await state.terminal.resize(180, 250);
+  await state.terminal.save('long-history-live');
+  await saveFacts(state, 'long-history-live');
+  const screen = state.terminal.screen();
+  assert.ok(screen.split('\n').some(line => line.trim() === 'ACCEPT_ARCHIVE_EARLY'),
+    'Normal live history must retain the early query body after preview budget saturation');
+  for (const text of ['END_ACCEPT_ARCHIVE_EARLY',
+    'THINKING_ACCEPT_ARCHIVE_EARLY', 'cmd=echo ACCEPT_OLD_BASH_1']) {
+    assert.ok(screen.includes(text), `Normal live history must retain visible ${text} after preview budget saturation`);
+  }
+  assert.ok(earlyTool.tool.inputText?.includes('ACCEPT_OLD_BASH_1'), 'The old Bash input preview must remain nonempty');
+  assert.equal(screen.split('\n').filter(line => /^Tools \[/.test(line.trim())).length, 9,
+    'Each contiguous tool batch must share one Tools heading, preserving the nine round boundaries');
+}
+
 async function checkResume(state) {
   state.terminal.dispose();
   state.terminal = openTerminal(state.homeDir, state.mode, ['--resume', state.originalSessionId]);
@@ -747,6 +869,15 @@ async function cleanupHost(state) {
 
 async function cleanup(state) {
   state.observation?.close();
+  if (state.terminal && !state.terminal.exited) {
+    const promptReady = state.mode === 'ink'
+      ? /^>\s+Type a message/m.test(state.terminal.screen())
+      : /^kodax:.*>\s*$/.test(state.terminal.cursorLine());
+    if (promptReady) {
+      await state.terminal.submit('/exit');
+      await Promise.race([state.terminal.exit, delay(3000)]);
+    }
+  }
   state.terminal?.dispose();
   if (state.terminal) await state.terminal.exit;
   try { await cleanupHost(state); }
@@ -764,9 +895,21 @@ async function run(mode) {
     views: new Map(), runEvents: [], providerErrors: [] };
   try {
     await setupProvider(state);
+    // The source Host launcher resolves its --import tsx from the project cwd.
+    if (sourceEntry) await symlink(path.join(repo, 'node_modules'), path.join(state.homeDir, 'node_modules'), 'junction');
     await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    if (longHistoryOnly) {
+      await check(state, 'long-history-preview-budget', checkLongHistoryPreviews);
+      await check(state, 'exit', checkExit);
+      return;
+    }
+    if (queueBoundaryOnly) {
+      await check(state, 'busy-queue-next-model-boundary', checkQueueModelBoundary);
+      await check(state, 'exit', checkExit);
+      return;
+    }
     await check(state, 'registered-extension-no-output', checkHostCommandNoOutput);
     await check(state, 'registered-extension-help', checkHostCommandHelp);
     await check(state, 'prompt-stream-complete', checkPrompt);
@@ -776,6 +919,7 @@ async function run(mode) {
     await check(state, 'multiline-long-input', checkLongInput);
     await check(state, 'question-dialog-roundtrip', checkQuestion);
     if (mode === 'ink') await check(state, 'busy-queue-withdraw-edit', checkQueue);
+    if (mode === 'ink') await check(state, 'busy-queue-next-model-boundary', checkQueueModelBoundary);
     if (mode === 'ink') await check(state, 'history-search-frozen-live-view', checkFrozenHistory);
     if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
     if (mode === 'ink') await check(state, 'transcript-control-character-paint', checkTranscriptPaint);
@@ -797,7 +941,8 @@ async function run(mode) {
 }
 
 try {
-  const modes = process.argv.slice(2).length ? process.argv.slice(2) : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

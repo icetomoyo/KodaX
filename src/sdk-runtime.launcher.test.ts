@@ -4,7 +4,36 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+
+const contention = vi.hoisted(() => ({
+  enabled: false, calls: 0, arrivals: [] as Array<() => void>, responses: [] as Array<() => void>, snapshots: [] as unknown[],
+}));
+
+vi.mock('./runtime-daemon/transport.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./runtime-daemon/transport.js')>();
+  const rendezvous = (waiting: Array<() => void>): Promise<void> => new Promise(resolve => {
+    waiting.push(resolve);
+    if (waiting.length === 2) waiting.splice(0).forEach(release => release());
+  });
+  return { ...actual, createRuntimeDaemonSocketClientTransport: async (
+    ...args: Parameters<typeof actual.createRuntimeDaemonSocketClientTransport>
+  ) => {
+    const transport = await actual.createRuntimeDaemonSocketClientTransport(...args);
+    return { ...transport, request: async (...request: Parameters<typeof transport.request>) => {
+      if (!contention.enabled || request[0] !== 'daemon.management.get' || contention.calls++ >= 8) {
+        return transport.request(...request);
+      }
+      // Four real overlapping inspections: neither temporary client may
+      // disconnect until both Host snapshots have observed the contention.
+      await rendezvous(contention.arrivals);
+      const result = await transport.request(...request);
+      contention.snapshots.push(result);
+      await rendezvous(contention.responses);
+      return result;
+    } };
+  } };
+});
 import { connectKodaXRuntime, ensureKodaXRuntime } from './sdk-runtime.js';
 import { observeRuntimeDaemonHealth } from './runtime-daemon/lifecycle.js';
 import { waitForRuntimeDaemonOwnerExit } from './runtime-daemon/process.js';
@@ -36,12 +65,18 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
     const oldId = old.identity.runtimeId;
     const saved = await old.sessions.create({ title: 'Keep across Host refresh' });
     await old.close();
+    contention.enabled = true;
     const connections = await Promise.allSettled([
       ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 }),
       ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 }),
     ]);
     const clients = connections.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     try {
+      expect(contention.snapshots).toHaveLength(8);
+      for (const snapshot of contention.snapshots) expect(snapshot).toMatchObject({ preflight: {
+        clientCount: 2, blockers: ['connected_clients'], activeRuns: [],
+        clients: [expect.objectContaining({ name: 'kodax-host-launcher' }), expect.objectContaining({ name: 'kodax-host-launcher' })],
+      } });
       const rejected = connections.filter((result) => result.status === 'rejected');
       expect(rejected, rejected.map(result => String(result.reason)).join('\n')).toEqual([]);
       const current = clients[0]!;
@@ -53,6 +88,7 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
       await Promise.all(clients.map((client) => client.close()));
     }
   } finally {
+    contention.enabled = false;
     await stopHost(paths);
     if (child.exitCode === null && child.signalCode === null) child.kill();
     await exited;

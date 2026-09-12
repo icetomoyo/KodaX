@@ -116,6 +116,28 @@ describe('product Host startup and passive connection', () => {
     await runtime.close();
   });
 
+  it('reports unconfirmed owner exit when managed shutdown consumes the startup deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      const old = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+      upgradeMocks.acquireProcessLease.mockResolvedValue(createLease({
+        ...old,
+        async request(method, params) {
+          const result = await old.request(method, params);
+          if (method === 'runtime.shutdown') vi.setSystemTime(Date.now() + 500);
+          return result;
+        },
+      }));
+      upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500 }))
+        .rejects.toThrow('Host startup timed out before owner exit could be confirmed');
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+      expect(calls.filter((call) => call === 'old:close')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('preserves automatic idle refresh for the existing daemon launcher', async () => {
     const calls: string[] = [];
     upgradeMocks.acquireProcessLease
@@ -259,15 +281,47 @@ describe('product Host startup and passive connection', () => {
     expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
   });
 
-  it('bounds retries while another connected client continues using the older Host', async () => {
+  it('bounds competing-client retries by the original startup deadline without shutting down a busy Host', async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
     const calls: string[] = [];
     upgradeMocks.acquireProcessLease.mockImplementation(async () => createLease(createLegacyTransport({
       preflight: createPreflight({ blockers: ['connected_clients'], canStop: false }), calls, close: async () => undefined,
     })));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ preflight: { blockers: ['connected_clients'] } });
-    expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(3);
-    expect(calls.filter((call) => call === 'old:close')).toHaveLength(3);
-    expect(calls).not.toContain('old:runtime.shutdown');
+    try {
+      const startedAt = Date.now();
+      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500 })
+        .then(() => { throw new Error('Busy Host unexpectedly accepted'); }, error => ({ error, settledAt: Date.now() }));
+      await vi.advanceTimersByTimeAsync(500);
+      const outcome = await pending;
+      expect(outcome.error).toMatchObject({ preflight: { blockers: ['connected_clients'] } });
+      expect(outcome.settledAt - startedAt).toBe(500);
+      expect(upgradeMocks.acquireProcessLease.mock.calls.length).toBeGreaterThan(3);
+      expect(calls.filter(call => call === 'old:close')).toHaveLength(upgradeMocks.acquireProcessLease.mock.calls.length);
+      expect(calls).not.toContain('old:runtime.shutdown');
+      const budgets = upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.startupTimeoutMs as number);
+      expect(budgets[0]).toBe(500);
+      expect(budgets.at(-1)).toBeLessThan(500);
+    } finally { random.mockRestore(); vi.useRealTimers(); }
+  });
+
+  it('cancels contention backoff after closing the temporary client without another attach', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const calls: string[] = [];
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => createLease(createLegacyTransport({
+      preflight: createPreflight({ blockers: ['connected_clients'], canStop: false }), calls,
+      close: async () => { setTimeout(() => controller.abort(), 25); },
+    })));
+    try {
+      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupSignal: controller.signal })
+        .then(() => { throw new Error('Cancelled launcher unexpectedly accepted'); }, error => error as unknown);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+      expect(calls.filter(call => call === 'old:close')).toHaveLength(1);
+      expect(calls).not.toContain('old:runtime.shutdown');
+    } finally { vi.useRealTimers(); }
   });
 
   it('allows passive connection to an older Host whose execution contract is compatible', async () => {

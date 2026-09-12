@@ -414,16 +414,23 @@ function sessionActivityEvents(
 function boundedViewItems(items: readonly ClientViewItem[]): ClientViewItem[] {
   // Bound the complete replacement, including escaped Unicode and tool inputs.
   // The original content stays in the Session owner for readItem/copy.
+  const window = items.slice(-150);
+  const previewSize = (text: string | undefined): number => Math.min(text?.length ?? 0, 256);
+  // Reserve a readable preview for every retained field before giving the tail
+  // the remaining capacity. Otherwise long outputs erase earlier query/body/input.
+  let reserved = window.reduce((sum, item) => sum + previewSize(item.text) + previewSize(item.tool?.inputText), 0);
   let remaining = 128 * 1024;
   const result: ClientViewItem[] = [];
-  for (const item of items.slice(-150).reverse()) {
-    const count = Math.min(item.text.length, 8192, remaining);
+  for (const item of window.reverse()) {
+    reserved -= previewSize(item.text);
+    const count = Math.min(item.text.length, 8192, remaining - reserved);
     let offset = item.text.length - count;
     if (offset > 0 && /[\uDC00-\uDFFF]/u.test(item.text.charAt(offset))) offset += 1;
     const text = item.text.slice(offset);
     remaining -= text.length;
     const input = item.tool?.inputText;
-    const inputText = input?.slice(0, Math.min(8192, remaining));
+    reserved -= previewSize(input);
+    const inputText = input?.slice(0, Math.min(8192, remaining - reserved));
     remaining -= inputText?.length ?? 0;
     result.push({ ...item, text,
       ...(offset > 0 ? { textOffset: offset, totalTextLength: item.text.length } : {}),

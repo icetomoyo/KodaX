@@ -831,8 +831,8 @@ export function formatToolCallInlineText(tool: ToolCall): string {
   return suffixParts.length > 0 ? `${summary} (${suffixParts.join(" - ")})` : summary;
 }
 
-export function collapseToolCalls(tools: readonly ToolCall[]): ToolSummaryGroup[] {
-  const groups = new Map<string, ToolSummaryGroup>();
+export function collapseToolCalls(tools: readonly ToolCall[]): (ToolSummaryGroup & { readonly members: readonly ToolCall[] })[] {
+  const groups = new Map<string, ToolSummaryGroup & { members: ToolCall[] }>();
 
   for (const tool of tools) {
     const outputDetails = typeof tool.output === "string"
@@ -851,8 +851,9 @@ export function collapseToolCalls(tools: readonly ToolCall[]): ToolSummaryGroup[
     if (existing) {
       existing.tool = tool;
       existing.count += 1;
+      existing.members.push(tool);
     } else {
-      groups.set(key, { tool, count: 1 });
+      groups.set(key, { tool, count: 1, members: [tool] });
     }
   }
 

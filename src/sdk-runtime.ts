@@ -5539,7 +5539,8 @@ interface CapabilityUpgradeInput {
   readonly lease: RuntimeDaemonProcessLease;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly requiredCapability: string;
-  readonly exitTimeoutMs: number;
+  readonly startupDeadline: number;
+  readonly startupSignal?: AbortSignal;
 }
 
 function createCapabilityUpgradeRuntime(
@@ -5768,9 +5769,15 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
       || current.processStartIdentity !== owner.processStartIdentity
     ) throw new Error("The original Host process identity cannot be confirmed; retry against the current owner.");
     assertCurrentLauncherBuild();
+    input.startupSignal?.throwIfAborted();
+    if (Date.now() >= input.startupDeadline) throw new Error('Host startup timed out before managed shutdown.');
     await input.transport.request("runtime.shutdown");
     await runtime.close();
-    await waitForRuntimeDaemonOwnerExit(owner, input.exitTimeoutMs);
+    const remainingStartupMs = input.startupDeadline - Date.now();
+    if (remainingStartupMs <= 0) {
+      throw new Error('Host startup timed out before owner exit could be confirmed. Wait for the old Host to exit before retrying startup.');
+    }
+    await waitForRuntimeDaemonOwnerExit(owner, remainingStartupMs, input.startupSignal);
   } catch (error: unknown) {
     throw new RuntimeDaemonCapabilityUpgradeError(
       error instanceof Error ? error.message : "The older Host could not be refreshed.",
@@ -5783,11 +5790,29 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
   }
 }
 
+function waitForDaemonStartupRetry(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel);
+      resolve();
+    }, milliseconds);
+    const cancel = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
+}
+
 async function connectKodaXRuntimeInternal(
   options: ConnectKodaXRuntimeOptions,
   allowCapabilityUpgrade: boolean,
   ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
   startupRetries = 2,
+  startupDeadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000),
+  contentionAttempt = 0,
 ): Promise<KodaXDaemonRuntime> {
   if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   assertRuntimeTimeout(
@@ -5815,6 +5840,10 @@ async function connectKodaXRuntimeInternal(
     options.daemonOrphanExitMs,
     1,
   );
+  options.daemonStartupSignal?.throwIfAborted();
+  if (allowCapabilityUpgrade && options.autoStart === true && Date.now() >= startupDeadline) {
+    throw new RuntimeDaemonCapabilityUpgradeError('Host startup timed out before another connection attempt.', undefined, undefined, 'runtimeBuild');
+  }
   const explicitEndpoint =
     options.endpoint !== undefined
       ? normalizeRuntimeDaemonEndpoint(options.endpoint)
@@ -5833,7 +5862,7 @@ async function connectKodaXRuntimeInternal(
           permissionTimeoutMs: options.permissionTimeoutMs,
           userInputTimeoutMs: options.userInputTimeoutMs,
           orphanExitMs: options.daemonOrphanExitMs,
-          startupTimeoutMs: options.daemonStartupTimeoutMs,
+          startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
           ownerBootstrap,
@@ -5988,19 +6017,22 @@ async function connectKodaXRuntimeInternal(
           lease,
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
-          exitTimeoutMs: options.daemonStartupTimeoutMs ?? 60_000,
+          startupDeadline,
+          startupSignal: options.daemonStartupSignal,
         });
       } catch (error: unknown) {
         if (
-          startupRetries > 0
-          && error instanceof RuntimeDaemonCapabilityUpgradeError
+          error instanceof RuntimeDaemonCapabilityUpgradeError
           && error.preflight?.blockers.length === 1
           && error.preflight.blockers[0] === "connected_clients"
+          && Date.now() < startupDeadline
         ) {
-          // Release temporary startup clients before retrying; the existing
-          // owner lock still decides which process may start the replacement.
-          await new Promise<void>((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
-          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1);
+          // The rejected temporary client is already closed. Contention gets
+          // the remaining startup budget, not the actual-upgrade attempt limit.
+          const backoff = 50 + Math.floor(Math.random() * Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)));
+          await waitForDaemonStartupRetry(Math.min(backoff, startupDeadline - Date.now()), options.daemonStartupSignal);
+          if (Date.now() >= startupDeadline) throw error;
+          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries, startupDeadline, contentionAttempt + 1);
         }
         throw error;
       } finally {
@@ -6013,6 +6045,8 @@ async function connectKodaXRuntimeInternal(
         allowCapabilityUpgrade,
         ownerBootstrap,
         startupRetries - 1,
+        startupDeadline,
+        contentionAttempt,
       );
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
@@ -6026,8 +6060,10 @@ async function connectKodaXRuntimeInternal(
       && isRecord(error) && error.code === 'conflict') {
       // Admission may temporarily close before shutdown is published on disk.
       // Only retry connection initialization; business operations are never replayed.
-      await new Promise<void>(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
-      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1);
+      if (Date.now() >= startupDeadline) throw error;
+      await waitForDaemonStartupRetry(Math.min(50 + Math.floor(Math.random() * 100), startupDeadline - Date.now()), options.daemonStartupSignal);
+      if (Date.now() >= startupDeadline) throw error;
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1, startupDeadline, contentionAttempt);
     }
     throw error;
   }
@@ -7671,6 +7707,7 @@ function createRuntimeSessionService(
     async load(sessionId, options) {
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
+      await awaitRuntimeReadOperation(() => sessionViews.flush(sessionId), budget);
       const data = await admission.loadRequired(
         sessionId,
         sessionReadOptionsFromBudget(budget),
@@ -8321,6 +8358,7 @@ function createRuntimeSessionService(
       if (input.selector !== undefined && input.historyBoundary !== undefined) {
         throw new Error("fork accepts either selector or historyBoundary, not both");
       }
+      await sessionViews.flush(input.sessionId);
       const source = await admission.loadRequired(input.sessionId);
       let forked: Awaited<ReturnType<SessionManager["forkSession"]>>;
       try {
@@ -8381,6 +8419,7 @@ function createRuntimeSessionService(
     async recover(input) {
       ensureOpen();
       assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
+      await sessionViews.flush(input.sessionId);
       const source = await admission.loadRequired(input.sessionId);
       if (source.messages.length === 0) {
         throw sessionCommandError(
@@ -8422,6 +8461,7 @@ function createRuntimeSessionService(
 
     async getSettingsVersioned(sessionId) {
       ensureOpen();
+      await sessionViews.flush(sessionId);
       await admission.loadRequired(sessionId);
       return settingsOwner.read(sessionId);
     },
@@ -8432,9 +8472,9 @@ function createRuntimeSessionService(
 
     async getAutoModeStats(sessionId) {
       ensureOpen();
-      await admission.loadRequired(sessionId);
+      const rawSettings = (await this.getSettingsVersioned(sessionId)).value;
       const settings = resolveEffectiveRuntimeSessionSettings(readRuntimeConfig(path.join(configHome, 'config.json')),
-        (await settingsOwner.read(sessionId)).value);
+        rawSettings);
       if (replApi.normalizePermissionMode(settings.permissionMode) !== "auto") {
         return undefined;
       }
@@ -8512,6 +8552,7 @@ function createRuntimeSessionService(
 
     async readLineage(sessionId) {
       ensureOpen();
+      await sessionViews.flush(sessionId);
       const data = await admission.loadRequired(sessionId);
       if (data.lineage === undefined) return null;
       return toClientLineageSummary(data.lineage);
@@ -10200,9 +10241,10 @@ function createRuntimeRunService(deps: {
       runId: record.runId,
     });
 
+    let outputInputId = record.productInput?.inputId;
     const { events, authorizeForcedPermission } = wrapKodaXEvents({
       display: deps.sessionViews.events(record.sessionId, record.runId, record.start.options.events?.getCostReport,
-        () => [...record.interruptInputs].reverse().find(input => input.state === 'delivered')?.inputId ?? record.productInput?.inputId),
+        () => outputInputId),
       bus: deps.bus,
       original: record.start.options.events,
       permissions: deps.permissions,
@@ -10282,8 +10324,9 @@ function createRuntimeRunService(deps: {
         }
         publishRunUpdate(record);
       },
-      onMidTurnUserMessages: (queuedMessageIds, queuedMessageEntryIds) =>
-        deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds),
+      onMidTurnUserMessages: (queuedMessageIds, queuedMessageEntryIds) => {
+        outputInputId = deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds) ?? outputInputId;
+      },
     });
     const runOptions = buildRunOptions({
       agentPlane: deps.agentPlane,
@@ -10295,6 +10338,13 @@ function createRuntimeRunService(deps: {
       provider: record.provider,
       record,
       sessionManager: deps.sessionManager,
+      consumePendingInputs: persist => deps.sessionOperations.run(record.sessionId, async () => {
+        if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
+          || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
+        const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, persist);
+        outputInputId = consumed.at(-1)?.inputId ?? outputInputId;
+        return consumed;
+      }),
     });
     deps.bus.emit(
       "config.effective",
@@ -10697,7 +10747,7 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     queuedMessageIds: readonly string[],
     queuedMessageEntryIds: Readonly<Record<string, string>> | undefined,
-  ): void => {
+  ): string | undefined => {
     const queuedByMessageId = new Map<string, RuntimeInterruptInputRecord>();
     for (const input of record.interruptInputs) {
       if (input.state === "queued" && input.queueMessageId !== undefined) {
@@ -10759,6 +10809,7 @@ function createRuntimeRunService(deps: {
       },
     );
     publishRunUpdate(record);
+    return delivered.at(-1)?.inputId;
   };
 
   const settingsSubscription = deps.settingsOwner.subscribe(
@@ -13011,6 +13062,7 @@ function createWorkspaceSandboxRootRegistry(input: {
 }
 
 function buildRunOptions(input: {
+  readonly consumePendingInputs: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumePendingInputs'];
   readonly agentPlane?: AgentExecutorPlane;
   readonly authorizeForcedPermission: (
     call: RunnerToolCall,
@@ -13230,25 +13282,17 @@ function buildRunOptions(input: {
             ],
           }
         : {}),
-      ...(record.actorSession
-        ? {
-            actorSession: record.actorSession,
-            interruptInput: {
-              closeInputWindow() {
-                record.interruptInputOpen = false;
-              },
-              reopenInputWindow() {
-                if (
-                  !record.terminalEmitted &&
-                  isActiveRunPhase(record.phase) &&
-                  options.abortSignal?.aborted !== true
-                ) {
-                  record.interruptInputOpen = true;
-                }
-              },
-            },
+      ...(record.actorSession ? { actorSession: record.actorSession } : {}),
+      ...(record.actorSession || !isForkInvocation ? { interruptInput: {
+        ...(!isForkInvocation ? { consumePendingInputs: input.consumePendingInputs } : {}),
+        closeInputWindow() { record.interruptInputOpen = false; },
+        reopenInputWindow() {
+          if (record.actorSession !== undefined && !record.terminalEmitted
+            && isActiveRunPhase(record.phase) && options.abortSignal?.aborted !== true) {
+            record.interruptInputOpen = true;
           }
-        : {}),
+        },
+      } } : {}),
       ...(agentPlane && record.agentContext
         ? {
             agentExecutorPlane: {

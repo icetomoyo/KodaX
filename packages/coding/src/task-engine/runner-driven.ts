@@ -2443,7 +2443,7 @@ async function runManagedTaskViaRunnerInner(
     prompts: readonly QueuedMessage[],
     timestamp: string,
     transcript: readonly KodaXMessage[],
-  ): Promise<KodaXMessage[]> => {
+  ): Promise<{ messages: KodaXMessage[]; start: () => void }> => {
     if (memoryRuntime !== undefined) memoryRuntime.presentationMessages = transcript;
     if (prompts.length > 0) await persistManagedBoundary(transcript);
     const preparedTurn = prompts.length > 0
@@ -2471,21 +2471,19 @@ async function runManagedTaskViaRunnerInner(
     const messages = deliveries.map((delivery) => delivery.message);
     if (prompts.length > 0) {
       await persistManagedBoundary([...transcript, ...messages]);
-      const queuedMessageEntryIds: Record<string, string> = {};
-      for (const { queued, message } of deliveries) {
-        const entryId = getSessionMessageEntryId(message);
-        if (entryId !== undefined) queuedMessageEntryIds[queued.id] = entryId;
-      }
-      preparedTurn?.start();
-      options.events?.onMidTurnUserMessages?.(
-        deliveries.map(({ queued }) => queued.content),
-        {
-          queuedMessageIds: deliveries.map(({ queued }) => queued.id),
-          queuedMessageEntryIds,
-        },
-      );
     }
-    return messages;
+    return { messages, start: () => { preparedTurn?.start(); } };
+  };
+  const notifyMidTurnPromptMessages = (prompts: readonly QueuedMessage[], messages: readonly KodaXMessage[]): void => {
+    if (prompts.length === 0) return;
+    const queuedMessageEntryIds: Record<string, string> = {};
+    prompts.forEach((queued, index) => {
+      const entryId = getSessionMessageEntryId(messages[index]!);
+      if (entryId !== undefined) queuedMessageEntryIds[queued.id] = entryId;
+    });
+    options.events?.onMidTurnUserMessages?.(prompts.map(queued => queued.content), {
+      queuedMessageIds: prompts.map(queued => queued.id), queuedMessageEntryIds,
+    });
   };
 
   const composeMidTurnMailboxMessage = async (
@@ -2546,25 +2544,35 @@ async function runManagedTaskViaRunnerInner(
       agentId: messageQueueAgentId,
       lastTurnToolNames: turnCtx.lastTurnToolNames ?? [],
     });
-    if (drained.length === 0) return runtimeContextMessage ? [runtimeContextMessage] : [];
     const prompts = drained.filter((message) => message.mode === 'prompt');
     const mailbox = drained.filter((message) => message.mode !== 'prompt');
     const timestamp = new Date().toISOString();
-    const promptMessages = await composeMidTurnPromptMessages(
+    const promptTurn = await composeMidTurnPromptMessages(
       prompts,
       timestamp,
       turnCtx.transcript,
     );
+    const promptMessages = promptTurn.messages;
+    promptTurn.start();
+    notifyMidTurnPromptMessages(prompts, promptMessages);
+    let hostTurn: Awaited<ReturnType<typeof composeMidTurnPromptMessages>> | undefined;
+    const hostPrompts = await options.context?.interruptInput?.consumePendingInputs?.(async inputs => {
+      hostTurn = await composeMidTurnPromptMessages(inputs, timestamp, [...turnCtx.transcript, ...promptMessages]);
+    }) ?? [];
+    const hostMessages = hostTurn?.messages ?? [];
+    hostTurn?.start();
+    notifyMidTurnPromptMessages(hostPrompts, hostMessages);
     const syntheticMessage = await composeMidTurnMailboxMessage(
       mailbox,
       turnCtx.transcript,
-      promptMessages,
+      [...promptMessages, ...hostMessages],
       timestamp,
     );
     return [
       ...(runtimeContextMessage ? [runtimeContextMessage] : []),
       ...(syntheticMessage ? [syntheticMessage] : []),
       ...promptMessages,
+      ...hostMessages,
     ];
   };
   // Transcript snapshot ref — populated by the adapter's beforeNextTurn

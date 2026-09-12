@@ -125,6 +125,8 @@ export interface TranscriptRow {
   key: string;
   text: string;
   itemId?: string;
+  /** Original items represented by a tool summary or its detail rows. */
+  itemIds?: readonly string[];
   color?: TranscriptColorToken;
   /**
    * Optional row background accent for diff rows. Resolved to
@@ -141,6 +143,8 @@ export interface TranscriptRow {
 
 export interface TranscriptSection {
   key: string;
+  /** Original item identities retained when adjacent tools share a section. */
+  itemIds?: readonly string[];
   rows: TranscriptRow[];
 }
 
@@ -602,7 +606,8 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
 
   const rows: TranscriptRow[] = [];
 
-  for (const item of items) {
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+    const item = items[itemIndex]!;
     switch (item.type) {
       case "user":
         pushWrappedRows(
@@ -664,7 +669,19 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         });
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
-      case "tool_group":
+      case "tool_group": {
+        // Host items retain their individual read/copy identities. Only the
+        // adjacent display segment shares the existing tool summary collapse.
+        const toolSources = new Map(item.tools.map(tool => [tool, item.id]));
+        const tools = [...item.tools];
+        while (items[itemIndex + 1]?.type === "tool_group") {
+          const next = items[++itemIndex]!;
+          if (next.type !== "tool_group") break;
+          for (const tool of next.tools) {
+            tools.push(tool);
+            toolSources.set(tool, next.id);
+          }
+        }
         pushWrappedRows(
           rows,
           `${item.id}-header`,
@@ -672,11 +689,18 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           viewportWidth,
           { color: "accent", bold: true, itemId: item.id }
         );
-        collapseToolCalls(item.tools).forEach((group) => (
-          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools, showAllContent)
-        ));
+        for (const group of collapseToolCalls(tools)) {
+          const sourceId = toolSources.get(group.tool)!;
+          const memberIds = [...new Set(group.members.map(tool => toolSources.get(tool)!))];
+          const startRow = rows.length;
+          buildToolRows(rows, sourceId, group.tool, group.count, viewportWidth, showDetailedTools, showAllContent);
+          for (let rowIndex = startRow; rowIndex < rows.length; rowIndex += 1) {
+            rows[rowIndex] = { ...rows[rowIndex]!, itemId: sourceId, itemIds: memberIds };
+          }
+        }
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
+      }
       case "thinking":
         {
           pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
@@ -1128,21 +1152,31 @@ export function buildHistoryItemTranscriptSections(
   showAllContent = false,
   showFullThinking = false,
 ): TranscriptSection[] {
-  const sections = items.map((item) => {
+  const segments: HistoryItem[][] = [];
+  for (const item of items) {
+    const previous = segments.at(-1);
+    if (!showDetailedTools && item.type === 'tool_group' && !expandedItemKeys?.has(item.id)
+      && previous?.[0]?.type === 'tool_group' && !expandedItemKeys?.has(previous[0].id)) {
+      previous.push(item);
+    } else segments.push([item]);
+  }
+  const sections = segments.map((segment) => {
+    const item = segment[0]!;
     const expanded = showDetailedTools || Boolean(expandedItemKeys?.has(item.id));
     // FEATURE_220: the thinking-collapse mode (KODAX_THINKING_COLLAPSE) and the
     // showFullThinking expand both change a thinking item's rendered rows, so
     // they MUST be part of the cache key — else a toggle would serve stale
     // sections for a reused item reference.
     const sig = `${viewportWidth}|${maxLines}|${showAllContent ? 1 : 0}|${expanded ? 1 : 0}|${isThinkingCollapseEnabled() ? 1 : 0}|${showFullThinking ? 1 : 0}`;
-    const cached = _itemSectionCache.get(item);
+    const cached = segment.length === 1 ? _itemSectionCache.get(item) : undefined;
     if (cached !== undefined && cached.sig === sig) {
       return cached.section;
     }
     const section: TranscriptSection = {
       key: item.id,
+      ...(segment.length > 1 ? { itemIds: segment.map(member => member.id) } : {}),
       rows: buildTranscriptRows({
-        items: [item],
+        items: segment,
         viewportWidth,
         maxLines,
         showAllContent,
@@ -1150,10 +1184,10 @@ export function buildHistoryItemTranscriptSections(
         showFullThinking,
       }),
     };
-    _itemSectionCache.set(item, { sig, section });
+    if (segment.length === 1) _itemSectionCache.set(item, { sig, section });
     return section;
   });
-  return suppressTightRunBlanks(items, sections);
+  return suppressTightRunBlanks(segments.map(segment => segment[0]!), sections);
 }
 
 export function buildDynamicTranscriptSection(
@@ -1730,12 +1764,15 @@ export function resolveScrollOffsetForTranscriptItem(
   }
 
   const rows = flattenTranscriptSections(sections);
-  const targetSection = sections.find((section) => section.key === targetItemId);
+  const targetSection = sections.find((section) => section.key === targetItemId || section.itemIds?.includes(targetItemId));
   if (!targetSection || targetSection.rows.length === 0) {
     return 0;
   }
 
-  const targetRowKey = targetSection.rows[0]?.key;
+  const targetRows = targetSection.itemIds
+    ? targetSection.rows.filter(row => row.itemIds?.includes(targetItemId))
+    : targetSection.rows;
+  const targetRowKey = targetRows[0]?.key;
   const rowIndex = rows.findIndex((row) => row.key === targetRowKey);
   if (rowIndex === -1) {
     return 0;

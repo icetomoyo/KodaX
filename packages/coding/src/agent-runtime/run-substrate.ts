@@ -961,73 +961,69 @@ export async function runSubstrate(
   if (messageQueueAgentId !== undefined && ctx.actorControl?.callerPath === '/root') {
     releaseActiveRootQueueRoute = registerActiveRootQueueRoute(messageQueueAgentId);
   }
-  const consumeRuntimeInterruptInput = async (): Promise<boolean> => {
-    if (!options.context?.interruptInput) return false;
-    const queue = getMessageQueue();
-    const promptFilter = {
-      agentId: messageQueueAgentId,
-      maxPriority: 'user' as const,
-      mode: 'prompt' as const,
-      predicate: createRuntimeDeliveryPredicate(
-        queue.getSnapshot(),
-        messageQueueAgentId,
-      ),
-    };
-    const prompts = queue.peek(promptFilter);
-    if (prompts.length === 0) return false;
-    const preparedPrompts = prompts.map((queued) => {
+  const appendInterruptPrompts = async (prompts: readonly import('@kodax-ai/agent').QueuedMessage[]): Promise<KodaXMessage[]> => {
+    const prepared = prompts.map(queued => {
       const inputArtifacts = toKodaXInputArtifacts(queued.inputArtifacts);
       validateInputArtifactsForModel(inputArtifacts ?? [], {
-        provider: turnState.currentProviderName,
-        model: turnState.currentModelOverride,
+        provider: turnState.currentProviderName, model: turnState.currentModelOverride,
       });
       return { queued, inputArtifacts };
     });
-    queue.dequeue(promptFilter);
     const queuedTurnId = startQueuedLiveTurn(prompts[0]?.id);
-    memoryIntentUserTurnRef.current = {
-      text: prompts.map((queued) => queued.content).join('\n'),
-      turnId: queuedTurnId,
-    };
-    if (ctx.actorControl !== undefined) {
-      ctx.actorTurnRef = {
-        actorPath: ctx.actorControl.callerPath,
-        turnId: queuedTurnId,
-      };
-    }
+    memoryIntentUserTurnRef.current = { text: prompts.map(queued => queued.content).join('\n'), turnId: queuedTurnId };
+    if (ctx.actorControl !== undefined) ctx.actorTurnRef = { actorPath: ctx.actorControl.callerPath, turnId: queuedTurnId };
     const timestamp = new Date().toISOString();
-    const deliveries = preparedPrompts.map(({ queued, inputArtifacts }) => {
-      const message: KodaXMessage = {
-        role: 'user',
-        content: buildPromptMessageContent(queued.content, inputArtifacts),
-        ...(queued.inputId !== undefined ? { inputId: queued.inputId } : {}),
-        turnId: queuedTurnId,
-        timestamp,
-      };
-      messages.push(message);
-      return { queued, message };
-    });
-    if (options.session?.persistedByHost === false) {
-      await saveRequiredSessionSnapshot(options, sessionId, {
-        messages,
-        title,
-        gitRoot: options.context?.gitRoot ?? undefined,
-        runtimeSessionState,
+    const appended: KodaXMessage[] = prepared.map(({ queued, inputArtifacts }) => ({
+      role: 'user', content: buildPromptMessageContent(queued.content, inputArtifacts),
+      ...(queued.inputId !== undefined ? { inputId: queued.inputId } : {}), turnId: queuedTurnId, timestamp,
+    }));
+    const startIndex = messages.length;
+    messages.push(...appended);
+    try {
+      if (options.session?.persistedByHost === false) {
+        await saveRequiredSessionSnapshot(options, sessionId, {
+          messages, title, gitRoot: options.context?.gitRoot ?? undefined, runtimeSessionState,
+        });
+      }
+    } catch (error) {
+      messages.splice(startIndex, appended.length);
+      throw error;
+    }
+    return appended;
+  };
+  const consumeRuntimeInterruptInput = async (allowHost: boolean): Promise<boolean> => {
+    const inputPort = options.context?.interruptInput;
+    if (!inputPort) return false;
+    const queue = getMessageQueue();
+    const promptFilter = {
+      agentId: messageQueueAgentId, maxPriority: 'user' as const, mode: 'prompt' as const,
+      predicate: createRuntimeDeliveryPredicate(queue.getSnapshot(), messageQueueAgentId),
+    };
+    // Host SA owns only its Session queue; an unscoped legacy queue belongs
+    // to a standalone embedder. Actor-backed Runs retain their exact route.
+    const prompts = inputPort.consumePendingInputs && messageQueueAgentId === undefined ? [] : queue.peek(promptFilter);
+    const notify = (inputs: readonly import('@kodax-ai/agent').QueuedMessage[], appended: readonly KodaXMessage[]) => {
+      if (inputs.length === 0) return;
+      const queuedMessageEntryIds: Record<string, string> = {};
+      inputs.forEach((queued, index) => {
+        const entryId = getSessionMessageEntryId(appended[index]!);
+        if (entryId !== undefined) queuedMessageEntryIds[queued.id] = entryId;
       });
+      events.onMidTurnUserMessages?.(inputs.map(queued => queued.content), {
+        queuedMessageIds: inputs.map(queued => queued.id), queuedMessageEntryIds,
+      });
+    };
+    if (prompts.length > 0) {
+      // Legacy interrupt admission already owns this queue slice.
+      const appended = await appendInterruptPrompts(prompts);
+      queue.dequeue(promptFilter);
+      notify(prompts, appended);
     }
-    const queuedMessageEntryIds: Record<string, string> = {};
-    for (const { queued, message } of deliveries) {
-      const entryId = getSessionMessageEntryId(message);
-      if (entryId !== undefined) queuedMessageEntryIds[queued.id] = entryId;
-    }
-    events.onMidTurnUserMessages?.(
-      deliveries.map(({ queued }) => queued.content),
-      {
-        queuedMessageIds: deliveries.map(({ queued }) => queued.id),
-        queuedMessageEntryIds,
-      },
-    );
-    return true;
+    let appended: KodaXMessage[] = [];
+    const hostPrompts = !allowHost || (ctx.actorControl && ctx.actorControl.callerPath !== '/root') ? []
+      : await inputPort.consumePendingInputs?.(async inputs => { appended = await appendInterruptPrompts(inputs); }) ?? [];
+    notify(hostPrompts, appended);
+    return prompts.length > 0 || hostPrompts.length > 0;
   };
 
   let contextTokenSnapshot = rebaseContextTokenSnapshot(
@@ -2309,7 +2305,7 @@ export async function runSubstrate(
           signal,
         });
         const appendedQueuedMessages = appendQueuedRuntimeMessages(messages, runtimeSessionState);
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         if (appendedQueuedMessages || consumedInterruptInput) {
           const hasContinuationIteration = consumedInterruptInput
             ? reserveInterruptContinuation(iter)
@@ -2385,7 +2381,7 @@ export async function runSubstrate(
           messages,
           runtimeSessionState,
         );
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         if (appendedQueuedMessages || consumedInterruptInput) {
           const hasContinuationIteration = consumedInterruptInput
             ? reserveInterruptContinuation(iter)
@@ -2453,7 +2449,7 @@ export async function runSubstrate(
       });
       turnState.maxTokensRetryCount = maxTokensOutcome.nextMaxTokensRetryCount;
       if (maxTokensOutcome.outcome === 'continue') {
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         const hasContinuationIteration = consumedInterruptInput
           ? reserveInterruptContinuation(iter)
           : iter + 1 < iterationLimit;
@@ -2483,7 +2479,7 @@ export async function runSubstrate(
       });
       turnState.managedProtocolContinueAttempted = protocolContinueOutcome.nextContinueAttempted;
       if (protocolContinueOutcome.outcome === 'continue') {
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         const hasContinuationIteration = consumedInterruptInput
           ? reserveInterruptContinuation(iter)
           : iter + 1 < iterationLimit;
@@ -2529,7 +2525,7 @@ export async function runSubstrate(
           messages,
           runtimeSessionState,
         );
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         if (appendedQueuedMessages || consumedInterruptInput) {
           const hasContinuationIteration = consumedInterruptInput
             ? reserveInterruptContinuation(iter)
@@ -2786,7 +2782,7 @@ export async function runSubstrate(
           messages,
           runtimeSessionState,
         );
-        const consumedInterruptInput = await consumeRuntimeInterruptInput();
+        const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
         if (appendedQueuedMessages || consumedInterruptInput) {
           const hasContinuationIteration = consumedInterruptInput
             ? reserveInterruptContinuation(iter)
@@ -2913,7 +2909,7 @@ export async function runSubstrate(
       });
       await commitActorNotificationReceipts(ctx, messages);
       contextTokenSnapshot = settleOutcome.contextTokenSnapshot;
-      const consumedInterruptInput = await consumeRuntimeInterruptInput();
+      const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
       if (consumedInterruptInput) {
         reserveInterruptContinuation(iter);
         contextTokenSnapshot = rebaseContextTokenSnapshot(messages, contextTokenSnapshot);

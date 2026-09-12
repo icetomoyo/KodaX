@@ -665,3 +665,67 @@ R3 的预算还需区分已解析配置和实际执行容量：Memory evidence r
 发现 0；此前业务旁路、设置同步和同 Run steer 来源锚问题已关闭。最后两项测试增量未修改生产行为、未删除或放宽原前景断言，独立复查仍为 0。该独立结论来自源码及测试接缝核验；实际构建、完整回归和 PTY 由主 Agent 执行，分别记录，不把静态评审当作运行验收。
 
 仍保留明确边界：强制 legacy renderer 的历史搜索跳转问题见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)，不由默认 owned renderer 验收豁免；缺少可证明来源的旧历史不按文本自动修复；未来 Web transport、远程认证、多租户隔离未实现。本轮使用离线 Provider，不认证商业模型回答质量，未做 macOS/Linux 实机及 Electron GUI 验收，也未重新测量覆盖率。用户原有 Host/session 没有重启或改写，没有推送、发布或版本号变更。
+
+## 2026-09-12：长会话空白、工具分组与队列交付时机复查
+
+用户实际使用再次暴露了此前验收缺口。上节 15,560 项通过仅属于当时快照，不能证明本节行为正确：短会话、单条长文本、展开全文，以及队列撤回/整轮结束后续跑，都没有覆盖本次失败条件。
+
+### 已复现的原因
+
+1. **Host 预览预算让旧正文变空。** `session.view` 保留最近 150 项，却从最新项向前分配 131,072 个 UTF-16 码元。多个长结果耗尽预算后，较早的 query、Thinking、assistant 正文及工具参数被截成空串，标题与身份仍存在。只读检查用户 Session 时，原 query 长 21，view 长 0；12 个原本非空字段预览为空，全文 reader 仍有内容。这是统一输出投影的问题，SDK 同样能观察到，不能归因为终端或旧 Host。观察时该 Run 仍在执行、尚无 assistant 项；该次观察不能证明模型已给出正式回答却被丢弃。
+2. **保留工具业务身份后遗漏展示分组。** 每个 Host 工具项映射成独立 UI 工具组，原有合并算法只作用于单组，导致每次调用各有 Tools 标题。修复仅合并相邻展示段，保留原 itemId 和全文读取身份。独立复查进一步发现：合并后搜索非首项不能只定位段首；须核对目标工具行的实际可见性，以及同摘要折叠成员的展开/复制身份。
+3. **可撤回队列失去下一次模型调用前的交付点。** 旧版 SA/AMA 在工具完成后的安全点消费输入；当前 Host 的普通队列仅在整个 Run 结束后 drain。真实 IPC 和 Windows PTY 均复现：原 Run 的第二次 Provider 请求已到达，排队文字出现次数仍为 0，Host 队列仍保留该输入。用户要求的是下一次模型沟通及时包含输入，不能用终态后新 Run 能消费来代替。
+
+### 本轮验收接缝
+
+- `session-view.preview.test.ts`：多项长输出和完整 150 项窗口下，各保留正文/工具参数仍有可读预览，预算不增加，原文 reader 和 suffix offset 保持一致。
+- 实际用户 Session 的被动读取加本地无写入投影：旧 query 0 → 修正投影 21，合计仍为 131,072；不重跑用户任务，不改写会话。
+- `client-plane.test.ts`、transcript 布局/滚动及 row memo：实际 UI section 路径的相邻工具合并、非首成员搜索定位、展开和复制。
+- `sdk-client.queue-boundary.test.ts`：真实 ProductClient/IPC 到受控 Provider，覆盖 SA/AMA 下交付时机、输入身份、附件、撤回及去重。
+- `repl-pty-acceptance.mjs`：真实键盘排队并检查下一次 Provider 请求；多批工具结果填满预算后在普通 live 界面重绘检查早期内容。`--source` 走 `npm run dev` 的源码入口，不能用展开全文掩盖普通预览空白。
+
+### 修复范围
+
+Host 在现有预览总预算内先为每个保留字段预留可读片段，再将剩余额度分给近期内容；不扩大协议负载预算或把全文塞回 view。工具合并只在 UI 布局层发生，长段定位与折叠成员读取均保留原身份。
+
+普通队列通过既有 `interruptInput` 执行边界进入 SA/AMA，正文仍由唯一 `SessionInputQueue` 持有。Host 与 withdraw 共用 Session 操作锁，在成功保存后提交原队列批次；没有第二套执行队列或 claim/ack 账本。canonical 保存后的可抛通知在队列提交后执行，不能因通知异常将已保存输入误留队。steer 与普通输入在同一安全点依次交付，后续输出来源跟随最后已交付输入；旧工具的迟到结果仍保留原来源。
+
+排队 Skill 保留可信准备和顺序屏障；停止、失败或没有下一执行额度时保留尚未交付的普通队列。SA 使用原有绝对迭代额度，AMA 复用 Runner 原有许可判断，不增加无限续跑。fork 保留原来的中断窗口控制，仅禁止它消费所属 Session 的普通队列。没有修改 Bash 执行、sandbox 选择或权限批准路径。
+
+### 验证记录
+
+长会话实际 Windows PTY 的旧构建复现目录为 `kodax-repl-acceptance-HH3jwH`：早期正文/参数在普通界面重绘后为空，全文 reader 仍能读出。队列实际 PTY 的旧构建复现目录为 `kodax-repl-acceptance-JbQtXK`：第二次 Provider 请求中的排队文字计数为 0，原 Run 仍 running、队列未清除。两者均为真实失败信号，不以“进程能启动”代替。
+
+本轮冻结构建和类型检查已通过。源码长会话 PTY 已通过（`kodax-repl-acceptance-kYyrKq`），预算饱和后 query、Thinking、已发出的正式回答与旧 Bash 参数仍可见，相邻批次共 9 个工具标题。初次全交互源码 PTY 在命令续答检查失败（`kodax-repl-acceptance-mF5GfF`）：续答已经在原 Run 流式显示，测试却仍等待与原 Run 不同的 ID。已按本次交付语义改为检查原 inputId 接收记录、原 Run 仍 running、队列消失，再双 Esc 验证该 Run interrupted；保留命令 handler 仅执行一次及后续输入验证，不修改产品迎合旧断言。失败清理时的 node-pty `AttachConsole failed` 来自库的异步清理，不是这次超时的原因。
+
+独立 SA 迭代上限测试 2/2 通过：前 8 个输入各在下一请求出现，既有绝对上限的第 9 个待交付输入保持排队且未写入正文。该项在补齐 guard 后验证，不能宣称已经取得单独的生产 RED。
+
+#### Standards
+
+硬违反 0；可行动 smell 0。复用现有 Session 锁、执行边界、持久化和输入身份，没有新队列 owner、恢复状态机、shell backend 或 sandbox fallback。根 Agent 另核新增测试没有把“找不到输入”的 index=-1 当成顺序通过。
+
+#### Spec
+
+最终发现 0。长工具段非首项定位、同点 steer/普通输入交付、SA 最后执行额度与 fork 原中断窗口控制均已复查。曾提出的 dequeue 并发删除疑虑经读取既有 predicate 实现后撤回：它捕获固定输入 ID 集合，后来输入不匹配，无需额外逐 ID 删除补丁。
+
+首轮冻结全套为 **1,058 文件通过、2 文件失败、1 文件跳过；15,579 passed、2 failed、77 skipped、21 todo**（714.90 秒，`.regression-full.log`）。两个失败均逐项复核：
+
+- `sdk-client.queue.test.ts` 仍要求最后一条 user 消息是带分隔符的整批文字。旧版 `6886f96f` 的 SA 安全点本来就逐 queued 输入保留 message；分隔符合并属于终态后新 Run 路径，本次未删除该路径。设计要求同批及时交付，没有规定只能一条 user。测试改为第二次 Provider 请求中 second/third 全文、inputId、顺序及次数完全匹配，两条 receipt 指向原 Run；保留模型 a→b 生效、撤回、去重和请求次数断言。
+- 新增 AMA 顺序强断言在首个 partial 帧找不到 query。仅通过已有观察器、保持第二次 Provider 请求暂停，测得 firstPartialInputIndex=-1 后 **100ms 自然收敛**到用户项 index 2 且先于 partial；没有额外 read、新输入或释放 Provider 触发刷新。这是既有 80ms 异步刷新窗口，不是持续丢失。测试改为有界等待正文与顺序同时成立，仍强制 index≥0 和完整原文，不增加生产事务或恢复补丁。最初缺少诊断的探针被清理异常掩盖，不能当作长期缺失证据。
+
+上述断言修正后，队列/steer/迭代上限定向 **5 文件 25/25 通过**（`.regression-queue-final.log`），生产构建未变。最终全交互 PTY 增强为真实 AMA 排队后在普通界面看到 query 整行，SA 注册命令续答场景另行保留。
+
+第二轮完整测试仍有两处失败，不能把它们归为环境问题。并发 launcher 的两份真实 preflight 均只有两个临时 launcher 连接，Run、任务、权限与队列全部空闲；三个短退避回合仍互相触发 `connected_clients`。保留该保护，改为在原始启动截止时间内先释放临时连接、有限退避并重探测，竞争等待不消耗实际升级次数上限。没有新锁、选举、持久票据或客户端名称豁免。真实 IPC 测试固定制造四轮碰撞（八份 Host 快照），修后连接同一新 owner，旧进程正常退出、原 Session 保留；升级定向 33/33 通过，另覆盖期限耗尽、取消及 shutdown 后无法确认退出，不启动第二 owner。
+
+另一处是 `readLineage` 与 Host 自有显示 checkpoint 争用 Session 写锁。最初怀疑后台 Learning，受控写入堆栈已排除：持锁者为 `SessionViewOwner.save → mutateUiHistory`。历史 capture 已等待这个 checkpoint，lineage、派生与设置读却遗漏，且 IPC 准入还会先调用 `sessions.load`。因此没有让测试先读一次历史来掩盖差异，而是给 load、lineage、fork、recover、settings 及 auto stats 接入既有 flush（load 保留原读取预算，stats 复用 settings），保留准入、idle、owner、revision 和外部写入检查。真实 IPC 回归 **15/15**（`.derive-final-green.log`）：六个入口等待自身 checkpoint、六个入口传播保存失败、外部写锁仍报 data_changed，以及原 fork/recover 用例。多个受控入口在接线前确实 RED；最后增量 Standards、Spec 分别为 0 项发现。
+
+| 最终门禁 | 结果 |
+| --- | --- |
+| `npm run build` | 最后竞态修复后重新通过；SDK 声明及无 Node ambient types 的纯 Client 消费者通过，`.regression-build-final.log`。 |
+| `npm run typecheck` | 最后竞态修复后 src/tests 均通过，`.regression-typecheck-complete.log`；`git diff --check` 通过。 |
+| 源码长会话 PTY | 最后竞态修复后 startup、预算饱和普通显示、正常退出 **3/3**，`kodax-repl-acceptance-Sj3Lbq`，`.regression-long-pty-complete.log`。 |
+| 源码入口完整 PTY | 最后竞态修复后 **33/33：Ink 20、classic 13**，`kodax-repl-acceptance-8Zxv0v`，`.regression-source-pty-complete.log`。 |
+| 打包入口完整 PTY | 最后竞态修复后 **33/33：Ink 20、classic 13**，`kodax-repl-acceptance-d6vyOW`，`.regression-built-pty-complete.log`。 |
+| 最后修复后的完整 Vitest | **1,060 文件通过、1 文件跳过；15,596 passed、77 skipped、21 todo，零失败**；719.72 秒，exit 0，`.regression-full-complete.log`。第二轮的两个失败均已修复并在本轮通过。 |
+
+以上 PTY 结果均核对 `results.json` 的通过/失败计数及进程 exit 0。源码与打包入口分别验收，不以一个入口替代另一个；不把启动、退出与单元测试数相加冒充功能覆盖率。最后生产增量经独立 Standards、Spec 复查，各为 0 项发现，随后冻结生产代码，重新构建、类型检查、完整 Vitest 与三组 PTY 均通过。临时诊断和专用验证 HOME 已清理，用户原有 Host/Session 未重启或改写；本节不豁免上节记录的强制 legacy renderer 搜索、跨平台实机和覆盖率等验收边界。

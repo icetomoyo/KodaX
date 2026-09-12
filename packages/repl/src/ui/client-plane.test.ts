@@ -7,8 +7,9 @@ import type {
 } from '@kodax-ai/coding/client-contract';
 import { CANCELLED_TOOL_RESULT_MESSAGE, type AskUserAnswer } from '@kodax-ai/coding';
 import { ToolCallStatus } from './types.js';
-import { buildTranscriptToolInputCopyText } from './utils/transcript-search.js';
-import { buildTranscriptRows } from './utils/transcript-layout.js';
+import { isTranscriptItemVisible, resolveTranscriptSelectionOffset } from './utils/transcript-scroll-controller.js';
+import { buildTranscriptToolInputCopyText, buildTranscriptCopyText, searchTranscriptItems } from './utils/transcript-search.js';
+import { buildTranscriptRows, buildHistoryItemTranscriptSections, buildTranscriptRenderModel, getVisibleTranscriptRows } from './utils/transcript-layout.js';
 import {
   answerClientPlaneInteraction,
   clientViewToHistoryItems,
@@ -28,6 +29,83 @@ function viewItem(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id'
 }
 
 describe('clientViewToHistoryItems (T17)', () => {
+  it('scrolls to the last distinct tool row rather than the header of a long merged section', () => {
+    const items = clientViewToHistoryItems([
+      ...Array.from({ length: 20 }, (_, index) => viewItem({
+        id: `tool-${index}`, type: 'tool', text: `unique-result-${index}`,
+        tool: { callId: `call-${index}`, name: 'read', status: 'success', inputText: JSON.stringify({ path: `file-${index}.ts` }) },
+      })),
+      viewItem({ id: 'later', type: 'assistant', text: 'Later output\n'.repeat(30) }),
+    ]);
+    const [match] = searchTranscriptItems(items, 'unique-result-19');
+    expect(match?.itemId).toBe('tool-19');
+    const renderModel = buildTranscriptRenderModel({ items, viewportWidth: 100, windowed: true });
+    const options = { items, renderModel, terminalWidth: 100, transcriptMaxLines: 1000,
+      viewportRows: 8, itemId: match!.itemId };
+    const headerWindow = renderModel.sections[0]!.rows.slice(0, 8);
+    expect(isTranscriptItemVisible({ ...options, visibleRows: headerWindow })).toBe(false);
+    const offset = resolveTranscriptSelectionOffset(options);
+    const visibleRows = getVisibleTranscriptRows(renderModel.rows, 8, offset);
+    expect(visibleRows.some(row => row.key.startsWith('tool-19-tool-'))).toBe(true);
+    expect(isTranscriptItemVisible({ ...options, visibleRows })).toBe(true);
+  });
+  it('locates, expands, and copies the middle original item in an x3 tool summary', () => {
+    const tools = clientViewToHistoryItems(['first', 'middle', 'last'].map(id => viewItem({
+      id, type: 'tool', text: `needle-${id}`,
+      tool: { callId: `call-${id}`, name: 'bash', status: 'success', inputText: '{"command":"git status"}' },
+    })));
+    const items = [...tools, ...clientViewToHistoryItems([viewItem({
+      id: 'later', type: 'assistant', text: 'Later output\n'.repeat(30),
+    })])];
+    const [match] = searchTranscriptItems(items, 'needle-middle');
+    expect(match?.itemId).toBe('middle');
+    const renderModel = buildTranscriptRenderModel({ items, viewportWidth: 100, windowed: true });
+    expect(renderModel.rows.map(row => row.text).join('\n')).toContain('x3');
+    const options = { items, renderModel, terminalWidth: 100, transcriptMaxLines: 1000,
+      viewportRows: 8, itemId: match!.itemId };
+    const offset = resolveTranscriptSelectionOffset(options);
+    expect(offset).toBeGreaterThan(0);
+    const visibleRows = getVisibleTranscriptRows(renderModel.rows, 8, offset);
+    expect(isTranscriptItemVisible({ ...options, visibleRows })).toBe(true);
+    expect(visibleRows.find(row => row.text.includes('x3'))?.itemIds).toContain('middle');
+    const selected = items.find(item => item.id === match!.itemId);
+    expect(buildTranscriptCopyText(selected)).toContain('Output: needle-middle');
+    expect(buildTranscriptCopyText(selected)).not.toContain('needle-last');
+    expect(buildTranscriptToolInputCopyText(selected)).toBe('Tool: bash\n{"command":"git status"}');
+    const expanded = buildHistoryItemTranscriptSections(items, 100, 1000, false, new Set([match!.itemId]));
+    expect(expanded.find(section => section.key === 'middle')?.rows.map(row => row.text).join('\n'))
+      .toContain('needle-middle');
+  });
+  it('renders adjacent Host tool items with the existing collapsed summary while keeping item reads separate', async () => {
+    const source = ['first', 'second'].map(id => viewItem({
+      id, type: 'tool', text: 'same output', totalTextLength: 16,
+      tool: { callId: `call-${id}`, name: 'bash', status: 'success',
+        inputText: '{"command":"git status"}' },
+    }));
+    const items = clientViewToHistoryItems(source);
+    expect(items.map(item => item.id)).toEqual(['first', 'second']);
+    const rows = buildHistoryItemTranscriptSections(items, 100).flatMap(section => section.rows);
+    expect(rows.filter(row => row.text.startsWith('Tools [')).length).toBe(1);
+    expect(rows.map(row => row.text).join('\n')).toContain('x2');
+    expect(rows.find(row => row.text.includes('x2'))?.itemId).toBe('second');
+    expect(buildTranscriptToolInputCopyText(items.find(item => item.id === rows.find(row => row.text.includes('x2'))?.itemId)))
+      .toBe('Tool: bash\n{"command":"git status"}');
+    const expandedRows = buildHistoryItemTranscriptSections(items, 100, 1000, false, new Set(['first']))
+      .flatMap(section => section.rows);
+    expect(expandedRows.some(row => row.key.startsWith('first-tool-'))).toBe(true);
+    expect(expandedRows.some(row => row.key.startsWith('second-tool-'))).toBe(true);
+    expect(expandedRows.some(row => row.text.includes('x2'))).toBe(false);
+    const separated = buildHistoryItemTranscriptSections([items[0]!, { id: 'answer', type: 'assistant', text: 'Between tools', timestamp: 0 }, items[1]!], 100);
+    expect(separated.flatMap(section => section.rows).filter(row => row.text.startsWith('Tools [')).length).toBe(2);
+    const readIds: string[] = [];
+    const expanded = await readFrozenClientPlaneItems({ readItem: async (_session, id) => {
+      readIds.push(id);
+      return { id, text: `full ${id} body`.padEnd(16), offset: 0, totalLength: 16 };
+    } }, 'session', items);
+    expect(readIds).toEqual(['first', 'second']);
+    expect(expanded[0]?.type === 'tool_group' && expanded[0].tools[0]?.output).toBe('full first body ');
+    expect(expanded[1]?.type === 'tool_group' && expanded[1].tools[0]?.output).toBe('full second body');
+  });
   it('searches and copies the complete frozen stream without later appended characters', async () => {
     const items = clientViewToHistoryItems([viewItem({
       id: 'stream', type: 'assistant', text: 'snapshot', textOffset: 6, totalTextLength: 14,

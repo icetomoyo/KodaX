@@ -18,6 +18,7 @@ import type {
   RuntimeCompactionSkippedEvent,
 } from './agent-runtime/middleware/compaction-pressure.js';
 import type { MemoryRecallRunner } from '@kodax-ai/agent/experimental-memory';
+import type { QueuedMessage } from '@kodax-ai/agent';
 
 import type {
   GuardrailContext,
@@ -1940,6 +1941,8 @@ export interface KodaXContextOptions {
   interruptInput?: {
     closeInputWindow(): void;
     reopenInputWindow(): void;
+    /** Host retains the batch until the supplied canonical persistence succeeds. */
+    consumePendingInputs?(persist: (inputs: readonly QueuedMessage[]) => Promise<void>): Promise<readonly QueuedMessage[]>;
   };
   /** Host attribution for an explicit Workflow command, SDK request, or natural-language product word. */
   workflowIntent?: 'explicit';

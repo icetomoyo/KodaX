@@ -40,6 +40,8 @@
 
 自动更新仅适用于可验证身份、可正常管理且空闲的旧 Host：请求正常 shutdown，等待原进程真实退出，然后启动并连接目标构建。需要更新但 Host 忙碌、身份变化或不能确认退出时明确失败并给出重试入口；较新且兼容的 Host 可直接连接，较新但不兼容时明确拒绝，不降级。并发启动的初始化连接冲突按既有预算短暂退避后重试，不依赖可能滞后的状态文件猜测接入是否开放；管理或业务操作失败不因此重放。启动中的 owner 等待就绪，退出中的 owner 等待精确进程退出后再进入原有锁竞争。整个过程不强停工作、不启动第二个写入者。普通 connect 保持被动，即使启动器能够更新也不替用户执行更新。
 
+多个启动器同时刷新时，临时连接也受 `connected_clients` 保护。失败者先释放连接，在同一个启动截止时间内退避并重新探测；重试不重置期限，也不因客户端自称 launcher 而忽略它。底层启动取消信号会终止退避。竞争持续到期限时明确失败，不保证任意竞争都能收敛，不新增跨进程选举或恢复票据。
+
 `disconnect()` 仅释放本连接；`ClientObservation.close()` 仅结束一个观察。它们不表示 Run 停止或 Host 退出。`host.shutdown()` 请求空闲 Host 正常关闭，返回 `{ accepted: true }` 只代表接收请求，不能替代启动器对退出和清理完成的确认。
 
 ## 公开域与全部方法
@@ -112,7 +114,7 @@ prompt/extension 的模型偏好、工具限制、hooks 和 fork 由 Host 从可
 
 `inputs.submit` 的 delivery 包含 `immediate`、`after_turn`、`steer`、`redirect`；后两者必须指定 `targetRunId`。同一 inputId 的不同文本、附件或其他意图发生冲突；附件是意图的一部分。`read` 返回 `null` 仅表示该 Host 当前查不到接收记录，不保证跨 Host 重启的全局恰好一次。
 
-接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待槽位；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
+接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待安全交付点；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
 `runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败或 Actor 结算不确定；连接可能仍然健康。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
 
@@ -121,15 +123,19 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 | delivery | 行为与确认 |
 | --- | --- |
 | immediate | 尝试开始 Run；Session 忙时冲突，不先执行动态准备 |
-| after_turn | 保存到可撤回队列；多条输入可能合成一个 user 展示项和同一 Run，展示项仅保留首 inputId，其余逐 inputs.read 确认 submitted/runId |
+| after_turn | 保存到 Host 可撤回队列；普通输入在当前 Run 下一次模型调用前的安全点交付，不等待整个长任务结束。没有可用安全点时保留待后续调度；多条输入也可能合批为同一 Run/一个 user 展示项，须逐 inputs.read 确认 submitted/runId |
 | redirect | 保存新输入并停止目标 Run，沿用显式 redirect 的后续调度 |
 | steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在可撤回 view.queue 中；通过 inputs.read 确认 submitted/dropped |
 
 普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
 
+安全点消费与 withdraw 使用同一 Host Session 操作锁；输入成功保存后才从可撤回队列移除并标记 submitted。消费前撤回得到完整原文和附件，消费后撤回明确 conflict。排队 Skill 必须经 Host 可信准备，是普通批次的顺序边界；不把 Skill 当普通文字塞入执行器，也不让后方输入越过它。没有后续执行额度时不通过无限延长 Run 来消费队列。以上行为对 REPL 和 SDK 相同，不新增 UI 自有执行队列。
+
 Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限；取消用 `kind: 'cancel'`。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
 
-`readLineage` 在尚无 lineage 的旧 Session 可返回 null。标签和分支选择的未知 selector 必须明确冲突。rewind 需要 expectedHead，只允许空闲 Session，且不会撤销文件副作用；fork 可使用带 sourceRevision 的 historyBoundary，源 Session 保持不变。recover 从确定性恢复种子派生新 Session，不执行 LLM 调用；继续运行仍通过普通 input submit。
+`readLineage` 在尚无 lineage 的旧 Session 可返回 null。会话读取、lineage、设置读取及 fork/recover 都先等待同 Host 已发起的显示快照保存，再进行原有准入和存储一致性检查；调用者不必先读一次历史来触发同步。保存失败会传递给调用者，外部写入造成的不稳定边界仍明确拒绝。Run 终态本身不等于所有显示快照已保存。
+
+标签和分支选择的未知 selector 必须明确冲突。rewind 需要 expectedHead，只允许空闲 Session，且不会撤销文件副作用；fork 可使用带 sourceRevision 的 historyBoundary，源 Session 保持不变。recover 从确定性恢复种子派生新 Session，不执行 LLM 调用；继续运行仍通过普通 input submit。
 
 `selectBranch` 的可选第三参数 `summarizeCurrentBranch` 保留原分支切换时的摘要行为。REPL 若尚未持有 rewind 的 expectedHead，会先读取当前 lineage，再把该身份提交给 Host 校验；这不会取消并发冲突保护。
 
@@ -165,7 +171,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `id` | Host 为该显示项给出的身份；同项更新沿用 ID | 可作组件 key，不解析内部字符串格式；不同读取面或修订的 ID 不保证互换 |
 | `inputId?` | canonical user 消息对应的已接受输入身份 | 关联乐观输入与 Host 正式项；旧历史可能没有，不能据全文全局去重 |
 | `type` | user/assistant/thinking/info/error/event/hint/sidecar/system/tool | 用户、助手、思考、通知与工具分别呈现；不同类型不因相邻而合成同一条原文 |
-| `text` | 该类型的显示正文；tool 时是工具输出 | 可能是有界后缀；空文本合法，不代表没有工具输入或运行失败 |
+| `text` | 该类型的显示正文；tool 时是工具输出 | 可能是有界后缀；原文为空时空文本合法，不代表没有工具输入或运行失败。不能因其他项目用完预算而把非空原文投影成空壳 |
 | `textOffset?`, `totalTextLength?` | 有界正文后缀的绝对 UTF-16 偏移与完整长度 | 按 readItem 补齐；不能用 text.length 代替完整长度 |
 | `timestamp?` | Unix 毫秒时间；实时项生成时取时钟，后续同 ID 更新保留原时间，恢复项采用保存的信息 | 保持 Host 数组顺序，不按本地到达时间重排；缺失不补成“现在” |
 | `icon?` | Host 附带的展示提示字符串，例如 sidecar 裁决提示 | 仅展示；未知值用通用图标，不据它判 Run/工具终态 |
@@ -178,6 +184,8 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `tool.startedAt?`, `tool.endedAt?` | 工具开始/结束的 Unix 毫秒时间 | 两者具备时才可计算执行耗时；不存在 endedAt 不等于当前一定还运行 |
 
 纯契约没有 item.streaming、item.isFinal 或逐 token 事件。Host 收到 assistant/thinking delta 后更新同一显示项的完整当前文本；一次刷新可以合并多次内部事件。Provider retry/输出段替换可以移除旧项或替换正文，不能要求 text 永远只增长。工具开始、progress、result 也更新同一个工具项；状态由 Host 生成，客户端不解析文本前缀再猜一次状态。
+
+当前实现保留最后 150 项，正文与工具参数合计最多 131,072 个 UTF-16 码元，每字段最多 8192 个码元。Host 先为各保留项的非空正文和参数预留可读预览，再把剩余额度分配给较新的内容；长回答或工具结果不能挤掉较早 query、Thinking、回答和 Bash 参数的全部预览。正文仍为带 textOffset 的后缀，工具参数仍为前缀；全文继续按原 itemId 和 part 分页读取。这是显示长度限制，客户端不能用它计算模型上下文的 token 使用率。
 
 当前 Ink 的 [clientViewToHistoryItems](../packages/repl/src/ui/client-plane.ts) 在存在活动 Run 时给列表中末条 assistant 加本地 isStreaming 展示标记，Run 终态后重新投影去掉；这是终端显示约定，不能升级成 Host 对某项仍在产生 token 的保证。工具、审批、Run 和输出项分别依其自身事实显示。
 
@@ -249,9 +257,13 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 
 `sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens。Activity 的父上下文与 worker 上下文不可混为一个计数。
 
-取消后保留的半截输出可能只有 display checkpoint，没有 canonical assistant message。Host 为新输出保留可选 `afterInputId` 来源锚，恢复时将其放在对应 canonical 用户输入之后、下一轮输入之前；合批输入的已记录身份映射到同一用户项。同一 Run 的 steer 以已交付输入事实更新后续输出来源；segment 开始和工具项创建时捕获来源，既有项的延迟 delta/result 保留原锚。该字段是 Host 恢复元数据，客户端仍只使用 Host 给出的项顺序，不自行排序。旧记录缺失来源时保持旧恢复规则，不按正文或时间猜测所属输入。
+输入接收结果与正文视图异步更新，不保证同一帧到达。已提交输入可能稍后才出现在观察视图中；消费结果以 inputId 的接收记录为准，不能因首帧尚未显示正文就重交输入。后续 view 应自然收敛，不需要客户端额外读取或重新提交来推动刷新。
+
+取消后保留的半截输出可能只有 display checkpoint，没有 canonical assistant message。Host 为新输出保留可选 `afterInputId` 来源锚，恢复时将其放在对应 canonical 用户输入之后、下一轮输入之前；合批输入的已记录身份映射到同一用户项。同一 Run 的 steer 和已交付普通排队输入按实际交付顺序更新后续输出来源；segment 开始和工具项创建时捕获来源，既有项的延迟 delta/result 保留原锚。该字段是 Host 恢复元数据，客户端仍只使用 Host 给出的项顺序，不自行排序。旧记录缺失来源时保持旧恢复规则，不按正文或时间猜测所属输入。
 
 显示窗口是有界的。`textOffset`/`totalTextLength` 表示正文省略的前缀和总长；工具 inputText 可由 totalInputLength 标明不完整。调用 `readItem(sessionId, itemId, { part: 'text' | 'input', offset })` 补齐。offset、totalLength、nextOffset 均以 UTF-16 字符单元计数，不是 UTF-8 字节；应按返回的 nextOffset 续读，验证项 ID、偏移连续性和长度，直到结束。null、无进展或读取变化是失败，不能把部分原文当全文。
+
+相邻工具可以在客户端共用一个展示标题，重复摘要可以折叠计数，但每个工具仍保留原 Host itemId。搜索定位、选择高亮、展开和复制必须指向该工具（或包含它的折叠摘要行），不能因合并展示而读到另一工具，或只滚到整段标题便判定目标已可见。
 
 历史与实时 view 不同：`readHistory` 首次给最新页，页内由旧到新，nextCursor 指向更旧页；拼接完整历史要反转页顺序，不能反转页内顺序。cursor 是不透明值。每页必须属于同一 revision；变更时重新从最新页读。`oversized` 给出超大条目的 itemId/byteLength，page.items 保留可定位的有界投影；这些正文须由 `readHistoryEntry` 读取，不能静默遗漏或用截断预览冒充。搜索可按角色过滤，scope 为 all 或 compacted；hit 的 snippet 是检索预览，不是复制原文。每个命中包含不透明 itemId，可直接交给 readHistoryEntry 分页读取原文，包括压缩前长正文。命中身份使用 transcript 修订空间，与 conversation 身份分开；entryIndex 不能当作 conversation 页数组下标或 fork 的 entryId。现有快照过期时 reader 明确报 resync_required，调用方须重新搜索，不按全文匹配恢复身份。
 

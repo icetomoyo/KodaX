@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { MessageQueue } from '@kodax-ai/agent';
+import { MessageQueue, type QueuedMessage } from '@kodax-ai/agent';
 import { parseInlineSkillReferences } from '@kodax-ai/coding';
 import type { ClientInputAcceptance, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
 
@@ -169,6 +169,22 @@ export class SessionInputQueue {
       fact.runId = runId;
     }
     this.changed(sessionId);
+  }
+
+  /** Caller holds the same Session operation lock used by withdrawal. */
+  async consumePlainBatch(sessionId: string, runId: string,
+    persist: (inputs: readonly QueuedMessage[]) => Promise<void>): Promise<readonly QueuedMessage[]> {
+    const batch = this.batch(sessionId);
+    if (batch.length === 0 || batch[0]!.skill) return [];
+    const prompts: QueuedMessage[] = batch.map(({ input, enqueuedAt }) => ({
+      id: `product:${this.facts.get(this.key(sessionId, input.inputId))!.messageId!}`,
+      agentId: sessionId, inputId: input.inputId, content: input.text,
+      priority: 'user', mode: 'prompt', enqueuedAt,
+      ...(input.inputArtifacts ? { inputArtifacts: input.inputArtifacts } : {}),
+    }));
+    await persist(prompts);
+    this.submitBatch(sessionId, batch.map(({ input }) => input.inputId), runId);
+    return prompts;
   }
 
   withdraw(sessionId: string, inputId: string): ClientSubmitInput {

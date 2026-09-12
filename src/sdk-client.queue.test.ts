@@ -77,7 +77,7 @@ afterEach(async () => {
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-it('shares queued input, atomically withdraws exact input, and batches the remaining text once', async () => {
+it('shares queued input, atomically withdraws exact input, and delivers the remaining batch in the next request', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', model: 'queue-model-a' });
   const views: ClientSessionView[] = [];
@@ -104,11 +104,16 @@ it('shares queued input, atomically withdraws exact input, and batches the remai
     await expect.poll(() => requests.length).toBe(2);
     expect(requestModels).toEqual(['queue-model-a', 'queue-model-b']);
     await expect.poll(() => views.at(-1)?.queue.length).toBe(0);
-    const latest = requests[1]!.filter((message) => message.role === 'user').at(-1);
-    expect(latest?.content).toBe('Second instruction.\n\n---\n\nThird instruction.');
+    const delivered = requests[1]!.filter(message => message.role === 'user'
+      && (message.inputId === 'second' || message.inputId === 'third'));
+    expect(delivered.map(message => ({ inputId: message.inputId, content: message.content }))).toEqual([
+      { inputId: 'second', content: 'Second instruction.' },
+      { inputId: 'third', content: 'Third instruction.' },
+    ]);
     expect(JSON.stringify(requests)).not.toContain(removed.text);
     const consumed = await first.inputs.read(session.id, 'second');
-    expect(consumed).toMatchObject({ state: 'submitted' });
+    expect(consumed).toMatchObject({ state: 'submitted', runId: active.runId });
+    expect(await second.inputs.read(session.id, 'third')).toMatchObject({ state: 'submitted', runId: active.runId });
     await runtime.runs.await(consumed!.runId!);
     await expect(second.inputs.withdraw(session.id, 'third')).rejects.toMatchObject({ code: 'conflict' });
   } finally {

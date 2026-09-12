@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,9 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
+import { withKodaXFileLock } from '@kodax-ai/agent';
+import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
+import { SessionViewOwner } from './session-view.js';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -201,3 +204,117 @@ it('recovers into a new session via a deterministic seed and continues with one 
     await runtime.runs.await(activeSource.runId!);
   }
 }, 90_000);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function sessionWriteLock(sessionId: string): string {
+  const key = createHash('sha256').update(sessionId, 'utf8').digest('hex');
+  return path.join(homeDir, '.kodax', 'sessions', '.write-locks', `${key}.lock`);
+}
+
+const idleSourceReads = {
+  session: (sessionId: string) => first.sessions.read(sessionId),
+  settings: (sessionId: string) => first.sessions.getSettings(sessionId),
+  stats: (sessionId: string) => first.sessions.getAutoModeStats(sessionId),
+  lineage: (sessionId: string) => first.sessions.readLineage(sessionId),
+  fork: (sessionId: string) => first.sessions.forkSession(sessionId),
+  recover: (sessionId: string) => first.sessions.recoverSession(sessionId),
+};
+
+it.each(Object.entries(idleSourceReads))(
+  '%s waits for its Host display checkpoint before reading the idle source',
+  async (_name, readSource) => {
+    const session = await first.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    const held = deferred<void>();
+    const release = deferred<void>();
+    const flushed = deferred<'flush'>();
+    const mutate = FileSessionStorage.prototype.mutateUiHistory;
+    const writer = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory')
+      .mockImplementation(async function (this: FileSessionStorage, id, mutation) {
+        // Hold the real Session write lock inside the Host checkpoint promise.
+        // No fake read result or delay controls the reader's outcome.
+        await withKodaXFileLock(sessionWriteLock(id), async () => {
+          held.resolve();
+          await release.promise;
+        });
+        return mutate.call(this, id, mutation);
+      });
+    let restoreFlush: (() => void) | undefined;
+    let reading: Promise<unknown> | undefined;
+    try {
+      await runRound(session.id, 1);
+      await held.promise;
+      const flush = SessionViewOwner.prototype.flush;
+      const flushSpy = vi.spyOn(SessionViewOwner.prototype, 'flush')
+        .mockImplementation(function (this: SessionViewOwner, id) {
+          if (id === session.id) flushed.resolve('flush');
+          return flush.call(this, id);
+        });
+      restoreFlush = () => flushSpy.mockRestore();
+      reading = readSource(session.id);
+      const firstOutcome = await Promise.race([
+        flushed.promise,
+        reading.then(() => 'read' as const, () => 'failed' as const),
+      ]);
+      expect(firstOutcome).toBe('flush');
+      release.resolve();
+      expect(await reading).not.toBeNull();
+    } finally {
+      release.resolve();
+      if (reading) await Promise.allSettled([reading]);
+      restoreFlush?.();
+      writer.mockRestore();
+    }
+  },
+);
+
+it('rejects an external writer instead of returning a partial lineage snapshot', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await withKodaXFileLock(sessionWriteLock(session.id), async () => {
+    await expect(first.sessions.readLineage(session.id)).rejects.toMatchObject({ code: 'data_changed' });
+  });
+  await expect(first.sessions.readLineage(session.id)).resolves.toBeDefined();
+});
+
+it.each(Object.entries(idleSourceReads))(
+  '%s propagates a failed Host checkpoint instead of reading an older source',
+  async (_name, readSource) => {
+    const session = await first.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    const held = deferred<void>();
+    const release = deferred<void>();
+    const flushed = deferred<void>();
+    let restoreFlush: (() => void) | undefined;
+    let reading: Promise<unknown> | undefined;
+    const writer = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory')
+      .mockImplementation(async () => {
+        held.resolve();
+        await release.promise;
+        throw new Error('checkpoint-save-failed');
+      });
+    try {
+      await runRound(session.id, 1);
+      await held.promise;
+      const flush = SessionViewOwner.prototype.flush;
+      const flushSpy = vi.spyOn(SessionViewOwner.prototype, 'flush').mockImplementation(function (this: SessionViewOwner, id) {
+        flushed.resolve();
+        return flush.call(this, id);
+      });
+      restoreFlush = () => flushSpy.mockRestore();
+      reading = readSource(session.id);
+      await Promise.race([flushed.promise, reading.catch(() => undefined)]);
+      release.resolve();
+      await expect(reading).rejects.toThrow('checkpoint-save-failed');
+    } finally {
+      release.resolve();
+      if (reading) await Promise.allSettled([reading]);
+      restoreFlush?.();
+      writer.mockRestore();
+    }
+  },
+);

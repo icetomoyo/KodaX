@@ -512,6 +512,8 @@ export function areTranscriptRowPropsEqual(
     if (a.indent !== b.indent) return false;
     if (a.spinner !== b.spinner) return false;
     if (a.itemId !== b.itemId) return false;
+    if ((a.itemIds?.length ?? 0) !== (b.itemIds?.length ?? 0)
+      || a.itemIds?.some((id, index) => id !== b.itemIds?.[index])) return false;
   }
 
   const ra = prev.selectionRange;
@@ -851,7 +853,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           row={row}
           theme={theme}
           animateSpinners={animateSpinners}
-          selectedItem={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) : false}
+          selectedItem={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) || row.itemIds?.includes(selectedItemId) : false}
           selectionRange={selectedTextRanges?.get(row.key)}
         />
       ))}

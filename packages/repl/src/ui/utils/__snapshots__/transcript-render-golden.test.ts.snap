@@ -42,7 +42,7 @@ exports[`transcript render data-layer golden — FEATURE_172 Layer 0 G1 > multi-
   [key=u-1-blank itemId=u-1] " "
 # section: t-1
   [key=t-1-header-0 itemId=t-1 color=accent bold] "Tools [<ts>]"
-  [key=t-1-tool-t-1-call-main-0 color=success indent=2] "✓ Read (50ms)"
+  [key=t-1-tool-t-1-call-main-0 itemId=t-1 color=success indent=2] "✓ Read (50ms)"
   [key=t-1-blank itemId=t-1] " "
 # section: a-1
   [key=a-1-header-0 itemId=a-1 color=secondary bold] "Assistant [<ts>]"
@@ -56,7 +56,7 @@ exports[`transcript render data-layer golden — FEATURE_172 Layer 0 G1 > multi-
   [key=u-2-blank itemId=u-2] " "
 # section: t-2
   [key=t-2-header-0 itemId=t-2 color=accent bold] "Tools [<ts>]"
-  [key=t-2-tool-t-2-call-main-0 color=success indent=2] "✓ Read (50ms)"
+  [key=t-2-tool-t-2-call-main-0 itemId=t-2 color=success indent=2] "✓ Read (50ms)"
   [key=t-2-blank itemId=t-2] " "
 # section: a-2
   [key=a-2-header-0 itemId=a-2 color=secondary bold] "Assistant [<ts>]"
