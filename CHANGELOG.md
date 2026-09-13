@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 - Keep an accepted Shell Stop unconfirmed while process-tree cleanup is unknown.
   Retry cleanup against the original Run, retain exact recovery references across
   owner restarts, and preserve known descendants when refreshing process identities.
+- Preserve Run cleanup evidence during generic process sweeps, and propagate
+  the owning Run's Shell cleanup registration through read/write child executors.
 
 ---
 

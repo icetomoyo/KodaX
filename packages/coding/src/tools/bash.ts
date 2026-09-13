@@ -795,7 +795,11 @@ async function executeToolBash(
         requireDurableRecord: true,
         ...(!runInBackground && ctx.registerShellCleanup ? {
           onRegistered: (reference) => {
-            releaseRunCleanup = ctx.registerShellCleanup!(reference, () => retryRunCleanup());
+            releaseRunCleanup = ctx.registerShellCleanup!(reference, () => {
+              // Owner cleanup can arrive before a child Actor's abort signal.
+              foregroundStopRequested = true;
+              return retryRunCleanup();
+            });
           },
         } : {}),
       });

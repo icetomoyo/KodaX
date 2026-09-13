@@ -157,3 +157,46 @@ bounded standalone failure, registration-plus-sandbox cleanup failure, and
 natural completion winning a late cancellation signal. Unknown cleanup remains
 unknown, accepted request frontiers remain fixed, and client disconnect behavior
 is preserved.
+
+## GLM review follow-up — 2026-09-13
+
+Two verified gaps are covered by permanent regressions:
+
+- Generic startup/exit cleanup preserves a Run's exact process registration and
+  its verified cleanup result until the SDK clears its durable reference. The
+  SDK restart test uses the actual registry and Runtime APIs, simulates only OS
+  termination, and confirms that recovery releases the record before a successor
+  Run completes. Missing or uncertain evidence still does not count as success.
+- Read/write child execution carries the launch Run ID and cleanup callback.
+  A real Node child driven by an offline Provider exercises SDK Session Stop,
+  blocked cleanup, queued successor, same-request recovery and durable release.
+  This integration test also caught owner cleanup arriving before the child
+  AbortSignal: the cleanup callback now explicitly requests strict Stop cleanup,
+  preserving the ordinary natural-completion path.
+
+The existing Windows Shell CI gate includes the Run registry tests, child Shell
+tests and both new SDK integration files. No new endpoint, configuration option
+or retry scheduler was introduced.
+
+Focused V8 coverage passed 149 tests. Intersecting added executable lines with
+coverage measured 48/56 in managed-child registration, 5/5 in child execution and
+4/4 in Bash: 57/65 (87.69%). These are changed-line figures, not whole-file or
+whole-repository coverage.
+
+The Runtime, Actor, shared-daemon and CLI exit regression group passed 387 tests;
+the registry, Bash, child execution, Session Stop and recovery group passed 315.
+The two child Shell cases and one real SDK Actor Shell case also passed, for
+705 distinct passing cases across 19 files. Package, bundle and declaration
+builds and source/test type checking passed on Windows. This is scoped
+verification; the unchanged native backends and full repository suite were not
+rerun for this follow-up.
+
+### Standards
+
+Independent review: 0 unresolved hard violations and 0 actionable smells.
+
+### Spec
+
+Independent review: 0 unresolved findings against FEATURE_299. The additional
+owner-before-child-abort correction closes the observed SDK integration failure;
+the review does not claim broader POSIX process-identity support.

@@ -355,6 +355,10 @@ jobs:
       - name: Shell contract Windows gate
         run: >-
           npx vitest run
+          packages/agent/src/runtime/managed-child-processes.run.test.ts
+          packages/coding/src/child-executor.shell-cleanup.test.ts
+          src/sdk-runtime.child-shell-cleanup.test.ts
+          src/sdk-runtime.shell-registry-recovery.test.ts
           packages/llm/src/providers/runtime-registry.test.ts
           packages/coding/src/shell-execution/contract.test.ts
           packages/coding/src/shell-execution/environment.test.ts

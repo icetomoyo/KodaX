@@ -1392,6 +1392,7 @@ async function runReadChildBody(
         context: {
           gitRoot: scope.ctx.gitRoot,
           executionCwd: scope.ctx.executionCwd ?? scope.ctx.gitRoot,
+          runtimeRunId: scope.ctx.runtimeRunId,
           shellExecution: scope.ctx.shellExecution,
           shellSandbox: scope.ctx.shellSandbox,
           resolveShellPermissionMode: scope.ctx.resolveShellPermissionMode,
@@ -1689,6 +1690,7 @@ async function runWriteChildBody(
         context: {
           gitRoot: childCtx.gitRoot,
           executionCwd: childCtx.executionCwd ?? childCtx.gitRoot,
+          runtimeRunId: childCtx.runtimeRunId,
           shellExecution: childCtx.shellExecution,
           shellSandbox: childCtx.shellSandbox,
           resolveShellPermissionMode: childCtx.resolveShellPermissionMode,
@@ -2349,6 +2351,9 @@ export function buildChildEvents(
 
   return {
     ...(workflowCorrelation ? { workflowCorrelation } : {}),
+    ...(parentEvents?.registerShellCleanup
+      ? { registerShellCleanup: parentEvents.registerShellCleanup }
+      : {}),
     onOutputSegmentStart: (segment, meta) => {
       parentEvents?.onOutputSegmentStart?.(
         segment,

@@ -24,6 +24,7 @@ vi.mock('./tools/worktree.js', () => ({
 import type {
   KodaXChildContextBundle,
   KodaXChildFanoutClass,
+  KodaXOptions,
   ProviderRecoveryEvent,
 } from './types.js';
 import {
@@ -130,6 +131,34 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  it.each([['read', true], ['write', false]] as const)(
+    'keeps each %s child Shell bound to the Run context that launched it',
+    async (_kind, readOnly) => {
+      mockRunKodaX.mockResolvedValue(okResult('inspected'));
+      const priorCleanup = vi.fn(() => () => undefined);
+      const currentCleanup = vi.fn(() => () => undefined);
+      for (const [runtimeRunId, registerShellCleanup] of [
+        ['run-prior', priorCleanup], ['run-current', currentCleanup],
+      ] as const) {
+        await executeChildAgents(
+          [createBundle({ readOnly })],
+          { ...createCtx(), runtimeRunId },
+          createOptions({ parentOptions: { provider: 'anthropic', events: { registerShellCleanup } } }),
+        );
+      }
+      const prior = mockRunKodaX.mock.calls[0]?.[0] as KodaXOptions;
+      const current = mockRunKodaX.mock.calls[1]?.[0] as KodaXOptions;
+      expect(prior.context?.runtimeRunId).toBe('run-prior');
+      expect(prior.events?.registerShellCleanup).toBe(priorCleanup);
+      expect(current.context?.runtimeRunId).toBe('run-current');
+      expect(current.events?.registerShellCleanup).toBe(currentCleanup);
+      await executeChildAgents([createBundle({ readOnly })], createCtx(), createOptions());
+      const standalone = mockRunKodaX.mock.calls[2]?.[0] as KodaXOptions;
+      expect(standalone.context?.runtimeRunId).toBeUndefined();
+      expect(standalone.events?.registerShellCleanup).toBeUndefined();
+    },
+  );
 
   it('forwards the shared managed-run budget into a child runtime', async () => {
     mockRunKodaX.mockResolvedValue(okResult('inspected'));
@@ -609,6 +638,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     const onContextBudgetSnapshot = vi.fn();
     const onPromptCacheDiagnostics = vi.fn();
     const onTextDelta = vi.fn();
+    const registerShellCleanup = vi.fn(() => () => undefined);
     const childMessages = [
       { role: 'assistant' as const, content: 'Full report with file:line evidence.' },
     ];
@@ -649,6 +679,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
             onContextBudgetSnapshot,
             onPromptCacheDiagnostics,
             onTextDelta,
+            registerShellCleanup,
           },
         },
       }),
@@ -666,6 +697,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         onContextBudgetSnapshot?: unknown;
         onPromptCacheDiagnostics?: unknown;
         onTextDelta?: unknown;
+        registerShellCleanup?: unknown;
       };
       session?: { initialMessages?: readonly unknown[] };
       context?: {
@@ -681,6 +713,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     expect(digestOptions.events?.onContextBudgetSnapshot).toBe(onContextBudgetSnapshot);
     expect(digestOptions.events?.onPromptCacheDiagnostics).toBe(onPromptCacheDiagnostics);
     expect(digestOptions.events?.onTextDelta).toBeUndefined();
+    expect(digestOptions.events?.registerShellCleanup).toBeUndefined();
     expect(digestOptions.context?.parentAgentId).toBe('/root/workflow-parent');
     expect(digestOptions.context?.contextIdentitySessionId).toBe('test-session');
     expect(digestOptions.session?.initialMessages).toBe(childMessages);
@@ -817,6 +850,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     const onContextBudgetSnapshot = vi.fn();
     const onPromptCacheDiagnostics = vi.fn();
     const onTextDelta = vi.fn();
+    const registerShellCleanup = vi.fn(() => () => undefined);
     mockRunKodaX
       .mockResolvedValueOnce({
         success: true,
@@ -853,6 +887,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
             onContextBudgetSnapshot,
             onPromptCacheDiagnostics,
             onTextDelta,
+            registerShellCleanup,
           },
         },
       }),
@@ -866,6 +901,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         onContextBudgetSnapshot?: unknown;
         onPromptCacheDiagnostics?: unknown;
         onTextDelta?: unknown;
+        registerShellCleanup?: unknown;
       };
       context?: {
         contextDiagnostics?: boolean;
@@ -878,6 +914,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     expect(repairOptions.events?.onContextBudgetSnapshot).toBe(onContextBudgetSnapshot);
     expect(repairOptions.events?.onPromptCacheDiagnostics).toBe(onPromptCacheDiagnostics);
     expect(repairOptions.events?.onTextDelta).toBeUndefined();
+    expect(repairOptions.events?.registerShellCleanup).toBeUndefined();
     expect(repairOptions.context?.parentAgentId).toBe('/root/repair-parent');
     expect(repairOptions.context?.contextIdentitySessionId).toBe('test-session');
   });
