@@ -206,6 +206,20 @@ pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
 
+## v0.7.96-rc.3 Release Corrections
+
+The rc.3 corrections close two Shell cleanup gaps introduced while hardening
+FEATURE_299 stop admission. First, a default daemon handshake did not project
+the owning Runtime's `sessionCancellation` and `toolInvocation` capabilities,
+so explicit tool execution could be fenced incorrectly; the capabilities now
+flow through the handshake and capability query. Second, when a stopped
+command's process-tree cleanup could not be confirmed, the unconfirmed-cleanup
+note replaced the result entirely — dropping the `[Cancelled]`/`[Timeout]`
+status from stopped commands and the exit code plus captured output from
+completed commands. The note is now appended to the command outcome, cleanup
+retries target the original Run, and recovery references survive owner
+restarts. See `docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
+
 ## v0.7.96-rc.2 Release Corrections
 
 The rc.2 correction closes the stale first-Stop gap left by beta.9's unified

@@ -4,6 +4,16 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.3 release addendum:** Shell cleanup ownership is recoverable:
+> an accepted Shell Stop stays unconfirmed while process-tree cleanup is
+> unknown, cleanup retries target the original Run, exact recovery references
+> survive owner restarts, Run cleanup evidence survives generic process
+> sweeps, and the owning Run's Shell cleanup registration propagates through
+> read/write child executors. The default daemon handshake projects the owning
+> Runtime's `sessionCancellation` and `toolInvocation` capabilities. Shell
+> results keep their cancelled/timeout status and captured output; the
+> unconfirmed-cleanup note is appended, never substituted.
+>
 > **v0.7.96-rc.2 release addendum:** The FEATURE_299 Stop contract is
 > tightened: a first `sessions.cancel` request whose `expectedRunId` binding
 > is already terminal is rejected atomically inside the Runtime before a new

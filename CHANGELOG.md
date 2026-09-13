@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.3] - 2026-09-13
+
+Third release candidate of the v0.7.96 line: daemon capabilities are aligned
+and accepted Shell Stops become recoverable while process-tree cleanup is
+unknown, with shell results keeping their status and output. Every rc.2
+contract is retained. npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - Project the owning Runtime's `sessionCancellation` and `toolInvocation`

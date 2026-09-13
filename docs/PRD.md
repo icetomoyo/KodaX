@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.2`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.3`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,9 +205,13 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.2 release carries FEATURE_297 and FEATURE_299, unifies
-trusted text authority across Runtime Sessions and direct SDK entries, and
-rejects a first Stop request bound to an already terminal Run atomically
+The v0.7.96-rc.3 release carries FEATURE_297 and FEATURE_299, aligns daemon
+`sessionCancellation` and `toolInvocation` capabilities, and makes accepted
+Shell Stops recoverable while process-tree cleanup is unknown: cleanup retries
+target the original Run, recovery references survive owner restarts, and shell
+results keep their cancelled/timeout status and captured output with the
+unconfirmed-cleanup note appended. The rc.2 stale-Stop rejection holds: a
+first Stop request bound to an already terminal Run is rejected atomically
 before publishing a new Stop frontier, so delayed requests cannot stop
 successor Runs while accepted requests retain normal and post-restart replay.
 The rc.1 trusted text authority contracts hold: Full

@@ -296,6 +296,12 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.3 发布**：v0.7.96 线第三个发布候选。对齐 daemon 的
+`sessionCancellation` 与 `toolInvocation` capability，并让已受理的 Shell Stop
+在进程树清理未知时保持可恢复：清理重试仍针对原 Run，恢复引用跨宿主重启保留，
+shell 结果保留其取消/超时状态与已捕获输出，未确认清理说明以附加形式呈现。
+所有 rc.2 契约全部保留。
+
 **v0.7.96-rc.2 发布**：v0.7.96 线第二个发布候选。绑定到已终态 `expectedRunId`
 的首次 Session Stop 请求会在发布新 Stop frontier 之前被原子拒绝——类型为
 `code: 'conflict'`、`denialSource: 'stale_run'`、`retryable: false`——迟到的
@@ -382,7 +388,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.2 发布清单](docs/release.md#v0796-rc2-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.3 发布清单](docs/release.md#v0796-rc3-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
