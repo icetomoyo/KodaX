@@ -14363,7 +14363,11 @@ function createRuntimePersistence(
   const sessionOrdersDir = path.join(runtimeDir, "session-orders");
   const permissionGrantsFile = path.join(runtimeDir, "permission-grants.json");
   const runStatusIndexFile = path.join(runtimeDir, "run-status-index.json");
-  const validatedSequenceFloorBySession = new Map<string, number>();
+  const validatedSequenceFloorBySession = new Map<string, RuntimeSessionCursor>();
+  const readValidatedSequenceFloor = (sessionId: string, journalEpoch: string): number | undefined => {
+    const cursor = validatedSequenceFloorBySession.get(sessionId);
+    return cursor?.journalEpoch === journalEpoch ? cursor.seq : undefined;
+  };
 
   const runDir = (runId: string): string =>
     path.join(runsDir, encodeURIComponent(runId));
@@ -14517,6 +14521,10 @@ function createRuntimePersistence(
       sessionId,
       journalEpoch,
     });
+    // A newly generated epoch has no persisted events to recover. Initialize
+    // its cursor under the same lock instead of scanning every unrelated Run.
+    writeRuntimeSequenceCursor(sessionEventSequenceFile(sessionId), 0);
+    validatedSequenceFloorBySession.set(sessionId, { sessionId, journalEpoch, seq: 0 });
     return journalEpoch;
   };
 
@@ -14529,14 +14537,16 @@ function createRuntimePersistence(
     }
     const journalEpoch = readSessionJournalEpochLocked(sessionId);
     const cursor = readEventSequenceCursor(sessionId);
-    const validatedFloor = validatedSequenceFloorBySession.get(sessionId)
-      ?? cursor
-      ?? findMaxPersistedEventSeq(sessionId, journalEpoch);
-    const current = Math.max(cursor ?? 0, validatedFloor);
+    // Another Runtime may have advanced the journal beyond this cached floor.
+    // Without a valid durable cursor, recover that progress from the logs.
+    const current = Math.max(
+      cursor ?? findMaxPersistedEventSeq(sessionId, journalEpoch),
+      readValidatedSequenceFloor(sessionId, journalEpoch) ?? 0,
+    );
     const firstSeq = current + 1;
     const last = current + count;
     writeRuntimeSequenceCursor(sessionEventSequenceFile(sessionId), last);
-    validatedSequenceFloorBySession.set(sessionId, last);
+    validatedSequenceFloorBySession.set(sessionId, { sessionId, journalEpoch, seq: last });
     return {
       firstSeq,
       journalEpoch,
@@ -14564,12 +14574,10 @@ function createRuntimePersistence(
         const journalEpoch = readSessionJournalEpochLocked(sessionId);
         const persisted = readEventSequenceCursor(sessionId);
         const seq = Math.max(
-          persisted ?? 0,
-          validatedSequenceFloorBySession.get(sessionId)
-            ?? persisted
-            ?? findMaxPersistedEventSeq(sessionId, journalEpoch),
+          persisted ?? findMaxPersistedEventSeq(sessionId, journalEpoch),
+          readValidatedSequenceFloor(sessionId, journalEpoch) ?? 0,
         );
-        validatedSequenceFloorBySession.set(sessionId, seq);
+        validatedSequenceFloorBySession.set(sessionId, { sessionId, journalEpoch, seq });
         return { sessionId, journalEpoch, seq };
       },
     );
@@ -15608,13 +15616,14 @@ function createRuntimePersistence(
             || parsed.sessionId !== sessionId
             || parsed.retired !== true
           ) return false;
+          const journalEpoch = randomUUID();
           writeRuntimeJsonAtomic(journalFile, {
             version: 1,
             sessionId,
-            journalEpoch: randomUUID(),
+            journalEpoch,
           });
           writeRuntimeSequenceCursor(sessionEventSequenceFile(sessionId), 0);
-          validatedSequenceFloorBySession.set(sessionId, 0);
+          validatedSequenceFloorBySession.set(sessionId, { sessionId, journalEpoch, seq: 0 });
           return true;
         },
       );
@@ -15693,10 +15702,13 @@ function createRuntimePersistence(
           currentRootRunIds === undefined || currentRootRunIds.has(event.runId)
         ));
         for (const event of filtered) {
-          validatedSequenceFloorBySession.set(event.sessionId, Math.max(
-            validatedSequenceFloorBySession.get(event.sessionId) ?? 0,
-            event.seq,
-          ));
+          validatedSequenceFloorBySession.set(event.sessionId, {
+            ...event.cursor,
+            seq: Math.max(
+              readValidatedSequenceFloor(event.sessionId, event.cursor.journalEpoch) ?? 0,
+              event.seq,
+            ),
+          });
         }
         return withPersistenceWarnings(filtered, filter);
       }

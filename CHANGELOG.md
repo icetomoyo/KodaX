@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Initialize new Session event journals at sequence zero instead of scanning and
+  parsing unrelated Run logs. This removes a synchronous startup stall that could
+  also cause concurrent Session history reads to exceed their 15-second timeout.
+- Bind cached event sequence floors to their journal epoch. When an existing
+  sequence file is missing or corrupt, recover the durable log maximum even if
+  another Runtime has left this process with an older cached floor, preventing
+  duplicate event sequences and lost replay progress.
+- Populate both Full RepoIntel routing and preturn caches during startup prewarm
+  from the same worker result, avoiding a repeated routing query after the short
+  inner cache expires while preserving the complete Full context.
+
 ---
 
 ## [0.7.96-rc.3] - 2026-09-13

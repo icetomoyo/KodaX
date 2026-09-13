@@ -16138,6 +16138,96 @@ describe("createKodaXRuntime", () => {
     await second.close();
   });
 
+  it("creates and observes a fresh Session without reading unrelated Run event logs", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const sessionsDir = path.join(tempRoot, "sessions");
+    const first = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
+    const unrelated = await first.sessions.create({ sessionId: "unrelated-history" });
+    await first.sessions.appendNotice({
+      sessionId: unrelated.id,
+      source: "sequence-test",
+      content: "n".repeat(256 * 1024),
+    });
+    await first.close();
+
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
+    const unrelatedLog = path.join(tempRoot, ".kodax", "runtime", "runs", unrelated.id, "events.jsonl");
+    const openSync = mutableNodeFs.openSync;
+    let unrelatedEventReads = 0;
+    mutableNodeFs.openSync = ((file, flags, mode) => {
+      if (String(file) === unrelatedLog && flags === "r") unrelatedEventReads += 1;
+      return openSync(file, flags, mode);
+    }) as typeof nodeFs.openSync;
+    syncBuiltinESMExports();
+    try {
+      const session = await runtime.sessions.create({ sessionId: "fresh-sequence" });
+      const observation = await runtime.sessions.observe(session.id, () => undefined);
+      expect(observation.snapshot.cursor.seq).toBe(1);
+      observation.close();
+      expect(unrelatedEventReads).toBe(0);
+    } finally {
+      mutableNodeFs.openSync = openSync;
+      syncBuiltinESMExports();
+      await runtime.close();
+    }
+  });
+
+  it("resets the persisted cursor and cached floor when corrupt journal metadata starts a new epoch", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "sessions"),
+    });
+    try {
+      const session = await runtime.sessions.create({ sessionId: "corrupt-journal" });
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "plan" });
+      const before = await runtime.sessions.observe(session.id, () => undefined);
+      const oldCursor = before.snapshot.cursor;
+      expect(oldCursor.seq).toBeGreaterThan(1);
+      before.close();
+
+      await fs.writeFile(path.join(runtimeSessionEventDir(tempRoot, session.id), "journal.json"), "{");
+      await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      const after = await runtime.sessions.observe(session.id, () => undefined);
+      expect(after.snapshot.cursor.journalEpoch).not.toBe(oldCursor.journalEpoch);
+      expect(after.snapshot.cursor.seq).toBe(1);
+      after.close();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("does not carry another Runtime's cached sequence floor into a replacement journal epoch", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const options = { homeDir: tempRoot, sessionsDir: path.join(tempRoot, "sessions") };
+    const first = await createKodaXRuntime(options);
+    const second = await createKodaXRuntime(options);
+    try {
+      const session = await first.sessions.create({ sessionId: "shared-replacement-epoch" });
+      await first.sessions.updateSettings(session.id, { permissionMode: "plan" });
+      await first.sessions.updateSettings(session.id, { permissionMode: "accept-edits" });
+      const prior = await second.events.replay({ sessionId: session.id });
+      expect(prior.at(-1)?.seq).toBeGreaterThan(1);
+
+      await fs.writeFile(path.join(runtimeSessionEventDir(tempRoot, session.id), "journal.json"), "{");
+      await first.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      const observation = await second.sessions.observe(session.id, () => undefined);
+      const replacementCursor = observation.snapshot.cursor;
+      observation.close();
+      expect(replacementCursor.journalEpoch).not.toBe(prior.at(-1)?.cursor.journalEpoch);
+      expect(replacementCursor.seq).toBe(1);
+
+      await first.sessions.updateSettings(session.id, { permissionMode: "plan" });
+      const following = await second.events.replay({ sessionId: session.id, after: replacementCursor });
+      expect(following).toEqual([
+        expect.objectContaining({ type: "session.settings.updated", seq: 2 }),
+      ]);
+    } finally {
+      await second.close();
+      await first.close();
+    }
+  });
+
   it("trusts a valid Session sequence cursor without rescanning Run logs", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const sessionsDir = path.join(tempRoot, "sessions");
@@ -16195,6 +16285,52 @@ describe("createKodaXRuntime", () => {
       expect(new Set(replay.map((event) => event.seq)).size).toBe(replay.length);
     } finally {
       await second.close();
+    }
+  });
+
+  it.each([
+    ["missing", "observe"],
+    ["corrupt", "observe"],
+    ["missing", "append"],
+    ["corrupt", "append"],
+  ] as const)("recovers a %s sequence beyond another Runtime's cached floor during %s", async (damage, operation) => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const options = { homeDir: tempRoot, sessionsDir: path.join(tempRoot, "sessions") };
+    const reader = await createKodaXRuntime(options);
+    const writer = await createKodaXRuntime(options);
+    try {
+      const session = await writer.sessions.create({ sessionId: "stale-sequence-floor" });
+      const initial = await reader.events.replay({ sessionId: session.id });
+      expect(initial.at(-1)?.seq).toBe(1);
+      await writer.sessions.updateSettings(session.id, { permissionMode: "plan" });
+      await writer.sessions.updateSettings(session.id, { permissionMode: "accept-edits" });
+      const prior = await writer.events.replay({ sessionId: session.id });
+      const priorCursor = prior.at(-1)!.cursor;
+      expect(priorCursor.seq).toBe(3);
+      await writer.close();
+
+      const sequenceFile = runtimeSessionEventSequencePath(tempRoot, session.id);
+      if (damage === "missing") await fs.unlink(sequenceFile);
+      else await fs.writeFile(sequenceFile, "3garbage\n");
+
+      if (operation === "observe") {
+        const observation = await reader.sessions.observe(session.id, () => undefined);
+        try {
+          expect(observation.snapshot.cursor).toEqual(priorCursor);
+        } finally {
+          observation.close();
+        }
+      }
+      await reader.sessions.updateSettings(session.id, { permissionMode: "full-access" });
+      const following = await reader.events.replay({ sessionId: session.id, after: priorCursor });
+      expect(following).toEqual([
+        expect.objectContaining({ type: "session.settings.updated", seq: 4 }),
+      ]);
+      const all = await reader.events.replay({ sessionId: session.id });
+      expect(all.map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+    } finally {
+      await writer.close();
+      await reader.close();
     }
   });
 
