@@ -1004,6 +1004,7 @@ async function dispatchRuntimeDaemonRequest(
           options.management !== undefined,
           options.orphanExitEnabled === true,
           runtimeImplementsEventCoalescing(runtime),
+          runtime.capabilities,
         ),
         principalId,
         ...(options.controlJournal !== undefined
@@ -1079,6 +1080,7 @@ async function dispatchRuntimeDaemonRequest(
         options.management !== undefined,
         options.orphanExitEnabled === true,
         runtimeImplementsEventCoalescing(runtime),
+        runtime.capabilities,
       );
     case "operation.get": {
       const params = requireRecord(request.params);
@@ -2310,6 +2312,7 @@ function runtimeDaemonCapabilities(
   daemonManagement = false,
   orphanExitEnabled = false,
   runtimeEventCoalescing = false,
+  ownerCapabilities: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
@@ -2329,7 +2332,11 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sharedSessionSettings;
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
+  delete safeOverrides.sessionCancellation;
+  delete safeOverrides.toolInvocation;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
+  const sessionCancellation = ownerCapabilities.sessionCancellation;
+  const toolInvocation = ownerCapabilities.toolInvocation;
   return {
     events: true,
     permissions: true,
@@ -2460,6 +2467,13 @@ function runtimeDaemonCapabilities(
       protocolCancellation: true,
       responseAcknowledgement: true,
     },
+    ...(isRecord(sessionCancellation) && sessionCancellation.version === 1
+      && sessionCancellation.durableFrontier === true
+      ? { sessionCancellation: { version: 1, durableFrontier: true } }
+      : {}),
+    ...(isRecord(toolInvocation) && toolInvocation.version === 1
+      ? { toolInvocation: { version: 1 } }
+      : {}),
     typedRuntimeEvents: { version: 1 },
     daemonSafeRunInput: { version: 1 },
     integrationConfigResilience: {

@@ -15,6 +15,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 
 const {
   killChildProcessTree,
+  killChildProcessTreeSync,
   killPidTree,
   readProcessStartIdentity,
   rememberChildProcessTree,
@@ -128,6 +129,89 @@ describe('Windows process-tree identity fences', () => {
 
     expect(terminationScripts.join('\n')).toContain('TerminateExact(4242');
     expect(terminationScripts.join('\n')).toContain('TerminateExact(4343');
+  });
+
+  it('retains a known orphan grandchild when a fresh root snapshot loses its intermediate parent', async () => {
+    setWindows();
+    const scripts: string[] = [];
+    let killedRoot = false;
+    spawnSyncMock.mockImplementation((_command, args) => {
+      const script = Array.isArray(args) ? String(args.at(-1)) : '';
+      if (script.trim().endsWith('Out-Null')) {
+        scripts.push(script);
+        killedRoot = true;
+        return snapshot('');
+      }
+      return snapshot(`${killedRoot ? '' : '4242,1,100\n'}4444,4343,120\n`);
+    });
+    await expect(killPidTree(4242, {
+      expectedProcessStartIdentity: '100', expectedProcessTreeComplete: true,
+      expectedProcessTreeIdentities: [
+        { pid: 4242, creationTime: '100' }, { pid: 4343, creationTime: '110' }, { pid: 4444, creationTime: '120' },
+      ], forceMs: 0, taskkillMs: 100,
+    })).resolves.toEqual({ status: 'unknown' });
+    expect(scripts.join('\n')).toContain('TerminateExact(4444, [UInt64]120)');
+  });
+
+  it.each(['refresh', 'exit-refresh', 'async-kill', 'sync-kill'] as const)(
+    'keeps previously captured orphan identities through %s', async (action) => {
+      setWindows();
+      const child = fakeChild(4242);
+      const scripts: string[] = [];
+      let tree = '4242,1,100\n4343,4242,110\n4444,4343,120\n';
+      spawnSyncMock.mockImplementation((_command, args) => {
+        const script = Array.isArray(args) ? String(args.at(-1)) : '';
+        if (script.trim().endsWith('Out-Null')) {
+          scripts.push(script);
+          tree = '4444,4343,120\n';
+          return snapshot('');
+        }
+        return snapshot(tree);
+      });
+      rememberChildProcessTree(child as never);
+      rememberChildProcessTree(child as never);
+      tree = '4242,1,100\n4444,4343,120\n';
+      if (action === 'refresh') rememberChildProcessTree(child as never);
+      child.exitCode = 0;
+      if (action === 'exit-refresh') rememberChildProcessTree(child as never);
+      const result = action === 'sync-kill' ? killChildProcessTreeSync(child as never)
+        : await killChildProcessTree(child as never, { forceMs: 0, taskkillMs: 100 });
+      expect(result).toEqual({ status: 'unknown' });
+      expect(scripts.join('\n')).toContain('TerminateExact(4444, [UInt64]120)');
+    },
+  );
+
+  it('never substitutes the creation identity of a reused orphan PID', async () => {
+    setWindows();
+    const scripts: string[] = [];
+    let rootAlive = true;
+    spawnSyncMock.mockImplementation((_command, args) => {
+      const script = Array.isArray(args) ? String(args.at(-1)) : '';
+      if (script.trim().endsWith('Out-Null')) { scripts.push(script); rootAlive = false; return snapshot(''); }
+      return snapshot(`${rootAlive ? '4242,1,100\n' : ''}4444,1,999\n`);
+    });
+    await expect(killPidTree(4242, { expectedProcessStartIdentity: '100', expectedProcessTreeComplete: true,
+      expectedProcessTreeIdentities: [{ pid: 4242, creationTime: '100' }, { pid: 4444, creationTime: '120' }],
+      forceMs: 0, taskkillMs: 100,
+    })).resolves.toEqual({ status: 'terminated' });
+    expect(scripts.join('\n')).toContain('TerminateExact(4444, [UInt64]120)');
+    expect(scripts.join('\n')).not.toContain('TerminateExact(4444, [UInt64]999)');
+  });
+
+  it('does not discard retained unknown descendants when a fresh root snapshot looks complete', async () => {
+    setWindows();
+    const scripts: string[] = [];
+    let rootAlive = true;
+    spawnSyncMock.mockImplementation((_command, args) => {
+      const script = Array.isArray(args) ? String(args.at(-1)) : '';
+      if (script.trim().endsWith('Out-Null')) { scripts.push(script); rootAlive = false; return snapshot(''); }
+      return snapshot(`${rootAlive ? '4242,1,100\n' : ''}4444,4343,120\n`);
+    });
+    await expect(killPidTree(4242, { expectedProcessStartIdentity: '100', expectedProcessTreeComplete: false,
+      expectedProcessTreeIdentities: [{ pid: 4242, creationTime: '100' }, { pid: 4444, creationTime: '0' }],
+      forceMs: 0, taskkillMs: 100,
+    })).resolves.toEqual({ status: 'unknown' });
+    expect(scripts.join('\n')).not.toContain('TerminateExact(4444');
   });
 
   it('fails closed without signaling a bare pid when every snapshot backend fails', async () => {

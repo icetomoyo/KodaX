@@ -12,6 +12,8 @@ npx vitest run src/trusted-coding-permissions.test.ts src/trusted-coding-entry.t
 npx vitest run src/sdk-runtime.test.ts -t "Auto|auto|permission|Permission|Full Access|setting|outdated text authority"
 npx vitest run src/sdk-runtime-daemon-upgrade.test.ts
 npx vitest run src/sdk-runtime.stop-admission.test.ts src/sdk-runtime.tool-invocation.test.ts src/sdk-conversation-history.test.ts packages/repl/src/interactive/storage.conversation-page-admission.test.ts
+npx vitest run src/runtime-daemon/server.test.ts src/sdk-runtime.shell-cleanup.test.ts src/sdk-runtime.shell-recovery.test.ts packages/agent/src/runtime/managed-child-processes.run.test.ts packages/agent/src/runtime/process-tree.windows.test.ts
+npx vitest run packages/coding/src/tools/bash.test.ts packages/coding/src/tools/bash-cleanup.test.ts packages/coding/src/agent-runtime/tool-invocation.test.ts
 npx vitest run packages/coding/src/extensions/managed-execution.test.ts packages/coding/src/extensions/session-isolation.test.ts packages/coding/src/extensions/command-lifecycle.test.ts packages/repl/src/interactive/commands-extension.test.ts
 npx vitest run packages/coding/src/permissions/exec-policy.test.ts packages/repl/src/permission/standalone-shell-boundary.test.ts src/exec-policy-cli.test.ts src/windows-text-transaction.test.ts
 npm test
@@ -37,6 +39,9 @@ OS; Windows execution does not prove Unix handle/CAS behavior.
 | Session frontier | Accepted queued Runs cancelled first; new submissions retained; same request replays after restart; a genuine control-lock delivery failure stays fenced even if an older successful request is replayed |
 | CLI/ACP | Stop failure remains visible and retry uses the same request ID; accepted does not mean confirmed; natural completed/failed outcomes remain truthful; captured UI inputs exclude later additions |
 | Managed effects | Real shared socket Runtime executes tools without a model; nonzero Shell exit/start failure is unsuccessful; actual slash command starts a process through nested checked tools and Stop under a history lock confirms only after the PID exits |
+| Default daemon | Initialize and capability query derive both v1 capabilities from the owner; overrides cannot fabricate support. Use handshake capabilities in client tests; read succeeds without a model, forbidden write changes no bytes, and events/messages survive restart |
+| Shell self-recovery | Unknown Stop cleanup fences successors; bounded automatic retries and concurrent same-request retries only clean the original child. Exhaustion remains unknown. Owner close refuses to release liveness while cleanup remains pending; retry can finish it |
+| Durable cleanup | Preserve exact Run/PID/registration references through status and Stop writes. Dead-owner recovery verifies cleanup before clearing references and deleting registry evidence. Missing/malformed identities or OS failures remain unknown; refreshing A→B→C after B exits must retain C, including PID-reuse isolation |
 | Extension isolation | Separate Sessions and Runtime instances, same-name tools, null Runtime, combined Runtime, reload during admission, delayed cleanup, default restoration and command unregister/override restoration |
 | Workflow | Session-owned stop only; no global enumeration/optimistic stopped state; paused and already-cancelled owner signals propagate; confirmation follows cleanup |
 | Text transactions | Full Access edits ordinary .git metadata and external temporary targets through native host authority; protected controls, unsafe paths, link identity, stale revisions and atomicity still enforced; protocol 5 capability required |
@@ -64,6 +69,14 @@ OS; Windows execution does not prove Unix handle/CAS behavior.
 5. Load an extension command that uses `api.getExecutionScope().invokeTool`.
    Run it concurrently in two Sessions, reload the extension while one runs,
    and cancel one Run. Only the owned work stops; future Runs use the new version.
+6. Inject transient process cleanup failure. Stop must return an accepted but
+   unconfirmed receipt, keep successors queued, and recover without executing the
+   command again. Exhaust automatic retries, restore cleanup and replay the same
+   request. Restart a dead owner with pending references and inspect the original
+   Run again. Missing identity evidence must remain unknown, never trigger a bare
+   PID kill. On POSIX, dead-owner cleanup without safe identity evidence remains
+   unknown. Test ordinary short commands separately: natural completion must not
+   wait forever for a Windows snapshot of a process that has already exited.
 
 Workflow packaging/distribution as an extension is outside this release. The
 scoped execution, progress, state and cancellation contracts are available for
@@ -104,3 +117,43 @@ paused/already-cancelled workflow signals, managed slash-command ownership,
 Runtime/null-Runtime contribution isolation, and reload/default/disposer cleanup.
 Each correction has a passing regression; the shared transport tests use actual
 Session locks and real child processes.
+
+## Daemon alignment verification — 2026-09-13
+
+Windows follow-up validation passed 494 Runtime/Actor/daemon regression cases,
+72 Bash cases, and the targeted real Shell, restart, registration-failure and
+process-identity suites. `npm run build:packages`, `npm run typecheck` and both
+repository/submodule whitespace checks passed. This is scoped regression
+evidence, not a new full-repository or cross-platform release certification.
+
+V8 line coverage intersected with executable lines added in this patch:
+
+| Source | Covered / measured changed lines |
+|---|---|
+| Managed child registration/recovery | 67 / 67 |
+| Windows process-tree identity merge | 35 / 35 |
+| Explicit tool invocation | 4 / 4 |
+| Bash cleanup (standalone and Runtime suites combined) | 94 / 106 |
+| Runtime cleanup ownership/recovery | 149 / 167 |
+| Daemon capability projection | 14 / 14 |
+
+The measured patch scope is 363 / 393 lines (92.37%). These numbers are neither
+whole-repository coverage nor branch coverage. Combined Bash file line coverage
+is 81.81%; unrelated parts of the large Runtime/registry files were not the
+coverage target of these focused suites.
+
+### Standards
+
+Independent final review: 0 unresolved hard violations and 0 actionable smells.
+The patch reuses existing Run metadata, process registration and cancellation
+paths; no additional daemon endpoint, configuration option or recovery scheduler
+was introduced.
+
+### Spec
+
+Independent final review: 0 unresolved findings against FEATURE_299 sections 4
+and 6. Review findings were fixed and retested: retained descendant identity,
+bounded standalone failure, registration-plus-sandbox cleanup failure, and
+natural completion winning a late cancellation signal. Unknown cleanup remains
+unknown, accepted request frontiers remain fixed, and client disconnect behavior
+is preserved.

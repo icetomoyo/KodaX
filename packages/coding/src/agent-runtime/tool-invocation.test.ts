@@ -21,3 +21,28 @@ it.each(['node -e "process.exit(7)"', 'kodax_nonexistent_command_299'])('fails c
   const result = await runToolInvocation({ provider: 'unconfigured-provider' }, { name: 'bash', input: { command } });
   expect(result.success).toBe(false);
 });
+
+it.each([0, 7])('preserves natural Shell exit %i when abort arrives after execution ends', async (exitCode) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-completion-'));
+  vi.stubEnv('KODAX_HOME', root);
+  const controller = new AbortController();
+  try {
+    const result = await runToolInvocation({ provider: 'unconfigured-provider',
+      abortSignal: controller.signal,
+      context: { executionCwd: root, resolveShellPermissionMode: () => 'full-access',
+        authorizeShellHostExecution: async () => true },
+      events: { onToolExecutionEnd: () => controller.abort(new Error('late stop')) },
+    }, { name: 'bash', input: { command: `node -e "process.exit(${exitCode})"` } });
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.lastText).toContain(`Exit: ${exitCode}`);
+    expect(result).toMatchObject({ interrupted: false, success: exitCode === 0 });
+  } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
+});
+
+it('keeps a Shell cancellation interrupted when no natural outcome was reported', async () => {
+  const controller = new AbortController();
+  const result = await runToolInvocation({ provider: 'unconfigured-provider', abortSignal: controller.signal,
+    events: { beforeToolExecute: () => { controller.abort(new Error('stop before execution')); return false; } },
+  }, { name: 'bash', input: { command: 'node -e "process.exit(0)"' } });
+  expect(result).toMatchObject({ interrupted: true, success: false, lastText: expect.stringContaining('[Cancelled]') });
+});

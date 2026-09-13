@@ -274,8 +274,10 @@ it('accepts locked Session Stop over a real socket and replays its frontier afte
     createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ runtime: f.runtime, notify, disconnect }),
   });
   const transport = await createRuntimeDaemonSocketClientTransport(server.endpoint);
-  await transport.request('initialize', { profile: 'default' });
-  const client = createRuntimeDaemonClient({ identity: f.runtime.identity, transport, capabilities: f.runtime.capabilities });
+  const initialized = await transport.request('initialize', { profile: 'default' }) as {
+    identity: typeof f.runtime.identity; capabilities: Readonly<Record<string, unknown>>;
+  };
+  const client = createRuntimeDaemonClient({ ...initialized, transport });
   const input = { sessionId: f.session.id, expectedRunId: f.run.runId, requestId: 'restart-replay' };
   try {
     await f.hold();

@@ -14,12 +14,15 @@ import path from 'node:path';
 import { emitKodaXDiagnostic } from '../diagnostics.js';
 import { getAgentConfigPath } from './agent-home.js';
 import {
+  captureWindowsProcessTree,
   isCurrentProcessWindowsJobContained,
   killChildProcessTree,
   killPidTree,
+  mergeWindowsProcessTreeCaptures,
   rememberChildProcessTree,
   rememberedChildProcessTreeIdentities,
   rememberedChildProcessTreeIsComplete,
+  retainedWindowsProcessTree,
   type WindowsProcessTreeIdentity,
 } from './process-tree.js';
 
@@ -27,6 +30,7 @@ const REGISTRY_VERSION = 4;
 const PROCESS_QUERY_TIMEOUT_MS = 5_000;
 
 export interface ManagedChildProcessMetadata {
+  readonly runtimeRunId?: string;
   readonly kind: string;
   readonly command: string;
   readonly args?: readonly string[];
@@ -34,10 +38,89 @@ export interface ManagedChildProcessMetadata {
 }
 
 export interface ManagedChildRegistrationOptions {
+  /** Persist the Run's exact recovery reference before the tool reports admission. */
+  readonly onRegistered?: (reference: ManagedRunChildProcessReference) => void;
   /** Keep the record until the returned cleanup callback is invoked. */
   readonly manualUnregister?: boolean;
   /** Do not let an externally mutating child start without durable recovery evidence. */
   readonly requireDurableRecord?: boolean;
+}
+
+export interface ManagedRunChildProcessReference {
+  readonly runtimeRunId: string;
+  readonly pid: number;
+  readonly registrationId: string;
+}
+
+export type ManagedRunChildCleanupResult =
+  | { readonly status: 'verified'; readonly release: () => void }
+  | { readonly status: 'unknown' };
+
+/** Missing evidence is never equivalent to a verified process-tree drain. */
+export async function cleanupManagedRunChildProcess(
+  reference: ManagedRunChildProcessReference,
+): Promise<ManagedRunChildCleanupResult> {
+  let record = readRunChildRecord(reference);
+  if (record === undefined) return { status: 'unknown' };
+  const active = activeChildren.get(record.pid);
+  const owned = record.ownerPid === process.pid && active?.record.registrationId === record.registrationId
+    && active.record.runtimeRunId === record.runtimeRunId
+    && active.record.processStartIdentity === record.processStartIdentity
+    && active.record.registeredAtMs === record.registeredAtMs;
+  if (!owned && !runChildOwnerIsGone(record)) return { status: 'unknown' };
+  if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
+  if (!owned) record = persistRunChildTree(record);
+  const result = owned ? await killChildProcessTree(active.child) : await killPidTree(record.pid, {
+    expectedProcessStartIdentity: record.processStartIdentity,
+    expectedProcessTreeIdentities: record.processTreeIdentities,
+    expectedProcessTreeComplete: record.processTreeComplete === true,
+  });
+  if (result.status === 'unknown') return { status: 'unknown' };
+  return { status: 'verified', release: () => {
+    const current = readRunChildRecord(reference);
+    if (current !== undefined && current.ownerPid === record.ownerPid
+      && current.ownerProcessStartIdentity === record.ownerProcessStartIdentity
+      && current.processStartIdentity === record.processStartIdentity
+      && current.registeredAtMs === record.registeredAtMs) {
+      removeRecord(record.pid, record.registrationId);
+    }
+  } };
+}
+
+function persistRunChildTree(record: ManagedChildProcessRecord): ManagedChildProcessRecord {
+  if (process.platform !== 'win32' || record.processStartIdentity === undefined) return record;
+  const observed = captureWindowsProcessTree(record.pid, record.processStartIdentity);
+  if (observed === undefined || observed === null) return record;
+  const retained = retainedWindowsProcessTree(record.pid, record.processStartIdentity,
+    record.processTreeIdentities, record.processTreeComplete === true);
+  const captured = mergeWindowsProcessTreeCaptures(observed, retained) ?? observed;
+  const updated = { ...record, processTreeComplete: captured.completeTree,
+    processTreeIdentities: [
+      ...[captured.root, ...captured.descendants].map(({ pid, creationTime }) => ({ pid, creationTime })),
+      ...captured.uncertainDescendantPids.map((pid) => ({ pid, creationTime: '0' })),
+    ],
+  };
+  writeRecord(updated);
+  return updated;
+}
+
+function runChildOwnerIsGone(record: ManagedChildProcessRecord): boolean {
+  try { process.kill(record.ownerPid, 0); }
+  catch (error: unknown) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+  if (record.ownerProcessStartIdentity === undefined) return false;
+  const current = processStartIdentity(record.ownerPid);
+  return current !== undefined && current !== record.ownerProcessStartIdentity;
+}
+
+function readRunChildRecord(reference: ManagedRunChildProcessReference): ManagedChildProcessRecord | undefined {
+  if (!Number.isSafeInteger(reference.pid) || reference.pid <= 0
+    || !/^[0-9a-f-]{36}$/i.test(reference.registrationId)
+    || !reference.runtimeRunId) return undefined;
+  const persisted = readRecord(registryPath(reference.pid, reference.registrationId));
+  if (persisted.status !== 'current' || persisted.record.pid !== reference.pid
+    || persisted.record.registrationId !== reference.registrationId
+    || persisted.record.runtimeRunId !== reference.runtimeRunId) return undefined;
+  return persisted.record;
 }
 
 interface ManagedChildProcessRecord extends ManagedChildProcessMetadata {
@@ -54,7 +137,7 @@ interface ManagedChildProcessRecord extends ManagedChildProcessMetadata {
 
 interface ActiveManagedChildProcess {
   readonly record: ManagedChildProcessRecord;
-  readonly child: Pick<ChildProcess, 'exitCode' | 'signalCode'>;
+  readonly child: ChildProcess;
 }
 
 const activeChildren = new Map<number, ActiveManagedChildProcess>();
@@ -508,6 +591,7 @@ function readRecord(filePath: string): ManagedChildRecordReadResult {
         )
       )
       || (parsed.cwd !== undefined && typeof parsed.cwd !== 'string')
+      || (parsed.runtimeRunId !== undefined && typeof parsed.runtimeRunId !== 'string')
       || (
         parsed.processStartIdentity !== undefined
         && typeof parsed.processStartIdentity !== 'string'
@@ -676,6 +760,7 @@ export function registerManagedChildProcess(
     registrationId,
     registeredAtMs: Date.now(),
     kind: metadata.kind,
+    ...(metadata.runtimeRunId === undefined ? {} : { runtimeRunId: metadata.runtimeRunId }),
     command: metadata.command,
     args: metadata.args ? [...metadata.args] : undefined,
     cwd: metadata.cwd,
@@ -764,6 +849,10 @@ export function registerManagedChildProcess(
   if (!options.manualUnregister) {
     child.once('exit', unregister);
     child.once('error', unregister);
+  }
+  // A failed Run-reference write must leave the exact local child recoverable.
+  if (metadata.runtimeRunId !== undefined) {
+    options.onRegistered?.({ runtimeRunId: metadata.runtimeRunId, pid, registrationId });
   }
   return () => {
     child.off('exit', refreshTreeRecord);

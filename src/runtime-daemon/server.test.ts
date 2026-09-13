@@ -1710,6 +1710,47 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
+  it('advertises supported owner Session Stop and explicit tool invocation through both capability endpoints', async () => {
+    const runtime = { ...makeRuntime(), capabilities: {
+      sessionCancellation: { version: 1, durableFrontier: true, internalOnly: true },
+      toolInvocation: { version: 1, internalOnly: true },
+    } } satisfies KodaXRuntime;
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    try {
+      const initialized = await initializeDispatcher(dispatcher);
+      expect(initialized.capabilities).toMatchObject({
+        sessionCancellation: { version: 1, durableFrontier: true },
+        toolInvocation: { version: 1 },
+      });
+      expect(initialized.capabilities).toHaveProperty('sessionCancellation', { version: 1, durableFrontier: true });
+      expect(initialized.capabilities).toHaveProperty('toolInvocation', { version: 1 });
+      const queried = await dispatcher.handle(createRuntimeDaemonRequest('owner-capabilities', 'runtime.capabilities'));
+      expect(queried).toMatchObject({ result: initialized.capabilities });
+    } finally { dispatcher.close(); }
+  });
+
+  it.each([
+    {},
+    { sessionCancellation: { version: 0, durableFrontier: true }, toolInvocation: { version: 0 } },
+    { sessionCancellation: { version: 2, durableFrontier: true }, toolInvocation: { version: 2 } },
+    { sessionCancellation: { version: 1, durableFrontier: false }, toolInvocation: true },
+  ])('does not let overrides invent unsupported owner execution capabilities: %j', async (capabilities) => {
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime: { ...makeRuntime(), capabilities },
+      capabilities: {
+        sessionCancellation: { version: 1, durableFrontier: true },
+        toolInvocation: { version: 1 },
+      },
+    });
+    try {
+      const initialized = await initializeDispatcher(dispatcher);
+      expect(initialized.capabilities).not.toHaveProperty('sessionCancellation');
+      expect(initialized.capabilities).not.toHaveProperty('toolInvocation');
+      const queried = await dispatcher.handle(createRuntimeDaemonRequest('unsupported-capabilities', 'runtime.capabilities'));
+      expect(queried).toMatchObject({ result: initialized.capabilities });
+    } finally { dispatcher.close(); }
+  });
+
   it('advertises versioned shared-daemon facts including interrupt support', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-server-capabilities-'));
     try {

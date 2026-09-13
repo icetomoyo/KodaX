@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Project the owning Runtime's `sessionCancellation` and `toolInvocation`
+  capabilities through the default daemon handshake and capability query.
+  Explicit tool execution retains normal permissions, events and persistence.
+- Keep an accepted Shell Stop unconfirmed while process-tree cleanup is unknown.
+  Retry cleanup against the original Run, retain exact recovery references across
+  owner restarts, and preserve known descendants when refreshing process identities.
+
 ---
 
 ## [0.7.96-rc.2] - 2026-09-12

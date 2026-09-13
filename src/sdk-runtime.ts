@@ -169,6 +169,8 @@ import type {
   SessionTranscriptEntry,
 } from "@kodax-ai/repl";
 import {
+  cleanupManagedRunChildProcess,
+  type ManagedRunChildProcessReference,
   createMcpManager,
   createAgentExecutorPlane,
   createSessionLineage,
@@ -3643,6 +3645,8 @@ interface RuntimeRunRecord {
   actorDurabilityPreservesExecutorFact?: boolean;
   activeEffectCount?: number;
   finishAfterEffectDrain?: () => void;
+  shellCleanups?: Map<string, { reference: ManagedRunChildProcessReference; retry: () => Promise<void> }>;
+  shellEffectDrain?: { count: number; promise: Promise<void>; resolve: () => void };
   capturedExecutorResult?: KodaXResult;
   capturedExecutorFailure?: RuntimeRunFailureFact;
   mode: RuntimeRunMode;
@@ -3745,6 +3749,7 @@ interface RuntimeRunServiceInternal extends RuntimeRunService {
   ): Promise<readonly RuntimeRunStatus[]>;
   inspectOne(runId: string): Promise<RuntimeRunStatus | undefined>;
   closeAll(reason: string): void;
+  retryShellCleanups(): Promise<void>;
   releaseSession(sessionId: string): void;
   getAutoModeStats(sessionId: string): AutoModeStats | undefined;
 }
@@ -3761,6 +3766,7 @@ interface PersistedRuntimeRunStatus {
   readonly owner?: AgentActorOwner;
   readonly sessionJournalEpoch?: string;
   readonly revision: number;
+  readonly shellCleanups?: unknown;
 }
 
 interface PersistedRuntimeRunStop {
@@ -3835,6 +3841,7 @@ interface RuntimePersistence {
   eventRunSessionId(runId: string): string | undefined;
   replay(filter?: RuntimeInternalEventReplayFilter): readonly RuntimeEvent[];
   saveRunStatus(status: RuntimeRunStatus): RuntimeRunStatus;
+  saveRunShellCleanups(runId: string, references: readonly ManagedRunChildProcessReference[], expectedRevision: number): void;
   requestRunStop(
     runId: string,
     reason: string,
@@ -4536,6 +4543,7 @@ export async function createKodaXRuntime(
     };
     if (
       isTerminalRunPhase(status.phase)
+      && !hasPersistedShellCleanups(persisted)
       && !status.interruptInputs?.some((input) => input.state === "queued")
     ) {
       runs.set(
@@ -4597,7 +4605,7 @@ export async function createKodaXRuntime(
       );
       continue;
     }
-    const recovered = interruptPersistedNonTerminalRun(
+    const recovered = await interruptPersistedNonTerminalRun(
       normalizedStatus,
       bus,
       persistence,
@@ -4722,6 +4730,7 @@ export async function createKodaXRuntime(
         userInputs.rejectAll("runtime closed");
         shutdownStarted = true;
       }
+      await runService.retryShellCleanups();
       beginCloseTranscriptSnapshots?.();
       await sessionOperations.close();
       await closeTranscriptSnapshots?.();
@@ -8619,7 +8628,7 @@ function createRuntimeRunService(deps: {
         error: "owner_liveness_unconfirmed",
       };
     }
-    const recovered = interruptPersistedNonTerminalRun(
+    const recovered = await interruptPersistedNonTerminalRun(
       persisted.status,
       deps.bus,
       deps.persistence,
@@ -8715,6 +8724,10 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
+    if ((record.shellCleanups?.size ?? 0) > 0) {
+      record.unconfirmedResult = result;
+      return result;
+    }
     if (
       record.settlementFinished === true
       && record.unconfirmedResult === undefined
@@ -8793,6 +8806,10 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
+    if ((record.shellCleanups?.size ?? 0) > 0) {
+      record.unconfirmedResult = result;
+      return result;
+    }
     if (record.settlementFinished === true && record.start === undefined) {
       // A terminal callback may have resolved the public Run result while the
       // executor Promise was still pending. Retain a later Promise payload as
@@ -9452,6 +9469,7 @@ function createRuntimeRunService(deps: {
   const canApplyExecutorTerminalSignal = (
     record: RuntimeRunRecord,
   ): boolean => {
+    if ((record.shellCleanups?.size ?? 0) > 0) return false;
     const actorSession = record.actorSession;
     return (
       actorSession === undefined
@@ -9611,7 +9629,7 @@ function createRuntimeRunService(deps: {
       const retainDurabilityFence =
         actorDurabilityFailureApplies(record)
         && !executorPromiseSettled(record);
-      if (!drain && !retainDurabilityFence) {
+      if (!drain && !retainDurabilityFence && (record.shellCleanups?.size ?? 0) === 0) {
         resolveRunStart(record, result);
         releaseActiveQueueRoute(record);
         releaseActiveRun(record);
@@ -9846,6 +9864,45 @@ function createRuntimeRunService(deps: {
       onMidTurnUserMessages: (queuedMessageIds, queuedMessageEntryIds) =>
         deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds),
     });
+    events.registerShellCleanup = (reference, retry) => {
+      if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
+        throw new Error("Invalid Runtime Shell cleanup binding");
+      }
+      const pending = record.shellCleanups ??= new Map();
+      if (pending.has(reference.registrationId)) throw new Error("Duplicate Runtime Shell cleanup binding");
+      pending.set(reference.registrationId, { reference, retry });
+      const release = () => {
+        if (!pending.has(reference.registrationId)) return;
+        const persisted = deps.persistence.loadRunStatus(record.runId);
+        if (persisted?.owner?.ownerId !== deps.runOwner.ownerId) throw new Error("Runtime Shell cleanup owner changed");
+        deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()]
+          .filter((entry) => entry.reference.registrationId !== reference.registrationId)
+          .map((entry) => entry.reference), persisted.revision);
+        pending.delete(reference.registrationId);
+        queueMicrotask(() => {
+          try { finishRecoveredUnconfirmedRun(record); }
+          catch (error: unknown) { finishRunSettlementFailure(record, error); }
+        });
+      };
+      try {
+        const persisted = deps.persistence.loadRunStatus(record.runId);
+        if (persisted?.owner?.ownerId !== deps.runOwner.ownerId) throw new Error("Runtime Shell cleanup owner changed");
+        deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()].map((entry) => entry.reference), persisted.revision);
+      } catch (error: unknown) {
+        // Registration threw before Bash received its release callback. Retain
+        // the exact local binding so a later Stop/close can still repair it.
+        pending.set(reference.registrationId, { reference, retry: async () => {
+          await retry();
+          if (!pending.has(reference.registrationId)) return;
+          const cleaned = await cleanupManagedRunChildProcess(reference);
+          if (cleaned.status === "unknown") return;
+          release();
+          cleaned.release();
+        } });
+        throw error;
+      }
+      return release;
+    };
     const runOptions = buildRunOptions({
       agentPlane: deps.agentPlane,
       defaultConfigHome: deps.defaultConfigHome,
@@ -11183,6 +11240,14 @@ function createRuntimeRunService(deps: {
           });
         }
       }
+      if (deliverCancellationEffects) {
+        for (const entry of [...(run.shellCleanups?.values() ?? [])]) {
+          void entry.retry().catch((error: unknown) => emitKodaXDiagnostic({
+            source: "runtime.shell-cleanup", level: "error",
+            message: `Shell cleanup remains unconfirmed for Run ${run.runId}.`, detail: error,
+          }));
+        }
+      }
       return runtimeRunStopReceipt(stop);
     },
 
@@ -11234,6 +11299,31 @@ function createRuntimeRunService(deps: {
       autoModeGuardrails.clear();
       autoModeStates.clear();
       queueBySession.clear();
+    },
+    async retryShellCleanups() {
+      for (const run of deps.runs.values()) {
+        if (!run.ownedByRuntime) continue;
+        for (const entry of [...(run.shellCleanups?.values() ?? [])]) {
+          try { await entry.retry(); }
+          catch (error: unknown) {
+            emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
+              message: `Runtime close could not verify Shell cleanup for Run ${run.runId}.`, detail: error });
+            throw Object.assign(createRuntimeConflictError("Shell cleanup failed; retry Runtime close", 0),
+              { retryable: true, denialSource: "shell_cleanup", cause: error });
+          }
+        }
+        if (run.shellEffectDrain !== undefined) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([run.shellEffectDrain.promise,
+              new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); })]);
+          } finally { if (timer !== undefined) clearTimeout(timer); }
+        }
+        if ((run.shellCleanups?.size ?? 0) > 0 || run.shellEffectDrain !== undefined) {
+          throw Object.assign(createRuntimeConflictError("Shell process cleanup is unconfirmed; retry Runtime close", 0),
+            { retryable: true, denialSource: "shell_cleanup" });
+        }
+      }
     },
     releaseSession(sessionId) {
       for (const entry of autoModeGuardrails.get(sessionId)?.values() ?? []) {
@@ -15681,6 +15771,9 @@ function createRuntimePersistence(
       const file = statusFile(status.runId);
       return withRuntimeStatusFileLock(file, () => {
         const existing = readPersistedRuntimeRunStatus(file);
+        if (hasPersistedShellCleanups(existing) && isTerminalRunPhase(status.phase)) {
+          return existing!.status;
+        }
         if (existing && isTerminalRunPhase(existing.status.phase)) {
           return existing.status;
         }
@@ -15699,6 +15792,7 @@ function createRuntimePersistence(
             revision: (existing?.revision ?? 0) + 1,
             owner: runOwner,
             sessionJournalEpoch,
+            ...(existing?.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
         // Commit the canonical status first. Publish a new active Run once;
@@ -15710,6 +15804,20 @@ function createRuntimePersistence(
           updateRunStatusIndex(status, false);
         }
         return status;
+      });
+    },
+    saveRunShellCleanups(runId, references, expectedRevision) {
+      const file = statusFile(runId);
+      withRuntimeStatusFileLock(file, () => {
+        const existing = readPersistedRuntimeRunStatus(file);
+        if (existing === undefined) throw new Error(`Runtime run not found: ${runId}`);
+        if (existing.revision !== expectedRevision) {
+          throw createRuntimeConflictError("Runtime Shell cleanup reference changed", existing.revision);
+        }
+        writeRuntimeJsonAtomic(file, { ...existing.status, _runtime: {
+          revision: existing.revision + 1, owner: existing.owner,
+          sessionJournalEpoch: existing.sessionJournalEpoch, shellCleanups: references,
+        } });
       });
     },
     requestRunStop(runId, reason, ownedUnknownOwnerId) {
@@ -15815,6 +15923,8 @@ function createRuntimePersistence(
           _runtime: {
             revision,
             owner: runOwner,
+            sessionJournalEpoch: existing.sessionJournalEpoch,
+            ...(existing.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
         finalizeRunStatusIndex(next);
@@ -17226,6 +17336,7 @@ function parsePersistedRuntimeRunStatus(
   return {
     status,
     revision,
+    ...(metadata?.shellCleanups !== undefined ? { shellCleanups: metadata.shellCleanups } : {}),
     ...(owner !== undefined ? { owner } : {}),
     ...(sessionJournalEpoch !== undefined ? { sessionJournalEpoch } : {}),
   };
@@ -17660,11 +17771,52 @@ function recordFromPersistedStatus(
   };
 }
 
-function interruptPersistedNonTerminalRun(
+function isManagedRunShellReference(value: unknown, runId: string): value is ManagedRunChildProcessReference {
+  return isRecord(value) && value.runtimeRunId === runId
+    && typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid > 0
+    && typeof value.registrationId === "string" && /^[0-9a-f-]{36}$/i.test(value.registrationId);
+}
+
+function hasPersistedShellCleanups(entry: PersistedRuntimeRunStatus | undefined): boolean {
+  return entry?.shellCleanups !== undefined
+    && (!Array.isArray(entry.shellCleanups) || entry.shellCleanups.length > 0);
+}
+
+async function recoverPersistedShellCleanups(status: RuntimeRunStatus, persistence: RuntimePersistence): Promise<boolean> {
+  const entry = persistence.loadRunStatus(status.runId);
+  if (!hasPersistedShellCleanups(entry)) return true;
+  const references = entry?.shellCleanups;
+  if (!Array.isArray(references)
+    || !references.every((reference): reference is ManagedRunChildProcessReference => isManagedRunShellReference(reference, status.runId))) return false;
+  for (const reference of references) {
+    const result = await cleanupManagedRunChildProcess(reference);
+    if (result.status === "unknown") return false;
+    const currentEntry = persistence.loadRunStatus(status.runId);
+    const current = currentEntry?.shellCleanups;
+    if (!Array.isArray(current) || !current.every((item): item is ManagedRunChildProcessReference => isManagedRunShellReference(item, status.runId))) return false;
+    if (currentEntry?.owner?.ownerId !== entry?.owner?.ownerId) return false;
+    persistence.saveRunShellCleanups(status.runId, current.filter((item) => item.registrationId !== reference.registrationId), currentEntry!.revision);
+    result.release();
+  }
+  return true;
+}
+
+async function interruptPersistedNonTerminalRun(
   status: RuntimeRunStatus,
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
-): RuntimeRunStatus {
+): Promise<RuntimeRunStatus> {
+  let shellCleanupVerified = false;
+  try { shellCleanupVerified = await recoverPersistedShellCleanups(status, persistence); }
+  catch (error: unknown) {
+    emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
+      message: `Shell recovery remains unconfirmed for Run ${status.runId}.`, detail: error });
+  }
+  if (!shellCleanupVerified) {
+    return { ...status, phase: "unknown", stage: "unknown", error: "shell_cleanup_unconfirmed",
+      terminal: undefined, endedAt: undefined,
+      ...(status.stop !== undefined ? { stop: { ...status.stop, state: "unknown", outcome: "unknown", resolvedAt: undefined } } : {}) };
+  }
   const durableTerminal = recoverPersistedDurableTerminal(
     status,
     bus,
@@ -17758,6 +17910,7 @@ function recoverPersistedDurableTerminal(
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
 ): RuntimeRunStatus | undefined {
+  if (hasPersistedShellCleanups(persistence.loadRunStatus(status.runId))) return undefined;
   const durableEvents = [...persistence.replay({
     sessionId: status.sessionId,
     runId: status.runId,
@@ -19150,7 +19303,6 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolResult?.(result, meta);
     },
     onToolExecutionStart(tool, meta) {
-      void tool;
       void meta;
       if (actorDurabilityFenced()) {
         const error = new Error("Tool execution was fenced by Actor durability failure.");
@@ -19158,11 +19310,24 @@ function wrapKodaXEvents(input: {
         throw error;
       }
       record.activeEffectCount = (record.activeEffectCount ?? 0) + 1;
+      if (tool.name === "bash") {
+        if (record.shellEffectDrain === undefined) {
+          let resolve!: () => void;
+          const promise = new Promise<void>((done) => { resolve = done; });
+          record.shellEffectDrain = { count: 0, promise, resolve };
+        }
+        record.shellEffectDrain.count++;
+      }
     },
     onToolExecutionEnd(tool, meta) {
       record.trustedTextApprovals?.revoke(tool.id);
       void meta;
       record.activeEffectCount = Math.max(0, (record.activeEffectCount ?? 0) - 1);
+      if (tool.name === "bash" && record.shellEffectDrain !== undefined
+        && --record.shellEffectDrain.count === 0) {
+        record.shellEffectDrain.resolve();
+        record.shellEffectDrain = undefined;
+      }
       if ((record.activeEffectCount ?? 0) === 0) {
         const finishAfterEffectDrain = record.finishAfterEffectDrain;
         record.finishAfterEffectDrain = undefined;
@@ -22374,9 +22539,16 @@ function markRunTerminal(
   terminal?: Omit<RuntimeTerminalFact, "revision" | "kind">,
 ): void {
   if (run.terminalEmitted) return;
+  if ((run.shellCleanups?.size ?? 0) > 0) {
+    run.phase = "unknown";
+    run.stage = "unknown";
+    run.error = "shell_cleanup_unconfirmed";
+    saveRunStatusSafely(bus, persistence, run, statusFromRecord(run));
+    return;
+  }
   delete run.actorHealthBaseState;
   delete run.lifecycleError;
-  if (run.error === "stop_outcome_unconfirmed") delete run.error;
+  if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
   terminalizeQueuedInterruptInputs(run);
   run.phase = phase;
