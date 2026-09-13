@@ -1333,7 +1333,9 @@ async function executeToolBash(
         const message = error instanceof Error ? error.message : String(error);
         if (foregroundCommandRegistered) {
           disposeCollectors();
-          settle(`Command: ${command}\n[Unknown] Shell cleanup could not be verified: ${message}`);
+          settle(
+            `${buildStoppedResult(reason, '', [])}\n[Unknown] Shell cleanup could not be verified: ${message}`,
+          );
           return;
         }
         if (!closeObserved) {
@@ -1534,7 +1536,19 @@ async function executeToolBash(
           const message = error instanceof Error ? error.message : String(error);
           if (foregroundCommandRegistered) {
             disposeCollectors();
-            settle(`Command: ${command}\n[Unknown] Shell cleanup could not be verified: ${message}`);
+            let captured = '';
+            try {
+              captured = stdoutDecoded?.text ?? decodeCollector(stdout).text;
+              const stderrText = stderrDecoded?.text ?? decodeCollector(stderr).text;
+              if (stderrText) captured += `\n[stderr]\n${stderrText}`;
+            } catch {
+              captured = '';
+            }
+            settle(
+              `Command: ${command}\nExit: ${code}`
+              + (captured ? `\n${captured}` : '')
+              + `\n[Unknown] Shell cleanup could not be verified: ${message}`,
+            );
             return;
           }
           const stdoutText = stdoutDecoded?.text ?? decodeCollector(stdout).text;

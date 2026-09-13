@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
   owner restarts, and preserve known descendants when refreshing process identities.
 - Preserve Run cleanup evidence during generic process sweeps, and propagate
   the owning Run's Shell cleanup registration through read/write child executors.
+- Keep the cancelled/timeout status and captured output in shell results when
+  process-tree cleanup cannot be confirmed: the unconfirmed-cleanup note is
+  appended to the command outcome instead of replacing it.
 
 ---
 
