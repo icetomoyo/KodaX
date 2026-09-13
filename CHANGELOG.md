@@ -27,7 +27,9 @@ contract is retained. npm publication remains a manual maintainer action.
   the owning Run's Shell cleanup registration through read/write child executors.
 - Keep the cancelled/timeout status and captured output in shell results when
   process-tree cleanup cannot be confirmed: the unconfirmed-cleanup note is
-  appended to the command outcome instead of replacing it.
+  appended to the command outcome instead of replacing it. The background
+  stop owns native termination, so cleanup never terminates the same
+  process tree twice.
 
 ---
 

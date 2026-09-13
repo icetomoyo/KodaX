@@ -984,6 +984,8 @@ async function executeToolBash(
 
     const stopBackgroundChild = (child: ManagedChildProcess): void => {
       if (sandboxInvocation?.processControl !== undefined) {
+        // The stop owns native termination; cleanup must not issue a second one.
+        nativeTerminationVerified = true;
         void sandboxInvocation.processControl.terminate(child).catch((error: unknown) => {
           emitKodaXDiagnostic({
             source: 'coding:bash-sandbox',
