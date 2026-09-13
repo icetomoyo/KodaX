@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.4] - 2026-09-13
+
+Fourth release candidate of the v0.7.96 line: new Session startup no longer
+scans unrelated Run event logs, and lost or corrupt event-sequence cursors
+recover beyond stale cross-Runtime caches (Issue 334). Every rc.3 contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - Initialize new Session event journals at sequence zero instead of scanning and

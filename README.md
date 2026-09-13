@@ -784,6 +784,16 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.4 release:** Fourth release candidate of the v0.7.96 line,
+fixing Issue 334. New Session event journals initialize at sequence zero
+instead of scanning unrelated Run logs, removing a synchronous startup stall
+that could push concurrent Session history reads past their 15-second
+timeout. Cached sequence floors are epoch-aware, and a missing or corrupt
+sequence file recovers the durable log maximum beyond a stale cross-Runtime
+cache, preventing duplicate event sequences and lost replay progress.
+Startup prewarm serves routing and preturn from the same complete result.
+Every rc.3 contract is retained.
+
 **v0.7.96-rc.3 release:** Third release candidate of the v0.7.96 line.
 Aligns the daemon `sessionCancellation` and `toolInvocation` capabilities and
 makes accepted Shell Stops recoverable while process-tree cleanup is unknown:
@@ -886,7 +896,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc3-release-preparation).
+[release checklist](docs/release.md#v0796-rc4-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

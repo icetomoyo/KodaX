@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.3`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.4`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,12 +205,17 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.3 release carries FEATURE_297 and FEATURE_299, aligns daemon
-`sessionCancellation` and `toolInvocation` capabilities, and makes accepted
-Shell Stops recoverable while process-tree cleanup is unknown: cleanup retries
-target the original Run, recovery references survive owner restarts, and shell
-results keep their cancelled/timeout status and captured output with the
-unconfirmed-cleanup note appended. The rc.2 stale-Stop rejection holds: a
+The v0.7.96-rc.4 release carries FEATURE_297 and FEATURE_299 and fixes
+Issue 334: new Session event journals initialize at sequence zero instead of
+scanning unrelated Run logs — removing a synchronous startup stall that could
+push concurrent history reads past their 15-second timeout — cached sequence
+floors are epoch-aware, and a missing or corrupt sequence file recovers the
+durable log maximum beyond a stale cross-Runtime cache so replay never
+duplicates sequences. Startup prewarm serves routing and preturn from the
+same complete result. The rc.3 daemon capability alignment holds:
+`sessionCancellation` and `toolInvocation` are projected through the default
+handshake, and accepted Shell Stops stay recoverable while process-tree
+cleanup is unknown. The rc.2 stale-Stop rejection holds: a
 first Stop request bound to an already terminal Run is rejected atomically
 before publishing a new Stop frontier, so delayed requests cannot stop
 successor Runs while accepted requests retain normal and post-restart replay.

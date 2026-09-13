@@ -1,6 +1,6 @@
 # Issue 334: Session startup and sequence recovery
 
-Baseline: `5c6a18c0` / SDK `0.7.96-rc.3`. Fix: Unreleased.
+Baseline: `5c6a18c0` / SDK `0.7.96-rc.3`. Fix: `0.7.96-rc.4`.
 
 ## Required behavior
 

@@ -137,9 +137,59 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.4 release preparation
+
+Release state: `v0.7.96-rc.4` is the GitHub pre-release for the exact
+tagged commit — the fourth release candidate of the v0.7.96 line, fixing
+Issue 334 (new Session startup scanning unrelated Run logs, and lost-cursor
+recovery across stale cross-Runtime caches). The tag-triggered Release
+workflow builds every platform archive and the universal npm tarball,
+publishes checksums, and creates the GitHub pre-release. npm registry
+publication remains a separate manual maintainer action.
+
+On top of rc.3 it includes:
+
+- New Session event journals initialize at sequence zero under the existing
+  lock instead of scanning unrelated Run logs, removing a synchronous startup
+  stall that could push concurrent Session history reads past their
+  15-second timeout.
+- Cached sequence floors are bound to their journal epoch; a missing or
+  corrupt sequence file recovers the durable log maximum even when another
+  live Runtime holds an older cached floor, preventing duplicate event
+  sequences and lost replay progress. Valid cursors keep the constant-cost path.
+- Startup prewarm serves both Full RepoIntel routing and preturn from the
+  same complete result.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.4`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, Issue 334 session journal/sequence recovery regressions
+   (`docs/test-guides/ISSUE_334_v0.7.96_REGRESSION_GUIDE.md`,
+   `packages/coding/src/repo-intelligence/runtime-prewarm.test.ts`),
+   shell cleanup and shared-probe cancellation regressions, trusted-text
+   permission regressions, FEATURE_299 stop-admission regressions, and
+   package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.4`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.3 release preparation
 
-Release state: `v0.7.96-rc.3` is the GitHub pre-release for the exact
+Release state: `v0.7.96-rc.3` was the GitHub pre-release for the exact
 tagged commit — the third release candidate of the v0.7.96 line, aligning
 daemon capabilities and making accepted Shell Stops recoverable while
 process-tree cleanup is unknown. The tag-triggered Release workflow builds

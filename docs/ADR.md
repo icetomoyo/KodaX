@@ -4,6 +4,14 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.4 release addendum:** Session journal event sequencing is
+> epoch-scoped and lock-ordered: new journals initialize sequence zero under
+> the existing lock instead of scanning unrelated Run logs, cached floors are
+> bound to their journal epoch, and a missing or corrupt sequence file
+> recovers the durable log maximum beyond a stale cross-Runtime cached floor.
+> Valid cursors keep the constant-cost path, and Full RepoIntel routing and
+> preturn share one complete startup prewarm result.
+>
 > **v0.7.96-rc.3 release addendum:** Shell cleanup ownership is recoverable:
 > an accepted Shell Stop stays unconfirmed while process-tree cleanup is
 > unknown, cleanup retries target the original Run, exact recovery references

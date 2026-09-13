@@ -716,7 +716,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 334 | High | Resolved in source | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | Unreleased | 2026-09-13 | 2026-09-13 |
+| 334 | High | Resolved in source | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
