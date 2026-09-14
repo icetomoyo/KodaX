@@ -16257,7 +16257,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   }, 60_000);
 
-  it("resolves live Auto reviewer settings again at a Bash host boundary", async () => {
+  it.each(['runtime', 'product-ipc'] as const)("resolves live Auto reviewer settings again at a Bash host boundary (%s)", async (surface) => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const projectRoot = path.join(tempRoot, "live-auto-reviewer-settings");
     await fs.mkdir(projectRoot, { recursive: true });
@@ -16295,63 +16295,91 @@ describe("createKodaXRuntime", () => {
       defaultModel: "mock-model",
       sharedDaemonHost: false,
     });
-    const session = await runtime.sessions.create({ title: "Live Auto reviewer settings", projectPath: projectRoot });
-    await runtime.sessions.updateSettings(session.id, {
-      permissionMode: "auto",
-      executionCwd: projectRoot,
-      autoModeClassifierModel: "mock-provider:reviewer-a",
-    });
-    const handle = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "review with live settings",
-      options: { context: { executionCwd: projectRoot, gitRoot: projectRoot } },
-    });
-    await flushMicrotasks();
-    if (!runOptions) throw new Error("expected Runtime run options");
+    const { connectKodaXClient } = await import('./sdk-client.js');
+    const { startRuntimeDaemonHost } = await import('./runtime-daemon/host.js');
+    let client: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
+    let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>> | undefined;
+    let runId: string | undefined;
+    try {
+      if (surface === 'product-ipc') {
+        const { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } = await import('./runtime-daemon/state.js');
+        const paths = resolveRuntimeDaemonPaths(tempRoot);
+        const lock = tryAcquireRuntimeDaemonLock(paths, {
+          runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+        });
+        if (!lock) throw new Error('Could not acquire the Auto reviewer test Host lock.');
+        const endpoint = process.platform === 'win32'
+          ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-auto-reviewer-${randomUUID()}` }
+          : { kind: 'unix' as const, path: path.join(tempRoot, 'auto-reviewer.sock') };
+        host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
+        client = await connectKodaXClient({ homeDir: tempRoot, endpoint: endpoint.path });
+      }
+      const sessions = client?.sessions ?? runtime.sessions;
+      const session = await sessions.create({ title: "Live Auto reviewer settings", projectPath: projectRoot });
+      await sessions.updateSettings(session.id, {
+        permissionMode: "auto",
+        executionCwd: projectRoot,
+        autoModeClassifierModel: "mock-provider:reviewer-a",
+      });
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "review with live settings",
+        options: { context: { executionCwd: projectRoot, gitRoot: projectRoot } },
+      });
+      runId = handle.runId;
+      await flushMicrotasks();
+      if (!runOptions) throw new Error("expected Runtime run options");
 
-    await authorizeRuntimeAutoCall(runOptions, {
-      id: "read_before_reviewer_change",
-      name: "read",
-      input: { path: path.join(projectRoot, "README.md") },
-    });
-    expect(reviewedModels).toEqual(["mock-provider:reviewer-a"]);
+      await authorizeRuntimeAutoCall(runOptions, {
+        id: "read_before_reviewer_change",
+        name: "read",
+        input: { path: path.join(projectRoot, "README.md") },
+      });
+      expect(reviewedModels).toEqual(["mock-provider:reviewer-a"]);
 
-    await runtime.sessions.updateSettings(session.id, {
-      autoModeClassifierModel: "mock-provider:reviewer-b",
-    });
-    const bashCall = {
-      id: "bash_after_reviewer_change",
-      name: "bash",
-      input: { command: "git config --global user.name KodaX" },
-    };
-    await authorizeRuntimeAutoCall(runOptions, bashCall);
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
-      toolCallId: bashCall.id,
-      toolInput: bashCall.input,
-      command: bashCall.input.command,
-      cwd: projectRoot,
-      executable: "git",
-      args: ["config", "--global", "user.name", "KodaX"],
-      reason: "sandbox_denied",
-    })).resolves.toBe(true);
-    expect(reviewedModels).toEqual([
-      "mock-provider:reviewer-a",
-      "mock-provider:reviewer-b",
-    ]);
+      await sessions.updateSettings(session.id, {
+        autoModeClassifierModel: "mock-provider:reviewer-b",
+      });
+      const bashCall = {
+        id: "bash_after_reviewer_change",
+        name: "bash",
+        input: { command: "git config --global user.name KodaX" },
+      };
+      await authorizeRuntimeAutoCall(runOptions, bashCall);
+      await expect(runOptions.context?.authorizeShellHostExecution?.({
+        toolCallId: bashCall.id,
+        toolInput: bashCall.input,
+        command: bashCall.input.command,
+        cwd: projectRoot,
+        executable: "git",
+        args: ["config", "--global", "user.name", "KodaX"],
+        reason: "sandbox_denied",
+      })).resolves.toBe(true);
+      expect(reviewedModels).toEqual([
+        "mock-provider:reviewer-a",
+        "mock-provider:reviewer-b",
+      ]);
 
-    await runtime.sessions.updateSettings(session.id, { permissionMode: null, autoModeClassifierModel: null });
-    expect((await runtime.sessions.getSettings(session.id)).permissionMode).toBeUndefined();
-    expect(await runtime.sessions.getAutoModeStats(session.id)).toMatchObject({ classifierModel: 'mock-provider:profile-reviewer' });
-    const profileCall = { ...bashCall, id: 'bash_after_clear_to_profile' };
-    await authorizeRuntimeAutoCall(runOptions, profileCall);
-    await expect(runOptions.context?.authorizeShellHostExecution?.({
-      toolCallId: profileCall.id, toolInput: profileCall.input, command: profileCall.input.command,
-      cwd: projectRoot, executable: 'git', args: ['config', '--global', 'user.name', 'KodaX'], reason: 'sandbox_denied',
-    })).resolves.toBe(true);
-    expect(reviewedModels.at(-1)).toBe('mock-provider:profile-reviewer');
-
-    await runtime.runs.abort(handle.runId);
-    await runtime.close();
+      await sessions.updateSettings(session.id, { permissionMode: null, autoModeClassifierModel: null });
+      expect((await sessions.getSettings(session.id)).permissionMode).toBeUndefined();
+      expect(await sessions.getAutoModeStats(session.id)).toMatchObject({ classifierModel: 'mock-provider:profile-reviewer' });
+      const profileCall = { ...bashCall, id: 'bash_after_clear_to_profile' };
+      await authorizeRuntimeAutoCall(runOptions, profileCall);
+      await expect(runOptions.context?.authorizeShellHostExecution?.({
+        toolCallId: profileCall.id, toolInput: profileCall.input, command: profileCall.input.command,
+        cwd: projectRoot, executable: 'git', args: ['config', '--global', 'user.name', 'KodaX'], reason: 'sandbox_denied',
+      })).resolves.toBe(true);
+      expect(reviewedModels.at(-1)).toBe('mock-provider:profile-reviewer');
+      await authorizeRuntimeAutoCall(runOptions, {
+        id: 'read_after_clear_to_profile', name: 'read', input: { path: path.join(projectRoot, 'README.md') },
+      });
+      expect(reviewedModels.slice(-2)).toEqual(['mock-provider:profile-reviewer', 'mock-provider:profile-reviewer']);
+    } finally {
+      if (runId) await runtime.runs.abort(runId);
+      await client?.disconnect();
+      await host?.close();
+      await runtime.close();
+    }
   }, 60_000);
 
   it("reuses and bounds Auto reviewer cache entries within one Session", async () => {

@@ -24,7 +24,7 @@ interface ChoiceOption {
   readonly value: string;
 }
 
-export type ClassicAsk = (prompt: string) => Promise<string | undefined>;
+export type ClassicAsk = (prompt: string, signal?: AbortSignal) => Promise<string | undefined>;
 
 /**
  * Interpret one readline answer against a choice list: a 1-based number, an
@@ -65,8 +65,9 @@ async function askChoice(
   question: string,
   options: readonly ChoiceOption[],
   allowCustomInput: boolean,
+  signal?: AbortSignal,
 ): Promise<AskUserAnswer> {
-  const parsed = parseClassicChoice(await ask(describeChoices(question, options)), options, allowCustomInput);
+  const parsed = parseClassicChoice(await ask(describeChoices(question, options), signal), options, allowCustomInput);
   if (parsed.kind === 'cancel') return CANCELLED_TOOL_RESULT_MESSAGE;
   if (parsed.kind === 'custom') return { kind: 'customInput', value: parsed.value };
   return parsed.value;
@@ -82,36 +83,38 @@ export function createClassicPlaneDialogSurface(input: {
   readonly permissionMode: () => PermissionMode;
   readonly confirm?: typeof confirmToolExecution;
 }): ClientPlaneDialogSurface {
-  const ask = input.ask ?? (async (prompt) => {
+  const ask = input.ask ?? (async (prompt, signal) => {
     const { askInput } = await import('./readline-helpers.js');
-    return askInput(input.rl, prompt);
+    return askInput(input.rl, prompt, signal);
   });
   const confirm = input.confirm ?? confirmToolExecution;
   return {
-    question: async (options: AskUserQuestionOptions) => {
+    question: async (options: AskUserQuestionOptions, signal) => {
       if (options.kind === 'input' || options.options === undefined || options.options.length === 0) {
-        const text = await ask(`${options.question}: `);
+        const text = await ask(`${options.question}: `, signal);
         const trimmed = (text ?? '').trim();
         return trimmed.length === 0 ? CANCELLED_TOOL_RESULT_MESSAGE : trimmed;
       }
-      return askChoice(ask, options.question, options.options, options.allowCustomInput !== false);
+      return askChoice(ask, options.question, options.options, options.allowCustomInput !== false, signal);
     },
-    questionMulti: async (options: AskUserMultiOptions) => {
+    questionMulti: async (options: AskUserMultiOptions, signal) => {
       const answers: Record<string, AskUserAnswer> = {};
       for (const question of options.questions) {
+        if (signal?.aborted) return undefined;
         const answer = await askChoice(
           ask,
           question.question,
           question.options,
           question.allowCustomInput !== false,
+          signal,
         );
         if (answer === CANCELLED_TOOL_RESULT_MESSAGE) return undefined;
         answers[question.question] = answer;
       }
       return answers;
     },
-    questionInput: async (options) => {
-      const text = await ask(`${options.question}: `);
+    questionInput: async (options, signal) => {
+      const text = await ask(`${options.question}: `, signal);
       return text !== undefined && text.trim().length > 0 ? text : undefined;
     },
     permission: async (options: ClientPermissionInteractionOptions, signal) => {

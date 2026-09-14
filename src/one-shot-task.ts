@@ -175,14 +175,20 @@ export async function runOneShotClientTask(
   // restored afterwards, for resumed AND freshly created persistent
   // sessions (pre-T35 run options never persisted). A concurrent run
   // another client starts on the same session during this window also
-  // observes the patched settings — bounded by this invocation.
+  // observes the patched settings. Restore only our own revision, so a
+  // concurrent Client edit remains authoritative even after this run ends.
   // Temporary sessions are deleted by the Host at settlement; nothing
   // to restore.
   const restoreSettings = Object.keys(patch).length > 0 && !plan.temporary;
   const previousSettings = restoreSettings
-    ? await client.sessions.getSettings(plan.sessionId)
+    ? await client.sessions.getSettingsVersioned(plan.sessionId)
     : undefined;
-  if (Object.keys(patch).length > 0) {
+  let appliedRevision: number | undefined;
+  if (previousSettings !== undefined) {
+    const applied = await client.sessions.updateSettingsVersioned(plan.sessionId, patch,
+      { expectedRevision: previousSettings.revision });
+    appliedRevision = applied.revision;
+  } else if (Object.keys(patch).length > 0) {
     await client.sessions.updateSettings(plan.sessionId, patch);
   }
 
@@ -251,11 +257,12 @@ export async function runOneShotClientTask(
   } finally {
     observation?.close();
     progress.close();
-    if (previousSettings !== undefined) {
+    if (previousSettings !== undefined && appliedRevision !== undefined) {
       // A failed restore would leave this invocation's flags on the
       // session — surface it instead of swallowing (e.g. disconnect).
       await client.sessions
-        .updateSettings(plan.sessionId, restoreSettingsPatch(previousSettings, patch))
+        .updateSettingsVersioned(plan.sessionId, restoreSettingsPatch(previousSettings.value, patch),
+          { expectedRevision: appliedRevision })
         .catch((error: unknown) => {
           emitKodaXDiagnostic({ source: 'kodax.one-shot', level: 'warn',
             message: `Failed to restore settings for session ${plan.sessionId}; invocation flags may remain active.`, detail: error });

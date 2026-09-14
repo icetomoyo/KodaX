@@ -17,6 +17,31 @@ const IMAGE_MEDIA_TYPES: Record<string, KodaXImageMediaType> = {
 
 const IMAGE_REF_PATTERN = /@(?:"([^"]+)"|'([^']+)'|([^\s]+))/g;
 
+/** Match user references using the host platform's path case semantics. */
+export function inputArtifactPathKey(filePath: string, cwd: string): string {
+  const resolved = path.resolve(cwd, filePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/** Restore image references for editable input recalled without a local draft. */
+export function restorePromptInputArtifacts(
+  text: string,
+  artifacts: readonly KodaXInputArtifact[],
+  cwd: string,
+): string {
+  const resolvePath = (value: string): string => inputArtifactPathKey(value, cwd);
+  const referenced = new Set([...text.matchAll(IMAGE_REF_PATTERN)]
+    .map(match => resolvePath(match[1] ?? match[2] ?? match[3]!)));
+  const restored: string[] = [];
+  for (const artifact of artifacts) {
+    if (artifact.kind !== 'image' || referenced.has(resolvePath(artifact.path))) continue;
+    referenced.add(resolvePath(artifact.path));
+    const quote = artifact.path.includes('"') ? "'" : '"';
+    restored.push(`@${quote}${artifact.path}${quote}`);
+  }
+  return restored.length > 0 ? `${text}${text.endsWith(' ') || !text ? '' : ' '}${restored.join(' ')}` : text;
+}
+
 export interface PreparedPromptInputArtifacts {
   promptText: string;
   messageContent: string | KodaXContentBlock[];
@@ -49,6 +74,7 @@ function buildImageAnchor(_index: number): string {
 export function preparePromptInputArtifacts(
   promptText: string,
   cwd: string,
+  recalledArtifacts: readonly KodaXInputArtifact[] = [],
 ): PreparedPromptInputArtifacts {
   const inputArtifacts: KodaXInputArtifact[] = [];
   const warnings: string[] = [];
@@ -69,14 +95,16 @@ export function preparePromptInputArtifacts(
       continue;
     }
 
-    const mediaType = resolveImageMediaType(rawPath);
+    const resolvedPath = path.resolve(cwd, rawPath);
+    const recalled = recalledArtifacts.find(artifact => artifact.kind === 'image'
+      && inputArtifactPathKey(artifact.path, cwd) === inputArtifactPathKey(resolvedPath, cwd));
+    const mediaType = (recalled?.kind === 'image' ? recalled.mediaType : undefined) ?? resolveImageMediaType(rawPath);
     if (!mediaType) {
       rewrittenPromptParts.push(match[0]);
       cursor = matchIndex + match[0].length;
       continue;
     }
 
-    const resolvedPath = path.resolve(cwd, rawPath);
     try {
       const stats = fs.statSync(resolvedPath);
       if (!stats.isFile()) {
@@ -102,7 +130,7 @@ export function preparePromptInputArtifacts(
       seenPaths.add(resolvedPath);
       const anchor = buildImageAnchor(inputArtifacts.length + 1);
       imageAnchors.set(resolvedPath, anchor);
-      inputArtifacts.push({
+      inputArtifacts.push(recalled ?? {
         kind: 'image',
         path: resolvedPath,
         mediaType,

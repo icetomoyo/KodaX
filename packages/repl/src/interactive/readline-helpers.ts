@@ -52,13 +52,12 @@ export function getPrompt(mode: string, config: CurrentConfig): string {
 }
 
 // Read input; supports multiline continuations and external editor.
-export async function askInput(rl: readline.Interface, prompt: string): Promise<string> {
+export async function askInput(rl: readline.Interface, prompt: string, signal?: AbortSignal): Promise<string> {
   const theme = getCurrentTheme();
   const lines: string[] = [];
 
-  const firstLine = await new Promise<string>((resolve) => {
-    rl.question(prompt, resolve);
-  });
+  const firstLine = await askLine(rl, prompt, signal);
+  if (signal?.aborted) return '';
 
   if (firstLine === '\x05' || firstLine.toLowerCase() === '/e') {
     return openExternalEditor(lines.join('\n'));
@@ -67,13 +66,26 @@ export async function askInput(rl: readline.Interface, prompt: string): Promise<
   lines.push(firstLine);
   while (needsContinuation(lines.join('\n'))) {
     const continuationPrompt = chalk.hex(theme.colors.dim)('... ');
-    const nextLine = await new Promise<string>((resolve) => {
-      rl.question(continuationPrompt, resolve);
-    });
+    const nextLine = await askLine(rl, continuationPrompt, signal);
+    if (signal?.aborted) return '';
     lines.push(nextLine);
   }
 
   return lines.join('\n').replace(/\\\n/g, '\n');
+}
+
+function askLine(rl: readline.Interface, prompt: string, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) return Promise.resolve('');
+  return new Promise<string>(resolve => {
+    const finish = (answer: string): void => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(answer);
+    };
+    const onAbort = (): void => finish('');
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal) rl.question(prompt, { signal }, finish);
+    else rl.question(prompt, finish);
+  });
 }
 
 export async function openExternalEditor(initialContent: string): Promise<string> {

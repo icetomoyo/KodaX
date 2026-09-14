@@ -63,6 +63,13 @@ it('applies Session settings to the next actual request without changing another
           client.sessions.updateSettings(first.id, { effort: 'low' }),
         ]);
         expect(await client.sessions.getSettings(first.id)).toMatchObject({ model: 'next-model' });
+        const snapshot = await client.sessions.getSettingsVersioned(first.id);
+        const updated = await client.sessions.updateSettingsVersioned(first.id, { model: 'next-model' },
+          { expectedRevision: snapshot.revision });
+        expect(updated).toMatchObject({ revision: snapshot.revision + 1, value: { model: 'next-model' } });
+        await expect(client.sessions.updateSettingsVersioned(first.id, { model: 'stale-model' },
+          { expectedRevision: snapshot.revision })).rejects.toMatchObject({ code: 'conflict' });
+        expect(await client.sessions.getSettings(first.id)).toMatchObject({ model: 'next-model' });
         expect(await client.sessions.getSettings(second.id)).toMatchObject({ model: 'initial-model' });
         for (const session of [first, second]) {
           requestedModels.length = 0;

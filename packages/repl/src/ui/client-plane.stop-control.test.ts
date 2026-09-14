@@ -2,6 +2,60 @@ import { expect, it, vi } from 'vitest';
 import { bindClientPlaneSessionStop, followClientPlaneRun, runClientPlaneRound, type ClientRoundOutcome, type InkClientPlane } from './client-plane.js';
 import type { RuntimeStopControl } from '../interactive/runtime-stop.js';
 
+it('reports failed withdrawal when cancellation arrives before a queued input starts', async () => {
+  const controller = new AbortController();
+  const withdraw = vi.fn(async () => { throw new Error('Host rejected withdrawal; input remains queued'); });
+  const stop = vi.fn();
+  const plane = { submit: async () => {
+    controller.abort();
+    return { state: 'queued' };
+  }, withdraw, stop, activeRun: async () => undefined } as unknown as InkClientPlane;
+  await expect(runClientPlaneRound({ plane, sessionId: 'session', prompt: 'later', abortSignal: controller.signal }))
+    .rejects.toThrow('Host rejected withdrawal; input remains queued');
+  expect(withdraw).toHaveBeenCalledWith('session', expect.stringMatching(/^ink-/));
+  expect(stop).not.toHaveBeenCalled();
+});
+
+it('does not confirm cancellation when withdrawal returns no input', async () => {
+  const controller = new AbortController();
+  const withdraw = vi.fn(async () => undefined);
+  const stop = vi.fn();
+  const plane = { submit: async () => {
+    controller.abort();
+    return { state: 'queued' };
+  }, withdraw, stop, activeRun: async () => undefined } as unknown as InkClientPlane;
+  await expect(runClientPlaneRound({ plane, sessionId: 'session', prompt: 'later', abortSignal: controller.signal }))
+    .rejects.toThrow('Input withdrawal was not confirmed; it may still run.');
+  expect(withdraw).toHaveBeenCalledWith('session', expect.stringMatching(/^ink-/));
+  expect(stop).not.toHaveBeenCalled();
+});
+
+it.each(['cancelled', 'completed', 'unknown'] as const)('waits for the Host %s outcome when cancellation arrives during input acceptance', async phase => {
+  const controller = new AbortController();
+  let finish!: (outcome: ClientRoundOutcome) => void;
+  const outcome = new Promise<ClientRoundOutcome>(resolve => { finish = resolve; });
+  const stop = vi.fn().mockResolvedValue({ accepted: true, state: 'unknown', outcome: 'unknown' });
+  const awaitRun = vi.fn(() => outcome);
+  const plane = { submit: async () => {
+    controller.abort();
+    return { state: 'submitted', runId: 'accepted-run' };
+  }, stop, awaitRun, activeRun: async () => undefined } as unknown as InkClientPlane;
+  let settled = false;
+  const pending = runClientPlaneRound({ plane, sessionId: 'session', prompt: 'work', abortSignal: controller.signal,
+    getDisplayedRunId: () => 'older-displayed-run' });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await vi.waitFor(() => expect(stop).toHaveBeenCalledWith('accepted-run'));
+  expect(settled).toBe(false);
+  expect(awaitRun).toHaveBeenCalledWith('session', 'accepted-run');
+  const result = { success: true, lastText: 'finished before cancellation', messages: [], sessionId: 'session' };
+  finish({ phase, ...(phase === 'completed' ? { result } : {}),
+    ...(phase === 'unknown' ? { error: 'shell_cleanup_unconfirmed' } : {}) });
+  if (phase === 'unknown') await expect(pending).rejects.toThrow('shell_cleanup_unconfirmed');
+  else if (phase === 'completed') await expect(pending).resolves.toEqual(result);
+  else await expect(pending).resolves.toMatchObject({ interrupted: true });
+  expect(stop).toHaveBeenCalledOnce();
+});
+
 it.each(['round', 'started'] as const)('keeps rejected Session Stop retryable in a %s Run', async mode => {
   let finish!: (outcome: ClientRoundOutcome) => void;
   const result = new Promise<ClientRoundOutcome>(resolve => { finish = resolve; });

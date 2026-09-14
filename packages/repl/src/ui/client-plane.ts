@@ -68,8 +68,11 @@ export interface InkClientPlane {
     readonly runId?: string;
     readonly state?: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
   }>;
-  /** Withdraw a queued input; returns the original text when this caller owned it. */
-  withdraw(sessionId: string, inputId: string): Promise<string | undefined>;
+  /** Withdraw a queued input, retaining attachments; standalone bindings may return plain text. */
+  withdraw(sessionId: string, inputId: string): Promise<string | {
+    readonly text: string;
+    readonly inputArtifacts?: readonly KodaXInputArtifact[];
+  } | undefined>;
   /** Resolve uncertain acceptance without starting new work. */
   readInput?(sessionId: string, inputId: string): Promise<{
     readonly state: 'submitted' | 'queued' | 'withdrawn' | 'dropped';
@@ -377,6 +380,7 @@ export async function runClientPlaneRound(input: {
   const inputId = mintInkInputId();
   const aborted = (): boolean => input.abortSignal?.aborted === true;
   let stopping: Promise<unknown> | undefined;
+  let withdrawalError: Error | undefined;
   const stopRun = (runId: string | undefined): void => {
     if (runId !== undefined) {
       stopping = input.plane.stop(runId).then(
@@ -399,7 +403,10 @@ export async function runClientPlaneRound(input: {
         },
       );
     } else {
-      stopping = input.plane.withdraw(input.sessionId, inputId).catch((error: unknown) => {
+      stopping = input.plane.withdraw(input.sessionId, inputId).then(restored => {
+        if (restored === undefined) throw new Error('Input withdrawal was not confirmed; it may still run.');
+      }).catch((error: unknown) => {
+        withdrawalError = error instanceof Error ? error : new Error(String(error));
         emitKodaXDiagnostic({
           source: 'client.plane',
           level: 'warn',
@@ -422,10 +429,6 @@ export async function runClientPlaneRound(input: {
       `The Host ${accepted.state} the input; resubmit with a new input id.`,
     );
   }
-  if (aborted()) {
-    stopRun(accepted.runId);
-    return interruptedPlaneResult(input.sessionId);
-  }
   let currentRunId = accepted.runId;
   const sessionStop = bindClientPlaneSessionStop(input, () => input.getDisplayedRunId?.() ?? currentRunId);
   let lastOutcome: ClientRoundOutcome | undefined;
@@ -435,6 +438,7 @@ export async function runClientPlaneRound(input: {
   };
   input.abortSignal?.addEventListener('abort', stop, { once: true });
   try {
+    if (aborted()) stopRun(currentRunId);
     for (;;) {
       if (currentRunId === undefined) {
         currentRunId = await pollActiveRun(
@@ -447,6 +451,7 @@ export async function runClientPlaneRound(input: {
         if (currentRunId === undefined) {
           if (aborted()) {
             await stopping;
+            if (withdrawalError) throw withdrawalError;
             return interruptedPlaneResult(input.sessionId);
           }
           // The input never started; take it back so it cannot run later

@@ -60,7 +60,7 @@ export function createCliClientPlane(client: KodaXProductClient): InkClientPlane
     cancelSession: input => client.sessions.cancel(input),
     submit: input => client.inputs.submit(input),
     readInput: (sessionId, inputId) => client.inputs.read(sessionId, inputId),
-    withdraw: (sessionId, inputId) => client.inputs.withdraw(sessionId, inputId).then(result => result.text),
+    withdraw: (sessionId, inputId) => client.inputs.withdraw(sessionId, inputId),
     awaitRun: (_sessionId, runId) => client.runs.await(runId),
     stop: runId => client.runs.stop(runId),
     activeRun: async sessionId => {

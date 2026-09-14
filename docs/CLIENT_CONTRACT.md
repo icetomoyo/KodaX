@@ -59,6 +59,7 @@
 | `learning` | `list`, `get`, `getSnapshot`, `events`, `subscribe`, `acknowledge`, `snooze`, `reject`, `disable`, `rollback`, `promote`, `review`, `trust` | 客户端通知状态保持原作用域；治理动作修改 Host 共享事实，沿用已有订阅流 |
 | `sessions` 基本管理 | `create`, `list`, `read`, `delete`, `archive`, `unarchive` | 创建、查询、删除和归档 Host 所有的 Session；`list` 接受项目、scope、归档、分页、tag、surface 过滤 |
 | `sessions` 设置 | `getSettings`, `updateSettings` | 返回原始 Session 覆盖；下一次物理请求采用新选择，patch 的 `null` 清除覆盖并恢复 Host profile 配置，缺失不制造新的执行默认值 |
+| `sessions` 条件设置 | `getSettingsVersioned`, `updateSettingsVersioned` | 读取 `{ revision, value }`；更新必须携带 `{ expectedRevision }`，过期时 `conflict` 且不写入。复用 Host 既有设置 CAS，普通编辑无需使用，不新增操作回执或恢复协议 |
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
 | `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory` | 规范对话分页、超大项正文和全 Session 搜索 |
@@ -87,6 +88,8 @@
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 
 无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入和 MCP 表单等人工提问使用既有 `cancel` 回答，不代填默认值。工具收到拒绝或取消，Run 仍按正常执行结果结算；不把取消一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
+
+one-shot 的调用设置仍临时写入共享 Session，并非独立的 Run 设置层。持久 Session 只在设置版本仍等于该次写入的版本时恢复；另一 Client 修改过任意设置后，保留新的设置事实并报告恢复冲突，调用旗标中未被覆盖的字段可能继续保留。初次应用也使用读到的版本，避免在读取与应用之间覆盖新编辑。不通过读后无条件写入、重试旧恢复或创建第二份设置权威来消除冲突。
 
 `commands.execute` 接收 `sessionId`、`inputId`、注册 `name` 和可选 `args`；`review.start` 接收 Session/Input 身份及参数，`agents.reviewLean` 接收 Session/Input 身份。三者都要求 `run:control`，实际执行保留忙时拒绝。帮助和命令正文读取不经过执行的空闲门禁。承接 FEATURE_299 后，未声明 `execution: configuration` 的 extension handler 经正常工具执行入口运行，立即返回 `started.runId`；没有模型调用或没有输出也仍有真实工具 Run。Host 保存一次原始输入，并为 handler 提供所属 Run、取消信号及受检工具调用。handler 返回模型 invocation 时在同一 Run 内继续执行，复用原 inputId 和工具历史；模型、工具限制与 fork 仍由 Host 从注册结果解析。声明 `execution: configuration` 的命令才直接返回 `completed`，不伪造执行 scope。`completed.success` 和可选 `message` 是该动作的结果，`started.runId` 只是已启动身份；客户端随后观察 Session、等待 `runs.await`，不能把它重新提交为输入。
 

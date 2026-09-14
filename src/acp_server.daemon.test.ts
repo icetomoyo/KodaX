@@ -69,7 +69,12 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
   });
   if (!lock) throw new Error('Isolated ACP Host lock unavailable.');
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, ownsA2AConfigReconciler: true, endpoint: defaultRuntimeDaemonEndpoint('default', homeDir) });
+  // ACP flags belong to the calling process; an already running Host has its own environment.
+  vi.stubEnv('KODAX_REPO_INTELLIGENCE', 'light');
+  vi.stubEnv('KODAX_REPO_INTELLIGENCE_TRACE', '1');
   const server = new KodaXAcpServer({ homeDir, provider: 'acp-local', permissionMode: 'full-access', logLevel: 'off' });
+  vi.stubEnv('KODAX_REPO_INTELLIGENCE', 'off');
+  vi.stubEnv('KODAX_REPO_INTELLIGENCE_TRACE', '0');
   const request = new TransformStream<Uint8Array, Uint8Array>();
   const response = new TransformStream<Uint8Array, Uint8Array>();
   const notifications: SessionNotification[] = [];
@@ -89,6 +94,9 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     const session = await client.newSession({ cwd: homeDir, mcpServers: [] });
     const result = await client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Say hello.' }] });
     expect(result.stopReason).toBe('end_turn');
+    expect(await runtime.sessions.getSettings(session.sessionId)).toMatchObject({
+      repoIntelligenceMode: 'light', repoIntelligenceTrace: true,
+    });
     expect((await runtime.sessions.list()).map(item => item.id)).toContain(session.sessionId);
     expect((await runtime.runs.list({ sessionId: session.sessionId })).map(run => run.phase)).toEqual(['completed']);
     const text = notifications.flatMap(({ update }) => update.sessionUpdate === 'agent_message_chunk'

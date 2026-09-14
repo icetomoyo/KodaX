@@ -621,7 +621,7 @@ describe('runClientPlaneRound queue chain (T17)', () => {
       },
       withdraw: (_sessionId, inputId) => {
         withdraws.push(inputId);
-        return Promise.resolve(undefined);
+        return Promise.resolve('withdrawn input');
       },
       awaitRun: (_sessionId, runId) => {
         script.onAwait?.(runId);

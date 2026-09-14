@@ -39,6 +39,7 @@ import {
   isToolFileMutation,
   normalizeReasoningEffortValue,
   parseReasoningEffortEnv,
+  resolveRepoIntelligenceRuntimeConfig,
   combineExtensionRuntimes,
   createExtensionRuntime,
   dedupeExtensionPathsByEntrypoint,
@@ -585,6 +586,7 @@ export class KodaXAcpServer implements Agent {
   private readonly planModeEffort?: KodaXWireReasoningEffort;
   private readonly thinking: boolean;
   private readonly reasoningMode: KodaXReasoningMode;
+  private readonly repoIntelligence: ReturnType<typeof resolveRepoIntelligenceRuntimeConfig>;
   private readonly defaultPermissionMode: AcpPermissionMode;
   private readonly defaultCwd: string;
   private readonly hasFixedCwd: boolean;
@@ -643,6 +645,7 @@ export class KodaXAcpServer implements Agent {
         );
     this.thinking = options.thinking ?? config.thinking ?? false;
     this.reasoningMode = options.reasoningMode ?? config.reasoningMode ?? 'auto';
+    this.repoIntelligence = resolveRepoIntelligenceRuntimeConfig();
     this.defaultPermissionMode = normalizeAcpPermissionMode(
       options.permissionMode ?? config.permissionMode,
       'accept-edits',
@@ -1037,6 +1040,8 @@ export class KodaXAcpServer implements Agent {
       thinking: effort === 'none' ? false : this.thinking,
       reasoningMode: effort === 'none' ? 'off' : this.reasoningMode,
       permissionMode: session.permissionMode,
+      repoIntelligenceMode: this.repoIntelligence.mode,
+      repoIntelligenceTrace: this.repoIntelligence.trace,
     });
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
     const projection = await observeAcpClientPrompt(client, session.sessionId,

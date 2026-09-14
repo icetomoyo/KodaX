@@ -1,8 +1,45 @@
-import { describe, expect, it } from 'vitest';
-import type { ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
+import { describe, expect, it, vi } from 'vitest';
+import readline from 'node:readline';
+import { PassThrough } from 'node:stream';
+import type { ClientObservationStatus, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { attachClassicPlaneDisplay, createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
 import { applyClientSessionViewSettings } from '../ui/client-session-settings.js';
 import type { CurrentConfig } from '../commands/types.js';
+import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
+
+it.each(['client', 'unavailable'] as const)('retires answered questions and %s observations without stale answers', async reason => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const rl = readline.createInterface({ input, output, terminal: false });
+  let printed = '';
+  output.on('data', chunk => { printed += String(chunk); });
+  let receive: ((view: ClientSessionView) => void) | undefined;
+  let status: ((state: ClientObservationStatus) => void) | undefined;
+  const onNotice = vi.fn();
+  const respondInteraction = vi.fn(async () => true);
+  const close = await attachClassicPlaneDisplay({
+    observe: async (_sessionId, listener, options) => { receive = listener; status = options?.onStatus; return () => undefined; },
+    readItem: async () => null, respondInteraction,
+  }, 'session', { onNotice, dialogs: createClassicPlaneDialogSurface({ rl, permissionMode: () => 'accept-edits' }) });
+  const question = (requestId: string) => ({ requestId, sessionId: 'session', runId: 'run',
+    kind: 'question_input' as const, options: { question: requestId }, createdAt: '2026-09-14T00:00:00Z',
+    expiresAt: '2026-09-14T01:00:00Z' });
+  const view: ClientSessionView = { session: { id: 'session', title: '' }, settings: {},
+    items: [], queue: [], runs: [], interactions: [question('first')] };
+  try {
+    receive?.(view);
+    await vi.waitFor(() => expect(printed).toContain('first:'));
+    receive?.({ ...view, interactions: [question('second')] });
+    await vi.waitFor(() => expect(printed).toContain('second:'), { timeout: 300 });
+    expect(respondInteraction).not.toHaveBeenCalled();
+    if (reason === 'client') close();
+    else status?.({ state: 'closed', reason });
+    input.write('late answer\n');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(respondInteraction).not.toHaveBeenCalled();
+    if (reason === 'unavailable') expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('unavailable'));
+  } finally { close(); rl.close(); input.destroy(); output.destroy(); }
+});
 
 it('updates classic settings from its existing display observation without writing them back', async () => {
   let config: CurrentConfig = { provider: 'anthropic', model: 'startup', permissionMode: 'accept-edits',

@@ -11280,7 +11280,8 @@ function createRuntimeRunService(deps: {
       cache: autoModeGuardrails,
       states: autoModeStates,
       settingsOwner: deps.settingsOwner,
-            getRecord: () => deps.runs.get(runId),
+      configHome: deps.defaultConfigHome,
+      getRecord: () => deps.runs.get(runId),
       onPhase: (record, phase) => {
         if (
           record.terminalEmitted
@@ -23324,6 +23325,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
   readonly cache: Map<string, Map<string, RuntimeAutoModeGuardrailCacheEntry>>;
   readonly states: Map<string, AutoModeSharedState>;
   readonly settingsOwner: RuntimeSessionSettingsOwner;
+  readonly configHome: string;
   readonly getRecord: () => RuntimeRunRecord | undefined;
   readonly onPhase: (
     record: RuntimeRunRecord,
@@ -23342,7 +23344,10 @@ function createRuntimeSessionAutoModeGuardrail(input: {
   ): Promise<
     RuntimeOwnedAutoModeGuardrail | undefined
   > => {
-    const settings = (await input.settingsOwner.read(input.sessionId)).value;
+    const settings = resolveEffectiveRuntimeSessionSettings(
+      readRuntimeConfig(path.join(input.configHome, 'config.json')),
+      (await input.settingsOwner.read(input.sessionId)).value,
+    );
     const record = input.getRecord();
     if (record) {
       record.permissionMode = settings.permissionMode;

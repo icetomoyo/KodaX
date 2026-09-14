@@ -103,6 +103,11 @@ export interface KodaXProductClient {
     archive(sessionId: string): Promise<void>;
     unarchive(sessionId: string): Promise<void>;
     getSettings(sessionId: string): Promise<ClientSessionSettings>;
+    /** Read the Host's existing settings revision for a conditional edit or restoration. */
+    getSettingsVersioned(sessionId: string): Promise<ClientSessionSettingsSnapshot>;
+    /** Reject with conflict if another settings edit has occurred since expectedRevision. */
+    updateSettingsVersioned(sessionId: string, patch: ClientSessionSettingsPatch,
+      options: { readonly expectedRevision: number }): Promise<ClientSessionSettingsSnapshot>;
     /** Existing Host Auto reviewer diagnostics; undefined when Auto mode is not selected. */
     getAutoModeStats(sessionId: string): Promise<ClientAutoModeStats | undefined>;
     /** Change this Session only. The next physical request uses the updated selection. */
@@ -624,6 +629,11 @@ export interface ClientRunStopReceipt {
   readonly state: string;
   readonly outcome: string;
   readonly phase: string;
+}
+
+export interface ClientSessionSettingsSnapshot {
+  readonly revision: number;
+  readonly value: ClientSessionSettings;
 }
 
 export interface ClientSessionCancelInput {

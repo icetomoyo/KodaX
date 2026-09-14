@@ -193,15 +193,37 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
   }
 }, 120_000);
 
+it('preserves another Client setting change made while a one-shot invocation is running', async () => {
+  const harness = await startHarness('kodax-one-shot-concurrent-settings-');
+  const client = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
+  const other = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
+  try {
+    const session = await client.sessions.create({ title: 'Shared settings', projectPath: harness.homeDir });
+    await client.sessions.updateSettings(session.id, { model: 'original-model' });
+    executor.managed.mockImplementation(async () => {
+      expect(await other.sessions.getSettings(session.id)).toMatchObject({ model: 'invocation-model' });
+      await other.sessions.updateSettings(session.id, { model: 'new-ui-model' });
+      return { success: true, lastText: 'done', messages: [], sessionId: session.id };
+    });
+    await runOneShotClientTask({ client, runtime: harness.runtime,
+      options: { provider: 'one-shot-provider', model: 'invocation-model', session: { id: session.id } }, prompt: 'Work' });
+    expect(await other.sessions.getSettings(session.id)).toMatchObject({ model: 'new-ui-model' });
+  } finally {
+    await client.disconnect();
+    await other.disconnect();
+    await harness.close();
+  }
+}, 120_000);
+
 it('reports settings restoration failure even when no CLI error callback is installed', async () => {
   const harness = await startHarness('kodax-one-shot-restore-');
   const client = toKodaXProductClient(harness.runtime);
   const session = await client.sessions.create({ title: 'Restore', projectPath: harness.homeDir });
-  const update = client.sessions.updateSettings.bind(client.sessions);
+  const update = client.sessions.updateSettingsVersioned.bind(client.sessions);
   let calls = 0;
-  client.sessions.updateSettings = async (sessionId, patch) => {
+  client.sessions.updateSettingsVersioned = async (sessionId, patch, options) => {
     if (++calls === 2) throw new Error('restore transport lost');
-    return update(sessionId, patch);
+    return update(sessionId, patch, options);
   };
   const diagnostics: KodaXDiagnostic[] = [];
   const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));

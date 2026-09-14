@@ -11442,7 +11442,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onPopPendingInputs={() => {
             const inputs = consumePendingInputs();
             if (inputs.length > 0) return inputs.join("\n---\n");
-            return clientInputQueue?.pull(context.sessionId, (clientView?.queue ?? []).map((entry) => entry.inputId));
+              return clientInputQueue?.pull(context.sessionId, (clientView?.queue ?? []).map((entry) => entry.inputId),
+                currentOptionsRef.current.context?.executionCwd ?? process.cwd());
           }}
           prompt=">"
           placeholder={buildPromptPlaceholderText({

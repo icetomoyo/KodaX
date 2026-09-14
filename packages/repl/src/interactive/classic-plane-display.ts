@@ -158,7 +158,11 @@ export async function attachClassicPlaneDisplay(
   const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const differ = createClassicPlaneDisplayDiffer(line => { if (!closed) write(line); },
     (id, readOptions) => plane.readItem(sessionId, id, readOptions));
-  const handledInteractions = new Set<string>();
+  const handledInteractions = new Map<string, AbortController>();
+  const closeDialogs = (): void => {
+    for (const controller of handledInteractions.values()) controller.abort();
+    handledInteractions.clear();
+  };
   let dialogChain: Promise<void> = Promise.resolve();
   let displayChain: Promise<void> = Promise.resolve();
   const observation = await plane.observe(sessionId, (view: ClientSessionView) => {
@@ -171,22 +175,41 @@ export async function attachClassicPlaneDisplay(
     });
     const dialogs = options.dialogs;
     if (dialogs === undefined) return;
+    const pendingIds = new Set(view.interactions.map(interaction => interaction.requestId));
+    for (const [requestId, controller] of handledInteractions) {
+      if (pendingIds.has(requestId)) continue;
+      controller.abort();
+      handledInteractions.delete(requestId);
+    }
     for (const interaction of view.interactions) {
       if (handledInteractions.has(interaction.requestId)) continue;
-      handledInteractions.add(interaction.requestId);
+      const controller = new AbortController();
+      handledInteractions.set(interaction.requestId, controller);
       dialogChain = dialogChain
-        .then(() => answerClientPlaneInteraction(plane, interaction, dialogs))
+        .then(() => answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal))
         .then((accepted) => {
-          if (accepted) return;
+          if (accepted || controller.signal.aborted) return;
           handledInteractions.delete(interaction.requestId);
         })
         .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
           handledInteractions.delete(interaction.requestId);
           options.onNotice?.(
             `Answer delivery failed (${error instanceof Error ? error.message : String(error)}); the question re-opens or resolves Host-side.`,
           );
         });
     }
-  });
-  return () => { closed = true; observation(); };
+  }, { onStatus: status => {
+    if (closed || status.state !== 'closed') return;
+    closed = true;
+    closeDialogs();
+    if (status.reason === 'unavailable') {
+      options.onNotice?.('Session observation is unavailable; reconnect to receive output and Host questions.');
+    }
+  } });
+  return () => {
+    closed = true;
+    closeDialogs();
+    observation();
+  };
 }

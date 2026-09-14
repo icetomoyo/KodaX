@@ -2,6 +2,18 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-09-14 主线融合复核
+
+完整分析和边界见 [复核报告](../research/product-client-reaudit-2026-09-14.md)。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
+
+1. 一个窗口等待问题，第二个客户端回答该问题。classic 窗口应撤掉旧输入；Host 下一问题可立即作答。关闭观察后输入旧答案不得发出 Host 答复。
+2. 忙时排入 `说明 @"带空格的图片.png"`，重新挂接同一 Session 后按 ↑ 取回，修改正文再提交。图片引用应可见、仅一份，后续模型请求仍有该图片附件。
+3. 在 Host 接受输入期间取消。界面应等待真实 Run 结果；不能把 Stop 接受或 cleanup unknown 显示为已完成取消。
+4. one-shot 使用临时模型参数恢复已有 Session，在运行期间由另一客户端改变模型。one-shot 结束不能覆盖新选择；设置恢复冲突需明确报告。
+5. ACP 进程与既有 Host 的 repo-intelligence 环境值不同。ACP 发起 prompt 后，Host Session 的模式/trace 开关应采用 ACP 调用配置。
+
+上述公开接缝已有自动回归；真实终端操作通过与否应单独记录，不能以单测成绩代替。
+
 ## Windows 终端验收
 
 入口：`tests/repl-pty-acceptance.mjs`。

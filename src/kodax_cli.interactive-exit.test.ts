@@ -223,7 +223,13 @@ async function importMainWithMocks(options: {
           return {};
         },
         async getSettings() {
+          return {};
+        },
+        async getSettingsVersioned() {
           return { revision: 0, value: {} };
+        },
+        async updateSettingsVersioned() {
+          return { revision: 1, value: {} };
         },
         async delete(sessionId: string) {
           runtimeDeletes.push(sessionId);

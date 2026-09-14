@@ -34,6 +34,14 @@ export function toKodaXProductClient(
       unarchive: (sessionId) => runtime.sessions.unarchive(sessionId),
       getAutoModeStats: async sessionId => (await runtime.sessions.getAutoModeStats(sessionId)) ?? undefined,
       getSettings: async (sessionId) => toClientSessionSettings(await runtime.sessions.getSettings(sessionId)),
+      getSettingsVersioned: async sessionId => {
+        const snapshot = await runtime.sessions.getSettingsVersioned(sessionId);
+        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value) };
+      },
+      updateSettingsVersioned: async (sessionId, patch, options) => {
+        const snapshot = await runtime.sessions.updateSettingsVersioned(sessionId, patch, options);
+        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value) };
+      },
       updateSettings: async (sessionId, patch) => toClientSessionSettings(await runtime.sessions.updateSettings(sessionId, patch)),
       observe: (sessionId, onView, options) => runtime.sessions.observeView(sessionId, onView, options),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
