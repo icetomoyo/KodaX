@@ -3,6 +3,7 @@ import { createReadStream } from 'fs';
 import path from 'node:path';
 import { createInterface } from 'readline';
 import type { KodaXToolResultContentItem } from '@kodax-ai/llm';
+import { prepareValidatedImageBlock, validateImageBytesInRun } from '@kodax-ai/llm';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { buildReadFileUnchangedStub } from '../multi-instance/read-file-state-cache.js';
@@ -20,8 +21,8 @@ const BINARY_SAMPLE_BYTES = 4096;
 // Image extension → MIME type, used by the multimodal branch (claudecode
 // parity, 2026-05-20). When `read` is invoked on one of these extensions
 // the tool returns a `tool_result` content array with a text descriptor
-// followed by an `image` block whose path the provider serializer reads
-// into base64 at wire-send time. Mirrors
+// followed by an `image` block. Managed runs prepare the observed bytes
+// here; direct SDK callers retain path-based serialization. Mirrors
 // c:/Works/claudecode/src/tools/FileReadTool/FileReadTool.ts:866-891.
 const IMAGE_MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -351,12 +352,22 @@ export async function toolRead(
     if (stat.size > READ_IMAGE_MAX_BYTES) {
       return `[Tool Error] Image too large to inline (${formatSize(stat.size)} > ${formatSize(READ_IMAGE_MAX_BYTES)}): ${filePath}. Resize before reading.`;
     }
+    const bytes = await fs.readFile(filePath);
+    const validation = await validateImageBytesInRun(bytes);
+    if (validation.status === 'invalid') {
+      return `[Tool Error] Image cannot be decoded: ${filePath}. Re-extract or replace this image before reading it again.`;
+    }
+    const mediaType = validation.mediaType ?? imageMimeType;
+    const notice = validation.status === 'unverified'
+      ? ` Local validation unavailable (${validation.reason}); original bytes retained.` : '';
+    const image = { type: 'image' as const, path: filePath, mediaType };
+    prepareValidatedImageBlock(image, bytes, validation);
     return [
       {
         type: 'text',
-        text: `[Read image: ${filePath} (${formatSize(stat.size)}, ${imageMimeType})] — image content delivered as inline vision below; describe what you see in your next response.`,
+        text: `[Read image: ${filePath} (${formatSize(stat.size)}, ${mediaType})] — image content delivered as inline vision below; describe what you see in your next response.${notice}`,
       },
-      { type: 'image', path: filePath, mediaType: imageMimeType },
+      image,
     ];
   }
 

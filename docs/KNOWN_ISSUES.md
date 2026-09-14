@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-13_
+_Last Updated: 2026-09-14_
 
 ---
 
@@ -717,6 +717,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
+| 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | - | 2026-09-14 | - |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
@@ -937,6 +938,81 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 335: Invalid existing image files cause repeated GLM Coding HTTP 400
+
+- **Priority**: High
+- **Status**: Resolved
+- **Release**: Source implementation only; not released
+- **Introduced**: confirmed v0.7.96-rc.4; extension-based read branch dates to c76df9600 (2026-05-20); first affected release not established
+- **Created**: 2026-09-14
+
+**Original Problem**: `toolRead()` accepts a `.png` file containing non-image bytes and
+returns an inline image result. Both `zhipu-coding/glm-5.3-flash` and
+`zai-coding/glm-5.3-flash` reject its replay with HTTP 400, code `1210`, image parsing
+error. Appending continue retains the bad image and fails again. Replacing only the
+referenced file's bytes with a valid PNG restores the same history to a successful reply.
+The expected behavior is an actionable invalid-image result/recovery rather than a
+persistently failing Provider request.
+
+**Context**: This is a controlled synthetic reproduction prompted by Space Issue 215.
+The user subsequently relayed a customer session analysis: reading `img/img_6433.jpg`
+at 09:56:12 was followed by kimi-code image-decode HTTP 400 and three zhipu-coding
+`1210` failures. The JPEG reportedly has JFIF/EXIF headers but no SOF frame data;
+two other extracted JPEGs decode normally. This strongly corroborates the independently
+reproduced failure chain; the original customer JSONL/JPEG was not inspected locally.
+Current and legacy assistant ordering were both accepted by both endpoints. The image
+defect predates the shared ordering change.
+
+**Root Cause**: The read tool checks extension and size, while image serialization checks
+file availability and base64-encodes bytes without validating them. Every subsequent
+request rereads the path. Separately, Provider error-code extraction ignores the nested
+`APIError.error.error.code` location, so the observed `1210` is absent from metadata and
+the Runtime emits only its generic client-error message.
+
+**Implemented 2026-09-14**: Shared decoding now checks `read`, MCP media, and both native
+Provider serializers. SA/Runner prepare new/restored images once per run; read/MCP
+snapshot received bytes before returning. Invalid historical images become request-only
+explanatory text; valid images and all other history remain intact. MIME follows actual
+bytes; new reads/resume revalidate repaired files. Unavailable/unsupported decoding does not
+classify images as corrupt. Nested numeric/string upstream codes are preserved.
+Space's paste fallback calls the optional new SDK media validator before writing.
+Preparation responds to cancellation, preserves text-only scheduling, and shares prepared
+digests with cache diagnostics. Both release archive formats include the decoder assets.
+
+**Verification**: Expanded runtime/provider/MCP/read regressions passed (216 files / 2473
+tests), followed by 865 focused tests including two additional ingress-cancellation cases.
+Core image modules have 90.24% line coverage. Earlier 27 offline audit checks,
+two actual GLM calls for each preparation stage,
+SDK builds, and Windows Node/Bun/Electron ASAR probes passed. Both real Providers
+returned visible replies from unchanged old corrupt-image history, with a valid image
+retained. See the [regression and release guide](test-guides/ISSUE_335_v0.7.96_REGRESSION_GUIDE.md).
+Space still pins published rc.4: new SDK release/integration and full cross-platform
+installer acceptance remain outstanding. No blind 400 retry or automatic re-encoding of valid images is enabled.
+A bounded main-Agent text diagnosis now handles residual native request-content 400/422
+errors; only verified, request-only repairs can resume. See the implementation and final
+review notes in `investigations/MAIN_AGENT_RECOVERY_IMPLEMENTATION_2026-09-14.md`.
+
+**Expanded Compatibility Scope (2026-09-14)**: The same unvalidated-byte path exists for
+MCP image, embedded-resource and resource results, plus direct SDK image input. A local
+stdio MCP probe confirmed all three routes persist a JPEG with valid headers but no SOF.
+Space's pasted-image normalization catch can also fall back to raw bytes. Scope includes
+KodaX's handling of returned MCP media, not changing MCP tools or disabling image support.
+Preserve valid images, text, structuredContent, original isError and tool-call pairing.
+
+27 offline checks passed as a diagnostic baseline. An isolated pi/Photon comparison
+accepted 11 valid controls and rejected 4 corrupt inputs on the default read path; pi's
+tool normalization still retained all 4 corrupt images. Existing Jimp rejects a valid
+WebP, so decoder failure alone must not be treated as image corruption. Distinguish
+unsupported codecs/backend unavailability and verify Node/Bun/Electron packaging before
+enabling enforcement. A real GLM experiment replaced only the bad image in a request
+copy and eliminated the 400 on both endpoints, preserving the original history/file and
+a valid companion image. Auto-effort small-budget reply probes were inconclusive;
+low-effort controls subsequently returned visible OK responses on both endpoints.
+The investigation below predates the implementation above. See the
+[expanded scan and bounded recovery design](investigations/IMAGE_COMPATIBILITY_RECOVERY_2026-09-14.md).
+
+See [full investigation, evidence, and reproduction commands](investigations/GLM_CODING_400_2026-09-14.md).
 
 ### Issue 333: Windows sandbox ACL grants break host OpenSSH
 
@@ -14783,7 +14859,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 213 (34 Open, 179 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 214 (34 Open, 180 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

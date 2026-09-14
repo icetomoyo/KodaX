@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createCustomProvider, KODAX_PROVIDERS, KodaXAnthropicCompatProvider,
   KodaXOpenAICompatProvider, runWithScopedConfig,
+  prepareHistoryImages, withPreparedImageHistory,
   type KodaXBaseProvider, type KodaXMessage,
 } from '@kodax-ai/llm';
 import { hashProviderVisibleMessages } from './prompt-cache-diagnostics.js';
@@ -47,11 +48,55 @@ async function captureMessages(provider: KodaXBaseProvider, messages: KodaXMessa
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+it.each(['anthropic', 'openai'] as const)('%s diagnostics follow prepared images after source files change', async (protocol) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-wire-'));
+  try {
+    const goodPath = path.join(directory, 'valid.jpg');
+    const badPath = path.join(directory, 'broken.jpg');
+    await copyFile('tests/fixtures/images/valid-png.png', goodPath);
+    await writeFile(badPath, 'not an image');
+    const images = [{ type: 'image' as const, path: goodPath, mediaType: 'image/jpeg' },
+      { type: 'image' as const, path: badPath }];
+    const history: KodaXMessage[] = [
+      { role: 'assistant', content: [call('read-images')] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-images', content: images }, ...images] },
+    ];
+    const provider = createCustomProvider({ name: 'prepared-wire', protocol, model: 'vision',
+      baseUrl: 'https://provider.invalid', apiKeyEnv: 'UNUSED', imageInput: true });
+    await withPreparedImageHistory(async () => {
+      await prepareHistoryImages(history);
+      await rm(goodPath);
+      for (const method of ['complete', 'stream'] as const) {
+        const wire = await captureMessages(provider, history, method);
+        const normalized = JSON.parse(JSON.stringify(wire), (_key, value: unknown) => {
+          if (!value || typeof value !== 'object' || !('type' in value)) return value;
+          if (value.type === 'image' && 'source' in value) {
+            const source = value.source as { data: string; media_type: string };
+            return { type: 'image', mediaType: source.media_type,
+              dataHash: createHash('sha256').update(Buffer.from(source.data, 'base64')).digest('hex') };
+          }
+          if (value.type === 'image_url' && 'image_url' in value) {
+            const url = (value.image_url as { url: string }).url;
+            const [header, encoded] = url.split(',');
+            return { type: 'image_url', mediaType: header!.slice(5, -7),
+              dataHash: createHash('sha256').update(Buffer.from(encoded!, 'base64')).digest('hex') };
+          }
+          return value;
+        }) as unknown;
+        expect(hashProviderVisibleMessages(history, provider)).toBe(hash(normalized));
+      }
+    });
+  } finally {
+    expect(path.dirname(directory)).toBe(tmpdir());
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each([true, false])('keeps tool-image diagnostic projection aligned with imageInput=%s', async (imageInput) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kodax-image-wire-'));
   try {
     const imagePath = path.join(directory, 'pixel.png');
-    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+    await copyFile('tests/fixtures/images/valid-png.png', imagePath);
     const provider = createCustomProvider({ name: 'image-wire', protocol: 'openai', model: 'test-model',
       baseUrl: 'https://provider.invalid', apiKeyEnv: 'UNUSED', imageInput });
     for (const filePath of [imagePath, path.join(directory, 'missing.png')]) {

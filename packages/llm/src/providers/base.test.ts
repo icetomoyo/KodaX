@@ -643,6 +643,19 @@ describe('KodaXBaseProvider', () => {
     expect(error).not.toHaveProperty('metadata.httpStatus');
   });
 
+  it.each(['1210', 1210])('preserves nested coding-provider error code %s without copying its body', async (code) => {
+    const provider = new TestProvider();
+    const upstream = Object.assign(new Error('400 image input parse error'), {
+      status: 400, error: { error: { code, message: 'private provider body' } },
+    });
+    const task = vi.fn(() => Promise.reject(upstream));
+    const error: unknown = await provider.exposeWithRateLimit(task, undefined, 3)
+      .then(() => undefined, (caught: unknown) => caught);
+    expect(error).toMatchObject({ metadata: { httpStatus: 400, upstreamCode: '1210' } });
+    expect(JSON.stringify(error)).not.toContain('private provider body');
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
   it('does not overwrite an already classified provider failure', async () => {
     const provider = new TestProvider();
     const classified = new KodaXProviderError(

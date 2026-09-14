@@ -38,9 +38,12 @@ import {
   mapLegacyReasoningModeToEffortIntent,
   resolvePromptCacheDisabled,
   withProviderRequestCredential,
+  prepareHistoryImages,
+  withPreparedImageHistory,
   type CostTracker,
 } from '@kodax-ai/llm';
 import path from 'path';
+import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../resilience/text-recovery.js';
 import { estimateTokens } from '../tokenizer.js';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
 // for backward compatibility. Importing it here creates a cycle
@@ -80,7 +83,7 @@ import { loadCompactionConfig } from '../compaction-config.js';
 // CAP-074 (KODAX_MAX_MAXTOKENS_RETRIES) is consumed inside
 // `agent-runtime/max-tokens-continuation.ts` since FEATURE_100 P3.5a.
 import { waitForRetryDelay } from '../retry-handler.js';
-import { telemetryRecovery } from '../resilience/index.js';
+import { classifyResilienceError, telemetryRecovery } from '../resilience/index.js';
 import {
   buildPromptMessageContent,
   toKodaXInputArtifacts,
@@ -715,14 +718,20 @@ export async function runSubstrate(
   const { randomUUID } = await import('node:crypto');
   const boundOptions = { ...options, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
-  return withExtensionRuntimeContext(() => runSubstrateInContext(boundOptions, prompt, declaredAgent), options.extensionRuntime ?? getActiveExtensionRuntime());
+  let prepareImages = false;
+  return withPreparedImageHistory(() => withExtensionRuntimeContext(
+    () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }),
+    options.extensionRuntime ?? getActiveExtensionRuntime(),
+  ), options.abortSignal, () => prepareImages);
 }
 
 async function runSubstrateInContext(
   options: KodaXOptions,
   prompt: string,
-  declaredAgent?: Agent,
+  declaredAgent: Agent | undefined,
+  setImagePreparation: (enabled: boolean) => void,
 ): Promise<KodaXResult> {
+  const textRecovery = createTextRecoveryState();
   const previousActiveRuntime = getActiveExtensionRuntime();
   const runtime = options.extensionRuntime ?? previousActiveRuntime;
   const activeRegistryRuntime = options.extensionRuntime instanceof KodaXExtensionRuntime
@@ -794,6 +803,7 @@ async function runSubstrateInContext(
   // etc.) get the right adaptive bucket instead of the default-model
   // window.
   const initialProvider = resolveProvider(turnState.currentProviderName);
+  setImagePreparation(initialProvider.getCapabilityProfile().transport === 'native-api');
   assertProviderConfigured(initialProvider, turnState.currentProviderName);
   options = installProductionLearningReviewer(
     options,
@@ -930,6 +940,8 @@ async function runSubstrateInContext(
     options.context?.inputArtifacts,
     liveTurnScopeRef.current.turnId,
   );
+  const initialImagePreparation = prepareHistoryImages(messages);
+  if (initialImagePreparation) await initialImagePreparation;
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')
   );
@@ -1018,6 +1030,8 @@ async function runSubstrateInContext(
       messages.push(message);
       return { queued, message };
     });
+    const preparation = prepareHistoryImages(deliveries.map(({ message }) => message));
+    if (preparation) await preparation;
     if (options.session?.persistedByHost === false) {
       await saveRequiredSessionSnapshot(options, sessionId, {
         messages,
@@ -1589,6 +1603,10 @@ async function runSubstrateInContext(
       turnState.runtimeThinkingLevel = preparedProviderState.reasoningMode;
       runtimeSessionState.thinkingLevel = turnState.runtimeThinkingLevel;
       const streamProvider = resolveProvider(turnState.currentProviderName);
+      // Hooks/session settings may switch CLI to native; admit using the actual transport.
+      setImagePreparation(streamProvider.getCapabilityProfile().transport === 'native-api');
+      const preparedProviderImages = prepareHistoryImages(messages);
+      if (preparedProviderImages) await preparedProviderImages;
       contextWindow = resolveContextWindow(
         compactionConfig,
         streamProvider,
@@ -1947,7 +1965,9 @@ async function runSubstrateInContext(
         currentTokens: resolveContextTokenCount(wireMessages, contextTokenSnapshot),
       });
       let capacityRecoveryUsed = false;
+      let textRecoveryRetry = false;
       while (true) {
+        wireMessages = projectTextRecovery(wireMessages, textRecovery);
         effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
@@ -2050,6 +2070,7 @@ async function runSubstrateInContext(
               effectiveProviderReasoning,
               {
                 ...streamCallbacks,
+                ...(textRecoveryRetry ? { singleAttempt: true } : {}),
                 promptCacheKey,
                 onRetryAfter: wrappedRetryAfter,
                 modelOverride: turnState.currentModelOverride,
@@ -2066,6 +2087,14 @@ async function runSubstrateInContext(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (textRecoveryRetry) {
+            const classification = classifyResilienceError(error);
+            terminalExecutionFailure = buildTerminalProviderFailure({ error,
+              errorClass: classification.errorClass, requestPhase: classification.failureStage,
+              provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
+              startedAt: boundarySession.snapshot().startedAt });
+            throw error;
+          }
           if (error instanceof KodaXContextOverflowError && !capacityRecoveryUsed && !options.abortSignal?.aborted) {
             capacityRecoveryUsed = true;
             error.requestInputReliefTokens = Math.max(0, estimateTokens(providerMessages) - estimateTokens(wireMessages));
@@ -2215,6 +2244,20 @@ async function runSubstrateInContext(
           }
 
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
+            streamTimers.clearAll();
+            const recovered = await tryTextRecovery({ state: textRecovery, error, messages: wireMessages,
+              provider: streamProvider, system: effectiveSystemPrompt, model: turnState.currentModelOverride,
+              reasoning: effectiveProviderReasoning, maxOutputTokens: requestMaxOutputTokens,
+              attempt, maxAttempts: resilienceCfg.maxRetries, timeoutMs: API_HARD_TIMEOUT_MS, signal: options.abortSignal,
+              hasPendingInputs: () => hasQueuedFollowUp(events, messageQueueAgentId),
+              onStart: () => events.onProviderRecovery?.({ stage: decision.failureStage, errorClass: decision.reasonCode,
+                attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }),
+              onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
+                provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
+                inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+            });
+            if (recovered) { attempt += 1; textRecoveryRetry = true; continue; }
             messages = providerMessages;
             const boundary = boundarySession.snapshot();
             terminalExecutionFailure = buildTerminalProviderFailure({

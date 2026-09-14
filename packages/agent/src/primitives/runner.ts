@@ -65,7 +65,7 @@ import {
   replaceSystemMessage,
 } from './runner-handoff.js';
 import { ContextCapacityError } from '../context-capacity.js';
-import { KodaXContextOverflowError } from '@kodax-ai/llm';
+import { KodaXContextOverflowError, prepareHistoryImages } from '@kodax-ai/llm';
 import { estimateTokens } from '../tokenizer.js';
 
 /**
@@ -647,6 +647,8 @@ async function appendMessageEntry(session: Session, message: AgentMessage): Prom
 }
 
 async function commitMessage(opts: RunOptions, message: AgentMessage): Promise<void> {
+  const preparation = prepareHistoryImages([message]);
+  if (preparation) await preparation;
   if (opts.session) await appendMessageEntry(opts.session, message);
   await opts.onMessageCommitted?.(message);
 }
@@ -696,6 +698,9 @@ async function runGenerationTurn(
     : null;
   let reply: RunnerLlmReturn;
   try {
+    // Rewritten/compacted blocks may be new; admitted blocks require no file I/O.
+    const preparation = prepareHistoryImages(transcript);
+    if (preparation) await preparation;
     reply = await llm([...transcript], agent);
   } catch (err) {
     if (genSpan) {

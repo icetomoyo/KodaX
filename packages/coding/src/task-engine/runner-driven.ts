@@ -32,7 +32,7 @@ import type {
   KodaXTaskResultMetadata,
   KodaXToolResultContentItem,
 } from '@kodax-ai/llm';
-import { mapLegacyReasoningModeToEffortIntent } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
 import type {
   Agent,
   QueuedMessage,
@@ -249,6 +249,7 @@ import {
   emitTurnStarted,
   isVisibleToolName,
   withLiveTurnAttribution,
+  hasQueuedFollowUp,
 } from '../agent-runtime/event-emitter.js';
 import { withDurableCompactionPersistence } from '../agent-runtime/durable-compaction.js';
 // CAP-008: shared initial-messages resolver. Three-tier fallback
@@ -2021,6 +2022,7 @@ async function runManagedTaskViaRunnerInner(
     },
     undefined,
     userInputDegradationCache,
+    () => hasQueuedFollowUp(options.events ?? {}, messageQueueAgentId),
   );
 
   // FEATURE_143 (v0.7.36) — `plan.promptOverlay` (routing-notes block:
@@ -2725,7 +2727,12 @@ async function runManagedTaskViaRunnerInner(
         // duplicate-key conflicts for the current runtime version.
         await sessionRuntime.hydrateSession(options.session?.id ?? resolvedSessionId);
       }
-      return await runWithIdleYield({
+      // Keep one native snapshot across idle-yield resumes; custom streams and CLI
+      // transports do not consume these bytes. Follow the same provider as the adapter.
+      let imageProviderName = options.provider ?? 'anthropic';
+      let prepareImages = !adapterOverride
+        && resolveProvider(imageProviderName).getCapabilityProfile().transport === 'native-api';
+      return await withPreparedImageHistory(() => runWithIdleYield({
     initialAgent: entryAgent,
     initialInput: runnerInput,
     runOnce,
@@ -2844,6 +2851,14 @@ async function runManagedTaskViaRunnerInner(
     // completions. Keep the generic wrapper's defensive default for other
     // callers, but do not turn it into a task-wide ceiling here.
     maxIterations: MANAGED_TASK_IDLE_YIELD_ITERATIONS,
+      }), options.abortSignal, () => {
+        const providerName = options.provider ?? 'anthropic';
+        if (providerName !== imageProviderName) {
+          imageProviderName = providerName;
+          prepareImages = !adapterOverride
+            && resolveProvider(providerName).getCapabilityProfile().transport === 'native-api';
+        }
+        return prepareImages;
       });
     } catch (error) {
       options.context?.interruptInput?.closeInputWindow();

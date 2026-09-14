@@ -190,6 +190,7 @@ export class ProviderRecoveryCoordinator {
       case 'non_streaming_fallback':
         return this.executeNonStreamingFallback(messages, decision);
       case 'manual_continue':
+      case 'text_diagnosis':
         return this.executeManualContinue(messages, decision);
       case 'sanitize_thinking_and_retry':
         return this.executeSanitizeThinking(messages, decision);

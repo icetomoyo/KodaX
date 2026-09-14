@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent corrupt extracted images from poisoning subsequent model requests (Issue 335).
+  Prepare read/MCP image bytes at receipt and historical images at run admission; reuse them
+  across Anthropic/OpenAI requests, retries and compaction without repeatedly reading files.
+  Preserve valid bytes, text, tool status and original history. Revalidate on new reads/resume,
+  correct stale MIME, keep diagnostics aligned and preserve nested upstream error codes.
+  Cancel preparation promptly while preserving text-only scheduling and direct SDK compatibility.
+  Reuse ingress validation verdicts and include decoder queue waits in the existing time budget.
+  Avoid unused image snapshots for custom Runner callbacks and ACP transports.
+  Decoder unavailability retains the existing image path with an explicit notice.
+  Expose `validateImageBytes` through the LLM and media SDK; include the WASM codec in Bun
+  binaries and release archives.
+- Diagnose residual native request-content errors with the current Agent using a text-only
+  request and the existing output/attempt budgets. Apply only evidence-backed request-view
+  repairs, preserve completed and unknown-execution tool records, retain later valid reasoning,
+  stop on new input/cancellation and allow one
+  diagnostic plus one retry. Preserve precise image evidence through credential redaction;
+  authentication, quota and transport failures keep their existing recovery behavior.
+  Release settled image-validation contexts without retaining credentials or image snapshots.
+
 ---
 
 ## [0.7.96-rc.4] - 2026-09-13

@@ -59,3 +59,4 @@ export {
   enqueueWithArtifacts,
   type EnqueueWithArtifactsInput,
 } from './queue.js';
+export { validateImageBytes, type ImageValidation } from '@kodax-ai/llm';

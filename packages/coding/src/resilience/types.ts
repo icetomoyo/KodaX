@@ -53,6 +53,7 @@ export type RecoveryAction =
   | 'stable_boundary_retry'
   | 'non_streaming_fallback'
   | 'manual_continue'
+  | 'text_diagnosis'
   // Sanitize thinking blocks out of history (or blank their signatures)
   // and retry once. Triggered by `reasoning_content_required`. v0.7.28.
   | 'sanitize_thinking_and_retry';

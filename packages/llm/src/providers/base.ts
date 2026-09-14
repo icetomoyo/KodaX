@@ -1,3 +1,4 @@
+import { inheritRejectedImage } from './rejected-image.js';
 /**
  * KodaX Base Provider
  *
@@ -161,7 +162,8 @@ function extractErrorCode(error: unknown, depth = 0): string {
   if (typeof record.code === 'string') {
     return record.code;
   }
-  return extractErrorCode(record.cause, depth + 1);
+  if (typeof record.code === 'number' && Number.isSafeInteger(record.code)) return String(record.code);
+  return extractErrorCode(record.cause, depth + 1) || extractErrorCode(record.error, depth + 1);
 }
 
 function extractDiagnosticString(
@@ -923,7 +925,7 @@ export abstract class KodaXBaseProvider {
         );
       } catch (e) {
         // Context window overflow: compute reduced max_tokens and retry once
-        if (this.isContextOverflowError(e) && retryState.maxOutputTokensOverride === undefined) {
+        if (retries > 1 && this.isContextOverflowError(e) && retryState.maxOutputTokensOverride === undefined) {
           const reduced = this.parseContextOverflow(e);
           const currentLimit = retryState.maxOutputTokensLimit;
           if (reduced && (currentLimit === undefined || reduced < currentLimit)) {
@@ -1008,7 +1010,7 @@ export abstract class KodaXBaseProvider {
         // effort) AND self-heal THIS turn: flip the suppress flag and retry
         // once with the effort param dropped, so the request still completes
         // and the user never has to re-send their query.
-        if (reasoningGuard && !effortRetried) {
+        if (retries > 1 && reasoningGuard && !effortRetried) {
           const rejection = classifyReasoningEffortRejection(e, reasoningGuard.effort);
           if (rejection) {
             reasoningGuard.onRejected?.({
@@ -1056,11 +1058,11 @@ export abstract class KodaXBaseProvider {
 
           if (e instanceof KodaXProviderError) throw e;
 
-          throw new KodaXProviderError(
+          throw inheritRejectedImage(e, new KodaXProviderError(
             `${this.name} API error: ${e.message}`,
             this.name,
             this.providerErrorMetadata(e),
-          );
+          ));
         }
         throw e;
       }

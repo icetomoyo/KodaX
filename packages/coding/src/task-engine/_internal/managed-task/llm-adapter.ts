@@ -47,6 +47,7 @@ import {
   type RunnerLlmResult,
 } from '@kodax-ai/agent';
 import { resolveProvider } from '../../../providers/index.js';
+import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../../../resilience/text-recovery.js';
 import {
   KODAX_MAX_MAXTOKENS_RETRIES,
   KODAX_MAX_EMPTY_COMPLETION_RETRIES,
@@ -351,6 +352,7 @@ export function buildRunnerLlmAdapter(
   /** Volatile request-only context appended after Provider cache breakpoints. */
   getEphemeralSuffix?: () => KodaXEphemeralSuffix | undefined,
   userInputDegradationCache?: UserInputDegradationCache,
+  hasPendingRecoveryInput?: () => boolean,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. The iteration
@@ -359,6 +361,7 @@ export function buildRunnerLlmAdapter(
   // cumulative managed-task budget: the caller resets `iterationStateRef`
   // before every fresh idle-yield `runOnce` invocation.
   const localIterationState = { current: 0 };
+  const textRecovery = createTextRecoveryState();
   const iterationState = iterationStateRef ?? localIterationState;
   const MAX_ITER_HINT = MANAGED_RUNNER_PANIC_ITERATIONS;
   let pendingRuntimeReminders: string[] = [];
@@ -547,9 +550,9 @@ export function buildRunnerLlmAdapter(
         : undefined;
       const lowerProviderMessages = (
         providerMessages: readonly KodaXMessage[],
-      ): KodaXMessage[] => supportsNativeEphemeralSuffix
+      ): KodaXMessage[] => projectTextRecovery(supportsNativeEphemeralSuffix
         ? [...providerMessages]
-        : appendEphemeralSuffixToMessages(providerMessages, ephemeralSuffix);
+        : appendEphemeralSuffixToMessages(providerMessages, ephemeralSuffix), textRecovery);
       const diagnosticSessionId = options.context?.contextIdentitySessionId
         ?? options.session?.id;
       const diagnosticAgentId = options.context?.currentAgentId;
@@ -661,7 +664,7 @@ export function buildRunnerLlmAdapter(
           disablePromptCache: options.disablePromptCache,
           system,
           tools: wireTools,
-          messages: providerMessages,
+          messages: projectTextRecovery([...providerMessages], textRecovery),
           ...(ephemeralSuffix !== undefined ? { ephemeralSuffix } : {}),
           ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
           attempt,
@@ -740,6 +743,7 @@ export function buildRunnerLlmAdapter(
         });
       }
       let attempt = 0;
+      let textRecoveryRetry = false;
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
       // FEATURE_085 parity for the Scout/Runner path: mirror the main
       // agent loop's max_tokens escalation (cd213e4). When a capped-budget
@@ -885,7 +889,7 @@ export function buildRunnerLlmAdapter(
               [...wireTools],
               system,
               providerReasoning,
-              { ...streamOptions, signal: credentialSignal },
+              { ...streamOptions, ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
               credentialSignal,
             ),
           );
@@ -977,6 +981,7 @@ export function buildRunnerLlmAdapter(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, providerMessages); throw error; }
           // Runner owns canonical history and the single post-compaction retry.
           if (error instanceof KodaXContextOverflowError) {
             error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
@@ -1141,6 +1146,19 @@ export function buildRunnerLlmAdapter(
           }
 
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
+            if (hardTimer) clearTimeout(hardTimer);
+            if (idleTimer) clearTimeout(idleTimer);
+            const recovered = await tryTextRecovery({ state: textRecovery, error, messages: wireProviderMessages,
+              provider, system, model: activeModel, reasoning: providerReasoning, maxOutputTokens: requestMaxOutputTokens,
+              attempt, maxAttempts: resilienceCfg.maxRetries, timeoutMs: API_HARD_TIMEOUT_MS, signal: options.abortSignal,
+              hasPendingInputs: hasPendingRecoveryInput ?? options.events?.hasPendingInputs,
+              onStart: () => options.events?.onProviderRecovery?.({ stage: decision.failureStage, errorClass: decision.reasonCode,
+                attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }),
+              onUsage: usage => { costTracker = recordCostUsage(costTracker, { provider: providerName,
+                model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+            });
+            if (recovered) { attempt += 1; textRecoveryRetry = true; nextRequestMode = 'replace'; continue; }
             // Preserve in-flight providerMessages on the thrown error so the
             // outer wrapper's session-snapshot save can persist real history
             // instead of `[]`. Non-enumerable so JSON-serializing telemetry
