@@ -4,6 +4,13 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.6 release addendum:** Windows Shell cleanup verification is
+> evidence-bounded: process-tree queries are skipped only when every retained
+> target is definitively absent, unknown cleanup outcomes keep their fences
+> and Run recovery evidence, and the Windows termination process is reused
+> for its first post-termination snapshot under exact identity checks, with
+> fresh verification and retries whenever cleanup is uncertain.
+>
 > **v0.7.96-rc.5 release addendum:** Image bytes cross the model boundary
 > only after validation: read and MCP images are prepared at receipt,
 > historical images at run admission, and the prepared result is reused

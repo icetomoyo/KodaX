@@ -784,6 +784,14 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.6 release:** Sixth release candidate of the v0.7.96 line.
+Reduces Windows exit delays from unresolved historical Shell records:
+process-tree queries are skipped only when every retained target is
+definitively absent, unknown cleanup outcomes and Run recovery evidence are
+preserved, and the Windows termination process is reused for its first
+post-termination snapshot with exact identity checks and fresh verification
+when cleanup is uncertain. Every rc.5 contract is retained.
+
 **v0.7.96-rc.5 release:** Fifth release candidate of the v0.7.96 line,
 fixing Issue 335. Read and MCP image bytes are validated at receipt and
 historical images are prepared at run admission, reused across
@@ -906,7 +914,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc5-release-preparation).
+[release checklist](docs/release.md#v0796-rc6-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

@@ -137,9 +137,55 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.6 release preparation
+
+Release state: `v0.7.96-rc.6` is the GitHub pre-release for the exact
+tagged commit — the sixth release candidate of the v0.7.96 line, reducing
+Windows exit delays from unresolved historical Shell records. The
+tag-triggered Release workflow builds every platform archive and the
+universal npm tarball, publishes checksums, and creates the GitHub
+pre-release. npm registry publication remains a separate manual maintainer
+action.
+
+On top of rc.5 it includes:
+
+- Windows process-tree queries during cleanup are skipped only when every
+  retained target is definitively absent; unknown cleanup outcomes and Run
+  recovery evidence are preserved.
+- The Windows termination process is reused for its first post-termination
+  snapshot, retaining exact process identity checks plus fresh verification
+  and retries when cleanup is uncertain.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.6`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, Windows process-cleanup regressions
+   (`packages/agent/src/runtime/process-cleanup.windows.integration.test.ts`,
+   `process-tree.windows.test.ts`, `managed-child-processes.run.test.ts`,
+   `packages/llm/src/cli-events/process-tree.windows.test.ts`),
+   Issue 335 image-validation regressions, bundled archive probes, Issue 334
+   session journal regressions, and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.6`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.5 release preparation
 
-Release state: `v0.7.96-rc.5` is the GitHub pre-release for the exact
+Release state: `v0.7.96-rc.5` was the GitHub pre-release for the exact
 tagged commit — the fifth release candidate of the v0.7.96 line, fixing
 Issue 335 (corrupt extracted images poisoning model requests, plus
 evidence-backed text recovery for residual native request-content errors).

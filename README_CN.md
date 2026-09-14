@@ -296,6 +296,12 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.6 发布**：v0.7.96 线第六个发布候选。降低未决历史 Shell 记录
+导致的 Windows 退出延迟：仅当所有保留目标都确定不存在时才跳过进程树查询，
+未知的清理结果与 Run 恢复证据全部保留；Windows 终止进程复用于首次终止后
+快照，清理不确定时保留精确的进程身份校验、全新验证与重试。所有 rc.5 契约
+全部保留。
+
 **v0.7.96-rc.5 发布**：v0.7.96 线第五个发布候选，修复 Issue 335。`read` 与
 MCP 图片字节在接收时校验，历史图片在 Run 准入时准备，跨 Anthropic/OpenAI
 请求、重试与压缩复用；确认损坏的图片替换为可执行的文字说明，正常图片字节、
@@ -402,7 +408,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.5 发布清单](docs/release.md#v0796-rc5-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.6 发布清单](docs/release.md#v0796-rc6-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

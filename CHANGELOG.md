@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.6] - 2026-09-14
+
+Sixth release candidate of the v0.7.96 line: Windows exit delays from
+unresolved historical Shell records are reduced while unknown cleanup
+outcomes and Run recovery evidence are preserved. Every rc.5 contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - Reduce Windows exit delays from unresolved historical Shell records. Skip process-tree
