@@ -69,6 +69,21 @@ preview. `RuntimePermissionMode` is the canonical four-mode output type, while
 `RuntimePermissionModeInput` additionally accepts the legacy
 `auto-in-project` input alias.
 
+For the `@kodax-ai/kodax` direct SDK entries, the live
+`context.resolveShellPermissionMode` callback also governs the default native
+text host. Full Access permits ordinary external targets. In Auto mode, an
+explicit allow from the `auto-mode` guardrail or the host's `beforeToolExecute`
+authorizes the exact text call; a later host veto still wins. An absent review
+or callback is not permission to write outside the configured roots. An
+explicitly supplied `trustedTextMutationHost` remains the embedder's authority.
+
+Runtime and direct/managed provider requests include the effective permission
+mode from the live host getter, even with a custom system prompt. This context
+is refreshed for subsequent requests and retries, rather than inferred from
+`config.json` or persisted as a stale conversation message. Runtime Session
+settings are authoritative over caller defaults. Runtime permission capability
+6 is required for the corrected text approval and live-context contracts.
+
 ## Shell Execution Contract
 
 KodaX supports a host-configurable Shell Execution Contract. Runtime Session
@@ -93,6 +108,14 @@ no-follow, hard-link, revision/CAS and atomicity rules remain enforced. Text
 policy refusals identify `builtin_fallback` versus `runtime_integrity`, the
 matched rule and remedy. The native text protocol is version 5; older native
 bindings must be upgraded together with the host.
+
+Auto approvals for `write`, `edit`, `multi_edit`, and `insert_after_anchor`
+are bound to the concrete tool ID, complete input, and resolved target. Each
+approval permits one snapshot/commit transaction, including when invoked
+through `tool_call`. It does not add a writable directory, authorize another
+content payload, or authorize a later Undo. Mode changes and Run cancellation
+revoke Runtime approvals. Protected files, native link/path validation, and
+revision/CAS checks still apply to approved external text operations.
 
 Manual `!command`, extension managed commands and nested scope tools enter the
 same Session Run and Shell policy. Handwritten input does not revoke an explicit

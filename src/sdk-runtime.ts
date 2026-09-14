@@ -72,6 +72,7 @@ import {
   createOutputSegmentProjection,
   effectiveOutputSegmentText,
   estimateTokens,
+  resolveToolBridgeTarget,
   generateSessionId,
   listCodingDispatchableAgents,
   listRunScopedTools,
@@ -232,6 +233,9 @@ import type {
 } from "@kodax-ai/repl";
 import {
   McpCapabilityProvider,
+  cleanupManagedRunChildProcess,
+  type ManagedRunChildProcessReference,
+  createMcpManager,
   createAgentExecutorPlane,
   createSessionLineage,
   emitKodaXDiagnostic,
@@ -319,6 +323,7 @@ import {
   sandboxRuntimeCapability,
 } from "./sandbox-runtime.js";
 import { createTrustedTextMutationHost } from "./windows-text-transaction.js";
+import { createTrustedTextApprovals } from "./trusted-text-approvals.js";
 import type {
   RuntimeAgentBindingService,
   RuntimeAgentOwnerSession,
@@ -894,7 +899,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   daemonShutdownVerification: 1,
   effectiveConfig: 1,
   managedRunDurability: 1,
-  runtimeAutoModeGuardrail: 5,
+  runtimeAutoModeGuardrail: 6,
   sandboxRuntime: 11,
   sharedSessionSettings: 2,
   runtimeEventCoalescing: 1,
@@ -962,7 +967,7 @@ export interface RuntimeCapabilityRequirements {
   /** Require the sandbox-first execution chain and permission fallback revision. */
   readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   /** Runtime owns Auto[LLM] review at the proven host boundary. */
-  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5;
+  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5 | 6;
 }
 
 export interface RuntimeConnectionState {
@@ -2192,6 +2197,7 @@ export interface RuntimeRunStopReceipt {
 
 export interface RuntimeSessionCancelInput {
   readonly sessionId: string;
+  /** Must be nonterminal for a first request; accepted requests remain replayable after settlement. */
   readonly expectedRunId: string;
   readonly requestId: string;
 }
@@ -3657,6 +3663,8 @@ interface RuntimeRunRecord {
   execPolicyRules?: readonly ExecPolicyRule[];
   execPolicyErrors?: readonly { readonly path: string; readonly message: string }[];
   readonly trustedProjectExecPolicySnapshotPath?: string;
+  forcedPermissionCalls?: Set<string>;
+  trustedTextApprovals?: ReturnType<typeof createTrustedTextApprovals>;
   reasoning?: KodaXReasoningMode;
   error?: string;
   failureDetail?: RuntimeFailureDetail;
@@ -3675,6 +3683,8 @@ interface RuntimeRunRecord {
   actorDurabilityPreservesExecutorFact?: boolean;
   activeEffectCount?: number;
   finishAfterEffectDrain?: () => void;
+  shellCleanups?: Map<string, { reference: ManagedRunChildProcessReference; retry: () => Promise<void> }>;
+  shellEffectDrain?: { count: number; promise: Promise<void>; resolve: () => void };
   capturedExecutorResult?: KodaXResult;
   capturedExecutorFailure?: RuntimeRunFailureFact;
   mode: RuntimeRunMode;
@@ -3780,6 +3790,7 @@ interface RuntimeRunServiceInternal extends RuntimeRunService {
   ): Promise<readonly RuntimeRunStatus[]>;
   inspectOne(runId: string): Promise<RuntimeRunStatus | undefined>;
   closeAll(reason: string): void;
+  retryShellCleanups(): Promise<void>;
   releaseSession(sessionId: string): void;
   getAutoModeStats(sessionId: string): AutoModeStats | undefined;
 }
@@ -3798,6 +3809,7 @@ interface PersistedRuntimeRunStatus {
   readonly status: RuntimeRunStatus;
   readonly owner?: AgentActorOwner;
   readonly revision: number;
+  readonly shellCleanups?: unknown;
 }
 
 interface PersistedRuntimeRunStop {
@@ -3846,6 +3858,7 @@ interface RuntimePersistence {
   close(): void;
   nextSessionOrder(sessionId: string): number;
   saveRunStatus(status: RuntimeRunStatus): RuntimeRunStatus;
+  saveRunShellCleanups(runId: string, references: readonly ManagedRunChildProcessReference[], expectedRevision: number): void;
   requestRunStop(
     runId: string,
     reason: string,
@@ -4130,7 +4143,7 @@ async function createKodaXRuntimeInternal(
       requirements: {
         ...options.requirements,
         liveOutputSegments: 1 as const,
-        runtimeAutoModeGuardrail: 5 as const,
+        runtimeAutoModeGuardrail: 6 as const,
         sharedSessionSettings: 2 as const,
         ...(autoStart
           ? {
@@ -4232,7 +4245,7 @@ async function createKodaXRuntimeInternal(
     },
     runtimeEventCoalescing: { version: 1 },
     runtimeAutoModeGuardrail: {
-      version: 5,
+      version: 6,
       owner: "session-runtime",
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
@@ -4247,6 +4260,8 @@ async function createKodaXRuntimeInternal(
       permissionGrantSuggestions: true,
       concretePermissionMatchers: true,
       clientScopeExpansion: false,
+      exactTextMutationApproval: true,
+      livePermissionContext: true,
     },
     sharedSessionSettings: {
       version: 2,
@@ -4676,6 +4691,7 @@ async function createKodaXRuntimeInternal(
     };
     if (
       isTerminalRunPhase(status.phase)
+      && !hasPersistedShellCleanups(persisted)
       && !status.interruptInputs?.some((input) => input.state === "queued")
     ) {
       runs.set(
@@ -4715,7 +4731,7 @@ async function createKodaXRuntimeInternal(
       );
       continue;
     }
-    const recovered = interruptPersistedNonTerminalRun(
+    const recovered = await interruptPersistedNonTerminalRun(
       normalizedStatus,
       bus,
       persistence,
@@ -5158,6 +5174,7 @@ async function createKodaXRuntimeInternal(
         userInputs.rejectAll("runtime closed");
         shutdownStarted = true;
       }
+      await runService.retryShellCleanups();
       beginCloseTranscriptSnapshots?.();
       await sessionOperations.close();
       await Promise.allSettled([...preparations, ...[...runs.values()].flatMap(run => run.preparation ? [run.preparation] : [])]);
@@ -5614,7 +5631,7 @@ function daemonCapabilityRequirements(
   return {
     ...options.requirements,
     liveOutputSegments: 1,
-    runtimeAutoModeGuardrail: 5,
+    runtimeAutoModeGuardrail: 6,
     sharedSessionSettings: 2,
     ...(process.platform === "win32" ? { sandboxRuntime: 11 } : {}),
     ...(options.autoStart === true
@@ -9095,7 +9112,7 @@ function createRuntimeRunService(deps: {
         error: "owner_liveness_unconfirmed",
       };
     }
-    const recovered = interruptPersistedNonTerminalRun(
+    const recovered = await interruptPersistedNonTerminalRun(
       persisted.status,
       deps.bus,
       deps.persistence,
@@ -9219,6 +9236,12 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
+    // rc.3 fix: a Run with in-flight managed shell cleanups defers its
+    // settlement fact until the cleanup owner resolves them.
+    if ((record.shellCleanups?.size ?? 0) > 0) {
+      record.unconfirmedResult = result;
+      return result;
+    }
     const temporary = record.admittedSessionContext?.runtimeInfo?.temporary === true;
     if (temporary && !executorPromiseSettled(record)) return result;
     if (
@@ -9315,6 +9338,10 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
+    if ((record.shellCleanups?.size ?? 0) > 0) {
+      record.unconfirmedResult = result;
+      return result;
+    }
     if (record.settlementFinished === true && record.start === undefined) {
       // A terminal callback may have resolved the public Run result while the
       // executor Promise was still pending. Retain a later Promise payload as
@@ -9990,6 +10017,7 @@ function createRuntimeRunService(deps: {
   const canApplyExecutorTerminalSignal = (
     record: RuntimeRunRecord,
   ): boolean => {
+    if ((record.shellCleanups?.size ?? 0) > 0) return false;
     const actorSession = record.actorSession;
     return (
       actorSession === undefined
@@ -10123,6 +10151,7 @@ function createRuntimeRunService(deps: {
     void requestManagedActorCancellation(record, reason);
     record.actorFinalizationAbortController?.abort(abortError);
     deps.permissions.rejectForRun(record.runId, reason);
+    record.trustedTextApprovals?.clear();
     deps.userInputs.rejectForRun(record.runId, reason);
     if (!wasQueued) {
       record.interruptInputOpen = false;
@@ -10147,7 +10176,7 @@ function createRuntimeRunService(deps: {
       const retainDurabilityFence =
         actorDurabilityFailureApplies(record)
         && !executorPromiseSettled(record);
-      if (!drain && !retainDurabilityFence) {
+      if (!drain && !retainDurabilityFence && (record.shellCleanups?.size ?? 0) === 0) {
         resolveRunStart(record, result);
         releaseActiveQueueRoute(record);
         releaseActiveRun(record);
@@ -10400,7 +10429,46 @@ function createRuntimeRunService(deps: {
         outputInputId = deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds) ?? outputInputId;
       },
     });
-    const createRunOptions = () => buildRunOptions({
+    events.registerShellCleanup = (reference, retry) => {
+      if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
+        throw new Error("Invalid Runtime Shell cleanup binding");
+      }
+      const pending = record.shellCleanups ??= new Map();
+      if (pending.has(reference.registrationId)) throw new Error("Duplicate Runtime Shell cleanup binding");
+      pending.set(reference.registrationId, { reference, retry });
+      const release = () => {
+        if (!pending.has(reference.registrationId)) return;
+        const persisted = deps.persistence.loadRunStatus(record.runId);
+        if (persisted?.owner?.ownerId !== deps.runOwner.ownerId) throw new Error("Runtime Shell cleanup owner changed");
+        deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()]
+          .filter((entry) => entry.reference.registrationId !== reference.registrationId)
+          .map((entry) => entry.reference), persisted.revision);
+        pending.delete(reference.registrationId);
+        queueMicrotask(() => {
+          try { finishRecoveredUnconfirmedRun(record); }
+          catch (error: unknown) { finishRunSettlementFailure(record, error); }
+        });
+      };
+      try {
+        const persisted = deps.persistence.loadRunStatus(record.runId);
+        if (persisted?.owner?.ownerId !== deps.runOwner.ownerId) throw new Error("Runtime Shell cleanup owner changed");
+        deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()].map((entry) => entry.reference), persisted.revision);
+      } catch (error: unknown) {
+        // Registration threw before Bash received its release callback. Retain
+        // the exact local binding so a later Stop/close can still repair it.
+        pending.set(reference.registrationId, { reference, retry: async () => {
+          await retry();
+          if (!pending.has(reference.registrationId)) return;
+          const cleaned = await cleanupManagedRunChildProcess(reference);
+          if (cleaned.status === "unknown") return;
+          release();
+          cleaned.release();
+        } });
+        throw error;
+      }
+      return release;
+    };
+        const createRunOptions = () => buildRunOptions({
       agentPlane: deps.agentPlane,
       authorizeForcedPermission,
       defaultConfigHome: deps.defaultConfigHome,
@@ -10943,6 +11011,9 @@ function createRuntimeRunService(deps: {
           record.sessionControl?.setReasoning(record.reasoning, reasoning);
           if (record.start) Object.assign(record.start.options, reasoning, { reasoningMode: record.reasoning });
         }
+        // rc.1 fix: text-mutation approvals are keyed to the permission
+        // mode that granted them; a mode change revokes them.
+        if (record.permissionMode !== settings.permissionMode) record.trustedTextApprovals?.clear();
         record.permissionMode = settings.permissionMode;
         record.autoModeClassifierModel = settings.autoModeClassifierModel;
         publishRunUpdate(record);
@@ -11209,8 +11280,7 @@ function createRuntimeRunService(deps: {
       cache: autoModeGuardrails,
       states: autoModeStates,
       settingsOwner: deps.settingsOwner,
-      configHome: deps.defaultConfigHome,
-      getRecord: () => deps.runs.get(runId),
+            getRecord: () => deps.runs.get(runId),
       onPhase: (record, phase) => {
         if (
           record.terminalEmitted
@@ -11273,6 +11343,7 @@ function createRuntimeRunService(deps: {
       ...(trustedProjectExecPolicySnapshotPath === undefined
         ? {}
         : { trustedProjectExecPolicySnapshotPath }),
+      forcedPermissionCalls: new Set(),
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
@@ -11791,9 +11862,22 @@ function createRuntimeRunService(deps: {
           ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
         });
       }
+      // rc.3 fix: managed shell cleanups registered by this Run are retried
+      // when its cancellation effects deliver, so a stopped Run cannot
+      // strand native child processes.
+      for (const entry of [...(run.shellCleanups?.values() ?? [])]) {
+        void entry.retry().catch((error: unknown) => emitKodaXDiagnostic({
+          source: "runtime.shell-cleanup", level: "error",
+          message: `Shell cleanup remains unconfirmed for Run ${run.runId}.`, detail: error,
+        }));
+      }
     }
     return runtimeRunStopReceipt(stop);
   };
+
+  // In-flight Run stops registered before the Session gate so a concurrent
+  // Session Stop publication can wait for them before deciding staleness.
+  const pendingRunStops = new Map<string, Promise<unknown>>();
 
   const prepareSessionStop = async (
     input: RuntimeSessionCancelInput,
@@ -11828,9 +11912,18 @@ function createRuntimeRunService(deps: {
         || b.sessionOrder - a.sessionOrder).map((run) => run.runId),
       identity: { surface: runtimeInfo?.surface, profileId: runtimeInfo?.profileId } };
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    // An in-flight stop of the expected Run must settle before this
+    // first publication decides staleness; the lock section stays sync.
+    const pendingStop = pendingRunStops.get(input.expectedRunId);
+    if (pendingStop !== undefined) await pendingStop.catch(() => { /* settled either way */ });
     return withRuntimeStatusFileLock(file, () => {
       const raced = readRuntimeSessionStopRecord(file);
       if (raced !== undefined) { assertSessionStopBinding(raced, input); return raced; }
+      // Check after admission's await, in the synchronous request publication
+      // section. An old Run must not authorize a new frontier after settlement.
+      if (isTerminalRunPhase(expected.phase)) {
+        throw sessionStopConflict("Expected Run has already terminated", "stale_run");
+      }
       writeRuntimeJsonAtomic(file, record);
       return record;
     });
@@ -12195,7 +12288,27 @@ function createRuntimeRunService(deps: {
       if (sessionId === undefined) {
         throw new Error(`Runtime run not found: ${runId}`);
       }
-      return deps.sessionOperations.run(sessionId, () => abortRun(runId));
+      // rc.2 fix: an observer can predate the Run and only hold its durable
+      // control record; reject the foreign owner before Session admission.
+      const persisted = deps.persistence.loadRunStatus(runId);
+      if (
+        persisted?.owner !== undefined
+        && persisted.owner.ownerId !== deps.runOwner.ownerId
+        && !isTerminalRunPhase(persisted.status.phase)
+      ) {
+        throw createRuntimeConflictError(
+          `Runtime ${deps.runOwner.runtimeId} does not own run ${runId}`,
+          persisted.revision,
+        );
+      }
+      const stopOperation = deps.sessionOperations.run(sessionId, () => abortRun(runId));
+      if (!pendingRunStops.has(runId)) {
+        pendingRunStops.set(runId, stopOperation);
+        void stopOperation.finally(() => {
+          if (pendingRunStops.get(runId) === stopOperation) pendingRunStops.delete(runId);
+        }).catch(() => { /* claim cleanup only */ });
+      }
+      return stopOperation;
     },
 
 
@@ -12248,6 +12361,31 @@ function createRuntimeRunService(deps: {
       autoModeGuardrails.clear();
       autoModeStates.clear();
       queueBySession.clear();
+    },
+    async retryShellCleanups() {
+      for (const run of deps.runs.values()) {
+        if (!run.ownedByRuntime) continue;
+        for (const entry of [...(run.shellCleanups?.values() ?? [])]) {
+          try { await entry.retry(); }
+          catch (error: unknown) {
+            emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
+              message: `Runtime close could not verify Shell cleanup for Run ${run.runId}.`, detail: error });
+            throw Object.assign(createRuntimeConflictError("Shell cleanup failed; retry Runtime close", 0),
+              { retryable: true, denialSource: "shell_cleanup", cause: error });
+          }
+        }
+        if (run.shellEffectDrain !== undefined) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([run.shellEffectDrain.promise,
+              new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); })]);
+          } finally { if (timer !== undefined) clearTimeout(timer); }
+        }
+        if ((run.shellCleanups?.size ?? 0) > 0 || run.shellEffectDrain !== undefined) {
+          throw Object.assign(createRuntimeConflictError("Shell process cleanup is unconfirmed; retry Runtime close", 0),
+            { retryable: true, denialSource: "shell_cleanup" });
+        }
+      }
     },
     releaseSession(sessionId) {
       productQueue.releaseSession(sessionId);
@@ -13335,6 +13473,9 @@ function buildRunOptions(input: {
     sessionManager,
     workspaceRoot,
   });
+  const textApprovals = createTrustedTextApprovals(executionCwd, () =>
+    replApi.normalizePermissionMode(record.permissionMode) === "auto");
+  record.trustedTextApprovals = textApprovals;
   const runtimeTrustedTextMutationHost = createTrustedTextMutationHost(
     () => [
       workspaceRoot,
@@ -13348,6 +13489,7 @@ function buildRunOptions(input: {
       resolveShellPermissionMode() === "full-access",
     ),
     () => resolveShellPermissionMode() === "full-access",
+    textApprovals.authorize,
   );
   const trustedTextMutationHost = runtimeTrustedTextMutationHost;
   const selectWorkspaceSandbox = async (call: RunnerToolCall) => {
@@ -15625,6 +15767,9 @@ function createRuntimePersistence(
       const file = statusFile(status.runId);
       return withRuntimeStatusFileLock(file, () => {
         const existing = readPersistedRuntimeRunStatus(file);
+        if (hasPersistedShellCleanups(existing) && isTerminalRunPhase(status.phase)) {
+          return existing!.status;
+        }
         if (existing && isTerminalRunPhase(existing.status.phase)) {
           return existing.status;
         }
@@ -15640,6 +15785,7 @@ function createRuntimePersistence(
           _runtime: {
             revision: (existing?.revision ?? 0) + 1,
             owner: runOwner,
+            ...(existing?.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
         // Commit the canonical status first. Publish a new active Run once;
@@ -15651,6 +15797,20 @@ function createRuntimePersistence(
           updateRunStatusIndex(status, false);
         }
         return status;
+      });
+    },
+    saveRunShellCleanups(runId, references, expectedRevision) {
+      const file = statusFile(runId);
+      withRuntimeStatusFileLock(file, () => {
+        const existing = readPersistedRuntimeRunStatus(file);
+        if (existing === undefined) throw new Error(`Runtime run not found: ${runId}`);
+        if (existing.revision !== expectedRevision) {
+          throw createRuntimeConflictError("Runtime Shell cleanup reference changed", existing.revision);
+        }
+        writeRuntimeJsonAtomic(file, { ...existing.status, _runtime: {
+          revision: existing.revision + 1, owner: existing.owner,
+          shellCleanups: references,
+        } });
       });
     },
     requestRunStop(runId, reason, ownedUnknownOwnerId) {
@@ -15756,6 +15916,7 @@ function createRuntimePersistence(
           _runtime: {
             revision,
             owner: runOwner,
+              ...(existing.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
         finalizeRunStatusIndex(next);
@@ -16858,6 +17019,7 @@ function parsePersistedRuntimeRunStatus(
   return {
     status,
     revision,
+    ...(metadata?.shellCleanups !== undefined ? { shellCleanups: metadata.shellCleanups } : {}),
     ...(owner !== undefined ? { owner } : {}),
   };
 }
@@ -17287,6 +17449,36 @@ function recordFromPersistedStatus(
   };
 }
 
+function isManagedRunShellReference(value: unknown, runId: string): value is ManagedRunChildProcessReference {
+  return isRecord(value) && value.runtimeRunId === runId
+    && typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid > 0
+    && typeof value.registrationId === "string" && /^[0-9a-f-]{36}$/i.test(value.registrationId);
+}
+
+function hasPersistedShellCleanups(entry: PersistedRuntimeRunStatus | undefined): boolean {
+  return entry?.shellCleanups !== undefined
+    && (!Array.isArray(entry.shellCleanups) || entry.shellCleanups.length > 0);
+}
+
+async function recoverPersistedShellCleanups(status: RuntimeRunStatus, persistence: RuntimePersistence): Promise<boolean> {
+  const entry = persistence.loadRunStatus(status.runId);
+  if (!hasPersistedShellCleanups(entry)) return true;
+  const references = entry?.shellCleanups;
+  if (!Array.isArray(references)
+    || !references.every((reference): reference is ManagedRunChildProcessReference => isManagedRunShellReference(reference, status.runId))) return false;
+  for (const reference of references) {
+    const result = await cleanupManagedRunChildProcess(reference);
+    if (result.status === "unknown") return false;
+    const currentEntry = persistence.loadRunStatus(status.runId);
+    const current = currentEntry?.shellCleanups;
+    if (!Array.isArray(current) || !current.every((item): item is ManagedRunChildProcessReference => isManagedRunShellReference(item, status.runId))) return false;
+    if (currentEntry?.owner?.ownerId !== entry?.owner?.ownerId) return false;
+    persistence.saveRunShellCleanups(status.runId, current.filter((item) => item.registrationId !== reference.registrationId), currentEntry!.revision);
+    result.release();
+  }
+  return true;
+}
+
 /**
  * FEATURE_298 T33: the single conservative read-side formatter for legacy
  * Run records. It never consults Runtime events — a durable terminal is not
@@ -17294,11 +17486,26 @@ function recordFromPersistedStatus(
  * and queued work is reported as not executed. Only the interrupted
  * projection itself is persisted (the status file stays authoritative).
  */
-function interruptPersistedNonTerminalRun(
+async function interruptPersistedNonTerminalRun(
   status: RuntimeRunStatus,
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
-): RuntimeRunStatus {
+): Promise<RuntimeRunStatus> {
+  // rc.2 fix: a persisted non-terminal Run with unverified managed shell
+  // cleanups stays unknown rather than being projected interrupted - the
+  // native children may still be alive.
+  let shellCleanupVerified = false;
+  try { shellCleanupVerified = await recoverPersistedShellCleanups(status, persistence); }
+  catch (error: unknown) {
+    emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
+      message: `Shell recovery remains unconfirmed for Run ${status.runId}.`, detail: error });
+  }
+  if (!shellCleanupVerified) {
+    return { ...status, phase: "unknown", stage: "unknown", error: "shell_cleanup_unconfirmed",
+      terminal: undefined, endedAt: undefined,
+      ...(status.stop !== undefined ? { stop: { ...status.stop, state: "unknown", outcome: "unknown", resolvedAt: undefined } } : {}) };
+  }
+
   const reason: RuntimeTerminalCode =
     status.phase === "queued"
       ? "runtime_restarted"
@@ -18560,8 +18767,12 @@ function wrapKodaXEvents(input: {
   };
   const authorizeForcedPermission = (
     call: RunnerToolCall,
-  ): Promise<RuntimePermissionToolDecision> =>
-    authorizeTrackedPermission(
+  ): Promise<RuntimePermissionToolDecision> => {
+    // FEATURE_299: register the exact call so its admission pass treats
+    // this escalation as an explicit forced permission, one-shot.
+    const forcedKey = runtimeAutoModeDecisionKey(call);
+    if (forcedKey !== undefined) record.forcedPermissionCalls?.add(forcedKey);
+    return authorizeTrackedPermission(
       call.name,
       call.input,
       {
@@ -18571,6 +18782,7 @@ function wrapKodaXEvents(input: {
       },
       runtimeShellPermissionIdentity(record),
     );
+  };
   const externalCallbacks = (): KodaXEvents | undefined =>
     record.actorDurabilityFailure === undefined ? original : undefined;
   const actorDurabilityFenced = (): boolean =>
@@ -18754,7 +18966,6 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolResult?.(result, meta);
     },
     onToolExecutionStart(tool, meta) {
-      void tool;
       void meta;
       if (actorDurabilityFenced()) {
         const error = new Error("Tool execution was fenced by Actor durability failure.");
@@ -18762,11 +18973,24 @@ function wrapKodaXEvents(input: {
         throw error;
       }
       record.activeEffectCount = (record.activeEffectCount ?? 0) + 1;
+      if (tool.name === "bash") {
+        if (record.shellEffectDrain === undefined) {
+          let resolve!: () => void;
+          const promise = new Promise<void>((done) => { resolve = done; });
+          record.shellEffectDrain = { count: 0, promise, resolve };
+        }
+        record.shellEffectDrain.count++;
+      }
     },
     onToolExecutionEnd(tool, meta) {
-      void tool;
+      record.trustedTextApprovals?.revoke(tool.id);
       void meta;
       record.activeEffectCount = Math.max(0, (record.activeEffectCount ?? 0) - 1);
+      if (tool.name === "bash" && record.shellEffectDrain !== undefined
+        && --record.shellEffectDrain.count === 0) {
+        record.shellEffectDrain.resolve();
+        record.shellEffectDrain = undefined;
+      }
       if ((record.activeEffectCount ?? 0) === 0) {
         const finishAfterEffectDrain = record.finishAfterEffectDrain;
         record.finishAfterEffectDrain = undefined;
@@ -19127,8 +19351,16 @@ function wrapKodaXEvents(input: {
     ): Promise<RuntimePermissionToolDecision> => {
       const stoppedBeforeAdmission = managedStopDecision();
       if (stoppedBeforeAdmission !== undefined) return stoppedBeforeAdmission;
+      const exactCall: RunnerToolCall = {
+        id: meta?.toolId ?? `runtime_${tool}`,
+        name: tool,
+        input: toolInput,
+      };
+      const exactCallKey = runtimeAutoModeDecisionKey(exactCall);
+      const forcedPermission = exactCallKey !== undefined
+        && record.forcedPermissionCalls?.delete(exactCallKey) === true;
       const permissionMode = replApi.normalizePermissionMode(record.permissionMode);
-      if (permissionMode === "full-access") {
+      if (permissionMode === "full-access" && !forcedPermission) {
         const fullAccessDecision = resolveRuntimePermissionPolicy(
           record,
           tool,
@@ -19142,7 +19374,7 @@ function wrapKodaXEvents(input: {
       const runtimeOwnsAutoDecision =
         autoGuardrail !== undefined &&
         permissionMode === "auto";
-      if (runtimeOwnsAutoDecision) {
+      if (runtimeOwnsAutoDecision && !forcedPermission) {
         if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
         if (tool !== "bash") {
           const hostDecision = await original?.beforeToolExecute?.(
@@ -19158,8 +19390,17 @@ function wrapKodaXEvents(input: {
             return hostDecision;
           }
         }
-        // The engine-side guardrail verdict is authoritative for the current
-        // call; admission does not re-review allowed work.
+        const allowed =
+          meta?.toolId !== undefined &&
+          autoGuardrail.consumeAllowedCall({
+            id: meta.toolId,
+            name: tool,
+            input: toolInput,
+          });
+        if (!allowed) {
+          return "[Blocked] Runtime auto mode did not classify this concrete tool call.";
+        }
+        record.trustedTextApprovals?.grant(exactCall);
         return true;
       }
       if (permissionMode === "accept-edits" && tool === "bash") {
@@ -21952,14 +22193,22 @@ function markRunTerminal(
   terminal?: Omit<RuntimeTerminalFact, "revision" | "kind">,
 ): void {
   if (run.terminalEmitted) return;
+  if ((run.shellCleanups?.size ?? 0) > 0) {
+    run.phase = "unknown";
+    run.stage = "unknown";
+    run.error = "shell_cleanup_unconfirmed";
+    saveRunStatusSafely(bus, persistence, run, statusFromRecord(run));
+    return;
+  }
   delete run.actorHealthBaseState;
   delete run.lifecycleError;
-  if (run.error === "stop_outcome_unconfirmed") delete run.error;
+  if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
   terminalizeQueuedInterruptInputs(run);
   run.phase = phase;
   if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();
+  run.trustedTextApprovals?.clear();
   run.stage = "terminal";
   run.stageChangedAt = endedAt;
   run.activeSubtaskCount = 0;
@@ -22799,7 +23048,7 @@ interface RuntimeAutoModeGuardrailCacheEntry {
   readonly projectRoot: string;
   readonly executionCwd: string;
   readonly classifierModel?: string;
-  readonly guardrail: AutoModeToolGuardrail;
+  readonly guardrail: RuntimeOwnedAutoModeGuardrail;
 }
 
 const MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION = 8;
@@ -22812,6 +23061,8 @@ const MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION = 8;
  */
 interface RuntimeOwnedAutoModeGuardrail extends ToolGuardrail {
   prepare?(): Promise<void>;
+  consumeAllowedCall(call: RunnerToolCall): boolean;
+  clearAllowedCalls(): void;
   reviewHostCall(
     call: RunnerToolCall,
     permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
@@ -22845,12 +23096,115 @@ function runtimeShellPermissionIdentity(
   };
 }
 
+function serializeRuntimeToolInput(
+  value: unknown,
+  ancestors = new Set<object>(),
+): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return `string:${value.length}:${value}`;
+  if (typeof value === "boolean")
+    return value ? "boolean:true" : "boolean:false";
+  if (typeof value === "undefined") return "undefined";
+  if (typeof value === "bigint") return `bigint:${value.toString()};`;
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "number:NaN";
+    if (Object.is(value, -0)) return "number:-0";
+    return `number:${String(value)};`;
+  }
+  if (typeof value !== "object")
+    throw new Error("Tool input must contain data values only.");
+  if (ancestors.has(value)) throw new Error("Tool input must not be circular.");
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    !Array.isArray(value) &&
+    prototype !== Object.prototype &&
+    prototype !== null
+  ) {
+    throw new Error("Tool input must be a plain object.");
+  }
+  ancestors.add(value);
+  try {
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key === "symbol")) {
+      throw new Error("Tool input must not contain symbol properties.");
+    }
+    if (Array.isArray(value)) {
+      const indexes = ownKeys
+        .filter(
+          (key): key is string => key !== "length" && typeof key === "string",
+        )
+        .map((key) => {
+          const index = Number(key);
+          if (
+            !Number.isInteger(index) ||
+            index < 0 ||
+            index >= value.length ||
+            String(index) !== key
+          ) {
+            throw new Error(
+              "Tool input arrays must not contain named properties.",
+            );
+          }
+          return { index, key };
+        })
+        .sort((left, right) => left.index - right.index);
+      return `array:${value.length}:[${indexes
+        .map(
+          ({ key }) =>
+            `${key}:${serializeRuntimeDataProperty(value, key, ancestors)}`,
+        )
+        .join("")}]`;
+    }
+    const keys = ownKeys
+      .filter((key): key is string => typeof key === "string")
+      .sort();
+    return `object:{${keys
+      .map(
+        (key) =>
+          `${serializeRuntimeToolInput(key, ancestors)}${serializeRuntimeDataProperty(
+            value,
+            key,
+            ancestors,
+          )}`,
+      )
+      .join("")}}`;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function serializeRuntimeDataProperty(
+  owner: object,
+  key: string,
+  ancestors: Set<object>,
+): string {
+  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error("Tool input must contain enumerable data properties only.");
+  }
+  return serializeRuntimeToolInput(descriptor.value, ancestors);
+}
+
+function runtimeAutoModeDecisionKey(call: RunnerToolCall): string | undefined {
+  try {
+    const input = serializeRuntimeToolInput(call.input);
+    return createHash("sha256")
+      .update(`${call.id}\0${call.name}\0${input}`)
+      .digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
+
 function isRuntimeAutoModeGuardrail(
   guardrail: NonNullable<RuntimeKodaXOptions["guardrails"]>[number],
 ): guardrail is RuntimeOwnedAutoModeGuardrail {
   return (
     guardrail.kind === "tool" &&
     guardrail.name === "auto-mode" &&
+    "consumeAllowedCall" in guardrail &&
+    typeof guardrail.consumeAllowedCall === "function" &&
     "reviewHostCall" in guardrail &&
     typeof guardrail.reviewHostCall === "function"
   );
@@ -22883,6 +23237,80 @@ function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boo
   });
 }
 
+function createRuntimeOwnedAutoModeGuardrail(
+  guardrail: AutoModeToolGuardrail,
+): RuntimeOwnedAutoModeGuardrail {
+  const allowedCalls = new Set<string>();
+  const pendingHostReviews = new Map<
+    string,
+    { readonly call: RunnerToolCall; readonly context: GuardrailContext }
+  >();
+  return {
+    ...guardrail,
+    beforeTool: async (
+      call: RunnerToolCall,
+      ctx: GuardrailContext,
+    ): Promise<GuardrailVerdict> => {
+      if (!guardrail.beforeTool) {
+        return {
+          action: "block",
+          reason: "Runtime auto-mode guardrail has no beforeTool hook.",
+        };
+      }
+      if (call.name === "bash") {
+        const key = runtimeAutoModeDecisionKey(call);
+        if (key === undefined) {
+          return {
+            action: "block",
+            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
+          };
+        }
+        allowedCalls.add(key);
+        pendingHostReviews.set(key, { call, context: ctx });
+        while (pendingHostReviews.size > 64) {
+          const oldest = pendingHostReviews.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          pendingHostReviews.delete(oldest);
+        }
+        return { action: "allow" };
+      }
+      const verdict = await guardrail.beforeTool(call, ctx);
+      if (verdict.action === "allow") {
+        const bridgeTarget = resolveToolBridgeTarget(call);
+        const authorizedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
+        const key = runtimeAutoModeDecisionKey(authorizedCall);
+        if (key !== undefined) allowedCalls.add(key);
+      }
+      return verdict;
+    },
+    consumeAllowedCall(call) {
+      const key = runtimeAutoModeDecisionKey(call);
+      if (key === undefined || !allowedCalls.has(key)) return false;
+      allowedCalls.delete(key);
+      return true;
+    },
+    async reviewHostCall(call) {
+      const key = runtimeAutoModeDecisionKey(call);
+      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
+      if (key !== undefined) pendingHostReviews.delete(key);
+      if (pending === undefined || !guardrail.beforeTool) {
+        return {
+          action: "block",
+          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
+        };
+      }
+      return typeof guardrail.reviewHostBoundary === "function"
+        ? guardrail.reviewHostBoundary(pending.call, pending.context)
+        : guardrail.beforeTool(pending.call, pending.context);
+    },
+    clearAllowedCalls() {
+      allowedCalls.clear();
+      pendingHostReviews.clear();
+    },
+  };
+}
+
+
 function createRuntimeSessionAutoModeGuardrail(input: {
   readonly runId: string;
   readonly sessionId: string;
@@ -22896,29 +23324,25 @@ function createRuntimeSessionAutoModeGuardrail(input: {
   readonly cache: Map<string, Map<string, RuntimeAutoModeGuardrailCacheEntry>>;
   readonly states: Map<string, AutoModeSharedState>;
   readonly settingsOwner: RuntimeSessionSettingsOwner;
-  readonly configHome: string;
   readonly getRecord: () => RuntimeRunRecord | undefined;
   readonly onPhase: (
     record: RuntimeRunRecord,
     phase: RuntimeRunPhase,
   ) => void;
 }): RuntimeOwnedAutoModeGuardrail {
-  // Dispatch context per Bash sandbox attempt, keyed by the runner's call
-  // id — the current call's own identity, no content hashing. A boundary
-  // escalation reviews exactly the dispatch that produced it; runners may
-  // prepare several Bash calls of one turn before executing them.
-  const dispatchesByCallId = new Map<
+  const allowedCalls = new Set<string>();
+  const pendingHostReviews = new Map<
     string,
     { readonly call: RunnerToolCall; readonly context: GuardrailContext }
   >();
+  let currentGuardrail: RuntimeOwnedAutoModeGuardrail | undefined;
   let configurationError: RuntimeAutoModeConfigurationError | undefined;
   const resolveGuardrail = async (
     permissionMode?: KodaXShellHostExecutionRequest["permissionMode"],
   ): Promise<
-    AutoModeToolGuardrail | undefined
+    RuntimeOwnedAutoModeGuardrail | undefined
   > => {
-    const settings = resolveEffectiveRuntimeSessionSettings(readRuntimeConfig(path.join(input.configHome, 'config.json')),
-      (await input.settingsOwner.read(input.sessionId)).value);
+    const settings = (await input.settingsOwner.read(input.sessionId)).value;
     const record = input.getRecord();
     if (record) {
       record.permissionMode = settings.permissionMode;
@@ -22932,12 +23356,15 @@ function createRuntimeSessionAutoModeGuardrail(input: {
       record?.model ?? input.model,
     );
     if (configurationError) {
+      currentGuardrail = undefined;
       return undefined;
     }
-    return createRuntimeAutoModeGuardrail({
+    const guardrail = await createRuntimeAutoModeGuardrail({
       ...input,
       settings: reviewSettings,
     });
+    currentGuardrail = guardrail;
+    return guardrail;
   };
   return {
     kind: "tool",
@@ -22949,17 +23376,23 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     async beforeTool(call, ctx) {
       if (call.name === "bash") {
         const liveMode = replApi.normalizePermissionMode(
-          resolveEffectiveRuntimeSessionSettings(readRuntimeConfig(path.join(input.configHome, 'config.json')),
-            (await input.settingsOwner.read(input.sessionId)).value).permissionMode,
+          input.settingsOwner.peek(input.sessionId)?.value.permissionMode
+            ?? input.getRecord()?.permissionMode,
         );
         if (liveMode !== "auto") return { action: "allow" };
-        dispatchesByCallId.set(call.id, { call, context: ctx });
-        while (dispatchesByCallId.size > 64) {
-          const oldest = dispatchesByCallId.keys().next().value as
-            | string
-            | undefined;
+        const key = runtimeAutoModeDecisionKey(call);
+        if (key === undefined) {
+          return {
+            action: "block",
+            reason: "Runtime could not bind this Bash call to an exact sandbox attempt.",
+          };
+        }
+        allowedCalls.add(key);
+        pendingHostReviews.set(key, { call, context: ctx });
+        while (pendingHostReviews.size > 64) {
+          const oldest = pendingHostReviews.keys().next().value as string | undefined;
           if (oldest === undefined) break;
-          dispatchesByCallId.delete(oldest);
+          pendingHostReviews.delete(oldest);
         }
         return { action: "allow" };
       }
@@ -22970,21 +23403,36 @@ function createRuntimeSessionAutoModeGuardrail(input: {
         }
         return { action: "allow" };
       }
-      return guardrail.beforeTool(call, ctx);
+      currentGuardrail = guardrail;
+      const verdict = await guardrail.beforeTool(call, ctx);
+      if (verdict.action === "allow") {
+        const bridgeTarget = resolveToolBridgeTarget(call);
+        const authorizedCall = bridgeTarget?.ok ? bridgeTarget.call : call;
+        guardrail.consumeAllowedCall(authorizedCall);
+        const key = runtimeAutoModeDecisionKey(authorizedCall);
+        if (key !== undefined) allowedCalls.add(key);
+      }
+      return verdict;
+    },
+    consumeAllowedCall(call) {
+      const key = runtimeAutoModeDecisionKey(call);
+      if (key === undefined || !allowedCalls.has(key)) return false;
+      allowedCalls.delete(key);
+      return true;
     },
     async reviewHostCall(call, permissionMode) {
-      const pending = dispatchesByCallId.get(call.id);
-      dispatchesByCallId.delete(call.id);
+      const key = runtimeAutoModeDecisionKey(call);
+      const pending = key === undefined ? undefined : pendingHostReviews.get(key);
+      if (key !== undefined) pendingHostReviews.delete(key);
       if (pending === undefined) {
         return {
           action: "block",
-          reason: "Auto[LLM] host review did not match the current sandboxed call. Use a safer route.",
+          reason: "Auto[LLM] host review did not match the exact sandboxed call. Use a safer route.",
         };
       }
-      // Host-boundary review is a fresh authorization decision over the
-      // current call and its dispatch context. Resolve from live Session
-      // settings even when an earlier tool initialized a cached reviewer with
-      // a now-stale classifier override.
+      // Host-boundary review is a fresh authorization decision. Resolve from
+      // live Session settings even when an earlier tool initialized a cached
+      // reviewer with a now-stale classifier override.
       const guardrail = await resolveGuardrail(permissionMode);
       if (guardrail === undefined) {
         return {
@@ -22993,10 +23441,15 @@ function createRuntimeSessionAutoModeGuardrail(input: {
             ?? "Auto[LLM] reviewer is unavailable. Use a safer route or configure a reviewer model.",
         };
       }
-      return typeof guardrail.reviewHostBoundary === "function"
-        ? guardrail.reviewHostBoundary(pending.call, pending.context)
-        : guardrail.beforeTool?.(pending.call, pending.context)
-          ?? { action: "allow" };
+      const admitted = await guardrail.beforeTool?.(pending.call, pending.context);
+      if (admitted !== undefined && admitted.action !== "allow") return admitted;
+      guardrail.consumeAllowedCall(pending.call);
+      return guardrail.reviewHostCall(call);
+    },
+    clearAllowedCalls() {
+      allowedCalls.clear();
+      pendingHostReviews.clear();
+      currentGuardrail?.clearAllowedCalls();
     },
   };
 }
@@ -23033,7 +23486,7 @@ async function createRuntimeAutoModeGuardrail(input: {
     record: RuntimeRunRecord,
     phase: RuntimeRunPhase,
   ) => void;
-}): Promise<AutoModeToolGuardrail | undefined> {
+}): Promise<RuntimeOwnedAutoModeGuardrail | undefined> {
   if (
     replApi.normalizePermissionMode(input.settings.permissionMode) !== "auto"
   ) {
@@ -23098,7 +23551,7 @@ async function createRuntimeAutoModeGuardrail(input: {
     sharedState,
     extraCollectors: [replApi.replBashPathSignalCollector],
   });
-  const guardrail = bootstrap.getGuardrail();
+  const guardrail = createRuntimeOwnedAutoModeGuardrail(bootstrap.getGuardrail());
   const cacheEntry: RuntimeAutoModeGuardrailCacheEntry = {
     runId: input.runId,
     projectRoot,
@@ -23112,6 +23565,8 @@ async function createRuntimeAutoModeGuardrail(input: {
   while (sessionCache.size > MAX_RUNTIME_AUTO_MODE_GUARDRAILS_PER_SESSION) {
     const oldestKey = sessionCache.keys().next().value as string | undefined;
     if (oldestKey === undefined || oldestKey === cacheKey) break;
+    const oldest = sessionCache.get(oldestKey);
+    oldest?.guardrail.clearAllowedCalls();
     sessionCache.delete(oldestKey);
   }
   return guardrail;

@@ -48,7 +48,7 @@ async function executeInvocation(
     releaseController = runtime?.bindController?.(createExtensionRuntimeSessionController(state));
     await runtime?.hydrateSession?.(sessionId);
     const ctx = buildToolExecutionContext({ options, sessionId, runtime, managedProtocolPayloadRef: { current: undefined } });
-    let shellSucceeded = false;
+    let shellSucceeded: boolean | undefined;
     if (invocation.name === 'bash') ctx.reportShellExecutionOutcome = (outcome) => { shellSucceeded = outcome.success; };
     const call: KodaXToolUseBlock = { type: 'tool_use', id: randomUUID(), name: invocation.name, input: invocation.input };
     const messages: KodaXMessage[] = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context.inputArtifacts,
@@ -61,7 +61,9 @@ async function executeInvocation(
     });
     const content = results.get(call.id) ?? '[Tool Error] Tool invocation returned no result.';
     const lastText = toolResultText(content);
-    const interrupted = options.abortSignal?.aborted === true || isCancelledToolResultContent(content);
+    // rc.2 fix: a foreground Shell's reported exit wins a later Stop during result delivery.
+    const interrupted = isCancelledToolResultContent(content) || (options.abortSignal?.aborted === true
+      && (shellSucceeded === undefined || invocation.input.run_in_background === true));
     const toolResult = createToolResultBlock(call.id, content);
     messages.push({ role: 'assistant', content: [call] }, { role: 'user', content: [toolResult] });
     options.events?.onToolResult?.({ id: call.id, name: call.name, content: lastText, toolResult });
@@ -69,7 +71,7 @@ async function executeInvocation(
       messages, title: resumed.title || prompt.slice(0, 80), gitRoot: options.context.gitRoot ?? undefined, runtimeSessionState: state,
     });
     return { sessionId, messages, lastText, interrupted, success: !interrupted && !isToolResultErrorContent(content)
-      && (invocation.name !== 'bash' || shellSucceeded),
+      && (invocation.name !== 'bash' || shellSucceeded === true),
       runtimeSessionSnapshot: snapshotRuntimeSessionState(state, { includeUnchanged: false }) };
   } finally { releaseController?.(); releaseExecution(); }
 }

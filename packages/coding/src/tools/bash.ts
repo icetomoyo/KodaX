@@ -644,10 +644,18 @@ async function executePreparedShellCommand(
   let targetStartAttested = false;
   let sandboxPreStartUnavailable = false;
   let sandboxPreStartDiagnostic: string | undefined;
+  let releaseRunCleanup: (() => void) | undefined;
+  let retryRunCleanup: () => Promise<void> = async () => undefined;
+  let foregroundStopRequested = false;
+  let nativeTerminationVerified = false;
   const cleanupSandbox = async (
     execution: 'not_started' | 'started_or_unknown' = 'not_started',
   ): Promise<void> => {
     if (!sandboxInvocation) return;
+    if (sandboxCleanupError !== undefined && ctx.registerShellCleanup !== undefined) {
+      sandboxCleanup = undefined;
+      sandboxCleanupError = undefined;
+    }
     sandboxCleanup ??= (async () => {
       let controlOutput: Uint8Array | undefined;
       let controlFailure: unknown;
@@ -779,15 +787,28 @@ async function executePreparedShellCommand(
       throw error;
     }
     let unregister: (() => void) | undefined;
+    retryRunCleanup = () => cleanupStartedCommand(proc, () => unregister?.());
     try {
-      unregister = registerManagedChildProcess(proc, { kind, command, cwd }, {
+      unregister = registerManagedChildProcess(proc, { kind, command, cwd,
+        runtimeRunId: ctx.runtimeRunId }, {
         manualUnregister: true,
         requireDurableRecord: true,
+        ...(!runInBackground && ctx.registerShellCleanup ? {
+          onRegistered: (reference) => {
+            releaseRunCleanup = ctx.registerShellCleanup!(reference, () => {
+              // Owner cleanup can arrive before a child Actor's abort signal.
+              foregroundStopRequested = true;
+              return retryRunCleanup();
+            });
+          },
+        } : {}),
       });
     } catch (error) {
+      foregroundStopRequested = !runInBackground;
       if (sandboxInvocation?.processControl !== undefined) {
         try {
           await sandboxInvocation.processControl.terminate(proc);
+          nativeTerminationVerified = true;
         } catch (terminationError: unknown) {
           emitKodaXDiagnostic({
             source: 'coding:bash-sandbox',
@@ -802,7 +823,6 @@ async function executePreparedShellCommand(
           try {
             termination = await killChildProcessTree(proc, {
               forceMs: 500,
-              taskkillMs: 500,
             });
           } catch (terminationError: unknown) {
             emitKodaXDiagnostic({
@@ -863,9 +883,11 @@ async function executePreparedShellCommand(
       if (deliveryFailure !== undefined) throw deliveryFailure;
     } catch (error: unknown) {
       let inputFailure = error;
+      foregroundStopRequested = !runInBackground;
       if (sandboxInvocation?.processControl !== undefined) {
         try {
           await sandboxInvocation.processControl.terminate(proc);
+          nativeTerminationVerified = true;
         } catch (terminationError: unknown) {
           inputFailure = new AggregateError(
             [error, terminationError],
@@ -885,7 +907,15 @@ async function executePreparedShellCommand(
           [inputFailure, cleanupError],
           'Shell input, termination, and sandbox cleanup did not all settle cleanly.',
         );
-      } finally {
+      }
+      // Keep the durable witness if bootstrap cleanup could not be verified.
+      // The owner can retry this exact child even though command startup failed.
+      if (ctx.registerShellCleanup !== undefined) {
+        try { await cleanupStartedCommand(proc, unregister); }
+        catch (cleanupError: unknown) {
+          throw new AggregateError([inputFailure, cleanupError], sandboxLifecycleErrorDetail(inputFailure));
+        }
+      } else {
         unregister();
       }
       if (
@@ -906,19 +936,36 @@ async function executePreparedShellCommand(
     proc: ManagedChildProcess,
     unregister: () => void,
   ): Promise<void> => {
+    let treeCleanupVerified = true;
+    if (!nativeTerminationVerified && (foregroundStopRequested || ctx.abortSignal?.aborted)
+      && sandboxInvocation?.processControl) {
+      await sandboxInvocation.processControl.terminate(proc);
+      nativeTerminationVerified = true;
+    }
     if (sandboxInvocation?.processTreeContainment !== 'native-job') {
-      try {
-        await killChildProcessTree(proc, { forceMs: 500, taskkillMs: 500 });
-      } catch (error: unknown) {
-        emitKodaXDiagnostic({
-          source: 'coding:bash-sandbox',
-          level: 'warn',
-          message: 'Settled shell process-tree cleanup could not be confirmed.',
-          detail: error,
-        });
+      const result = await killChildProcessTree(proc, { forceMs: 500 });
+      treeCleanupVerified = result.status !== 'unknown';
+      if (result.status === 'unknown') {
+        if (foregroundStopRequested || ctx.abortSignal?.aborted) {
+          throw new Error('Shell process-tree cleanup is unconfirmed.');
+        }
+        // A naturally completed short-lived command may exit before Windows
+        // can capture its identity. Preserve its existing completion semantics;
+        // an accepted Stop above must instead retain the cleanup fence.
+        emitKodaXDiagnostic({ source: 'coding:bash', level: 'warn',
+          message: 'Naturally completed shell process-tree cleanup could not be confirmed.' });
       }
     }
     await cleanupSandbox('started_or_unknown');
+    if (!treeCleanupVerified && (foregroundStopRequested || ctx.abortSignal?.aborted)) {
+      throw new Error('Shell process-tree cleanup is unconfirmed.');
+    }
+    if (sandboxCleanupError !== undefined && ctx.registerShellCleanup !== undefined
+      && (foregroundStopRequested || ctx.abortSignal?.aborted)) {
+      throw sandboxCleanupError;
+    }
+    releaseRunCleanup?.();
+    releaseRunCleanup = undefined;
     unregister();
   };
 
@@ -938,6 +985,8 @@ async function executePreparedShellCommand(
 
     const stopBackgroundChild = (child: ManagedChildProcess): void => {
       if (sandboxInvocation?.processControl !== undefined) {
+        // The stop owns native termination; cleanup must not issue a second one.
+        nativeTerminationVerified = true;
         void sandboxInvocation.processControl.terminate(child).catch((error: unknown) => {
           emitKodaXDiagnostic({
             source: 'coding:bash-sandbox',
@@ -1083,18 +1132,55 @@ async function executePreparedShellCommand(
     let foregroundCommandRegistered = true;
     const unregisterForegroundCommand = (): void => {
       if (!foregroundCommandRegistered) return;
+      unregisterManagedChild();
       foregroundCommandRegistered = false;
       process.off('exit', cleanupOnProcessExit);
-      unregisterManagedChild();
     };
     let finishForegroundRequest: Promise<void> | undefined;
+    let cleanupAttempt: Promise<void> | undefined;
+    let cleanupRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    let cleanupRetryCount = 0;
+    let resolveForegroundCleanup: (() => void) | undefined;
+    const attemptForegroundCleanup = (): Promise<void> => {
+      if (cleanupAttempt) return cleanupAttempt;
+      if (!foregroundCommandRegistered) return Promise.resolve();
+      if (cleanupRetryTimer) clearTimeout(cleanupRetryTimer);
+      cleanupAttempt = (async () => {
+        try {
+          await cleanupStartedCommand(proc, unregisterForegroundCommand);
+          resolveForegroundCleanup?.();
+        } catch (error: unknown) {
+          emitKodaXDiagnostic({
+            source: 'coding:bash', level: 'warn',
+            message: 'Shell cleanup is unconfirmed; retaining the Run and child registration for retry.',
+            detail: error,
+          });
+          if (cleanupRetryCount < 3) {
+            cleanupRetryTimer = setTimeout(() => {
+              void attemptForegroundCleanup();
+            }, 1_000 * 2 ** cleanupRetryCount++);
+            cleanupRetryTimer.unref();
+          }
+        } finally {
+          cleanupAttempt = undefined;
+        }
+      })();
+      return cleanupAttempt;
+    };
+    retryRunCleanup = async () => {
+      cleanupRetryCount = 0;
+      await attemptForegroundCleanup();
+    };
     const finishForeground = (): Promise<void> => {
-      finishForegroundRequest ??= cleanupStartedCommand(
-        proc,
-        unregisterForegroundCommand,
-      ).finally(() => {
-        process.off('exit', cleanupOnProcessExit);
+      if (!foregroundCommandRegistered) return Promise.resolve();
+      if (!ctx.registerShellCleanup) {
+        finishForegroundRequest ??= cleanupStartedCommand(proc, unregisterForegroundCommand);
+        return finishForegroundRequest;
+      }
+      finishForegroundRequest ??= new Promise<void>((resolveCleanup) => {
+        resolveForegroundCleanup = resolveCleanup;
       });
+      void attemptForegroundCleanup();
       return finishForegroundRequest;
     };
     let settled = false;
@@ -1203,22 +1289,10 @@ async function executePreparedShellCommand(
     };
 
     const settleStoppedCommand = async (reason: 'cancelled' | 'timeout'): Promise<void> => {
-      let killWarning: string | undefined;
-      try {
-        if (sandboxInvocation?.processControl !== undefined) {
-          await sandboxInvocation.processControl.terminate(proc);
-        } else {
-          await killChildProcessTree(proc, { forceMs: 500, taskkillMs: 500 });
-        }
-      } catch (error) {
-        killWarning = error instanceof Error ? error.message : String(error);
-      }
+      await finishForeground();
       const streamsClosed = await waitForProcessClose();
 
       const lifecycleWarnings: string[] = [];
-      if (killWarning) {
-        lifecycleWarnings.push(`[warn] Process-tree termination reported an error: ${killWarning}`);
-      }
       if (!streamsClosed && !closeObserved) {
         const recovery = startForegroundOutputRecovery(stdout, stderr);
         stoppedOutputRecovery = recovery;
@@ -1226,7 +1300,6 @@ async function executePreparedShellCommand(
         return;
       }
 
-      await finishForeground();
       if (sandboxCleanupError !== undefined) {
         const detail = sandboxLifecycleErrorDetail(sandboxCleanupError);
         lifecycleWarnings.push(`[warn] Required OS sandbox cleanup failed: ${detail}`);
@@ -1250,11 +1323,19 @@ async function executePreparedShellCommand(
     };
 
     const requestStop = (reason: 'cancelled' | 'timeout'): void => {
-      if (settled || stopReason) return;
+      if (settled || stopReason || !foregroundCommandRegistered) return;
       stopReason = reason;
+      foregroundStopRequested = true;
       if (timer) clearTimeout(timer);
       void settleStoppedCommand(reason).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
+        if (foregroundCommandRegistered) {
+          disposeCollectors();
+          settle(
+            `${buildStoppedResult(reason, '', [])}\n[Unknown] Shell cleanup could not be verified: ${message}`,
+          );
+          return;
+        }
         if (!closeObserved) {
           const recovery = startForegroundOutputRecovery(stdout, stderr);
           stoppedOutputRecovery = recovery;
@@ -1447,6 +1528,23 @@ async function executePreparedShellCommand(
           settle(out);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          if (foregroundCommandRegistered) {
+            disposeCollectors();
+            let captured = '';
+            try {
+              captured = stdoutDecoded?.text ?? decodeCollector(stdout).text;
+              const stderrText = stderrDecoded?.text ?? decodeCollector(stderr).text;
+              if (stderrText) captured += `\n[stderr]\n${stderrText}`;
+            } catch {
+              captured = '';
+            }
+            settle(
+              `Command: ${command}\nExit: ${code}`
+              + (captured ? `\n${captured}` : '')
+              + `\n[Unknown] Shell cleanup could not be verified: ${message}`,
+            );
+            return;
+          }
           const stdoutText = stdoutDecoded?.text ?? decodeCollector(stdout).text;
           const stderrText = stderrDecoded?.text ?? decodeCollector(stderr).text;
           let out = `Command: ${command}\nExit: ${code}\n${stdoutText}`;

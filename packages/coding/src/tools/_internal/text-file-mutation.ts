@@ -182,6 +182,12 @@ function textFileMutationRequest(
   };
 }
 
+function mutationToolCall(request: TextFileMutationRequest) {
+  return request.toolCallId === undefined ? undefined : {
+    id: request.toolCallId, name: request.toolName, input: request.toolInput,
+  };
+}
+
 /**
  * Text tools execute in the trusted host and never enter the shell sandbox or
  * its filesystem-effect lease. On every supported desktop platform the host
@@ -206,6 +212,7 @@ export function withTextFileMutation<T>(
   if (trustedHost !== undefined) {
     return trustedHost.snapshot({
       path: filePath,
+      toolCall: mutationToolCall(request),
       createParentDirectories: toolName === 'write',
       signal: ctx.abortSignal,
     }).then((snapshot) => {
@@ -323,6 +330,7 @@ export async function writeTextFileForMutation(
     }
     const outcome = await snapshot.trustedHost.commit({
       path: snapshot.request.path,
+      toolCall: mutationToolCall(snapshot.request),
       expectedRevision,
       content,
       createParentDirectories,

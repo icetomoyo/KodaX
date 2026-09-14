@@ -298,6 +298,32 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.4 发布**：v0.7.96 线第四个发布候选，修复 Issue 334。新建
+Session 事件日志从序列零初始化，不再扫描无关的 Run 日志——消除可能把并发
+Session 历史读取拖过 15 秒超时的同步启动停顿。缓存序列下限按 journal epoch
+绑定；序列文件缺失或损坏时，即使另一个 Runtime 留下了更旧的缓存下限，也会
+恢复持久日志最大值，避免重复事件序列与丢失重放进度。启动预热让路由与
+preturn 共用同一完整结果。所有 rc.3 契约全部保留。
+
+**v0.7.96-rc.3 发布**：v0.7.96 线第三个发布候选。对齐 daemon 的
+`sessionCancellation` 与 `toolInvocation` capability，并让已受理的 Shell Stop
+在进程树清理未知时保持可恢复：清理重试仍针对原 Run，恢复引用跨宿主重启保留，
+shell 结果保留其取消/超时状态与已捕获输出，未确认清理说明以附加形式呈现。
+所有 rc.2 契约全部保留。
+
+**v0.7.96-rc.2 发布**：v0.7.96 线第二个发布候选。绑定到已终态 `expectedRunId`
+的首次 Session Stop 请求会在发布新 Stop frontier 之前被原子拒绝——类型为
+`code: 'conflict'`、`denialSource: 'stale_run'`、`retryable: false`——迟到的
+请求因此无法停止后继 Run。已受理的请求保持可重放，包括 Runtime 重启之后。
+所有 rc.1 契约全部保留。
+
+**v0.7.96-rc.1 发布**：v0.7.96 线首个发布候选。统一 Runtime Session 与直接
+SDK 入口的可信文本授权：Full Access 通过 `runKodaX`、`runManagedTask` 与每个
+`KodaXClient.send` 覆盖原生文本事务；自动批准的具体文本调用可写入其确切外部
+目标（包括可移植的 `tool_call` 分发），但不授予目录权限，也不会跨操作或跨 Run
+复用批准；显式拒绝与原生完整性校验继续生效。直接与托管 provider 请求携带实时
+宿主权限事实并在重试时刷新，runtime 权限 capability 6 阻止旧 daemon 提供该授权。
+
 **v0.7.96-beta.9 发布**：交付 FEATURE_299——统一 Stop、Full Access 与扩展
 执行契约。owned Run 控制与原子 Session Stop 不依赖文件锁，跨直接 CLI、SDK、
 daemon 与 ACP 宿主在单一"受理 vs 确认"Stop 契约下工作。Full Access 直接在
@@ -371,8 +397,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-npm 发布仍由
-维护者手动执行。详见 [v0.7.96-beta.9 发布清单](docs/release.md#v0796-beta9-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.4 发布清单](docs/release.md#v0796-rc4-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

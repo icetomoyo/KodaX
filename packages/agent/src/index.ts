@@ -432,6 +432,9 @@ export {
 export {
   registerManagedChildProcess,
   cleanupRegisteredManagedChildren,
+  cleanupManagedRunChildProcess,
+  type ManagedRunChildProcessReference,
+  type ManagedRunChildCleanupResult,
   type ManagedChildRegistrationOptions,
   type ManagedChildProcessMetadata,
   type ManagedChildCleanupSummary,

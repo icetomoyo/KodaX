@@ -502,7 +502,7 @@ function createCurrentTransport(
         sandboxRuntime: { version: 11 },
         sessionEventJournal: { version: 1 },
         sharedSessionSettings: { version: 2 },
-        runtimeAutoModeGuardrail: { version: 5, owner: 'session-runtime' },
+        runtimeAutoModeGuardrail: { version: 6, owner: 'session-runtime' },
         runtimeEventCoalescing: { version: 1 },
         ...(process.platform === 'win32'
           ? { daemonShutdownVerification: { version: 1 } }

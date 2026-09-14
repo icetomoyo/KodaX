@@ -2,7 +2,44 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-03
+> Last updated: 2026-09-12
+>
+> **v0.7.96-rc.4 release addendum:** Session journal event sequencing is
+> epoch-scoped and lock-ordered: new journals initialize sequence zero under
+> the existing lock instead of scanning unrelated Run logs, cached floors are
+> bound to their journal epoch, and a missing or corrupt sequence file
+> recovers the durable log maximum beyond a stale cross-Runtime cached floor.
+> Valid cursors keep the constant-cost path, and Full RepoIntel routing and
+> preturn share one complete startup prewarm result.
+>
+> **v0.7.96-rc.3 release addendum:** Shell cleanup ownership is recoverable:
+> an accepted Shell Stop stays unconfirmed while process-tree cleanup is
+> unknown, cleanup retries target the original Run, exact recovery references
+> survive owner restarts, Run cleanup evidence survives generic process
+> sweeps, and the owning Run's Shell cleanup registration propagates through
+> read/write child executors. The default daemon handshake projects the owning
+> Runtime's `sessionCancellation` and `toolInvocation` capabilities. Shell
+> results keep their cancelled/timeout status and captured output; the
+> unconfirmed-cleanup note is appended, never substituted.
+>
+> **v0.7.96-rc.2 release addendum:** The FEATURE_299 Stop contract is
+> tightened: a first `sessions.cancel` request whose `expectedRunId` binding
+> is already terminal is rejected atomically inside the Runtime before a new
+> Stop frontier is published (`code: 'conflict'`, `denialSource:
+> 'stale_run'`, `retryable: false`). Accepted request replay, partial-delivery
+> recovery, and restart replay are unchanged; no client-side status check and
+> no new lock surface are introduced.
+>
+> **v0.7.96-rc.1 release addendum:** Under ADR-066's separate-authority model,
+> trusted text authority now behaves identically for Runtime Sessions and
+> direct SDK entries: Full Access reaches native text transactions through
+> `runKodaX`, `runManagedTask`, and each `KodaXClient.send`, and auto-approved
+> concrete text calls authorize their exact external target — including
+> portable `tool_call` dispatch — without granting a directory or reusing an
+> approval across operations or Runs; explicit denials and native integrity
+> checks stay enforced. Direct and managed provider requests carry live host
+> permission facts refreshed on retries, and runtime permission capability 6
+> fences older daemon authority.
 >
 > **v0.7.96-beta.9 release addendum:** ADR-070 removes the global ACL
 > admission mutex and command-lifetime filesystem-effect coordinator. Native

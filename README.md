@@ -782,6 +782,42 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.4 release:** Fourth release candidate of the v0.7.96 line,
+fixing Issue 334. New Session event journals initialize at sequence zero
+instead of scanning unrelated Run logs, removing a synchronous startup stall
+that could push concurrent Session history reads past their 15-second
+timeout. Cached sequence floors are epoch-aware, and a missing or corrupt
+sequence file recovers the durable log maximum beyond a stale cross-Runtime
+cache, preventing duplicate event sequences and lost replay progress.
+Startup prewarm serves routing and preturn from the same complete result.
+Every rc.3 contract is retained.
+
+**v0.7.96-rc.3 release:** Third release candidate of the v0.7.96 line.
+Aligns the daemon `sessionCancellation` and `toolInvocation` capabilities and
+makes accepted Shell Stops recoverable while process-tree cleanup is unknown:
+cleanup retries target the original Run, recovery references survive owner
+restarts, and shell results keep their cancelled/timeout status and captured
+output with the unconfirmed-cleanup note appended. Every rc.2 contract is
+retained.
+
+**v0.7.96-rc.2 release:** Second release candidate of the v0.7.96 line. A
+first Session Stop request bound to an already terminal `expectedRunId` is
+rejected atomically before a new Stop frontier is published — typed
+`code: 'conflict'`, `denialSource: 'stale_run'`, `retryable: false` — so a
+delayed request cannot stop successor Runs. Already accepted requests stay
+replayable, including after Runtime restart. Every rc.1 contract is retained.
+
+**v0.7.96-rc.1 release:** First release candidate of the v0.7.96 line.
+Unifies trusted text authority across Runtime Sessions and direct SDK
+entries: Full Access reaches native text transactions through `runKodaX`,
+`runManagedTask`, and each `KodaXClient.send`; auto-approved concrete text
+calls write their exact external target, including portable `tool_call`
+dispatch, without granting a directory or reusing approval across operations
+or Runs; explicit denials and native integrity checks remain enforced.
+Direct and managed provider requests carry live host permission facts,
+refreshed on retries, and runtime permission capability 6 fences older
+daemon authority.
+
 **v0.7.96-beta.9 release:** Ships FEATURE_299 — unified Stop, Full Access
 and extension execution contracts. Owned Run controls and atomic Session
 Stop work independently of file locks across direct CLI, SDK, daemon, and
@@ -858,7 +894,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-beta9-release-preparation).
+[release checklist](docs/release.md#v0796-rc4-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

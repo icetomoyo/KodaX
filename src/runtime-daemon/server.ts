@@ -2410,9 +2410,9 @@ function runtimeDaemonCapabilities(
   daemonManagement = false,
   orphanExitEnabled = false,
   runtimeEventCoalescing = false,
-  runtimeCapabilities: Readonly<Record<string, unknown>> = {},
+  ownerCapabilities: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
-  const { productClient, toolInvocation, sessionCancellation } = runtimeCapabilities;
+  const { productClient, toolInvocation, sessionCancellation } = ownerCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2431,8 +2431,8 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
-  delete safeOverrides.toolInvocation;
   delete safeOverrides.sessionCancellation;
+  delete safeOverrides.toolInvocation;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
   return {
     events: true,
@@ -2483,7 +2483,7 @@ function runtimeDaemonCapabilities(
       ? { runtimeEventCoalescing: { version: 1 } }
       : {}),
     runtimeAutoModeGuardrail: {
-      version: 5,
+      version: 6,
       owner: "session-runtime",
       sandboxFirst: true,
       sandboxCompletionAuthority: true,
@@ -2498,6 +2498,8 @@ function runtimeDaemonCapabilities(
       permissionGrantSuggestions: true,
       concretePermissionMatchers: true,
       clientScopeExpansion: false,
+      exactTextMutationApproval: true,
+      livePermissionContext: true,
     },
     ...(orphanExitEnabled
       ? {
@@ -2555,6 +2557,13 @@ function runtimeDaemonCapabilities(
       protocolCancellation: true,
       responseAcknowledgement: true,
     },
+    ...(isRecord(sessionCancellation) && sessionCancellation.version === 1
+      && sessionCancellation.durableFrontier === true
+      ? { sessionCancellation: { version: 1, durableFrontier: true } }
+      : {}),
+    ...(isRecord(toolInvocation) && toolInvocation.version === 1
+      ? { toolInvocation: { version: 1 } }
+      : {}),
     typedRuntimeEvents: { version: 1 },
     daemonSafeRunInput: { version: 1 },
     integrationConfigResilience: {

@@ -19,7 +19,7 @@ import type {
   RuntimeCompactionSkippedEvent,
 } from './agent-runtime/middleware/compaction-pressure.js';
 import type { MemoryRecallRunner } from '@kodax-ai/agent/experimental-memory';
-import type { QueuedMessage } from '@kodax-ai/agent';
+import type { ManagedRunChildProcessReference, QueuedMessage } from '@kodax-ai/agent';
 
 import type {
   GuardrailContext,
@@ -560,6 +560,11 @@ export interface KodaXEvents {
     tool: { id: string; name: string },
     meta?: KodaXToolEventMeta,
   ) => void;
+  /** Internal owner binding: release only after process-tree cleanup is verified. */
+  registerShellCleanup?: (
+    reference: ManagedRunChildProcessReference,
+    retry: () => Promise<void>,
+  ) => () => void;
   /** FEATURE_067 v2: Real-time tool execution progress update. Updates the tool's display in the REPL transcript. */
   onToolProgress?: (
     update: { id: string; message: string; extension?: {
@@ -1848,6 +1853,14 @@ export interface KodaXTrustedTextCommitInput {
   readonly content: string;
   readonly createParentDirectories: boolean;
   readonly signal?: AbortSignal;
+  readonly toolCall?: KodaXTrustedTextToolCall;
+}
+
+/** Exact tool invocation identity; only host-issued approval can give it authority. */
+export interface KodaXTrustedTextToolCall {
+  readonly id: string;
+  readonly name: string;
+  readonly input: Readonly<Record<string, unknown>>;
 }
 
 export type KodaXTrustedTextCommitOutcome =
@@ -1881,6 +1894,7 @@ export interface KodaXTrustedTextMutationHost {
     readonly path: string;
     readonly createParentDirectories: boolean;
     readonly signal?: AbortSignal;
+    readonly toolCall?: KodaXTrustedTextToolCall;
   }): Promise<KodaXTrustedTextFileSnapshot>;
   commit(input: KodaXTrustedTextCommitInput): Promise<KodaXTrustedTextCommitOutcome>;
 }
@@ -2847,6 +2861,7 @@ export interface KodaXToolExecutionContext {
   reportToolSandboxObservation?: (observation: KodaXShellSandboxObservation) => void;
   /** Structured Shell outcome for explicit host invocations; output text is not authority. */
   reportShellExecutionOutcome?: (outcome: { success: boolean }) => void;
+  registerShellCleanup?: KodaXEvents['registerShellCleanup'];
   /** Fail-closed host policy applied to every concrete file a read tool opens. */
   assertReadablePath?: (candidate: string) => void;
   /** Host tool visibility ceiling inherited by child agents. */

@@ -11,11 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-beta.9` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-beta.9` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.4` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.4` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9` |
-| In development | `v0.7.97` / `FEATURE_298` — core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending |
+
 | Total tracked features | `83` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -28,7 +27,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9; `297` is implemented and Issue 326 is stabilized through v0.7.96-beta.9; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.4; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -518,9 +517,64 @@
 
 ---
 
+## v0.7.96-rc.4 Release Record
+
+`v0.7.96-rc.4` is the fourth release candidate of the v0.7.96 line and fixes
+Issue 334. New Session event journals initialize at sequence zero under the
+existing lock instead of scanning unrelated Run logs, removing a synchronous
+startup stall that could push concurrent Session history reads past their
+15-second timeout. Cached sequence floors are bound to their journal epoch;
+a missing or corrupt sequence file recovers the durable log maximum even when
+another live Runtime holds an older cached floor, preventing duplicate event
+sequences and lost replay progress, while valid cursors keep the constant-cost
+path. Startup prewarm serves both Full RepoIntel routing and preturn from the
+same complete result. Every rc.3 contract is retained. npm publication remains
+a manual maintainer step.
+
+## v0.7.96-rc.3 Release Record
+
+`v0.7.96-rc.3` was the third release candidate of the v0.7.96 line. The
+owning Runtime's `sessionCancellation` and `toolInvocation` capabilities are
+projected through the default daemon handshake and capability query. An
+accepted Shell Stop stays unconfirmed while process-tree cleanup is unknown:
+cleanup retries target the original Run, exact recovery references survive
+owner restarts, known descendants are preserved when refreshing process
+identities, and Run cleanup evidence survives generic process sweeps; the
+owning Run's Shell cleanup registration propagates through read/write child
+executors. Shell results keep their cancelled/timeout status and captured
+output with the unconfirmed-cleanup note appended. Every rc.2 contract is
+retained. npm publication remains a manual maintainer step.
+
+## v0.7.96-rc.2 Release Record
+
+`v0.7.96-rc.2` was the second release candidate of the v0.7.96 line. A first
+`sessions.cancel` request whose `expectedRunId` is already terminal is
+rejected atomically inside the Runtime before a new Stop frontier is
+published — typed `code: 'conflict'`, `denialSource: 'stale_run'`,
+`retryable: false` — so a delayed request cannot stop successor Runs;
+client-side status checks are unnecessary. Already accepted requests remain
+replayable after their Run ends, including after Runtime restart, and a stale
+request's target is never replaced by a later Run unless the user requests a
+new Stop. Every rc.1 contract is retained. npm publication remains a manual
+maintainer step.
+
+## v0.7.96-rc.1 Release Record
+
+`v0.7.96-rc.1` was the first release candidate of the v0.7.96 line. It
+unifies trusted text authority across Runtime Sessions and direct SDK
+entries: Full Access reaches native text transactions through `runKodaX`,
+`runManagedTask`, and each `KodaXClient.send`; auto-approved concrete text
+calls write their exact external target, including portable `tool_call`
+dispatch, without granting a directory or reusing approval across operations
+or Runs; explicit denials and native integrity checks remain enforced.
+Direct and managed provider requests carry live host permission facts,
+refreshed on retries, and runtime permission capability 6 fences older
+daemon authority. Every beta.9 contract is retained. npm publication remains
+a manual maintainer step.
+
 ## v0.7.96-beta.9 Release Record
 
-`v0.7.96-beta.9` is the ninth beta pre-release of the v0.7.96 line and ships
+`v0.7.96-beta.9` was the ninth beta pre-release of the v0.7.96 line and ships
 FEATURE_299. Owned Run controls and atomic Session Stop work independently
 of file locks across direct CLI, SDK, daemon, and ACP hosts under a single
 acceptance-versus-confirmation Stop contract; duplicate and restarted Stop

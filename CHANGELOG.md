@@ -8,6 +8,89 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.4] - 2026-09-13
+
+Fourth release candidate of the v0.7.96 line: new Session startup no longer
+scans unrelated Run event logs, and lost or corrupt event-sequence cursors
+recover beyond stale cross-Runtime caches (Issue 334). Every rc.3 contract is
+retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Initialize new Session event journals at sequence zero instead of scanning and
+  parsing unrelated Run logs. This removes a synchronous startup stall that could
+  also cause concurrent Session history reads to exceed their 15-second timeout.
+- Bind cached event sequence floors to their journal epoch. When an existing
+  sequence file is missing or corrupt, recover the durable log maximum even if
+  another Runtime has left this process with an older cached floor, preventing
+  duplicate event sequences and lost replay progress.
+- Populate both Full RepoIntel routing and preturn caches during startup prewarm
+  from the same worker result, avoiding a repeated routing query after the short
+  inner cache expires while preserving the complete Full context.
+
+---
+
+## [0.7.96-rc.3] - 2026-09-13
+
+Third release candidate of the v0.7.96 line: daemon capabilities are aligned
+and accepted Shell Stops become recoverable while process-tree cleanup is
+unknown, with shell results keeping their status and output. Every rc.2
+contract is retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Project the owning Runtime's `sessionCancellation` and `toolInvocation`
+  capabilities through the default daemon handshake and capability query.
+  Explicit tool execution retains normal permissions, events and persistence.
+- Keep an accepted Shell Stop unconfirmed while process-tree cleanup is unknown.
+  Retry cleanup against the original Run, retain exact recovery references across
+  owner restarts, and preserve known descendants when refreshing process identities.
+- Preserve Run cleanup evidence during generic process sweeps, and propagate
+  the owning Run's Shell cleanup registration through read/write child executors.
+- Keep the cancelled/timeout status and captured output in shell results when
+  process-tree cleanup cannot be confirmed: the unconfirmed-cleanup note is
+  appended to the command outcome instead of replacing it. The background
+  stop owns native termination, so cleanup never terminates the same
+  process tree twice.
+
+---
+
+## [0.7.96-rc.2] - 2026-09-12
+
+Second release candidate of the v0.7.96 line: a stale first Session Stop
+request bound to an already terminal Run is rejected atomically before a new
+Stop frontier is published. Every rc.1 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Fixed
+
+- Reject first `sessions.cancel` requests bound to a terminal Run before
+  publishing a cancellation frontier, preventing delayed requests from stopping
+  successor Runs. Accepted requests retain normal and post-restart replay.
+
+---
+
+## [0.7.96-rc.1] - 2026-09-12
+
+First release candidate of the v0.7.96 line: trusted text authority is
+unified across Runtime Sessions and direct SDK entries, and provider requests
+carry live permission facts. Every beta.9 contract is retained. npm
+publication remains a manual maintainer action.
+
+### Fixed
+
+- Unify trusted text authority across Runtime Sessions and direct SDK entries.
+  Full Access now reaches native text transactions through `runKodaX`,
+  `runManagedTask`, and each `KodaXClient.send`. Auto-approved concrete text
+  calls can write their exact external target, including portable `tool_call`
+  dispatch, without granting a directory or reusing approval across operations
+  or Runs. Explicit denials and native integrity checks remain enforced.
+- Include live host permission facts in direct and managed provider requests,
+  including retries, independently of configuration defaults and prompt
+  overrides. Runtime permission capability 6 fences older daemon authority.
+
+---
+
 ## [0.7.96-beta.9] - 2026-09-12
 
 Ninth beta pre-release of the v0.7.96 line, carrying FEATURE_299 (unified

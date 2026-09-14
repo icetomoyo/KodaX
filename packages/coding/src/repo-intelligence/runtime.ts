@@ -1250,11 +1250,18 @@ export function prewarmRepoIntelligenceCaches(
 
   // Fire-and-forget - caller does not await.
   const timer = setTimeout(() => {
-    void getRepoPreturnBundle(context, {
+    const prewarmOptions = {
       mode: options.mode,
       refresh: false,
       targetPath: '.',
-    }).catch(() => {});
+    };
+    // Populate both public caches while their shared full-engine request is
+    // in flight. Otherwise routing repeats the work after the inner 1.5s TTL,
+    // even though the complete prewarmed bundle remains fresh for 60s.
+    void Promise.all([
+      getRepoPreturnBundle(context, prewarmOptions),
+      getRepoRoutingSignals(context, prewarmOptions),
+    ]).catch(() => {});
   }, REPO_INTELLIGENCE_PREWARM_DELAY_MS);
   if (typeof timer === 'object' && typeof timer.unref === 'function') {
     timer.unref();

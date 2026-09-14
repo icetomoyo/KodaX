@@ -1,11 +1,32 @@
 # Known Issues
 
-_Last Updated: 2026-09-12_
+_Last Updated: 2026-09-13_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## Implemented 2026-09-13 — New Session startup and event-sequence recovery (Issue 334)
+
+New journal epochs did not initialize their sequence cursor. The first event
+therefore scanned every Run log to recover a sequence for an epoch that could
+not yet have any events. Expanding tail reads repeatedly parsed unrelated logs
+synchronously, blocking concurrent history reads. A read-only diagnostic against
+924 existing Run logs reproduced 18.3 seconds of creation work, 4.44 GB of reads,
+and `Session history read timed out after 15000ms` in a concurrent strict read.
+
+New epochs now initialize sequence zero under the existing lock. Cached floors
+are epoch-aware. Existing epochs with missing/corrupt sequence files recover the
+durable log maximum even when a live Runtime holds an older floor, preventing
+duplicate sequences after another Runtime has advanced the journal. Valid
+cursors retain the constant-cost path. The unrelated startup prewarm cache
+omission is also fixed: routing and preturn now share the full prewarmed result.
+
+The original startup fix reduced the same diagnostic to 0.36 seconds and zero
+unrelated event reads; the additional recovery fix covers missing/corrupt cursors
+with live cross-Runtime caches. See the
+[regression guide](test-guides/ISSUE_334_v0.7.96_REGRESSION_GUIDE.md).
 
 ## Implemented 2026-09-12 — Unified Stop and execution contracts (FEATURE_299)
 
@@ -208,6 +229,51 @@ Diagnostic note: the REPL's "Cleaned incomplete tool calls" banner reflects
 pairing-based cleanup and does not detect defect 1; the error classifier maps
 this 400 to a permanent failure, so it surfaced as a manual-intervention
 banner. With both fixes in, replayed sessions serialize wire-valid.
+
+## v0.7.96-rc.3 Release Corrections
+
+The rc.3 corrections close two Shell cleanup gaps introduced while hardening
+FEATURE_299 stop admission. First, a default daemon handshake did not project
+the owning Runtime's `sessionCancellation` and `toolInvocation` capabilities,
+so explicit tool execution could be fenced incorrectly; the capabilities now
+flow through the handshake and capability query. Second, when a stopped
+command's process-tree cleanup could not be confirmed, the unconfirmed-cleanup
+note replaced the result entirely — dropping the `[Cancelled]`/`[Timeout]`
+status from stopped commands and the exit code plus captured output from
+completed commands. The note is now appended to the command outcome, cleanup
+retries target the original Run, and recovery references survive owner
+restarts. See `docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
+
+## v0.7.96-rc.2 Release Corrections
+
+The rc.2 correction closes the stale first-Stop gap left by beta.9's unified
+Stop contract: a first `sessions.cancel` request whose `expectedRunId` binding
+is already terminal could previously publish a new Stop frontier and stop a
+successor Run. The rejection is now atomic inside the Runtime — typed
+`code: 'conflict'`, `denialSource: 'stale_run'`, `retryable: false` — so no
+client-side status check is needed. Accepted request replay, partial-delivery
+recovery, and restart replay are preserved; a stale request's target is never
+silently retargeted to a later Run. See
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md` for the successor
+protection, admission-race, and daemon regression coverage.
+
+## v0.7.96-rc.1 Release Corrections
+
+The rc.1 corrections close the trusted-text authority gap between Runtime
+Sessions and direct SDK entries: Full Access previously gated native text
+transactions only on the Runtime path, so `runKodaX`, `runManagedTask`, and
+`KodaXClient.send` entries could not write approved external targets under
+the same policy. Auto approvals are now bound to the concrete tool ID,
+complete input, and resolved target — one snapshot/commit transaction each,
+including via portable `tool_call` dispatch — without granting a writable
+directory or reusing an approval across operations or Runs; explicit denials,
+protected files, native link/path validation, and revision/CAS checks stay
+enforced. Provider requests previously inferred permission context from
+`config.json` defaults or stale persisted messages; direct and managed
+requests now include the live host permission mode refreshed on retries.
+Runtime permission capability 6 (`runtimeAutoModeGuardrail`) fences older
+daemons from serving the corrected authority. See
+`docs/test-guides/FEATURE_299_0.7.96_TEST_GUIDE.md`.
 
 ## v0.7.96-beta.9 Release Corrections
 
@@ -662,6 +728,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
@@ -14728,7 +14795,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 212 (34 Open, 178 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 213 (34 Open, 179 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

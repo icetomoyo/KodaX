@@ -18,6 +18,14 @@ function nextTurn(): Promise<void> {
 }
 
 describe('toolBash cleanup rejection handling', () => {
+  it('returns an unknown outcome when standalone foreground cleanup cannot be verified', async () => {
+    const result = await toolBash({
+      command: 'node -e "setTimeout(() => {}, 50)"',
+    }, { backups: new Map(), executionCwd: process.cwd() });
+    expect(result).toContain('[Unknown]');
+    expect(result).not.toContain('[Cancelled]');
+  }, 5_000);
+
   it('does not surface unhandled rejections when aborted background cleanup rejects', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {

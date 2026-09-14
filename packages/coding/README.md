@@ -195,6 +195,15 @@ hook crashes or returns malformed JSON. The coding runtime finalizes its
 authoritative `KodaXResult` before emitting the public completion signal, so
 A2A responses cannot publish an empty successful answer (Issue 302).
 
+The v0.7.96-rc.1 release unifies trusted text authority across Runtime
+Sessions and direct SDK entries. Full Access reaches native text transactions
+through `runKodaX`, `runManagedTask`, and each `KodaXClient.send`; auto-approved
+concrete text calls authorize their exact external target, including portable
+`tool_call` dispatch, without granting a directory or reusing an approval
+across operations or Runs; explicit denials and native integrity checks stay
+enforced. Direct and managed provider requests carry live host permission
+facts refreshed on retries.
+
 The v0.7.96-beta.9 Windows shell path removes the old command-lifetime filesystem-
 effect coordinator. Bash commands, trusted text tools, and different worktree
 paths no longer share a KodaX global lock; same-file text CAS and same-path

@@ -5,10 +5,94 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createExtensionRuntime } from '@kodax-ai/coding';
 import { executeCommand } from '@kodax-ai/repl';
+import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
+import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
+import { readRuntimeDaemonToken, resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { createRuntimeDaemonSocketServer, createRuntimeDaemonSocketClientTransport, defaultRuntimeDaemonEndpoint } from './runtime-daemon/transport.js';
+
+it('executes explicit tools from daemon negotiation with permissions, events and durable history without a model', async () => {
+  // Plan mode intentionally permits writes under the system temp directory.
+  const root = await mkdtemp(path.join(process.cwd(), '.kodax-daemon-tools-'));
+  const sessionsDir = path.join(root, 'sessions');
+  const providerCalls = vi.fn();
+  class NoModelProvider extends KodaXBaseProvider {
+    readonly name = 'daemon-explicit-tools';
+    readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = {
+      apiKeyEnv: 'KODAX_EXPLICIT_TOOLS_TEST_KEY', model: 'offline', supportsThinking: false,
+    };
+    async stream(): Promise<KodaXStreamResult> {
+      providerCalls();
+      throw new Error('Explicit tool execution must not call a model.');
+    }
+  }
+  vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+  vi.stubEnv('KODAX_EXPLICIT_TOOLS_TEST_KEY', 'offline-test');
+  const unregister = registerModelProvider('daemon-explicit-tools', () => new NoModelProvider());
+  const runtime = await createKodaXRuntime({ homeDir: root, sessionsDir, sharedDaemonHost: true,
+    defaultProvider: 'daemon-explicit-tools' });
+  const paths = resolveRuntimeDaemonPaths(root, 'default');
+  const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId,
+    pid: process.pid, createdAt: runtime.identity.startedAt });
+  if (!lock) throw new Error('Expected isolated daemon owner lock.');
+  const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: defaultRuntimeDaemonEndpoint('explicit-tools', root) });
+  const transport = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+  const initialized = await transport.request('initialize', { profile: 'default', token: readRuntimeDaemonToken(paths),
+    capabilities: { operationDeduplication: true } }) as {
+    identity: typeof runtime.identity; capabilities: Readonly<Record<string, unknown>>;
+  };
+  const client = createRuntimeDaemonClient({ ...initialized, transport });
+  try {
+    await expect(transport.request('runtime.capabilities')).resolves.toEqual(initialized.capabilities);
+    const session = await client.sessions.create({ projectPath: root });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'plan' });
+    const target = path.join(root, 'read.txt');
+    await writeFile(target, 'durable explicit read');
+    const seen: string[] = [];
+    const finishedRuns: string[] = [];
+    const subscription = client.events.subscribe({ sessionId: session.id }, event => {
+      seen.push(event.type);
+      if (event.type === 'tool.finished') finishedRuns.push(event.runId);
+    });
+    await subscription.ready;
+    try {
+      const read = await client.runs.start({ sessionId: session.id, prompt: 'read without model', options: {
+        lsp: false, toolInvocation: { name: 'read', input: { path: target } },
+      } });
+      await expect(read.result).resolves.toMatchObject({ phase: 'completed', result: {
+        success: true, lastText: expect.stringContaining('durable explicit read'),
+      } });
+      const denied = await client.runs.start({ sessionId: session.id, prompt: 'deny write in plan mode', options: {
+        lsp: false, toolInvocation: { name: 'write', input: { path: target, content: 'must not write' } },
+      } });
+      const deniedResult = await denied.result;
+      await expect(readFile(target, 'utf8')).resolves.toBe('durable explicit read');
+      expect(deniedResult.result).toMatchObject({ success: false, lastText: expect.stringContaining('[Blocked]') });
+      await expect(client.sessions.cancel({ sessionId: session.id, expectedRunId: read.runId,
+        requestId: 'completed-explicit-tool' })).rejects.toMatchObject({ code: 'conflict', data: { denialSource: 'stale_run' } });
+      await vi.waitFor(() => expect(seen).toContain('tool.finished'));
+      expect(finishedRuns).toEqual(expect.arrayContaining([read.runId, denied.runId]));
+      const transcript = await client.sessions.transcript(session.id);
+      expect(JSON.stringify(transcript)).toContain('durable explicit read');
+      expect(JSON.stringify(transcript)).toContain('deny write in plan mode');
+      await runtime.close();
+      const restarted = await createKodaXRuntime({ homeDir: root, sessionsDir, sharedDaemonHost: true });
+      try {
+        expect((await restarted.sessions.transcript(session.id))?.messages).toEqual(transcript?.messages);
+        await expect(restarted.runs.get(read.runId)).resolves.toMatchObject({ phase: 'completed' });
+        await expect(restarted.runs.get(denied.runId)).resolves.toMatchObject({ phase: 'failed' });
+      } finally { await restarted.close(); }
+      expect(providerCalls).not.toHaveBeenCalled();
+    } finally { subscription.close(); }
+  } finally {
+    await client.close(); await host.close(); await runtime.close();
+    unregister(); vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
 
 it('owns explicit Shell effects and confirms process cleanup through real shared Runtime Stop', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-owned-shell-'));
@@ -21,10 +105,13 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
   const server = await createRuntimeDaemonSocketServer({ endpoint: defaultRuntimeDaemonEndpoint('owned-shell', root),
     createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ runtime, notify, disconnect }) });
   const transport = await createRuntimeDaemonSocketClientTransport(server.endpoint);
-  await transport.request('initialize', { profile: 'default' });
-  const client = createRuntimeDaemonClient({ identity: runtime.identity, capabilities: runtime.capabilities, transport });
+  const initialized = await transport.request('initialize', { profile: 'default' }) as {
+    identity: typeof runtime.identity; capabilities: Readonly<Record<string, unknown>>;
+  };
+  const client = createRuntimeDaemonClient({ ...initialized, transport });
   const lock = path.join(sessionsDir, '.write-locks', `${createHash('sha256').update(session.id).digest('hex')}.lock`);
   let childPid: number | undefined;
+  let testFailure: unknown;
   try {
     const extensionFile = path.join(root, 'managed-command.mjs');
     await writeFile(extensionFile, `export default api => api.registerCommand({ name: 'managed-stop', description: 'managed Stop test',
@@ -71,11 +158,23 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
     await rm(lock);
     await expect(commandResult).resolves.toBe(false);
     expect(() => process.kill(childPid!, 0)).toThrow();
+  } catch (error: unknown) {
+    testFailure = error;
+    throw error;
   } finally {
-    await rm(lock, { force: true });
-    await client.close(); await server.close(); await runtime.close();
-    await extensions.dispose();
-    vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+    const cleanupFailures: unknown[] = [];
+    for (const cleanup of [
+      () => rm(lock, { force: true }),
+      () => client.close(), () => server.close(), () => runtime.close(),
+      () => extensions.dispose(),
+      () => { vi.unstubAllEnvs(); },
+      () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
+    ]) {
+      try { await cleanup(); } catch (error: unknown) { cleanupFailures.push(error); }
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(testFailure === undefined ? cleanupFailures : [testFailure, ...cleanupFailures],
+        'Owned Shell test cleanup failed.', { cause: testFailure });
+    }
   }
 }, 60_000);

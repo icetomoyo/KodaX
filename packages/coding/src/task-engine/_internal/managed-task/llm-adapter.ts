@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 
 import type {
   KodaXContentBlock,
@@ -411,7 +412,8 @@ export function buildRunnerLlmAdapter(
         systemParts.push(text);
       }
     }
-    const system = systemParts.join('\n\n');
+    const baseSystem = systemParts.join('\n\n');
+    let system = withEffectivePermissionContext(baseSystem, options.context);
     let transcript = messages.slice(cut);
     const ephemeralSuffix = getEphemeralSuffix?.();
     const runtimeReminders = pendingRuntimeReminders;
@@ -770,6 +772,7 @@ export function buildRunnerLlmAdapter(
         ?.turnId ?? `response_${randomUUID().replace(/-/g, '')}`;
       let nextRequestMode: KodaXOutputSegmentMode = 'append';
       while (true) {
+        system = withEffectivePermissionContext(baseSystem, options.context);
         throwIfManagedProviderAborted(options.abortSignal, providerMessages);
         attempt += 1;
         const wireProviderMessages = lowerProviderMessages(providerMessages);
@@ -1261,6 +1264,7 @@ export function buildRunnerLlmAdapter(
             attempt + l5Retries,
             false,
           );
+          system = withEffectivePermissionContext(baseSystem, options.context);
           const continuationRequest = boundaryTracker.snapshot();
           telemetryBoundary(continuationRequest);
           const continuationMeta = {

@@ -182,6 +182,7 @@ export type {
   KodaXTrustedTextCommitOutcome,
   KodaXTrustedTextFileSnapshot,
   KodaXTrustedTextMutationHost,
+  KodaXTrustedTextToolCall,
   KodaXWorkspaceSandboxRootRegistry,
   KodaXSkillScriptInputFile,
   KodaXSkillScriptOutputFile,
