@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reduce Windows exit delays from unresolved historical Shell records. Skip process-tree
+  queries only when every retained target is definitively absent; preserve unknown cleanup
+  outcomes and Run recovery evidence.
+- Reuse the Windows termination process for its first post-termination snapshot. Retain
+  exact process identity checks, fresh verification and retries when cleanup is uncertain.
+
 ---
 
 ## [0.7.96-rc.5] - 2026-09-14

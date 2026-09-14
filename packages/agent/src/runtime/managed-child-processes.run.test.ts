@@ -94,6 +94,160 @@ async function persistedRunChild(ownerPid = 91235): Promise<ManagedRunChildProce
   return reference;
 }
 
+it.runIf(process.platform === 'win32')('keeps 122 extinct incomplete Run records unchanged without process-tree queries', async () => {
+  const reference = await persistedRunChild(91233);
+  const directory = path.join(home, 'runtime', 'processes', 'children');
+  const originalFile = path.join(directory, `${reference.pid}.${reference.registrationId}.json`);
+  const record = JSON.parse(await readFile(originalFile, 'utf8')) as Record<string, unknown>;
+  const records = Array.from({ length: 122 }, (_, index) => {
+    const pid = reference.pid + index;
+    const bytes = JSON.stringify({ ...record, pid, processTreeComplete: false,
+      processTreeIdentities: [{ pid, creationTime: '111' }] });
+    return { file: path.join(directory, `${pid}.${reference.registrationId}.json`), bytes };
+  });
+  await Promise.all(records.map(({ file, bytes }) => writeFile(file, bytes)));
+  vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+  });
+  processTree.capture.mockReturnValue(null);
+  processTree.killPid.mockResolvedValue({ status: 'unknown' });
+
+  expect(await cleanupRegisteredManagedChildren()).toEqual({ killed: 0, pruned: 0, skipped: 122 });
+  expect(processTree.capture).not.toHaveBeenCalled();
+  expect(processTree.killPid).not.toHaveBeenCalled();
+  expect(processTree.killChild).not.toHaveBeenCalled();
+  for (const { file, bytes } of records) await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+});
+
+it.runIf(process.platform === 'win32').each([
+  { name: 'live root', livePid: 91234 },
+  { name: 'live retained descendant', livePid: 91236 },
+  { name: 'live uncertain descendant', livePid: 91236, descendantIdentity: '0' },
+  { name: 'unreadable root', errorPid: 91234, errorCode: 'EPERM' },
+  { name: 'unreadable descendant', errorPid: 91236, errorCode: 'EPERM' },
+  { name: 'failed descendant query', errorPid: 91236, errorCode: 'EIO' },
+  { name: 'zero descendant PID', descendantPid: 0 },
+  { name: 'negative descendant PID', descendantPid: -1 },
+  { name: 'fractional descendant PID', descendantPid: 1.5 },
+  { name: 'unsafe descendant PID', descendantPid: Number.MAX_SAFE_INTEGER + 1 },
+  { name: 'mismatched retained root', rootIdentity: '222' },
+  { name: 'missing retained root', omitRoot: true },
+  { name: 'complete process tree', completeTree: true },
+])('still attempts exact Run cleanup with $name', async (scenario) => {
+  const reference = await persistedRunChild();
+  const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
+  const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  const identities = [
+    ...(scenario.omitRoot ? [] : [{ pid: reference.pid, creationTime: scenario.rootIdentity ?? '111' }]),
+    { pid: scenario.descendantPid ?? 91236, creationTime: scenario.descendantIdentity ?? '112' },
+  ];
+  const bytes = JSON.stringify({ ...record, processTreeComplete: scenario.completeTree ?? false,
+    processTreeIdentities: identities });
+  await writeFile(file, bytes);
+  vi.spyOn(process, 'kill').mockImplementation((pid) => {
+    if (pid === scenario.livePid) return true;
+    throw Object.assign(new Error('query'), { code: pid === scenario.errorPid ? scenario.errorCode : 'ESRCH' });
+  });
+  processTree.capture.mockReturnValue(null);
+  processTree.killPid.mockResolvedValue({ status: 'unknown' });
+
+  expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+  expect(processTree.capture).toHaveBeenCalledWith(reference.pid, '111');
+  expect(processTree.killPid).toHaveBeenCalledWith(reference.pid, {
+    expectedProcessStartIdentity: '111', expectedProcessTreeComplete: scenario.completeTree ?? false,
+    expectedProcessTreeIdentities: identities,
+  });
+  await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+});
+
+it.runIf(process.platform === 'win32').each([false, undefined])(
+  'rechecks extinct known and uncertain descendants on each incomplete cleanup (complete: %s)', async (complete) => {
+    const reference = await persistedRunChild();
+    const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
+    const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const bytes = JSON.stringify({ ...record, processTreeComplete: complete, processTreeIdentities: [
+      { pid: reference.pid, creationTime: '111' }, { pid: 91236, creationTime: '112' }, { pid: 91237, creationTime: '0' },
+    ] });
+    await writeFile(file, bytes);
+    let descendantAlive = false;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (descendantAlive && pid === 91237) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    processTree.capture.mockReturnValue(null);
+    processTree.killPid.mockResolvedValue({ status: 'unknown' });
+    expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+    expect(kill).toHaveBeenCalledWith(91236, 0);
+    expect(kill).toHaveBeenCalledWith(91237, 0);
+    expect(processTree.capture).not.toHaveBeenCalled();
+    expect(processTree.killPid).not.toHaveBeenCalled();
+    await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+
+    descendantAlive = true;
+    expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+    expect(processTree.capture).toHaveBeenCalledOnce();
+    expect(processTree.killPid).toHaveBeenCalledOnce();
+    await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+  },
+);
+
+it.runIf(process.platform === 'win32').each(['live', 'EPERM'])(
+  'checks the %s owner before inspecting an incomplete Run tree', async (ownerState) => {
+    const reference = await persistedRunChild();
+    const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
+    const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    await writeFile(file, JSON.stringify({ ...record, processTreeComplete: false }));
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === 91235 && ownerState === 'live') return true;
+      throw Object.assign(new Error('query'), { code: pid === 91235 ? ownerState : 'ESRCH' });
+    });
+    expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+    expect(kill).toHaveBeenCalledExactlyOnceWith(91235, 0);
+    expect(processTree.capture).not.toHaveBeenCalled();
+    expect(processTree.killPid).not.toHaveBeenCalled();
+  },
+);
+
+it('keeps incomplete dead-owner POSIX cleanup on the existing termination path', async () => {
+  const reference = await persistedRunChild();
+  const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
+  const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  await writeFile(file, JSON.stringify({ ...record, processTreeComplete: false }));
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+  vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+  processTree.killPid.mockResolvedValue({ status: 'unknown' });
+  try {
+    expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+    expect(processTree.killPid).toHaveBeenCalledWith(reference.pid, {
+      expectedProcessStartIdentity: '111', expectedProcessTreeComplete: false,
+      expectedProcessTreeIdentities: [{ pid: reference.pid, creationTime: '111' }],
+    });
+  } finally { Object.defineProperty(process, 'platform', platform); }
+});
+
+it('keeps an owned incomplete Run on its exact child-handle cleanup path', async () => {
+  home = await mkdtemp(path.join(tmpdir(), 'kodax-run-child-'));
+  setAgentConfigHome(home);
+  const child = Object.assign(new EventEmitter(), { pid: 91234, exitCode: null, signalCode: null }) as ChildProcess;
+  let reference: ManagedRunChildProcessReference | undefined;
+  unregister = registerManagedChildProcess(child, { kind: 'bash', command: 'test', runtimeRunId: 'run-a' }, {
+    manualUnregister: true, requireDurableRecord: true, onRegistered: (value) => { reference = value; },
+  });
+  if (!reference) throw new Error('Run child reference missing');
+  const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
+  const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  await writeFile(file, JSON.stringify({ ...record, processTreeComplete: false }));
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+  });
+  processTree.killChild.mockResolvedValue({ status: 'unknown' });
+  expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
+  expect(processTree.killChild).toHaveBeenCalledWith(child);
+  expect(processTree.killPid).not.toHaveBeenCalled();
+  expect(kill).not.toHaveBeenCalled();
+});
+
 it.each([false, true])('keeps verified dead-owner Run cleanup recoverable after a global child sweep (root alive: %s)', async (rootAlive) => {
   const reference = await persistedRunChild();
   const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
@@ -285,7 +439,10 @@ it.runIf(process.platform === 'win32')('preserves the complete tree before dead-
   const file = path.join(home, 'runtime', 'processes', 'children', `${reference.pid}.${reference.registrationId}.json`);
   const record = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   await writeFile(file, JSON.stringify({ ...record, processTreeComplete: false }));
-  vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+  vi.spyOn(process, 'kill').mockImplementation((pid) => {
+    if (pid === reference.pid) return true;
+    throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+  });
   processTree.capture.mockReturnValueOnce({ root: { pid: 91234, parentPid: 1, creationTime: '111' },
     descendants: [{ pid: 91236, parentPid: 91234, creationTime: '112' }],
     uncertainDescendantPids: [], completeTree: true }).mockReturnValue(null);

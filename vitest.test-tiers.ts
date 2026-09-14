@@ -70,6 +70,7 @@ export const SYSTEM_TEST_FILES = [
   'packages/agent/src/capabilities/mcp/transport.test.ts',
   'packages/agent/src/runtime/managed-child-processes.test.ts',
   'packages/agent/src/runtime/process-tree.test.ts',
+  'packages/agent/src/runtime/process-cleanup.windows.integration.test.ts',
   'packages/coding/src/lsp/client-integration.test.ts',
   'packages/coding/src/repo-intelligence/**/*.test.ts',
   'packages/coding/src/tools/bash.test.ts',

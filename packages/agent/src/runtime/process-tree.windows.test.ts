@@ -58,6 +58,130 @@ function snapshot(stdout: string) {
 }
 
 describe('Windows process-tree identity fences', () => {
+  it('verifies a drained tree using the fresh snapshot from the termination process', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,4242,112\n'))
+      .mockReturnValueOnce(snapshot('KODAX_TERMINATION_COMPLETED\n0,0,0\n1,0,100\nKODAX_SNAPSHOT_COMPLETED\n'))
+      .mockReturnValue(snapshot('1,0,100\n'));
+
+    await expect(killPidTree(4_242, {
+      expectedProcessStartIdentity: '111', forceMs: 0,
+    })).resolves.toEqual({ status: 'terminated' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    const script = String(spawnSyncMock.mock.calls[1]?.[1]?.at(-1));
+    expect(script.indexOf('::TerminateExact(4343')).toBeLessThan(script.indexOf('::TerminateExact(4242'));
+    expect(script.indexOf('::TerminateExact(4242')).toBeLessThan(script.indexOf('::ReadRows()'));
+  });
+
+  it.each([
+    ['empty', ''],
+    ['truncated', 'KODAX_TERMINATION_COMPLETED\n1,0,100\n'],
+    ['malformed identity', 'KODAX_TERMINATION_COMPLETED\n1,0,100\n4242,1,broken\nKODAX_SNAPSHOT_COMPLETED\n'],
+    ['malformed row', 'KODAX_TERMINATION_COMPLETED\n1,0,100\nbroken\nKODAX_SNAPSHOT_COMPLETED\n'],
+    ['still alive', 'KODAX_TERMINATION_COMPLETED\n4242,1,111\nKODAX_SNAPSHOT_COMPLETED\n'],
+    ['identity unreadable', 'KODAX_TERMINATION_COMPLETED\n4242,1,0\nKODAX_SNAPSHOT_COMPLETED\n'],
+  ])('reads a new snapshot when the termination snapshot is %s', async (_scenario, output) => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot(output))
+      .mockReturnValue(snapshot('1,0,100\n'));
+
+    await expect(killPidTree(4_242, {
+      expectedProcessStartIdentity: '111', forceMs: 0,
+    })).resolves.toEqual({ status: 'terminated' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('preserves the unknown result when the termination process fails without stdout', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce({ ...snapshot(''), stdout: undefined, error: new Error('ENOENT'), status: null })
+      .mockReturnValue(snapshot('4242,1,111\n'));
+    await expect(killPidTree(4_242, {
+      expectedProcessStartIdentity: '111', forceMs: 0,
+    })).resolves.toEqual({ status: 'unknown' });
+  });
+
+  it.each([false, true])('preserves retry after snapshot timeout only with completed termination (%s)', async (completed) => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce({
+        ...snapshot(completed ? 'KODAX_TERMINATION_COMPLETED\n' : ''),
+        error: new Error('ETIMEDOUT'), status: null,
+      })
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot(''))
+      .mockReturnValue(snapshot('1,0,100\n'));
+    const result = await killPidTree(4_242, {
+      expectedProcessStartIdentity: '111', forceMs: 0,
+    });
+    expect(result).toEqual({ status: completed ? 'terminated' : 'unknown' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(completed ? 5 : 3);
+    const script = String(spawnSyncMock.mock.calls[1]?.[1]?.at(-1));
+    expect(script.indexOf("Out.WriteLine('KODAX_TERMINATION_COMPLETED')"))
+      .toBeLessThan(script.indexOf('Out.Flush()'));
+    expect(script.indexOf('Out.Flush()')).toBeLessThan(script.indexOf('::ReadRows()'));
+  });
+
+  it('does not certify a tree while a retained uncertain descendant is still present', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,4242,0\n'))
+      .mockReturnValueOnce(snapshot('KODAX_TERMINATION_COMPLETED\n1,0,100\n4343,9,222\nKODAX_SNAPSHOT_COMPLETED\n'))
+      .mockReturnValue(snapshot('4343,9,222\n'));
+    const result = await killPidTree(4_242, {
+      expectedProcessStartIdentity: '111', forceMs: 0,
+    });
+    expect(result).toEqual({ status: 'unknown' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(5);
+    const script = String(spawnSyncMock.mock.calls[1]?.[1]?.at(-1));
+    expect(script).not.toContain('::TerminateExact(4343');
+  });
+
+  it.each([
+    ['already gone', 'KODAX_TERMINATION_COMPLETED\n1,0,100\nKODAX_SNAPSHOT_COMPLETED\n', 3],
+    ['still alive', 'KODAX_TERMINATION_COMPLETED\n4242,1,111\nKODAX_SNAPSHOT_COMPLETED\n', 4],
+    ['unavailable', '', 4],
+  ] as const)('preserves synchronous verification when the immediate snapshot is %s', (_scenario, output, calls) => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot(output))
+      .mockReturnValue(snapshot('1,0,100\n'));
+    const child = fakeChild(4_242);
+    rememberChildProcessTree(child as never);
+
+    expect(killChildProcessTreeSync(child as never)).toEqual({ status: 'terminated' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(calls);
+  });
+
+  it('does not add a post-termination snapshot to an incomplete retained tree', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockReturnValueOnce(snapshot('1,0,100\n')).mockReturnValue(snapshot(''));
+
+    await expect(killPidTree(4_242, {
+      expectedProcessStartIdentity: '111',
+      expectedProcessTreeIdentities: [{ pid: 4_242, creationTime: '111' }, { pid: 4_343, creationTime: '112' }],
+      expectedProcessTreeComplete: false, forceMs: 0,
+    })).resolves.toEqual({ status: 'unknown' });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    const script = String(spawnSyncMock.mock.calls[1]?.[1]?.at(-1));
+    expect(script).toContain('::TerminateExact(4343');
+    expect(script).not.toContain('::ReadRows()');
+  });
+
   afterEach(() => {
     Object.defineProperty(process, 'platform', {
       configurable: true,
@@ -137,7 +261,7 @@ describe('Windows process-tree identity fences', () => {
     let killedRoot = false;
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) {
+      if (/::TerminateExact\(\d/.test(script)) {
         scripts.push(script);
         killedRoot = true;
         return snapshot('');
@@ -161,7 +285,7 @@ describe('Windows process-tree identity fences', () => {
       let tree = '4242,1,100\n4343,4242,110\n4444,4343,120\n';
       spawnSyncMock.mockImplementation((_command, args) => {
         const script = Array.isArray(args) ? String(args.at(-1)) : '';
-        if (script.trim().endsWith('Out-Null')) {
+        if (/::TerminateExact\(\d/.test(script)) {
           scripts.push(script);
           tree = '4444,4343,120\n';
           return snapshot('');
@@ -187,7 +311,7 @@ describe('Windows process-tree identity fences', () => {
     let rootAlive = true;
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) { scripts.push(script); rootAlive = false; return snapshot(''); }
+      if (/::TerminateExact\(\d/.test(script)) { scripts.push(script); rootAlive = false; return snapshot(''); }
       return snapshot(`${rootAlive ? '4242,1,100\n' : ''}4444,1,999\n`);
     });
     await expect(killPidTree(4242, { expectedProcessStartIdentity: '100', expectedProcessTreeComplete: true,
@@ -204,7 +328,7 @@ describe('Windows process-tree identity fences', () => {
     let rootAlive = true;
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) { scripts.push(script); rootAlive = false; return snapshot(''); }
+      if (/::TerminateExact\(\d/.test(script)) { scripts.push(script); rootAlive = false; return snapshot(''); }
       return snapshot(`${rootAlive ? '4242,1,100\n' : ''}4444,4343,120\n`);
     });
     await expect(killPidTree(4242, { expectedProcessStartIdentity: '100', expectedProcessTreeComplete: false,
@@ -242,7 +366,7 @@ describe('Windows process-tree identity fences', () => {
     let snapshotCalls = 0;
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) {
+      if (/::TerminateExact\(\d/.test(script)) {
         terminationScripts.push(script);
         child.exitCode = 0;
         return snapshot('');
@@ -295,7 +419,7 @@ describe('Windows process-tree identity fences', () => {
     ];
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) return snapshot('');
+      if (/::TerminateExact\(\d/.test(script)) return snapshot('');
       return snapshot(snapshots.shift() ?? '4444,4343,120\n');
     });
     const child = fakeChild(4_242);
@@ -335,7 +459,7 @@ describe('Windows process-tree identity fences', () => {
     ];
     spawnSyncMock.mockImplementation((_command, args) => {
       const script = Array.isArray(args) ? String(args.at(-1)) : '';
-      if (script.trim().endsWith('Out-Null')) {
+      if (/::TerminateExact\(\d/.test(script)) {
         terminationScripts.push(script);
         return snapshot('');
       }
