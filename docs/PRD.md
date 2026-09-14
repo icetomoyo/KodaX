@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.4`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.5`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,16 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.4 release carries FEATURE_297 and FEATURE_299 and fixes
-Issue 334: new Session event journals initialize at sequence zero instead of
+The v0.7.96-rc.5 release carries FEATURE_297 and FEATURE_299 and fixes
+Issue 335: read and MCP image bytes are validated at receipt and historical
+images are prepared at run admission, reused across Anthropic/OpenAI
+requests, retries, and compaction; confirmed corrupt images become actionable
+text while valid bytes, tool status, and original history are preserved, and
+`validateImageBytes` ships through the LLM and media SDK with the WASM codec
+in Bun binaries and release archives. Residual native request-content errors
+are diagnosed with one evidence-backed text-only request plus one retry. The
+rc.4 journal sequencing fix holds: new Session event journals initialize at
+sequence zero instead of
 scanning unrelated Run logs — removing a synchronous startup stall that could
 push concurrent history reads past their 15-second timeout — cached sequence
 floors are epoch-aware, and a missing or corrupt sequence file recovers the

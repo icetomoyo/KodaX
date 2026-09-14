@@ -137,9 +137,62 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.5 release preparation
+
+Release state: `v0.7.96-rc.5` is the GitHub pre-release for the exact
+tagged commit — the fifth release candidate of the v0.7.96 line, fixing
+Issue 335 (corrupt extracted images poisoning model requests, plus
+evidence-backed text recovery for residual native request-content errors).
+The tag-triggered Release workflow builds every platform archive and the
+universal npm tarball, publishes checksums, and creates the GitHub
+pre-release. npm registry publication remains a separate manual maintainer
+action.
+
+On top of rc.4 it includes:
+
+- Read and MCP image bytes are validated at receipt and historical images
+  are prepared at run admission, reused across Anthropic/OpenAI requests,
+  retries, and compaction; confirmed corrupt images become actionable text
+  while valid bytes, tool status, and original history are preserved.
+- `validateImageBytes` ships through the LLM and media SDK; the WASM codec
+  (`image-codec/`) is included in Bun binaries and every release archive.
+- Residual native request-content errors are diagnosed with the current
+  Agent using one evidence-backed text-only request plus one retry, without
+  retaining credentials or image snapshots.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.5`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, Issue 335 image-validation regressions (`packages/llm/src/image-validation*.test.ts`,
+   `packages/llm/src/providers/rejected-image.test.ts`,
+   `image-history-recovery.test.ts`, `prepared-image-history.test.ts`,
+   `packages/coding/src/agent-runtime/image-admission.test.ts`,
+   `packages/coding/src/resilience/text-recovery.test.ts`),
+   bundled image/text-recovery and archive codec probes
+   (`tests/bundled-image-validation.test.mjs`, `tests/bundled-text-recovery.test.mjs`,
+   `tests/image-codec-release.test.mjs`), prompt-cache wire regressions,
+   Issue 334 session journal regressions, and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.5`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.4 release preparation
 
-Release state: `v0.7.96-rc.4` is the GitHub pre-release for the exact
+Release state: `v0.7.96-rc.4` was the GitHub pre-release for the exact
 tagged commit — the fourth release candidate of the v0.7.96 line, fixing
 Issue 334 (new Session startup scanning unrelated Run logs, and lost-cursor
 recovery across stale cross-Runtime caches). The tag-triggered Release

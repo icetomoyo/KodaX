@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-rc.4 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-rc.5 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,10 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-rc.4 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-rc.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The rc.5 release fixes Issue 335');
+    expect(sdk).toContain('historical images are prepared at run admission');
+    expect(sdk).toContain('one evidence-backed text-only diagnostic plus one retry');
     expect(sdk).toContain('The rc.4 release fixes Issue 334');
     expect(sdk).toContain('removing a startup stall that could push concurrent history reads past');
     expect(sdk).toContain('so replay never duplicates');

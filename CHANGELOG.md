@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.5] - 2026-09-14
+
+Fifth release candidate of the v0.7.96 line: corrupt extracted images no
+longer poison subsequent model requests (Issue 335), and residual native
+request-content errors are diagnosed with an evidence-backed text-only
+request. Every rc.4 contract is retained. npm publication remains a manual
+maintainer action.
+
 ### Fixed
 
 - Prevent corrupt extracted images from poisoning subsequent model requests (Issue 335).

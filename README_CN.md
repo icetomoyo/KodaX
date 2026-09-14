@@ -296,6 +296,13 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.5 发布**：v0.7.96 线第五个发布候选，修复 Issue 335。`read` 与
+MCP 图片字节在接收时校验，历史图片在 Run 准入时准备，跨 Anthropic/OpenAI
+请求、重试与压缩复用；确认损坏的图片替换为可执行的文字说明，正常图片字节、
+工具状态与原始历史全部保留。`validateImageBytes` 通过 LLM 与 media SDK 暴露，
+WASM 解码器随 Bun 二进制与发布归档附带。残留的原生请求内容错误用一次
+有证据支撑的纯文本请求加一次重试进行诊断。所有 rc.4 契约全部保留。
+
 **v0.7.96-rc.4 发布**：v0.7.96 线第四个发布候选，修复 Issue 334。新建
 Session 事件日志从序列零初始化，不再扫描无关的 Run 日志——消除可能把并发
 Session 历史读取拖过 15 秒超时的同步启动停顿。缓存序列下限按 journal epoch
@@ -395,7 +402,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.4 发布清单](docs/release.md#v0796-rc4-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.5 发布清单](docs/release.md#v0796-rc5-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

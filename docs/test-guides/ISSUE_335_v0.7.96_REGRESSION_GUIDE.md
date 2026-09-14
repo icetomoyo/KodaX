@@ -1,6 +1,6 @@
 # Issue 335：坏图入口检查与旧历史恢复
 
-2026-09-14：源码已实现，尚未发布。关联 Space Issue 215。
+2026-09-14：源码已实现，随 `v0.7.96-rc.5` 发布。关联 Space Issue 215。
 
 ## 已实现行为
 
@@ -137,7 +137,7 @@ npx vitest run -c vitest.integration.config.ts packages/llm/src/providers/glm-hi
 
 ## 发布验收与边界
 
-1. 发布新 SDK 后，Space 升级精确依赖并构建安装包；目前仍引用旧 rc.4，
+1. 发布新 SDK 后，Space 升级精确依赖并构建安装包；旧安装包引用的是 rc.4，
    不得向客户声称已安装的版本自动获得修复。Space 新校验接口是可选的以兼容旧 SDK。
 2. Windows/macOS/Linux 安装包需实测正常附图、MCP 混合图片、粘贴、关闭重开旧会话、
    fork、连续追问和取消。macOS/Linux 及完整安装包尚未在本机运行。
