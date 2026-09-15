@@ -310,9 +310,11 @@ async function run(mode) {
   const state = { mode, homeDir: path.join(artifacts, `${label}-${mode}`), requests: [], pending: new Map(), providerErrors: [] };
   await mkdir(state.homeDir, { recursive: true });
   await setupProvider(state);
+  // The question dialog runs last: a Host without askUser callbacks fails it
+  // without blocking the independent scenarios ahead of it.
   const order = mode === 'ink'
-    ? ['startup', 'prompt', 'slash-help', 'slash-status', 'question', 'queue', 'stop', 'exit', 'resume']
-    : ['startup', 'prompt', 'slash-help', 'slash-status', 'question', 'stop', 'exit', 'resume'];
+    ? ['startup', 'prompt', 'slash-help', 'slash-status', 'queue', 'stop', 'exit', 'resume', 'question']
+    : ['startup', 'prompt', 'slash-help', 'slash-status', 'stop', 'exit', 'resume', 'question'];
   try {
     state.terminal = openTerminal(state.homeDir, mode);
     for (const name of order) await scenario(state, name, scenarios[name]);
