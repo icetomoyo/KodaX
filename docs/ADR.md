@@ -4,6 +4,13 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.7 release addendum:** A2A responses return eligible file
+> outputs from successful writes in both coding and managed execution. The
+> returned set is derived from the written-files record rather than
+> conversation compaction or the memory artifact ledger, existing
+> publication limits and legacy executors are preserved, and HTML/HTM
+> outputs are typed `text/html`.
+>
 > **v0.7.96-rc.6 release addendum:** Windows Shell cleanup verification is
 > evidence-bounded: process-tree queries are skipped only when every retained
 > target is definitively absent, unknown cleanup outcomes keep their fences

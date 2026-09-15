@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-rc.6 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-rc.7 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,10 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-rc.6 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-rc.7 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The rc.7 release returns eligible A2A file outputs from successful writes in both coding and');
+    expect(sdk).toContain('independently of conversation compaction and the memory artifact ledger');
+    expect(sdk).toContain("recognized as `text/html`.");
     expect(sdk).toContain('The rc.6 release reduces Windows exit delays from unresolved historical Shell records');
     expect(sdk).toContain('only when every retained target is definitively absent');
     expect(sdk).toContain('first post-termination snapshot');

@@ -784,6 +784,13 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.7 release:** Seventh release candidate of the v0.7.96 line.
+Successful writes return eligible file outputs over A2A in both coding and
+managed execution, independently of conversation compaction and the memory
+artifact ledger, with existing publication limits and legacy executors
+preserved; HTML/HTM outputs are recognized as `text/html`. Every rc.6
+contract is retained.
+
 **v0.7.96-rc.6 release:** Sixth release candidate of the v0.7.96 line.
 Reduces Windows exit delays from unresolved historical Shell records:
 process-tree queries are skipped only when every retained target is
@@ -914,7 +921,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc6-release-preparation).
+[release checklist](docs/release.md#v0796-rc7-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
