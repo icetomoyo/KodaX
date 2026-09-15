@@ -99,6 +99,7 @@ import {
 } from '../reasoning.js';
 import { effortToLegacyReasoningMode } from '@kodax-ai/llm';
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
+import type { KodaXWrittenFile } from '../types.js';
 import {
   getRepoRoutingSignals,
   resolveKodaXAutoRepoMode,
@@ -968,6 +969,8 @@ async function runSubstrateInContext(
     runtime: runtime ?? undefined,
     managedProtocolPayloadRef,
   });
+  const writtenFiles = new Map<string, KodaXWrittenFile>();
+  ctx.writtenFiles = writtenFiles;
   if (ctx.actorControl !== undefined) {
     ctx.actorTurnRef = {
       actorPath: ctx.actorControl.callerPath,
@@ -1150,13 +1153,12 @@ async function runSubstrateInContext(
       runtimeSessionState,
       { includeUnchanged: false },
     );
-    const finalized = payload || runtimeSessionSnapshot
-      ? {
-          ...result,
-          ...(payload ? { managedProtocolPayload: payload } : {}),
-          ...(runtimeSessionSnapshot ? { runtimeSessionSnapshot } : {}),
-        }
-      : result;
+    const finalized = {
+      ...result,
+      writtenFiles: [...writtenFiles.values()],
+      ...(payload ? { managedProtocolPayload: payload } : {}),
+      ...(runtimeSessionSnapshot ? { runtimeSessionSnapshot } : {}),
+    };
     if (memorySession !== undefined) {
       const checks = collectVerifiedCheckFacts(finalized.artifactLedger ?? []);
       try {

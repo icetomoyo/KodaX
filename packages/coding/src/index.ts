@@ -218,6 +218,7 @@ export type {
   KodaXSelfManualConfig,
   KodaXSkillDynamicContextPolicy,
   KodaXResult,
+  KodaXWrittenFile,
   KodaXExecutionFailure,
   KodaXSessionControl,
   KodaXSessionMutators,

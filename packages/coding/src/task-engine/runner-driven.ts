@@ -90,6 +90,7 @@ import {
   codingMemorySourcePolicy,
 } from '../memory/coding-observations.js';
 import { collectVerifiedCheckFacts } from '../memory/verified-checks.js';
+import type { KodaXWrittenFile } from '../types.js';
 import {
   createMemoryRecallBinding,
 } from '../tools/memory-recall.js';
@@ -1451,8 +1452,10 @@ async function runManagedTaskViaRunnerInner(
   const siblingSnapshotRef: {
     current: readonly DiscoveredInstance[] | undefined;
   } = { current: undefined };
+  const writtenFiles = new Map<string, KodaXWrittenFile>();
   const baseCtx: KodaXToolExecutionContext = {
     ...substrateBaseCtx,
+    writtenFiles,
     mutationTracker,
     todoStore,
     // Last-resort LLM blob summarizer bound to the Worker's own
@@ -2972,6 +2975,7 @@ async function runManagedTaskViaRunnerInner(
       : undefined;
 
   const result: KodaXResult = {
+    writtenFiles: [...writtenFiles.values()],
     // FEATURE_184 (v0.7.45) Phase C.1: success=false when the run is
     // blocked, regardless of source — sidecar verdict (verdictStatus=
     // 'blocked') or Generator-level blocked handoff (signal='BLOCKED').

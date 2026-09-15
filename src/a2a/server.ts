@@ -288,8 +288,20 @@ function artifactMediaType(file: string): string {
     '.csv': 'text/csv', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.json': 'application/json', '.pdf': 'application/pdf', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.txt': 'text/plain', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.html': 'text/html', '.htm': 'text/html',
   };
   return mediaTypes[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+}
+
+function outputFileCandidates(result: RuntimeRunResult) {
+  // [] is authoritative. Only older/custom executors may fall back to the ledger.
+  return result.result?.writtenFiles?.map((file) => ({
+    target: file.path, admittedSkillOutput: file.sourceTool === 'run_skill_script',
+  })) ?? (result.result?.artifactLedger ?? []).flatMap((entry) => (
+    (entry.kind === 'file_created' || entry.kind === 'file_modified') && typeof entry.target === 'string'
+      ? [{ target: entry.target, admittedSkillOutput: entry.sourceTool === 'run_skill_script' && entry.action === 'promote_output' }]
+      : []
+  ));
 }
 
 function stagedArtifacts(
@@ -298,18 +310,17 @@ function stagedArtifacts(
   options: PreparedA2AServerOptions,
 ): readonly A2AArtifact[] {
   const root = record.workspaceRoot ?? options.agent.projectPath;
-  if (!root || !result.result?.artifactLedger) return [];
+  if (!root) return [];
   let realRoot: string;
   try { realRoot = fs.realpathSync(root); }
   catch { return []; }
   const seen = new Set<string>();
   const artifacts: A2AArtifact[] = [];
-  for (const entry of result.result.artifactLedger) {
-    if ((entry.kind !== 'file_created' && entry.kind !== 'file_modified') || typeof entry.target !== 'string') continue;
+  for (const entry of outputFileCandidates(result)) {
     const candidate = path.isAbsolute(entry.target) ? entry.target : path.resolve(root, entry.target);
     const relative = path.relative(root, candidate);
     const explicitlyStaged = relative.split(path.sep).includes('.kodax-a2a-staging');
-    const admittedSkillOutput = entry.sourceTool === 'run_skill_script' && entry.action === 'promote_output';
+    const { admittedSkillOutput } = entry;
     if (!isInside(root, candidate) || (!explicitlyStaged && !admittedSkillOutput)) continue;
     let stats: fs.Stats;
     let real: string;

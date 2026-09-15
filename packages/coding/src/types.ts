@@ -2582,6 +2582,12 @@ export interface KodaXRuntimeSessionSnapshot {
   extensionRecords?: KodaXExtensionSessionRecord[];
 }
 
+export interface KodaXWrittenFile {
+  readonly path: string;
+  /** Retains a successful Skill promotion even if a later edit changes the file. */
+  readonly sourceTool: 'write' | 'edit' | 'multi_edit' | 'insert_after_anchor' | 'run_skill_script';
+}
+
 export interface KodaXResult {
   success: boolean;
   lastText: string;
@@ -2619,6 +2625,11 @@ export interface KodaXResult {
    * backward compatibility on code paths that have not yet been updated.
    */
   artifactLedger?: readonly KodaXSessionArtifactLedgerEntry[];
+  /** Successful writes in this invocation; candidates, not permission to publish files.
+   * Unlike the compaction ledger, this list is not truncated with conversation history.
+   * An empty list is authoritative; undefined supports older/custom executors.
+   */
+  writtenFiles?: readonly KodaXWrittenFile[];
   /** 是否被用户中断 (Ctrl+C) */
   interrupted?: boolean;
   /** 是否达到迭代上限 */
@@ -2847,6 +2858,8 @@ export interface KodaXToolExecutionContext {
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */
   recordToolResultArtifact?: (toolCallId: string, outputPath: string) => void;
+  /** @internal Invocation-owned successful writes; reset by each execution path. */
+  writtenFiles?: Map<string, KodaXWrittenFile>;
   /** Session-scoped directory for helper scripts and scratch outputs. */
   sessionScratchDir?: string;
   /**
