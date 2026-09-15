@@ -17,8 +17,7 @@ describe('multimodal tool delivery', () => {
   beforeEach(async () => {
     directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-image-result-'));
     imagePath = path.join(directory, 'pixel.png');
-    await fs.writeFile(imagePath, Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+    await fs.copyFile('tests/fixtures/images/valid-png.png', imagePath);
   });
   afterEach(async () => {
     clearRuntimeModelProviders();

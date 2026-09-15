@@ -1964,6 +1964,8 @@ export interface KodaXContextOptions {
     reopenInputWindow(): void;
     /** Host retains the batch until the supplied canonical persistence succeeds. */
     consumePendingInputs?(persist: (inputs: readonly QueuedMessage[]) => Promise<void>): Promise<readonly QueuedMessage[]>;
+    /** Read-only Host queue fact for invalidating a recovery plan; does not request end-of-turn yielding. */
+    hasPendingInputs?(): boolean;
   };
   /** Host attribution for an explicit Workflow command, SDK request, or natural-language product word. */
   workflowIntent?: 'explicit';

@@ -1,3 +1,4 @@
+import { recordRejectedImage } from './rejected-image.js';
 /**
  * KodaX Anthropic Compatible Provider
  *
@@ -39,9 +40,7 @@ import {
   lowerCacheBoundaries,
 } from '../cache-control.js';
 import {
-  MISSING_IMAGE_PLACEHOLDER,
-  readImageFileAsBase64IfAvailable,
-  resolveImageMediaType,
+  prepareImageBlock,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import {
@@ -812,9 +811,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             const request = buildRequest(capability);
             response = await client.messages.create(
               request,
-              this.buildMessageCreateOptions(request, model, signal),
-            );
+              { ...this.buildMessageCreateOptions(request, model, signal), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+            ).catch(error => { recordRejectedImage(error, request); throw error; });
           } catch (error) {
+            if (streamOptions?.singleAttempt) throw error;
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -1105,7 +1105,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         : toolBlocks;
 
       return { textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason };
-    }, signal, 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
     });
@@ -1240,9 +1240,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             const request = buildRequest(capability);
             response = await client.messages.create(
               request,
-              this.buildMessageCreateOptions(request, model, signal),
-            );
+              { ...this.buildMessageCreateOptions(request, model, signal), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+            ).catch(error => { recordRejectedImage(error, request); throw error; });
           } catch (error) {
+            if (streamOptions?.singleAttempt) throw error;
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -1322,7 +1323,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         usage: normalizeAnthropicUsage((response as Anthropic.Messages.Message).usage),
         stopReason: (response as Anthropic.Messages.Message).stop_reason ?? undefined,
       };
-    }, signal, 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
     });
@@ -1462,18 +1463,17 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                 if (item.type === 'text') {
                   items.push({ type: 'text', text: item.text });
                 } else if (item.type === 'image') {
-                  const encoded = await readImageFileAsBase64IfAvailable(
-                    item.path,
-                  );
-                  if (encoded === undefined) {
-                    items.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
+                  const image = await prepareImageBlock(item);
+                  if ('placeholder' in image) {
+                    items.push({ type: 'text', text: image.placeholder });
                   } else {
+                    if (image.notice) items.push({ type: 'text', text: image.notice });
                     items.push({
                       type: 'image',
                       source: {
                         type: 'base64',
-                        media_type: resolveImageMediaType(item.path, item.mediaType),
-                        data: encoded,
+                        media_type: image.mediaType,
+                        data: image.data,
                       },
                     } as Anthropic.Messages.ImageBlockParam);
                   }
@@ -1495,18 +1495,17 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           if (b.type === 'text') {
             content.push({ type: 'text', text: b.text });
           } else if (b.type === 'image' && m.role === 'user') {
-            const encoded = await readImageFileAsBase64IfAvailable(
-              b.path,
-            );
-            if (encoded === undefined) {
-              content.push({ type: 'text', text: MISSING_IMAGE_PLACEHOLDER });
+            const image = await prepareImageBlock(b);
+            if ('placeholder' in image) {
+              content.push({ type: 'text', text: image.placeholder });
             } else {
+              if (image.notice) content.push({ type: 'text', text: image.notice });
               content.push({
                 type: 'image',
                 source: {
                   type: 'base64',
-                  media_type: resolveImageMediaType(b.path, b.mediaType),
-                  data: encoded,
+                  media_type: image.mediaType,
+                  data: image.data,
                 },
               } as Anthropic.Messages.ImageBlockParam);
             }

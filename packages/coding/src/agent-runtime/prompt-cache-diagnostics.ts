@@ -17,6 +17,7 @@ import {
   KodaXOpenAICompatProvider,
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
+  getPreparedImageDiagnostic,
 } from '@kodax-ai/llm';
 import type {
   CompactionProviderObserver,
@@ -63,17 +64,24 @@ function projectImage(block: Extract<KodaXContentBlock, { type: 'image' }>): unk
   };
 }
 
+function projectPreparedImage(block: Extract<KodaXContentBlock, { type: 'image' }>,
+  type: 'image' | 'image_url'): Readonly<Record<string, unknown>>[] {
+  const image = getPreparedImageDiagnostic(block);
+  if (image && 'placeholder' in image) return [{ type: 'text', text: image.placeholder }];
+  return [
+    ...(image?.notice ? [{ type: 'text', text: image.notice }] : []),
+    { type, mediaType: image?.mediaType ?? resolveDiagnosticImageMediaType(block.path, block.mediaType),
+      dataHash: image?.dataHash ?? hashImageFile(block.path) },
+  ];
+}
+
 function projectToolResultContent(
   block: Extract<KodaXContentBlock, { type: 'tool_result' }>,
 ): unknown {
   if (typeof block.content === 'string') return block.content;
-  return block.content.map((item) => item.type === 'image'
-    ? {
-        type: 'image',
-        mediaType: resolveDiagnosticImageMediaType(item.path, item.mediaType),
-        dataHash: hashImageFile(item.path),
-      }
-    : { type: 'text', text: item.text });
+  return block.content.flatMap((item) => item.type === 'image'
+    ? projectPreparedImage(item, 'image')
+    : [{ type: 'text', text: item.text }]);
 }
 
 function projectProviderVisibleBlock(block: KodaXContentBlock): unknown | undefined {
@@ -154,7 +162,12 @@ function projectOpenAIToolResult(
   if (typeof block.content === 'string') text.push(block.content);
   else for (const item of block.content) {
     if (item.type === 'text') text.push(item.text);
-    else if (diagnosticImageMissing(item.path)) {
+    else if (supportsImages && getPreparedImageDiagnostic(item)) {
+      for (const part of projectPreparedImage(item, 'image_url')) {
+        if (part.type === 'text') text.push(String(part.text));
+        else images.push(part);
+      }
+    } else if (diagnosticImageMissing(item.path)) {
       text.push('[Historical image unavailable: the local attachment file is missing.]');
     } else if (supportsImages) images.push({ type: 'image_url',
       mediaType: resolveDiagnosticImageMediaType(item.path, item.mediaType), dataHash: hashImageFile(item.path) });
@@ -252,11 +265,7 @@ function projectOpenAIMessages(
       role: 'user',
       content: [
         ...(text ? [{ type: 'text', text }] : []),
-        ...images.map((block) => ({
-          type: 'image_url',
-          mediaType: resolveDiagnosticImageMediaType(block.path, block.mediaType),
-          dataHash: hashImageFile(block.path),
-        })),
+        ...images.flatMap((block) => projectPreparedImage(block, 'image_url')),
       ],
     });
   }
@@ -380,7 +389,7 @@ function projectAnthropicMessages(
       if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });
       } else if (block.type === 'image' && role === 'user') {
-        content.push(projectImage(block) as Readonly<Record<string, unknown>>);
+        content.push(...projectPreparedImage(block, 'image'));
       }
     }
     if (

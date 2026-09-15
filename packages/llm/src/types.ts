@@ -848,6 +848,8 @@ export interface KodaXProviderConfig {
 }
 
 export interface KodaXProviderStreamOptions {
+  /** Recovery requests must not multiply their caller-owned attempt budget. */
+  singleAttempt?: boolean;
   /** Request-only tail context. Providers must not mutate persisted messages. */
   ephemeralSuffix?: KodaXEphemeralSuffix;
   /**

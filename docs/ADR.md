@@ -4,6 +4,24 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.6 release addendum:** Windows Shell cleanup verification is
+> evidence-bounded: process-tree queries are skipped only when every retained
+> target is definitively absent, unknown cleanup outcomes keep their fences
+> and Run recovery evidence, and the Windows termination process is reused
+> for its first post-termination snapshot under exact identity checks, with
+> fresh verification and retries whenever cleanup is uncertain.
+>
+> **v0.7.96-rc.5 release addendum:** Image bytes cross the model boundary
+> only after validation: read and MCP images are prepared at receipt,
+> historical images at run admission, and the prepared result is reused
+> across Anthropic/OpenAI requests, retries, and compaction. Confirmed
+> corrupt images become actionable text; valid bytes, tool status, and
+> original history are preserved, and revalidation happens on new reads and
+> resume. Residual native request-content errors admit one evidence-backed
+> text-only diagnostic plus one retry against the current Agent; recovered
+> contexts release credentials and image snapshots. The WASM codec ships as
+> an unprotected sidecar beside the binary.
+>
 > **v0.7.96-rc.4 release addendum:** Session journal event sequencing is
 > epoch-scoped and lock-ordered: new journals initialize sequence zero under
 > the existing lock instead of scanning unrelated Run logs, cached floors are

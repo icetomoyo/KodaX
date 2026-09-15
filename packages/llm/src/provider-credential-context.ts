@@ -1,3 +1,4 @@
+import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export type ProviderCredentialPurpose =
@@ -366,7 +367,7 @@ function redactCredentialValue(
         value: redactCredentialValue(descriptor.value, credential, seen),
       });
     }
-    return redacted;
+    return inheritRejectedImage(value, redacted);
   }
   if (Array.isArray(value)) {
     const redacted: unknown[] = [];

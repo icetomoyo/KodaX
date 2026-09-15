@@ -537,7 +537,7 @@ describe('openai message serialization', () => {
   it('serializes image input blocks as image_url content parts', async () => {
     const cwd = await createTempDir('kodax-openai-images-');
     const imagePath = path.join(cwd, 'diagram.png');
-    await writeFile(imagePath, 'fake-image');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAKAAAAAuCAYAAACvdRKFAAAAhUlEQVR4Ae3BQQGAMADEsO6kIG5q8QQy+mlynvt+JJKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiH7i7gKvb5ZrbwAAAABJRU5ErkJggg==', 'base64'));
     const create = vi.fn().mockResolvedValue({
       choices: [
         {
@@ -635,7 +635,7 @@ describe('openai message serialization', () => {
   it('downgrades multimodal tool_result to text placeholder (no image_url inside tool message)', async () => {
     const cwd = await createTempDir('kodax-openai-toolresult-image-');
     const imagePath = path.join(cwd, 'pic.png');
-    await writeFile(imagePath, 'fake-image');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAKAAAAAuCAYAAACvdRKFAAAAhUlEQVR4Ae3BQQGAMADEsO6kIG5q8QQy+mlynvt+JJKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiH7i7gKvb5ZrbwAAAABJRU5ErkJggg==', 'base64'));
     const create = vi.fn().mockResolvedValue({
       choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },

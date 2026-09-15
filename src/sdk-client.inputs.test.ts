@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -225,7 +225,7 @@ it('delivers a busy queued image through the real Host to the next Provider requ
     const session = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(session.id, { provider: 'product-image-test', model: 'image-test', permissionMode: 'full-access', agentMode: 'sa' });
     const imagePath = path.join(homeDir, 'pixel.png');
-    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+    await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'busy', text: 'Wait before the image.' });
     await expect.poll(() => wireRequests.length).toBe(1);
     const input = { sessionId: session.id, inputId: 'picture', text: 'Describe this image.', delivery: 'after_turn' as const,

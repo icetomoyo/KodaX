@@ -335,3 +335,10 @@ export type {
   CapabilitySearchOptions,
   CapabilitySearchSnapshot,
 } from './capability.js';
+
+export { validateImageBytes } from './image-validation.js';
+export type { ImageValidation } from './image-validation.js';
+export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHistory } from './providers/image-serialization.js';
+export { inspectPreparedImage } from './providers/image-serialization.js';
+export { getRejectedImageHash } from './providers/rejected-image.js';
+export { getPreparedImageDiagnostic, validateImageBytesInRun } from './providers/image-serialization.js';

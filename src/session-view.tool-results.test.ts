@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -39,7 +39,7 @@ it('keeps an actual pre-dispatch cancellation consistent between the Host event 
 it('delivers real SA image results without flattening the event and projects success in the Host', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-view-image-'));
   const imagePath = path.join(directory, 'pixel.png');
-  await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+  await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
   const owner = createViewOwner();
   const hostEvents = owner.events('session', 'run');
   const received: Parameters<NonNullable<KodaXEvents['onToolResult']>>[0][] = [];

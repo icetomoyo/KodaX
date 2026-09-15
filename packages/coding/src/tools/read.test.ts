@@ -254,9 +254,7 @@ describe('toolRead', () => {
   describe('image branch (claudecode parity)', () => {
     it('returns a multimodal content array for PNG files (not a Binary-error string)', async () => {
       const filePath = path.join(tempDir, 'pic.png');
-      // 89 50 4E 47 = "\x89PNG" magic. Bytes after are filler for
-      // `formatSize` to render something reasonable.
-      await fs.writeFile(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Array(120).fill(0)]));
+      await fs.writeFile(filePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAKAAAAAuCAYAAACvdRKFAAAAhUlEQVR4Ae3BQQGAMADEsO6kIG5q8QQy+mlynvt+JJKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiH7i7gKvb5ZrbwAAAABJRU5ErkJggg==', 'base64'));
 
       const result = await toolRead({ path: filePath }, {
         backups: new Map(),
@@ -288,7 +286,7 @@ describe('toolRead', () => {
       ['.webp', 'image/webp'],
     ])('handles %s as %s', async (ext, expectedMime) => {
       const filePath = path.join(tempDir, `pic${ext}`);
-      await fs.writeFile(filePath, Buffer.from(Array(64).fill(0xff)));
+      await fs.copyFile(new URL(`../../../../tests/fixtures/images/valid.${ext === '.jpeg' ? 'jpg' : ext.slice(1)}`, import.meta.url), filePath);
 
       const result = await toolRead({ path: filePath }, {
         backups: new Map(),
@@ -298,6 +296,15 @@ describe('toolRead', () => {
       expect(Array.isArray(result)).toBe(true);
       const items = result as ReadonlyArray<{ type: string; mediaType?: string }>;
       expect(items[1]).toMatchObject({ type: 'image', mediaType: expectedMime });
+    });
+
+    it('returns an actionable text error for a JPEG with headers but no image frame', async () => {
+      const filePath = path.join(tempDir, 'broken.jpg');
+      await fs.copyFile(new URL('../../../../tests/fixtures/images/missing-sof.jpg', import.meta.url), filePath);
+      const result = await toolRead({ path: filePath }, { backups: new Map(), executionCwd: tempDir });
+      expect(typeof result).toBe('string');
+      expect(result).toContain('cannot be decoded');
+      expect(result).toContain('Re-extract');
     });
 
     it('returns a text error (not the multimodal array) for images over the 10 MB cap', async () => {

@@ -1,3 +1,4 @@
+import { recordRejectedImage } from './rejected-image.js';
 /**
  * KodaX OpenAI Compatible Provider
  *
@@ -44,7 +45,7 @@ import {
   withProviderRequestCredential,
 } from '../provider-credential-context.js';
 import {
-  buildImageDataUrlIfAvailable,
+  prepareImageBlock,
   isImageFileMissing,
   MISSING_IMAGE_PLACEHOLDER,
   UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
@@ -950,9 +951,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           try {
             stream = await client.chat.completions.create(
               attemptParams,
-              signal ? { signal } : {},
-            );
+              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+            ).catch(error => { recordRejectedImage(error, attemptParams); throw error; });
           } catch (error) {
+            if (streamOptions?.singleAttempt) throw error;
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -1138,7 +1140,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         }
       }
       return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined };
-    }, signal, 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
     });
@@ -1246,9 +1248,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           try {
             response = await client.chat.completions.create(
               attemptParams,
-              signal ? { signal } : {},
-            ) as OpenAI.Chat.Completions.ChatCompletion;
+              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+            ).catch(error => { recordRejectedImage(error, attemptParams); throw error; }) as OpenAI.Chat.Completions.ChatCompletion;
           } catch (error) {
+            if (streamOptions?.singleAttempt) throw error;
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -1322,7 +1325,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
         stopReason: choice?.finish_reason ?? undefined,
       };
-    }, signal, 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
     });
@@ -1468,9 +1471,12 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       if (item.type === 'text') {
         text.push(item.text);
       } else if (supportsImages) {
-        const url = await buildImageDataUrlIfAvailable(item.path, item.mediaType);
-        if (url === undefined) text.push(MISSING_IMAGE_PLACEHOLDER);
-        else images.push({ type: 'image_url', image_url: { url } });
+        const image = await prepareImageBlock(item);
+        if ('placeholder' in image) text.push(image.placeholder);
+        else {
+          if (image.notice) text.push(image.notice);
+          images.push({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } });
+        }
       } else {
         text.push(await isImageFileMissing(item.path)
           ? MISSING_IMAGE_PLACEHOLDER : UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER);
@@ -1527,20 +1533,18 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       });
     }
     for (const block of imageBlocks) {
-      const dataUrl = await buildImageDataUrlIfAvailable(
-        block.path,
-        block.mediaType,
-      );
-      if (dataUrl === undefined) {
+      const image = await prepareImageBlock(block);
+      if ('placeholder' in image) {
         content.push({
           type: 'text',
-          text: MISSING_IMAGE_PLACEHOLDER,
+          text: image.placeholder,
         });
       } else {
+        if (image.notice) content.push({ type: 'text', text: image.notice });
         content.push({
           type: 'image_url',
           image_url: {
-            url: dataUrl,
+            url: `data:${image.mediaType};base64,${image.data}`,
           },
         });
       }

@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/llm",
-  "version": "0.7.96-rc.4",
+  "version": "0.7.96-rc.6",
   "description": "KodaX AI - 独立的 LLM 抽象层，可被其他项目复用",
   "private": true,
   "type": "module",
@@ -23,6 +23,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
     "@anthropic-ai/sdk": "^0.104.2",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "image-size": "2.0.2",
     "openai": "^6.32.0",
     "partial-json": "^0.1.7"
   },

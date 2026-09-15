@@ -30,6 +30,7 @@ afterEach(async () => {
   await fs.rm(directory, { recursive: true, force: true });
 });
 const image = { type: 'image', path: '/image.png' } as const;
+const pngFixture = new URL('../../../tests/fixtures/images/valid-png.png', import.meta.url);
 class ImageDeliveryProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'anthropic';
   protected readonly config = { apiKeyEnv: 'AUDIT_UNUSED_KEY', model: 'test', supportsThinking: false };
@@ -43,9 +44,10 @@ function pair(content: ToolResult): KodaXMessage[] {
 
 it('AUDIT: constructed Worker preserves a real PNG result returned by ctx.tools.read', async () => {
   const imagePath = path.join(directory, 'pixel.png');
-  await fs.writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+  await fs.writeFile(imagePath, await fs.readFile(pngFixture));
   const ctx = { backups: new Map(), executionCwd: directory };
   const expected = await executeTool('read', { path: imagePath }, ctx);
+  expect(expected).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));
   const handler = await loadHandler({ name: 'image-wrapper', version: '1.0.0', cwd: directory }, {
     kind: 'script', language: 'javascript',
     code: 'export async function handler(input, ctx) { return await ctx.tools.read(input); }',
@@ -102,6 +104,7 @@ it('AUDIT: managed direct read marks a returned error envelope as isError', asyn
 });
 
 it('AUDIT: MCP transport retains native image blocks rather than JSON text', async () => {
+  const imageBytes = await fs.readFile(pngFixture);
   const serverPath = path.join(directory, 'image-server.cjs');
   await fs.writeFile(serverPath, `
     const readline = require('node:readline');
@@ -113,7 +116,7 @@ it('AUDIT: MCP transport retains native image blocks rather than JSON text', asy
         capabilities: { tools: {} }, serverInfo: { name: 'audit', version: '1' } };
       if (message.method === 'tools/list') result = { tools: [{ name: 'image', inputSchema: { type: 'object' } }] };
       if (message.method === 'tools/call') result = { content: [
-        { type: 'text', text: 'Image follows' }, { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=' } ] };
+        { type: 'text', text: 'Image follows' }, { type: 'image', mimeType: 'image/png', data: '${imageBytes.toString('base64')}' } ] };
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
     });
   `);
@@ -125,14 +128,13 @@ it('AUDIT: MCP transport retains native image blocks rather than JSON text', asy
     if (typeof result.content === 'string') throw new Error('Expected native image content.');
     const imageBlock = result.content?.find((item) => item.type === 'image');
     expect(imageBlock?.path).toContain(path.join(directory, 'media', 'mcp'));
-    expect(await fs.readFile(imageBlock!.path)).toEqual(Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=', 'base64'));
+    expect(await fs.readFile(imageBlock!.path)).toEqual(imageBytes);
     await runtime.dispose();
     const restarted = new McpServerRuntime('audit', { type: 'stdio', command: process.execPath,
       args: [serverPath], startupTimeoutMs: 2000, requestTimeoutMs: 2000 }, path.join(directory, 'cache'));
     try {
       expect((await restarted.callTool('image', {})).content).toEqual(result.content);
-      expect((await fs.readFile(imageBlock!.path)).length).toBe(68);
+      expect((await fs.readFile(imageBlock!.path)).length).toBe(imageBytes.length);
       const ctx = { backups: new Map(), executionCwd: directory,
         extensionRuntime: { executeCapability: async () => ({ kind: 'tool', ...result }) },
       } as unknown as KodaXToolExecutionContext;
@@ -142,7 +144,7 @@ it('AUDIT: MCP transport retains native image blocks rather than JSON text', asy
       await new ImageDeliveryProvider({ messages: { create } }).complete(pair(content), [], 'Inspect');
       const wire = create.mock.calls[0]?.[0].messages;
       expect(JSON.stringify(wire)).toContain('"type":"base64"');
-      expect(JSON.stringify(wire)).toContain('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB');
+      expect(JSON.stringify(wire)).toContain(imageBytes.toString('base64'));
       expect(JSON.stringify(wire)).not.toContain(imageBlock!.path);
     } finally { await restarted.dispose(); }
   } finally { await runtime.dispose(); }

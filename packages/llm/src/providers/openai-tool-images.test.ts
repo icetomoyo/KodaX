@@ -14,7 +14,7 @@ afterEach(async () => {
 it.each(['complete', 'stream'] as const)('%s delivers only paired tool images after the full response group', async (method) => {
   directory = await mkdtemp(path.join(tmpdir(), 'kodax-tool-images-'));
   const imagePath = path.join(directory, 'pixel.png');
-  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=';
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAAuCAYAAACvdRKFAAAAhUlEQVR4Ae3BQQGAMADEsO6kIG5q8QQy+mlynvt+JJKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiH7i7gKvb5ZrbwAAAABJRU5ErkJggg==';
   await writeFile(imagePath, Buffer.from(png, 'base64'));
   const provider = createCustomProvider({ name: 'vision-test', protocol: 'openai', model: 'vision',
     baseUrl: 'https://provider.invalid', apiKeyEnv: 'UNUSED', imageInput: true });

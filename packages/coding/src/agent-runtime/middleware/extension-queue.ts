@@ -55,6 +55,7 @@
  */
 
 import type { KodaXMessage, KodaXToolResultBlock } from '@kodax-ai/llm';
+import { prepareHistoryImages } from '@kodax-ai/llm';
 import {
   emitKodaXDiagnostic,
   type StopHookFn,
@@ -316,7 +317,10 @@ export interface PushToolResultsAndSettleOutput {
 export async function pushToolResultsAndSettle(
   input: PushToolResultsAndSettleInput,
 ): Promise<PushToolResultsAndSettleOutput> {
-  input.messages.push({ role: 'user', content: [...input.toolResults] });
+  const message: KodaXMessage = { role: 'user', content: [...input.toolResults] };
+  const preparation = prepareHistoryImages([message]);
+  if (preparation) await preparation;
+  input.messages.push(message);
   if (input.editRecoveryMessages.length > 0) {
     input.messages.push({
       role: 'user',

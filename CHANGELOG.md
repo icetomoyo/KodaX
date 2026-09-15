@@ -8,6 +8,54 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.6] - 2026-09-14
+
+Sixth release candidate of the v0.7.96 line: Windows exit delays from
+unresolved historical Shell records are reduced while unknown cleanup
+outcomes and Run recovery evidence are preserved. Every rc.5 contract is
+retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Reduce Windows exit delays from unresolved historical Shell records. Skip process-tree
+  queries only when every retained target is definitively absent; preserve unknown cleanup
+  outcomes and Run recovery evidence.
+- Reuse the Windows termination process for its first post-termination snapshot. Retain
+  exact process identity checks, fresh verification and retries when cleanup is uncertain.
+
+---
+
+## [0.7.96-rc.5] - 2026-09-14
+
+Fifth release candidate of the v0.7.96 line: corrupt extracted images no
+longer poison subsequent model requests (Issue 335), and residual native
+request-content errors are diagnosed with an evidence-backed text-only
+request. Every rc.4 contract is retained. npm publication remains a manual
+maintainer action.
+
+### Fixed
+
+- Prevent corrupt extracted images from poisoning subsequent model requests (Issue 335).
+  Prepare read/MCP image bytes at receipt and historical images at run admission; reuse them
+  across Anthropic/OpenAI requests, retries and compaction without repeatedly reading files.
+  Preserve valid bytes, text, tool status and original history. Revalidate on new reads/resume,
+  correct stale MIME, keep diagnostics aligned and preserve nested upstream error codes.
+  Cancel preparation promptly while preserving text-only scheduling and direct SDK compatibility.
+  Reuse ingress validation verdicts and include decoder queue waits in the existing time budget.
+  Avoid unused image snapshots for custom Runner callbacks and ACP transports.
+  Decoder unavailability retains the existing image path with an explicit notice.
+  Expose `validateImageBytes` through the LLM and media SDK; include the WASM codec in Bun
+  binaries and release archives.
+- Diagnose residual native request-content errors with the current Agent using a text-only
+  request and the existing output/attempt budgets. Apply only evidence-backed request-view
+  repairs, preserve completed and unknown-execution tool records, retain later valid reasoning,
+  stop on new input/cancellation and allow one
+  diagnostic plus one retry. Preserve precise image evidence through credential redaction;
+  authentication, quota and transport failures keep their existing recovery behavior.
+  Release settled image-validation contexts without retaining credentials or image snapshots.
+
+---
+
 ## [0.7.96-rc.4] - 2026-09-13
 
 Fourth release candidate of the v0.7.96 line: new Session startup no longer

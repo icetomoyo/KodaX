@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -10,14 +10,8 @@ import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
-// 1x1 transparent PNG — real magic bytes so the provider-facing image
-// serialization works with the actual file content.
-const PNG_BYTES = Buffer.from(
-  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6364f8cfc000000301010018dd8db00000000049454e44ae426082',
-  'hex',
-);
-
 it('binds artifact references to their actual file state at run admission', async () => {
+  const PNG_BYTES = await readFile('tests/fixtures/images/valid-png.png');
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-artifacts-'));
   const requestBodies: string[] = [];
   const providerServer = createServer((request, response) => {

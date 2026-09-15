@@ -200,3 +200,69 @@ Independent review: 0 unresolved hard violations and 0 actionable smells.
 Independent review: 0 unresolved findings against FEATURE_299. The additional
 owner-before-child-abort correction closes the observed SDK integration failure;
 the review does not claim broader POSIX process-identity support.
+
+## Windows exit performance correction — 2026-09-14
+
+The reported delay occurred after `[Exiting KodaX...]`: 122 historical Run-owned
+Shell records with absent owners and roots, incomplete root-only captures, and
+unconfirmed cleanup caused 366 synchronous PowerShell invocations. An isolated
+reproduction using the installed bundle's final-cleanup function took 85.8 seconds;
+the event-loop timer could not interrupt the synchronous sweep.
+
+The correction preserves the existing cleanup outcomes and durable-reference
+protocol. A dead-owner Windows record may avoid tree queries only when its retained
+root identity matches and every retained PID, including uncertain descendants, is
+a positive safe integer definitively absent (`ESRCH`). It remains `unknown` at its
+original location. Live targets, permission/query errors, complete captures and
+current owned children retain their original cleanup paths.
+
+For actual Windows termination, the same short-lived PowerShell invocation returns
+a fresh post-termination snapshot. Only a complete, valid result accepted by the
+existing identity/completeness predicate can finish verification early. A missing,
+truncated or failed snapshot retains the original fresh-query and retry path;
+completion of the termination phase remains independent of snapshot success.
+No exit deadlines, public options, registry schema or package dependencies change.
+
+Run the focused Windows regressions with:
+
+```powershell
+node node_modules/vitest/vitest.mjs run packages/agent/src/runtime/managed-child-processes.run.test.ts packages/agent/src/runtime/process-tree.windows.test.ts packages/llm/src/cli-events/process-tree.windows.test.ts packages/agent/src/runtime/process-cleanup.windows.integration.test.ts packages/agent/src/runtime/process-tree.test.ts packages/agent/src/runtime/managed-child-processes.test.ts src/sdk-runtime.shell-registry-recovery.test.ts src/sdk-runtime.shell-recovery.test.ts src/kodax_cli.interactive-exit.test.ts --maxWorkers 1
+```
+
+The real-process regression checks repeated 122-record sweeps without PowerShell
+or evidence changes, actual termination using the combined query, and a live
+retained descendant whose old root has disappeared. Existing Windows tests retain
+coverage for real nested processes and reused root identities. Deterministic tests
+assert reduced query counts when the post-termination snapshot proves completion;
+real-process tests permit additional queries when the OS legitimately needs more
+time. The Windows Shell CI gate includes both the protocol and real-process tests.
+
+Validation on Windows: the 16-file cleanup, registry, SDK recovery, CLI exit and
+MCP/LSP regression group passed 196 tests, with two platform-specific skips.
+The focused 96-test V8 coverage run covered all 96 added executable lines across
+the three changed runtime source files (13/13, 44/44 and 39/39). This is changed-line
+coverage; whole-file coverage in that focused run was 61.15%.
+
+After rebuilding the packages, CLI bundle and SDK declarations, the installed
+bundle's final-cleanup function processed the same shape of 122 isolated records
+in 11.78 ms and 8.45 ms, with zero PowerShell invocations and all original record
+bytes retained. The probe exposed the bundled function through an in-memory export
+only; it did not replace the cleanup algorithm. Other resource-close callbacks
+were idle, so this measures the historical-record bottleneck, not every possible
+interactive exit. The user's registry was not modified.
+
+Source and test type checking and `git diff --check` passed. Verification was
+scoped to affected paths; the full repository suite and unchanged native backends
+were not rerun. The CLI lifecycle test emitted a listener-count warning while
+repeatedly loading the CLI; all its assertions passed.
+
+### Standards
+
+Independent final review: 0 unresolved hard violations or actionable smells.
+
+### Spec
+
+Independent final review: 0 unresolved findings against the approved performance
+correction and FEATURE_299 cleanup/recovery requirements. Actual live descendants,
+reused root identities, incomplete evidence and failed snapshot fallbacks remain
+covered by regression tests.

@@ -319,7 +319,13 @@ function readWindowsProcessSnapshotNative(): WindowsProcessIdentity[] | undefine
     windowsHide: true,
   });
   if (result.error || result.status !== 0) return undefined;
-  const snapshot = result.stdout.split(/\r?\n/).flatMap((line) => {
+  return parseWindowsNativeProcessRows(result.stdout);
+}
+
+function parseWindowsNativeProcessRows(stdout: string): WindowsProcessIdentity[] | undefined {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.some((line) => !/^\d+,\d+,\d+$/.test(line))) return undefined;
+  const snapshot = lines.flatMap((line) => {
     const [pidText, parentText, creationTime = '0'] = line.split(',', 3);
     const pid = Number(pidText);
     const parentPid = Number(parentText);
@@ -398,7 +404,7 @@ function windowsCreationAtLeast(
 
 function currentCapturedWindowsPids(
   captured: readonly WindowsProcessIdentity[],
-  snapshot = readWindowsProcessSnapshot(),
+  snapshot: readonly WindowsProcessIdentity[] | undefined = readWindowsProcessSnapshot(),
 ): Set<number> | undefined {
   if (snapshot === undefined) return undefined;
   const uncertainPids = new Set(
@@ -422,8 +428,8 @@ function currentCapturedWindowsPids(
 
 function capturedWindowsProcessesGone(
   capture: WindowsProcessTreeCapture,
+  snapshot: readonly WindowsProcessIdentity[] | undefined = readWindowsProcessSnapshot(),
 ): boolean | undefined {
-  const snapshot = readWindowsProcessSnapshot();
   if (snapshot === undefined) return undefined;
   const known = currentCapturedWindowsPids(
     [capture.root, ...capture.descendants],
@@ -463,21 +469,53 @@ async function waitForCapturedWindowsProcessesExit(
   return capturedWindowsProcessesGone(capture) === true;
 }
 
+const WINDOWS_TERMINATION_COMPLETED = 'KODAX_TERMINATION_COMPLETED';
+const WINDOWS_SNAPSHOT_COMPLETED = 'KODAX_SNAPSHOT_COMPLETED';
+
+interface WindowsTerminationResult {
+  readonly terminationAttempted: boolean;
+  readonly snapshot?: readonly WindowsProcessIdentity[];
+}
+
+function readWindowsTerminationResult(
+  stdout: string,
+  succeeded: boolean,
+): WindowsTerminationResult {
+  const lines = stdout.trim().split(/\r?\n/);
+  const terminated = lines.indexOf(WINDOWS_TERMINATION_COMPLETED);
+  const completed = lines.indexOf(WINDOWS_SNAPSHOT_COMPLETED);
+  return {
+    // Snapshot failure must not erase a completed termination or suppress retry.
+    terminationAttempted: succeeded || terminated >= 0,
+    snapshot: succeeded && terminated >= 0 && completed > terminated
+      ? parseWindowsNativeProcessRows(lines.slice(terminated + 1, completed).join('\n'))
+      : undefined,
+  };
+}
+
 function terminateCapturedWindowsProcesses(
   captured: readonly WindowsProcessIdentity[],
-): boolean {
+  includeSnapshot = false,
+): WindowsTerminationResult {
   const commands = [...captured].reverse().flatMap((identity) => (
     /^\d+$/.test(identity.creationTime)
       ? [`[KodaXNativeProcessSnapshot]::TerminateExact(${identity.pid}, [UInt64]${identity.creationTime}) | Out-Null`]
       : []
   ));
-  if (commands.length === 0) return false;
+  if (commands.length === 0) return { terminationAttempted: false };
   const script = [
     "$source = @'",
     NATIVE_PARENT_PROCESS_SOURCE,
     "'@",
     'Add-Type -TypeDefinition $source',
     ...commands,
+    ...(includeSnapshot ? [
+      `[Console]::Out.WriteLine('${WINDOWS_TERMINATION_COMPLETED}')`,
+      '[Console]::Out.Flush()',
+      '[Console]::Out.Write([KodaXNativeProcessSnapshot]::ReadRows())',
+      `[Console]::Out.WriteLine('${WINDOWS_SNAPSHOT_COMPLETED}')`,
+      '[Console]::Out.Flush()',
+    ] : []),
   ].join('\n');
   const result = spawnSync('powershell.exe', [
     '-NoProfile',
@@ -489,7 +527,7 @@ function terminateCapturedWindowsProcesses(
     timeout: TASKKILL_TIMEOUT_MS,
     windowsHide: true,
   });
-  return !result.error && result.status === 0;
+  return readWindowsTerminationResult(result.stdout ?? '', !result.error && result.status === 0);
 }
 
 interface WindowsProcessTreeCapture {
@@ -575,12 +613,14 @@ async function killCapturedWindowsTree(
   capture: WindowsProcessTreeCapture,
 ): Promise<ProcessTreeKillResult> {
   const captured = [capture.root, ...capture.descendants];
-  const terminationAttempted = terminateCapturedWindowsProcesses(captured);
+  const termination = terminateCapturedWindowsProcesses(captured, capture.completeTree);
   if (!capture.completeTree) return UNKNOWN;
+  if (termination.snapshot !== undefined
+    && capturedWindowsProcessesGone(capture, termination.snapshot) === true) return TERMINATED;
   if (await waitForCapturedWindowsProcessesExit(capture, FORCE_WAIT_MS)) {
     return TERMINATED;
   }
-  if (!terminationAttempted) return UNKNOWN;
+  if (!termination.terminationAttempted) return UNKNOWN;
   terminateCapturedWindowsProcesses(captured);
   return await waitForCapturedWindowsProcessesExit(capture, FORCE_WAIT_MS)
     ? TERMINATED

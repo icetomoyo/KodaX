@@ -67,6 +67,7 @@ export async function cleanupManagedRunChildProcess(
     const owned = record.ownerPid === process.pid && sameRunChildRecord(active?.record, record);
     if (!owned && !runChildOwnerIsGone(record)) return { status: 'unknown' };
     if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
+    if (!owned && incompleteRunTreeTargetsAreGone(record)) return { status: 'unknown' };
     if (!owned) record = persistRunChildTree(record);
     const result = owned ? await killChildProcessTree(active!.child) : await killPidTree(record.pid, {
       expectedProcessStartIdentity: record.processStartIdentity,
@@ -98,6 +99,21 @@ function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expe
     && current.registrationId === expected.registrationId && current.runtimeRunId === expected.runtimeRunId
     && current.ownerPid === expected.ownerPid && current.ownerProcessStartIdentity === expected.ownerProcessStartIdentity
     && current.processStartIdentity === expected.processStartIdentity && current.registeredAtMs === expected.registeredAtMs;
+}
+
+function incompleteRunTreeTargetsAreGone(record: ManagedChildProcessRecord): boolean {
+  if (process.platform !== 'win32' || record.processTreeComplete === true) return false;
+  const identities = record.processTreeIdentities;
+  const root = identities?.find((identity) => identity.pid === record.pid);
+  if (identities === undefined || record.processStartIdentity === undefined
+    || root?.creationTime !== record.processStartIdentity) return false;
+  // A missing root cannot reveal a new tree. When every retained target is
+  // also gone, exact termination would do nothing and cleanup stays unconfirmed.
+  return identities.every(({ pid }) => {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    try { process.kill(pid, 0); return false; }
+    catch (error: unknown) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+  });
 }
 
 function persistRunChildTree(record: ManagedChildProcessRecord): ManagedChildProcessRecord {

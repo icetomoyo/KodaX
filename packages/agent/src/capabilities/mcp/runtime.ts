@@ -1,6 +1,7 @@
 import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
 import { getActiveMcpCallContext, runWithMcpCallContext } from './call-context.js';
 import type { CapabilityResult, KodaXToolResultContentItem } from '@kodax-ai/llm';
+import { prepareValidatedImageBlock, validateImageBytesInRun } from '@kodax-ai/llm';
 import { persistImageAsBlock } from '../../media/persist-image.js';
 import { getAgentConfigPath } from '../../runtime/agent-home.js';
 import {
@@ -207,14 +208,27 @@ async function normalizeMcpContent(value: unknown): Promise<CapabilityResult['co
     if (record) {
       const mediaType = record?.mimeType;
       if (mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/gif' && mediaType !== 'image/webp') {
-        throw new Error(`Unsupported MCP image media type: ${String(mediaType)}`);
+        items.push({ type: 'text', text: '[MCP image unavailable: unsupported media type. Return this attachment as PNG, JPEG, GIF or WebP; other results remain available.]' });
+        continue;
       }
       if (typeof data !== 'string' || !data.length || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-        throw new Error('MCP image content must contain valid base64 data.');
+        items.push({ type: 'text', text: '[MCP image unavailable: invalid base64 data. Return this attachment with valid encoding; other results remain available.]' });
+        continue;
       }
-      items.push(await persistImageAsBlock({ buffer: Buffer.from(data, 'base64'), mediaType }, {
+      const buffer = Buffer.from(data, 'base64');
+      const validation = await validateImageBytesInRun(buffer);
+      if (validation.status === 'invalid') {
+        items.push({ type: 'text', text: '[MCP image unavailable: this attachment cannot be decoded. Re-extract or replace this image; other results remain available.]' });
+        continue;
+      }
+      if (validation.status === 'unverified') {
+        items.push({ type: 'text', text: `[Local MCP image validation unavailable (${validation.reason}); original bytes retained.]` });
+      }
+      const image = await persistImageAsBlock({ buffer, mediaType: validation.mediaType ?? mediaType }, {
         directory: getAgentConfigPath('media', 'mcp'), fileNamePrefix: 'mcp',
-      }));
+      });
+      prepareValidatedImageBlock(image, buffer, validation);
+      items.push(image);
     } else {
       const text = flattenMcpContent([entry]);
       if (text !== undefined) items.push({ type: 'text', text });

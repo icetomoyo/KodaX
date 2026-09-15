@@ -10478,6 +10478,7 @@ function createRuntimeRunService(deps: {
       provider: record.provider,
       record,
       sessionManager: deps.sessionManager,
+      hasPendingInputs: () => productQueue.list(record.sessionId).length > 0,
       consumePendingInputs: persist => deps.sessionOperations.run(record.sessionId, async () => {
         if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
           || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
@@ -13427,6 +13428,7 @@ function createWorkspaceSandboxRootRegistry(input: {
 }
 
 function buildRunOptions(input: {
+  readonly hasPendingInputs: () => boolean;
   readonly consumePendingInputs: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumePendingInputs'];
   readonly agentPlane?: AgentExecutorPlane;
   readonly authorizeForcedPermission: (
@@ -13657,7 +13659,10 @@ function buildRunOptions(input: {
         : {}),
       ...(record.actorSession ? { actorSession: record.actorSession } : {}),
       ...(record.actorSession || !isForkInvocation ? { interruptInput: {
-        ...(!isForkInvocation ? { consumePendingInputs: input.consumePendingInputs } : {}),
+        ...(!isForkInvocation ? {
+          consumePendingInputs: input.consumePendingInputs,
+          hasPendingInputs: input.hasPendingInputs,
+        } : {}),
         closeInputWindow() { record.interruptInputOpen = false; },
         reopenInputWindow() {
           if (record.actorSession !== undefined && !record.terminalEmitted

@@ -356,6 +356,10 @@ jobs:
         run: >-
           npx vitest run
           packages/agent/src/runtime/managed-child-processes.run.test.ts
+          packages/agent/src/runtime/process-tree.windows.test.ts
+          packages/agent/src/runtime/process-tree.test.ts
+          packages/agent/src/runtime/process-cleanup.windows.integration.test.ts
+          packages/llm/src/cli-events/process-tree.windows.test.ts
           packages/coding/src/child-executor.shell-cleanup.test.ts
           src/sdk-runtime.child-shell-cleanup.test.ts
           src/sdk-runtime.shell-registry-recovery.test.ts

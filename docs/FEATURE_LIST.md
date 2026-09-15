@@ -11,10 +11,11 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.4` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-rc.4` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.6` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.6` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-
+| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.6` |
+| Current development | `v0.7.97` / `FEATURE_298` — Product Host / Client implementation and parity verification |
 | Total tracked features | `83` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -27,7 +28,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.4; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.6; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -517,9 +518,36 @@
 
 ---
 
+## v0.7.96-rc.6 Release Record
+
+`v0.7.96-rc.6` is the sixth release candidate of the v0.7.96 line. It
+reduces Windows exit delays from unresolved historical Shell records:
+process-tree queries are skipped only when every retained target is
+definitively absent, unknown cleanup outcomes and Run recovery evidence are
+preserved, and the Windows termination process is reused for its first
+post-termination snapshot with exact identity checks, fresh verification,
+and retries when cleanup is uncertain. Every rc.5 contract is retained. npm
+publication remains a manual maintainer step.
+
+## v0.7.96-rc.5 Release Record
+
+`v0.7.96-rc.5` was the fifth release candidate of the v0.7.96 line and fixes
+Issue 335. Read and MCP image bytes are validated at receipt and historical
+images are prepared at run admission, reused across Anthropic/OpenAI
+requests, retries, and compaction without repeatedly reading files. Confirmed
+corrupt images become actionable text while valid bytes, text, tool status,
+and original history are preserved; revalidation happens on new reads and
+resume, stale MIME is corrected, and nested upstream error codes survive.
+`validateImageBytes` ships through the LLM and media SDK, and the WASM codec
+is included in Bun binaries and release archives. Residual native
+request-content errors are diagnosed with the current Agent using one
+evidence-backed text-only request plus one retry, without retaining
+credentials or image snapshots. Every rc.4 contract is retained. npm
+publication remains a manual maintainer step.
+
 ## v0.7.96-rc.4 Release Record
 
-`v0.7.96-rc.4` is the fourth release candidate of the v0.7.96 line and fixes
+`v0.7.96-rc.4` was the fourth release candidate of the v0.7.96 line and fixes
 Issue 334. New Session event journals initialize at sequence zero under the
 existing lock instead of scanning unrelated Run logs, removing a synchronous
 startup stall that could push concurrent Session history reads past their

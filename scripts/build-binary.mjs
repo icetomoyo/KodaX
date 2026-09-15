@@ -11,6 +11,7 @@
  *     provider-capabilities.json
  *     semantic-worker.js
  *     constructed-handler-worker.js
+ *     image-codec/       ← original Photon JS + WASM for isolated image decoding
  *
  * Usage:
  *   node scripts/build-binary.mjs                    # current platform
@@ -357,6 +358,13 @@ function buildOne(target, version) {
     throw new Error(`Missing ${capJsonSrc}.`);
   }
   cpSync(capJsonSrc, join(outDir, 'provider-capabilities.json'));
+
+  // Image validation runs the unchanged JS/WASM codec outside the compiled executable.
+  const imageCodecSrc = join(ROOT, 'node_modules', '@silvia-odwyer', 'photon-node');
+  if (!existsSync(join(imageCodecSrc, 'photon_rs_bg.wasm'))) {
+    throw new Error(`Missing image codec: ${imageCodecSrc}. Run npm ci first.`);
+  }
+  cpSync(imageCodecSrc, join(outDir, 'image-codec'), { recursive: true });
 
   // 4. Sidecar repo-intelligence worker. The compiled binary cannot load a
   // worker from inside its single executable image; semantic-worker-client

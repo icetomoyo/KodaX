@@ -7,7 +7,10 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide describes the `v0.7.97` development branch, based on `v0.7.96-rc.4`; npm publication remains a
+This guide describes the `v0.7.97` development branch, based on `v0.7.96-rc.6`; npm publication remains a
+separate manual maintainer step. The SDK
+advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:6`,
+`sharedSessionSettings:2`, and `crashOutcomeModel:2`;
 trusted text transactions are split from platform shell containment
 (cross-Runtime per-file kernel locking, revision CAS, flushed atomic
 replacement, and a native restricted-token Windows shell runner behind
