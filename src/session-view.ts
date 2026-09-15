@@ -336,7 +336,7 @@ export class SessionViewOwner {
   }
 }
 
-function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonly ClientViewItem[]): ClientViewItem[] {
+export function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonly ClientViewItem[]): ClientViewItem[] {
   const items = [...history];
   let nextPosition = items.length;
   // Canonical entries own their positions. Unsaved text keeps its live order
@@ -346,6 +346,10 @@ function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonl
     if (position >= 0) {
       items[position] = item;
       nextPosition = position;
+    } else if (isSettledCanonicalDuplicate(items, item)) {
+      // The canonical projection already owns this settled output; keeping
+      // the live segment copy too would render the same reply twice.
+      continue;
     } else {
       const sourceIndex = item.afterInputId === undefined ? -1
         : items.findIndex(candidate => candidate.type === 'user' && candidate.inputId === item.afterInputId);
@@ -357,6 +361,35 @@ function mergeSessionViewItems(history: readonly ClientViewItem[], live: readonl
     }
   }
   return items;
+}
+
+/**
+ * True when a live assistant/thinking segment already has its canonical copy
+ * in history within the same round window. Identity adoption fails when the
+ * two projections diverge by edge whitespace (the persisted message is
+ * trimmed), so the merge falls back to trimmed-text equality.
+ */
+function isSettledCanonicalDuplicate(items: readonly ClientViewItem[], item: ClientViewItem): boolean {
+  if (item.type !== 'assistant' && item.type !== 'thinking') return false;
+  const liveText = item.text.trim();
+  if (!liveText) return false;
+  let windowStart = -1;
+  if (item.afterInputId !== undefined) {
+    windowStart = items.findIndex(candidate => candidate.type === 'user' && candidate.inputId === item.afterInputId);
+  }
+  if (windowStart < 0) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index]!.type === 'user') { windowStart = index; break; }
+    }
+  }
+  if (windowStart < 0) return false;
+  let windowEnd = -1;
+  for (let index = windowStart + 1; index < items.length; index += 1) {
+    if (items[index]!.type === 'user') { windowEnd = index; break; }
+  }
+  return items.some((candidate, index) => candidate.type === item.type
+    && candidate.text.trim() === liveText
+    && index > windowStart && (windowEnd < 0 || index < windowEnd));
 }
 
 function createChildActivityUpdater(update: (patch: Omit<Partial<ClientSessionActivity>, 'runId'>) => void) {

@@ -19,7 +19,7 @@ it('retains inline workflow process facts and a readable saved child digest', as
 import type { KodaXSessionData } from '@kodax-ai/agent';
 import { runWithProviderCredential } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from './session-view.js';
+import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems, mergeSessionViewItems } from './session-view.js';
 
 it('invalidates embedded observations when the Host releases the session', async () => {
   const owner = new SessionViewOwner(async () => ({
@@ -491,4 +491,30 @@ it('finishes an observation against the new branch when its initial read crosses
     expect(observed.map(next => next.items[0]?.text)).toEqual(['new branch']);
     handle.close();
   } finally { await owner.close(); }
+});
+
+it('collapses a settled live output into its canonical copy when only whitespace diverges', () => {
+  const history = [
+    { id: 'u1', type: 'user' as const, text: 'query', inputId: 'input-1', timestamp: 1 },
+    { id: 'c1', type: 'assistant' as const, text: 'END_SETTLED', timestamp: 2 },
+  ];
+  const live = [
+    { id: 'run-1:req-1:assistant', type: 'assistant' as const, text: ' END_SETTLED',
+      timestamp: 3, afterInputId: 'input-1' },
+  ];
+  const merged = mergeSessionViewItems(history, live);
+  expect(merged.filter(item => item.type === 'assistant').map(item => item.id)).toEqual(['c1']);
+});
+
+it('keeps a still-streaming live output that has no canonical counterpart yet', () => {
+  const history = [
+    { id: 'u1', type: 'user' as const, text: 'query', inputId: 'input-1', timestamp: 1 },
+  ];
+  const live = [
+    { id: 'run-1:req-1:assistant', type: 'assistant' as const, text: 'partial an',
+      timestamp: 3, afterInputId: 'input-1' },
+  ];
+  const merged = mergeSessionViewItems(history, live);
+  expect(merged.filter(item => item.type === 'assistant').map(item => item.id))
+    .toEqual(['run-1:req-1:assistant']);
 });
