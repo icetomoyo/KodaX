@@ -180,6 +180,8 @@ export interface CommandCallbacks {
   listHostCommands?: KodaXProductClient['catalog']['commands'];
   inspectExtensions?: KodaXProductClient['catalog']['extensions'];
   mcp?: Pick<KodaXProductClient['mcp'], 'status' | 'listTools'>;
+  /** Host-owned reasoning-effort probing; unbound keeps the local provider path. */
+  providerCapabilities?: Pick<KodaXProductClient['catalog'], 'probeReasoningEfforts' | 'forgetCapabilities'>;
   startReview?: KodaXProductClient['review']['start'];
   reviewAgentsLean?: KodaXProductClient['agents']['reviewLean'];
   exit: () => void | Promise<void>;
@@ -296,35 +298,6 @@ export interface CommandCallbacks {
    * Host manager so every client of the same Host sees the same work.
    */
   workflows?: WorkflowHostControl;
-  /**
-   * FEATURE_298 T37 — Host-side trusted Skill preparation. When present,
-   * explicit Skill invocations load/expand against the Host's trusted
-   * registry (client supplies only name + argument text); absent keeps the
-   * local preparation until the fallback removal slice.
-   */
-  prepareSkillInvocation?: SkillPreparationBinding;
-  /**
-   * FEATURE_298 T37 — Host-side trusted preparation for discovered prompt
-   * commands (markdown frontmatter + content); builtin/skill/extension
-   * commands stay client-side.
-   */
-  prepareCommandInvocation?: CommandPreparationBinding;
-  /** FEATURE_298 T37 — Host-side /review preparation (diff + packets). */
-  prepareReview?: ReviewPreparationBinding;
-  /** FEATURE_298 T37 — Host-side /agents lean prompt preparation. */
-  prepareAgentsLean?: (input: {
-    readonly projectRoot: string;
-  }) => Promise<
-    | {
-      readonly kind: 'prepared';
-      readonly invocation: {
-        readonly prompt: string;
-        readonly source: 'prompt';
-        readonly displayName: string;
-      };
-    }
-    | { readonly kind: 'missing' }
-  >;
   getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
   openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
   /**
@@ -506,92 +479,6 @@ export interface MemoryCommandPlane {
   reviewerProviderConfigured(): boolean;
   rebuild(): Promise<MemoryRebuildResult>;
   ensureOpenTarget(targetPath: string): Promise<string>;
-}
-
-/** FEATURE_298 T37 — Host-prepared explicit Skill invocation projection. */
-export interface PreparedSkillInvocation {
-  readonly prompt: string;
-  readonly source: 'skill';
-  readonly displayName: string;
-  readonly path?: string;
-  readonly disableModelInvocation?: boolean;
-  readonly allowedTools?: string;
-  readonly context?: 'fork';
-  readonly agent?: string;
-  readonly argumentHint?: string;
-  readonly model?: string;
-  readonly hooks?: CommandHooks;
-  readonly skillInvocation: import('@kodax-ai/coding').KodaXSkillInvocationContext;
-}
-
-/** FEATURE_298 T37 — Host-prepared discovered prompt-command projection. */
-export interface PreparedCommandInvocation {
-  readonly prompt: string;
-  readonly source: 'prompt';
-  readonly displayName: string;
-  readonly path?: string;
-  readonly disableModelInvocation?: boolean;
-  readonly userInvocable?: boolean;
-  readonly allowedTools?: string;
-  readonly context?: 'fork';
-  readonly agent?: string;
-  readonly argumentHint?: string;
-  readonly model?: string;
-  readonly hooks?: CommandHooks;
-  readonly frontmatter?: Record<string, unknown>;
-}
-
-export interface CommandPreparationBinding {
-  prepare(input: {
-    readonly projectRoot: string;
-    readonly name: string;
-  }): Promise<
-    | { readonly kind: 'prepared'; readonly invocation: PreparedCommandInvocation }
-    | { readonly kind: 'local' }
-    | { readonly kind: 'unknown' }
-  >;
-}
-
-/** FEATURE_298 T37 — Host-prepared /review result projection. */
-export type PreparedReview =
-  | {
-    readonly kind: 'prepared';
-    readonly invocation: {
-      readonly prompt: string;
-      readonly source: 'prompt';
-      readonly displayName: string;
-    };
-  }
-  | {
-    readonly kind: 'workflow';
-    readonly workflow: {
-      readonly request: string;
-      readonly displayName: string;
-      readonly builtinName: 'scoped-review';
-      readonly builtinArgs: Record<string, unknown>;
-    };
-  }
-  | { readonly kind: 'empty' }
-  | { readonly kind: 'error'; readonly message: string };
-
-export interface ReviewPreparationBinding {
-  prepare(input: {
-    readonly projectRoot: string;
-    readonly sessionId: string;
-    readonly args: readonly string[];
-  }): Promise<PreparedReview>;
-}
-
-export interface SkillPreparationBinding {
-  prepare(input: {
-    readonly projectRoot: string;
-    readonly name: string;
-    readonly argumentsText?: string;
-    readonly sessionId?: string;
-  }): Promise<
-    | { readonly kind: 'prepared'; readonly invocation: PreparedSkillInvocation }
-    | { readonly kind: 'unknown' }
-  >;
 }
 
 export interface WorkflowHostControl {

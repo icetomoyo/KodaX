@@ -1712,16 +1712,37 @@ export const BUILTIN_COMMANDS: Command[] = [
       // offered again. With no target, clears the whole cache.
       if (input === 'forget-capability') {
         const target = (args[1] ?? '').trim();
-        if (!target) {
-          clearCapabilityCache();
-          console.log(chalk.dim('\n[Cleared all learned capability overrides]\n'));
+        const parseTarget = (): { provider: string; model?: string } => {
+          const slash = target.indexOf('/');
+          return {
+            provider: slash === -1 ? target : target.slice(0, slash),
+            model: slash === -1 ? undefined : target.slice(slash + 1) || undefined,
+          };
+        };
+        const clearLocal = (): void => {
+          if (!target) {
+            clearCapabilityCache();
+            console.log(chalk.dim('\n[Cleared all learned capability overrides]\n'));
+            return;
+          }
+          const { provider: fp, model: fm } = parseTarget();
+          clearCapabilityCache(fp, fm);
+          console.log(chalk.dim(`\n[Cleared learned capability overrides for ${fp}${fm ? `/${fm}` : ''}]\n`));
+        };
+        // Host-owned cache when bound: the Host face governs Host-side effort
+        // selection; the local mirror still clears so unbound fallbacks and
+        // display logic stay consistent.
+        const hostCapabilities = _callbacks?.providerCapabilities;
+        if (hostCapabilities !== undefined) {
+          const { provider, model } = parseTarget();
+          void hostCapabilities.forgetCapabilities(target ? { provider, model } : undefined)
+            .then(clearLocal)
+            .catch((error: unknown) => {
+              console.log(chalk.red(`\n[Forget failed: ${error instanceof Error ? error.message : String(error)}]\n`));
+            });
           return;
         }
-        const slash = target.indexOf('/');
-        const fp = slash === -1 ? target : target.slice(0, slash);
-        const fm = slash === -1 ? undefined : target.slice(slash + 1) || undefined;
-        clearCapabilityCache(fp, fm);
-        console.log(chalk.dim(`\n[Cleared learned capability overrides for ${fp}${fm ? `/${fm}` : ''}]\n`));
+        clearLocal();
         return;
       }
 
@@ -1737,7 +1758,16 @@ export const BUILTIN_COMMANDS: Command[] = [
         const label = `${currentConfig.provider}/${currentConfig.model ?? '(default)'}`;
         console.log(chalk.dim(`\n[Probing ${label} — ${candidates.length} efforts, minimal requests…]`));
         try {
-          const results = await probeProviderReasoningEfforts({
+          // Host-owned probing when bound: rejections are recorded into the
+          // Host capability cache that governs Host-side effort selection.
+          const hostResults = _callbacks?.providerCapabilities !== undefined
+            ? await _callbacks.providerCapabilities.probeReasoningEfforts({
+              provider: currentConfig.provider,
+              model: currentConfig.model,
+              efforts: candidates,
+            })
+            : undefined;
+          const results = hostResults ?? await probeProviderReasoningEfforts({
             provider: currentConfig.provider,
             model: currentConfig.model,
             efforts: candidates,
@@ -3251,28 +3281,6 @@ export async function executeCommand(
       return clientCommandResult(result);
     }
 
-    // FEATURE_298 T37 — discovered prompt commands prepare Host-side when a
-    // binding is present: the client sends only the registered name and the
-    // Host reads the command file against its trusted discovery order.
-    if (
-      callbacks.prepareCommandInvocation !== undefined
-      && cmd.source === 'extension'
-      && cmd.path !== undefined
-    ) {
-      try {
-        const prepared = await callbacks.prepareCommandInvocation.prepare({
-          projectRoot: context.gitRoot ?? process.cwd(),
-          name: parsed.command,
-        });
-        if (prepared.kind === 'prepared') {
-          return { invocation: prepared.invocation };
-        }
-      } catch (error) {
-        console.log(chalk.red(`\n[Command preparation failed: ${error instanceof Error ? error.message : String(error)}]`));
-        return false;
-      }
-    }
-
     try {
       const result = await cmd.handler(parsed.args, context, callbacks, currentConfig);
       // Handle project init prompt.
@@ -3389,7 +3397,7 @@ async function executeSkillCommand(
     }
     console.log();
 
-    const invocation = await prepareUserSkillInvocation(callbacks ?? {}, skillName, skillArgs, {
+    const invocation = await prepareUserSkillInvocation(skillName, skillArgs, {
       workingDirectory: context.runtimeInfo?.executionCwd ?? process.cwd(),
       projectRoot: context.gitRoot ?? undefined,
       sessionId: context.sessionId,

@@ -431,6 +431,11 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
     result: okSchema,
   },
+  'learning.subscribe': { params: objectSchema({ afterRevision: integerSchema }, [], true), result: subscriptionSchema() },
+  'learning.unsubscribe': {
+    params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
+    result: okSchema,
+  },
   'workflow.pause': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.resume': { params: runIdParamsSchema(), result: booleanSchema },
   'workflow.stop': { params: objectSchema({ runId: stringSchema, sessionId: stringSchema }, ['runId']), result: booleanSchema },

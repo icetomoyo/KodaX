@@ -96,6 +96,7 @@ import { projectConversationHistoryPage, readConversationHistoryEntry, readHisto
 import type {
   AskUserAnswer,
   LearningEvent,
+  LearningSubscribeOptions,
   McpServerConfig,
   McpServerToolList,
 } from '@kodax-ai/agent';
@@ -1077,7 +1078,7 @@ export function createRuntimeDaemonClient(
         }) as ReturnType<KodaXRuntime['learning']['events']>;
       },
       subscribe(subscribeOptions) {
-        return pollRuntimeLearningEvents(request, subscribeOptions?.afterRevision ?? 0);
+        return learningEventPushIterable(options.transport, request, subscribeOptions);
       },
       async acknowledge(nameOrSlug) {
         await request('learning.acknowledge', { nameOrSlug });
@@ -1397,22 +1398,55 @@ export function createRuntimeDaemonClient(
   };
 }
 
-async function* pollRuntimeLearningEvents(
-  request: (method: RuntimeDaemonMethod, params?: unknown) => Promise<unknown>,
-  initialRevision: number,
-): AsyncIterable<LearningEvent> {
-  let revision = initialRevision;
-  while (true) {
-    const events = await request('learning.events', { afterRevision: revision }) as readonly LearningEvent[];
-    if (events.length === 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      continue;
-    }
-    for (const event of events) {
-      revision = event.sequence;
-      yield event;
-    }
-  }
+/**
+ * Push-backed learning event stream: a learning.subscribe notification
+ * subscription surfaced as the contract AsyncIterable. Events emitted
+ * between subscribe request and handshake are buffered, mirroring the
+ * workflow subscription semantics.
+ */
+function learningEventPushIterable(
+  transport: RuntimeDaemonClientTransport,
+  request: RuntimeDaemonClientTransport["request"],
+  options: LearningSubscribeOptions | undefined,
+): AsyncIterableIterator<LearningEvent> {
+  const buffered: LearningEvent[] = [];
+  let wake: (() => void) | undefined;
+  let failure: ((error: unknown) => void) | undefined;
+  let closed = false;
+  const subscription = subscribeToDaemonNotification(transport, request, "learning.subscribe", {
+    ...(options?.afterRevision !== undefined ? { afterRevision: options.afterRevision } : {}),
+  }, (event) => {
+    buffered.push(event as LearningEvent);
+    const resolve = wake;
+    wake = undefined;
+    resolve?.();
+  });
+  subscription.ready?.catch((error: unknown) => {
+    const reject = failure;
+    failure = undefined;
+    reject?.(error);
+  });
+  const iterator: AsyncIterableIterator<LearningEvent> = {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next(): Promise<IteratorResult<LearningEvent>> {
+      for (;;) {
+        if (buffered.length > 0) return { value: buffered.shift()!, done: false };
+        if (closed) return { done: true, value: undefined };
+        await new Promise<void>((resolve, reject) => {
+          wake = resolve;
+          failure = reject;
+        });
+      }
+    },
+    async return(): Promise<IteratorResult<LearningEvent>> {
+      closed = true;
+      subscription.close();
+      return { done: true, value: undefined };
+    },
+  };
+  return iterator;
 }
 
 function reportReverseBridgeFailure(kind: string): void {
@@ -2217,7 +2251,7 @@ function subscribeToDaemonWorkflowEvents(
 function subscribeToDaemonNotification(
   transport: RuntimeDaemonClientTransport,
   request: RuntimeDaemonClientTransport['request'],
-  method: 'workflow.subscribe',
+  method: 'workflow.subscribe' | 'learning.subscribe',
   params: unknown,
   listener: (event: unknown) => void,
 ): RuntimeSubscription {
@@ -2311,10 +2345,12 @@ function deserializeRuntimeError(value: unknown): Error | undefined {
 
 function unsubscribeRemote(
   request: RuntimeDaemonClientTransport['request'],
-  subscribeMethod: 'workflow.subscribe',
+  subscribeMethod: 'workflow.subscribe' | 'learning.subscribe',
   subscriptionId: string,
 ): void {
-  const unsubscribeMethod = 'workflow.unsubscribe';
+  const unsubscribeMethod = subscribeMethod === 'workflow.subscribe'
+    ? 'workflow.unsubscribe'
+    : 'learning.unsubscribe';
   void request(unsubscribeMethod, { subscriptionId }).catch(() => undefined);
 }
 

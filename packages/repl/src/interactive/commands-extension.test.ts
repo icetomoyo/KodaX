@@ -286,7 +286,7 @@ describe('extension command host adapters', () => {
     expect(output).not.toContain('diag-cmd  Diagnostic command');
   });
 
-  it('prepares discovered prompt commands through the Host binding (FEATURE_298 T37)', async () => {
+  it('runs discovered prompt commands through the local registry handler', async () => {
     const cmdDir = path.join(tempDir, '.kodax', 'commands');
     await mkdir(cmdDir, { recursive: true });
     await writeFile(
@@ -308,47 +308,14 @@ describe('extension command host adapters', () => {
     registry.clear();
     getCommandRegistry(tempDir);
     try {
-      const seen: Array<{ name: string; projectRoot: string }> = [];
-      const binding = {
-        async prepare(input: { name: string; projectRoot: string }) {
-          seen.push(input);
-          if (input.name !== 'host-prep') return { kind: 'local' as const };
-          return {
-            kind: 'prepared' as const,
-            invocation: {
-              prompt: 'Host-prepared prompt body.',
-              source: 'prompt' as const,
-              displayName: 'host-prep',
-              allowedTools: 'Read',
-            },
-          };
-        },
-      };
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const result = await executeCommand(
-        { command: 'host-prep', args: [] },
-        { sessionId: 'session-1', gitRoot: tempDir } as never,
-        { prepareCommandInvocation: binding } as never,
-        {} as never,
-      );
-      logSpy.mockRestore();
-
-      expect(seen).toEqual([{ name: 'host-prep', projectRoot: tempDir }]);
-      expect(result).toMatchObject({
-        invocation: {
-          prompt: 'Host-prepared prompt body.',
-          source: 'prompt',
-          displayName: 'host-prep',
-        },
-      });
-
-      // Without a binding the local registry handler still runs.
       const local = await executeCommand(
         { command: 'host-prep', args: [] },
         { sessionId: 'session-1', gitRoot: tempDir } as never,
         {} as never,
         {} as never,
       );
+      logSpy.mockRestore();
       expect(local).toMatchObject({
         invocation: {
           prompt: 'Local prompt body.',

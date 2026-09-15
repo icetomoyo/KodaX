@@ -194,17 +194,6 @@ export const agentsCommand: Command = {
       return clientCommandResult(result);
     }
 
-    // FEATURE_298 T37 — with a Host binding the AGENTS.md read and prompt
-    // build happen Host-side; missing files keep the local init fallback.
-    const leanBinding = callbacks?.prepareAgentsLean;
-    if (leanBinding !== undefined) {
-      const prepared = await leanBinding({ projectRoot: root });
-      if (prepared.kind === 'prepared') {
-        return { success: true, invocation: prepared.invocation };
-      }
-      return await initializeAgentsFile(agentsPath, callbacks);
-    }
-
     let content: string;
     try {
       content = await readFile(agentsPath, 'utf8');

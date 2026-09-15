@@ -3100,6 +3100,8 @@ const METHOD_SMOKE_PARAMS = {
   'workflow.get': { runId: 'run-1' },
   'workflow.subscribe': { filter: { runId: 'run-1' } },
   'workflow.unsubscribe': { subscriptionId: 'workflow-sub-missing' },
+'learning.subscribe': {},
+'learning.unsubscribe': { subscriptionId: 'learning-sub-missing' },
   'workflow.pause': { runId: 'run-1' },
   'workflow.resume': { runId: 'run-1' },
   'workflow.stop': { runId: 'run-1' },

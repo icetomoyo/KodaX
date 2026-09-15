@@ -11,7 +11,7 @@ import {
   type KodaXContextTokenSnapshot,
   type KodaXResult,
 } from '@kodax-ai/coding';
-import type { CommandInvocationRequest, SkillPreparationBinding } from '../commands/types.js';
+import type { CommandInvocationRequest } from '../commands/types.js';
 
 function collectSkillReferences(input: string): readonly InlineSkillReference[] {
   return [
@@ -127,60 +127,26 @@ export async function createUserSkillInvocation(
 }
 
 /**
- * FEATURE_298 T37 — binding-aware explicit Skill preparation. With a Host
- * binding the client sends only the registered name + argument text and the
- * Host loads/expands against its trusted registry; without one the local
- * preparation still runs until the fallback removal slice.
+ * Explicit Skill preparation for unbound surfaces. In the product
+ * fixed-Host wiring the Host owns Skill expansion during input admission,
+ * so no client-side Host binding exists or is needed.
  */
 export async function prepareUserSkillInvocation(
-  bindings: { readonly prepareSkillInvocation?: SkillPreparationBinding },
   name: string,
   argumentsText: string,
   context: SkillContext,
 ): Promise<CommandInvocationRequest | undefined> {
-  const binding = bindings.prepareSkillInvocation;
-  if (binding === undefined) {
-    return createUserSkillInvocation(name, argumentsText, context);
-  }
-  const prepared = await binding.prepare({
-    projectRoot: context.projectRoot ?? context.workingDirectory,
-    name,
-    ...(argumentsText.trim().length > 0 ? { argumentsText } : {}),
-    ...(context.sessionId !== undefined ? { sessionId: context.sessionId } : {}),
-  });
-  if (prepared.kind === 'unknown') return undefined;
-  const invocation = prepared.invocation;
-  return {
-    prompt: invocation.prompt,
-    source: invocation.source,
-    displayName: invocation.displayName,
-    ...(invocation.path !== undefined ? { path: invocation.path } : {}),
-    ...(invocation.disableModelInvocation !== undefined
-      ? { disableModelInvocation: invocation.disableModelInvocation }
-      : {}),
-    userInvocable: true,
-    ...(invocation.allowedTools !== undefined ? { allowedTools: invocation.allowedTools } : {}),
-    ...(invocation.context !== undefined ? { context: invocation.context } : {}),
-    ...(invocation.agent !== undefined ? { agent: invocation.agent } : {}),
-    ...(invocation.argumentHint !== undefined ? { argumentHint: invocation.argumentHint } : {}),
-    ...(invocation.model !== undefined ? { model: invocation.model } : {}),
-    ...(invocation.hooks !== undefined ? { hooks: invocation.hooks } : {}),
-    skillInvocation: invocation.skillInvocation,
-  };
+  return createUserSkillInvocation(name, argumentsText, context);
 }
 
-/** Binding-aware form of resolveUserSkillInvocation (raw input text). */
+/** Resolve-then-prepare form (raw input text). */
 export async function prepareUserSkillInvocationFromInput(
-  bindings: { readonly prepareSkillInvocation?: SkillPreparationBinding },
   input: string,
   context: SkillContext,
 ): Promise<CommandInvocationRequest | undefined> {
-  if (bindings.prepareSkillInvocation === undefined) {
-    return resolveUserSkillInvocation(input, context);
-  }
   const reference = await resolveUserSkillReference(input, context);
   return reference
-    ? prepareUserSkillInvocation(bindings, reference.name, reference.argumentsText, context)
+    ? prepareUserSkillInvocation(reference.name, reference.argumentsText, context)
     : undefined;
 }
 

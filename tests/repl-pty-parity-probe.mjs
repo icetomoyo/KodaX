@@ -125,6 +125,7 @@ async function respondToModelRequest(state, request, response) {
   for await (const chunk of request) body += chunk;
   const data = JSON.parse(body);
   state.requests.push(data);
+  if (lastUserText(data.messages) === 'ping') state.probeRequests += 1;
   const token = lastUserText(data.messages).match(/(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   const send = content => response.write(`data: ${JSON.stringify({
@@ -235,6 +236,11 @@ const scenarios = {
     await state.terminal.submit('/status');
     await delay(1200);
   },
+  async 'provider-probe'(state) {
+    await state.terminal.submit('/provider probe');
+    await waitFor('probe output rendered', () => state.terminal.screen().includes('rejections recorded'));
+    await waitFor('three effort probes reached the provider', () => state.probeRequests >= 3);
+  },
   async question(state) {
     await state.terminal.submit('ACCEPT_QUESTION');
     await waitFor('terminal question dialog', () => state.terminal.screen().includes('Which acceptance option?'));
@@ -307,14 +313,14 @@ const scenarios = {
 };
 
 async function run(mode) {
-  const state = { mode, homeDir: path.join(artifacts, `${label}-${mode}`), requests: [], pending: new Map(), providerErrors: [] };
+  const state = { mode, homeDir: path.join(artifacts, `${label}-${mode}`), requests: [], pending: new Map(), providerErrors: [], probeRequests: 0 };
   await mkdir(state.homeDir, { recursive: true });
   await setupProvider(state);
   // The question dialog runs last: a Host without askUser callbacks fails it
   // without blocking the independent scenarios ahead of it.
   const order = mode === 'ink'
-    ? ['startup', 'prompt', 'slash-help', 'slash-status', 'queue', 'stop', 'exit', 'resume', 'question']
-    : ['startup', 'prompt', 'slash-help', 'slash-status', 'stop', 'exit', 'resume', 'question'];
+    ? ['startup', 'prompt', 'slash-help', 'slash-status', 'provider-probe', 'queue', 'stop', 'exit', 'resume', 'question']
+    : ['startup', 'prompt', 'slash-help', 'slash-status', 'provider-probe', 'stop', 'exit', 'resume', 'question'];
   try {
     state.terminal = openTerminal(state.homeDir, mode);
     for (const name of order) await scenario(state, name, scenarios[name]);

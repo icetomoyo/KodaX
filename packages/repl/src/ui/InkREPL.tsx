@@ -768,11 +768,6 @@ export interface InkREPLOptions extends KodaXOptions {
   learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
-  /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
-  prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
-  prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
-  prepareReview?: CommandCallbacks['prepareReview'];
-  prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   commandClient?: CommandCallbacks['commandClient'];
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
@@ -9060,7 +9055,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     let invocation;
     try {
       invocation = await prepareUserSkillInvocationFromInput(
-        { prepareSkillInvocation: options.prepareSkillInvocation },
         rawInput,
         {
         workingDirectory: currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
@@ -10063,7 +10057,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         inlineSkillInvocation = options.clientPlane || parsed || fullText.trim().startsWith('!')
           ? undefined
           : await prepareUserSkillInvocationFromInput(
-            { prepareSkillInvocation: options.prepareSkillInvocation },
             fullText.trim(),
             {
               workingDirectory: currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
@@ -10110,10 +10103,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
           openLearningCenter,
           workflows: options.workflows,
-          prepareSkillInvocation: options.prepareSkillInvocation,
-          prepareCommandInvocation: options.prepareCommandInvocation,
-          prepareReview: options.prepareReview,
-          prepareAgentsLean: options.prepareAgentsLean,
           commandClient: options.commandClient,
           listHostCommands: options.listHostCommands,
           inspectExtensions: options.inspectExtensions,

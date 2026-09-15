@@ -340,6 +340,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "learning.get",
     "learning.snapshot",
     "learning.events",
+    "learning.subscribe",
+    "learning.unsubscribe",
   ]),
   ...scopeEntries("learning:control", [
     "learning.acknowledge",
@@ -2197,6 +2199,35 @@ async function dispatchRuntimeDaemonRequest(
           "afterRevision",
         ),
       );
+    case "learning.subscribe": {
+      // Push subscription over the generic event notification channel, the
+      // same wiring workflow.subscribe uses; a bound client no longer has to
+      // poll learning.events to observe learning lifecycle changes.
+      const subscriptionId = createSubscriptionId();
+      const iterator = bindRuntimeLearningClient(runtime.learning, principalId).subscribe({
+        afterRevision: optionalIntegerField(optionalRecord(request.params) ?? {}, "afterRevision"),
+      })[Symbol.asyncIterator]();
+      const driver = (async () => {
+        try {
+          for (;;) {
+            const next = await iterator.next();
+            if (next.done) break;
+            notify(subscriptionId, next.value);
+          }
+        } catch { /* closed or the learning service failed */ }
+      })();
+      rememberSubscription(subscriptionId, {
+        close: () => {
+          void iterator.return?.();
+          void driver.catch(() => undefined);
+        },
+      });
+      return { subscriptionId };
+    }
+    case "learning.unsubscribe":
+      return {
+        ok: closeSubscription(requireStringParam(request.params, "subscriptionId")),
+      };
     case "learning.acknowledge":
       await bindRuntimeLearningClient(
         runtime.learning,

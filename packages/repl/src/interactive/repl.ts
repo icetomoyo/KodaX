@@ -500,11 +500,6 @@ export interface RepLOptions extends KodaXOptions {
   learning?: LearningBinding;
   /** FEATURE_298 T22 — Host workflow plane; required for start/control. */
   workflows?: CommandCallbacks['workflows'];
-  /** FEATURE_298 T37 — Host-side trusted Skill preparation. */
-  prepareSkillInvocation?: CommandCallbacks['prepareSkillInvocation'];
-  prepareCommandInvocation?: CommandCallbacks['prepareCommandInvocation'];
-  prepareReview?: CommandCallbacks['prepareReview'];
-  prepareAgentsLean?: CommandCallbacks['prepareAgentsLean'];
   commandClient?: CommandCallbacks['commandClient'];
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
@@ -1220,10 +1215,6 @@ Keyboard Shortcuts:
     learning: options.learning,
     getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
     workflows: options.workflows,
-    prepareSkillInvocation: options.prepareSkillInvocation,
-    prepareCommandInvocation: options.prepareCommandInvocation,
-    prepareReview: options.prepareReview,
-    prepareAgentsLean: options.prepareAgentsLean,
     commandClient: options.commandClient,
     listHostCommands: options.listHostCommands,
     inspectExtensions: options.inspectExtensions,
@@ -2219,7 +2210,7 @@ Keyboard Shortcuts:
     if (options.clientPlane) return { invocation: undefined, rejected: false } as const;
     try {
       return {
-        invocation: await prepareUserSkillInvocationFromInput(callbacks, input, {
+        invocation: await prepareUserSkillInvocationFromInput(input, {
           workingDirectory: currentOptions.context?.executionCwd ?? process.cwd(),
           projectRoot: context.gitRoot ?? undefined,
           sessionId: context.sessionId,

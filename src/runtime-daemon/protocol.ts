@@ -97,6 +97,8 @@ export type RuntimeDaemonMethod =
   | 'learning.get'
   | 'learning.snapshot'
   | 'learning.events'
+  | 'learning.subscribe'
+  | 'learning.unsubscribe'
   | 'learning.acknowledge'
   | 'learning.snooze'
   | 'learning.reject'
@@ -445,6 +447,8 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'learning.get',
   'learning.snapshot',
   'learning.events',
+  'learning.subscribe',
+  'learning.unsubscribe',
   'learning.acknowledge',
   'learning.snooze',
   'learning.reject',
