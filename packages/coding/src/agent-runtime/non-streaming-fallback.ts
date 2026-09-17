@@ -56,6 +56,7 @@ import type {
   KodaXEphemeralSuffix,
 } from '@kodax-ai/llm';
 import { withProviderRequestCredential } from '@kodax-ai/llm';
+import { getCachedRejectedEfforts, recordRejectedEffort } from '@kodax-ai/agent';
 import type { BoundaryTrackerSession } from './boundary-tracker-session.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
@@ -78,6 +79,8 @@ export interface NonStreamingFallbackInput {
   readonly providerName: string;
   readonly attempt: number;
   readonly responseId: string;
+  /** Capability-cache location override (custom KODAX_HOME); must match the host turn loop. */
+  readonly configHome?: string;
   /**
    * Hook to clear the streaming-mode timers BEFORE the fallback fires.
    * Required because the streaming attempt's watchdogs would otherwise
@@ -139,6 +142,12 @@ export async function executeNonStreamingFallback(
         input.effectiveProviderReasoning,
         {
           promptCacheKey: input.promptCacheKey,
+          rejectedReasoningEfforts: getCachedRejectedEfforts(input.providerName, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
+          onReasoningEffortRejected: (event) => {
+            recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
+            input.events.onReasoningEffortRejected?.(event);
+          },
+          onReasoningResolved: (event) => input.events.onReasoningResolved?.(event),
           onTextDelta: (text: string) => {
             input.boundarySession.markTextDelta(text);
             void input.emitActiveExtensionEvent('text:delta', { text });

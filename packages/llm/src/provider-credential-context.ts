@@ -343,6 +343,46 @@ function isPromiseLike<T>(value: T): value is T & PromiseLike<unknown> {
     && typeof value.then === 'function';
 }
 
+function redactCredentialError(
+  value: Error,
+  credential: string,
+  seen: WeakMap<object, unknown>,
+): Error {
+  // DOMException accessors require constructor-created internal state.
+  const redacted = value instanceof DOMException
+    ? new DOMException(
+      value.message.split(credential).join('[REDACTED_CREDENTIAL]'),
+      value.name.split(credential).join('[REDACTED_CREDENTIAL]'),
+    )
+    : new Error();
+  Object.setPrototypeOf(redacted, Object.getPrototypeOf(value));
+  const nativeStackGetter = Object.getOwnPropertyDescriptor(redacted, 'stack')?.get;
+  delete redacted.stack;
+  seen.set(value, redacted);
+  for (const key of Reflect.ownKeys(value)) {
+    let descriptor = Object.getOwnPropertyDescriptor(value, key);
+    // Materialize V8's lazy stack, but never execute custom diagnostic getters.
+    if (key === 'stack' && descriptor?.get && descriptor.get === nativeStackGetter) {
+      descriptor = {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        writable: true,
+        value: value.stack,
+      };
+    }
+    if (descriptor === undefined || !('value' in descriptor)) continue;
+    const safeKey = typeof key === 'string'
+      ? key.split(credential).join('[REDACTED_CREDENTIAL]')
+      : key;
+    if (Object.prototype.hasOwnProperty.call(redacted, safeKey)) continue;
+    Object.defineProperty(redacted, safeKey, {
+      ...descriptor,
+      value: redactCredentialValue(descriptor.value, credential, seen),
+    });
+  }
+  return inheritRejectedImage(value, redacted);
+}
+
 function redactCredentialValue(
   value: unknown,
   credential: string,
@@ -352,23 +392,7 @@ function redactCredentialValue(
   if (value === null || typeof value !== 'object') return value;
   const previous = seen.get(value);
   if (previous !== undefined) return previous;
-  if (value instanceof Error) {
-    const redacted = Object.create(Object.getPrototypeOf(value)) as Error;
-    seen.set(value, redacted);
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor === undefined || !('value' in descriptor)) continue;
-      const safeKey = typeof key === 'string'
-        ? key.split(credential).join('[REDACTED_CREDENTIAL]')
-        : key;
-      if (Object.prototype.hasOwnProperty.call(redacted, safeKey)) continue;
-      Object.defineProperty(redacted, safeKey, {
-        ...descriptor,
-        value: redactCredentialValue(descriptor.value, credential, seen),
-      });
-    }
-    return inheritRejectedImage(value, redacted);
-  }
+  if (value instanceof Error) return redactCredentialError(value, credential, seen);
   if (Array.isArray(value)) {
     const redacted: unknown[] = [];
     seen.set(value, redacted);

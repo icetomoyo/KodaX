@@ -4,8 +4,8 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current release: `v0.7.96-rc.7`
-> (`@kodax-ai/kodax@0.7.96-rc.7`; Windows `sandboxRuntime:11`,
+> Current release: `v0.7.96-rc.8`
+> (`@kodax-ai/kodax@0.7.96-rc.8`; Windows `sandboxRuntime:11`,
 > `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
 > `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
 >
@@ -24,7 +24,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The package release is `@kodax-ai/kodax@0.7.96-rc.7`, which includes the v2
+The package release is `@kodax-ai/kodax@0.7.96-rc.8`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -1703,7 +1703,62 @@ closed wire objects. Unknown authority fields fail validation; `metadata` is
 the sole open host-extension field. Compile-time key guards keep the daemon
 spawn schema aligned with `AgentSpawnInput`, including required control keys.
 
-## 23. Related Documents
+## 23. Custom OpenAI-Compatible Reasoning
+
+Missing custom OpenAI reasoning metadata selects a compatible effort wire strategy
+without asserting supported levels. Explicit `reasoning: "none"`, the `none` preset,
+or `supportsThinking: false` still suppress control parameters. Provider-level profiles
+remain inherited by models without their own reasoning declaration.
+
+`auto` prefers `defaultEffort` or a preset marked `isDefault`; otherwise its candidate
+ladder starts at `max`. Explicit effort starts at that value, honors declared aliases,
+and descends through `max`, `xhigh`, `high`, `medium`, `low`, and `minimal`, restricted
+to declared levels when present and excluding aliases that disable thinking. `none` first sends a disable control unless metadata
+explicitly excludes it, then tries enabled levels from lowest to highest. Only after
+all candidates are rejected, or the control parameter itself is rejected, is the
+request sent without that control. Friendly OpenAI configurations use `reasoning_effort`;
+the `openai-responses-effort` profile selects nested `reasoning.effort` on the configured
+compatible endpoint. Explicit provider presets retain their native thinking dialects.
+
+Only HTTP 400/422 errors explicitly rejecting a reasoning control or value teach a
+capability rejection. Authentication, rate limiting, unrelated validation failures,
+missing visible thinking, and successful requests do not establish effort support.
+The provider records rejections before compatibility retries, including `singleAttempt`
+failures. Its instance cache is keyed by wire model. The coding runtime persists events
+in the existing provider/model capability cache and supplies `rejectedReasoningEfforts`
+to each new provider instance, including non-streaming recovery. Standalone LLM hosts
+can supply the same option when recreating instances. Cache strings are rejected wire
+efforts, `*` for rejected reasoning control, or `parameter:<name>` for a rejected budget
+or toggle parameter. No positive-support cache is inferred from success.
+
+`KodaXStreamResult.reasoningResolution` and `onReasoningResolved` report `provider`,
+`model`, `requestedEffort`, optional `sentEffort`, and `fallbacks` (`profile`,
+`unsupported-effort`, `unsupported-parameter`, or `cached-rejection`). `sentEffort`
+describes the actual request value; `verified` remains `false`. Host cache application
+does not replace the user's original intent on the compatible provider path.
+
+Streaming and complete responses share one accumulator for `reasoning_content`,
+`reasoning`, and `reasoning_details`. Detail text/summary takes display precedence over
+duplicate aliases. Only streamed text/summary continuations with matching IDs or
+indices and compatible signatures/formats are joined; complete response blocks keep
+their original boundaries. Encrypted blocks,
+signatures, IDs, format and additional structured fields survive as opaque data in
+`KodaXThinkingBlock.openaiReasoning`, including encrypted-only replies. This metadata
+survives JSON history storage and is replayed only to the same provider, endpoint and
+wire model. Existing `replayReasoningContent` continues to control legacy
+`reasoning_content` echo. The detail shapes follow the
+[OpenRouter reasoning contract](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+
+Regression commands:
+
+```sh
+npx vitest run packages/llm/src
+npx vitest run packages/coding/src/agent-runtime/reasoning-fallback.test.ts packages/coding/src/agent-runtime/__contract-tests__/cap-067-stream-handlers.contract.test.ts packages/coding/src/agent-runtime/__contract-tests__/cap-071-non-streaming-fallback.contract.test.ts
+npm run build:packages
+npm run typecheck
+```
+
+## 24. Related Documents
 
 - Product requirements: [PRD.md](PRD.md)
 - High-level design: [HLD.md](HLD.md)

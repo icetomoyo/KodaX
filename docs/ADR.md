@@ -4,6 +4,17 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.8 release addendum:** Custom OpenAI-compatible reasoning is
+> negotiated from `auto`: rejected efforts lower through explicit levels
+> without losing explicit disable intent, hard-rejection caches span
+> streaming and non-streaming turns, and requested/sent effort plus fallback
+> reasons reach SDK hosts while `reasoning` and structured
+> `reasoning_details` replay only to the same endpoint and model. Timeout
+> and cancellation errors keep native DOMException semantics, nested causes,
+> and redacted stacks across scoped credentials. KodaX's default `NODE_ENV`
+> is injected only for KodaX's own process tree and stripped from user shell
+> command and probe environments via the `KODAX_INTERNAL_NODE_ENV` marker.
+>
 > **v0.7.96-rc.7 release addendum:** A2A responses return eligible file
 > outputs from successful writes in both coding and managed execution. The
 > returned set is derived from the written-files record rather than

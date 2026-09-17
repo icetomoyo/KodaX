@@ -156,7 +156,7 @@ export function classifyError(error: Error): ErrorClassification {
 
   // 检查通用网络错误模式
   const msg = error.message.toLowerCase();
-  if (matchesTransientMessage(msg)) {
+  if (error.name === 'TimeoutError' || matchesTransientMessage(msg)) {
     return {
       category: ErrorCategory.TRANSIENT,
       retryable: true,

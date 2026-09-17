@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { types } from 'node:util';
 
 import {
   createProviderCredentialLeaseScope,
@@ -20,6 +21,89 @@ import {
 import { KodaXRateLimitError } from './errors.js';
 
 describe('provider credential context', () => {
+  it.each(['TimeoutError', 'AbortError'])('preserves native %s semantics during redaction', (name) => {
+    const secret = 'fake-domexception-secret';
+    const original = new DOMException(`request failed with ${secret}`, name);
+    const redacted = runWithProviderCredential('openai', secret, () =>
+      redactScopedProviderCredential(original));
+
+    expect(redacted).not.toBe(original);
+    expect(redacted).toBeInstanceOf(DOMException);
+    expect(redacted.name).toBe(name);
+    expect(redacted.message).toBe('request failed with [REDACTED_CREDENTIAL]');
+    expect(redacted.code).toBe(original.code);
+    expect(String(redacted)).toBe(`${name}: request failed with [REDACTED_CREDENTIAL]`);
+    expect(redacted.stack).toBe(original.stack?.replaceAll(secret, '[REDACTED_CREDENTIAL]'));
+    expect(original.message).toContain(secret);
+  });
+
+  it('preserves native Error identity and lazy stack diagnostics', () => {
+    const original = new TypeError('failed with fake-stack-secret');
+    const redacted = runWithProviderCredential('openai', 'fake-stack-secret', () =>
+      redactScopedProviderCredential(original));
+
+    expect(types.isNativeError(redacted)).toBe(true);
+    expect(redacted).toBeInstanceOf(TypeError);
+    expect(redacted.stack).toBe(original.stack?.replaceAll('fake-stack-secret', '[REDACTED_CREDENTIAL]'));
+    expect(redacted.stack).toContain('provider-credential-context.test.ts');
+  });
+
+  it('does not execute custom diagnostic getters while cloning errors', () => {
+    const original = new Error('failed with fake-getter-secret');
+    Object.defineProperty(original, 'stack', {
+      get() { throw new Error('custom stack getter must not run'); },
+    });
+    const redacted = runWithProviderCredential('openai', 'fake-getter-secret', () =>
+      redactScopedProviderCredential(original));
+    expect(redacted.message).toBe('failed with [REDACTED_CREDENTIAL]');
+    expect(redacted.stack).toBeUndefined();
+  });
+
+  it('redacts repeated native causes, aggregate errors and cycles through a derived request lease', async () => {
+    const secret = 'fake-nested-secret';
+    const timeout = new DOMException(`deadline exceeded ${secret}`, 'TimeoutError');
+    const abort = new DOMException(`cancelled ${secret}`, 'AbortError');
+    const original = new AggregateError([timeout, abort], `failed ${secret}`, { cause: timeout });
+    Object.defineProperty(timeout, 'cause', { value: abort, configurable: true });
+    Object.defineProperty(abort, 'cause', { value: original, configurable: true });
+    const scope = createProviderCredentialLeaseScope({
+      allowedProviders: ['openai'],
+      acquire: async () => secret,
+    });
+
+    try {
+      const failure = await runWithProviderCredentialLeaseScope(scope, async () => {
+        const child = deriveCurrentProviderCredentialLeaseScope(['openai'])!;
+        try {
+          return await runWithProviderCredentialLeaseScope(child, () => withProviderRequestCredential(
+            'openai', 'primary', undefined,
+            () => { throw redactScopedProviderCredential(original); },
+          ));
+        } finally {
+          child.close();
+        }
+      }).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error('Expected AggregateError');
+      expect(types.isNativeError(failure)).toBe(true);
+      const causes = failure.errors as DOMException[];
+      expect(failure.cause).toBe(causes[0]);
+      expect(causes.map((error) => [error.name, error.message, error.code])).toEqual([
+        ['TimeoutError', 'deadline exceeded [REDACTED_CREDENTIAL]', 23],
+        ['AbortError', 'cancelled [REDACTED_CREDENTIAL]', 20],
+      ]);
+      expect(Reflect.get(causes[0]!, 'cause')).toBe(causes[1]);
+      expect(Reflect.get(causes[1]!, 'cause')).toBe(failure);
+      expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable).toBe(false);
+      expect(failure.stack).not.toContain(secret);
+      expect(causes[0]?.stack).not.toContain(secret);
+      expect(timeout.message).toContain(secret);
+    } finally {
+      scope.close();
+    }
+  });
+
   it('isolates concurrent run credentials and clears them outside the scope', async () => {
     const [first, second] = await Promise.all([
       runWithProviderCredential('openai', 'first-secret', async () => {

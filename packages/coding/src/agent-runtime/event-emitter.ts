@@ -313,6 +313,9 @@ export function withLiveTurnAttribution(
     onReasoningEffortRejected: (event) => {
       baseEvents.onReasoningEffortRejected?.(withLiveMeta(scope, event));
     },
+    onReasoningResolved: (event) => {
+      baseEvents.onReasoningResolved?.(withLiveMeta(scope, event));
+    },
     onRepoIntelligenceTrace: (event) => {
       baseEvents.onRepoIntelligenceTrace?.(withLiveMeta(scope, event));
     },

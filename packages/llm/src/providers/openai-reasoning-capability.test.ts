@@ -263,7 +263,7 @@ describe('openai reasoning capability', () => {
   it('Part 2: a rejected profile shape degrades to a param-free retry (openai-compat)', async () => {
     const create = vi
       .fn()
-      .mockRejectedValueOnce(new Error('unsupported parameter: reasoning_effort'))
+      .mockRejectedValueOnce(Object.assign(new Error('unsupported parameter: reasoning_effort'), { status: 400 }))
       .mockResolvedValueOnce(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('my-relay', 'native-effort', {
       chat: { completions: { create } },
@@ -282,7 +282,7 @@ describe('openai reasoning capability', () => {
   it('Part 2: degrades to a param-free retry when a relay rejects the thinking field (DeepSeek dual shape)', async () => {
     const create = vi
       .fn()
-      .mockRejectedValueOnce(new Error('unknown parameter: thinking'))
+      .mockRejectedValueOnce(Object.assign(new Error('unknown parameter: thinking'), { status: 400 }))
       .mockResolvedValueOnce(createCompletedOpenAIStream());
     // DeepSeek's openai-compat reasoning shape sends BOTH thinking and reasoning_effort,
     // so a relay may reject the thinking field rather than reasoning_effort. The fallback
@@ -342,7 +342,7 @@ describe('openai reasoning capability', () => {
     expect(create.mock.calls[0]?.[0].reasoning_effort).toBe('xhigh');
   });
 
-  it('omits reasoning_effort when explicit effort auto clears the provider field', async () => {
+  it('resolves explicit auto to the highest declared effort when no default is declared', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('openai', 'native-effort', {
       chat: { completions: { create } },
@@ -353,7 +353,7 @@ describe('openai reasoning capability', () => {
       effort: 'auto',
     });
 
-    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
+    expect(create.mock.calls[0]?.[0].reasoning_effort).toBe('xhigh');
   });
 
   it('enables thinking for the always-on Kimi K2.7 Code preset (v0.7.57 regression fix)', async () => {
@@ -474,7 +474,7 @@ describe('openai reasoning capability', () => {
 
   it('degrades a provider-budget profile when an upstream rejects budget_tokens', async () => {
     const create = vi.fn()
-      .mockRejectedValueOnce(new Error('budget_tokens is unsupported'))
+      .mockRejectedValueOnce(Object.assign(new Error('budget_tokens is unsupported'), { status: 400 }))
       .mockResolvedValueOnce(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('my-relay', 'native-budget', {
       chat: { completions: { create } },
@@ -737,7 +737,7 @@ describe('openai reasoning capability', () => {
   it('falls back from budget to toggle within the request (in-memory capability fallback)', async () => {
     const create = vi
       .fn()
-      .mockRejectedValueOnce(new Error('unknown parameter: budget_tokens'))
+      .mockRejectedValueOnce(Object.assign(new Error('unknown parameter: budget_tokens'), { status: 400 }))
       .mockResolvedValueOnce(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('zhipu', 'native-budget', {
       chat: { completions: { create } },

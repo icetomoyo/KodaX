@@ -188,7 +188,7 @@ describe('formatReasoningEffortStatusLabel', () => {
       effortOverride: true,
       thinking: true,
       reasoningMode: 'auto',
-    })).toBe('max->medium');
+    })).toBe('max->xhigh');
   });
 
   it('maps minimal to low for GLM-5.3', () => {

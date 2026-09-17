@@ -14,6 +14,29 @@ const customProviders = ['openai', 'anthropic'].map((protocol) => ({
 }));
 llm.registerCustomProviders(customProviders);
 
+for (const name of ['TimeoutError', 'AbortError']) {
+  test(`bundled SDK preserves redacted ${name} and nested causes`, async (t) => {
+    const secret = 'fake-bundled-error-secret';
+    const original = new DOMException(`failed ${secret}`, name);
+    Object.defineProperty(original, 'cause', { value: new Error(`nested ${secret}`) });
+    const scope = llm.createProviderCredentialLeaseScope({
+      allowedProviders: ['openai'], acquire: async () => secret,
+    });
+    t.after(() => scope.close());
+    await assert.rejects(llm.runWithProviderCredentialLeaseScope(scope, () =>
+      llm.withProviderRequestCredential('openai', 'primary', undefined, () => { throw original; })), (error) => {
+      assert.ok(error instanceof DOMException);
+      assert.equal(error.name, name);
+      assert.equal(error.code, name === 'AbortError' ? 20 : 23);
+      assert.equal(error.message, 'failed [REDACTED_CREDENTIAL]');
+      assert.equal(error.cause.message, 'nested [REDACTED_CREDENTIAL]');
+      assert.equal(error.stack, original.stack.replaceAll(secret, '[REDACTED_CREDENTIAL]'));
+      assert.equal(original.message, `failed ${secret}`);
+      return true;
+    });
+  });
+}
+
 for (const providerName of ['openai', 'anthropic', ...customProviders.map(({ name }) => name)]) {
   for (const cached of [false, true]) {
     test(`${providerName}: ${cached ? 'cached managed' : 'manual'} summary acquires its scoped credential`, async (t) => {

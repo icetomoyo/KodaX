@@ -22,6 +22,7 @@ import {
   KodaXToolDefinition,
   KodaXProviderStreamOptions,
   KodaXReasoningRequest,
+  KodaXReasoningResolution,
   KodaXStreamResult,
   KodaXThinkingBlock,
   KodaXRedactedThinkingBlock,
@@ -51,6 +52,10 @@ import {
   UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
+import { buildReasoningEffortLadder, usesReasoningEffortLadder } from '../reasoning-ladder.js';
+import { addRejectedEffort, getRejectedEfforts, type CapabilityCache } from '../capability-learning.js';
+import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
+import { OpenAIReasoningAccumulator } from './openai-reasoning.js';
 
 const KODAX_OPENAI_COMPAT_USER_AGENT = 'KodaX';
 
@@ -229,37 +234,6 @@ function extractOpenAIMessageText(content: unknown): string {
     .join('');
 }
 
-// Non-streaming counterpart to extractReasoningDelta(). Without this, thinking
-// content silently disappears when streaming falls back to complete().
-function extractOpenAIMessageReasoning(message: unknown): string {
-  if (!message || typeof message !== 'object') {
-    return '';
-  }
-  const raw = Reflect.get(message, 'reasoning_content');
-  if (typeof raw === 'string') {
-    return raw;
-  }
-  if (!Array.isArray(raw)) {
-    return '';
-  }
-  return raw
-    .map((part) => {
-      if (typeof part === 'string') {
-        return part;
-      }
-      if (
-        part &&
-        typeof part === 'object' &&
-        'text' in part &&
-        typeof (part as { text?: unknown }).text === 'string'
-      ) {
-        return (part as { text: string }).text;
-      }
-      return '';
-    })
-    .join('');
-}
-
 type WireToolCall = {
   readonly id: string;
   readonly value: unknown;
@@ -323,6 +297,88 @@ function rewriteAssistantWireToolCalls(
 }
 
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
+  // Only hard rejections survive requests. Attempt state remains request-local.
+  private reasoningRejections: CapabilityCache = {};
+
+  protected override normalizeReasoning(reasoning?: boolean | KodaXReasoningRequest): KodaXNormalizedReasoningRequest {
+    return super.normalizeReasoning(typeof reasoning !== 'boolean'
+      && reasoning?.effort === undefined && reasoning?.enabled === undefined
+      ? { ...reasoning, effort: 'auto' } : reasoning);
+  }
+
+  private reasoningAttempts(reasoning: KodaXNormalizedReasoningRequest, model: string) {
+    const profile = this.getReasoningProfile(model);
+    if (usesReasoningEffortLadder(profile)) {
+      const requested = reasoning.effortSource === 'omitted' ? 'auto' : reasoning.effort;
+      return buildReasoningEffortLadder(profile, requested).map(effort => ({
+        capability: (effort === undefined ? 'none' : 'profile') as OpenAIReasoningAttempt,
+        reasoning: { ...reasoning, effort: effort ?? 'none', enabled: effort !== 'none' && effort !== undefined },
+      }));
+    }
+    this.validateExplicitReasoningEffort(reasoning, model);
+    const capabilities: OpenAIReasoningAttempt[] = profile ? ['profile', 'none']
+      : isReasoningEnabled(reasoning)
+        ? this.getReasoningFallbackChain(this.getReasoningCapability(model)).filter(isOpenAIReasoningAttempt)
+        : ['none'];
+    return capabilities.map(capability => ({ capability, reasoning }));
+  }
+
+  private skipRejectedReasoning(
+    params: object, model: string, options: KodaXProviderStreamOptions | undefined,
+    resolution: KodaXReasoningResolution,
+  ): boolean {
+    const wire = params as Record<string, unknown>;
+    const hasControl = ['reasoning_effort', 'reasoning', 'thinking', 'extra_body'].some(key => key in wire);
+    if (!hasControl) return false;
+    const effort = this.sentReasoningEffort(params);
+    const rejected = [...getRejectedEfforts(this.reasoningRejections, this.name, this.getWireModelId(model)),
+      ...(options?.rejectedReasoningEfforts ?? [])];
+    const rejectedParameter = rejected.some(value => value.startsWith('parameter:')
+      && this.hasReasoningParameter(params, value.slice('parameter:'.length)));
+    if (!rejectedParameter && !rejected.includes('*') && (effort === undefined || !rejected.includes(effort))) return false;
+    if (!resolution.fallbacks.some(fallback => fallback.effort === effort)) {
+      resolution.fallbacks.push({ effort, reason: 'cached-rejection' });
+    }
+    return true;
+  }
+
+  private hasReasoningParameter(params: object, parameter: string): boolean {
+    const wire = params as Record<string, unknown>;
+    return parameter in wire || ['thinking', 'reasoning', 'extra_body'].some(key => {
+      const nested = wire[key];
+      return nested !== null && typeof nested === 'object' && parameter in nested;
+    });
+  }
+
+  private sentReasoningEffort(params: object): string | undefined {
+    const wire = params as Record<string, unknown>;
+    const thinking = wire.thinking as { type?: string; effort?: string } | undefined;
+    const reasoning = wire.reasoning as { effort?: string } | undefined;
+    return typeof wire.reasoning_effort === 'string' ? wire.reasoning_effort
+      : reasoning?.effort ?? thinking?.effort ?? (thinking?.type === 'disabled' ? 'none' : undefined);
+  }
+
+  private recordReasoningRejection(
+    error: unknown, params: object, model: string, options: KodaXProviderStreamOptions | undefined,
+    resolution: KodaXReasoningResolution,
+  ): boolean {
+    const sent = this.sentReasoningEffort(params);
+    const rejection = classifyReasoningEffortRejection(error, sent);
+    if (!rejection) return false;
+    if (rejection.parameter && !this.hasReasoningParameter(params, rejection.parameter)) return false;
+    if (!rejection.parameter && sent === undefined) return false;
+    const effort = rejection.parameterRejected
+      ? ['budget_tokens', 'thinking_budget', 'enable_thinking'].includes(rejection.parameter ?? '')
+        ? `parameter:${rejection.parameter}` : '*'
+      : rejection.rejectedEffort;
+    this.reasoningRejections = addRejectedEffort(this.reasoningRejections,
+      this.name, this.getWireModelId(model), effort, 'observed', new Date().toISOString());
+    resolution.fallbacks.push({ effort: sent,
+      reason: rejection.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' });
+    options?.onReasoningEffortRejected?.({ provider: this.name, model, effort });
+    return true;
+  }
+
   abstract override readonly name: string;
   readonly supportsThinking = true;
   protected abstract override readonly config: KodaXProviderConfig;
@@ -554,6 +610,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     params: Record<string, unknown>,
   ): void {
     delete params.reasoning_effort;
+    delete params.reasoning;
     delete params.thinking;
 
     const extraBody =
@@ -672,7 +729,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     model: string,
     requestedBudget: number,
   ): void {
-    this.validateExplicitReasoningEffort(reasoning, model);
+    if (!usesReasoningEffortLadder(capability)) this.validateExplicitReasoningEffort(reasoning, model);
     const intent = this.resolveReasoningProfileIntent(reasoning, capability, model);
     const preset = capability.reasoningPreset;
 
@@ -769,9 +826,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       return;
     }
 
-    if (capability.effortStrategy === 'openai-chat-effort') {
+    if (usesReasoningEffortLadder(capability)) {
+      const effort = intent.disabled ? 'none' : intent.effort;
+      if (capability.effortStrategy === 'openai-responses-effort') {
+        if (effort) params.reasoning = { effort };
+        return;
+      }
       if (intent.disabled) {
-        if (capability.supportedEfforts?.some((entry) => entry.value === 'none')) {
+        if (capability.supportsDisabledThinking !== false) {
           params.reasoning_effort = 'none';
         }
         return;
@@ -824,21 +886,6 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return budget;
   }
 
-  private getFallbackTerms(capability: OpenAIReasoningAttempt): string[] {
-    switch (capability) {
-      case 'profile':
-        return ['thinking', 'reasoning_effort', 'enable_thinking', 'thinking_budget', 'budget_tokens'];
-      case 'native-budget':
-        return ['thinking_budget', 'budget_tokens', 'thinking'];
-      case 'native-effort':
-        return ['reasoning_effort'];
-      case 'native-toggle':
-        return ['enable_thinking', 'thinking'];
-      default:
-        return [];
-    }
-  }
-
   async stream(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
@@ -847,6 +894,13 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
+    const model = streamOptions?.modelOverride ?? this.config.model;
+    const normalizedReasoning = this.normalizeReasoning(reasoning);
+    const reasoningResolution: KodaXReasoningResolution = {
+      provider: this.name, model,
+      requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort ?? 'auto',
+      verified: false, fallbacks: [],
+    };
     return this.withRateLimit(async (retryState) => {
       // FEATURE_116 (v0.7.37): strip any cache-boundary markers before
       // building the wire payload. OpenAI-compat path has no client-side
@@ -856,7 +910,6 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         this.normalizeSystemForWire(system, cleanMessages);
       // Resolve the active model up front so the message serializer can
       // pick per-model replayReasoningContent overrides (KodaXModelDescriptor).
-      const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       const fullMessages = appendOpenAIEphemeralSuffix([
         { role: 'system', content: mergedSystem },
@@ -873,7 +926,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
       let textContent = '';
-      let thinkingContent = '';
+      const reasoningOutput = new OpenAIReasoningAccumulator();
       let usage: KodaXTokenUsage | undefined;
       let includeUsage = true;
 
@@ -882,19 +935,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const streamStartTime = Date.now();
 
       // 传递 signal 给 SDK，确保底层 HTTP 请求能被取消
-      const normalizedReasoning = this.normalizeReasoning(reasoning);
-      this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const reasoningProfile = this.getReasoningProfile(model);
-      const initialCapability =
-        isReasoningEnabled(normalizedReasoning)
-          ? this.getReasoningCapability(model)
-          : 'none';
-      const attempts: OpenAIReasoningAttempt[] =
-        reasoningProfile
-          ? ['profile', 'none']
-          : isReasoningEnabled(normalizedReasoning)
-            ? this.getReasoningFallbackChain(initialCapability).filter(isOpenAIReasoningAttempt)
-            : ['none'];
+      const attempts = this.reasoningAttempts(normalizedReasoning, model);
       const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
         ?? this.getEffectiveMaxOutputTokens(model);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
@@ -926,7 +967,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | undefined;
       let lastError: unknown;
 
-      for (const capability of attempts) {
+      for (const { capability, reasoning: attemptReasoning } of attempts) {
         while (!stream) {
           const attemptParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
             ...createParams,
@@ -943,18 +984,22 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             attemptParams,
             model,
             capability,
-            normalizedReasoning,
+            attemptReasoning,
             retryState.suppressReasoningEffort,
             maxOutputTokens,
           );
 
+          if (this.skipRejectedReasoning(attemptParams, model, streamOptions, reasoningResolution)) break;
+          reasoningResolution.sentEffort = this.sentReasoningEffort(attemptParams);
           try {
             stream = await client.chat.completions.create(
               attemptParams,
               { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; });
           } catch (error) {
+            const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
             if (streamOptions?.singleAttempt) throw error;
+            if (rejected) { lastError = error; break; }
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -971,15 +1016,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
               includeUsage = false;
               continue;
             }
-            if (
-              !this.shouldFallbackForReasoningError(
-                error,
-                ...this.getFallbackTerms(capability),
-              )
-            ) {
-              throw error;
-            }
-            break;
+            throw error;
           }
         }
 
@@ -1039,9 +1076,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           textContent += delta.content;
           streamOptions?.onTextDelta?.(delta.content);
         }
-        const reasoningDelta = this.extractReasoningDelta(delta);
+        const reasoningDelta = reasoningOutput.append(delta, true);
         if (reasoningDelta) {
-          thinkingContent += reasoningDelta;
           streamOptions?.onThinkingDelta?.(reasoningDelta);
         }
         if (delta?.tool_calls) {
@@ -1098,11 +1134,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
       const toolBlocks: KodaXToolUseBlock[] = [];
-      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
-      if (thinkingContent) {
-        thinkingBlocks.push({ type: 'thinking', thinking: thinkingContent });
-        streamOptions?.onThinkingEnd?.(thinkingContent);
-      }
+      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl() });
+      if (reasoningOutput.text) streamOptions?.onThinkingEnd?.(reasoningOutput.text);
       // `_salvaged` = strict parse failed (kept on a clean stop so a mutating
       // tool's malformed payload is still gated downstream). `_truncated` adds
       // "and the stop was NOT clean" (`length`/ambiguous), which is unsafe for
@@ -1139,11 +1172,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           }
         }
       }
-      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
-      model: streamOptions?.modelOverride ?? this.config.model,
-      onRejected: streamOptions?.onReasoningEffortRejected,
-    });
+      if (reasoningResolution.requestedEffort !== 'auto'
+        && reasoningResolution.requestedEffort !== reasoningResolution.sentEffort
+        && reasoningResolution.fallbacks.length === 0) {
+        reasoningResolution.fallbacks.push({ effort: reasoningResolution.requestedEffort, reason: 'profile' });
+      }
+      streamOptions?.onReasoningResolved?.(reasoningResolution);
+      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined, reasoningResolution };
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter);
   }
 
   override supportsNonStreamingFallback(): boolean {
@@ -1158,12 +1194,18 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
+    const model = streamOptions?.modelOverride ?? this.config.model;
+    const normalizedReasoning = this.normalizeReasoning(reasoning);
+    const reasoningResolution: KodaXReasoningResolution = {
+      provider: this.name, model,
+      requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort ?? 'auto',
+      verified: false, fallbacks: [],
+    };
     return this.withRateLimit(async (retryState) => {
       // FEATURE_116 (v0.7.37): strip cache-boundary markers (see stream()).
       const cleanMessages = this.stripCacheBoundariesFromMessages(messages);
       const { system: mergedSystem, rest: nonSystemMessages } =
         this.normalizeSystemForWire(system, cleanMessages);
-      const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       const fullMessages = appendOpenAIEphemeralSuffix([
         { role: 'system', content: mergedSystem },
@@ -1180,18 +1222,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const forcedToolName = streamOptions?.forcedToolName;
       let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
-      const normalizedReasoning = this.normalizeReasoning(reasoning);
-      this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const reasoningProfile = this.getReasoningProfile(model);
-      const initialCapability =
-        isReasoningEnabled(normalizedReasoning)
-          ? this.getReasoningCapability(model)
-          : 'none';
-      const attempts: OpenAIReasoningAttempt[] = reasoningProfile
-        ? ['profile', 'none']
-        : isReasoningEnabled(normalizedReasoning)
-          ? this.getReasoningFallbackChain(initialCapability).filter(isOpenAIReasoningAttempt)
-          : ['none'];
+      const attempts = this.reasoningAttempts(normalizedReasoning, model);
       const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
         ?? this.getEffectiveMaxOutputTokens(model);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
@@ -1222,7 +1253,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       let lastError: unknown;
 
       const client = await this.getClient();
-      for (const capability of attempts) {
+      for (const { capability, reasoning: attemptReasoning } of attempts) {
         // Mirror the stream() path: an inner `while (!response)` so a
         // forced-tool-choice rejection retries the SAME capability without
         // tool_choice. A flat for+continue would instead skip to the next
@@ -1240,18 +1271,22 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             attemptParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
             model,
             capability,
-            normalizedReasoning,
+            attemptReasoning,
             retryState.suppressReasoningEffort,
             maxOutputTokens,
           );
 
+          if (this.skipRejectedReasoning(attemptParams, model, streamOptions, reasoningResolution)) break;
+          reasoningResolution.sentEffort = this.sentReasoningEffort(attemptParams);
           try {
             response = await client.chat.completions.create(
               attemptParams,
               { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; }) as OpenAI.Chat.Completions.ChatCompletion;
           } catch (error) {
+            const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
             if (streamOptions?.singleAttempt) throw error;
+            if (rejected) { lastError = error; break; }
             lastError = error;
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
@@ -1261,15 +1296,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
               );
               continue;
             }
-            if (
-              !this.shouldFallbackForReasoningError(
-                error,
-                ...this.getFallbackTerms(capability),
-              )
-            ) {
-              throw error;
-            }
-            break;
+            throw error;
           }
         }
 
@@ -1288,7 +1315,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const choice = response.choices[0];
       const message = choice?.message;
       const textContent = extractOpenAIMessageText(message?.content);
-      const reasoningContent = extractOpenAIMessageReasoning(message);
+      const reasoningOutput = new OpenAIReasoningAccumulator();
+      const reasoningContent = reasoningOutput.append(message);
       const cleanStop = isCleanStop(choice?.finish_reason ?? undefined);
       const toolBlocks: KodaXToolUseBlock[] = (message?.tool_calls ?? [])
         .filter(isOpenAIFunctionToolCall)
@@ -1311,53 +1339,27 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
-      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl() });
       if (reasoningContent) {
-        thinkingBlocks.push({ type: 'thinking', thinking: reasoningContent });
         streamOptions?.onThinkingDelta?.(reasoningContent);
         streamOptions?.onThinkingEnd?.(reasoningContent);
       }
 
+      if (reasoningResolution.requestedEffort !== 'auto'
+        && reasoningResolution.requestedEffort !== reasoningResolution.sentEffort
+        && reasoningResolution.fallbacks.length === 0) {
+        reasoningResolution.fallbacks.push({ effort: reasoningResolution.requestedEffort, reason: 'profile' });
+      }
+      streamOptions?.onReasoningResolved?.(reasoningResolution);
       return {
+        reasoningResolution,
         textBlocks,
         toolBlocks,
         thinkingBlocks,
         usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
         stopReason: choice?.finish_reason ?? undefined,
       };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
-      model: streamOptions?.modelOverride ?? this.config.model,
-      onRejected: streamOptions?.onReasoningEffortRejected,
-    });
-  }
-
-  private extractReasoningDelta(
-    delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta | undefined,
-  ): string {
-    const raw = (delta as Record<string, unknown> | undefined)?.reasoning_content;
-    if (typeof raw === 'string') {
-      return raw;
-    }
-    if (!Array.isArray(raw)) {
-      return '';
-    }
-
-    return raw
-      .map((part) => {
-        if (typeof part === 'string') {
-          return part;
-        }
-        if (
-          typeof part === 'object' &&
-          part !== null &&
-          'text' in part &&
-          typeof (part as { text?: unknown }).text === 'string'
-        ) {
-          return (part as { text: string }).text;
-        }
-        return '';
-      })
-      .join('');
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter);
   }
 
   private serializeAssistantMessage(
@@ -1455,6 +1457,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       message.reasoning_content = thinking || '';
     }
 
+    const replay = contentBlocks.flatMap(block => block.type === 'thinking' && block.openaiReasoning
+      ? [block.openaiReasoning] : []).filter(data => data.provider === this.name
+        && data.model === this.getWireModelId(model) && data.baseUrl === this.getBaseUrl());
+    const details = replay.flatMap(data => data.details ?? []);
+    if (details.length > 0) message.reasoning_details = details;
+    if (replay.some(data => data.reasoning !== undefined)) {
+      message.reasoning = replay.map(data => data.reasoning ?? '').join('');
+    }
     return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];
   }
 

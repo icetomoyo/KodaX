@@ -23,6 +23,23 @@ const contract: KodaXShellExecutionContract = {
 };
 
 describe('shell execution environment', () => {
+  it.each(['linux', 'win32'] as const)('isolates only the injected NODE_ENV on %s', (platform) => {
+    const source = { NODE_ENV: 'production', KODAX_INTERNAL_NODE_ENV: 'production', KEEP: 'yes' };
+    expect(hardenShellCommandEnvironment(source, 'bash', platform)).toEqual({ KEEP: 'yes' });
+    expect(source.NODE_ENV).toBe('production');
+    expect(hardenShellCommandEnvironment({ ...source, NODE_ENV: 'test' }, 'bash', platform))
+      .toEqual({ NODE_ENV: 'test', KEEP: 'yes' });
+    expect(hardenShellCommandEnvironment({ NODE_ENV: 'production' }, 'bash', platform))
+      .toEqual({ NODE_ENV: 'production' });
+  });
+
+  it('handles case-insensitive Windows names without removing distinct POSIX names', () => {
+    const source = { node_env: 'production', kodax_internal_node_env: 'production' };
+    expect(hardenShellCommandEnvironment(source, 'bash', 'win32')).toEqual({});
+    expect(hardenShellCommandEnvironment(source, 'bash', 'linux'))
+      .toEqual({ node_env: 'production' });
+  });
+
   it('inherits the host environment while removing only KodaX and Electron controls', () => {
     expect(hardenShellCommandEnvironment({
       PATH: 'C:\\Windows\\System32',

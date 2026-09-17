@@ -18,6 +18,7 @@
 import { resolveModelCapabilities, resolveProviderModelDescriptors } from './providers/index.js';
 import { resolveReasoningEffort } from './reasoning.js';
 import { narrowReasoningProfile } from './capability-learning.js';
+import { buildReasoningEffortLadder, usesReasoningEffortLadder } from './reasoning-ladder.js';
 
 export interface ResolveWireEffortInput {
   /** Provider id (built-in alias or registered custom provider name). */
@@ -65,6 +66,16 @@ export function resolveWireEffort(input: ResolveWireEffortInput): ResolvedWireEf
   if (!profile) {
     // No reasoning profile → nothing to send on the wire.
     return { effort: undefined, configuredEffort: undefined, adjusted: false };
+  }
+  if (profile.effortStrategy === 'none' || profile.effortStrategy === 'prompt-only') {
+    return { effort: undefined, configuredEffort: input.desiredEffort ?? 'auto', adjusted: true };
+  }
+
+  if (usesReasoningEffortLadder(profile)) {
+    const configuredEffort = input.desiredEffort ?? 'auto';
+    const effort = input.rejectedEfforts?.includes('*') ? undefined : buildReasoningEffortLadder(profile, configuredEffort)
+      .find(value => value === undefined || !input.rejectedEfforts?.includes(value));
+    return { effort, configuredEffort, adjusted: effort !== configuredEffort };
   }
 
   const narrowed =

@@ -120,25 +120,19 @@ function legacyReasoningPresetForProtocol(
     case 'prompt-only':
       return 'none';
     case 'native-toggle':
-      // anthropic-compat: bare thinking:{type:'enabled'} is the correct non-Claude
-      // shape (matches the built-in zhipu/kimi/minimax presets). openai-compat: there
-      // is no portable thinking-toggle wire param — the Anthropic-shaped
-      // thinking:{type:'enabled'} that generic-thinking-toggle would emit is
-      // rejected/ignored by OpenAI-style relays (the v0.7.57 relay-deepseek
-      // regression). Stay passive there: no profile → the name-gated capability
-      // switch sends nothing for a custom (non-qwen/zhipu) provider, and
-      // reasoning_content is parsed unconditionally regardless.
+      // OpenAI has no portable thinking toggle. Leave the preset unspecified;
+      // provider resolution below supplies an unknown-capability effort strategy.
       return protocol === 'anthropic' ? 'generic-thinking-toggle' : undefined;
     case 'native-budget':
       return protocol === 'anthropic' ? 'anthropic-budget' : 'qwen-hybrid-thinking';
     case 'native-effort':
       return protocol === 'anthropic' ? 'claude-adaptive-max' : 'openai-chat-reasoning';
     case 'native-adaptive':
-      // openai-compat has no portable adaptive wire param; stay passive there too.
+      // OpenAI-compatible unknown models use effort negotiation instead of adaptive thinking.
       return protocol === 'anthropic' ? 'claude-adaptive-max' : undefined;
     default:
       // Bare supportsThinking with no explicit capability: anthropic-compat keeps the
-      // non-Claude enable toggle; openai-compat stays passive (see native-toggle).
+      // non-Claude enable toggle; OpenAI uses the unknown-capability effort strategy.
       if (supportsThinking !== true) return undefined;
       return protocol === 'anthropic' ? 'generic-thinking-toggle' : undefined;
   }
@@ -183,7 +177,7 @@ function buildReasoningProfileFromSimple(
     // anthropic-compat endpoint instead wants adaptive: configure an explicit
     // reasoningProfile (effortStrategy:'anthropic-output-effort') for that case.
     effortStrategy: protocol === 'anthropic' ? 'anthropic-reasoning-effort' : 'openai-chat-effort',
-    thinkingStrategy: 'provider-toggle',
+    ...(protocol === 'anthropic' ? { thinkingStrategy: 'provider-toggle' as const } : {}),
     ...(defaultWire !== undefined ? { defaultEffort: defaultWire } : {}),
     supportedEfforts,
     ...(canDisable
@@ -257,6 +251,7 @@ function migrateLegacyDeepSeekPreset(
 export function resolveCustomProviderReasoningProfile(
   config: KodaXCustomProviderConfig,
 ): KodaXReasoningProfile | undefined {
+  // The fallback describes a wire dialect; no supportedEfforts are asserted.
   return resolveCustomReasoningProfile(
     getConfiguredReasoningProfile(config),
     migrateLegacyDeepSeekPreset(config.reasoningPreset, config.model),
@@ -266,7 +261,9 @@ export function resolveCustomProviderReasoningProfile(
       reasoningCapability: config.reasoningCapability,
       supportsThinking: config.supportsThinking,
     },
-  );
+  ) ?? (config.protocol === 'openai'
+    ? { effortStrategy: 'openai-chat-effort', allowCustomEffort: true }
+    : undefined);
 }
 
 export function resolveCustomModelReasoningProfile(
@@ -446,13 +443,6 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
       ? 'none'
       : (custom.reasoningCapability ??
          legacyCapabilityFromReasoningProfile(reasoningProfile) ??
-         // Final arm is reached ONLY for openai-passive: anthropic-compat always resolves a
-         // profile above (so legacyCapabilityFromReasoningProfile returns a value), while
-         // openai-compat bare-supportsThinking has no profile (F3). openai-passive sends NO
-         // wire reasoning param, so report 'none' — matching the runtime AND the other
-         // surfaces (getCustomProviderList / getCustomModelCapabilities), rather than a
-         // 'native-toggle' label KodaX never acts on. (The model still thinks; that is
-         // reflected by supportsThinking and reasoning_content parsing, not by this label.)
          'none');
   const supportsThinking = custom.supportsThinking ??
     (reasoningCapability !== 'none' && reasoningCapability !== 'prompt-only');

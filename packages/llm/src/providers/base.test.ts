@@ -156,6 +156,25 @@ class AlwaysOnThinkingProvider extends KodaXBaseProvider {
 }
 
 describe('KodaXBaseProvider', () => {
+  it('preserves native timeout identity for downstream recovery', async () => {
+    const error = new DOMException('deadline exceeded', 'TimeoutError');
+    const request = vi.fn(async () => { throw error; });
+    await expect(new TestProvider().exposeWithRateLimit(request)).rejects.toBe(error);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('normalizes nested typed deadlines without copying upstream bodies', async () => {
+    const cause = Object.assign(new DOMException('deadline exceeded', 'TimeoutError'), {
+      response: { body: 'private-timeout-body' },
+    });
+    const original = new Error('request failed', { cause: new Error('transport failed', { cause }) });
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(async () => {
+      throw original;
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ name: 'KodaXNetworkError', isTimeout: true });
+    expect(failure).not.toHaveProperty('cause');
+    expect(JSON.stringify(failure)).not.toContain('private-timeout-body');
+  });
   it('deduplicates the default model from getAvailableModels', () => {
     const provider = new TestProvider();
     expect(provider.getAvailableModels()).toEqual([

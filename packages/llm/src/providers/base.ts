@@ -21,7 +21,7 @@ import {
   KodaXWireReasoningEffort,
 } from '../types.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
+import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import { parseContextOverflowFacts } from './context-overflow.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
@@ -152,6 +152,11 @@ function extractHttpStatus(error: unknown, depth = 0): number | undefined {
     ?? normalizeHttpStatus(record.statusCode)
     ?? normalizeHttpStatus(record.code)
     ?? extractHttpStatus(record.cause, depth + 1);
+}
+
+function hasTypedTimeout(error: unknown, depth = 0): boolean {
+  if (!(error instanceof Error) || depth > 4) return false;
+  return error.name === 'TimeoutError' || hasTypedTimeout(error.cause, depth + 1);
 }
 
 function extractErrorCode(error: unknown, depth = 0): string {
@@ -1040,6 +1045,8 @@ export abstract class KodaXBaseProvider {
         }
         // Non-rate-limit errors
         if (e instanceof Error) {
+          // Preserve typed deadlines for recovery even when the message has no timeout wording.
+          if (e.name === 'TimeoutError') throw e;
           if (
             signal?.aborted &&
             (e.name === 'AbortError' || (await isProviderSdkAbortError(e)))
@@ -1059,6 +1066,11 @@ export abstract class KodaXBaseProvider {
           }
 
           if (e instanceof KodaXProviderError) throw e;
+
+          // Preserve nested timeout classification without copying private response bodies.
+          if (hasTypedTimeout(e)) {
+            throw inheritRejectedImage(e, new KodaXNetworkError(`${this.name} API error: ${e.message}`, true));
+          }
 
           throw inheritRejectedImage(e, new KodaXProviderError(
             `${this.name} API error: ${e.message}`,

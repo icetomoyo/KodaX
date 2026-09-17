@@ -100,23 +100,17 @@ describe('custom providers', () => {
     expect(provider.getBaseUrl()).toBe('https://example.test/v1');
     expect(provider.getAvailableModels()).toEqual(['custom-main', 'custom-alt']);
     expect(provider.getConfiguredReasoningCapability()).toBe('native-toggle');
-    // F3: openai-compat native-toggle stays PASSIVE — KodaX must NOT synthesize a
-    // generic-thinking-toggle profile, because that injects the Anthropic-shaped
-    // thinking:{type:'enabled'} object that OpenAI-style relays reject/ignore (the
-    // v0.7.57 relay-deepseek regression). With no profile the name-gated capability
-    // switch sends nothing for a custom provider; reasoning_content is parsed
-    // unconditionally so thinking still surfaces if the endpoint emits it.
-    expect(provider.getReasoningProfile()).toBeUndefined();
+    // Undeclared OpenAI capability probes effort without inventing a thinking toggle.
+    expect(provider.getReasoningProfile()).toEqual({ effortStrategy: 'openai-chat-effort', allowCustomEffort: true });
     expect(provider.getCapabilityProfile()).toEqual(EXPECTED_NATIVE_CUSTOM_PROFILE);
     expect(provider.getContextWindow()).toBe(123456);
   });
 
-  it('F3: native-toggle is protocol-aware — passive on openai, enable-toggle on anthropic', () => {
+  it('legacy native-toggle uses the protocol-specific compatible strategy', () => {
     vi.stubEnv('CUSTOM_TOGGLE_OPENAI_API_KEY', 'test-key');
     vi.stubEnv('CUSTOM_TOGGLE_ANTHROPIC_API_KEY', 'test-key');
 
-    // openai-compat: no profile synthesized → no Anthropic-shaped thinking object
-    // reaches the wire (relays reject it). reasoning_content is parsed regardless.
+    // OpenAI-compatible gateways use reasoning_effort, not an Anthropic thinking object.
     const openai = createCustomProvider({
       name: 'toggle-openai',
       protocol: 'openai',
@@ -126,7 +120,7 @@ describe('custom providers', () => {
       supportsThinking: true,
       reasoningCapability: 'native-toggle',
     });
-    expect(openai.getReasoningProfile()).toBeUndefined();
+    expect(openai.getReasoningProfile()).toEqual({ effortStrategy: 'openai-chat-effort', allowCustomEffort: true });
 
     // anthropic-compat: bare thinking:{type:'enabled'} is the correct non-Claude
     // shape (matches built-in zhipu/kimi/minimax), so the toggle profile stays.
@@ -145,7 +139,7 @@ describe('custom providers', () => {
     });
   });
 
-  it('F3: bare supportsThinking is passive on openai, enable-toggle on anthropic', () => {
+  it('bare supportsThinking uses effort on openai and enable-toggle on anthropic', () => {
     vi.stubEnv('CUSTOM_BARE_OPENAI_API_KEY', 'test-key');
     vi.stubEnv('CUSTOM_BARE_ANTHROPIC_API_KEY', 'test-key');
 
@@ -157,7 +151,7 @@ describe('custom providers', () => {
       model: 'bare-model',
       supportsThinking: true,
     });
-    expect(openai.getReasoningProfile()).toBeUndefined();
+    expect(openai.getReasoningProfile()).toEqual({ effortStrategy: 'openai-chat-effort', allowCustomEffort: true });
 
     const anthropic = createCustomProvider({
       name: 'bare-anthropic',
@@ -498,12 +492,10 @@ describe('custom providers', () => {
     providers[0]!.capabilityProfile.mcpSupport = 'none';
     expect(getCustomProviderList()[0]!.capabilityProfile.mcpSupport).toBe('native');
 
-    // F3: openai-compat native-toggle is passive — no profile synthesized (KodaX
-    // must not inject the Anthropic-shaped thinking object that OpenAI relays reject).
-    // The capability label is still surfaced; the wire stays clean.
+    // Undeclared capabilities use effort negotiation without an Anthropic thinking object.
     expect(getCustomModelCapabilities('custom-openai', 'custom-main')).toMatchObject({
-      reasoningCapability: 'native-toggle',
-      reasoningProfile: undefined,
+      reasoningCapability: 'native-effort',
+      reasoningProfile: { effortStrategy: 'openai-chat-effort', allowCustomEffort: true },
       thinkingBudgetCap: 2048,
     });
     expect(getCustomModelCapabilities('custom-anthropic', 'claude-custom')).toMatchObject({
@@ -969,7 +961,7 @@ describe('custom providers', () => {
     });
   });
 
-  it('openai-passive (bare supportsThinking:true) reports none across EVERY surface (consistent with passive runtime)', () => {
+  it('undeclared OpenAI effort uses the compatible strategy across every surface', () => {
     vi.stubEnv('CUSTOM_PASSIVE_API_KEY', 'test-key');
     const config: KodaXCustomProviderConfig = {
       name: 'passive-openai',
@@ -982,12 +974,11 @@ describe('custom providers', () => {
     registerCustomProviders([cloneConfig(config)]);
 
     const provider = createCustomProvider(cloneConfig(config));
-    // openai-passive sends no wire reasoning param → all three label surfaces agree on 'none'
-    // (not 'native-toggle'), and the resolved profile is undefined.
-    expect(provider.getConfiguredReasoningCapability()).toBe('none');
-    expect(provider.getReasoningProfile()).toBeUndefined();
-    expect(getCustomProviderList().find((p) => p.name === 'passive-openai')?.reasoningCapability).toBe('none');
-    expect(getCustomModelCapabilities('passive-openai', 'p-model')?.reasoningCapability).toBe('none');
+    // The wire strategy is known; support for specific efforts is still unknown.
+    expect(provider.getConfiguredReasoningCapability()).toBe('native-effort');
+    expect(provider.getReasoningProfile()).toEqual({ effortStrategy: 'openai-chat-effort', allowCustomEffort: true });
+    expect(getCustomProviderList().find((p) => p.name === 'passive-openai')?.reasoningCapability).toBe('native-effort');
+    expect(getCustomModelCapabilities('passive-openai', 'p-model')?.reasoningCapability).toBe('native-effort');
     // The model is still thinking-capable — reflected by supportsThinking, not the label.
     expect(getCustomModelCapabilities('passive-openai', 'p-model')?.supportsThinking).toBe(true);
   });

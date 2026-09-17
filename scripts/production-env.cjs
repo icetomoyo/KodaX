@@ -11,8 +11,11 @@
  */
 'use strict';
 
-if (!process.env.NODE_ENV) {
+if (process.env.NODE_ENV === undefined) {
   process.env.NODE_ENV = process.env.KODAX_DEV === '1' ? 'development' : 'production';
+  // Preserve provenance across KodaX workers/daemon launches. The SDK consumes
+  // this marker at the user-shell boundary, leaving our own runtime untouched.
+  process.env.KODAX_INTERNAL_NODE_ENV = process.env.NODE_ENV;
 }
 
 // Bootstrap hardening must run before the first application ESM import.

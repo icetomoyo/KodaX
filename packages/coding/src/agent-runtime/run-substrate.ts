@@ -1622,19 +1622,14 @@ async function runSubstrateInContext(
       );
 
       let effectiveProviderEffort = turnState.runtimeThinkingLevel ?? effectiveReasoningPlan.effort;
-      // FEATURE_222 (R5) — self-heal a hard-rejected reasoning_effort across turns.
-      // base.ts fires onReasoningEffortRejected + suppresses within a turn, but the
-      // provider instance is rebuilt every turn so that suppression is lost;
-      // stream-handler-wiring records the rejection in the capability cache and here
-      // we consult it before building the request. No relevant rejection → the effort
-      // is left untouched and behavior is byte-identical.
-      //
-      // Keyed by the SAME concrete model base.ts records under
-      // (`modelOverride ?? provider.getModel()`) — including runtime-registered
-      // providers, which resolveProvider (unlike a static descriptor lookup) resolves.
+      // Compatible providers receive the rejection cache separately so they can
+      // preserve user intent while negotiating the wire value. Other adapters keep
+      // their legacy host-side resolution. Re-created providers share the host cache.
       const rejectionModel = turnState.currentModelOverride ?? streamProvider.getModel();
       const rejectedEfforts = getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome);
-      if (effectiveProviderEffort !== undefined && rejectedEfforts.length > 0) {
+      const effortStrategy = streamProvider.getReasoningProfile(rejectionModel)?.effortStrategy;
+      const providerNegotiatesEffort = effortStrategy === 'openai-chat-effort' || effortStrategy === 'openai-responses-effort';
+      if (!providerNegotiatesEffort && effectiveProviderEffort !== undefined && rejectedEfforts.length > 0) {
         // Check the value that would actually reach the wire (the provider applies
         // effortAliases / ceilings), not the pre-alias effort — a rejected rung can be
         // reached via an alias (e.g. low → high). If that wire value is rejected,
@@ -2086,6 +2081,7 @@ async function runSubstrateInContext(
               effectiveProviderReasoning,
               {
                 ...streamCallbacks,
+                rejectedReasoningEfforts: getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome),
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}),
                 promptCacheKey,
                 onRetryAfter: wrappedRetryAfter,
@@ -2202,6 +2198,7 @@ async function runSubstrateInContext(
               attempt,
               responseId,
               clearStreamTimers: streamTimers.clearAll,
+              configHome: options.context?.configHome,
             });
             if (fallbackOutcome.ok) {
               result = fallbackOutcome.result;

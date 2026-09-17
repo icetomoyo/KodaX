@@ -49,7 +49,7 @@ describe('readline helpers', () => {
       ));
 
       expect(prompt).toContain('kodax:default (openai:gpt-5.3-codex)');
-      expect(prompt).toContain('[effort:max->medium]');
+      expect(prompt).toContain('[effort:max->xhigh]');
     });
 
     it('keeps the compact prompt effort-first on medium terminals', () => {
@@ -60,7 +60,7 @@ describe('readline helpers', () => {
         createConfig({ effort: 'max', effortOverride: true }),
       ));
 
-      expect(prompt).toContain('kodax:default[max->medium]> ');
+      expect(prompt).toContain('kodax:default[max->xhigh]> ');
       expect(prompt).not.toContain('reason:');
     });
   });

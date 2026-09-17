@@ -79,6 +79,7 @@ export type StreamHandlerCallbacks = Pick<
   | 'onRateLimit'
   | 'onRetryAfter'
   | 'onReasoningEffortRejected'
+  | 'onReasoningResolved'
   | 'onHeartbeat'
 >;
 
@@ -140,6 +141,7 @@ export function buildStreamHandlers(input: StreamHandlerWiringInput): StreamHand
       recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
       events.onReasoningEffortRejected?.(event);
     },
+    onReasoningResolved: (event) => events.onReasoningResolved?.(event),
     onHeartbeat: (pause) => {
       if (pause) {
         // Between content blocks: server may be silent while generating

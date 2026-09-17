@@ -297,6 +297,8 @@ a new one before running `kodax`.
 `userAgentMode` defaults to `"compat"`, which sends `KodaX` instead of the official SDK User-Agent. Switch it to `"sdk"` only when your gateway expects the upstream SDK header.
 For custom reasoning models, `reasoning: { efforts, default }` is the preferred v0.7.57 shape; use `"reasoning": "none"` for models without thinking capability. SDK hosts should render effort pickers from `reasoningProfile.supportedEfforts` / `defaultEffort` rather than assuming a fixed five-option ladder.
 
+An undeclared OpenAI-compatible reasoning profile means capability is unknown. Omitted effort uses `auto`: the declared default wins, otherwise KodaX tries `max` and lowers only after explicit parameter/value rejection. `none` attempts to disable reasoning, then tries the lowest available thinking effort if disabling is rejected. SDK hosts receive `onReasoningResolved` with the requested effort, sent effort, fallback reasons, and `verified: false`; request acceptance does not prove that the model honored the strength. See [reasoning negotiation](docs/DD.md#23-custom-openai-compatible-reasoning) for cache and replay contracts.
+
 #### OpenAI-compatible reasoning providers
 
 Some OpenAI-compatible reasoning models require KodaX to replay the previous assistant turn's `reasoning_content` on later requests. DeepSeek V4 thinking mode is the known load-bearing case. Built-in DeepSeek already opts in; custom providers must say so explicitly:
@@ -782,6 +784,17 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.8 release:** Eighth release candidate of the v0.7.96 line.
+Custom OpenAI-compatible reasoning is negotiated from `auto`: rejected
+efforts lower through explicit levels without losing disable intent,
+hard-rejection caches span streaming and non-streaming turns, and
+requested/sent effort plus fallback reasons reach SDK hosts while
+`reasoning` and `reasoning_details` replay only to the same endpoint and
+model. Timeout and cancellation errors keep native DOMException semantics,
+nested causes, and redacted stacks across scoped credentials. KodaX's
+default `NODE_ENV` no longer reaches user shell commands, so `npm install`
+and `npm ci` keep devDependencies. Every rc.7 contract is retained.
+
 **v0.7.96-rc.7 release:** Seventh release candidate of the v0.7.96 line.
 Successful writes return eligible file outputs over A2A in both coding and
 managed execution, independently of conversation compaction and the memory
@@ -919,7 +932,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc7-release-preparation).
+[release checklist](docs/release.md#v0796-rc8-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
