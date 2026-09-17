@@ -399,6 +399,8 @@ function collectErrorText(error: unknown): string {
   while (current != null && depth < MAX_DEPTH && !seen.has(current)) {
     seen.add(current);
     if (current instanceof Error) {
+      // Native deadlines may have localized/empty messages, including inside cause.
+      if (current.name === 'TimeoutError') parts.push('timeout');
       if (current.message) parts.push(current.message);
       const code = (current as { code?: unknown }).code;
       if (typeof code === 'string' && code.length > 0) parts.push(code);

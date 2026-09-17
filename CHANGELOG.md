@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Preserve native DOMException timeout/cancellation semantics, nested causes, and
+  redacted error stacks across scoped Provider credentials. Keep typed timeouts
+  recognizable through Provider wrapping and recovery even without timeout wording.
 - Negotiate custom OpenAI-compatible reasoning from `auto` by default, lower rejected
   efforts without losing explicit disable intent, and reuse hard-rejection caches
   across streaming and non-streaming turns. Report requested/sent effort and fallback

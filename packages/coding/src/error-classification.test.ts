@@ -3,6 +3,11 @@ import { KodaXProviderError } from '@kodax-ai/llm';
 import { classifyError, ErrorCategory } from './error-classification.js';
 
 describe('classifyError', () => {
+  it('recognizes typed timeouts without relying on message wording', () => {
+    expect(classifyError(new DOMException('deadline exceeded', 'TimeoutError'))).toMatchObject({
+      category: ErrorCategory.TRANSIENT, retryable: true,
+    });
+  });
   it('prioritizes typed cancellation over incomplete-stream wording', () => {
     const error = new DOMException('Stream incomplete: request aborted', 'AbortError');
     expect(classifyError(error)).toMatchObject({

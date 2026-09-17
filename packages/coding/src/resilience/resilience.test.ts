@@ -53,6 +53,11 @@ describe('resolveResilienceConfig', () => {
 // ============== Classifier Tests ==============
 
 describe('classifyResilienceError', () => {
+  it.each([false, true])('recognizes typed timeouts without message hints (nested: %s)', (nested) => {
+    const timeout = new DOMException('deadline exceeded', 'TimeoutError');
+    const error = nested ? new Error('request failed', { cause: timeout }) : timeout;
+    expect(classifyResilienceError(error)).toMatchObject({ errorClass: 'request_timeout', retryable: true });
+  });
   it('classifies AbortError as user_abort', () => {
     const error = new DOMException('The user aborted a request', 'AbortError');
     const result = classifyResilienceError(error);
