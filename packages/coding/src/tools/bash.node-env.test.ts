@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanupRegisteredManagedChildren } from '@kodax-ai/agent';
 import type { KodaXShellExecutionContract } from '../types.js';
 import { clearShellExecutionEnvironmentCache } from '../shell-execution/resolver.js';
 import { toolBash } from './bash.js';
@@ -15,10 +16,13 @@ const shellExecution: KodaXShellExecutionContract = {
 };
 
 describe('user shell NODE_ENV isolation', () => {
-  let cwd: string;
+  let cwd = '';
 
   beforeEach(async () => {
+    cwd = '';
     cwd = await mkdtemp(join(tmpdir(), 'kodax-shell-node-env-'));
+    // Isolate durable child records as well as the command's working directory.
+    vi.stubEnv('KODAX_HOME', join(cwd, 'agent-home'));
     for (const name of Object.keys(process.env)) {
       if (/^npm_config_/i.test(name)) vi.stubEnv(name, undefined);
     }
@@ -36,10 +40,20 @@ describe('user shell NODE_ENV isolation', () => {
   });
 
   afterEach(async () => {
-    vi.unstubAllEnvs();
-    delete require.cache[preloadPath];
-    clearShellExecutionEnvironmentCache();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      if (cwd) {
+        const cleanup = await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
+        if (cleanup.skipped === 0) {
+          await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        } else {
+          process.emitWarning(`Managed child cleanup is unverified; retained test records in ${cwd}`);
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      delete require.cache[preloadPath];
+      clearShellExecutionEnvironmentCache();
+    }
   });
 
   it.each(['legacy', 'configured', 'sandbox'])(
