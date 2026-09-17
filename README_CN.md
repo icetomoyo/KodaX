@@ -884,6 +884,8 @@ import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-
 
 自定义 reasoning 模型优先使用 v0.7.57 的 `reasoning: { efforts, default }`；无 thinking 能力的模型使用 `"reasoning": "none"`。SDK 宿主的 effort 选择器应从 `reasoningProfile.supportedEfforts` / `defaultEffort` 动态生成，不要假定固定五档。
 
+OpenAI-compatible provider 未声明 reasoning profile 表示能力未知。未设置 effort 时使用 `auto`：优先采用已声明默认档，否则从 `max` 开始，仅在明确的参数／档位拒绝后逐档降低。`none` 会尝试关闭；关闭被拒绝后尝试最低可用思考档。SDK 宿主通过 `onReasoningResolved` 收到用户意图、实际发送档位、回退原因和 `verified: false`；请求成功不代表模型已按该强度执行。缓存和推理数据回传规则见[详细设计](docs/DD.md#23-custom-openai-compatible-reasoning)。
+
 #### OpenAI 兼容推理模型
 
 部分 OpenAI-compatible 推理模型要求多轮请求时回放上一轮 assistant 的 `reasoning_content`。DeepSeek V4 thinking mode 是已知必须开启的场景；内置 DeepSeek provider 已经默认开启，但自定义 provider 需要显式配置：

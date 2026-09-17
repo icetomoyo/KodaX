@@ -100,6 +100,14 @@ export interface KodaXThinkingBlock {
   type: 'thinking';
   thinking: string;
   signature?: string;
+  /** Opaque OpenAI-compatible reasoning replay, scoped to its original endpoint/model. */
+  openaiReasoning?: {
+    provider: string;
+    model: string;
+    baseUrl?: string;
+    reasoning?: string;
+    details?: Record<string, unknown>[];
+  };
 }
 
 export interface KodaXRedactedThinkingBlock {
@@ -217,6 +225,17 @@ export interface KodaXStreamResult {
   usage?: KodaXTokenUsage;
   /** Provider stop reason: 'end_turn' (normal), 'max_tokens' (truncated), 'stop_sequence', 'tool_use', etc. */
   stopReason?: string;
+  /** Wire observation only; acceptance does not prove reasoning strength took effect. */
+  reasoningResolution?: KodaXReasoningResolution;
+}
+
+export interface KodaXReasoningResolution {
+  provider: string;
+  model: string;
+  requestedEffort: string;
+  sentEffort?: string;
+  verified: false;
+  fallbacks: { effort?: string; reason: 'profile' | 'unsupported-effort' | 'unsupported-parameter' | 'cached-rejection' }[];
 }
 
 // ============== 工具定义 ==============
@@ -910,6 +929,9 @@ export interface KodaXProviderStreamOptions {
     model: string;
     effort: string;
   }) => void;
+  /** Persisted hard rejections from the host; '*' means the control parameter was rejected. */
+  rejectedReasoningEfforts?: readonly string[];
+  onReasoningResolved?: (resolution: KodaXReasoningResolution) => void;
   sessionId?: string;
   /** Override the provider's default model for a single request */
   modelOverride?: string;

@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Negotiate custom OpenAI-compatible reasoning from `auto` by default, lower rejected
+  efforts without losing explicit disable intent, and reuse hard-rejection caches
+  across streaming and non-streaming turns. Report requested/sent effort and fallback
+  reasons to SDK hosts, retaining the original rejection across rate-limit retries;
+  preserve and replay `reasoning` and structured `reasoning_details`.
+
 ---
 
 ## [0.7.96-rc.7] - 2026-09-14

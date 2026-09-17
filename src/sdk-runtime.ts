@@ -19500,6 +19500,10 @@ function wrapKodaXEvents(input: {
       );
       externalCallbacks()?.onReasoningEffortRejected?.(event);
     },
+    onReasoningResolved(event) {
+      emit("provider.recovery", { kind: "reasoning_resolved", event }, event);
+      externalCallbacks()?.onReasoningResolved?.(event);
+    },
     onRepoIntelligenceTrace(event) {
       emit("repo_intelligence.trace", event, event);
       externalCallbacks()?.onRepoIntelligenceTrace?.(event);

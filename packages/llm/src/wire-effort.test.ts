@@ -39,8 +39,8 @@ describe('resolveWireEffort', () => {
       rejectedEfforts: ['high'],
     });
     expect(resolved.effort).not.toBe('high');
-    // The profile's defaultEffort is 'max', which survives the narrowing.
-    expect(resolved.effort).toBe('max');
+    // A rejected high falls downward to low, never upward to the default max.
+    expect(resolved.effort).toBe('low');
     expect(resolved.adjusted).toBe(true);
   });
 

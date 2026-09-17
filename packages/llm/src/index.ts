@@ -68,6 +68,7 @@ export type {
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
   KodaXReasoningRequest,
+  KodaXReasoningResolution,
   KodaXNormalizedReasoningRequest,
   // v0.7.45 FEATURE_216 credential verification surface.
   KodaXVerifyStrategy,

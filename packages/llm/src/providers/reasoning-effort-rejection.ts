@@ -48,7 +48,9 @@ const EFFORT_PARAM_MARKERS = [
   'reasoning effort',
   'reasoninglevel',
   'reasoning_level',
-  'thinking',
+  'reasoning.effort',
+  'thinking.effort',
+  'thinking.type',
 ];
 
 // Plus a signal that the value/param was rejected (not merely mentioned).
@@ -66,12 +68,23 @@ const REJECTION_MARKERS = [
 
 const EFFORT_VALUES = ['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max'];
 
+function namesRejectedEffort(message: string): boolean {
+  const parameter = `(?:${EFFORT_PARAM_MARKERS.map(marker => marker.replaceAll('.', '\\.')).join('|')})`;
+  const rejected = `(?:${REJECTION_MARKERS.join('|')})`;
+  const quote = '[\'"`][^\'"`\\n]{0,80}[\'"`]';
+  const punctuation = "[\\s'\"`:]";
+  const before = `(?:${punctuation}|\\b(?:value|parameter|field|for|of|the)\\b|${quote})*`;
+  const after = `(?:${punctuation}|\\b(?:value|parameter|is)\\b|${quote})*`;
+  return new RegExp(`${rejected}${before}${parameter}\\b|${parameter}${after}${rejected}`).test(message);
+}
+
 /**
  * Try to recover WHICH effort the provider rejected from the error text, so the
  * narrowing is precise. Returns the sent effort when the message doesn't name a
  * value (the most reliable fallback), or undefined when neither is available.
  */
 function extractRejectedEffort(message: string, sentEffort: string | undefined): string | undefined {
+  if (sentEffort !== undefined) return sentEffort;
   for (const value of EFFORT_VALUES) {
     // Quote-or-boundary match so "high" doesn't trip on "xhigh".
     if (new RegExp(`['"\`]${value}['"\`]`).test(message)) {
@@ -83,6 +96,8 @@ function extractRejectedEffort(message: string, sentEffort: string | undefined):
 
 export interface ReasoningEffortRejection {
   readonly rejectedEffort: string;
+  readonly parameterRejected?: true;
+  readonly parameter?: string;
 }
 
 /**
@@ -106,9 +121,13 @@ export function classifyReasoningEffortRejection(
   if (!message) {
     return null;
   }
-  const namesEffortParam = EFFORT_PARAM_MARKERS.some((m) => message.includes(m));
-  const looksRejected = REJECTION_MARKERS.some((m) => message.includes(m));
-  if (!namesEffortParam || !looksRejected) {
+  const parameter = /(?:unknown|unrecognized|unexpected|unsupported|not supported)\s+(?:parameter|field|argument)s?\s*:?\s*['"`]*(reasoning_effort|reasoning\b|thinking\b|enable_thinking|thinking_budget|budget_tokens)/.exec(message)?.[1]
+    ?? /\b(enable_thinking|thinking_budget|budget_tokens)\b['"`]*\s+(?:is\s+)?(?:unsupported|not supported)/.exec(message)?.[1]
+    ?? /does not support\s+(?:the\s+)?['"`]*(reasoning_effort|reasoning|thinking)['"`]*\s+(?:parameter|field)/.exec(message)?.[1];
+  if (parameter) {
+    return { rejectedEffort: sentEffort ?? '*', parameterRejected: true, parameter };
+  }
+  if (!namesRejectedEffort(message)) {
     return null;
   }
   const rejectedEffort = extractRejectedEffort(message, sentEffort);

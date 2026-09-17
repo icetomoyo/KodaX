@@ -10,6 +10,19 @@ function err(message: string, status?: number): Error & { status?: number } {
 }
 
 describe('classifyReasoningEffortRejection', () => {
+  it('does not confuse an unrelated validation error mentioning the current effort with a rejection', () => {
+    expect(classifyReasoningEffortRejection(err('Invalid messages; current reasoning_effort is high', 400), 'high')).toBeNull();
+  });
+
+  it('recognizes an explicitly unsupported parameter without guessing a rejected level', () => {
+    expect(classifyReasoningEffortRejection(err('This model does not support the reasoning_effort parameter', 400), 'max'))
+      .toMatchObject({ parameterRejected: true, parameter: 'reasoning_effort' });
+  });
+
+  it('recognizes explicit disable rejection through thinking.type', () => {
+    expect(classifyReasoningEffortRejection(err("Unsupported value 'disabled' for thinking.type", 400), 'none'))
+      .toEqual({ rejectedEffort: 'none' });
+  });
   it('detects an OpenAI-style unsupported reasoning_effort value and extracts it', () => {
     const r = classifyReasoningEffortRejection(
       err("Unsupported value: 'reasoning_effort' does not support 'max'.", 400),

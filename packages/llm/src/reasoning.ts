@@ -13,6 +13,7 @@ import {
   KodaXThinkingBudgetMap,
   KodaXThinkingDepth,
 } from './types.js';
+import { buildReasoningEffortLadder, usesReasoningEffortLadder } from './reasoning-ladder.js';
 
 export const KODAX_REASONING_MODE_SEQUENCE: KodaXReasoningMode[] = [
   'off',
@@ -530,6 +531,15 @@ export function resolveReasoningEffort(
       source: 'legacy',
       isExplicit: false,
     });
+  }
+  if (usesReasoningEffortLadder(input.capability)) {
+    const first = candidates[0] ?? { value: 'auto', source: 'fallback' as const, isExplicit: false };
+    const profile = { ...input.capability, defaultEffort: input.modelDefaultEffort
+      ?? input.capability.defaultEffort ?? getDefaultPresetValue(input.capability)
+      ?? input.providerDefaultEffort ?? input.fallbackEffort };
+    const effectiveEffort = buildReasoningEffortLadder(profile, first.value)[0];
+    return { configuredEffort: first.value, effectiveEffort, source: first.source,
+      isExplicit: first.isExplicit, diagnostics: [] };
   }
   pushEffortCandidate(
     candidates,

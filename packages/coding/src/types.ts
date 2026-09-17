@@ -9,6 +9,7 @@
 
 // FEATURE_221: SDK consumers inject their own product manual topics.
 import type { KodaXManualTopicId, KodaXManualTopicInput } from './self-knowledge/types.js';
+import type { KodaXReasoningResolution } from '@kodax-ai/llm';
 import type { KodaXTimeoutConfig } from './timeouts.js';
 import type { ExtensionExecutionScope, ExtensionToolResult } from './extensions/execution-contract.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
@@ -710,6 +711,7 @@ export interface KodaXEvents {
     model: string;
     effort: string;
   } & Partial<KodaXLiveEventMeta>) => void;
+  onReasoningResolved?: (event: KodaXReasoningResolution & Partial<KodaXLiveEventMeta>) => void;
   onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent & Partial<KodaXLiveEventMeta>) => void;
   /** Optional bounded context diagnostics. Emitted only when context.contextDiagnostics is true. */
   onContextBudgetSnapshot?: (

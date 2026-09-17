@@ -208,6 +208,17 @@ describe('CAP-067: buildStreamHandlers — heartbeat semantics', () => {
 });
 
 describe('CAP-067: buildStreamHandlers — FEATURE_222 R5 reasoning-effort self-heal', () => {
+  it('forwards requested effort and actual wire resolution to the host', () => {
+    const { tracker } = fakeBoundaryTracker();
+    const { timers } = fakeTimers();
+    const onReasoningResolved = vi.fn();
+    const handlers = buildStreamHandlers({ events: { onReasoningResolved }, boundaryTracker: tracker,
+      streamTimers: timers, emitActiveExtensionEvent: vi.fn(), providerName: 'custom' });
+    const event = { provider: 'custom', model: 'm', requestedEffort: 'max', sentEffort: 'high',
+      verified: false as const, fallbacks: [{ effort: 'max', reason: 'unsupported-effort' as const }] };
+    handlers.onReasoningResolved?.(event);
+    expect(onReasoningResolved).toHaveBeenCalledExactlyOnceWith(event);
+  });
   it('auto-records a reasoning-effort rejection into the capability cache before forwarding', () => {
     recordRejectedEffortMock.mockClear();
     const { tracker } = fakeBoundaryTracker();
