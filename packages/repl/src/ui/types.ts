@@ -272,6 +272,8 @@ export interface StatusBarProps {
     /** Host configuration cannot supply a physical trigger before execution resolves its envelope. */
     hostBudget?: boolean;
     effectiveTriggerTokens?: number;
+    /** Live execution scope the tokens belong to; workers run their own window. */
+    scope?: 'parent' | 'worker';
     /** Current token count in context */
     currentTokens: number;
     /** Context window size (effective contextWindow) */

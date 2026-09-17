@@ -235,3 +235,32 @@ describe("status-bar (Ink view-model) — surface-status integration", () => {
     expect(text).toContain("Auto[LLM]");
   });
 });
+
+describe("status-bar context scope label", () => {
+  it("labels a worker-scope context cell so scope handoffs stay readable", () => {
+    const viewModel = buildStatusBarViewModel(baseProps({
+      contextUsage: {
+        currentTokens: 94,
+        contextWindow: 1_000_000,
+        triggerPercent: 75,
+        scope: 'worker',
+      },
+    }));
+    const segment = viewModel.segments.find((entry) => entry.id === "context-usage");
+    expect(segment?.text).toMatch(/^W 94\/1\.0M /);
+  });
+
+  it("leaves the parent context cell unlabeled", () => {
+    const viewModel = buildStatusBarViewModel(baseProps({
+      contextUsage: {
+        currentTokens: 43_800,
+        contextWindow: 1_000_000,
+        triggerPercent: 75,
+        scope: 'parent',
+      },
+    }));
+    const segment = viewModel.segments.find((entry) => entry.id === "context-usage");
+    expect(segment?.text).toMatch(/^43\.8k\/1\.0M /);
+    expect(segment?.text.startsWith("W ")).toBe(false);
+  });
+});

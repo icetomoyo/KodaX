@@ -21,6 +21,8 @@ export interface SurfaceStatusContextUsage {
   reservedResponseTokens?: number;
   hostBudget?: boolean;
   effectiveTriggerTokens?: number;
+  /** Execution scope these tokens belong to; a live worker has its own window. */
+  scope?: 'parent' | 'worker';
 }
 
 export interface SurfaceStatusManagedState {
@@ -79,6 +81,7 @@ export function buildSurfaceStatusBarProps(
     triggerTokens: executionBudget.compaction.absoluteTriggerTokens,
     reservedResponseTokens: executionBudget.reservedResponseTokens,
     hostBudget: true, effectiveTriggerTokens: executionBudget.compaction.triggerTokens,
+    scope,
   } : scope === 'parent' ? options.contextUsage : undefined;
   const hasMatchingBudget = contextUsage !== undefined;
   const liveActivity = options.isTranscriptMode ? undefined : activity;

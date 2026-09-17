@@ -525,9 +525,12 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     const currentStr = formatTokenCount(contextUsage.currentTokens);
     const windowStr = formatTokenCount(contextUsage.contextWindow);
     const progressBar = createMiniProgressBar(percent);
+    // A live worker owns a separate context window; label the handoff so the
+    // parent -> worker -> parent numbers stay self-explanatory.
+    const scopePrefix = contextUsage.scope === 'worker' ? 'W ' : '';
     segments.push({
       id: "context-usage",
-      text: `${currentStr}/${windowStr} ${progressBar} ${percent}%`,
+      text: `${scopePrefix}${currentStr}/${windowStr} ${progressBar} ${percent}%`,
       color: contextUsage.hostBudget && contextUsage.effectiveTriggerTokens === undefined ? 'dim' : getContextColor(
         contextUsage.currentTokens,
         contextUsage.contextWindow,

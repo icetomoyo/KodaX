@@ -164,3 +164,24 @@ describe("surface-status", () => {
     expect(props.managedIdleWaitingPendingCount).toBeUndefined();
   });
 });
+
+it("carries the execution scope on host-budget context usage", () => {
+  const options = {
+    sessionId: "session", permissionMode: "accept-edits" as const, agentMode: "ama" as const,
+    provider: "p", model: "m", isTranscriptMode: false,
+    streamingState: { currentTool: undefined, activeToolCalls: [], isThinking: false,
+      thinkingCharCount: 0, toolInputCharCount: 0, toolInputContent: "", currentIteration: 1,
+      isCompacting: false, maxIter: 20 },
+    isLoading: true,
+    clientActivity: { runId: "run", context: { tokenCount: 900, tokenSource: "api" as const, scope: "worker" as const },
+      contextBudget: { scope: "worker", provider: "worker-provider", model: "worker-model",
+        contextWindow: 32_000, reservedResponseTokens: 4000, reservedMemoryTokens: 0,
+        compaction: { enabled: true, triggerPercent: 75, triggerTokens: 24_000, physicalCapacityTokens: 27_000 } } },
+  };
+  const workerBudget = buildSurfaceStatusBarProps(options);
+  expect(workerBudget.contextUsage).toMatchObject({ scope: "worker", currentTokens: 900 });
+  const parentLive = buildSurfaceStatusBarProps({ ...options, clientActivity: {
+    ...options.clientActivity, context: { tokenCount: 600, tokenSource: "estimate" as const, scope: "parent" as const },
+    contextBudget: { ...options.clientActivity.contextBudget, scope: "parent" } } });
+  expect(parentLive.contextUsage).toMatchObject({ scope: "parent", currentTokens: 600 });
+});
