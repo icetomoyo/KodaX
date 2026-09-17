@@ -8,6 +8,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.7] - 2026-09-14
+
+Seventh release candidate of the v0.7.96 line: successful writes return
+eligible file outputs over A2A in both coding and managed execution. Every
+rc.6 contract is retained. npm publication remains a manual maintainer
+action.
+
+### Fixed
+
+- Return eligible A2A files from successful writes in both coding and managed execution,
+  independently of conversation compaction and the memory artifact ledger. Preserve existing
+  publication limits and legacy executors; recognize HTML/HTM outputs as `text/html`.
+
+---
+
 ## [0.7.96-rc.6] - 2026-09-14
 
 Sixth release candidate of the v0.7.96 line: Windows exit delays from

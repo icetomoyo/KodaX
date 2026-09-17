@@ -103,6 +103,8 @@
  */
 
 import type { ToolResult } from '../tools/types.js';
+import { recordWrittenFile } from './written-files.js';
+import { resolveExecutionCwd } from '../runtime-paths.js';
 import { toolResultText } from '../tools/tool-result-content.js';
 import type {
   KodaXEvents,
@@ -285,6 +287,7 @@ export async function executeToolCall(
       ? executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
       : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {});
     result = await executeInExtensionScope(toolCall, ctxWithToolHooks, abortSignal, events, execute);
+    recordWrittenFile(ctx.writtenFiles, toolCall, result, resolveExecutionCwd(ctx));
 
     // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
     if (toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
@@ -501,6 +504,7 @@ async function executeBridgeToolCall(input: {
       () => runScopedTarget === undefined
         ? executeTool(targetName, targetInput, ctxWithToolHooks)
         : executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput));
+    recordWrittenFile(input.ctx.writtenFiles, targetCall, result, resolveExecutionCwd(input.ctx));
     if (toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(targetName, targetInput, input.ctx);
       if (fallbackResult !== undefined) result = fallbackResult;

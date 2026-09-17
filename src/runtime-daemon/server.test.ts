@@ -100,6 +100,34 @@ describe('runtime daemon dispatcher', () => {
     } finally { dispatcher.close(); }
   });
 
+  it.each(['json', 'structured-clone'] as const)('preserves writtenFiles through shared Runtime RPC using %s serialization', async (serialization) => {
+    const runtime = makeRuntime();
+    const result: RuntimeRunResult = { runId: 'run-files', sessionId: 'session-1', phase: 'completed', result: {
+      success: true, lastText: 'ready', messages: [], sessionId: 'session-1',
+      writtenFiles: [{ path: path.resolve('report.html'), sourceTool: 'run_skill_script' }],
+    } };
+    vi.spyOn(runtime.runs, 'start').mockResolvedValue({ runId: result.runId, sessionId: result.sessionId, result: Promise.resolve(result) });
+    vi.spyOn(runtime.runs, 'await').mockResolvedValue(result);
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher);
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method, params) {
+        const response = await dispatcher.handle(createRuntimeDaemonRequest(
+          `files-${randomRequestSuffix()}`, method, params,
+        ));
+        if (!isRuntimeDaemonSuccessResponse(response)) throw new Error(response.error.message);
+        return serialization === 'json' ? JSON.parse(JSON.stringify(response.result)) as unknown : structuredClone(response.result);
+      },
+      subscribe() { return { close() {} }; },
+    };
+    const client = createRuntimeDaemonClient({ identity: runtime.identity, transport, capabilities: {} });
+    try {
+      const handle = await client.runs.start({ sessionId: 'session-1', prompt: 'report' });
+      expect(await handle.result).toEqual(result);
+      expect(await client.runs.await(handle.runId)).toEqual(result);
+    } finally { await client.close(); dispatcher.close(); }
+  });
+
   it('retires the old RPC connection when the same stable identity takes over', async () => {
     const hub = createRuntimeDaemonReverseBridgeHub();
     const runtime = makeRuntime();

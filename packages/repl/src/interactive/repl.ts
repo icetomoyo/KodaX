@@ -142,6 +142,8 @@ import {
 import { getCurrentTheme, setTheme, type Theme } from './themes.js';
 import { getSkillRegistry, initializeSkillRegistry } from '@kodax-ai/agent';
 import { ReadlineUIContext } from '../ui/readline-ui.js';
+import { createCliEvents } from '../ui/cli-events.js';
+import { createClassicAskUserEvents } from './ask-user-prompts.js';
 import { extractLastAssistantText, extractTitle as extractSessionTitle } from '../ui/utils/message-utils.js';
 import { prepareRootCompactionLineage } from '../ui/utils/compaction-commit.js';
 import { executeShellCommand, isShellCommandHandled, type ShellExecutorConfig } from '../ui/utils/shell-executor.js';
@@ -540,6 +542,19 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       if (state === 'rejected') process.stderr.write(`\n[Stop rejected] ${detail ?? ''}\n`);
       else process.stdout.write(`\n[Stop ${state}] ${detail ?? ''}\n`);
     },
+  };
+  // The classic surface owns its console display the same way the Ink surface
+  // owns its React transcript: attach the CLI display events (spinner,
+  // streaming text, tool results) to every turn so embedded direct callbacks
+  // and the daemon event bridge both reach the terminal. `beforeToolExecute`
+  // is dropped — permissions stay with the REPL's own hook / the runtime
+  // permission broker, never the CLI YOLO default. Caller-provided handlers
+  // win per key. (Stop control travels the plane/runtime callbacks, not the
+  // mainline runtimeRunner wrapper.)
+  const { beforeToolExecute: _cliYoloPermission, ...classicDisplayEvents } = createCliEvents(false);
+  options = {
+    ...options,
+    events: { ...classicDisplayEvents, ...(options.events ?? {}) },
   };
   const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
   const startupGitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
@@ -1044,6 +1059,11 @@ Keyboard Shortcuts:
       // Suppress the runner's redundant flat snapshot so it can't clobber.
       persistedByHost: true,
     },
+    // Classic readline host callbacks for the ask_user_question tool (same
+    // FEATURE_222 contract Ink fulfils with React dialogs). Without them the
+    // tool degrades to a [Tool Error] the user never sees. Caller-provided
+    // handlers win per key.
+    events: { ...createClassicAskUserEvents(rl), ...options.events },
   };
 
   // Cost tracking ref — agent populates this via events.getCostReport, /cost command reads it

@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.6`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.7`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,12 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.6 release carries FEATURE_297 and FEATURE_299 and reduces
-Windows exit delays from unresolved historical Shell records: process-tree
+The v0.7.96-rc.7 release carries FEATURE_297 and FEATURE_299 and returns
+eligible A2A file outputs from successful writes in both coding and managed
+execution, independently of conversation compaction and the memory artifact
+ledger, with existing publication limits and legacy executors preserved;
+HTML/HTM outputs are recognized as `text/html`. The rc.6 Windows cleanup
+reduction holds: process-tree
 queries are skipped only when every retained target is definitively absent,
 unknown cleanup outcomes and Run recovery evidence are preserved, and the
 Windows termination process is reused for its first post-termination

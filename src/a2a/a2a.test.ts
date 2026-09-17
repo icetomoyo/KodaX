@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -27,6 +28,7 @@ import {
   parseA2AAgentCard,
   parseA2ATask,
   type A2AServerEvent,
+  type A2ATask,
 } from './index.js';
 import { legacyA2APrincipalKey } from './principal-key.js';
 import { A2AFileTaskStore } from './task-store.js';
@@ -79,7 +81,8 @@ function fakeRuntime(
     readonly sourceTool?: string;
     readonly action?: string;
   }[],
-  deferResult = false,
+  deferResult: boolean | Promise<void> = false,
+  writtenFiles?: NonNullable<RuntimeRunResult['result']>['writtenFiles'],
 ): KodaXRuntime {
   let sessionCounter = 0;
   let runCounter = 0;
@@ -114,9 +117,10 @@ function fakeRuntime(
             messages: [],
             sessionId: input.sessionId,
             ...(artifactLedger ? { artifactLedger } : {}),
+            ...(writtenFiles === undefined ? {} : { writtenFiles }),
           },
         };
-        const result = (deferResult
+        const result = (deferResult instanceof Promise ? deferResult.then(() => completedResult) : deferResult
           ? new Promise<typeof completedResult>((resolve) => {
               setImmediate(() => resolve(completedResult));
             })
@@ -1729,16 +1733,18 @@ describe('FEATURE_267 bidirectional A2A', () => {
     }
   });
 
-  it('publishes explicitly staged run files as inline A2A artifacts and stream updates', async () => {
+  it.each([false, true])('publishes staged file artifacts and stream updates (writtenFiles: %s)', async (useWrittenFiles) => {
     const workspace = temporaryRoot();
     const staging = path.join(workspace, '.kodax-a2a-staging');
     const output = path.join(staging, 'report.pptx');
     const artifactBytes = 16 * 1024 * 1024 - 1024;
+    let finishRun!: () => void;
+    const runFinished = new Promise<void>((resolve) => { finishRun = resolve; });
     mkdirSync(staging, { recursive: true });
     writeFileSync(output, Buffer.alloc(artifactBytes, 0x5a));
     const runtime = fakeRuntime('presentation ready', [{
       id: 'artifact-1', kind: 'file_created', target: output, timestamp: new Date().toISOString(),
-    }]);
+    }], runFinished, useWrittenFiles ? [{ path: output, sourceTool: 'write' }] : undefined);
     const base = serverOptions(runtime, temporaryRoot());
     const server = createKodaXA2AServer({
       ...base,
@@ -1767,17 +1773,93 @@ describe('FEATURE_267 bidirectional A2A', () => {
           },
         }),
       });
+      finishRun();
       const streamed = await response.text();
       expect(streamed.includes('"task"')).toBe(true);
       expect(streamed.includes('TASK_STATE_COMPLETED')).toBe(true);
+      expect(streamed.lastIndexOf('"artifactUpdate"')).toBeGreaterThan(-1);
+      expect(streamed.lastIndexOf('"artifactUpdate"')).toBeLessThan(streamed.lastIndexOf('TASK_STATE_COMPLETED'));
       const rawStart = streamed.indexOf('"raw":"') + '"raw":"'.length;
       const rawEnd = streamed.indexOf('"', rawStart);
       expect(rawStart).toBeGreaterThan('"raw":"'.length - 1);
       expect(rawEnd - rawStart).toBe(Math.ceil(artifactBytes / 3) * 4);
       expect(streamed.includes(workspace)).toBe(false);
     } finally {
+      finishRun();
       await server.close();
     }
+  });
+
+  it.each([{ name: 'missing', ledger: undefined }, { name: 'empty', ledger: [] }])('publishes written files independently of a $name artifact ledger', async ({ ledger }) => {
+    const workspace = temporaryRoot();
+    const output = path.join(workspace, '.kodax-a2a-staging', 'report.html');
+    mkdirSync(path.dirname(output), { recursive: true });
+    writeFileSync(output, '<p>report</p>');
+    const base = serverOptions(fakeRuntime('ready', ledger, false, [{ path: output, sourceTool: 'write' }]), temporaryRoot());
+    const server = createKodaXA2AServer({ ...base, agent: {
+      ...base.agent, projectPath: workspace, outputModes: ['text/plain', 'text/html'],
+    } });
+    try {
+      const response = await server.handle(directRpcRequest('SendMessage', {
+        message: { messageId: 'file', role: 'ROLE_USER', parts: [{ text: 'make report' }] },
+      }));
+      const body = await response.json();
+      expect(JSON.stringify(body)).toContain(Buffer.from('<p>report</p>').toString('base64'));
+      expect(JSON.stringify(body)).toContain('text/html');
+    } finally { await server.close(); }
+  });
+
+  it('does not revive old ledger files when writtenFiles is explicitly empty', async () => {
+    const workspace = temporaryRoot();
+    const output = path.join(workspace, '.kodax-a2a-staging', 'old.txt');
+    mkdirSync(path.dirname(output), { recursive: true });
+    writeFileSync(output, 'old private content');
+    const base = serverOptions(fakeRuntime('ready', [{
+      id: 'old', kind: 'file_modified', target: output, timestamp: new Date().toISOString(),
+    }], false, []), temporaryRoot());
+    const server = createKodaXA2AServer({ ...base, agent: { ...base.agent, projectPath: workspace } });
+    try {
+      const response = await server.handle(directRpcRequest('SendMessage', {
+        message: { messageId: 'no-output', role: 'ROLE_USER', parts: [{ text: 'hello' }] },
+      }));
+      expect(JSON.stringify(await response.json())).not.toContain('old.txt');
+    } finally { await server.close(); }
+  });
+
+  it('applies publication, size, MIME and real-path boundaries to writtenFiles', async () => {
+    const workspace = temporaryRoot();
+    const outside = temporaryRoot();
+    const staging = path.join(workspace, '.kodax-a2a-staging');
+    mkdirSync(staging);
+    for (const [name, content] of Object.entries({ 'good.htm': '<p>good</p>', 'large.txt': 'x'.repeat(129),
+      'binary.bin': 'unsupported', 'hidden.csv': 'a,b', 'ordinary.txt': 'private', 'promoted.html': '<p>skill</p>' })) {
+      writeFileSync(path.join(name === 'ordinary.txt' || name === 'promoted.html' ? workspace : staging, name), content);
+    }
+    writeFileSync(path.join(outside, 'outside.txt'), 'outside');
+    symlinkSync(outside, path.join(staging, 'escape'), 'junction');
+    const files: NonNullable<RuntimeRunResult['result']>['writtenFiles'] = [
+      ...['good.htm', './good.htm', 'large.txt', 'binary.bin', 'hidden.csv', 'missing.txt', 'escape/outside.txt', '.'].map((name) => ({
+        path: path.join(staging, name), sourceTool: 'write' as const,
+      })),
+      { path: path.join(workspace, 'ordinary.txt'), sourceTool: 'write' },
+      { path: path.join(outside, 'outside.txt'), sourceTool: 'run_skill_script' },
+      { path: path.join(workspace, 'promoted.html'), sourceTool: 'run_skill_script' },
+    ];
+    const base = serverOptions(fakeRuntime('ready', undefined, false, files), temporaryRoot());
+    const server = createKodaXA2AServer({ ...base,
+      limits: { ...base.limits, maxPartBytes: 128 },
+      agent: { ...base.agent, projectPath: workspace, outputModes: ['text/plain', 'text/html', 'text/csv'] },
+    });
+    try {
+      const response = await server.handle(directRpcRequest('SendMessage', {
+        message: { messageId: 'filtered', role: 'ROLE_USER', parts: [{ text: 'report' }] },
+        configuration: { acceptedOutputModes: ['text/plain', 'text/html'] },
+      }));
+      const body = await response.json() as { result: { task: A2ATask } };
+      expect(body.result.task.status.state).toBe('TASK_STATE_COMPLETED');
+      expect(body.result.task.artifacts?.flatMap((artifact) => artifact.parts).filter((part) => part.raw !== undefined)
+        .map((part) => part.filename)).toEqual(['good.htm', 'promoted.html']);
+    } finally { await server.close(); }
   });
 
   it('publishes successful sandboxed Skill outputs without exposing ordinary workspace writes', async () => {

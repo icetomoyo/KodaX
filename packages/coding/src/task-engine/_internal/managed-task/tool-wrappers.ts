@@ -18,6 +18,8 @@ import type {
 } from '@kodax-ai/agent';
 import { incrementManagedBudgetUsage } from './budget.js';
 import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
+import { recordWrittenFile } from '../../../agent-runtime/written-files.js';
+import { resolveExecutionCwd } from '../../../runtime-paths.js';
 import type { ManagedTaskBudgetController } from './budget.js';
 import type {
   KodaXEvents,
@@ -198,6 +200,7 @@ export function wrapCodingToolAsRunnable(
       };
       try {
         const content = await handler(input, ctxForCall);
+        recordWrittenFile(baseCtx.writtenFiles, { name: definition.name, input }, content, resolveExecutionCwd(ctxForCall));
         return {
           content,
           ...(isToolResultErrorContent(content) ? { isError: true } : {}),
