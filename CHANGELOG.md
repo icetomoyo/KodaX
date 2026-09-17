@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.8] - 2026-09-17
+
+Eighth release candidate of the v0.7.96 line: custom OpenAI-compatible
+reasoning is negotiated from `auto` with explicit-level fallback, timeout and
+cancellation errors keep their redacted semantics across scoped credentials,
+and KodaX's default `NODE_ENV` no longer leaks into user shell commands.
+Every rc.7 contract is retained. npm publication remains a manual maintainer
+action.
+
 ### Fixed
 
 - Preserve native DOMException timeout/cancellation semantics, nested causes, and

@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.7`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.8`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,16 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.7 release carries FEATURE_297 and FEATURE_299 and returns
-eligible A2A file outputs from successful writes in both coding and managed
+The v0.7.96-rc.8 release carries FEATURE_297 and FEATURE_299 and negotiates
+custom OpenAI-compatible reasoning from `auto`: rejected efforts lower
+through explicit levels without losing disable intent, hard-rejection caches
+span streaming and non-streaming turns, and requested/sent effort plus
+fallback reasons reach SDK hosts while `reasoning` and `reasoning_details`
+replay only to the same endpoint and model. Timeout and cancellation errors
+keep native DOMException semantics across scoped Provider credentials, and
+KodaX's default `NODE_ENV` no longer reaches user shell commands, so `npm
+install` and `npm ci` keep devDependencies. The rc.7 A2A file-return
+contract holds: eligible file outputs from successful writes return in both coding and managed
 execution, independently of conversation compaction and the memory artifact
 ledger, with existing publication limits and legacy executors preserved;
 HTML/HTM outputs are recognized as `text/html`. The rc.6 Windows cleanup

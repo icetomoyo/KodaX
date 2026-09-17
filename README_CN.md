@@ -296,6 +296,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.8 发布**：v0.7.96 线第八个发布候选。自定义 OpenAI 兼容推理从
+`auto` 开始协商：被拒绝的 effort 沿显式档位降级且不丢失显式禁用意图，硬拒绝
+缓存跨流式与非流式回合复用，请求/实际发送的 effort 与回退原因上报给 SDK 宿主，
+`reasoning` 与结构化 `reasoning_details` 只向同一 endpoint 与模型重放。超时与
+取消错误跨受限 Provider 凭据保持原生 DOMException 语义、嵌套原因与脱敏栈。
+KodaX 默认 `NODE_ENV` 不再进入用户 shell 命令，`npm install` 与 `npm ci`
+不再隐式省略 devDependencies。所有 rc.7 契约全部保留。
+
 **v0.7.96-rc.7 发布**：v0.7.96 线第七个发布候选。成功的写入在 coding 与
 managed 两条执行路径上都通过 A2A 返回符合条件的文件输出，不再依赖对话压缩
 与 memory 工件台账；既有发布限制与 legacy executor 全部保留，HTML/HTM 输出
@@ -413,7 +421,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.7 发布清单](docs/release.md#v0796-rc7-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.8 发布清单](docs/release.md#v0796-rc8-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
