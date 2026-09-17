@@ -160,6 +160,7 @@ describe('production environment preload', () => {
   const preloadPath = path.resolve('scripts/production-env.cjs');
   const envKeys = [
     'NODE_ENV',
+    'KODAX_INTERNAL_NODE_ENV',
     'LD_PRELOAD',
     'DYLD_INSERT_LIBRARIES',
     'DYLD_LIBRARY_PATH',

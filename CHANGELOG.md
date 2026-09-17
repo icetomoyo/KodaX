@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
   across streaming and non-streaming turns. Report requested/sent effort and fallback
   reasons to SDK hosts, retaining the original rejection across rate-limit retries;
   preserve and replay `reasoning` and structured `reasoning_details`.
+- Keep KodaX's default `NODE_ENV` out of SDK user shell commands so `npm install`
+  and `npm ci` no longer implicitly omit devDependencies. Preserve KodaX's own
+  production mode and explicitly configured user environment values.
 
 ---
 

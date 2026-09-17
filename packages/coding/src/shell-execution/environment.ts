@@ -33,6 +33,7 @@ const POSIX_BOOTSTRAP_NAMES = new Set([
 const EXECUTION_CONTROL_NAMES = new Set([
   'ELECTRON_RUN_AS_NODE',
   'KODAX_EFFECT_COMMAND_JSON',
+  'KODAX_INTERNAL_NODE_ENV',
   'KODAX_SANDBOX_ENV_PASS',
 ]);
 const MAX_RESOLVED_ENV_ENTRIES = 4_096;
@@ -43,7 +44,7 @@ export function hardenShellCommandEnvironment(
   shellKind: KodaXShellKind,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  const result = { ...source };
+  const result = withoutInjectedNodeEnvironment(source, platform);
   for (const name of Object.keys(result)) {
     if (isExecutionControlEnvironmentName(name)) {
       deleteEnvironmentValue(result, name, platform);
@@ -53,6 +54,22 @@ export function hardenShellCommandEnvironment(
   // cmd.exe otherwise searches the current working directory before PATH,
   // allowing a workspace-local executable to shadow a trusted bare command.
   setEnvironmentValue(result, 'NoDefaultCurrentDirectoryInExePath', '1', platform);
+  return result;
+}
+
+function withoutInjectedNodeEnvironment(
+  source: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const result = { ...source };
+  const injected = recordEnvironmentValue(source, 'KODAX_INTERNAL_NODE_ENV');
+  for (const name of Object.keys(result)) {
+    const normalized = platform === 'win32' ? name.toUpperCase() : name;
+    if (
+      name.toUpperCase() === 'KODAX_INTERNAL_NODE_ENV'
+      || (normalized === 'NODE_ENV' && injected !== undefined && result[name] === injected)
+    ) delete result[name];
+  }
   return result;
 }
 
@@ -90,7 +107,9 @@ export function buildShellProbeEnvironment(
     ? WINDOWS_BOOTSTRAP_NAMES
     : POSIX_BOOTSTRAP_NAMES;
   const result: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(source)) {
+  // Remove our default before shell profiles and explicit environment.set
+  // values run, so a user's own NODE_ENV=production remains authoritative.
+  for (const [name, value] of Object.entries(withoutInjectedNodeEnvironment(source, platform))) {
     if (
       value === undefined
       || isDeniedEnvironmentName(name, contract)
@@ -280,7 +299,7 @@ function overlayWindowsRegistryValues(
 }
 
 function recordEnvironmentValue(
-  values: Readonly<Record<string, string>>,
+  values: Readonly<NodeJS.ProcessEnv>,
   name: string,
 ): string | undefined {
   return Object.entries(values).find(
