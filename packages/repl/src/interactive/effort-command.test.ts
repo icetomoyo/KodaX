@@ -136,7 +136,7 @@ describe('/effort command', () => {
       thinking: true,
     });
     expect(setEffort).toHaveBeenCalledWith('max');
-    expect(getLoggedOutput()).toContain('Reasoning effort: max->medium');
+    expect(getLoggedOutput()).toContain('Reasoning effort: max->xhigh');
   });
 
   it('rejects whitespace-split effort values without persisting', async () => {
