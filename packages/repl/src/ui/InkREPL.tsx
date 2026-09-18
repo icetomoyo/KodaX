@@ -1,3 +1,4 @@
+import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata, readClientHistoryPreview } from '../session/client-session.js';
 /**
  * InkREPL - Ink-based REPL Adapter
  *
@@ -241,7 +242,7 @@ import {
 import {
   enforceSessionTransitionGuard,
 } from "../interactive/session-guardrails.js";
-import { formatSessionTree } from "../interactive/session-tree.js";
+import { formatSessionTree, formatClientSessionTree } from "../interactive/session-tree.js";
 import {
   inspectWorkspaceRuntime,
   resolveSessionRuntimeInfo,
@@ -760,6 +761,7 @@ export async function persistHostSessionPayload(
 }
 
 export interface InkREPLOptions extends KodaXOptions {
+  initialClientSettings?: ClientSessionSettingsPatch;
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
   hardExitOnClose?: boolean;
@@ -1825,6 +1827,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
+    const observedSessionId = context.sessionId;
     let closed = false;
     let closer: (() => void) | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
@@ -1832,8 +1835,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     let observedRunId: string | undefined;
     let stopBinding: ReturnType<typeof bindClientPlaneSessionStop> | undefined;
     const observe = (): void => {
-      void plane.observe(context.sessionId, (view) => {
-        if (closed) return;
+      void plane.observe(observedSessionId, (view) => {
+        if (closed || context.sessionId !== observedSessionId || view.session.id !== observedSessionId) return;
         clientViewRef.current = view;
         setClientView(view);
         const activeRunId = viewRunsActive(view);
@@ -1843,7 +1846,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           stopBinding?.close();
           observedRunId = activeRunId;
           stopBinding = activeRunId ? bindClientPlaneSessionStop({
-            plane, sessionId: context.sessionId,
+            plane, sessionId: observedSessionId,
             onStopState: runtimeStopCallbacks.onStopState,
             onStopControl: control => {
               observedStopRef.current = control;
@@ -4492,6 +4495,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const settingsSelectionRef = useRef({ sessionId: context.sessionId,
     patch: clientSessionSettings(currentConfig, options.maxIter) });
   useEffect(() => {
+    if (options.sessionCommands?.read) return;
     const sessionId = context.sessionId;
     const patch = { ...clientSessionSettings(currentConfig, options.maxIter),
       autoModeClassifierModel: autoModeSettings.classifierModel ?? null };
@@ -9244,8 +9248,57 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, [peekPendingInputDelivery, recordCompletedAgentRound, shiftPendingInput, stageQueuedPrompt]);
 
+  const refreshHostSession = async (id: string): Promise<void> => {
+    try { await settingsWriteRef.current; }
+    catch (error: unknown) {
+      emitKodaXDiagnostic({ source: 'repl:settings', level: 'warn',
+        message: 'Previous settings write failed; reading the selected Session from Host.', detail: String(error) });
+    }
+    const changedSession = id !== context.sessionId;
+    if (!options.sessionCommands?.read) {
+      const stored = await storage.load(id);
+      if (!stored) throw new Error(`Session not found: ${id}`);
+      context.messages = stored.messages;
+      context.uiHistory = normalizePersistedUiHistory(stored.uiHistory);
+      context.lineage = stored.lineage;
+      context.title = stored.title;
+      context.sessionId = id;
+      context.artifactLedger = stored.artifactLedger;
+      context.extensionState = stored.extensionState ? structuredClone(stored.extensionState) : undefined;
+      context.extensionRecords = stored.extensionRecords?.map(record => ({ ...record }));
+      context.extensionStateDirty = false;
+      context.extensionRecordsDirty = false;
+      context.contextTokenSnapshot = undefined;
+      applyInteractiveRuntimeInfo(resolveSessionRuntimeInfo(stored) ?? context.runtimeInfo ?? {});
+      currentOptionsRef.current.session = { ...currentOptionsRef.current.session, id, tag: stored.tag };
+      persistedUiHistoryRef.current = context.uiHistory ?? [];
+      clearUIHistory();
+      setLiveTokenCount(null);
+      setTodoItems([]);
+      getActivePasteStore()?.reset();
+      setSessionId(id);
+      teamModeHandle?.writer.update({ sessionId: id });
+      return;
+    }
+    const loaded = await readClientSession(options.sessionCommands!, id);
+    applyClientSessionMetadata(context, loaded.session);
+    applyInteractiveRuntimeInfo(context.runtimeInfo!);
+    settingsSelectionRef.current = { sessionId: id, patch: {} };
+    const next = applyClientSessionViewSettings(currentConfigRef.current, { settings: loaded.settings });
+    currentConfigRef.current = next;
+    setCurrentConfig(next);
+    currentOptionsRef.current.session = { ...currentOptionsRef.current.session, id, tag: loaded.session.tag };
+    persistedUiHistoryRef.current = [];
+    setLiveTokenCount(null);
+    if (changedSession) clearUIHistory();
+    setTodoItems([]);
+    getActivePasteStore()?.reset();
+    setSessionId(id);
+    teamModeHandle?.writer.update({ sessionId: id });
+  };
+
   const recoverCurrentSession = useCallback(async (prompt?: string): Promise<SessionRecoverStatus> => {
-    if (context.messages.length === 0) {
+    if (!options.sessionCommands && context.messages.length === 0) {
       return "empty";
     }
     const allowed = enforceSessionTransitionGuard(
@@ -9268,41 +9321,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (recoveredId === undefined) {
         return "failed";
       }
-      const boundLoaded = await storage.load(recoveredId);
-      if (!boundLoaded) {
-        return "failed";
-      }
-      context.sessionId = recoveredId;
-      context.messages = boundLoaded.messages;
-      context.title = boundLoaded.title;
-      context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
-      context.lineage = boundLoaded.lineage;
-      context.artifactLedger = boundLoaded.artifactLedger ?? context.artifactLedger;
-      context.contextTokenSnapshot = undefined;
-      context.sessionSnapshotDirty = false;
-      persistedUiHistoryRef.current = context.uiHistory ?? [];
-      const boundNow = new Date().toISOString();
-      context.createdAt = boundNow;
-      context.lastAccessed = boundNow;
-      currentOptionsRef.current.session = {
-        ...currentOptionsRef.current.session,
-        id: recoveredId,
-      };
-      setLiveTokenCount(null);
-      clearUIHistory();
-      setTodoItems([]);
-      // Issue 121 session-boundary hygiene (same as the unbound path).
-      getActivePasteStore()?.reset();
-      setSessionId(recoveredId);
-      teamModeHandle?.writer.update({ sessionId: recoveredId });
-      // FEATURE_298 T34 — the Host derives and persists the recovery seed.
-      // Review fix: an explicit /recover <prompt> continuation is the
-      // user's stated first input for the recovered session, so it runs
-      // here through the same round path as the unbound flow (the plane
-      // branch routes it over the Host faces).
-      console.log(chalk.green(`
-[Recovered into session: ${recoveredId}]`));
-      console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+      await refreshHostSession(recoveredId);
+      emitInfoItemToCorrectLayer({ type: 'info', text: `Recovered into session: ${recoveredId}` }, 'command');
       const continuation = normalizeRecoveryPrompt(prompt);
       if (continuation.length > 0) {
         try {
@@ -10162,7 +10182,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           compactSession: options.compactSession,
           // FEATURE_298 T36/T34 — the Host owns the Memory plane.
           memory: options.memory,
-          refreshSessionLineage: async () =>
+          refreshSessionLineage: options.sessionCommands?.read ? undefined : async () =>
             (await storage.getLineage?.(context.sessionId)) ?? undefined,
           exit: requestGracefulExit,
           saveSession: async () => {
@@ -10239,6 +10259,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             teamModeHandle?.writer.update({ sessionId: nextSessionId });
           },
           loadSession: async (id: string) => {
+            if (options.sessionCommands?.read) {
+              if (!enforceSessionTransitionGuard(currentConfig, 'Resuming a saved session', logSessionTransitionGuard)) return 'blocked';
+              await refreshHostSession(id);
+              emitInfoItemToCorrectLayer({ type: 'info', text: `Session loaded: ${id}` }, 'command');
+              return 'loaded';
+            }
             const loaded = await storage.load(id);
             if (loaded) {
               const allowed = enforceSessionTransitionGuard(
@@ -10330,7 +10356,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             // session view"; the todo surface is part of that view.
             setTodoItems([]);
           },
-          printHistory: () => {
+          printHistory: async () => {
+            if (options.clientPlane?.readHistory) return readClientHistoryPreview(options.clientPlane, context.sessionId);
             if (context.messages.length === 0) {
               console.log(chalk.dim("\n[No conversation history]"));
               return;
@@ -10446,6 +10473,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             await storage.deleteAll?.(context.gitRoot ?? undefined);
           },
           printSessionTree: async () => {
+            if (options.sessionCommands?.readLineage) {
+              const lines = formatClientSessionTree(await options.sessionCommands.readLineage(context.sessionId));
+              emitInfoItemToCorrectLayer({ type: 'info', text: 'Session Tree:\n' + lines.join('\n') }, 'command');
+              return;
+            }
             const lineage = await storage.getLineage?.(context.sessionId);
             if (!lineage) {
               console.log(chalk.dim("\n[No session tree available for this session]"));
@@ -10478,33 +10510,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               if (!found) {
                 return "missing";
               }
-              const boundLoaded = await storage.load(context.sessionId);
-              if (!boundLoaded) {
-                return "missing";
-              }
-              context.messages = boundLoaded.messages;
-              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
-              context.lineage = boundLoaded.lineage;
-              context.artifactLedger = boundLoaded.artifactLedger;
-              context.extensionState = boundLoaded.extensionState
-                ? structuredClone(boundLoaded.extensionState)
-                : undefined;
-              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
-              context.extensionStateDirty = false;
-              context.extensionRecordsDirty = false;
-              context.title = boundLoaded.title;
-              context.contextTokenSnapshot = undefined;
-              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
-              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
-              applyInteractiveRuntimeInfo(boundAppliedRuntime);
-              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
-                !== JSON.stringify(boundSavedRuntime);
-              persistedUiHistoryRef.current = context.uiHistory ?? [];
-              setLiveTokenCount(null);
-              clearUIHistory();
-              setTodoItems([]);
-              console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
-              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              await refreshHostSession(context.sessionId);
+              emitInfoItemToCorrectLayer({ type: 'info', text: `Session switched: ${context.sessionId}` }, 'command');
               return "switched";
             }
 
@@ -10555,7 +10562,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               }
               // Keep the interactive snapshot pinned to the rotated lineage
               // the Host just persisted (read back from the session file).
-              context.lineage = await storage.getLineage?.(context.sessionId) ?? context.lineage;
+              await options.sessionCommands.readLineage?.(context.sessionId);
               const boundAction = label && label.trim()
                 ? `checkpoint label set: ${label.trim()}`
                 : "checkpoint label cleared";
@@ -10596,44 +10603,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               if (boundForkedId === undefined) {
                 return "failed";
               }
-              const boundLoaded = await storage.load(boundForkedId);
-              if (!boundLoaded) {
-                return "failed";
-              }
-              context.sessionId = boundForkedId;
-              context.messages = boundLoaded.messages;
-              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
-              context.lineage = boundLoaded.lineage;
-              context.artifactLedger = boundLoaded.artifactLedger;
-              context.extensionState = boundLoaded.extensionState
-                ? structuredClone(boundLoaded.extensionState)
-                : undefined;
-              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
-              context.extensionStateDirty = false;
-              context.extensionRecordsDirty = false;
-              context.title = boundLoaded.title;
-              context.contextTokenSnapshot = undefined;
-              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
-              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
-              applyInteractiveRuntimeInfo(boundAppliedRuntime);
-              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
-                !== JSON.stringify(boundSavedRuntime);
-              persistedUiHistoryRef.current = context.uiHistory ?? [];
-              const boundNow = new Date().toISOString();
-              context.createdAt = boundNow;
-              context.lastAccessed = boundNow;
-              currentOptionsRef.current.session = {
-                ...currentOptionsRef.current.session,
-                id: boundForkedId,
-                tag: boundLoaded.tag,
-              };
-              setLiveTokenCount(null);
-              clearUIHistory();
-              setTodoItems([]);
-              setSessionId(boundForkedId);
-              teamModeHandle?.writer.update({ sessionId: boundForkedId });
-              console.log(chalk.green(`\n[Forked session: ${boundForkedId}]`));
-              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              await refreshHostSession(boundForkedId);
+              emitInfoItemToCorrectLayer({ type: 'info', text: `Session forked: ${boundForkedId}` }, 'command');
               return "forked";
             }
 
@@ -10694,39 +10665,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (options.sessionCommands) {
               const boundRewound = await options.sessionCommands.rewind({
                 sessionId: context.sessionId,
-          expectedHead: context.lineage?.activeEntryId ?? null,
+                expectedHead: options.sessionCommands.readLineage
+                  ? (await options.sessionCommands.readLineage(context.sessionId))?.activeEntryId ?? null
+                  : context.lineage?.activeEntryId ?? null,
                 ...(selector !== undefined ? { selector } : {}),
               });
               if (!boundRewound) {
                 return "failed";
               }
-              const boundLoaded = await storage.load(context.sessionId);
-              if (!boundLoaded) {
-                return "failed";
-              }
-              context.messages = boundLoaded.messages;
-              context.uiHistory = normalizePersistedUiHistory(boundLoaded.uiHistory);
-              context.lineage = boundLoaded.lineage;
-              context.artifactLedger = boundLoaded.artifactLedger;
-              context.extensionState = boundLoaded.extensionState
-                ? structuredClone(boundLoaded.extensionState)
-                : undefined;
-              context.extensionRecords = boundLoaded.extensionRecords?.map((record) => ({ ...record }));
-              context.extensionStateDirty = false;
-              context.extensionRecordsDirty = false;
-              context.title = boundLoaded.title;
-              context.contextTokenSnapshot = undefined;
-              const boundSavedRuntime = resolveSessionRuntimeInfo(boundLoaded);
-              const boundAppliedRuntime = boundSavedRuntime ?? context.runtimeInfo ?? startupRuntimeInfo;
-              applyInteractiveRuntimeInfo(boundAppliedRuntime);
-              context.sessionSnapshotDirty = JSON.stringify(boundAppliedRuntime)
-                !== JSON.stringify(boundSavedRuntime);
-              persistedUiHistoryRef.current = context.uiHistory ?? [];
-              setLiveTokenCount(null);
-              clearUIHistory();
-              setTodoItems([]);
-              console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : " to previous turn"}]`));
-              console.log(chalk.dim(`  Messages: ${boundLoaded.messages.length}`));
+              await refreshHostSession(context.sessionId);
+              emitInfoItemToCorrectLayer({ type: 'info', text: `Session rewound: ${context.sessionId}` }, 'command');
               return "rewound";
             }
 
@@ -10872,7 +10820,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         let startedRunId: string | undefined;
 
         try {
-          if (options.clientPlane) await settingsWriteRef.current;
+          if (options.clientPlane) {
+            const pendingSettings = settingsWriteRef.current;
+            try { await pendingSettings; }
+            catch (error: unknown) {
+              emitKodaXDiagnostic({ source: 'repl:settings', level: 'warn',
+                message: 'Previous settings write failed; command will use Host state.', detail: String(error) });
+              if (settingsWriteRef.current === pendingSettings) settingsWriteRef.current = Promise.resolve();
+            }
+          }
           const result = parsed
             ? await executeCommand(parsed, context, callbacks, currentConfig, fullText.trim())
             : undefined;
@@ -11923,7 +11879,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // retain their existing defaults.
   const repoIntelligenceTraceDefault = config.repoIntelligenceTrace === true;
 
-  const currentConfig: CurrentConfig = {
+  let currentConfig: CurrentConfig = {
     provider: initialProvider,
     model: initialModel,
     effort: initialEffort,
@@ -12060,33 +12016,22 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     // Silently ignore configuration loading errors for banner
   }
 
-  // -r <id>: Load specific session
-  if (options.session?.id) {
-    const loaded = await storage.load(options.session.id);
-    if (loaded) {
-      existingMessages = loaded.messages;
-      existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
-      existingLineage = loaded.lineage;
-      existingArtifactLedger = loaded.artifactLedger;
-      existingExtensionState = loaded.extensionState;
-      existingExtensionRecords = loaded.extensionRecords;
-      sessionTitle = loaded.title;
-      sessionId = options.session.id;
-      activeRuntimeInfo = resolveSessionRuntimeInfo(loaded) ?? startupRuntime;
-      activeGitRoot = activeRuntimeInfo.workspaceRoot ?? undefined;
-      // FEATURE_226: carry the resumed session's tag into options so the
-      // live currentOptionsRef reflects it (save side reads it back).
-      options = { ...options, session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag } };
-      console.log(chalk.green(`[Session loaded: ${sessionId}]`));
+  if (options.sessionCommands?.read) {
+    sessionId = options.session?.id ?? ((options.session?.resume || options.session?.autoResume)
+      ? (await options.sessionCommands.list!({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)?.id
+      : undefined);
+    if (sessionId) {
+      const loaded = await readClientSession(options.sessionCommands, sessionId);
+      sessionTitle = loaded.session.title;
+      activeRuntimeInfo = clientSessionRuntimeInfo(loaded.session);
+      activeGitRoot = loaded.session.workspaceRoot ?? loaded.session.gitRoot;
+      currentConfig = applyClientSessionViewSettings(currentConfig, { settings: loaded.settings });
+      options = { ...options, session: { ...options.session, id: sessionId, tag: loaded.session.tag } };
     }
-  }
-  // -c or autoResume: Load most recent non-empty session
-  else if (options.session?.resume || options.session?.autoResume) {
-    const recentSession = options.sessionCommands?.list
-      ? (await options.sessionCommands.list({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)
-      : await findMostRecentResumableSession(storage, gitRoot);
-    if (recentSession) {
-      const loaded = await storage.load(recentSession.id);
+  } else {
+    // -r <id>: Load specific session
+    if (options.session?.id) {
+      const loaded = await storage.load(options.session.id);
       if (loaded) {
         existingMessages = loaded.messages;
         existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
@@ -12095,19 +12040,44 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         existingExtensionState = loaded.extensionState;
         existingExtensionRecords = loaded.extensionRecords;
         sessionTitle = loaded.title;
-        sessionId = recentSession.id;
+        sessionId = options.session.id;
         activeRuntimeInfo = resolveSessionRuntimeInfo(loaded) ?? startupRuntime;
         activeGitRoot = activeRuntimeInfo.workspaceRoot ?? undefined;
-        // FEATURE_226: carry the resumed session's tag into options.
-        options = {
-          ...options,
-          session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag },
-        };
-        console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
+        // FEATURE_226: carry the resumed session's tag into options so the
+        // live currentOptionsRef reflects it (save side reads it back).
+        options = { ...options, session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag } };
+        console.log(chalk.green(`[Session loaded: ${sessionId}]`));
       }
     }
-  }
+    // -c or autoResume: Load most recent non-empty session
+    else if (options.session?.resume || options.session?.autoResume) {
+      const recentSession = options.sessionCommands?.list
+        ? (await options.sessionCommands.list({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)
+        : await findMostRecentResumableSession(storage, gitRoot);
+      if (recentSession) {
+        const loaded = await storage.load(recentSession.id);
+        if (loaded) {
+          existingMessages = loaded.messages;
+          existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
+          existingLineage = loaded.lineage;
+          existingArtifactLedger = loaded.artifactLedger;
+          existingExtensionState = loaded.extensionState;
+          existingExtensionRecords = loaded.extensionRecords;
+          sessionTitle = loaded.title;
+          sessionId = recentSession.id;
+          activeRuntimeInfo = resolveSessionRuntimeInfo(loaded) ?? startupRuntime;
+          activeGitRoot = activeRuntimeInfo.workspaceRoot ?? undefined;
+          // FEATURE_226: carry the resumed session's tag into options.
+          options = {
+            ...options,
+            session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag },
+          };
+          console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
+        }
+      }
+    }
 
+  }
   // Create context with loaded session
   const context = await createInteractiveContext({
     sessionId,
@@ -12131,7 +12101,12 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
       surface: 'repl',
     });
   }
-  await options.clientPlane?.updateSettings?.(context.sessionId, clientSessionSettings(currentConfig, options.maxIter));
+  if (options.sessionCommands?.read) {
+    if (options.initialClientSettings && Object.keys(options.initialClientSettings).length) {
+      await options.clientPlane?.updateSettings?.(context.sessionId, options.initialClientSettings);
+    }
+    currentConfig = applyClientSessionViewSettings(currentConfig, { settings: await options.sessionCommands.getSettings!(context.sessionId) });
+  } else await options.clientPlane?.updateSettings?.(context.sessionId, clientSessionSettings(currentConfig, options.maxIter));
   options = {
     ...options,
     context: {

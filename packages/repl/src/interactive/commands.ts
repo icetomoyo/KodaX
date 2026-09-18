@@ -1539,7 +1539,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['hist'],
     description: 'Show conversation history',
     handler: async (_args, _context, callbacks) => {
-      callbacks.printHistory();
+      return callbacks.printHistory();
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/history - Show Conversation History\n'));

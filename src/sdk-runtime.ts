@@ -6429,11 +6429,15 @@ function createRuntimeSessionService(
   ): RuntimeSession => ({
     id,
     title: data.title,
+    ...(data.runtimeInfo?.executionCwd ? { executionCwd: data.runtimeInfo.executionCwd } : {}),
+    ...(data.tag ? { tag: data.tag } : {}),
     ...(data.gitRoot ? { gitRoot: data.gitRoot } : {}),
     ...(data.runtimeInfo?.workspaceRoot
       ? { workspaceRoot: data.runtimeInfo.workspaceRoot }
       : {}),
     ...(data.runtimeInfo?.surface ? { surface: data.runtimeInfo.surface } : {}),
+    ...(data.runtimeInfo?.branch ? { branch: data.runtimeInfo.branch } : {}),
+    ...(data.runtimeInfo?.workspaceKind ? { workspaceKind: data.runtimeInfo.workspaceKind } : {}),
     ...(data.runtimeInfo?.profileId
       ? { profileId: data.runtimeInfo.profileId }
       : {}),
@@ -7554,6 +7558,9 @@ function createRuntimeSessionService(
         parentId: entry.parentId,
         type: entry.type,
         timestamp: entry.timestamp,
+        ...(entry.type === 'message' ? { role: entry.message.role,
+          preview: (typeof entry.message.content === 'string' ? entry.message.content : '[complex content]').replace(/\s+/g, ' ').slice(0, 160) }
+          : 'summary' in entry && typeof entry.summary === 'string' ? { preview: entry.summary.slice(0, 160) } : {}),
         ...(entry.type === "label"
           ? {
               ...(entry.targetId !== undefined ? { targetId: entry.targetId } : {}),

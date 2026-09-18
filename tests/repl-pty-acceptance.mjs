@@ -425,8 +425,8 @@ async function assertSelectedSettings(state) {
   assert.equal(settings.provider, 'acceptance-local');
   assert.equal(settings.model, 'acceptance-model');
   assert.equal(settings.agentMode, 'sa');
-  assert.equal(settings.thinking, false);
-  assert.equal(settings.permissionMode, 'accept-edits');
+  assert.ok(['none', 'off'].includes(settings.effort), 'Explicit effort off reaches Host');
+  assert.equal(settings.permissionMode ?? 'accept-edits', 'accept-edits');
   assert.equal(settings.maxIter, 7);
 }
 
@@ -527,6 +527,41 @@ async function checkHostSessionList(state) {
     await waitFor('Host session list rendered', () => state.terminal.screen().includes('HOST_LIST_ONLY'));
     assert.ok(!state.terminal.screen().includes('OTHER_PROJECT_HIDDEN'));
   } finally { await state.client.sessions.delete(listed.id); await state.client.sessions.delete(other.id); }
+}
+
+async function checkHostSessionTransitions(state) {
+  const target = await state.client.sessions.create({ projectPath: state.homeDir, title: 'HOST_LOAD_TARGET' });
+  await state.client.sessions.updateSettings(target.id, {
+    provider: 'acceptance-local', model: 'acceptance-model', agentMode: 'sa', effort: 'none', maxIter: 13,
+  });
+  const settings = await state.client.sessions.getSettings(target.id);
+  await state.terminal.submit(`/load ${target.id}`);
+  await waitFor('target loaded', () => state.terminal.screen().includes(target.id));
+  await delay(400);
+  assert.deepEqual(await state.client.sessions.getSettings(target.id), settings);
+  await observeSession(state, target.id);
+  await state.terminal.submit('ACCEPT_LOADED_HISTORY');
+  await waitFor('loaded response', () => state.terminal.screen().includes('END_ACCEPT_LOADED_HISTORY'));
+  await waitFor('loaded run settled', () => state.view.runs.every(run => !['accepted', 'queued', 'running', 'waiting_user', 'waiting_agent'].includes(run.phase)));
+  await waitFor('loaded prompt ready', () => state.mode === 'ink'
+    ? /^>\s+Type a message/m.test(state.terminal.screen()) : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
+  await delay(400);
+  const lineage = await state.client.sessions.readLineage(target.id);
+  const first = lineage.entries.find(entry => entry.role === 'user');
+  await state.terminal.submit(`/rewind ${first.id}`);
+  await waitFor('rewind head', async () => (await state.client.sessions.readLineage(target.id)).activeEntryId === first.id);
+  if (state.mode === 'ink') await waitFor('rewound history remains visible', () => state.terminal.screen().includes('ACCEPT_LOADED_HISTORY'));
+  await delay(400);
+  await state.terminal.submit('/tree');
+  await waitFor('Host tree rendered', () => state.terminal.screen().includes(first.id.slice(0, 12)));
+  state.terminal.dispose();
+  await state.terminal.exit;
+  state.terminal = openTerminal(state.homeDir, state.mode, ['--resume', target.id, '--repo-intelligence', 'full', '--repo-intelligence-trace']);
+  await waitFor('resumed target ready', () => state.terminal.screen().includes(target.id), 45_000);
+  await waitFor('explicit flags applied to existing Host', async () => {
+    const updated = await state.client.sessions.getSettings(target.id);
+    return updated.maxIter === 7 && updated.repoIntelligenceMode === 'full' && updated.repoIntelligenceTrace === true;
+  });
 }
 
 async function checkSettings(state) {
@@ -1035,6 +1070,7 @@ async function run(mode) {
     await check(state, 'host-execution-controls', checkHostExecutionControls);
     await check(state, 'host-session-list', checkHostSessionList);
     if (consumerOnly) {
+      await check(state, 'host-session-transitions', checkHostSessionTransitions);
       await check(state, 'exit', checkExit);
       return;
     }

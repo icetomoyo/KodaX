@@ -55,11 +55,15 @@ export interface ClientExtensionDiagnostics {
 }
 
 export interface ClientSession {
+  readonly executionCwd?: string;
   readonly id: string;
   readonly archived?: boolean;
   readonly title: string;
+  readonly tag?: string;
   readonly gitRoot?: string;
   readonly workspaceRoot?: string;
+  readonly branch?: string;
+  readonly workspaceKind?: 'detected' | 'managed';
   readonly surface?: string;
   readonly profileId?: string;
   readonly createdAt?: string;
@@ -392,12 +396,15 @@ export interface ClientGoalCreateInput {
   readonly tokenBudget?: number;
 }
 
-/** Metadata view of one lineage entry; message content stays out of shape. */
+/** Lineage facts with a bounded text preview; raw messages stay in the Host. */
 export interface ClientLineageEntry {
   readonly id: string;
   readonly parentId: string | null;
   readonly type: KodaXSessionEntry['type'];
   readonly timestamp: string;
+  readonly role?: 'user' | 'assistant' | 'system' | 'tool';
+  /** Bounded content hint, never a substitute for history/readItem. */
+  readonly preview?: string;
   /** Present on label entries: the labeled target entry. */
   readonly targetId?: string;
   /** Present on label entries; absent means the label was removed. */

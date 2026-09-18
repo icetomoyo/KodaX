@@ -5,6 +5,9 @@ import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 export function createCliSessionCommands(client: KodaXProductClient): SessionCommandBinding {
   return {
     list: filter => client.sessions.list(filter),
+    read: id => client.sessions.read(id),
+    getSettings: id => client.sessions.getSettings(id),
+    readLineage: id => client.sessions.readLineage(id),
     delete: sessionId => client.sessions.delete(sessionId),
     deleteAll: async ({ gitRoot }) => {
       const sessions = await client.sessions.list({

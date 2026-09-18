@@ -3,7 +3,8 @@
  */
 
 import * as readline from 'readline';
-import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata, readClientHistoryPreview } from '../session/client-session.js';
+import type { ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
 import * as path from 'path';
@@ -156,7 +157,7 @@ import { formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '../comm
 import {
   enforceSessionTransitionGuard,
 } from './session-guardrails.js';
-import { formatSessionTree } from './session-tree.js';
+import { formatSessionTree, formatClientSessionTree } from './session-tree.js';
 import {
   formatWorkspaceTruth,
   inspectWorkspaceRuntime,
@@ -194,10 +195,19 @@ export async function loadClassicStartupSession(
   sessionCommands?: SessionCommandBinding,
 ): Promise<{
   id: string;
-  data: KodaXSessionData;
+  data?: KodaXSessionData;
+  client?: Awaited<ReturnType<typeof readClientSession>>;
   kind: 'load' | 'continue';
   runtimeInfo?: KodaXSessionRuntimeInfo;
 } | null> {
+  if (sessionCommands?.read) {
+    const id = session?.id ?? ((session?.resume || session?.autoResume)
+      ? (await sessionCommands.list!({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)?.id
+      : undefined);
+    if (!id) return null;
+    const client = await readClientSession(sessionCommands, id);
+    return { id, client, kind: session?.id ? 'load' : 'continue', runtimeInfo: clientSessionRuntimeInfo(client.session) };
+  }
   if (session?.id) {
     const data = await storage.load(session.id);
     if (!data) return null;
@@ -493,6 +503,7 @@ export async function saveClassicSession(
 export type ReplRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | undefined>;
 
 export interface RepLOptions extends KodaXOptions {
+  initialClientSettings?: ClientSessionSettingsPatch;
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
   /** FEATURE_298 T18 — bound rounds travel the Host input/run faces. */
@@ -585,7 +596,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       session: {
         ...(options.session ?? {}),
         id: startupSession.id,
-        tag: startupSession.data.tag,
+        tag: startupSession.client?.session.tag ?? startupSession.data?.tag,
       },
     };
   }
@@ -690,14 +701,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     sessionId: startupSession?.id ?? options.session?.id,
     gitRoot,
     runtimeInfo: activeRuntime,
-    existingMessages: startupSession?.data.messages,
-    existingUiHistory: startupSession?.data.uiHistory,
-    existingLineage: startupSession?.data.lineage,
-    existingArtifactLedger: startupSession?.data.artifactLedger,
-    existingExtensionState: startupSession?.data.extensionState,
-    existingExtensionRecords: startupSession?.data.extensionRecords,
+    existingMessages: startupSession?.data?.messages,
+    existingUiHistory: startupSession?.data?.uiHistory,
+    existingLineage: startupSession?.data?.lineage,
+    existingArtifactLedger: startupSession?.data?.artifactLedger,
+    existingExtensionState: startupSession?.data?.extensionState,
+    existingExtensionRecords: startupSession?.data?.extensionRecords,
   });
-  context.title = startupSession?.data.title ?? '';
+  context.title = startupSession?.client?.session.title ?? startupSession?.data?.title ?? '';
   // Register a fresh Session before starting its Host view or accepting input.
   if (startupSession === null && options.session?.id === undefined && options.sessionCommands) {
     await options.sessionCommands.create({
@@ -713,7 +724,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     context.sessionId, config === currentConfig ? clientSessionSettings(config, options.maxIter)
       : changedClientSessionSettings(clientSessionSettings(currentConfig, options.maxIter),
         clientSessionSettings(config, options.maxIter), explicit));
-  await syncClientSettings();
+  if (options.sessionCommands?.read) {
+    if (options.initialClientSettings && Object.keys(options.initialClientSettings).length) {
+      await options.clientPlane?.updateSettings?.(context.sessionId, options.initialClientSettings);
+    }
+    const settings = await options.sessionCommands.getSettings!(context.sessionId);
+    currentConfig = applyClientSessionViewSettings(currentConfig, { settings });
+    currentPermissionMode = currentConfig.permissionMode;
+  } else await syncClientSettings();
   if (startupSession) {
     const label = startupSession.kind === 'continue' ? 'Continuing session' : 'Session loaded';
     process.stdout.write(`${chalk.green(`[${label}: ${startupSession.id}]`)}\n`);
@@ -807,12 +825,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // of file-system I/O — env override layers feed the resolver chain.
   const autoModeSettings = loadAutoModeSettings();
   const runtimeAutoModeSettings = toReplRuntimeAutoModeSettings(autoModeSettings);
-  if (options.clientPlane?.updateSettings) {
+  if (!options.sessionCommands?.read && options.clientPlane?.updateSettings) {
     await options.clientPlane.updateSettings(context.sessionId, {
       autoModeClassifierModel: runtimeAutoModeSettings.classifierModel ?? null,
     });
-  } else {
-    await options.runtimeAutoModeControl?.syncSettings?.(context.sessionId, currentPermissionMode, runtimeAutoModeSettings);
+  } else if (!options.sessionCommands?.read) {
+    await options.runtimeAutoModeControl?.syncSettings?.(context.sessionId, canonicalizePermissionMode(currentPermissionMode), runtimeAutoModeSettings);
   }
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
     projectRoot: gitRoot ?? process.cwd(),
@@ -919,6 +937,32 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     attachPlaneDisplayFor(nextId);
   };
   attachPlaneDisplayFor(context.sessionId);
+  const refreshHostSession = async (id: string): Promise<void> => {
+    if (!options.sessionCommands?.read) {
+      const stored = await storage.load(id);
+      if (!stored) throw new Error(`Session not found: ${id}`);
+      context.messages = stored.messages;
+      context.uiHistory = stored.uiHistory;
+      context.lineage = stored.lineage;
+      context.title = stored.title;
+      context.artifactLedger = stored.artifactLedger;
+      context.contextTokenSnapshot = undefined;
+      applyRuntimeContext(context, currentOptions, resolveSessionRuntimeInfo(stored) ?? context.runtimeInfo);
+      currentOptions.session = { ...currentOptions.session, id, tag: stored.tag };
+      setContextSessionId(id);
+      teamModeHandle?.writer.update({ sessionId: id });
+      return;
+    }
+    const loaded = await readClientSession(options.sessionCommands!, id);
+    applyClientSessionMetadata(context, loaded.session);
+    applyRuntimeContext(context, currentOptions, context.runtimeInfo);
+    currentConfig = applyClientSessionViewSettings(currentConfig, { settings: loaded.settings });
+    currentPermissionMode = currentConfig.permissionMode;
+    currentOptions.session = { ...currentOptions.session, id, tag: loaded.session.tag };
+    setContextSessionId(id);
+    teamModeHandle?.writer.update({ sessionId: id });
+  };
+
 
   // FEATURE_298 T18 — plane-bound rounds travel the Host input/run faces;
   // display authority is the live session view (the plane display
@@ -1084,7 +1128,7 @@ Keyboard Shortcuts:
   costReportRef.current = null;
 
   const recoverCurrentSession = async (prompt?: string): Promise<SessionRecoverStatus> => {
-    if (context.messages.length === 0) {
+    if (!options.sessionCommands && context.messages.length === 0) {
       return 'empty';
     }
     if (!guardSessionTransition('Recovering into a new session')) {
@@ -1102,27 +1146,8 @@ Keyboard Shortcuts:
       if (recoveredId === undefined) {
         return 'failed';
       }
-      const loaded = await storage.load(recoveredId);
-      if (!loaded) {
-        return 'failed';
-      }
-      setContextSessionId(recoveredId);
-      context.messages = loaded.messages;
-      context.title = loaded.title;
-      context.lineage = loaded.lineage;
-      context.artifactLedger = loaded.artifactLedger ?? context.artifactLedger;
-      context.contextTokenSnapshot = undefined;
-      context.createdAt = new Date().toISOString();
-      context.lastAccessed = context.createdAt;
-      currentOptions.session = {
-        ...currentOptions.session,
-        id: recoveredId,
-      };
-      console.log(chalk.green(`\n[Recovered into session: ${recoveredId}]`));
-      console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
-      // Review fix: an explicit /recover <prompt> continuation is the
-      // user's stated first input for the recovered session — run it
-      // through the same round path as the unbound flow.
+      await refreshHostSession(recoveredId);
+      process.stdout.write(`\n[Recovered into session: ${recoveredId}]\n`);
       const continuation = normalizeRecoveryPrompt(prompt);
       if (continuation.length > 0) {
         try {
@@ -1261,7 +1286,7 @@ Keyboard Shortcuts:
     // FEATURE_298 T36/T34 — the Host owns the Memory plane; without this
     // forward the product wiring is silently dropped and /memory breaks.
     memory: options.memory,
-    refreshSessionLineage: async () =>
+    refreshSessionLineage: options.sessionCommands?.read ? undefined : async () =>
       (await storage.getLineage?.(context.sessionId)) ?? undefined,
     exit: () => {
       isRunning = false;
@@ -1309,6 +1334,12 @@ Keyboard Shortcuts:
       teamModeHandle?.writer.update({ sessionId: context.sessionId });
     },
     loadSession: async (id: string) => {
+      if (options.sessionCommands?.read) {
+        if (!guardSessionTransition('Resuming a saved session')) return 'blocked';
+        await refreshHostSession(id);
+        process.stdout.write(`\n[Loaded session: ${id}]\n`);
+        return 'loaded';
+      }
       const loaded = await storage.load(id);
       if (loaded) {
         if (!guardSessionTransition('Resuming a saved session')) {
@@ -1397,7 +1428,8 @@ Keyboard Shortcuts:
       // Classic readline has no separate presentation history to clear.
       // /clear owns context resets; /compact must retain its committed context.
     },
-    printHistory: () => {
+    printHistory: async () => {
+      if (options.clientPlane?.readHistory) return readClientHistoryPreview(options.clientPlane, context.sessionId);
       if (context.messages.length === 0) {
         console.log(chalk.dim('\n[No conversation history]'));
         return;
@@ -1511,6 +1543,10 @@ Keyboard Shortcuts:
       await storage.deleteAll?.(context.gitRoot ?? undefined);
     },
     printSessionTree: async () => {
+      if (options.sessionCommands?.readLineage) {
+        process.stdout.write('\nSession Tree:\n' + formatClientSessionTree(await options.sessionCommands.readLineage(context.sessionId)).join('\n') + '\n');
+        return;
+      }
       const lineage = await storage.getLineage?.(context.sessionId);
       if (!lineage) {
         console.log(chalk.dim('\n[No session tree available for this session]'));
@@ -1540,16 +1576,8 @@ Keyboard Shortcuts:
         if (!found) {
           return 'missing';
         }
-        const loaded = await storage.load(context.sessionId);
-        if (!loaded) {
-          return 'missing';
-        }
-        context.messages = loaded.messages;
-        context.title = loaded.title;
-        context.lineage = loaded.lineage;
-        context.contextTokenSnapshot = undefined;
-        console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
-        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        await refreshHostSession(context.sessionId);
+        process.stdout.write(`\n[Switched to tree entry: ${selector}]\n`);
         return 'switched';
       }
 
@@ -1579,7 +1607,7 @@ Keyboard Shortcuts:
         if (!updated) {
           return false;
         }
-        context.lineage = await storage.getLineage?.(context.sessionId) ?? context.lineage;
+        await options.sessionCommands.readLineage?.(context.sessionId);
         const boundAction = label && label.trim()
           ? `checkpoint label set: ${label.trim()}`
           : 'checkpoint label cleared';
@@ -1610,24 +1638,8 @@ Keyboard Shortcuts:
         if (forkedId === undefined) {
           return 'failed';
         }
-        const loaded = await storage.load(forkedId);
-        if (!loaded) {
-          return 'failed';
-        }
-        setContextSessionId(forkedId);
-        context.messages = loaded.messages;
-        context.title = loaded.title;
-        context.lineage = loaded.lineage;
-        context.contextTokenSnapshot = undefined;
-        context.createdAt = new Date().toISOString();
-        context.lastAccessed = context.createdAt;
-        applyRuntimeContext(context, currentOptions, resolveSessionRuntimeInfo(loaded) ?? context.runtimeInfo);
-        currentOptions.session = {
-          ...currentOptions.session,
-          id: forkedId,
-        };
-        console.log(chalk.green(`\n[Forked session: ${forkedId}]`));
-        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        await refreshHostSession(forkedId);
+        process.stdout.write(`\n[Forked session: ${forkedId}]\n`);
         return 'forked';
       }
 
@@ -1660,23 +1672,16 @@ Keyboard Shortcuts:
       if (options.sessionCommands) {
         const rewound = await options.sessionCommands.rewind({
           sessionId: context.sessionId,
-          expectedHead: context.lineage?.activeEntryId ?? null,
+          expectedHead: options.sessionCommands.readLineage
+                  ? (await options.sessionCommands.readLineage(context.sessionId))?.activeEntryId ?? null
+                  : context.lineage?.activeEntryId ?? null,
           ...(selector !== undefined ? { selector } : {}),
         });
         if (!rewound) {
           return 'failed';
         }
-        const loaded = await storage.load(context.sessionId);
-        if (!loaded) {
-          return 'failed';
-        }
-        context.messages = loaded.messages;
-        context.title = loaded.title;
-        context.lineage = loaded.lineage;
-        context.contextTokenSnapshot = undefined;
-        context.lastAccessed = new Date().toISOString();
-        console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : ' to previous turn'}]`));
-        console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        await refreshHostSession(context.sessionId);
+        process.stdout.write('\n[Rewound session]\n');
         return 'rewound';
       }
 

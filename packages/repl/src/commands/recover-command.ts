@@ -7,12 +7,7 @@ export const recoverCommand: Command = {
   aliases: ['handoff'],
   description: 'Create a fresh session from safe memory and continue',
   usage: '/recover [prompt]',
-  handler: async (args, context, callbacks) => {
-    if (context.messages.length === 0) {
-      console.log(chalk.yellow('\nCurrent session is empty. Start a normal message instead.'));
-      return;
-    }
-
+  handler: async (args, _context, callbacks) => {
     if (!callbacks.recoverSession) {
       console.log(chalk.red('\n[Recover is not available in this host]\n'));
       return;
@@ -33,8 +28,7 @@ export const recoverCommand: Command = {
       status = await callbacks.recoverSession(normalizeRecoveryPrompt(args.join(' ')));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.log(chalk.red(`\n[Recover failed] ${message}\n`));
-      return;
+      return { success: false, message: `[Recover failed] ${message}` };
     }
     if (status === 'blocked') {
       console.log(chalk.yellow('\n[Recover blocked by the current session transition guard]\n'));

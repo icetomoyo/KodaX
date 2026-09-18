@@ -1,4 +1,42 @@
 import type { KodaXSessionTreeNode } from '@kodax-ai/agent';
+import type { ClientLineageSummary } from '@kodax-ai/coding/client-contract';
+
+/** The terminal owns layout; Host entries supply only bounded content facts. */
+export function formatClientSessionTree(lineage: ClientLineageSummary | null): string[] {
+  if (!lineage) return ['[No session tree available for this session]'];
+  const entries = new Map(lineage.entries.map(entry => [entry.id, entry]));
+  const visible = lineage.entries.filter(entry => ['message', 'compaction', 'branch_summary', 'archive_marker'].includes(entry.type));
+  const visibleIds = new Set(visible.map(entry => entry.id));
+  const labels = new Map<string, string>();
+  for (const entry of lineage.entries) {
+    if (entry.type === 'label' && entry.targetId) {
+      if (entry.label) labels.set(entry.targetId, entry.label); else labels.delete(entry.targetId);
+    }
+  }
+  const active = new Set<string>();
+  for (let id = lineage.activeEntryId; id && !active.has(id); id = entries.get(id)?.parentId ?? null) active.add(id);
+  const children = new Map<string | null, typeof visible>();
+  for (const entry of visible) {
+    const parent = entry.parentId && visibleIds.has(entry.parentId) ? entry.parentId : null;
+    const siblings = children.get(parent) ?? [];
+    siblings.push(entry);
+    children.set(parent, siblings);
+  }
+  const lines: string[] = [];
+  const visited = new Set<string>();
+  const visit = (parent: string | null, depth: number): void => {
+    for (const entry of children.get(parent) ?? []) {
+      if (visited.has(entry.id)) continue;
+      visited.add(entry.id);
+      const preview = entry.preview ?? '';
+      const label = labels.get(entry.id);
+      lines.push(`${'  '.repeat(depth)}${active.has(entry.id) ? '*' : ' '} ${entry.id.slice(0, 12)}  ${entry.role ?? entry.type}: ${preview.slice(0, 48)}${preview.length > 48 ? '...' : ''}${label ? ` [${label}]` : ''}`);
+      visit(entry.id, depth + 1);
+    }
+  };
+  visit(null, 0);
+  return lines;
+}
 
 function summarizeEntry(entry: KodaXSessionTreeNode['entry']): string {
   switch (entry.type) {

@@ -4925,7 +4925,20 @@ complete -c kodax -l version -d 'Show version'`);
         const runtimeAutoModeControl =
           createReplRuntimeAutoModeControl(interactiveClient);
 
+        const initialClientSettings = {
+          ...(program.getOptionValueSource('provider') === 'cli' ? { provider: options.provider, model: options.model ?? null } : {}),
+          ...(program.getOptionValueSource('model') === 'cli' ? { model: options.model ?? null } : {}),
+          ...(program.getOptionValueSource('effort') === 'cli' ? { effort: options.effort ?? null } : {}),
+          ...(program.getOptionValueSource('reasoning') === 'cli' || program.getOptionValueSource('thinking') === 'cli'
+            ? { reasoningMode: options.reasoningMode, thinking: options.thinking } : {}),
+          ...(program.getOptionValueSource('agentMode') === 'cli' ? { agentMode: options.agentMode } : {}),
+          ...(program.getOptionValueSource('maxIter') === 'cli' ? { maxIter: options.maxIter } : {}),
+          ...(program.getOptionValueSource('repoIntelligence') === 'cli'
+            ? { repoIntelligenceMode: parseRepoIntelligenceModeOption(opts.repoIntelligence) } : {}),
+          ...(program.getOptionValueSource('repoIntelligenceTrace') === 'cli' ? { repoIntelligenceTrace: opts.repoIntelligenceTrace === true } : {}),
+        };
         const interactiveOptions = {
+          initialClientSettings,
           provider: interactiveKodaXOptions.provider,
           model: interactiveKodaXOptions.model,
           effort: interactiveKodaXOptions.effort,

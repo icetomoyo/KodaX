@@ -114,11 +114,14 @@ export interface SessionGoalBinding {
 
 /**
  * FEATURE_298 T34 — session-command mutations are Host-owned: the surface
- * sends ids/selectors only and re-reads the session file the Host wrote;
+ * sends ids/selectors only and reads the resulting Host projections;
  * unbound REPLs keep the direct SessionStorage paths (standalone).
  */
 export interface SessionCommandBinding {
   list?: KodaXProductClient['sessions']['list'];
+  read?: KodaXProductClient['sessions']['read'];
+  getSettings?: KodaXProductClient['sessions']['getSettings'];
+  readLineage?: KodaXProductClient['sessions']['readLineage'];
   delete(sessionId: string): Promise<void>;
   deleteAll(input: { readonly gitRoot?: string }): Promise<void>;
   /** Returns false when no lineage entry matches the selector. */
@@ -205,7 +208,7 @@ export interface CommandCallbacks {
   listSessions: () => Promise<void | CommandResultData>;
   /** Clear presentation only. Commands own changes to messages/token state. */
   clearHistory: () => void;
-  printHistory: () => void;
+  printHistory: () => void | CommandResultData | Promise<void | CommandResultData>;
   switchProvider?: (provider: string, model?: string) => void | Promise<void>;
   setEffort?: (effort?: string) => void | Promise<void>;
   setReasoningMode?: (mode: KodaXReasoningMode) => void | Promise<void>;
