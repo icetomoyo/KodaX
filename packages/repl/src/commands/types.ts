@@ -181,7 +181,7 @@ export interface CommandCallbacks {
   inspectExtensions?: KodaXProductClient['catalog']['extensions'];
   mcp?: Pick<KodaXProductClient['mcp'], 'status' | 'listTools'>;
   /** Host-owned reasoning-effort probing; unbound keeps the local provider path. */
-  providerCapabilities?: Pick<KodaXProductClient['catalog'], 'probeReasoningEfforts' | 'forgetCapabilities'>;
+  providerCapabilities?: Pick<KodaXProductClient['catalog'], 'reasoningEfforts' | 'probeReasoningEfforts' | 'forgetCapabilities'>;
   startReview?: KodaXProductClient['review']['start'];
   reviewAgentsLean?: KodaXProductClient['agents']['reviewLean'];
   exit: () => void | Promise<void>;

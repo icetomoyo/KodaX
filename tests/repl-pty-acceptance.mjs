@@ -24,6 +24,7 @@ const results = [];
 const sourceEntry = process.argv.includes('--source');
 const longHistoryOnly = process.argv.includes('--long-history-only');
 const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
+const consumerOnly = process.argv.includes('--consumer-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -106,6 +107,12 @@ async function respondToModelRequest(state, request, response) {
   const data = JSON.parse(body);
   state.requests.push(data);
   const token = lastUserText(data.messages).match(/^(?:\/ah-run\s+)?(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
+  if ((data.max_completion_tokens === 1 || token === 'ACCEPT_CAPABILITY') && data.reasoning_effort === 'high') {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: "Unsupported value: reasoning_effort 'high'.",
+      type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
+    return;
+  }
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   if ((token === 'ACCEPT_ARCHIVE_EARLY' || token.startsWith('ACCEPT_ARCHIVE_FILL_'))
     && data.messages.at(-1).role !== 'tool') {
@@ -187,6 +194,7 @@ async function setupProvider(state) {
       name: 'acceptance-local', protocol: 'openai',
       baseUrl: `http://127.0.0.1:${state.server.address().port}/v1`,
       apiKeyEnv: 'KODAX_ACCEPTANCE_KEY', model: 'acceptance-model',
+      reasoning: { efforts: ['low', 'medium', 'high'], default: 'medium' },
       contextWindow: longHistoryOnly ? 262144 : 65536, maxOutputTokens: 1024,
     }],
   }));
@@ -420,6 +428,37 @@ async function assertSelectedSettings(state) {
   assert.equal(settings.thinking, false);
   assert.equal(settings.permissionMode, 'accept-edits');
   assert.equal(settings.maxIter, 7);
+}
+
+async function checkProviderCapabilities(state) {
+  const selection = { provider: 'acceptance-local', model: 'acceptance-model' };
+  const initialRequests = state.requests.length;
+  assert.ok((await state.client.catalog.reasoningEfforts(selection)).includes('high'));
+  assert.equal(state.requests.length, initialRequests, 'Capability discovery does not probe');
+  await state.terminal.submit('/provider probe');
+  await waitFor('Host learns the rejected effort', async () =>
+    !(await state.client.catalog.reasoningEfforts(selection)).includes('high'));
+  await waitFor('probe result presented', () => state.terminal.screen().includes('rejections recorded'));
+  const rejectedRequests = state.requests.filter(request => request.reasoning_effort === 'high').length;
+  const beforeSecondProbe = state.requests.length;
+  await state.terminal.submit('/provider probe');
+  await waitFor('second probe accepts the remaining efforts', () => state.requests.length >= beforeSecondProbe + 2);
+  await waitFor('second probe has finished rendering', () =>
+    (state.terminal.screen().match(/rejections recorded/g) ?? []).length === 2);
+  assert.equal(state.requests.filter(request => request.reasoning_effort === 'high').length, rejectedRequests,
+    'The next probe must use Host-filtered candidates');
+  await state.terminal.submit('/provider forget-capability acceptance-local/acceptance-model');
+  await waitFor('Host clear receipt presented', () => state.terminal.screen().includes('Cleared Host learned capability'));
+  assert.ok((await state.client.catalog.reasoningEfforts(selection)).includes('high'));
+  const savedEffort = (await state.client.config.read()).effort;
+  await state.client.sessions.updateSettings(state.sessionId, { effort: 'high', thinking: true, reasoningMode: 'deep' });
+  await waitFor('explicit Host effort reaches the terminal view', () => state.view.settings.effort === 'high');
+  await state.terminal.submit('ACCEPT_CAPABILITY');
+  await waitFor('real execution recovers from effort rejection', () => state.terminal.screen().includes('END_ACCEPT_CAPABILITY'));
+  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort === 'high'));
+  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort !== 'high'));
+  assert.equal((await state.client.config.read()).effort, savedEffort, 'Observed rejection must not overwrite user defaults');
+  await state.client.sessions.updateSettings(state.sessionId, { effort: 'off', thinking: false, reasoningMode: 'off' });
 }
 
 async function checkSettings(state) {
@@ -923,6 +962,11 @@ async function run(mode) {
     await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    await check(state, 'host-provider-capabilities', checkProviderCapabilities);
+    if (consumerOnly) {
+      await check(state, 'exit', checkExit);
+      return;
+    }
     if (longHistoryOnly) {
       await check(state, 'long-history-preview-budget', checkLongHistoryPreviews);
       await check(state, 'exit', checkExit);
@@ -965,7 +1009,7 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only'].includes(argument));
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only'].includes(argument));
   const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);

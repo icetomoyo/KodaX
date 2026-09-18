@@ -10,6 +10,8 @@ import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { BUILTIN_COMMANDS, type CommandCallbacks, type CurrentConfig } from '../packages/repl/src/interactive/commands.js';
+import { createInteractiveContext } from '../packages/repl/src/interactive/context.js';
 
 it('probes and forgets capabilities in the actual Host used by subsequent SA and AMA requests', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-capabilities-'));
@@ -65,6 +67,27 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         expect(await client.catalog.probeReasoningEfforts({ ...selection, efforts: ['high'] }), JSON.stringify(requests))
           .toEqual([{ effort: 'high', status: 'rejected' }]);
         expect(await client.catalog.reasoningEfforts(selection)).not.toContain('high');
+        const providerCommand = BUILTIN_COMMANDS.find(command => command.name === 'provider')!;
+        const context = await createInteractiveContext({ gitRoot: homeDir });
+        const callbacks: CommandCallbacks = {
+          providerCapabilities: client.catalog,
+          exit() {}, async saveSession() {}, async loadSession() { return 'missing'; },
+          async listSessions() {}, clearHistory() {}, printHistory() {},
+          ui: {
+            async select() { throw new Error('Unexpected selection'); },
+            async confirm() { throw new Error('Unexpected confirmation'); },
+            async input() { throw new Error('Unexpected input'); },
+          },
+        };
+        const config: CurrentConfig = {
+          ...selection, thinking: true, reasoningMode: 'balanced', agentMode: 'sa', permissionMode: 'accept-edits',
+        };
+        const beforeProbe = requests.length;
+        await providerCommand.handler(['probe'], context, callbacks, config);
+        expect(requests.slice(beforeProbe)).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ reasoning_effort: 'high' }),
+        ]));
+        expect(requests.length).toBeGreaterThan(beforeProbe);
         for (const agentMode of ['sa', 'ama'] as const) {
           const session = await client.sessions.create({ projectPath: homeDir });
           await client.sessions.updateSettings(session.id, {
@@ -79,7 +102,24 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           expect(requestedEfforts.length).toBeGreaterThan(0);
           expect(requestedEfforts).not.toContain('high');
         }
-        await client.catalog.forgetCapabilities(selection);
+        const forget = runtime.catalog.forgetCapabilities;
+        let releaseForget!: () => void;
+        let forgetEntered = false;
+        const forgetGate = new Promise<void>(resolve => { releaseForget = resolve; });
+        runtime.catalog.forgetCapabilities = async input => {
+          forgetEntered = true;
+          await forgetGate;
+          await forget(input);
+        };
+        let forgetSettled = false;
+        const forgetting = providerCommand.handler(['forget-capability', `${selection.provider}/${selection.model}`], context, callbacks, config)
+          .then(result => { forgetSettled = true; return result; });
+        try {
+          await expect.poll(() => forgetEntered).toBe(true);
+          expect(forgetSettled).toBe(false);
+        } finally { releaseForget(); }
+        expect(await forgetting).toMatchObject({ success: true });
+        runtime.catalog.forgetCapabilities = forget;
         expect(await client.catalog.reasoningEfforts(selection)).toContain('high');
         const restored = await client.sessions.create({ projectPath: homeDir });
         await client.sessions.updateSettings(restored.id, { ...selection, agentMode: 'sa', effort: 'high', permissionMode: 'full-access' });
@@ -89,6 +129,11 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         await runtime.runs.await(accepted.runId);
         await awaitLatestCodingMemoryReviewDrain(5_000);
         expect(requestedEfforts).toContain('high');
+        await client.disconnect();
+        const beforeDisconnectedCommands = requests.length;
+        expect(await providerCommand.handler(['probe'], context, callbacks, config)).toMatchObject({ success: false });
+        expect(await providerCommand.handler(['forget-capability'], context, callbacks, config)).toMatchObject({ success: false });
+        expect(requests.length).toBe(beforeDisconnectedCommands);
       } finally { await client.disconnect(); }
     } finally { await host.close(); }
   } finally {

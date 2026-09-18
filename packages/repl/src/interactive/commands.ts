@@ -1729,18 +1729,15 @@ export const BUILTIN_COMMANDS: Command[] = [
           clearCapabilityCache(fp, fm);
           console.log(chalk.dim(`\n[Cleared learned capability overrides for ${fp}${fm ? `/${fm}` : ''}]\n`));
         };
-        // Host-owned cache when bound: the Host face governs Host-side effort
-        // selection; the local mirror still clears so unbound fallbacks and
-        // display logic stay consistent.
         const hostCapabilities = _callbacks?.providerCapabilities;
         if (hostCapabilities !== undefined) {
           const { provider, model } = parseTarget();
-          void hostCapabilities.forgetCapabilities(target ? { provider, model } : undefined)
-            .then(clearLocal)
-            .catch((error: unknown) => {
-              console.log(chalk.red(`\n[Forget failed: ${error instanceof Error ? error.message : String(error)}]\n`));
-            });
-          return;
+          try {
+            await hostCapabilities.forgetCapabilities(target ? { provider, model } : undefined);
+            return { success: true, message: chalk.dim(`[Cleared Host learned capability overrides${target ? ` for ${target}` : ''}]`) };
+          } catch (error: unknown) {
+            return { success: false, message: chalk.red(`[Forget failed: ${error instanceof Error ? error.message : String(error)}]`) };
+          }
         }
         clearLocal();
         return;
@@ -1751,43 +1748,42 @@ export const BUILTIN_COMMANDS: Command[] = [
       // signal as passive learning (source: probed). Real requests, a few
       // tokens each; explicit and user-invoked only.
       if (input === 'probe') {
-        const candidates = getProviderReasoningEffortOptions(
-          currentConfig.provider,
-          currentConfig.model,
-        ).filter((e) => e !== 'auto' && e !== 'off');
         const label = `${currentConfig.provider}/${currentConfig.model ?? '(default)'}`;
-        console.log(chalk.dim(`\n[Probing ${label} — ${candidates.length} efforts, minimal requests…]`));
         try {
-          // Host-owned probing when bound: rejections are recorded into the
-          // Host capability cache that governs Host-side effort selection.
-          const hostResults = _callbacks?.providerCapabilities !== undefined
-            ? await _callbacks.providerCapabilities.probeReasoningEfforts({
+          const hostCapabilities = _callbacks?.providerCapabilities;
+          const candidates = (hostCapabilities
+            ? await hostCapabilities.reasoningEfforts({ provider: currentConfig.provider, model: currentConfig.model })
+            : getProviderReasoningEffortOptions(currentConfig.provider, currentConfig.model))
+            .filter(effort => effort !== 'auto' && effort !== 'off');
+          const results = hostCapabilities
+            ? await hostCapabilities.probeReasoningEfforts({
               provider: currentConfig.provider,
               model: currentConfig.model,
               efforts: candidates,
             })
-            : undefined;
-          const results = hostResults ?? await probeProviderReasoningEfforts({
+            : await probeProviderReasoningEfforts({
             provider: currentConfig.provider,
             model: currentConfig.model,
             efforts: candidates,
             resolve: resolveProvider,
             now: () => new Date().toISOString(),
           });
-          for (const r of results) {
+          const lines = results.map(r => {
             const mark = r.status === 'accepted'
               ? chalk.green('✓')
               : r.status === 'rejected'
                 ? chalk.red('✗')
                 : chalk.yellow('!');
-            console.log(chalk.dim(`  ${mark} ${r.effort}${r.error ? ` — ${r.error}` : ''}`));
-          }
-          console.log(chalk.dim('  (rejections recorded; undo with /provider forget-capability)\n'));
+            return chalk.dim(`  ${mark} ${r.effort}${r.error ? ` — ${r.error}` : ''}`);
+          });
+          return { success: results.every(result => result.status !== 'error'), message: [
+            chalk.dim(`[Probing ${label} — ${candidates.length} efforts, minimal requests…]`),
+            ...lines, chalk.dim('  (rejections recorded; undo with /provider forget-capability)'),
+          ].join('\n') };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.log(chalk.red(`\n[Probe failed: ${message}]\n`));
+          return { success: false, message: chalk.red(`[Probe failed: ${message}]`) };
         }
-        return;
       }
 
       let targetProvider = currentConfig.provider;

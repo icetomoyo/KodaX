@@ -506,6 +506,7 @@ export interface RepLOptions extends KodaXOptions {
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
   mcp?: CommandCallbacks['mcp'];
+  providerCapabilities?: CommandCallbacks['providerCapabilities'];
   startReview?: CommandCallbacks['startReview'];
   reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
   goal?: CommandCallbacks['goal'];
@@ -1239,6 +1240,7 @@ Keyboard Shortcuts:
     listHostCommands: options.listHostCommands,
     inspectExtensions: options.inspectExtensions,
     mcp: options.mcp,
+    providerCapabilities: options.providerCapabilities,
     startReview: options.startReview,
     reviewAgentsLean: options.reviewAgentsLean,
     // FEATURE_298 T34 — goal persistence goes through the Host binding;

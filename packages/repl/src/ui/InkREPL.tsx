@@ -772,6 +772,7 @@ export interface InkREPLOptions extends KodaXOptions {
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
   mcp?: CommandCallbacks['mcp'];
+  providerCapabilities?: CommandCallbacks['providerCapabilities'];
   startReview?: CommandCallbacks['startReview'];
   reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
   goal?: CommandCallbacks['goal'];
@@ -7647,6 +7648,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }, 'ratelimit');
     },
     onReasoningEffortRejected: (event) => {
+      if (options.clientPlane) {
+        emitInfoItemToCorrectLayer({
+          type: 'info', icon: '\u26A0',
+          text: `[${event.provider}/${event.model} rejected effort "${event.effort}"; Host capability learning governs subsequent requests.]`,
+        }, 'ratelimit');
+        return;
+      }
       // Passive capability learning: a provider HARD-rejected this effort, so
       // record it (narrows the cycle / /effort / wire everywhere via the
       // capability cache) and re-resolve a model-safe effort for the active
@@ -10107,6 +10115,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           listHostCommands: options.listHostCommands,
           inspectExtensions: options.inspectExtensions,
           mcp: options.mcp,
+          providerCapabilities: options.providerCapabilities,
           startReview: options.startReview,
           reviewAgentsLean: options.reviewAgentsLean,
           // FEATURE_298 T34 — goal persistence goes through the Host
