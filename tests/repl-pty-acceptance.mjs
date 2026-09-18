@@ -190,7 +190,7 @@ async function setupProvider(state) {
   await once(state.server, 'listening');
   await mkdir(path.join(state.homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(state.homeDir, '.kodax', 'config.json'), JSON.stringify({
-    provider: 'acceptance-local', customProviders: [{
+    provider: 'acceptance-local', planModeEffort: 'high', customProviders: [{
       name: 'acceptance-local', protocol: 'openai',
       baseUrl: `http://127.0.0.1:${state.server.address().port}/v1`,
       apiKeyEnv: 'KODAX_ACCEPTANCE_KEY', model: 'acceptance-model',
@@ -459,6 +459,49 @@ async function checkProviderCapabilities(state) {
   assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort !== 'high'));
   assert.equal((await state.client.config.read()).effort, savedEffort, 'Observed rejection must not overwrite user defaults');
   await state.client.sessions.updateSettings(state.sessionId, { effort: 'off', thinking: false, reasoningMode: 'off' });
+}
+
+async function checkHostSettingCommands(state) {
+  const savedBefore = await state.client.config.read();
+  const settingsBefore = await state.client.sessions.getSettings(state.sessionId);
+  for (const [command, expected] of [
+    ['/model acceptance-local/acceptance-model', { provider: 'acceptance-local', model: 'acceptance-model' }],
+    ['/effort low', { effort: 'low', reasoningMode: 'auto', thinking: true }],
+    ['/reasoning auto', { reasoningMode: 'auto', thinking: true }],
+    ['/agent-mode sa', { agentMode: 'sa' }],
+    ['/repo-intel mode off', { repoIntelligenceMode: 'off' }],
+    ['/repo-intel trace on', { repoIntelligenceTrace: true }],
+  ]) {
+    await state.terminal.submit(command);
+    await waitFor(`Host saved ${command}`, async () => {
+      const saved = await state.client.config.read();
+      const settings = await state.client.sessions.getSettings(state.sessionId);
+      return Object.entries(expected).every(([key, value]) => saved[key] === value && settings[key] === value);
+    });
+    await delay(400);
+  }
+  assert.equal((await state.client.config.read()).effort, undefined);
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).effort, undefined);
+  if (state.mode === 'ink') {
+    state.terminal.child.write('\x14');
+    await waitFor('Ctrl+T saved through Host', async () => (await state.client.config.read()).effort !== undefined);
+    const saved = await state.client.config.read();
+    assert.equal((await state.client.sessions.getSettings(state.sessionId)).effort, saved.effort);
+  }
+  await delay(400);
+  await state.terminal.submit('/thinking auto');
+  await waitFor('effort reset settled', async () => (await state.client.config.read()).effort === undefined);
+  await delay(400);
+  await state.terminal.submit('/repo-intel trace off');
+  await waitFor('trace off settled', async () => (await state.client.config.read()).repoIntelligenceTrace === false);
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: 'plan', effort: 'low' });
+  await waitFor('plan mode selection observed', () => state.view.settings.permissionMode === 'plan' && state.view.settings.effort === 'low');
+  await delay(400);
+  await state.terminal.submit('/effort auto');
+  await waitFor('plan effort override cleared', async () => (await state.client.sessions.getSettings(state.sessionId)).effort === undefined);
+  const keys = ['provider', 'model', 'effort', 'reasoningMode', 'thinking', 'agentMode', 'permissionMode', 'repoIntelligenceMode', 'repoIntelligenceTrace'];
+  await state.client.config.patch(Object.fromEntries(keys.map(key => [key, savedBefore[key] ?? null])));
+  await state.client.sessions.updateSettings(state.sessionId, Object.fromEntries(keys.map(key => [key, settingsBefore[key] ?? null])));
 }
 
 async function checkSettings(state) {
@@ -963,6 +1006,7 @@ async function run(mode) {
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
+    await check(state, 'host-setting-commands', checkHostSettingCommands);
     if (consumerOnly) {
       await check(state, 'exit', checkExit);
       return;

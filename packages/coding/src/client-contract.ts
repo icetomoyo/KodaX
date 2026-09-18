@@ -218,7 +218,8 @@ export interface KodaXProductClient {
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */
     read(): Promise<ClientConfig>;
-    patch(patch: Partial<ClientConfig>): Promise<ClientConfig>;
+    /** Omitted keys stay unchanged; null clears a saved default. */
+    patch(patch: { [K in keyof ClientConfig]?: ClientConfig[K] | null }): Promise<ClientConfig>;
     reload(): Promise<{ readonly ok: true; readonly config: ClientConfig }>;
   };
   readonly catalog: {

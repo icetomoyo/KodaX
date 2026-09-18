@@ -84,6 +84,9 @@ import {
   selectUncommittedLedgerUserItems,
 } from "./contexts/index.js";
 import { AutocompleteContextProvider, useAutocompleteContext } from "./hooks/index.js";
+import { hostEffortCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
+import { nearestCycleIndex } from './shortcuts/GlobalShortcuts.js';
+import { nextAgentMode } from '../common/agent-mode.js';
 import {
   StreamingState,
   ToolCallStatus,
@@ -772,6 +775,8 @@ export interface InkREPLOptions extends KodaXOptions {
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
   mcp?: CommandCallbacks['mcp'];
+  config?: CommandCallbacks['config'];
+  catalog?: CommandCallbacks['catalog'];
   providerCapabilities?: CommandCallbacks['providerCapabilities'];
   startReview?: CommandCallbacks['startReview'];
   reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
@@ -5807,6 +5812,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // redirect the extractor without recreation.
   const currentConfigRef = useRef(currentConfig);
   useEffect(() => {
+    autocomplete?.getProvider().updateOptions({ hostArguments: options.catalog
+      ? { catalog: options.catalog, selection: () => currentConfigRef.current } : undefined });
+  }, [autocomplete?.getProvider, options.catalog]);
+  useEffect(() => {
     currentConfigRef.current = currentConfig;
   }, [currentConfig]);
   useEffect(() => {
@@ -5856,6 +5865,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfigRef.current = next;
     setCurrentConfig(next);
   }, [context.sessionId, options.clientPlane, options.maxIter]);
+
+  const cycleHostEffort = async (): Promise<void> => {
+    const current = currentConfigRef.current;
+    try {
+      const cycle = await options.catalog!.reasoningEfforts({ provider: current.provider, model: current.model });
+      if (!cycle.length) return;
+      const shown = current.permissionMode === 'plan' && !current.effortOverride && current.planModeEffort !== undefined
+        ? current.planModeEffort : current.effortOverride ? current.effort : undefined;
+      const index = nearestCycleIndex(cycle, shown === 'none' ? 'off' : shown ?? 'auto');
+      const result = await hostEffortCommand([cycle[(index + 1) % cycle.length]!], {
+        config: options.config, catalog: options.catalog,
+        setEffort: async effort => selectClientConfig({ ...currentConfigRef.current, effort, effortOverride: effort !== undefined }, ['effort']),
+        setReasoningMode: async reasoningMode => selectClientConfig({ ...currentConfigRef.current, reasoningMode, thinking: reasoningMode !== 'off' }, ['reasoningMode', 'thinking']),
+      }, current);
+      emitInfoItemToCorrectLayer({ type: 'info', text: result.message ?? '' }, 'settings');
+    } catch (error) {
+      emitInfoItemToCorrectLayer({ type: 'info', text: `Host effort selection failed: ${String(error)}` }, 'settings');
+    }
+  };
+
+  const cycleHostAgentMode = async (): Promise<void> => {
+    const agentMode = nextAgentMode(currentConfigRef.current.agentMode);
+    const result = await saveAndApplyHostSetting({ config: options.config }, { agentMode },
+      () => selectClientConfig({ ...currentConfigRef.current, agentMode }, ['agentMode']), `Agent mode: ${agentMode.toUpperCase()}`);
+    emitInfoItemToCorrectLayer({ type: 'info', text: result.message ?? '' }, 'settings');
+  };
 
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
     const canonicalMode = canonicalizePermissionMode(mode);
@@ -10115,6 +10150,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           listHostCommands: options.listHostCommands,
           inspectExtensions: options.inspectExtensions,
           mcp: options.mcp,
+          config: options.config,
+          catalog: options.catalog,
           providerCapabilities: options.providerCapabilities,
           startReview: options.startReview,
           reviewAgentsLean: options.reviewAgentsLean,
@@ -10308,7 +10345,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             console.log();
           },
           switchProvider: async (provider: string, model?: string) => {
-            const effortResolution = resolveProviderReasoningRuntimeEffort({
+            const effortResolution = options.clientPlane ? { runtimeEffort: currentConfigRef.current.effort, diagnostic: undefined } : resolveProviderReasoningRuntimeEffort({
               provider,
               model,
               effort: currentConfigRef.current.effort,
@@ -10351,7 +10388,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             currentOptionsRef.current.agentMode = mode;
           },
           setPermissionMode: setSessionPermissionMode,
-          setRepoIntelligenceRuntime: (update) => {
+          setRepoIntelligenceRuntime: async (update) => {
+            if (options.clientPlane) {
+              await selectClientConfig({ ...currentConfigRef.current,
+                ...(update.mode !== undefined ? { repoIntelligenceMode: update.mode } : {}),
+                ...(update.trace !== undefined ? { repoIntelligenceTrace: update.trace } : {}),
+              }, [
+                ...(update.mode !== undefined ? ['repoIntelligenceMode' as const] : []),
+                ...(update.trace !== undefined ? ['repoIntelligenceTrace' as const] : []),
+              ]);
+              return;
+            }
             setCurrentConfig((prev) => ({
               ...prev,
               ...(update.mode !== undefined ? { repoIntelligenceMode: update.mode } : {}),
@@ -11653,6 +11700,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {/* Global Shortcuts - registers keyboard shortcuts (Issue 083) */}
       <GlobalShortcuts
         currentConfig={currentConfig}
+        onCycleThinking={options.config ? () => { void cycleHostEffort(); } : undefined}
+        onCycleAgentMode={options.config ? () => { void cycleHostAgentMode(); } : undefined}
         setCurrentConfig={setCurrentConfig}
         isLoading={isLoading}
         abort={abort}

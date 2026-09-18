@@ -338,6 +338,7 @@ export class CommandCompleter implements Completer {
 export function createCompleter(
   cwd?: string | (() => string),
   listHostCommands?: CommandCallbacks['listHostCommands'],
+  hostArguments?: import('./completers/argument-completer.js').HostArgumentSource,
 ): (line: string) => Promise<[string[], string]> {
   const fileCompleter = new FileCompleter(cwd);
   const skillCompleter = new SkillCompleter();
@@ -357,7 +358,7 @@ export function createCompleter(
     const allCompletions: Completion[] = [];
 
     if (hasSlash) {
-      const completions = await getArgumentCompletions(line, line.length);
+      const completions = await getArgumentCompletions(line, line.length, hostArguments);
       allCompletions.push(...completions);
     }
 
@@ -417,9 +418,10 @@ export function displayCompletions(completions: Completion[]): void {
 /**
  * Get completion suggestions for UI display - 获取补全建议 (用于 UI 显示)
  */
-async function getArgumentCompletions(input: string, cursorPos: number): Promise<Completion[]> {
+async function getArgumentCompletions(input: string, cursorPos: number,
+  hostArguments?: import('./completers/argument-completer.js').HostArgumentSource): Promise<Completion[]> {
   const { ArgumentCompleter } = await import('./completers/argument-completer.js');
-  const argumentCompleter = new ArgumentCompleter();
+  const argumentCompleter = new ArgumentCompleter(() => hostArguments);
   if (!argumentCompleter.canComplete(input, cursorPos)) return [];
   return argumentCompleter.getCompletions(input, cursorPos);
 }

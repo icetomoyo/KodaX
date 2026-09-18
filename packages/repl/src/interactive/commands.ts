@@ -96,6 +96,7 @@ import {
 import { CommandRegistry } from '../commands/registry.js';
 import { formatLearningStatus } from '../ui/view-models/learning-summary.js';
 import { copyCommand } from '../commands/copy-command.js';
+import { hostModelCommand, hostEffortCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
 import { learnCommand } from '../commands/learn-command.js';
 import { memoryCommand } from '../commands/memory-command.js';
 import { goalCommand } from '../commands/goal-command.js';
@@ -1101,6 +1102,10 @@ export const BUILTIN_COMMANDS: Command[] = [
           return;
         }
 
+        if (callbacks.config) return saveAndApplyHostSetting(callbacks, { repoIntelligenceMode: mode }, async () => {
+          if (!callbacks.setRepoIntelligenceRuntime) throw new Error('Session repo intelligence control unavailable');
+          await callbacks.setRepoIntelligenceRuntime({ mode });
+        }, `Repo intelligence mode: ${mode}`);
         const persistence = applyRepoIntelligenceRuntimeConfig(
           { mode },
           { repoIntelligenceMode: mode },
@@ -1126,6 +1131,10 @@ export const BUILTIN_COMMANDS: Command[] = [
           return;
         }
 
+        if (callbacks.config) return saveAndApplyHostSetting(callbacks, { repoIntelligenceTrace: nextValue }, async () => {
+          if (!callbacks.setRepoIntelligenceRuntime) throw new Error('Session repo intelligence control unavailable');
+          await callbacks.setRepoIntelligenceRuntime({ trace: nextValue });
+        }, `Repo intelligence trace: ${nextValue ? 'on' : 'off'}`);
         const persistence = applyRepoIntelligenceRuntimeConfig(
           { trace: nextValue },
           { repoIntelligenceTrace: nextValue },
@@ -1591,6 +1600,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show or switch provider/model',
     usage: '/model [<provider>[/<model>] | /<model>]',
     handler: async (args, _context, callbacks, currentConfig) => {
+      if (callbacks.config) return hostModelCommand(args, callbacks, currentConfig);
       // Read config once and pass providerModels to avoid repeated file I/O
       const providerModels = loadConfig().providerModels;
 
@@ -1872,6 +1882,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show or set native reasoning effort',
     usage: '/thinking [none|auto|low|medium|high|xhigh|max]',
     handler: async (args, _context, callbacks, currentConfig) => {
+      if (callbacks.config) return hostEffortCommand(args, callbacks, currentConfig);
       await handleReasoningEffortCommand('thinking', args, callbacks, currentConfig);
     },
     detailedHelp: () => {
@@ -1888,6 +1899,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show or set native reasoning effort',
     usage: '/reasoning [none|auto|low|medium|high|xhigh|max]',
     handler: async (args, _context, callbacks, currentConfig) => {
+      if (callbacks.config) return hostEffortCommand(args, callbacks, currentConfig);
       await handleReasoningEffortCommand('reasoning', args, callbacks, currentConfig);
     },
     detailedHelp: () => {
@@ -1903,6 +1915,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show or set native reasoning effort',
     usage: '/effort [level]',
     handler: async (args, _context, callbacks, currentConfig) => {
+      if (callbacks.config) return hostEffortCommand(args, callbacks, currentConfig);
       await handleReasoningEffortCommand('effort', args, callbacks, currentConfig);
     },
     detailedHelp: () => {
@@ -1951,6 +1964,10 @@ export const BUILTIN_COMMANDS: Command[] = [
         return;
       }
 
+      if (callbacks.config) return saveAndApplyHostSetting(callbacks, { agentMode: nextMode }, async () => {
+        if (!callbacks.setAgentMode) throw new Error('Session agent mode control unavailable');
+        await callbacks.setAgentMode(nextMode);
+      }, `Agent mode: ${nextMode.toUpperCase()}`);
       const persistence = await applyAgentMode(nextMode, callbacks, currentConfig);
       printPersistedCommandStatus(`Agent mode: ${nextMode.toUpperCase()}`, persistence);
     },

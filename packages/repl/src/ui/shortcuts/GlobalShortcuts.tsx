@@ -33,6 +33,8 @@ export interface GlobalShortcutsProps {
   onToggleHelp: () => void;
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
+  onCycleThinking?: () => void;
+  onCycleAgentMode?: () => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
   onToggleTranscriptMode?: () => void;
   onOpenTranscriptSearch?: () => void;
@@ -71,7 +73,7 @@ const EFFORT_ORDINAL: Record<string, number> = {
  * that silently disabled thinking on a model switch. Falls back to -1 (advance
  * → first rung) when the label sits below every cycle member.
  */
-function nearestCycleIndex(cycle: readonly string[], label: string): number {
+export function nearestCycleIndex(cycle: readonly string[], label: string): number {
   const exact = cycle.indexOf(label);
   if (exact !== -1) {
     return exact;
@@ -107,6 +109,8 @@ export function GlobalShortcuts({
   onToggleHelp,
   setShowHelp,
   onSetThinking,
+  onCycleThinking,
+  onCycleAgentMode,
   onSetReasoningMode,
   onToggleTranscriptMode,
   onOpenTranscriptSearch,
@@ -159,6 +163,7 @@ export function GlobalShortcuts({
     if (isInteractiveDialogActive) {
       return false;
     }
+    if (onCycleThinking) { onCycleThinking(); setShowHelp(false); return true; }
     // Cycle the active model's V2 effort ladder (off → … → max → auto → off),
     // not the legacy reasoning-mode sequence. `effort` drives both the runtime
     // request and the status bar; `reasoningMode`/`thinking` are kept coherent
@@ -265,6 +270,7 @@ export function GlobalShortcuts({
     if (isInteractiveDialogActive) {
       return false;
     }
+    if (onCycleAgentMode) { onCycleAgentMode(); setShowHelp(false); return true; }
     const nextMode: KodaXAgentMode = nextAgentMode(currentConfig.agentMode);
 
     setCurrentConfig((prev) => ({ ...prev, agentMode: nextMode }));

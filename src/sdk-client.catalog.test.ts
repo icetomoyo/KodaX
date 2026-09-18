@@ -11,6 +11,10 @@ import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { BUILTIN_COMMANDS } from '../packages/repl/src/interactive/commands.js';
+import { createInteractiveContext } from '../packages/repl/src/interactive/context.js';
+import type { CommandCallbacks, CurrentConfig } from '../packages/repl/src/commands/types.js';
+import { ArgumentCompleter } from '../packages/repl/src/interactive/completers/argument-completer.js';
 
 class CatalogProvider extends KodaXBaseProvider {
   readonly name = 'product-catalog-test';
@@ -106,4 +110,100 @@ it('lists real Host skills, commands, and effective config through typed queries
   expect(observed).toMatchObject({ ok: true });
   expect(observed.config.verifierLog).toBe(desiredVerifierLog);
   expect((await second.config.read()).verifierLog).toBe(desiredVerifierLog);
+
+  await first.config.patch({ model: 'explicit-model', effort: 'high' });
+  // JSON needs an explicit reset value; omission must keep unrelated defaults.
+  await first.config.patch({ model: null, effort: null });
+  const cleared = (await second.config.reload()).config;
+  expect(cleared.model).toBeUndefined();
+  expect(cleared.effort).toBeUndefined();
+  expect(cleared.verifierLog).toBe(desiredVerifierLog);
 }, 60_000);
+
+it('selects a Host-only model through the actual model command and clears it when switching provider', async () => {
+  await first.config.patch({ providerModels: { 'openai': ['host-only'] } });
+  const session = await first.sessions.create({ projectPath: homeDir });
+  const current: CurrentConfig = {
+    provider: 'openai', thinking: false, reasoningMode: 'off',
+    agentMode: 'sa', permissionMode: 'full-access',
+  };
+  const callbacks: CommandCallbacks = {
+    config: first.config, catalog: first.catalog,
+    exit() {}, async saveSession() {},
+    async loadSession() { return 'missing'; }, async listSessions() {}, clearHistory() {}, printHistory() {},
+    ui: {
+      async select() { throw new Error('Unexpected selection'); },
+      async confirm() { throw new Error('Unexpected confirmation'); },
+      async input() { throw new Error('Unexpected input'); },
+    },
+    async switchProvider(provider, model) {
+      await first.sessions.updateSettings(session.id, { provider, model: model ?? null });
+    },
+    async setEffort(effort) {
+      await first.sessions.updateSettings(session.id, { effort: effort ?? null });
+    },
+    async setReasoningMode(reasoningMode) {
+      await first.sessions.updateSettings(session.id, { reasoningMode, thinking: reasoningMode !== 'off' });
+    },
+    async setAgentMode(agentMode) {
+      await first.sessions.updateSettings(session.id, { agentMode });
+    },
+    async setRepoIntelligenceRuntime(update) {
+      await first.sessions.updateSettings(session.id, {
+        ...(update.mode !== undefined ? { repoIntelligenceMode: update.mode } : {}),
+        ...(update.trace !== undefined ? { repoIntelligenceTrace: update.trace } : {}),
+      });
+    },
+  };
+  const command = BUILTIN_COMMANDS.find(item => item.name === 'model')!;
+  const context = await createInteractiveContext({});
+  const result = await command.handler(['/host-only'], context, callbacks, current);
+  expect(result).toEqual({ success: true, message: '[Model: openai/host-only] Host default saved; Session applied' });
+  expect(await second.config.read()).toMatchObject({ model: 'host-only' });
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ model: 'host-only' });
+  expect(await command.handler(['openai'], context, callbacks, current)).toMatchObject({ success: true });
+  expect((await second.config.read()).model).toBeUndefined();
+  expect((await second.sessions.getSettings(session.id)).model).toBeUndefined();
+  await first.config.patch({ effort: 'high' });
+  await first.sessions.updateSettings(session.id, { effort: 'high' });
+  const effortCommand = BUILTIN_COMMANDS.find(item => item.name === 'effort')!;
+  expect(await effortCommand.handler(['auto'], context, callbacks, current)).toMatchObject({ success: true });
+  expect((await second.config.read()).effort).toBeUndefined();
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ reasoningMode: 'auto', thinking: true });
+  expect((await second.sessions.getSettings(session.id)).effort).toBeUndefined();
+  const modeCommand = BUILTIN_COMMANDS.find(item => item.name === 'agent-mode')!;
+  expect(await modeCommand.handler(['ama'], context, callbacks, current)).toMatchObject({ success: true });
+  expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'ama' });
+  const repoCommand = BUILTIN_COMMANDS.find(item => item.name === 'repo-intel')!;
+  expect(await repoCommand.handler(['mode', 'off'], context, callbacks, current)).toMatchObject({ success: true });
+  expect(await second.config.read()).toMatchObject({ repoIntelligenceMode: 'off' });
+  expect(await second.sessions.getSettings(session.id)).toMatchObject({ repoIntelligenceMode: 'off' });
+  const completer = new ArgumentCompleter(() => ({ catalog: first.catalog, selection: () => current }));
+  expect(await completer.getCompletions('/model openai/host', 18)).toContainEqual({
+    text: 'openai/host-only', display: 'openai/host-only', description: 'host-only', type: 'argument',
+  });
+  await first.config.patch({ planModeEffort: 'high' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'plan', effort: null });
+  let effectiveEffort: string | undefined;
+  const observation = await second.sessions.observe(session.id, view => { effectiveEffort = view.settings.effort; });
+  try { await expect.poll(() => effectiveEffort).toBe('high'); }
+  finally { observation.close(); }
+  const other = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(other.id, { agentMode: 'ama' });
+  const patch = runtime.config.patch;
+  runtime.config.patch = async () => { throw new Error('Injected Host save failure'); };
+  try {
+    expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+      success: false, message: expect.stringMatching(/Host default save failed:.*Session applied/),
+    });
+    expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'sa' });
+    expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
+  } finally { runtime.config.patch = patch; }
+  await first.sessions.delete(session.id);
+  expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+    success: false, message: expect.stringMatching(/Host default saved; Session apply failed:/),
+  });
+  expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
+  expect(await second.sessions.getSettings(other.id)).toMatchObject({ agentMode: 'ama' });
+});

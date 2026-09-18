@@ -4945,6 +4945,8 @@ complete -c kodax -l version -d 'Show version'`);
           inspectExtensions: () => interactiveClient.catalog.extensions(),
           mcp: interactiveClient.mcp,
           providerCapabilities: interactiveClient.catalog,
+          config: interactiveClient.config,
+          catalog: interactiveClient.catalog,
           startReview: (input: Parameters<typeof interactiveClient.review.start>[0]) => interactiveClient.review.start(input),
           reviewAgentsLean: (input: Parameters<typeof interactiveClient.agents.reviewLean>[0]) => interactiveClient.agents.reviewLean(input),
           // FEATURE_298 T34 — goal persistence is Host-owned; the command

@@ -14,6 +14,7 @@
 import { FileCompleter, CommandCompleter, findCommandSlashIndex, type Completer, type Completion } from './autocomplete.js';
 import { SkillCompleter } from './completers/skill-completer.js';
 import { ArgumentCompleter } from './completers/argument-completer.js';
+import type { HostArgumentSource } from './completers/argument-completer.js';
 import { sortCandidatesCombined } from './fuzzy.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type { CommandCallbacks } from '../commands/types.js';
@@ -38,6 +39,7 @@ export interface AutocompleteState {
  * AutocompleteProvider 的配置选项
  */
 export interface AutocompleteProviderOptions {
+  hostArguments?: HostArgumentSource;
   listHostCommands?: CommandCallbacks['listHostCommands'];
   /** Working directory for file completion - 文件补全的工作目录 */
   cwd?: string;
@@ -57,7 +59,7 @@ export interface AutocompleteProviderOptions {
  * Default options
  * 默认选项
  */
-const DEFAULT_OPTIONS: Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>> = {
+const DEFAULT_OPTIONS: Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands' | 'hostArguments'>> = {
   debounceDelay: 100,
   minTriggerChars: 1,
   maxCompletions: 10,
@@ -74,8 +76,8 @@ type DebounceTimer = ReturnType<typeof setTimeout> | null;
  * Internal options type with required defaults
  * 内部选项类型，包含必需的默认值
  */
-type InternalOptions = Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>> &
-  Pick<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands'>;
+type InternalOptions = Required<Omit<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands' | 'hostArguments'>> &
+  Pick<AutocompleteProviderOptions, 'cwd' | 'gitRoot' | 'listHostCommands' | 'hostArguments'>;
 
 /**
  * Autocomplete Provider - Main orchestrator for autocomplete
@@ -101,7 +103,7 @@ export class AutocompleteProvider {
     // 顺序很重要：更具体的补全器优先
     this.completers = [
       new SkillCompleter(this.options.gitRoot),
-      new ArgumentCompleter(),
+      new ArgumentCompleter(() => this.options.hostArguments),
       new CommandCompleter(async () => await this.options.listHostCommands?.(
         this.options.gitRoot ?? this.options.cwd ?? process.cwd(),
       ) ?? []),

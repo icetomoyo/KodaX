@@ -506,6 +506,8 @@ export interface RepLOptions extends KodaXOptions {
   listHostCommands?: CommandCallbacks['listHostCommands'];
   inspectExtensions?: CommandCallbacks['inspectExtensions'];
   mcp?: CommandCallbacks['mcp'];
+  config?: CommandCallbacks['config'];
+  catalog?: CommandCallbacks['catalog'];
   providerCapabilities?: CommandCallbacks['providerCapabilities'];
   startReview?: CommandCallbacks['startReview'];
   reviewAgentsLean?: CommandCallbacks['reviewAgentsLean'];
@@ -775,7 +777,8 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Detect and show project hint - 检测并显示项目提示
 
   // Create autocomplete - 创建自动补全器
-  const completer = createCompleter(() => context.gitRoot ?? process.cwd(), options.listHostCommands);
+  const completer = createCompleter(() => context.gitRoot ?? process.cwd(), options.listHostCommands,
+    options.catalog ? { catalog: options.catalog, selection: () => currentConfig } : undefined);
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -1069,6 +1072,7 @@ Keyboard Shortcuts:
 
   // Cost tracking ref — agent populates this via events.getCostReport, /cost command reads it
   const refreshCurrentEffort = (): void => {
+    if (options.clientPlane) { currentOptions.effort = currentConfig.effort; return; }
     const effortResolution = resolveCurrentRuntimeEffort();
     currentOptions.effort = effortResolution.runtimeEffort;
   };
@@ -1240,6 +1244,8 @@ Keyboard Shortcuts:
     listHostCommands: options.listHostCommands,
     inspectExtensions: options.inspectExtensions,
     mcp: options.mcp,
+    config: options.config,
+    catalog: options.catalog,
     providerCapabilities: options.providerCapabilities,
     startReview: options.startReview,
     reviewAgentsLean: options.reviewAgentsLean,
@@ -1399,7 +1405,8 @@ Keyboard Shortcuts:
       console.log();
     },
     switchProvider: async (provider: string, model?: string) => {
-      const effortResolution = resolveCurrentRuntimeEffort({ provider, model });
+      const effortResolution = options.clientPlane ? { runtimeEffort: currentConfig.effort, diagnostic: undefined }
+        : resolveCurrentRuntimeEffort({ provider, model });
       await syncClientSettings({ ...currentConfig, provider, model }, ['provider', 'model']);
       currentConfig.provider = provider;
       currentConfig.model = model;
@@ -1442,7 +1449,19 @@ Keyboard Shortcuts:
       // Note: permissionMode is no longer part of KodaXOptions
       // Permission control is handled locally via beforeToolExecute callback
     },
-    setRepoIntelligenceRuntime: (update) => {
+    setRepoIntelligenceRuntime: async (update) => {
+      if (options.clientPlane) {
+        const next = { ...currentConfig,
+          ...(update.mode !== undefined ? { repoIntelligenceMode: update.mode } : {}),
+          ...(update.trace !== undefined ? { repoIntelligenceTrace: update.trace } : {}),
+        };
+        await syncClientSettings(next, [
+          ...(update.mode !== undefined ? ['repoIntelligenceMode' as const] : []),
+          ...(update.trace !== undefined ? ['repoIntelligenceTrace' as const] : []),
+        ]);
+        Object.assign(currentConfig, next);
+        return;
+      }
       if (update.mode !== undefined) {
         currentConfig.repoIntelligenceMode = update.mode;
           process.env.KODAX_REPO_INTELLIGENCE = update.mode;

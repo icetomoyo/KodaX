@@ -1080,9 +1080,9 @@ export interface RuntimeAgentService {
   ): Promise<AgentEvent | undefined>;
 }
 
-export type RuntimeConfigPatch = Partial<
-  Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>
->;
+export type RuntimeConfigPatch = {
+  [K in RuntimeConfigPatchKey]?: ReplRuntimeConfigPatch[K] | null;
+};
 
 export interface RuntimeConfigReloadResult {
   readonly ok: true;
@@ -21004,7 +21004,12 @@ function deleteMutableSetting<K extends keyof RuntimeSessionSettings>(
 }
 
 function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: RuntimeSessionSettings): RuntimeSessionSettings {
-  return { ...parseRuntimeSessionSettings(config), ...overrides };
+  const settings = { ...parseRuntimeSessionSettings(config), ...overrides };
+  if (settings.permissionMode === 'plan' && settings.effort === undefined
+    && isRecord(config) && typeof config.planModeEffort === 'string') {
+    return { ...settings, effort: config.planModeEffort };
+  }
+  return settings;
 }
 
 function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
@@ -21140,7 +21145,7 @@ function assertPlainObject(
 
 function sanitizeRuntimeConfigPatch(
   patch: Record<string, unknown>,
-): RuntimeConfigPatch {
+): Partial<Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>> {
   const allowedKeys: ReadonlySet<string> = new Set(RUNTIME_CONFIG_PATCH_KEYS);
   for (const key of Object.keys(patch)) {
     if (!allowedKeys.has(key)) {
@@ -21149,7 +21154,9 @@ function sanitizeRuntimeConfigPatch(
       );
     }
   }
-  return patch as RuntimeConfigPatch;
+  return Object.fromEntries(Object.entries(patch).map(([key, value]) => [
+    key, value === null ? undefined : value,
+  ])) as Partial<Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>>;
 }
 
 function resolveRuntimeConfigFile(
@@ -21408,7 +21415,7 @@ function runtimeConfigPathValue(
 
 function patchRuntimeConfig(
   configFile: string | undefined,
-  patch: RuntimeConfigPatch,
+  patch: Partial<Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>>,
 ): void {
   if (configFile === undefined) {
     saveConfig(patch);

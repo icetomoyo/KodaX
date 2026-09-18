@@ -19,12 +19,37 @@ import { getCommandArguments } from './command-arguments.js';
 // Re-exported here for backward compatibility with existing consumers.
 export type { ArgumentDefinition, CommandArgumentsRegistry } from './types.js';
 import type { ArgumentDefinition, CommandArgumentsRegistry } from './types.js';
+import type { CommandCallbacks, CurrentConfig } from '../../commands/types.js';
+
+export interface HostArgumentSource {
+  catalog: NonNullable<CommandCallbacks['catalog']>;
+  selection: () => Pick<CurrentConfig, 'provider' | 'model'>;
+}
+
+async function hostSettingArguments(
+  source: HostArgumentSource, command: string, partial: string,
+): Promise<ArgumentDefinition[] | undefined> {
+  if (['effort', 'thinking', 'think', 't', 'reasoning', 'reason'].includes(command)) {
+    return (await source.catalog.reasoningEfforts(source.selection())).map(effort => ({
+      name: effort === 'off' ? 'none' : effort, description: 'Host reasoning effort', type: 'enum',
+    }));
+  }
+  if (!['model', 'm'].includes(command)) return undefined;
+  const providers = await source.catalog.providers();
+  const slash = partial.indexOf('/');
+  if (slash < 0) return providers.map(provider => ({ name: provider.name, description: `Switch to ${provider.name} provider`, type: 'enum' }));
+  const name = partial.slice(0, slash) || source.selection().provider;
+  return (providers.find(provider => provider.name === name)?.models ?? [])
+    .filter(model => model.toLowerCase().includes(partial.slice(slash + 1).toLowerCase()))
+    .map(model => ({ name: `${partial.slice(0, slash)}/${model}`, description: model, type: 'enum' }));
+}
 
 /**
  * Argument Completer implementation
  * 参数补全器实现
  */
 export class ArgumentCompleter implements Completer {
+  constructor(private readonly hostSource?: () => HostArgumentSource | undefined) {}
   /**
    * Check if this completer can handle the current input
    * 检查此补全器是否能处理当前输入
@@ -82,7 +107,9 @@ export class ArgumentCompleter implements Completer {
 
     // Get argument definitions for this command
     // 获取此命令的参数定义
-    const argumentDefs = getCommandArguments(commandName, currentPartial, argParts);
+    const host = this.hostSource?.();
+    const argumentDefs = (host ? await hostSettingArguments(host, commandName, currentPartial) : undefined)
+      ?? getCommandArguments(commandName, currentPartial, argParts);
     if (!argumentDefs || argumentDefs.length === 0) {
       return [];
     }

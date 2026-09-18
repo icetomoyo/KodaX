@@ -176,6 +176,8 @@ export interface SessionCompactBinding {
 }
 
 export interface CommandCallbacks {
+  config?: KodaXProductClient['config'];
+  catalog?: Pick<KodaXProductClient['catalog'], 'providers' | 'models' | 'reasoningEfforts'>;
   commandClient?: KodaXProductClient['commands'];
   listHostCommands?: KodaXProductClient['catalog']['commands'];
   inspectExtensions?: KodaXProductClient['catalog']['extensions'];
@@ -211,7 +213,7 @@ export interface CommandCallbacks {
   setRepoIntelligenceRuntime?: (update: {
     mode?: KodaXRepoIntelligenceMode;
     trace?: boolean;
-  }) => void;
+  }) => void | Promise<void>;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
   createKodaXOptions?: () => KodaXOptions;

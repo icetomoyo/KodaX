@@ -1,6 +1,5 @@
 import type { ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import type { CurrentConfig } from '../commands/types.js';
-import { resolveProviderReasoningRuntimeEffort } from '../common/utils.js';
 import { canonicalizePermissionMode } from '../permission/types.js';
 
 /** Apply known Host selections to display state, without resolving local defaults. */
@@ -21,6 +20,8 @@ export function applyClientSessionViewSettings(
     reasoningMode: settings.reasoningMode,
     agentMode: settings.agentMode,
     permissionMode: settings.permissionMode,
+    repoIntelligenceMode: settings.repoIntelligenceMode,
+    repoIntelligenceTrace: settings.repoIntelligenceTrace,
   }).filter(([key, value]) => (value !== undefined || key === 'effort'
     || (key === 'model' && provider !== undefined && provider !== config.provider))
     && !Object.hasOwn(locallyConfirmed, key === 'effortOverride' ? 'effort' : key)));
@@ -37,12 +38,14 @@ export function clientSessionSettings(
   return {
     provider: config.provider,
     model: config.model ?? null,
-    effort: resolveProviderReasoningRuntimeEffort(config).runtimeEffort ?? null,
+    effort: config.effort ?? null,
     thinking: config.thinking,
     reasoningMode: config.reasoningMode,
     agentMode: config.agentMode,
     permissionMode: canonicalizePermissionMode(config.permissionMode),
     maxIter: maxIter ?? null,
+    repoIntelligenceMode: config.repoIntelligenceMode ?? null,
+    repoIntelligenceTrace: config.repoIntelligenceTrace ?? null,
   };
 }
 
