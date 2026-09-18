@@ -89,11 +89,16 @@ it('cancels MCP receipt during initial validation instead of decoding the rest o
   const pending = withPreparedImageHistory(() => runtime.callTool('mixed', {}), abort.signal);
   const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   try {
-    await vi.waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+    // Cross-process startup is not the cancellation latency under test.
+    await vi.waitFor(() => expect(inspect).toHaveBeenCalledOnce(), { timeout: 10_000 });
     abort.abort();
     await rejected;
     expect(inspect).toHaveBeenCalledOnce();
-  } finally { finish({ status: 'valid', mediaType: 'image/png' }); }
+  } finally {
+    abort.abort();
+    finish({ status: 'valid', mediaType: 'image/png' });
+    await rejected;
+  }
 });
 
 it('prepares MCP bytes at receipt before the persisted attachment can be changed', async () => {
