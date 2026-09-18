@@ -218,6 +218,8 @@ export interface KodaXProductClient {
   readonly config: {
     /** Saved user defaults. Session overrides remain independent. */
     read(): Promise<ClientConfig>;
+    /** Live execution controls only; never exposes credentials or arbitrary environment. */
+    readEffective(): Promise<ClientEffectiveExecutionConfig>;
     /** Omitted keys stay unchanged; null clears a saved default. */
     patch(patch: { [K in keyof ClientConfig]?: ClientConfig[K] | null }): Promise<ClientConfig>;
     reload(): Promise<{ readonly ok: true; readonly config: ClientConfig }>;
@@ -795,6 +797,18 @@ export interface ClientConfig {
     readonly storageDir?: string;
   };
   readonly workflow?: { readonly maxConcurrency?: number };
+}
+
+export interface ClientEffectiveConfigValue<T> {
+  readonly value: T;
+  readonly source: 'runtime_override' | 'environment' | 'persisted' | 'unset';
+  readonly applied: boolean;
+}
+
+export interface ClientEffectiveExecutionConfig {
+  readonly verifierLog: ClientEffectiveConfigValue<boolean>;
+  readonly stallLog: ClientEffectiveConfigValue<boolean>;
+  readonly fallbackProviders: ClientEffectiveConfigValue<readonly string[]>;
 }
 
 /** MCP configuration only; executable connections and callbacks stay in the Host. */

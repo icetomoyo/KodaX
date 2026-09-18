@@ -1240,17 +1240,17 @@ export function inspectConfigEnvironmentSource(env: string): ConfigEnvironmentSo
   return projectedConfigEnvironment.get(env) === value ? 'persisted' : 'environment';
 }
 
-function projectConfigEnvironment(env: string, value: string | undefined): void {
+function projectConfigEnvironment(env: string, value: string | undefined, explicit = false): void {
   const current = process.env[env];
   const previousProjection = projectedConfigEnvironment.get(env);
   const ownedProjection = previousProjection !== undefined && current === previousProjection;
-  if (current !== undefined && !ownedProjection) {
+  if (current !== undefined && !ownedProjection && !explicit) {
     projectedConfigEnvironment.delete(env);
     return;
   }
 
   if (value === undefined) {
-    if (ownedProjection) delete process.env[env];
+    if (ownedProjection || explicit) delete process.env[env];
     projectedConfigEnvironment.delete(env);
     return;
   }
@@ -1330,6 +1330,15 @@ export const KODAX_CONFIG_ENV_BINDINGS: ReadonlyArray<{
 
 export function applyConfigEnvironment(config: ReturnType<typeof loadConfig>): void {
   applyConfigSurfaceBridges(config);
+}
+
+/** Only these existing commands promise immediate control of later execution. */
+export function applyExecutionConfigEnvironment(config: ReturnType<typeof loadConfig>, explicit = false): void {
+  for (const binding of CONFIG_ENV_BRIDGES) {
+    if (!['fallbackProviders', 'verifierLog', 'stallLog'].includes(binding.configPath)) continue;
+    if (explicit && !Object.hasOwn(config, binding.configPath)) continue;
+    projectConfigEnvironment(binding.env, binding.value(config), explicit);
+  }
 }
 
 export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {

@@ -96,7 +96,7 @@ import {
 import { CommandRegistry } from '../commands/registry.js';
 import { formatLearningStatus } from '../ui/view-models/learning-summary.js';
 import { copyCommand } from '../commands/copy-command.js';
-import { hostModelCommand, hostEffortCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
+import { hostModelCommand, hostEffortCommand, hostExecutionConfigCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
 import { learnCommand } from '../commands/learn-command.js';
 import { memoryCommand } from '../commands/memory-command.js';
 import { goalCommand } from '../commands/goal-command.js';
@@ -1222,6 +1222,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Configure the cross-provider fallback chain for child tasks',
     usage: '/fallback [status | <p1,p2,...> | off]',
     handler: async (args, _context, _callbacks, _currentConfig) => {
+      if (_callbacks.config) return hostExecutionConfigCommand('fallbackProviders', args, _callbacks.config);
       // Read the live env (set at startup from config, or updated by this
       // command) so status always reflects the running session.
       const current = (process.env.KODAX_FALLBACK_PROVIDERS ?? '')
@@ -2055,7 +2056,8 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Toggle Sidecar Verifier log line (off by default)',
     usage: '/verifier-log [on|off]',
     argumentHint: 'on | off',
-    handler: async (args) => {
+    handler: async (args, _context, callbacks) => {
+      if (callbacks.config) return hostExecutionConfigCommand('verifierLog', args, callbacks.config);
       const raw = args[0]?.toLowerCase();
       const envOn = process.env.KODAX_VERIFIER_LOG === '1';
 
@@ -2130,7 +2132,8 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Toggle Stall Sidecar log line (off by default)',
     usage: '/stall-log [on|off]',
     argumentHint: 'on | off',
-    handler: async (args) => {
+    handler: async (args, _context, callbacks) => {
+      if (callbacks.config) return hostExecutionConfigCommand('stallLog', args, callbacks.config);
       const raw = args[0]?.toLowerCase();
       const envOn = process.env.KODAX_STALL_LOG === '1';
 

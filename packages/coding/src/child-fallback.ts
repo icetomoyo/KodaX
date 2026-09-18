@@ -8,7 +8,7 @@
  * an operator-configured chain instead of failing the whole child.
  *
  * Scope is deliberately minimal (KodaX 极简): only hard transport/availability
- * errors trigger fallback. A child that *ran* and returned `success:false` is a
+ * errors trigger fallback. A child that returned an ordinary `success:false` is a
  * task outcome, not a provider outage, so it is NOT retried elsewhere. Aborts
  * (user cancel) are never faked over.
  *
@@ -34,7 +34,7 @@ export function resolveFallbackChain(): string[] {
 
 /**
  * Only hard provider-availability errors are fallback-eligible. A returned
- * `success:false` (task outcome) is explicitly NOT eligible — switching
+ * ordinary task outcome is explicitly NOT eligible — switching
  * providers because the agent didn't finish the task would mask real failures.
  */
 export function isFallbackEligibleError(error: unknown): boolean {
@@ -50,6 +50,14 @@ function errorReason(error: unknown): string {
   if (error instanceof KodaXNetworkError) return 'network error';
   if (error instanceof KodaXProviderError) return 'provider error';
   return error instanceof Error ? error.message : String(error);
+}
+
+function unavailableProviderResult(result: KodaXResult): boolean {
+  const failure = result.failure;
+  if (result.success || result.interrupted || !failure || failure.source === 'local' || failure.errorClass === 'local_execution_error' || failure.failureCode) return false;
+  if (failure.httpStatus !== undefined) return failure.httpStatus === 429 || failure.httpStatus >= 500;
+  return ['rate_limit', 'provider_overloaded', 'connection_failure', 'request_timeout', 'stream_idle_timeout', 'chunk_timeout']
+    .includes(failure.errorClass);
 }
 
 export interface ChildFallbackHooks {
@@ -76,23 +84,21 @@ export async function invokeChildWithFallback(
   hooks?: ChildFallbackHooks,
 ): Promise<KodaXResult> {
   const primary = options.provider ?? 'anthropic';
-  try {
-    return await run(options, prompt);
-  } catch (error) {
-    if (options.abortSignal?.aborted || !isFallbackEligibleError(error)) throw error;
-
-    const chain = resolveFallbackChain().filter((candidate) =>
-      candidate !== primary && (hooks?.isProviderAllowed?.(candidate) ?? true));
-    let lastError: unknown = error;
-    for (const toProvider of chain) {
-      hooks?.onFallback?.({ fromProvider: primary, toProvider, reason: errorReason(lastError) });
-      try {
-        return await run({ ...options, provider: toProvider, model: undefined }, prompt);
-      } catch (next) {
-        if (options.abortSignal?.aborted || !isFallbackEligibleError(next)) throw next;
-        lastError = next;
-      }
-    }
-    throw lastError;
+  let outcome: { result: KodaXResult } | { error: unknown };
+  const attempt = async (selection: KodaXOptions): Promise<typeof outcome> => {
+    try { return { result: await run(selection, prompt) }; }
+    catch (error) { return { error }; }
+  };
+  outcome = await attempt(options);
+  const chain = resolveFallbackChain().filter(candidate => candidate !== primary
+    && (hooks?.isProviderAllowed?.(candidate) ?? true));
+  for (const toProvider of chain) {
+    const eligible = 'result' in outcome ? unavailableProviderResult(outcome.result) : isFallbackEligibleError(outcome.error);
+    if (options.abortSignal?.aborted || !eligible) break;
+    hooks?.onFallback?.({ fromProvider: primary, toProvider,
+      reason: 'result' in outcome ? outcome.result.failure!.message : errorReason(outcome.error) });
+    outcome = await attempt({ ...options, provider: toProvider, model: undefined });
   }
+  if ('result' in outcome) return outcome.result;
+  throw outcome.error;
 }

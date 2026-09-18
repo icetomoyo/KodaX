@@ -12592,6 +12592,7 @@ function createRuntimeConfigService(
   },
 ): RuntimeConfigService {
   const { configFile } = options;
+  replApi.applyExecutionConfigEnvironment(toClientConfig(readRuntimeConfig(configFile)));
   return {
     async read() {
       ensureOpen();
@@ -12606,7 +12607,9 @@ function createRuntimeConfigService(
     async patch(patch) {
       ensureOpen();
       assertPlainObject(patch, "runtime.config.patch");
-      patchRuntimeConfig(configFile, sanitizeRuntimeConfigPatch(patch));
+      const normalized = sanitizeRuntimeConfigPatch(patch);
+      patchRuntimeConfig(configFile, normalized);
+      replApi.applyExecutionConfigEnvironment(normalized, true);
       options.onChanged?.();
       return redactRuntimeConfig(readRuntimeConfig(configFile));
     },
@@ -12615,6 +12618,7 @@ function createRuntimeConfigService(
       ensureOpen();
       if (configFile !== undefined) {
         registerRuntimeConfiguredCustomProviders(configFile);
+        replApi.applyExecutionConfigEnvironment(toClientConfig(readRuntimeConfig(configFile)));
         options.onChanged?.();
         return {
           ok: true,

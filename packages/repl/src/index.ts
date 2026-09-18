@@ -123,6 +123,7 @@ export {
   CONFIG_TEMPLATES,
   prepareRuntimeConfig,
   inspectConfigEnvironmentSource,
+  applyExecutionConfigEnvironment,
   KODAX_CONFIG_ENV_BINDINGS,
   resolveRuntimeProviderSelection,
   resolveRuntimeModelSelection,

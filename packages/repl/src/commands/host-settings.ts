@@ -3,6 +3,44 @@ import { normalizeReasoningEffortValue } from '@kodax-ai/coding';
 
 type ConfigPatch = Parameters<NonNullable<CommandCallbacks['config']>['patch']>[0];
 
+export async function hostExecutionConfigCommand(
+  field: 'verifierLog' | 'stallLog' | 'fallbackProviders', args: string[],
+  config: NonNullable<CommandCallbacks['config']>,
+): Promise<CommandResultData> {
+  const raw = args[0]?.toLowerCase();
+  const status = !raw || raw === 'status';
+  let value: boolean | string[] | null = null;
+  if (!status && field === 'fallbackProviders') {
+    value = ['off', 'clear', 'none'].includes(raw!) ? null : args.join(',').split(',').map(item => item.trim()).filter(Boolean);
+    if (Array.isArray(value) && !value.length) return { success: false, message: 'No fallback provider ids given' };
+  } else if (!status) {
+    if (['on', 'true', '1'].includes(raw!)) value = true;
+    else if (['off', 'false', '0'].includes(raw!)) value = false;
+    else if (!['clear', 'reset'].includes(raw!)) return { success: false, message: 'Expected on, off or clear' };
+  }
+  let saved = false;
+  let saveError: string | undefined;
+  if (!status) {
+    try { await config.patch({ [field]: value }); saved = true; }
+    catch (error) { saveError = String(error); }
+  }
+  try {
+    const [defaults, effective] = await Promise.all([config.read(), config.readEffective()]);
+    saved = JSON.stringify(defaults[field] ?? null) === JSON.stringify(value);
+    const fact = effective[field];
+    const desired = value ?? (field === 'fallbackProviders' ? [] : false);
+    const applied = fact.applied && (status || JSON.stringify(fact.value) === JSON.stringify(desired));
+    return { success: status || (saved && applied), message: [
+      `${field}: effective=${JSON.stringify(fact.value)}; source=${fact.source}; applied=${fact.applied}`,
+      `Host default=${JSON.stringify(defaults[field] ?? null)}`,
+      ...(!status ? [saved ? 'Host default saved' : `Host default save failed: ${saveError}`, applied ? 'Host applied' : 'Host desired value not applied'] : []),
+      ...(saveError && saved ? [`Update reported an error: ${saveError}; state confirmed by Host queries`] : []),
+    ].join('\n') };
+  } catch (error) {
+    return { success: false, message: `${saved ? 'Host default saved; ' : saveError ? `Update failed: ${saveError}; saved state unconfirmed; ` : ''}Effective state unavailable: ${String(error)}` };
+  }
+}
+
 /** Saving a default and applying a Session choice are separate operations. */
 export async function saveAndApplyHostSetting(
   callbacks: Pick<CommandCallbacks, 'config'>,

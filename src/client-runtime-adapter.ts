@@ -196,6 +196,21 @@ export function toKodaXProductClient(
     },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),
+      readEffective: async () => {
+        const { entries } = await runtime.config.readEffective();
+        const project = <T>(key: string, value: T) => ({
+          value, source: entries[key]?.source ?? 'unset',
+          applied: entries[key]?.applied === true || entries[key]?.present !== true,
+        });
+        const chain = entries.fallbackProviders?.value;
+        return {
+          verifierLog: project('verifierLog', entries.verifierLog?.value === '1' || entries.verifierLog?.value === true),
+          stallLog: project('stallLog', entries.stallLog?.value === '1' || entries.stallLog?.value === true),
+          fallbackProviders: project('fallbackProviders', typeof chain === 'string'
+            ? chain.split(',').map(item => item.trim()).filter(Boolean)
+            : Array.isArray(chain) ? chain.filter((item): item is string => typeof item === 'string') : []),
+        };
+      },
       patch: async (patch) => toClientConfig(await runtime.config.patch(patch)),
       reload: async () => ({ ok: true, config: toClientConfig((await runtime.config.reload()).config) }),
     },

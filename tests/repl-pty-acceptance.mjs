@@ -504,6 +504,21 @@ async function checkHostSettingCommands(state) {
   await state.client.sessions.updateSettings(state.sessionId, Object.fromEntries(keys.map(key => [key, settingsBefore[key] ?? null])));
 }
 
+async function checkHostExecutionControls(state) {
+  for (const [command, field, value] of [
+    ['/verifier-log on', 'verifierLog', true], ['/verifier-log off', 'verifierLog', false],
+    ['/stall-log on', 'stallLog', true], ['/stall-log off', 'stallLog', false],
+    ['/fallback acceptance-local', 'fallbackProviders', ['acceptance-local']], ['/fallback off', 'fallbackProviders', []],
+  ]) {
+    await state.terminal.submit(command);
+    await waitFor(`Host applied ${command}`, async () => {
+      const effective = (await state.client.config.readEffective())[field];
+      return effective.applied && JSON.stringify(effective.value) === JSON.stringify(value);
+    });
+    await delay(400);
+  }
+}
+
 async function checkSettings(state) {
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
@@ -1007,6 +1022,7 @@ async function run(mode) {
     await check(state, 'startup', checkStartup);
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
+    await check(state, 'host-execution-controls', checkHostExecutionControls);
     if (consumerOnly) {
       await check(state, 'exit', checkExit);
       return;
