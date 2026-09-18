@@ -59,6 +59,6 @@ describe('recoverCommand', () => {
       context as never,
       callbacks as never,
       {} as never,
-    )).resolves.toBeUndefined();
+    )).resolves.toMatchObject({ success: false, message: '[Recover failed] storage failed' });
   });
 });

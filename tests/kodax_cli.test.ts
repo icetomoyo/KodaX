@@ -362,14 +362,17 @@ describe('CLI Entry Point', () => {
     expect(source).not.toContain('Enter interactive mode (auto-resume)');
   });
 
-  it('should load the bounded resume picker dataset in one list pass', async () => {
+  it('should load normal resume candidates in one Host metadata query', async () => {
     const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
     const loader = source.match(
-      /async function loadResumableSessions[\s\S]*?\r?\n}\r?\n\r?\nasync function main/,
+      /async function loadResumableSessions[\s\S]*?\r?\n}/,
     )?.[0] ?? '';
 
     expect(loader).not.toBe('');
-    expect(loader.match(/listCliResumeSessions\(/g)).toHaveLength(1);
+    expect(loader.match(/\.sessions\.list\(/g)).toHaveLength(1);
+    expect(loader).toContain('toKodaXProductClient(runtime)');
+    expect(loader).toContain('Number.MAX_SAFE_INTEGER');
+    expect(loader).not.toContain('listCliResumeSessions(');
     expect(loader).not.toContain('listSessions(');
     expect(loader).not.toContain('while (');
   });

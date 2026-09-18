@@ -204,9 +204,11 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       stdin.emit('data', Buffer.from('\r'));
       if (command === '/recover') {
         await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('safesummary');
+        // Let the painted dialog install its input listener before answering.
+        await new Promise(resolve => setTimeout(resolve, 150));
         stdin.emit('data', Buffer.from('y'));
       }
-      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Typeamessage');
+      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''), { timeout: 5_000 }).toContain('Typeamessage');
     }
     mounted?.unmount();
     mounted?.cleanup();
