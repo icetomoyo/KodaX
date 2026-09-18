@@ -54,8 +54,16 @@ export async function saveAndApplyHostSetting(
     await callbacks.config!.patch(patch);
     facts.push('Host default saved');
   } catch (error) {
-    success = false;
-    facts.push(`Host default save failed: ${String(error)}`);
+    try {
+      const saved = await callbacks.config!.read();
+      const confirmed = Object.entries(patch).every(([key, value]) =>
+        JSON.stringify(saved[key as keyof typeof saved] ?? null) === JSON.stringify(value));
+      if (confirmed) facts.push(`Host default saved (confirmed by Host query after error: ${String(error)})`);
+      else { success = false; facts.push(`Host default save failed: ${String(error)}`); }
+    } catch (readError) {
+      success = false;
+      facts.push(`Host default saved state unconfirmed: ${String(error)}; read failed: ${String(readError)}`);
+    }
   }
   try {
     await apply();

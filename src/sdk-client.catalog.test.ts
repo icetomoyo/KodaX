@@ -209,6 +209,13 @@ it('selects a Host-only model through the actual model command and clears it whe
     expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'sa' });
     expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
   } finally { runtime.config.patch = patch; }
+  runtime.config.patch = async input => { await patch(input); throw new Error('Injected post-save failure'); };
+  try {
+    expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+      success: true, message: expect.stringMatching(/Host default saved.*confirmed.*Session applied/),
+    });
+    expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
+  } finally { runtime.config.patch = patch; }
   await first.sessions.delete(session.id);
   expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
     success: false, message: expect.stringMatching(/Host default saved; Session apply failed:/),
