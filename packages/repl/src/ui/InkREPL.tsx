@@ -10299,7 +10299,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             return "missing";
           },
           listSessions: async () => {
-            const sessions = await storage.list(context.gitRoot ?? undefined);
+            const sessions = options.sessionCommands?.list
+              ? await options.sessionCommands.list({ projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(), scope: 'user', limit: 10 })
+              : await storage.list(context.gitRoot ?? undefined);
+            if (options.sessionCommands?.list) return { success: true, message: sessions.length
+              ? 'Recent Sessions:\n' + sessions.map(item => `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`).join('\n')
+              : '[No saved sessions]' };
             if (sessions.length === 0) {
               console.log(chalk.dim("\n[No saved sessions]"));
               return;
@@ -12056,7 +12061,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   }
 
   // -r <id>: Load specific session
-  if (options.session?.id && !options.session.resume) {
+  if (options.session?.id) {
     const loaded = await storage.load(options.session.id);
     if (loaded) {
       existingMessages = loaded.messages;
@@ -12077,7 +12082,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   }
   // -c or autoResume: Load most recent non-empty session
   else if (options.session?.resume || options.session?.autoResume) {
-    const recentSession = await findMostRecentResumableSession(storage, gitRoot);
+    const recentSession = options.sessionCommands?.list
+      ? (await options.sessionCommands.list({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)
+      : await findMostRecentResumableSession(storage, gitRoot);
     if (recentSession) {
       const loaded = await storage.load(recentSession.id);
       if (loaded) {

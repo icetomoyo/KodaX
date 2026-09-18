@@ -7785,7 +7785,8 @@ function createRuntimeSessionService(
         sessionId,
         sessionReadOptionsFromBudget(budget),
       );
-      return toRuntimeSession(sessionId, data);
+      return { ...toRuntimeSession(sessionId, data),
+        ...(await manager.storage.isArchived(sessionId) ? { archived: true } : {}) };
     },
 
     async list(filter) {

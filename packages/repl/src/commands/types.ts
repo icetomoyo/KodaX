@@ -118,6 +118,7 @@ export interface SessionGoalBinding {
  * unbound REPLs keep the direct SessionStorage paths (standalone).
  */
 export interface SessionCommandBinding {
+  list?: KodaXProductClient['sessions']['list'];
   delete(sessionId: string): Promise<void>;
   deleteAll(input: { readonly gitRoot?: string }): Promise<void>;
   /** Returns false when no lineage entry matches the selector. */
@@ -201,7 +202,7 @@ export interface CommandCallbacks {
   readonly compactSession?: SessionCompactBinding;
   startNewSession?: () => void | Promise<void>;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
-  listSessions: () => Promise<void>;
+  listSessions: () => Promise<void | CommandResultData>;
   /** Clear presentation only. Commands own changes to messages/token state. */
   clearHistory: () => void;
   printHistory: () => void;

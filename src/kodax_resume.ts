@@ -44,7 +44,7 @@ export async function resolveBareResume(
   const notify = options.notify ?? printResumeNotice;
   const sessions = await listSessions({
     projectRoot: options.cwd ?? process.cwd(),
-    limit: 1000,
+    limit: Number.MAX_SAFE_INTEGER,
   });
   if (sessions.length === 0) {
     await notify('empty');

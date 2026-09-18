@@ -4,6 +4,7 @@ import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 /** CLI command adapters use the same product contract as external clients. */
 export function createCliSessionCommands(client: KodaXProductClient): SessionCommandBinding {
   return {
+    list: filter => client.sessions.list(filter),
     delete: sessionId => client.sessions.delete(sessionId),
     deleteAll: async ({ gitRoot }) => {
       const sessions = await client.sessions.list({

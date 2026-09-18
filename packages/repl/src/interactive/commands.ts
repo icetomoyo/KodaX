@@ -1384,8 +1384,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     handler: async (args, _context, callbacks) => {
       if (args.length === 0) {
         console.log(chalk.red('\n[Usage: /load <session-id>]'));
-        await callbacks.listSessions();
-        return;
+        return callbacks.listSessions();
       }
       const status = await callbacks.loadSession(args[0]!);
       if (status === 'missing') {
@@ -1518,7 +1517,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['ls', 'list'],
     description: 'List recent sessions',
     handler: async (_args, _context, callbacks) => {
-      await callbacks.listSessions();
+      return callbacks.listSessions();
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/sessions - List Saved Sessions\n'));
@@ -1562,8 +1561,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     handler: async (args, context, callbacks) => {
       if (args.length === 0) {
         console.log(chalk.red('\n[Usage: /delete <session-id> or /delete all]'));
-        await callbacks.listSessions?.();
-        return;
+        return callbacks.listSessions();
       }
       if (args[0] === 'all') {
         await callbacks.deleteAllSessions?.();

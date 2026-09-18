@@ -16,6 +16,10 @@ import { createInteractiveContext } from '../packages/repl/src/interactive/conte
 import type { CommandCallbacks, CurrentConfig } from '../packages/repl/src/commands/types.js';
 import { ArgumentCompleter } from '../packages/repl/src/interactive/completers/argument-completer.js';
 import { awaitLatestCodingMemoryReviewDrain, LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
+import { createCliSessionCommands } from './cli-client-plane.js';
+import { resolveOneShotSession } from './one-shot-task.js';
+import { listCliResumeSessions } from '../packages/repl/src/cli-resume.js';
+import { resolveBareResume } from './kodax_resume.js';
 
 class CatalogProvider extends KodaXBaseProvider {
   readonly name = 'product-catalog-test';
@@ -337,6 +341,50 @@ it('uses saved log controls during the next actual verifier and stall sidecar ex
   }
 }, 30_000);
 
+it('finds resumable Host sessions beyond the first window and agrees with the read-only snapshot', async () => {
+  const projectRoot = process.cwd();
+  const session = await first.sessions.create({ projectPath: projectRoot, title: 'Old resumable' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-catalog-test', agentMode: 'sa' });
+  const run = await first.inputs.submit({ sessionId: session.id, inputId: 'discovery-fixture', text: 'Saved history' });
+  if (!run.runId) throw new Error('Expected immediate fixture run');
+  await first.runs.await(run.runId);
+  const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+  for (let start = 0; start < 1001; start += 48) {
+    await Promise.all(Array.from({ length: Math.min(48, 1001 - start) }, (_, offset) => {
+      const id = `empty-${start + offset}`;
+      return writeFile(path.join(sessionsDir, `${id}.jsonl`), JSON.stringify({
+        _type: 'meta', id, title: id, gitRoot: projectRoot, scope: 'user', activeMessageCount: 0,
+        createdAt: '2099-01-01T00:00:00.000Z',
+      }) + '\n');
+    }));
+  }
+  const binding = createCliSessionCommands(first);
+  expect((await binding.list!({ projectRoot, limit: 50 })).every(item => item.msgCount === 0)).toBe(true);
+  expect(await resolveOneShotSession(first, { provider: 'product-catalog-test', session: { resume: true } }, 'continue')).toMatchObject({ sessionId: session.id, resumed: true });
+  const candidates = (await binding.list!({ projectRoot, scope: 'user', limit: Number.MAX_SAFE_INTEGER })).filter(item => item.msgCount > 0);
+  expect((await listCliResumeSessions({ projectRoot, sessionsDir })).map(item => item.id)).toEqual(candidates.map(item => item.id));
+  for (let start = 0; start < 1001; start += 48) {
+    await Promise.all(Array.from({ length: Math.min(48, 1001 - start) }, (_, offset) => {
+      const id = `empty-${start + offset}`;
+      return writeFile(path.join(sessionsDir, `${id}.jsonl`), JSON.stringify({
+        _type: 'meta', id, title: id, gitRoot: projectRoot, scope: 'user', activeMessageCount: 1,
+        createdAt: '2099-01-01T00:00:00.000Z',
+      }) + '\n');
+    }));
+  }
+  expect(await resolveBareResume({ cwd: projectRoot,
+    listSessions: input => listCliResumeSessions({ ...input, sessionsDir }),
+    pickSession: async items => { expect(items.length).toBe(1002); return items.find(item => item.id === session.id); },
+  })).toMatchObject({ kind: 'continue', argv: ['-r', session.id] });
+  await first.sessions.archive(session.id);
+  expect(await second.sessions.read(session.id)).toMatchObject({ archived: true });
+  await expect(resolveOneShotSession(first, { provider: 'product-catalog-test', session: { id: session.id, resume: true } }, 'resume')).rejects.toThrow('archived');
+  expect((await listCliResumeSessions({ projectRoot, sessionsDir })).map(item => item.id)).not.toContain(session.id);
+  await first.sessions.delete(session.id);
+  await expect(second.sessions.read(session.id)).rejects.toThrow('Session not found:');
+  await expect(resolveOneShotSession(first, { provider: 'product-catalog-test', session: { id: session.id, resume: true } }, 'resume')).rejects.toThrow('Session not found:');
+}, 45_000);
+
 it('changes the fallback used by real Workflow child execution', async () => {
   const requests: string[] = [];
   let failureStatus = 503;
@@ -344,8 +392,8 @@ it('changes the fallback used by real Workflow child execution', async () => {
     readonly supportsThinking = false;
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_PRODUCT_CATALOG_TEST_KEY', model: 'fallback-test', supportsThinking: false };
     constructor(readonly name: string) { super(); }
-    async stream(): Promise<KodaXStreamResult> {
-      requests.push(this.name);
+    async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+      if (args[0].some(message => typeof message.content === 'string' && message.content.startsWith('# Child Agent Task'))) requests.push(this.name);
       if (this.name === 'fallback-primary') throw new KodaXProviderError('Controlled upstream response body', this.name, { httpStatus: failureStatus, stage: 'transport' });
       return { textBlocks: [{ type: 'text', text: 'Fallback completed the inspection.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
     }

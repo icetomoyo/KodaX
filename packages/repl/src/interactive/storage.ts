@@ -63,6 +63,7 @@ import { getGitRoot, KODAX_DIR, KODAX_SESSIONS_DIR } from '../common/utils.js';
 import { inspectWorkspaceRuntime, isSameCanonicalRepo, resolveSessionRuntimeInfo } from './workspace-runtime.js';
 import {
   deriveProjectKeyFromData,
+  deriveProjectKeyFromRoot,
   sessionProjectMatchesAnyRoot,
   type ProjectIdentity,
 } from './project-key.js';
@@ -116,6 +117,7 @@ import {
   type ResumeIndexEntry,
 } from '../session/resume-index.js';
 import { countResumableSessionItems } from '../session/resumable-session.js';
+import { maintainProjectResumeIndex, resolveSessionDiscoveryRoots } from '../session/resume-discovery.js';
 export type {
   ConversationPageCacheChunk,
   ConversationPageCacheChunkInput,
@@ -5453,7 +5455,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     // host process's `process.cwd()`, which is the SDK consumer's
     // startup directory (NOT the project the user opened) for
     // in-process embedders like KodaX Space. Result: the
-    // per-project filter at line 1237 (`currentGitRoot ? [currentProjectKey]
+    // per-project filter at line 1237 (`currentGitRoot ? [...new Set([currentProjectKey, ...discoveryRoots.map(root => deriveProjectKeyFromRoot(root).key)])]
     // : <all dirs>`) silently selected the wrong project,
     // and the user saw an empty session list. With no project
     // intent supplied, `currentGitRoot` stays null → the
@@ -5468,6 +5470,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
           cwd: currentGitRoot ?? this.hostCwd ?? process.cwd(),
         })
       : undefined;
+    const indexRoot = currentRuntime?.canonicalRepoRoot ?? currentGitRoot ?? this.hostCwd;
+    const discovery = indexRoot ? await resolveSessionDiscoveryRoots(indexRoot) : undefined;
+    const discoveryRoots = discovery ? [discovery.canonicalProjectRoot, ...discovery.compatibleRoots] : [];
     // FEATURE_219 — candidate files come from the CURRENT project's directory
     // (O(sessions-in-project), the whole point of the per-project layout) plus
     // the legacy flat pool (compat until auto-migration empties it). When there
@@ -5493,7 +5498,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const currentProjectKey = currentProjectIdentity?.key;
     const isSidecar = (f: string): boolean => f.endsWith('.archive.jsonl') || f.endsWith('.islands.jsonl');
     const projectDirNames = currentProjectKey !== undefined
-      ? [currentProjectKey]
+      ? [...new Set([currentProjectKey, ...discoveryRoots.map(root => deriveProjectKeyFromRoot(root).key)])]
       : topEntries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name);
     let locationTraversalComplete = !hasProjectIntent;
     const readDirectory = async (directory: string): Promise<{
@@ -5514,7 +5519,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const projectFiles = await Promise.all(
         projectDirNames.slice(offset, offset + LIST_DIRECTORY_CONCURRENCY).map(async (key) => {
           const projectDir = this.projectDir(key);
-          const [active, archived, resumeEntries] = await Promise.all([
+          const [active, archived, existingResumeEntries] = await Promise.all([
             readDirectory(projectDir),
             readDirectory(path.join(projectDir, 'archived')),
             readResumeIndex(projectDir).catch((error: unknown) => {
@@ -5522,6 +5527,14 @@ export class FileSessionStorage implements KodaXSessionStorage {
               return undefined;
             }),
           ]);
+          let resumeEntries = existingResumeEntries;
+          if (resumeEntries === undefined && indexRoot && key === currentProjectKey) {
+            await maintainProjectResumeIndex({ sessionsDir: this.sessionsDir, projectRoot: indexRoot });
+            resumeEntries = await readResumeIndex(projectDir).catch((error: unknown) => {
+              reportStorageDiagnostic('warn', `Unable to read the rebuilt resume index in ${key}.`, error);
+              return undefined;
+            });
+          }
           return { projectDir, active, archived, resumeEntries };
         }),
       );
@@ -5610,6 +5623,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
               currentRuntime.workspaceRoot,
               currentRuntime.executionCwd,
               currentGitRoot,
+              ...discoveryRoots,
             ].filter((root): root is string => typeof root === 'string' && root.length > 0));
             if (!sameProject) return null;
           }

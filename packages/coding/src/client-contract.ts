@@ -56,6 +56,7 @@ export interface ClientExtensionDiagnostics {
 
 export interface ClientSession {
   readonly id: string;
+  readonly archived?: boolean;
   readonly title: string;
   readonly gitRoot?: string;
   readonly workspaceRoot?: string;

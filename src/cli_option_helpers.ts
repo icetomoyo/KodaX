@@ -391,7 +391,7 @@ export function buildSessionOptions(
   }
 
   if (cliOptions.resume) {
-    return { id: cliOptions.resume, storage, scope: 'user' };
+    return { id: cliOptions.resume, resume: true, storage, scope: 'user' };
   }
 
   if (cliOptions.continue) {

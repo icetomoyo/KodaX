@@ -191,6 +191,7 @@ export async function loadClassicStartupSession(
   session: KodaXOptions['session'],
   storage: SessionStorage,
   gitRoot?: string,
+  sessionCommands?: SessionCommandBinding,
 ): Promise<{
   id: string;
   data: KodaXSessionData;
@@ -210,7 +211,9 @@ export async function loadClassicStartupSession(
   }
 
   if (session?.resume || session?.autoResume) {
-    const recent = await findMostRecentResumableSession(storage, gitRoot);
+    const recent = sessionCommands?.list
+      ? (await sessionCommands.list({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)
+      : await findMostRecentResumableSession(storage, gitRoot);
     if (!recent) return null;
     const data = await storage.load(recent.id);
     if (!data) return null;
@@ -570,6 +573,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     options.session,
     storage,
     startupGitRoot,
+    options.sessionCommands,
   );
   const activeRuntime = startupSession
     ? startupSession.runtimeInfo ?? startupRuntime
@@ -1363,7 +1367,13 @@ Keyboard Shortcuts:
       return 'missing';
     },
       listSessions: async () => {
-        const sessions = await storage.list(context.gitRoot ?? undefined);
+        const sessions = options.sessionCommands?.list
+          ? (await options.sessionCommands.list({ projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(), scope: 'user', limit: 10 }))
+            .map(item => ({ ...item, runtimeInfo: { workspaceRoot: item.workspaceRoot, canonicalRepoRoot: item.gitRoot } }))
+          : await storage.list(context.gitRoot ?? undefined);
+        if (options.sessionCommands?.list) return { success: true, message: sessions.length
+          ? 'Recent Sessions:\n' + sessions.map(item => `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`).join('\n')
+          : '[No saved sessions]' };
         if (sessions.length === 0) {
           console.log(chalk.dim('\n[No saved sessions]'));
           return;

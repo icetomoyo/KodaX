@@ -89,20 +89,21 @@ export async function resolveOneShotSession(
 
   if (options.session?.id !== undefined) {
     try {
-      await client.sessions.read(options.session.id);
+      const target = await client.sessions.read(options.session.id);
+      if (target.archived) throw new Error(`Session is archived: ${target.id}`);
       return { sessionId: options.session.id, resumed: true, temporary: false };
     } catch (error: unknown) {
-      if (!isSessionNotFound(error)) throw error;
+      if (options.session.resume || !isSessionNotFound(error)) throw error;
       const created = await client.sessions.create(createInput(options.session.id));
       return { sessionId: created.id, resumed: false, temporary: false };
     }
   }
-  if (options.session?.resume === true) {
+  if (options.session?.resume === true || options.session?.autoResume === true) {
     // Project-scoped like the storage scan this replaces (FEATURE_219).
     const candidates = await client.sessions.list({
       projectRoot: gitRoot,
       scope: 'user',
-      limit: 1000,
+      limit: Number.MAX_SAFE_INTEGER,
     });
     const recent = candidates.find((session) => session.msgCount > 0);
     if (recent !== undefined) return { sessionId: recent.id, resumed: true, temporary: false };

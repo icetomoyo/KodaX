@@ -2789,13 +2789,11 @@ function showBasicHelp(): void {
 }
 
 async function loadResumableSessions(
-  maxSessions = 1000,
+  runtime: KodaXRuntime,
 ): Promise<SessionPickerItem[]> {
-  const { listCliResumeSessions } = await import('@kodax-ai/repl/cli-resume');
-  return listCliResumeSessions({
-    projectRoot: process.cwd(),
-    limit: maxSessions,
-  });
+  return (await toKodaXProductClient(runtime).sessions.list({
+    projectRoot: process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER,
+  })).filter(session => session.msgCount > 0);
 }
 
 function printProviderSetupCompletion(selection: {
@@ -4653,7 +4651,7 @@ complete -c kodax -l version -d 'Show version'`);
 
     // Session list: show a bounded preview; bare -r provides searchable navigation.
     if (options.session === 'list') {
-      const sessions = await loadResumableSessions();
+      const sessions = await loadResumableSessions(await getCliRuntime());
       const visible = sessions.slice(0, 50);
       const lines = visible.map((session) => {
         const surface = session.surface ? ` ${session.surface}` : '';
@@ -4752,8 +4750,9 @@ complete -c kodax -l version -d 'Show version'`);
       resumeWithoutId: opts.resume === true,
     });
 
+    let validatedResumeId: string | undefined;
     if (opts.resume === true) {
-      const sessions = await loadResumableSessions();
+      const sessions = await loadResumableSessions(await getCliRuntime());
       if (sessions.length === 0) {
         console.log(
           chalk.yellow(
@@ -4770,9 +4769,19 @@ complete -c kodax -l version -d 'Show version'`);
         options.resume = selected.id;
       }
     } else if (typeof opts.resume === 'string') {
-      if (!await new FileSessionStorage().has(opts.resume)) {
+      const resumeClient = toKodaXProductClient(await getCliRuntime());
+      let found = false;
+      try {
+        const target = await resumeClient.sessions.read(opts.resume);
+        if (target.archived) throw new Error('Session is archived; unarchive it before resuming.');
+        found = true;
+        validatedResumeId = target.id;
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith('Session not found:')) throw error;
+      }
+      if (!found) {
         const titleMatches = findSessionTitleMatches(
-          await loadResumableSessions(),
+          await loadResumableSessions(await getCliRuntime()),
           opts.resume,
         );
         if (titleMatches.length === 1) {
@@ -4796,6 +4805,11 @@ complete -c kodax -l version -d 'Show version'`);
           options.resume = selected.id;
         }
       }
+    }
+
+    if (options.resume && options.resume !== validatedResumeId) {
+      const target = await toKodaXProductClient(await getCliRuntime()).sessions.read(options.resume);
+      if (target.archived) throw new Error('Session is archived; unarchive it before resuming.');
     }
 
     // FEATURE_298 T27 — fixed to the independent Host: the client never
@@ -4890,21 +4904,21 @@ complete -c kodax -l version -d 'Show version'`);
         // FEATURE_298 T18 — resume selection reads the Host sessions face
         // (newest-first); the resolved id keeps the same-file local load.
         let interactiveKodaXOptions = kodaXOptions;
-        if (kodaXOptions.session?.resume === true) {
+        if (!kodaXOptions.session?.id && (kodaXOptions.session?.resume === true || kodaXOptions.session?.autoResume === true)) {
           // Project-scoped like the storage scan it replaces (FEATURE_219
           // per-project layout): without projectRoot, -c in project B could
           // resume project A's newest session.
-          const projectRoot = (await getGitRoot()) ?? undefined;
+          const projectRoot = (await getGitRoot()) ?? process.cwd();
           const candidates = await interactiveClient.sessions.list({
             ...(projectRoot !== undefined ? { projectRoot } : {}),
             scope: 'user',
-            limit: 1000,
+            limit: Number.MAX_SAFE_INTEGER,
           });
           const recent = candidates.find((session) => session.msgCount > 0);
           if (recent !== undefined) {
             interactiveKodaXOptions = {
               ...kodaXOptions,
-              session: { ...kodaXOptions.session, id: recent.id, resume: undefined },
+              session: { ...kodaXOptions.session, id: recent.id, resume: undefined, autoResume: undefined },
             };
           }
         }

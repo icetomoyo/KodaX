@@ -16,6 +16,24 @@ describe('listCliResumeSessions', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
+  it('reads legacy candidates and an absent directory without writing any files', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'kodax-resume-readonly-'));
+    tempDirs.push(home);
+    const sessionsDir = path.join(home, 'sessions');
+    const projectRoot = path.join(home, 'repo');
+    await mkdir(projectRoot);
+    expect(await listCliResumeSessions({ projectRoot, sessionsDir })).toEqual([]);
+    await expect(fs.access(sessionsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await mkdir(sessionsDir);
+    const body = JSON.stringify({ _type: 'meta', gitRoot: projectRoot, title: 'Legacy', activeMessageCount: 1 });
+    await writeFile(path.join(sessionsDir, 'legacy.jsonl'), body + '\n');
+    const before = await fs.stat(path.join(sessionsDir, 'legacy.jsonl'));
+    expect(await listCliResumeSessions({ projectRoot, sessionsDir })).toMatchObject([{ id: 'legacy' }]);
+    expect(await fs.readdir(sessionsDir)).toEqual(['legacy.jsonl']);
+    expect(await fs.readFile(path.join(sessionsDir, 'legacy.jsonl'), 'utf8')).toBe(body + '\n');
+    expect((await fs.stat(path.join(sessionsDir, 'legacy.jsonl'))).mtimeMs).toBe(before.mtimeMs);
+  });
+
   it('matches the existing bare-resume filters without loading empty, worker, or other-project sessions', async () => {
     const tempHome = await mkdtemp(path.join(os.tmpdir(), 'kodax-cli-resume-'));
     tempDirs.push(tempHome);
@@ -121,9 +139,7 @@ describe('listCliResumeSessions', () => {
     const projectRoot = path.join(tempHome, 'repo');
     await mkdir(projectRoot, { recursive: true });
 
-    // Stamp the current layout first so this specifically exercises the
-    // dual-layout reader rather than migration of the legacy fixture.
-    await listCliResumeSessions({ projectRoot, sessionsDir });
+    await mkdir(sessionsDir, { recursive: true });
     const meta = {
       _type: 'meta',
       title: 'Archived legacy session',
@@ -275,7 +291,8 @@ describe('listCliResumeSessions', () => {
     ]);
     const emitWarning = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
     try {
-      await expect(listCliResumeSessions({ projectRoot, sessionsDir })).resolves.toEqual([
+      await new FileSessionStorage({ sessionsDir, cwd: projectRoot }).list(projectRoot, { limit: Number.MAX_SAFE_INTEGER });
+    await expect(listCliResumeSessions({ projectRoot, sessionsDir })).resolves.toEqual([
         expect.objectContaining({ id: 'session' }),
       ]);
       expect(emitWarning).toHaveBeenCalledWith(
@@ -381,6 +398,9 @@ describe('listCliResumeSessions', () => {
       await expect(listCliResumeSessions({ projectRoot: nested, sessionsDir })).resolves.toEqual([
         expect.objectContaining({ id: 'worktree-session' }),
       ]);
+      await expect(new FileSessionStorage({ sessionsDir }).list(repository)).resolves.toEqual([
+        expect.objectContaining({ id: 'worktree-session' }),
+      ]);
       await expect(listCliResumeSessions({ projectRoot: repository, sessionsDir })).resolves.toEqual([
         expect.objectContaining({ id: 'worktree-session' }),
       ]);
@@ -415,6 +435,7 @@ describe('listCliResumeSessions', () => {
       }) + '\n', 'utf8'),
     ]);
 
+    await new FileSessionStorage({ sessionsDir, cwd: projectRoot }).list(projectRoot, { limit: Number.MAX_SAFE_INTEGER });
     await expect(listCliResumeSessions({ projectRoot, sessionsDir })).resolves.toEqual([
       expect.objectContaining({ id: 'current' }),
     ]);
@@ -540,6 +561,7 @@ describe('listCliResumeSessions', () => {
     ]);
     const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
 
+    await new FileSessionStorage({ sessionsDir, cwd: projectRoot }).list(projectRoot, { limit: Number.MAX_SAFE_INTEGER });
     await expect(listCliResumeSessions({ projectRoot, sessionsDir })).resolves.toEqual([
       expect.objectContaining({ id: 'current' }),
     ]);
@@ -594,6 +616,7 @@ describe('listCliResumeSessions', () => {
     }
     await Promise.all(writes);
 
+    await new FileSessionStorage({ sessionsDir, cwd: projectRoot }).list(projectRoot, { limit: Number.MAX_SAFE_INTEGER });
     await expect(listCliResumeSessions({ projectRoot, sessionsDir })).resolves.toHaveLength(5);
     const open = vi.spyOn(fs, 'open');
     try {

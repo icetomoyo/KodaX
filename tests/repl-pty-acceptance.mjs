@@ -519,6 +519,16 @@ async function checkHostExecutionControls(state) {
   }
 }
 
+async function checkHostSessionList(state) {
+  const listed = await state.client.sessions.create({ projectPath: state.homeDir, title: 'HOST_LIST_ONLY' });
+  const other = await state.client.sessions.create({ projectPath: artifacts, title: 'OTHER_PROJECT_HIDDEN' });
+  try {
+    await state.terminal.submit('/sessions');
+    await waitFor('Host session list rendered', () => state.terminal.screen().includes('HOST_LIST_ONLY'));
+    assert.ok(!state.terminal.screen().includes('OTHER_PROJECT_HIDDEN'));
+  } finally { await state.client.sessions.delete(listed.id); await state.client.sessions.delete(other.id); }
+}
+
 async function checkSettings(state) {
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
@@ -1023,6 +1033,7 @@ async function run(mode) {
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
     await check(state, 'host-execution-controls', checkHostExecutionControls);
+    await check(state, 'host-session-list', checkHostSessionList);
     if (consumerOnly) {
       await check(state, 'exit', checkExit);
       return;
