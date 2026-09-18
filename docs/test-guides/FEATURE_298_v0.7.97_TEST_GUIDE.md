@@ -165,3 +165,21 @@ SDK 对应 `src/sdk-client.queue-boundary.test.ts`，须覆盖 SA 与 AMA：消�
 扩展接续还须在 handler 暂停期间真实 reload，再检查当轮 Provider 使用旧贡献、下一个 Run 使用新贡献；SA 与 AMA 都要覆盖。MCP 初始化被 dispose 时应保留关闭原因，不能启动备用握手进程。对应 domains、MCP runtime 与 extension runtime 测试均保留，不以静态接线检查替代。
 
 还需运行 FEATURE_299 回归指南的原生边界与真实 Shell 清理测试。`npm run build` 包含不安装 Node 类型的 ProductClient 使用者编译检查，防止诊断字段泄漏 Host 执行类型；不得添加 Node 类型依赖来掩盖失败。
+
+
+## T38–T42 消费者归口补齐
+
+```bash
+npx vitest run src/sdk-client.catalog.test.ts src/sdk-client.repl-activity.test.ts src/sdk-client.capabilities.test.ts src/sdk-session-commands.test.ts src/sdk-goal-binding.test.ts
+node tests/repl-pty-acceptance.mjs --consumer-only
+```
+
+consumer-only 在真实 Ink/classic 终端验证 Host probe/forget、模型与设置命令、fallback/log 控制、按项目列会话、加载目标会话不覆盖设置、rewind 后历史可见、Host tree，以及已有 Host 下明确 `-r <id>` 和 repo-intelligence 启动参数。启动只提交显式参数；未显式指定的 permission/thinking 等字段保持 Host 默认，不强行写成客户端默认。
+
+`src/sdk-client.repl-activity.test.ts` 给客户端注入禁止 load/list/save 的 storage，实际 Host 仍使用 canonical 存储；从两个真实 REPL 入口验证 startup/load/status/tree label/select/rewind/fork/recover、目标设置保留，并验证 Ink 设置写入失败后仍可 load。恢复命令保留原有确认及 Continue 行为。`src/sdk-client.catalog.test.ts` 另验证保存前失败、保存后报错、实际 Session 应用失败分别如实呈现，以及真实 Workflow fallback 与 verifier/stall sidecar 日志开关。
+
+裸 `-r` 继续从 bootstrap 公开入口验收：空目录、旧布局和缺索引时读取不创建目录、迁移文件或写索引；超过 1000 个候选仍能选旧会话；选中后已删除/归档应由 Host 拒绝，不能误建新会话。普通 Host 列表只在索引缺失或无效时维护，热索引路径不重复扫描 canonical 正文。保留旧 worktree 路径映射与 Esc 输入所有权测试。
+
+人工补验：Host 与客户端 home/profile 分开时，Host 独有模型仍可选择；从工作区 A 加载 B 后，相对附件按 B 的实际路径解析；旧会话迟到更新不得覆盖新页。既有冻结浏览、展开、复制、外部编辑器和独立 REPL 入口继续按前文回归，不能用本节自动化替代跨平台及视觉验收。
+
+长历史预算夹具显式在 Host 设置 full-access，仅授权夹具中的受控本地工具，避免默认权限批准阻塞显示验收；既有正文、工具参数、分组和预算断言不变。失败清理覆盖待批准/等待子 Agent/恢复中的 Run。

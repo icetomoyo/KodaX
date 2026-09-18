@@ -15,7 +15,7 @@
 | Current package version | `@kodax-ai/kodax@0.7.96-rc.8` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.8` |
-| Current development | `v0.7.97` / `FEATURE_298` — Product Host / Client implementation and parity verification |
+| Current development | `v0.7.97` / `FEATURE_298` — core implemented; consumer-completion tickets T38–T42 implemented; release verification pending |
 | Total tracked features | `83` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -29,7 +29,7 @@
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
 | Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 2 | `298, 225` | `298`: approved v0.7.97 Product Host / Client design; core implementation and reported parity repairs complete; automated checks pass; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
+| InProgress | 2 | `298, 225` | `298`: prior core implementation and automated evidence retained; 2026-09-18 consumer-completion T38–T42 implemented and reviewed; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -513,7 +513,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — implemented; manual release acceptance pending |
+| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core implemented; [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) implemented and reviewed |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
