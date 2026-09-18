@@ -6429,6 +6429,7 @@ function createRuntimeSessionService(
   ): RuntimeSession => ({
     id,
     title: data.title,
+    msgCount: data.messages.length,
     ...(data.runtimeInfo?.executionCwd ? { executionCwd: data.runtimeInfo.executionCwd } : {}),
     ...(data.tag ? { tag: data.tag } : {}),
     ...(data.gitRoot ? { gitRoot: data.gitRoot } : {}),

@@ -1263,6 +1263,10 @@ Keyboard Shortcuts:
   // Command callbacks - 命令回调
   const callbacks: CommandCallbacks = {
     getRuntimeStatus: options.getRuntimeStatus,
+    getSessionStatus: options.sessionCommands?.read ? async () => ({
+      messageCount: (await options.sessionCommands!.read!(context.sessionId)).msgCount,
+      tokens: displayedPlaneView?.session.id === context.sessionId ? displayedPlaneView.parentContextTokens : undefined,
+    }) : undefined,
     validateSetupA2AConfig: options.validateSetupA2AConfig,
     prepareSetupSandbox: options.prepareSetupSandbox,
     inspectSandbox: options.inspectSandbox,

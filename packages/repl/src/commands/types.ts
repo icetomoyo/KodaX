@@ -275,6 +275,7 @@ export interface CommandCallbacks {
   rewindSession?: (selector?: string) => Promise<SessionRewindStatus>;
   getCostReport?: () => string | null;
   getRuntimeStatus?: () => Promise<RuntimeSurfaceStatus | undefined>;
+  getSessionStatus?: () => Promise<{ messageCount?: number; tokens?: number }>;
   /** Canonical host parser used by `/setup` for the root-owned A2A schema. */
   validateSetupA2AConfig?: (value: unknown) => unknown;
   /** Root-owned sandbox activation because ASRT is distributed by the host package. */

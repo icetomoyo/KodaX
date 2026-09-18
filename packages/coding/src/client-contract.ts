@@ -56,6 +56,8 @@ export interface ClientExtensionDiagnostics {
 
 export interface ClientSession {
   readonly executionCwd?: string;
+  /** Active conversation messages, when supplied by a Host read. */
+  readonly msgCount?: number;
   readonly id: string;
   readonly archived?: boolean;
   readonly title: string;

@@ -958,6 +958,8 @@ async function checkExit(state) {
 
 async function checkLongHistoryPreviews(state) {
   assert.equal(state.mode, 'ink', 'The long-history screen regression exercises Ink');
+  // This fixture exercises display budgets; authorize its controlled local tools explicitly.
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: 'full-access' });
   await Promise.all(Array.from({ length: 24 }, (_, index) => writeFile(path.join(state.homeDir, `archive-${index}.txt`),
     Array.from({ length: 100 }, (_, line) => `ARCHIVE_${index}_${line} ${'payload '.repeat(16)}`).join('\n'))));
   for (const token of ['ACCEPT_ARCHIVE_EARLY', ...'ABCDEFGH'.split('').map(letter => `ACCEPT_ARCHIVE_FILL_${letter}`)]) {
@@ -1016,7 +1018,7 @@ async function cleanupHost(state) {
   try {
     for (const view of state.views.values()) {
       for (const run of view.runs) {
-        if (['accepted', 'queued', 'running'].includes(run.phase)) {
+        if (['accepted', 'queued', 'running', 'waiting_user', 'waiting_agent', 'recovering'].includes(run.phase)) {
           await state.client.runs.stop(run.runId);
           await state.client.runs.await(run.runId);
         }

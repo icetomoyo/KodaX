@@ -10159,6 +10159,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Create command callbacks
         const callbacks: CommandCallbacks = {
           getRuntimeStatus: options.getRuntimeStatus,
+          getSessionStatus: options.sessionCommands?.read ? async () => ({
+            messageCount: (await options.sessionCommands!.read!(context.sessionId)).msgCount,
+            tokens: clientViewRef.current?.session.id === context.sessionId ? clientViewRef.current.parentContextTokens : undefined,
+          }) : undefined,
           validateSetupA2AConfig: options.validateSetupA2AConfig,
           prepareSetupSandbox: options.prepareSetupSandbox,
           inspectSandbox: options.inspectSandbox,

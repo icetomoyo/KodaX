@@ -143,6 +143,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     stdin.emit('data', Buffer.from('\r'));
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Totalcost:$0.012');
     const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+    let commandOutput = () => stripVTControlCharacters(stdout.text).replace(/\s/g, '');
     async function* sessionCommands(mode: string): AsyncGenerator<string> {
       const target = `target-${mode}`;
       await storage.createGenerated(target, { title: 'Host target', gitRoot: homeDir,
@@ -163,6 +164,9 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await expect.poll(() => received.at(-1)?.session.id).toBe(target);
       expect(await client.sessions.getSettings(target)).toEqual(settings);
       expect(await client.sessions.read(target)).toMatchObject({ branch: 'target-branch', executionCwd: homeDir });
+      yield '/status';
+      expect(commandOutput()).toContain('Messages:4');
+      expect(commandOutput()).toMatch(/Tokens:~[1-9]/);
       const lineage = (await client.sessions.readLineage(target))!;
       const root = lineage.entries.find(entry => entry.role === 'user')!;
       expect(root.preview).toBe('TARGET_FIRST');
@@ -216,6 +220,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       output: stdout as unknown as NodeJS.WritableStream, terminal: false,
     }));
     const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    commandOutput = () => stripVTControlCharacters(logs.mock.calls.flat().join(' ')).replace(/\s/g, '');
     const classicCommands = sessionCommands('classic');
     fixture.ask.mockImplementationOnce(async () => {
       await expect.poll(() => received.at(-1)?.activity?.costReport).toBe('Total cost: $0.012');

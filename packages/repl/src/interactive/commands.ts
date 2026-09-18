@@ -2756,8 +2756,11 @@ async function printStatus(
   callbacks?: CommandCallbacks,
 ): Promise<void> {
   const detailMode = args[0]?.toLowerCase();
-  const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
-  const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
+  const hostStatus = await callbacks?.getSessionStatus?.();
+  const tokens = callbacks?.getSessionStatus ? hostStatus?.tokens
+    : context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
+  const tokenSource = callbacks?.getSessionStatus ? 'Host estimate' : context.contextTokenSnapshot?.source ?? 'estimate';
+  const messageCount = callbacks?.getSessionStatus ? hostStatus?.messageCount : context.messages.length;
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
   const generalProviderPolicy = getProviderPolicyDecision(
     currentConfig.provider,
@@ -2783,8 +2786,8 @@ async function printStatus(
     console.log(chalk.dim(`  Provider Policy: ${policyColor(generalProviderPolicy.summary)}`));
   }
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
-  console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
-  console.log(chalk.dim(`  Tokens:      ~${tokens} (${tokenSource})`));
+  console.log(chalk.dim(`  Messages:    ${messageCount ?? 'unavailable'}`));
+  console.log(chalk.dim(`  Tokens:      ${tokens === undefined ? 'unavailable' : `~${tokens} (${tokenSource})`}`));
   const repoInspection = await inspectRepoIntelligenceRuntime({
     mode: currentConfig.repoIntelligenceMode,
     trace: currentConfig.repoIntelligenceTrace,
