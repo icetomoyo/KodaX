@@ -90,10 +90,13 @@ it('reads the same active Auto diagnostics through Product and the CLI control',
   expect(await first.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'auto' });
   let release: (() => void) | undefined;
   const held = new Promise<void>(resolve => { release = resolve; });
-  onProviderRequest = () => held;
+  let markEntered = () => {};
+  const entered = new Promise<void>(resolve => { markEntered = resolve; });
+  onProviderRequest = () => { markEntered(); return held; };
   try {
     const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'auto-diagnostic', text: 'Wait for diagnostic inspection.' });
-    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(0));
+    await entered;
+    expect(requests.length).toBeGreaterThan(0);
     expect(await first.sessions.getAutoModeStats(session.id)).toMatchObject({
       classifierHealth: 'healthy', denials: { consecutive: 0, cumulative: 0 }, breaker: { timestamps: [] },
     });

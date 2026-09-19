@@ -139,9 +139,11 @@ it('retains interrupted same-Run steer output after the delivered canonical inpu
   clearRuntimeModelProviders();
   let allowFirst: () => void = () => {};
   const gate = new Promise<void>(resolve => { allowFirst = resolve; });
+  let markEntered = () => {};
+  const entered = new Promise<void>(resolve => { markEntered = resolve; });
   registerModelProvider('product-steer-test', () => new SteerProvider(async (messages, options, signal) => {
     requests.push(structuredClone(messages));
-    if (requests.length === 1) { await gate; return; }
+    if (requests.length === 1) { markEntered(); await gate; return; }
     options?.onTextDelta?.('Partial after steer');
     await new Promise<void>((_resolve, reject) => {
       const abort = () => reject(new Error('Interrupted steered output'));
@@ -155,7 +157,8 @@ it('retains interrupted same-Run steer output after the delivered canonical inpu
   const observation = await first.sessions.observe(session.id, view => views.push(view));
   try {
     const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
-    await expect.poll(() => requests.length).toBe(1);
+    await entered;
+    expect(requests.length).toBe(1);
     await first.inputs.submit({ sessionId: session.id, inputId: 'steered', text: 'Continue here.', delivery: 'steer', targetRunId: active.runId! });
     allowFirst();
     await expect.poll(() => views.at(-1)?.items.some(item => item.text === 'Partial after steer'), { timeout: 15_000 }).toBe(true);
