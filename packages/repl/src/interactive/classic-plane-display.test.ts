@@ -66,6 +66,51 @@ function item(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | '
 }
 
 describe('createClassicPlaneDisplayDiffer (T18)', () => {
+  it('prints one count snapshot per streaming phase, retaining it across reconnect snapshots', async () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));
+    const thinking = { runId: 'run', streaming: { kind: 'thinking' as const, providerRequestId: 'request', itemId: 'thought', charCount: 5 } };
+    await differ([], thinking);
+    await differ([], { ...thinking, streaming: { ...thinking.streaming, charCount: 1000 } });
+    // Reconnected initial snapshots reuse this same session differ.
+    await differ([], thinking);
+    const tool = { runId: 'run', streaming: { kind: 'tool-input' as const, providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 8 } };
+    await differ([], tool);
+    await differ([], { ...tool, streaming: { ...tool.streaming, charCount: 1000 } });
+    await differ([], { ...tool, streaming: { ...tool.streaming, callId: 'two', charCount: 2 } });
+    await differ([], { runId: 'run' });
+    await differ([], tool);
+    expect(lines).toEqual(['info:Thinking (5 chars received so far)', 'info:Receiving read (8 chars received so far)',
+      'info:Receiving read (2 chars received so far)', 'info:Receiving read (8 chars received so far)']);
+  });
+
+  it('does not invent a cumulative count for anonymous tool input', async () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));
+    const activity = { runId: 'run', streaming: { kind: 'tool-input' as const, providerRequestId: 'request', toolName: 'read' } };
+    await differ([], activity);
+    await differ([], activity);
+    expect(lines).toEqual(['info:Receiving read']);
+  });
+
+  it('prints each interleaved call only once until its request changes or streaming ends', async () => {
+    const lines: string[] = [];
+    const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));
+    const first = { runId: 'run', streaming: { kind: 'tool-input' as const,
+      providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 2 } };
+    const second = { ...first, streaming: { ...first.streaming, callId: 'two', charCount: 3 } };
+    await differ([], first);
+    await differ([], second);
+    await differ([], { ...first, streaming: { ...first.streaming, charCount: 1000 } });
+    await differ([], second);
+    expect(lines).toEqual(['info:Receiving read (2 chars received so far)',
+      'info:Receiving read (3 chars received so far)']);
+    await differ([], { ...first, streaming: { ...first.streaming, providerRequestId: 'next' } });
+    await differ([]);
+    await differ([], first);
+    expect(lines).toHaveLength(4);
+  });
+
   it('prints complete bounded tool arguments and final output', async () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer(line => lines.push(line), async (id, options) => {

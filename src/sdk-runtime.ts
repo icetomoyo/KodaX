@@ -18975,6 +18975,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolSandboxObservation?.(update, meta);
     },
     onToolInputDelta(toolName, partialJson, meta) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase) || record.abortController?.signal.aborted) return;
+      input.display.onToolInputDelta?.(toolName, partialJson, meta);
       emit("tool.progress", { toolName, partialJson, meta }, meta);
       externalCallbacks()?.onToolInputDelta?.(toolName, partialJson, meta);
     },
@@ -19018,6 +19020,8 @@ function wrapKodaXEvents(input: {
       }
     },
     onStreamEnd(meta) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase) || record.abortController?.signal.aborted) return;
+      input.display.onStreamEnd?.(meta);
       emit("run.progress", { kind: "stream_end", meta }, meta);
       externalCallbacks()?.onStreamEnd?.(meta);
     },

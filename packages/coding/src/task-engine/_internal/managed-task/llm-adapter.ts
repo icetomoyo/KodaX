@@ -535,6 +535,7 @@ export function buildRunnerLlmAdapter(
       )[];
       usage?: KodaXTokenUsage;
     };
+    let activeProviderRequestId: string | undefined;
     if (overrideStream) {
       streamResult = await overrideStream(
         transcript,
@@ -791,6 +792,7 @@ export function buildRunnerLlmAdapter(
         const request = boundaryTracker.snapshot();
         telemetryBoundary(request);
         const requestMeta = { providerRequestId: request.requestId } as const;
+        activeProviderRequestId = request.requestId;
         options.events?.onOutputSegmentStart?.(
           { responseId, providerRequestId: request.requestId, mode: nextRequestMode },
           requestMeta,
@@ -870,7 +872,8 @@ export function buildRunnerLlmAdapter(
           onThinkingEnd: (thinking: string) => {
             options.events?.onThinkingEnd?.(thinking, requestMeta);
           },
-          onToolInputDelta: options.events?.onToolInputDelta,
+          onToolInputDelta: (name: string, json: string, meta?: { toolId?: string }) =>
+            options.events?.onToolInputDelta?.(name, json, { ...meta, ...requestMeta }),
           onRateLimit: (rateAttempt: number, maxRetries: number, delayMs: number) => {
             resetIdleTimer();
             if (options.events) {
@@ -1080,6 +1083,7 @@ export function buildRunnerLlmAdapter(
               const fallbackMeta = {
                 providerRequestId: fallbackRequest.requestId,
               } as const;
+              activeProviderRequestId = fallbackRequest.requestId;
               options.events?.onOutputSegmentStart?.(
                 { responseId, providerRequestId: fallbackRequest.requestId, mode: 'replace' },
                 fallbackMeta,
@@ -1103,6 +1107,8 @@ export function buildRunnerLlmAdapter(
                     promptCacheKey,
                     onReasoningEffortRejected: event => onReasoningEffortRejected(event, fallbackMeta.providerRequestId),
                     onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...fallbackMeta }),
+                    onToolInputDelta: (name, json, meta) =>
+                      options.events?.onToolInputDelta?.(name, json, { ...meta, ...fallbackMeta }),
                     modelOverride: activeModel,
                     maxOutputTokensOverride: requestMaxOutputTokens,
                     ephemeralSuffix: nativeEphemeralSuffix,
@@ -1294,6 +1300,7 @@ export function buildRunnerLlmAdapter(
           const continuationMeta = {
             providerRequestId: continuationRequest.requestId,
           } as const;
+          activeProviderRequestId = continuationRequest.requestId;
           options.events?.onOutputSegmentStart?.(
             { responseId, providerRequestId: continuationRequest.requestId, mode: 'append' },
             continuationMeta,
@@ -1335,7 +1342,8 @@ export function buildRunnerLlmAdapter(
                 onThinkingEnd: (thinking: string) => {
                   options.events?.onThinkingEnd?.(thinking, continuationMeta);
                 },
-                onToolInputDelta: options.events?.onToolInputDelta,
+                onToolInputDelta: (name, json, meta) =>
+                  options.events?.onToolInputDelta?.(name, json, { ...meta, ...continuationMeta }),
                 onRateLimit: (rateAttempt: number, maxRetries: number, delayMs: number) => {
                   if (options.events) {
                     emitProviderRateLimit(options.events, rateAttempt, maxRetries, delayMs);
@@ -1411,7 +1419,8 @@ export function buildRunnerLlmAdapter(
     // onStreamEnd fires after the provider finishes the current turn's
     // stream. The Runner-driven adapter funnels every turn through this
     // single return-path so the event fires once per stream.
-    if (options.events) emitStreamEnd(options.events);
+    if (options.events) emitStreamEnd(options.events,
+      activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined);
 
     // Fire onIterationEnd so the REPL token-count indicator can refresh
     // after each worker turn. `scope: 'worker'` mirrors the FEATURE_072

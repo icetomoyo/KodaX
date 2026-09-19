@@ -507,6 +507,16 @@ export interface ClientContextBudget {
 
 /** Display facts for the latest Run; worker context is distinct from parent context. */
 export interface ClientSessionActivity {
+  /** Transient request progress; never saved as conversation history or partial tool arguments. */
+  readonly streaming?: {
+    readonly kind: 'thinking'; readonly providerRequestId: string;
+    readonly itemId: string; readonly charCount: number;
+  } | {
+    readonly kind: 'tool-input'; readonly providerRequestId: string;
+    readonly toolName: string; readonly callId?: string;
+    /** Cumulative characters for this call; absent when the Provider supplied no call identity. */
+    readonly charCount?: number;
+  };
   readonly workflow?: ClientWorkflowProcess;
   /** Latest execution budget, whose model and scope may differ from the current Session selection. */
   readonly contextBudget?: ClientContextBudget;

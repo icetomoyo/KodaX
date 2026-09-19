@@ -13,10 +13,12 @@ import type {
   ClientItemContent,
   ClientItemReadOptions,
   ClientObservationStatus,
+  ClientSessionActivity,
 } from '@kodax-ai/coding/client-contract';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import {
   answerClientPlaneInteraction,
+  viewRunsActive,
   type ClientPlaneDialogSurface,
   type InkClientPlane,
 } from '../ui/client-plane.js';
@@ -57,13 +59,31 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
   let baselined = false;
   const printedText = new Map<string, number>();
   const printedToolStages = new Set<string>();
+  let streamingRequest: string | undefined;
+  const printedStreamingPhases = new Set<string>();
 
   const printOnce = (item: ClientViewItem, line: string): void => {
     write(line);
     printedText.set(item.id, item.text.length);
   };
 
-  return async (items: readonly ClientViewItem[]): Promise<void> => {
+  return async (items: readonly ClientViewItem[], activity?: ClientSessionActivity): Promise<void> => {
+    const streaming = activity?.streaming;
+    const request = streaming ? JSON.stringify([activity.runId, streaming.providerRequestId]) : undefined;
+    if (request !== streamingRequest) {
+      streamingRequest = request;
+      printedStreamingPhases.clear();
+    }
+    if (streaming) {
+      const phase = JSON.stringify([streaming.kind,
+        streaming.kind === 'thinking' ? streaming.itemId : streaming.callId ?? streaming.toolName]);
+      if (!printedStreamingPhases.has(phase)) {
+        printedStreamingPhases.add(phase);
+        const label = streaming.kind === 'thinking' ? 'Thinking' : `Receiving ${streaming.toolName}`;
+        const count = streaming.charCount === undefined ? '' : ` (${streaming.charCount} chars received so far)`;
+        write(`info:${label}${count}`);
+      }
+    }
     if (!baselined) {
       baselined = true;
       for (const item of items) {
@@ -174,7 +194,8 @@ export async function attachClassicPlaneDisplay(
   const observation = await plane.observe(sessionId, (view: ClientSessionView) => {
     if (!isCurrent()) return;
     options.onView?.(view);
-    displayQueue.pending = displayQueue.pending.then(() => !isCurrent() ? undefined : differ(view.items)).catch((error: unknown) => {
+    displayQueue.pending = displayQueue.pending.then(() => !isCurrent() ? undefined : differ(view.items,
+      viewRunsActive(view) === view.activity?.runId ? view.activity : undefined)).catch((error: unknown) => {
       const message = `Console output read failed: ${error instanceof Error ? error.message : String(error)}`;
       emitKodaXDiagnostic({ source: 'repl:classic-display', level: 'warn', message });
       if (isCurrent()) options.onNotice?.(message);

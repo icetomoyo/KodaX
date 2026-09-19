@@ -4619,8 +4619,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const promptWaitingReason = confirmRequest
     ? "confirm"
     : uiRequest?.kind;
+  const hostStreamingActivity = hostActiveRunId && sessionView?.activity?.runId === hostActiveRunId
+    ? sessionView.activity.streaming : undefined;
   const promptActivityViewModel = useMemo(
-    () => buildPromptActivityViewModel({
+    () => {
+      const activity = buildPromptActivityViewModel({
       isTranscriptMode,
       isLoading: statusBarIsLoading,
       streamingState: effectivePromptStreamingState,
@@ -4634,8 +4637,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       waitingReason: promptWaitingReason,
       workflowBuilderMessage: workflowBuilderMessage ?? undefined,
       backgroundWorkflowMessage: workflowActivityText,
-    }),
+      });
+      if (activity?.kind !== 'busy' || !hostStreamingActivity || isLivePaused || workflowBuilderMessage
+        || (sessionView?.activity?.compacting ?? effectivePromptStreamingState.isCompacting)) return activity;
+      const label = hostStreamingActivity.kind === 'thinking' ? 'Thinking' : `Receiving ${hostStreamingActivity.toolName}`;
+      const count = hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
+      return { ...activity, text: `${label}${count}` };
+    },
     [
+      hostStreamingActivity,
+      isLivePaused,
+      sessionView?.activity?.compacting,
       effectivePromptStreamingState.activeToolCalls,
       effectivePromptStreamingState.currentTool,
       effectivePromptStreamingState.isCompacting,

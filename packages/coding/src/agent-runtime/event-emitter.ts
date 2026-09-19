@@ -489,8 +489,9 @@ export function emitSessionStart(
  * Fire `onStreamEnd` — CAP-004. Shared between SA's per-turn stream
  * finalization and AMA's per-worker-turn stream finalization.
  */
-export function emitStreamEnd(events: KodaXEvents): void {
-  events.onStreamEnd?.();
+export function emitStreamEnd(events: KodaXEvents, meta?: KodaXActivityEventMeta): void {
+  if (meta === undefined) events.onStreamEnd?.();
+  else events.onStreamEnd?.(meta);
 }
 
 /**

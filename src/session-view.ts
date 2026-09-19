@@ -10,6 +10,8 @@ import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItem
 import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
 
+const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
+
 interface ObservedSession {
   view?: ClientSessionView;
   loading?: Promise<void>;
@@ -25,6 +27,7 @@ interface ObservedSession {
   persistRequested: boolean;
   persisting?: Promise<void>;
   activity?: ClientSessionActivity;
+  activityRunId?: string;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
 }
 
@@ -51,7 +54,11 @@ export class SessionViewOwner {
     const state = this.state(sessionId);
     state.costReport = costReport;
     state.runIds.add(runId);
+    state.activityRunId = runId;
     let segmentInputId: string | undefined;
+    const toolInputLengths = new Map<string, number>();
+    const startedTools = new Set<string>();
+    let streamEnded = false;
     const isPrimary = (meta?: KodaXActivityEventMeta) =>
       meta?.contextKind !== 'child' && !meta?.childAgentId
       && !meta?.workflowCorrelation?.workflowRunId && !meta?.workflowCorrelation?.childAgentId;
@@ -74,16 +81,25 @@ export class SessionViewOwner {
       state.segments.set(runId, reduced.state);
       upsert({ id: `${runId}:${meta.providerRequestId}:${kind}`, type: kind,
         text: reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() }, { inputId: segmentInputId });
+      if (currentStream(meta)) {
+        activity({ streaming: kind === 'thinking' ? { kind, providerRequestId: meta.providerRequestId,
+          itemId: `${runId}:${meta.providerRequestId}:thinking`, charCount: reduced.state.active.thinkingText.length } : undefined });
+      }
     };
     const notices = createSessionNoticeEvents(sessionId, (notice) => {
         upsert({ ...notice, id: `${runId}:${notice.id ?? randomUUID()}`, timestamp: Date.now() });
         this.checkpoint(sessionId);
       });
     const activity = (update: Omit<Partial<ClientSessionActivity>, 'runId'>): void => {
+      if (state.activityRunId !== runId) return;
       state.activity = { ...(state.activity?.runId === runId ? state.activity : {}), runId, ...redactScopedProviderCredential(update) };
       this.changed(sessionId);
     };
     const childActivity = createChildActivityUpdater(activity);
+    const currentStream = (meta?: KodaXActivityEventMeta): boolean => !streamEnded && isPrimary(meta)
+      && state.activityRunId === runId && meta?.providerRequestId !== undefined
+      && !state.view?.runs.some(run => run.runId === runId && !STREAMING_RUN_PHASES.has(run.phase))
+      && state.segments.get(runId)?.active?.providerRequestId === meta.providerRequestId;
     const currentReasoningRequest = (meta: KodaXActivityEventMeta): boolean => isPrimary(meta)
       && state.runIds.has(runId)
       && (meta.providerRequestId === undefined || state.segments.get(runId)?.active?.providerRequestId === meta.providerRequestId);
@@ -98,9 +114,13 @@ export class SessionViewOwner {
         if (currentReasoningRequest(event)) notices.onReasoningResolved?.(event);
       },
       onOutputSegmentStart: (segment, meta) => {
-        if (!isPrimary(meta)) return;
+        if (!isPrimary(meta) || state.activityRunId !== runId) return;
         const current = state.segments.get(runId) ?? createOutputSegmentProjection();
-        if (current.active?.providerRequestId !== segment.providerRequestId) segmentInputId = inputSource?.();
+        if (current.active?.providerRequestId !== segment.providerRequestId) {
+          toolInputLengths.clear(); startedTools.clear(); streamEnded = false;
+          segmentInputId = inputSource?.();
+          activity({ streaming: undefined });
+        }
         if (segment.mode === 'replace' && current.active?.responseId === segment.responseId
           && current.active.providerRequestId !== segment.providerRequestId) {
           const replaced = `${runId}:${current.active.providerRequestId}:`;
@@ -116,15 +136,36 @@ export class SessionViewOwner {
       },
       onTextDelta: (text, meta) => delta('assistant', text, meta),
       onThinkingDelta: (text, meta) => delta('thinking', text, meta),
+      onToolInputDelta: (toolName, partialJson, meta) => {
+        if (!currentStream(meta) || !meta?.providerRequestId || (meta.toolId && startedTools.has(meta.toolId))) return;
+        const charCount = meta.toolId ? (toolInputLengths.get(meta.toolId) ?? 0) + partialJson.length : undefined;
+        if (meta.toolId && charCount !== undefined) toolInputLengths.set(meta.toolId, charCount);
+        activity({ streaming: { kind: 'tool-input', providerRequestId: meta.providerRequestId, toolName,
+          ...(meta.toolId ? { callId: meta.toolId, charCount } : {}) } });
+      },
       onThinkingEnd: (text, meta) => {
         if (!isPrimary(meta)) return;
         const current = state.segments.get(runId);
         if (!current?.active || (meta?.providerRequestId && current.active.providerRequestId !== meta.providerRequestId)) return;
         state.segments.set(runId, { ...current, active: { ...current.active, thinkingText: text } });
         upsert({ id: `${runId}:${current.active.providerRequestId}:thinking`, type: 'thinking', text, timestamp: Date.now() }, { inputId: segmentInputId });
+        if (currentStream(meta) && state.activity?.streaming?.kind === 'thinking') activity({ streaming: undefined });
+      },
+      onStreamEnd: meta => {
+        if (!currentStream(meta)) return;
+        streamEnded = true;
+        toolInputLengths.clear(); startedTools.clear();
+        activity({ streaming: undefined });
       },
       onToolUseStart: (tool, meta) => {
         if (!isPrimary(meta)) { childActivity('tool', toolActivityDetail(tool.name, tool.input), meta); return; }
+        if (state.activityRunId === runId && (currentStream(meta)
+          || (meta?.providerRequestId === undefined && state.activity?.streaming?.kind === 'tool-input'
+            && state.activity.streaming.callId === tool.id))) {
+          startedTools.add(tool.id);
+          toolInputLengths.delete(tool.id);
+          activity({ streaming: undefined });
+        }
         const timestamp = Date.now();
         upsert({ id: `${runId}:tool:${tool.id}`, type: 'tool', text: '', timestamp,
           tool: { callId: tool.id, name: tool.name, status: 'running', startedAt: timestamp,
@@ -236,6 +277,7 @@ export class SessionViewOwner {
     state.segments.clear();
     state.runIds.clear();
     state.activity = undefined;
+    state.activityRunId = undefined;
     state.costReport = undefined;
     state.view = undefined;
     this.changed(sessionId, true);
@@ -318,6 +360,9 @@ export class SessionViewOwner {
       if (includeHistory) state.history = view.items;
       const items = mergeSessionViewItems(state.history, state.items);
       const costReport = state.costReport?.current?.();
+      if (state.activityRunId && view.runs.some(run => run.runId === state.activityRunId && !STREAMING_RUN_PHASES.has(run.phase))) {
+        if (state.activity?.streaming) state.activity = { ...state.activity, streaming: undefined };
+      }
       state.view = { ...view, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
       for (const [listener, report] of state.listeners) {
         try { listener(structuredClone(state.view)); report({ state: 'live' }); }

@@ -709,6 +709,8 @@ function attributeProviderRequest(events: KodaXEvents, providerRequestId: string
       events.onThinkingDelta?.(text, { ...meta, providerRequestId }),
     onThinkingEnd: (thinking, meta) =>
       events.onThinkingEnd?.(thinking, { ...meta, providerRequestId }),
+    onToolInputDelta: (name, json, meta) =>
+      events.onToolInputDelta?.(name, json, { ...meta, providerRequestId }),
     onReasoningEffortRejected: event =>
       events.onReasoningEffortRejected?.({ ...event, providerRequestId }),
     onReasoningResolved: event =>
@@ -2311,7 +2313,7 @@ async function runSubstrateInContext(
       }
 
       // 流式输出结束，通知 CLI 层
-      emitStreamEnd(events);
+      emitStreamEnd(events, activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined);
       await emitActiveExtensionEvent('stream:end', undefined);
 
       // Record cost for this LLM call

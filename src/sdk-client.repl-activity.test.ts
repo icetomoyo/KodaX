@@ -108,6 +108,24 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expect.poll(output).toContain("requested'high';unverified");
     expect(await client.sessions.getSettings(session.id)).toEqual(settings);
   };
+  const expectStreamingActivity = async (surface: 'ink' | 'classic', output: () => string): Promise<void> => {
+    const providerRequestId = `streaming-${surface}`;
+    const meta = { providerRequestId };
+    events!.onOutputSegmentStart?.({ responseId: `streaming-response-${surface}`, providerRequestId, mode: 'append' });
+    events!.onThinkingDelta?.('think', meta);
+    await expect.poll(output).toContain(surface === 'ink' ? 'Thinking(5chars)' : 'Thinking(5charsreceivedsofar)');
+    const beforeThinkingUpdate = output().length;
+    events!.onThinkingDelta?.(' more', meta);
+    // The owned renderer updates only changed cells, so the stable label is not repeated.
+    if (surface === 'ink') await expect.poll(() => output().slice(beforeThinkingUpdate)).toContain('10chars)');
+    events!.onThinkingEnd?.('think more', meta);
+    events!.onToolInputDelta?.('read', '{"path":', { ...meta, toolId: `tool-${surface}` });
+    await expect.poll(output).toContain(surface === 'ink' ? 'Receivingread(8chars)' : 'Receivingread(8charsreceivedsofar)');
+    const beforeInputUpdate = output().length;
+    events!.onToolInputDelta?.('read', '"x"}', { ...meta, toolId: `tool-${surface}` });
+    if (surface === 'ink') await expect.poll(() => output().slice(beforeInputUpdate)).toContain('12chars)');
+    events!.onStreamEnd?.(meta);
+  };
   let repl: Promise<void> | undefined;
   try {
     const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Work started from a different client',
@@ -132,6 +150,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Validating3findings');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Hostrevieweractive');
     await expectReasoningNotices('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
+    await expectStreamingActivity('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     const snapshot = createWorkflowProcessTracker({ runId: 'inline-workflow', workflowName: 'Host model workflow' }).getSnapshot();
     events!.onWorkflowProcessEvent?.({ type: 'workflow_updated', snapshot });
     events!.onWorkflowAgentDigest?.({ runId: snapshot.runId, event: { type: 'agent_completed', seq: 1,
@@ -259,6 +278,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     fixture.ask.mockImplementationOnce(async () => {
       await expect.poll(() => received.at(-1)?.session.id).toBe(session.id);
       await expectReasoningNotices('classic', commandOutput);
+      await expectStreamingActivity('classic', commandOutput);
       finish?.({ success: true, lastText: 'Done', messages: [], sessionId: session.id });
       await classicRun.result;
       return '/cost';
