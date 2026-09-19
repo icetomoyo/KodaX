@@ -15,7 +15,7 @@
 | Current package version | `@kodax-ai/kodax@0.7.96-rc.8` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.8` |
-| Current development | `v0.7.97` / `FEATURE_298` — core implemented; consumer-completion tickets T38–T42 implemented; release verification pending |
+| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T47 implemented; release verification pending (Vitest reporting timeout remains) |
 | Total tracked features | `83` |
 | InProgress | `2` |
 | Planned | `16` |
@@ -513,7 +513,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core implemented; [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) implemented and reviewed |
+| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T47 implemented and reviewed |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---

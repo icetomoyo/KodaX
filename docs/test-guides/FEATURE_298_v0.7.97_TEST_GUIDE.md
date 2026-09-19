@@ -183,3 +183,31 @@ consumer-only 在真实 Ink/classic 终端验证 Host probe/forget、模型与�
 人工补验：Host 与客户端 home/profile 分开时，Host 独有模型仍可选择；从工作区 A 加载 B 后，相对附件按 B 的实际路径解析；旧会话迟到更新不得覆盖新页。既有冻结浏览、展开、复制、外部编辑器和独立 REPL 入口继续按前文回归，不能用本节自动化替代跨平台及视觉验收。
 
 长历史预算夹具显式在 Host 设置 full-access，仅授权夹具中的受控本地工具，避免默认权限批准阻塞显示验收；既有正文、工具参数、分组和预算断言不变。失败清理覆盖待批准/等待子 Agent/恢复中的 Run。
+
+## T43–T47 体验承接回归
+
+使用隔离 profile；优先从真实 Product Client → IPC Host 和生产 Ink/classic 入口观察行为。T43 的 `src/sdk-client.interactions.test.ts` 验证无配置新会话、无模式旧会话、清除 override 及显式 accept-edits/plan 的 AskUser 直接出现 question，同时原始 Session/config 仍未写入默认。底层 SDK 未声明权限仍须走原 permission broker。原生终端验收中的 question 场景显式清除 profile/Session 权限覆盖后再发起请求，不能用 full-access 绕过这个回归。
+
+观察可用性须分别验证：首次失败、已成功后的短暂 interrupted、明确 closed；失败后原始长稿及附件引用可恢复，读设置与 Stop 继续可用；同会话重新订阅不吞或重复正文/问题，迟到的旧会话回调不污染新会话。提交结果未知不得自动重发输入。普通输入、显式工具、注册命令及 workflow 的新执行入口均须覆盖就绪检查。
+
+会话信息仅依据 Host 元数据：classic /load 显示目标工作区、消息数及切换提示，/sessions 显示工作区标注；目标设置、实际执行 cwd 和 raw Session 文件不因显示而改变。
+
+effort 必须区分拒绝事实与随后发送的参数；sentEffort 不表示模型强度已验证，不写回用户默认。SA/AMA 与双端消费者都需验证。流式活动按请求身份归属，覆盖 thinking 完整长度、同名交错工具、缺 ID、child 隔离、迟到事件和 replace/stop/reset。保留 80ms 合并、长历史预算、空闲 API 上下文真值和共享进程快照测试，不能用扩大预算或逐 delta RPC 换取通过。
+
+本轮不新增 Memory 写入、不恢复退役 Scout、不改 classic 工具全文约定，不将名称/计数反馈冒充逐字 JSON 预览。人工跨平台与终端操作手感仍按前文验收。
+
+新增定向自动化入口：
+
+```bash
+npx vitest run src/sdk-client.interactions.test.ts src/sdk-client.repl-observation.test.ts src/sdk-client.repl-activity.test.ts src/sdk-client.capabilities.test.ts src/sdk-client.streaming.test.ts src/session-view.streaming.test.ts src/session-view.reasoning.test.ts
+```
+
+`sdk-client.streaming` 使用本地 HTTP SSE 夹具、真实 Provider parser 和 IPC Host，分别暂停 thinking 与工具参数片段，证明两阶段确实可观察；不是对真实模型能力的验证。局部 streaming 用例还覆盖 A/B/A 同名工具分开累计、缺调用 ID 不计数、旧请求同 callId 的迟到工具启动、取消和 reset。classic 在连续流式活动期间按请求/阶段/调用去重提示，计数为首次看到的快照；活动消失后清空去重状态，重新进入可以再次提示。Ink 计数实时更新，冻结浏览不跟随更新。
+
+夹具同步也属于验收可信度：等待实际 Provider 请求进入后才断开或排队，不把默认 1 秒轮询当作产品性能承诺；fallback 统计应区分当前 child 请求与沿用历史的后台摘要；自然完成后清理临时目录前，等待已有 Memory review drain，并取消、等待测试自身额外创建的 Run。HTTP PTY 夹具先做健康检查，仅 Fetch 明确拒绝端口时重选，其他错误继续失败。不要通过跳过断言、增加生产重试或扩大历史预算消除这些夹具故障。
+
+MCP 冷启动/全局重载和私有会话资源隔离分别验收，保留真实工具调用；setup、测试体和 teardown 分别受现有 30 秒限制。不能把拆分后的组合墙钟时间描述为仍有单个 30 秒上限。setup 部分失败也要释放本次已创建的资源，Provider 回调只捕获本次 fixture，避免误清理或污染下一例。
+
+本轮原生 Windows PTY：主矩阵 43/43、consumer 14/14、长历史 7/7，退出码均 0。完整测试的首轮失败、定位及最终复验另见 v0.7.97 设计块的本轮证据；不将定向测试或带重试运行描述成一次无重试全量通过。检查全量结果时同时读取退出码、失败列表和未处理错误；JSON 的测试成功字段不能单独证明运行器无错。
+
+最终快照 `c94d73ab` 的完整默认测试集合使用 `--maxWorkers=1 --retry=0 --reporter=dot --reporter=json`：16140 测试通过、零测试失败，但仍有一次 Vitest `onTaskUpdate` 未处理超时，退出码为 1，**全量验收尚未通过**。类型检查、构建和 PTY 通过不能替代这个失败门禁。下一步先定位报告通道的具体任务与处理延迟，不以忽略错误、扩大时限或重复无定位的整套运行结案。

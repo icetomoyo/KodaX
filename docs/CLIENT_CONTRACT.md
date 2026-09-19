@@ -378,6 +378,10 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 
 当前没有承诺：浏览器远程传输、Host 崩溃后自动恢复全部执行、跨 Host 全局恰好一次提交、事件无限回放、任意时点全文快照、跨协议完全等价的瞬态输出。新增能力先扩展纯契约及 Host 实现，再让各 UI 消费；不以 UI 私有读取、版本分支或第二份执行状态绕过契约。
 
+终端在首次观察失败或观察明确关闭时显示不可用状态，并在新执行前重新确认观察已经建立。这个检查发生在输入进入提交状态之前；确定未提交的原稿可以从本地输入历史恢复。已经提交但确认丢失的输入仍需查询 Host，恢复观察本身不会重新提交。临时 `interrupted` 保留既有传输恢复及 Stop 入口。同一会话重连沿用已打印位置和串行输出队列；切换会话会使旧回调失效，包含迟到的交互问题。
+
+`/load` 和 `/sessions` 的消息数、工作区及变化提示来自 Host 会话元数据。客户端只展示这些信息，不据此检查会话文件、决定执行目录或覆盖目标设置；缺省消息数显示为不可用。
+
 ## 显式工具执行与 Session Stop（FEATURE_299 合入）
 
 `runs.startTool({sessionId, inputId, name, input, rawInput})` 将用户明确指定的工具交给同一 Host。CLI 的 `!command` 使用这个入口；执行仍经过工具可见性、权限、Shell 边界、记录及取消规则，不直接启动客户端进程。相同 inputId 和意图返回同一 Run；同一身份换工具或参数拒绝。取得 Run 身份后通过 `runs.await` 和 Session 视图消费结果，开始执行不代表成功。
@@ -391,5 +395,9 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 ## 活动面与批准计划
 
 `activity.todos`、`children`、`managedTask`、`costReport` 是 Host 事实，终端直接消费；本地加载状态不能覆盖另一个客户端启动的活动 Run。`managedTask.childFanoutClass` 与 fanoutCount 共同驱动原 AMA 后台条。模型内调用工作流时，`activity.workflow` 复用已有 `ClientWorkflowProcess`，保留阶段、计数、状态和名称；子代理摘要作为可补读、可保存的显示项提供。临时 Worker 进度仍只属于活动面，不变成用户对话。
+
+effort 拒绝与发送参数变化通过现有保留通知提供，按实际 Provider 请求归属过滤旧请求和 child。`sentEffort` 只说明发送参数，`verified: false` 不证明模型实际采用该推理强度；没有 Provider 回调时不推断成功。通知不改写 Session 或保存默认。AMA 的角色默认仍受用户上限约束，反馈记录实际角色请求，不把用户上限误写成每次请求值。
+
+`activity.streaming` 是当前请求的瞬时进度：thinking 提供既有 item 引用及完整字符数，tool-input 提供工具名称、调用 ID 和该调用的累计字符数。缺少调用 ID 时不按名称拼接计数。数据沿用 80ms 合并，替换请求、流结束、工具开始和 Run 终态会清除对应活动；它不保存半截参数 JSON。Ink 用现有 spinner 显示实时计数，classic 在连续流式活动期间按请求/阶段/调用去重输出进入时的计数快照，避免交错工具持续滚屏；活动消失后清空去重状态，重新进入可以再次提示。渲染差异由各端管理；这里不承诺逐字 JSON 预览。
 
 计划批准使用已有 permission Interaction，`options.plan` 提供完整计划正文，不从截断的 inputPreview 恢复。首个有效回答生效；Host 确认当前 Run 仍在运行且仍为 Plan 模式后才应用批准结果。拒绝、取消及 Stop 不切换权限模式，客户端不能自行先显示已批准。
