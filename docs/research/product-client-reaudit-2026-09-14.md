@@ -1,5 +1,7 @@
 # 主线融合后 Product Client / REPL 能力复核
 
+后续补充：在修复提交 `795b8469` 上核验 GLM 清单，另确认配置/Provider 探测的本地消费路径、授权管理 UI 缺位、classic 初次连接策略差异及 Learning 空闲订阅释放问题；同时纠正 MCP、默认模型与 prepare* 的过宽判断。请结合[补充核验](glm-findings-followup-2026-09-14.md)阅读本报告，不能把下述“入口存在”理解为所有消费者均已迁移。
+
 结论：2026-09-14 使用已有 GitHub token 同步 origin 后，主分支 `origin/KodaX` 为 `7b5b1b9e`，当前分支原 HEAD 为 `0841fb51`。`git rev-list --left-right --count HEAD...origin/KodaX` 为 `186 / 0`：当前分支已包含主线，无需再次合并。此次按 FEATURE_298 不退步约束重新检查融合实现，并修复已复现的消费者缺口，没有重写 Host 或重放分支历史。[设计约束](../features/v0.7.97.md#L130)
 
 ## 已承接的主线能力
