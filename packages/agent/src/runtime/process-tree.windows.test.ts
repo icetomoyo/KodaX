@@ -20,6 +20,7 @@ const {
   readProcessStartIdentity,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
+  withSharedWindowsProcessSnapshot,
 } = await import('./process-tree.js');
 
 const originalPlatform = process.platform;
@@ -472,5 +473,39 @@ describe('Windows process-tree identity fences', () => {
 
     expect(terminationScripts.join('\n')).toContain('TerminateExact(4242');
     expect(terminationScripts.join('\n')).not.toContain('TerminateExact(4444');
+  });
+});
+
+describe('shared cleanup snapshot scope', () => {
+  it('serves every read in the scope from one snapshot and re-reads after a termination', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,4242,112\n'))
+      .mockReturnValueOnce(snapshot('KODAX_TERMINATION_COMPLETED\n0,0,0\n1,0,100\nKODAX_SNAPSHOT_COMPLETED\n'))
+      .mockReturnValue(snapshot('1,0,100\n'));
+    await withSharedWindowsProcessSnapshot(async () => {
+      expect(readProcessStartIdentity(4242)).toBe('111');
+      // served from the shared snapshot: no second spawn for the tree read
+      expect(readProcessStartIdentity(4343)).toBe('112');
+      await expect(killPidTree(4242, { expectedProcessStartIdentity: '111', forceMs: 0 }))
+        .resolves.toEqual({ status: 'terminated' });
+      // the termination invalidated the shared snapshot: the next read is fresh
+      expect(readProcessStartIdentity(4242)).toBeUndefined();
+    });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not cache snapshot reads outside the shared scope', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockReturnValue(snapshot('4242,1,111\n'));
+    await withSharedWindowsProcessSnapshot(async () => {
+      expect(readProcessStartIdentity(4242)).toBe('111');
+      expect(readProcessStartIdentity(4242)).toBe('111');
+    });
+    expect(readProcessStartIdentity(4242)).toBe('111');
+    expect(readProcessStartIdentity(4242)).toBe('111');
+    expect(spawnSyncMock).toHaveBeenCalledTimes(3);
   });
 });

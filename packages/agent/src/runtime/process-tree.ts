@@ -438,9 +438,44 @@ function parseWindowsNativeProcessRows(stdout: string): WindowsProcessIdentity[]
   return snapshot.length > 0 ? snapshot : undefined;
 }
 
-function readWindowsProcessSnapshot(): WindowsProcessIdentity[] | undefined {
+function readWindowsProcessSnapshotUncached(): WindowsProcessIdentity[] | undefined {
   const nativeSnapshot = readWindowsProcessSnapshotNative();
   return nativeSnapshot ?? readWindowsProcessSnapshotFallback();
+}
+
+// The stale-children cleanup sweep captures and kills several recorded trees
+// back to back; each capture used to pay a fresh powershell process snapshot
+// (~1s). Inside `withSharedWindowsProcessSnapshot` all reads reuse one
+// snapshot, and any actual termination invalidates it so later reads and
+// captures never trust pre-kill data.
+let sharedSnapshot: WindowsProcessIdentity[] | undefined;
+let sharedSnapshotRead = false;
+let sharedSnapshotScopeDepth = 0;
+
+function readWindowsProcessSnapshot(): WindowsProcessIdentity[] | undefined {
+  if (sharedSnapshotScopeDepth <= 0) return readWindowsProcessSnapshotUncached();
+  if (!sharedSnapshotRead) {
+    sharedSnapshot = readWindowsProcessSnapshotUncached();
+    sharedSnapshotRead = true;
+  }
+  return sharedSnapshot;
+}
+
+function invalidateSharedWindowsProcessSnapshot(): void {
+  sharedSnapshot = undefined;
+  sharedSnapshotRead = false;
+}
+
+export async function withSharedWindowsProcessSnapshot<T>(
+  scope: () => Promise<T>,
+): Promise<T> {
+  sharedSnapshotScopeDepth += 1;
+  try {
+    return await scope();
+  } finally {
+    sharedSnapshotScopeDepth -= 1;
+    if (sharedSnapshotScopeDepth === 0) invalidateSharedWindowsProcessSnapshot();
+  }
 }
 
 /** Read an OS-issued start identity so later cleanup never trusts a bare PID. */
@@ -700,7 +735,9 @@ function terminateCapturedWindowsProcesses(
     timeout: timeoutMs,
     windowsHide: true,
   });
-  return readWindowsTerminationResult(result.stdout ?? '', !result.error && result.status === 0);
+  const termination = readWindowsTerminationResult(result.stdout ?? '', !result.error && result.status === 0);
+  if (termination.terminationAttempted) invalidateSharedWindowsProcessSnapshot();
+  return termination;
 }
 
 interface WindowsProcessTreeCapture {

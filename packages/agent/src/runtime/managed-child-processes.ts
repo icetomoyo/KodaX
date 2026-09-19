@@ -23,6 +23,7 @@ import {
   rememberedChildProcessTreeIdentities,
   rememberedChildProcessTreeIsComplete,
   retainedWindowsProcessTree,
+  withSharedWindowsProcessSnapshot,
   type WindowsProcessTreeIdentity,
 } from './process-tree.js';
 
@@ -902,6 +903,16 @@ export function registerManagedChildProcess(
 }
 
 export async function cleanupRegisteredManagedChildren(
+  options: CleanupOptions = {},
+): Promise<ManagedChildCleanupSummary> {
+  // The sweep captures/kills several stale trees; one shared process
+  // snapshot replaces the per-record powershell captures.
+  return withSharedWindowsProcessSnapshot(
+    () => cleanupRegisteredManagedChildrenInSharedSnapshotScope(options),
+  );
+}
+
+async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
   options: CleanupOptions = {},
 ): Promise<ManagedChildCleanupSummary> {
   let killed = 0;
