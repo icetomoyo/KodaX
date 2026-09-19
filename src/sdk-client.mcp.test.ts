@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
-  KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
+  KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { createMcpTestServerFixture } from '@kodax-ai/agent';
@@ -40,80 +40,104 @@ class McpTestProvider extends KodaXBaseProvider {
   }
 }
 
-it('reloads the actual Host MCP provider used by subsequent model tool calls', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-mcp-'));
-  const fixture = await createMcpTestServerFixture(homeDir);
-  const results: string[] = [];
-  registerModelProvider('product-mcp-test', () => new McpTestProvider(fixture.toolId, results));
+let homeDir: string;
+let fixture: Awaited<ReturnType<typeof createMcpTestServerFixture>>;
+let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
+let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>> | undefined;
+let client: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
+let unregisterProvider: (() => void) | undefined;
+let results: string[];
+
+beforeEach(async () => {
+  runtime = undefined;
+  host = undefined;
+  client = undefined;
+  unregisterProvider = undefined;
+  homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-mcp-'));
+  fixture = await createMcpTestServerFixture(homeDir);
+  const currentResults: string[] = [];
+  const toolId = fixture.toolId;
+  results = currentResults;
+  unregisterProvider = registerModelProvider('product-mcp-test', () => new McpTestProvider(toolId, currentResults));
   vi.stubEnv('KODAX_PRODUCT_MCP_TEST_KEY', 'test-only');
   const profile = 'mcp-contract';
   writeIntegrationDocument({
     domain: 'mcp', configHome: path.join(homeDir, '.kodax'),
     document: { version: 1, servers: fixture.servers }, validate: parseMcpIntegrationDocument,
   });
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const lock = tryAcquireRuntimeDaemonLock(paths, {
+    runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+  });
+  if (!lock) throw new Error('Could not acquire isolated MCP Host.');
+  const endpoint = process.platform === 'win32'
+    ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-mcp-${randomUUID()}` }
+    : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
+  host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
+  client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+});
+
+afterEach(async () => {
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
-    const lock = tryAcquireRuntimeDaemonLock(paths, {
-      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
-    });
-    if (!lock) throw new Error('Could not acquire isolated MCP Host.');
-    const endpoint = process.platform === 'win32'
-      ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-mcp-${randomUUID()}` }
-      : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
-    const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-    try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
-      try {
-        const session = await client.sessions.create({ projectPath: homeDir });
-        await client.sessions.updateSettings(session.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
-        const initial = await client.inputs.submit({ sessionId: session.id, inputId: 'cold-start', text: 'Call the echo MCP tool.' });
-        if (!initial.runId) throw new Error('Expected an immediate Run.');
-        await runtime.runs.await(initial.runId);
-        expect(results.join('\n')).toContain('echo:live Host');
-        expect(await client.mcp.listTools({ server: fixture.serverId }))
-          .toMatchObject([{ serverId: fixture.serverId, tools: [{ id: fixture.toolId, name: 'echo_tool' }] }]);
-        results.length = 0;
-        writeIntegrationDocument({
-          domain: 'mcp', configHome: path.join(homeDir, '.kodax'),
-          document: { version: 1, servers: { retained: { command: 'unused-disabled-server', connect: 'disabled' } } },
-          validate: parseMcpIntegrationDocument,
-        });
-        expect(await client.mcp.listServers()).toHaveProperty('retained');
-        await client.mcp.upsertServer(fixture.serverId, fixture.servers[fixture.serverId]!);
-        await client.mcp.reloadServers();
-        const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'mcp-input', text: 'Call the echo MCP tool.' });
-        if (!accepted.runId) throw new Error('Expected an immediate Run.');
-        await runtime.runs.await(accepted.runId);
-        expect(results.join('\n')).toContain('echo:live Host');
-        const privateConfig = { private: fixture.servers[fixture.serverId]! };
-        const firstPrivate = await client.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
-        const secondPrivate = await client.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
-        for (const privateSession of [firstPrivate, secondPrivate]) {
-          await client.sessions.updateSettings(privateSession.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
-        }
-        const invokePrivate = async (sessionId: string, inputId: string) => {
-          results.length = 0;
-          const run = await client.inputs.submit({ sessionId, inputId, text: 'Call the private MCP tool.' });
-          if (!run.runId) throw new Error('Expected an immediate Run.');
-          await runtime.runs.await(run.runId);
-          expect(results.join('\n')).toContain('echo:live Host');
-        };
-        await invokePrivate(firstPrivate.id, 'first-private');
-        await client.sessions.delete(firstPrivate.id);
-        await invokePrivate(secondPrivate.id, 'second-private');
-        expect(Object.keys(await client.mcp.listServers())).toEqual(['retained', fixture.serverId]);
-      } finally {
-        await client.disconnect();
-      }
-    } finally {
-      await host.close();
-    }
+    await client?.disconnect();
   } finally {
-    await runtime.close();
-    await awaitLatestCodingMemoryReviewDrain(5_000);
-    clearRuntimeModelProviders();
-    vi.unstubAllEnvs();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
+    try {
+      await host?.close();
+    } finally {
+      try {
+        await runtime?.close();
+      } finally {
+        await awaitLatestCodingMemoryReviewDrain(5_000);
+        unregisterProvider?.();
+        vi.unstubAllEnvs();
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
+      }
+    }
   }
+});
+
+it('reloads the actual Host MCP provider used by subsequent model tool calls', async () => {
+  const session = await client!.sessions.create({ projectPath: homeDir });
+  await client!.sessions.updateSettings(session.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
+  const initial = await client!.inputs.submit({ sessionId: session.id, inputId: 'cold-start', text: 'Call the echo MCP tool.' });
+  if (!initial.runId) throw new Error('Expected an immediate Run.');
+  await runtime!.runs.await(initial.runId);
+  expect(results.join('\n')).toContain('echo:live Host');
+  expect(await client!.mcp.listTools({ server: fixture.serverId }))
+    .toMatchObject([{ serverId: fixture.serverId, tools: [{ id: fixture.toolId, name: 'echo_tool' }] }]);
+  results.length = 0;
+  writeIntegrationDocument({
+    domain: 'mcp', configHome: path.join(homeDir, '.kodax'),
+    document: { version: 1, servers: { retained: { command: 'unused-disabled-server', connect: 'disabled' } } },
+    validate: parseMcpIntegrationDocument,
+  });
+  expect(await client!.mcp.listServers()).toHaveProperty('retained');
+  await client!.mcp.upsertServer(fixture.serverId, fixture.servers[fixture.serverId]!);
+  await client!.mcp.reloadServers();
+  const accepted = await client!.inputs.submit({ sessionId: session.id, inputId: 'mcp-input', text: 'Call the echo MCP tool.' });
+  if (!accepted.runId) throw new Error('Expected an immediate Run.');
+  await runtime!.runs.await(accepted.runId);
+  expect(results.join('\n')).toContain('echo:live Host');
+  expect(Object.keys(await client!.mcp.listServers())).toEqual(['retained', fixture.serverId]);
+});
+
+it('keeps the second session MCP provider usable after deleting the first private session', async () => {
+  const privateConfig = { private: fixture.servers[fixture.serverId]! };
+  const firstPrivate = await client!.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
+  const secondPrivate = await client!.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
+  for (const privateSession of [firstPrivate, secondPrivate]) {
+    await client!.sessions.updateSettings(privateSession.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
+  }
+  const invokePrivate = async (sessionId: string, inputId: string) => {
+    results.length = 0;
+    const run = await client!.inputs.submit({ sessionId, inputId, text: 'Call the private MCP tool.' });
+    if (!run.runId) throw new Error('Expected an immediate Run.');
+    await runtime!.runs.await(run.runId);
+    expect(results.join('\n')).toContain('echo:live Host');
+  };
+  await invokePrivate(firstPrivate.id, 'first-private');
+  await client!.sessions.delete(firstPrivate.id);
+  await invokePrivate(secondPrivate.id, 'second-private');
+  expect(Object.keys(await client!.mcp.listServers())).toEqual([fixture.serverId]);
 });
