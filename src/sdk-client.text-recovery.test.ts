@@ -34,6 +34,8 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
   let releaseOther = () => {};
   const otherGate = new Promise<void>(resolve => { releaseOther = resolve; });
   let otherStarted = false;
+  let markOtherEntered = () => {};
+  const otherEntered = new Promise<void>(resolve => { markOtherEntered = resolve; });
   try {
     const imagePath = path.join(homeDir, 'input.png');
     await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
@@ -59,6 +61,7 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
       }
       if (JSON.stringify(request.messages).includes('Hold the unrelated Session')) {
         otherStarted = true;
+        markOtherEntered();
         await otherGate;
         return (async function* () {
           yield { choices: [{ delta: { content: 'Unrelated Session finished.' }, finish_reason: 'stop' }] };
@@ -80,7 +83,8 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     Reflect.set(provider, '_client', { chat: { completions: { create } } });
     if (queueScope === 'other') {
       await client.inputs.submit({ sessionId: queueSession.id, inputId: 'other-initial', text: 'Hold the unrelated Session.' });
-      await expect.poll(() => otherStarted).toBe(true);
+      await otherEntered;
+      expect(otherStarted).toBe(true);
     }
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Describe this image.',
       inputArtifacts: [{ kind: 'image', path: imagePath, mediaType: 'image/png' }] });

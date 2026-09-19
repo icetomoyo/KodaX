@@ -158,14 +158,21 @@ it('deletes a temporary Session after its task settles even when the client disc
   await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
   let release: () => void = () => undefined;
   const waiting = new Promise<void>((resolve) => { release = resolve; });
-  onRequest = () => waiting;
-  const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'temporary-input', text: 'Run temporarily.' });
-  await expect.poll(() => requests).toBe(1);
-  await client.disconnect();
-  release();
-  expect((await runtime.runs.await(accepted.runId!)).phase).toBe('completed');
-  await expect.poll(() => storage.load(session.id)).toBeNull();
-  expect(await runtime.sessions.list()).not.toContainEqual(expect.objectContaining({ id: session.id }));
+  let markEntered = () => {};
+  const entered = new Promise<void>(resolve => { markEntered = resolve; });
+  onRequest = () => { markEntered(); return waiting; };
+  try {
+    const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'temporary-input', text: 'Run temporarily.' });
+    await entered;
+    expect(requests).toBe(1);
+    await client.disconnect();
+    release();
+    expect((await runtime.runs.await(accepted.runId!)).phase).toBe('completed');
+    expect(await storage.load(session.id)).toBeNull();
+    expect(await runtime.sessions.list()).not.toContainEqual(expect.objectContaining({ id: session.id }));
+  } finally {
+    release();
+  }
 });
 
 it('does not transparently resubmit an old connection after the Host changes', async () => {
@@ -206,12 +213,14 @@ it('reports temporary Session cleanup failure instead of claiming successful del
 it('delivers a busy queued image through the real Host to the next Provider request', async () => {
   let release = () => {};
   const waiting = new Promise<void>(resolve => { release = resolve; });
+  let markEntered = () => {};
+  const entered = new Promise<void>(resolve => { markEntered = resolve; });
   const wireRequests: unknown[] = [];
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     wireRequests.push(JSON.parse(Buffer.concat(chunks).toString()));
-    if (wireRequests.length === 1) await waiting;
+    if (wireRequests.length === 1) { markEntered(); await waiting; }
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.end('data: '+JSON.stringify({ id: 'image-test', object: 'chat.completion.chunk', created: 1, model: 'image-test',
       choices: [{ index: 0, delta: { content: 'Image received.' }, finish_reason: 'stop' }] })+'\n\ndata: [DONE]\n\n');
@@ -227,7 +236,8 @@ it('delivers a busy queued image through the real Host to the next Provider requ
     const imagePath = path.join(homeDir, 'pixel.png');
     await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'busy', text: 'Wait before the image.' });
-    await expect.poll(() => wireRequests.length).toBe(1);
+    await entered;
+    expect(wireRequests.length).toBe(1);
     const input = { sessionId: session.id, inputId: 'picture', text: 'Describe this image.', delivery: 'after_turn' as const,
       inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const, source: 'clipboard' as const }] };
     expect((await client.inputs.submit(input)).state).toBe('queued');
