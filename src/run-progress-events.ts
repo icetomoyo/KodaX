@@ -342,7 +342,7 @@ function forwardDaemonRecoveryEvent(
 ): void {
   if (payload.kind === 'reasoning_effort_rejected' && isRecord(payload.event)) {
     events?.onReasoningEffortRejected?.(
-      payload.event as Parameters<
+      payload.event as unknown as Parameters<
         NonNullable<KodaXEvents['onReasoningEffortRejected']>
       >[0],
     );

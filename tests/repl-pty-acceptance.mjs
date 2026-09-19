@@ -179,6 +179,11 @@ async function respondToModelRequest(state, request, response) {
 
 async function setupProvider(state) {
   state.server = createServer((request, response) => {
+    if (request.method === 'GET' && request.url === '/__acceptance_health') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
     respondToModelRequest(state, request, response).catch(error => {
       state.providerErrors.push(String(error));
       process.stderr.write(`Fixture provider failed: ${String(error)}\n`);
@@ -186,8 +191,19 @@ async function setupProvider(state) {
       response.end();
     });
   });
-  state.server.listen(0, '127.0.0.1');
-  await once(state.server, 'listening');
+  for (;;) {
+    state.server.listen(0, '127.0.0.1');
+    await once(state.server, 'listening');
+    try {
+      const health = await fetch(`http://127.0.0.1:${state.server.address().port}/__acceptance_health`);
+      if (health.status !== 204) throw new Error(`Fixture provider health check failed (${health.status}).`);
+      break;
+    } catch (error) {
+      await new Promise((resolve, reject) => state.server.close(closeError => closeError ? reject(closeError) : resolve()));
+      // Windows may allocate a port that Fetch blocks before sending HTTP.
+      if (error.cause?.message !== 'bad port') throw error;
+    }
+  }
   await mkdir(path.join(state.homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(state.homeDir, '.kodax', 'config.json'), JSON.stringify({
     provider: 'acceptance-local', planModeEffort: 'high', customProviders: [{
@@ -599,12 +615,12 @@ async function checkSettings(state) {
   await writeFile(configPath, JSON.stringify(profileConfig));
   await state.client.config.reload();
   await state.client.sessions.updateSettings(state.sessionId, { permissionMode: null });
-  await waitFor('Host view clears the permission override', () => state.view.settings.permissionMode === undefined);
+  await waitFor('Host view resolves the built-in permission default', () => state.view.settings.permissionMode === 'accept-edits');
   if (state.mode === 'classic') await state.terminal.submit('/status');
-  await waitFor('cleared permission is displayed without inventing a policy', () => {
+  await waitFor('cleared permission displays the effective Host default', () => {
     const screen = state.terminal.screen();
-    return state.mode === 'ink' ? screen.split('\n').slice(-2).join('\n').includes('Host default')
-      : /Permission:\s+Host default/.test(screen);
+    return state.mode === 'ink' ? screen.split('\n').slice(-2).join('\n').includes('Edits')
+      : /Permission:\s+accept-edits/.test(screen);
   });
   assert.equal((await state.client.sessions.getSettings(state.sessionId)).permissionMode, undefined);
   await state.client.config.patch({ permissionMode: 'accept-edits' });
@@ -728,8 +744,12 @@ async function typeClassicLine(state, text) {
 }
 
 async function checkQuestion(state) {
+  await state.client.config.patch({ permissionMode: null });
+  await state.client.sessions.updateSettings(state.sessionId, { permissionMode: null });
+  await waitFor('question uses the effective Host default', () => state.view.settings.permissionMode === 'accept-edits');
   await state.terminal.submit('ACCEPT_QUESTION');
   await waitFor('Host interaction', () => state.view.interactions.length === 1);
+  assert.equal(state.view.interactions[0].kind, 'question', 'Unset product permissions must not add an approval before AskUser');
   await waitFor('terminal question dialog', () => state.terminal.screen().includes('Which acceptance option?'));
   if (state.mode === 'ink') {
     await state.terminal.type('\x1b[B');

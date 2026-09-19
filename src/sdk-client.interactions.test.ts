@@ -89,8 +89,11 @@ function questionToolCall(): KodaXToolUseBlock {
   };
 }
 
-it.each(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const)(
-  'uses the Host effective permission default for questions (%s) without saving an override', async mode => {
+it.each([
+  ...(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const).map(mode => ({ mode, agentMode: 'sa' as const })),
+  { mode: 'absent' as const, agentMode: 'ama' as const },
+])(
+  'uses the Host effective permission default for questions ($mode/$agentMode) without saving an override', async ({ mode, agentMode }) => {
     scriptedToolCall = () => [questionToolCall()];
     const legacyId = `legacy-${randomUUID()}`;
     if (mode === 'legacy') {
@@ -101,7 +104,7 @@ it.each(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const)(
     }
     const session = mode === 'legacy' ? await first.sessions.read(legacyId)
       : await first.sessions.create({ projectPath: homeDir });
-    await first.sessions.updateSettings(session.id, { agentMode: 'sa' });
+    await first.sessions.updateSettings(session.id, { agentMode });
     if (mode === 'cleared') {
       await first.sessions.updateSettings(session.id, { permissionMode: 'plan' });
       await first.sessions.updateSettings(session.id, { permissionMode: null });

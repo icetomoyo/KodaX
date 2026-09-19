@@ -16,7 +16,7 @@ it('retains observed reasoning feedback without mixing child, replaced, or reset
     events.onReasoningEffortRejected?.({ ...rejected, effort: 'stale', providerRequestId: 'first' });
     events.onReasoningEffortRejected?.({ ...rejected, effort: 'child', providerRequestId: 'second', childAgentId: 'child' });
     events.onReasoningEffortRejected?.({ ...rejected, effort: 'workflow', providerRequestId: 'second',
-      workflowCorrelation: { workflowRunId: 'workflow', stepId: 'step' } });
+      workflowCorrelation: { workflowRunId: 'workflow' } });
     events.onReasoningResolved?.({ provider: 'provider', model: 'model', requestedEffort: 'high',
       sentEffort: 'medium', verified: false, fallbacks: [{ effort: 'high', reason: 'unsupported-effort' }], providerRequestId: 'second' });
     await expect.poll(() => views.at(-1)?.items.length).toBe(2);
