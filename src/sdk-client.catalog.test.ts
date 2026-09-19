@@ -400,7 +400,9 @@ it('changes the fallback used by real Workflow child execution', async () => {
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_PRODUCT_CATALOG_TEST_KEY', model: 'fallback-test', supportsThinking: false };
     constructor(readonly name: string) { super(); }
     async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
-      if (args[0].some(message => typeof message.content === 'string' && message.content.startsWith('# Child Agent Task'))) requests.push(this.name);
+      // A background digest retains the child briefing in history; count only the active task request.
+      const latestUserPrompt = [...args[0]].reverse().find(message => message.role === 'user')?.content;
+      if (typeof latestUserPrompt === 'string' && latestUserPrompt.startsWith('# Child Agent Task')) requests.push(this.name);
       if (this.name === 'fallback-primary') throw new KodaXProviderError('Controlled upstream response body', this.name, { httpStatus: failureStatus, stage: 'transport' });
       return { textBlocks: [{ type: 'text', text: 'Fallback completed the inspection.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
     }
@@ -420,7 +422,7 @@ it('changes the fallback used by real Workflow child execution', async () => {
     const outcome = await first.runs.await(started.runId);
     await awaitLatestCodingMemoryReviewDrain(5_000);
     expect(requests.slice(before)).toContain('fallback-primary');
-    expect(requests.slice(before).includes('fallback-secondary'), JSON.stringify({ outcome })).toBe(enabled && status === 503);
+    expect(requests.slice(before).includes('fallback-secondary'), JSON.stringify({ enabled, status, requestsSlice: requests.slice(before), outcome })).toBe(enabled && status === 503);
     if (!enabled || status !== 503) {
       expect(outcome.phase).toBe('failed');
       expect(outcome.error).not.toContain('Controlled upstream response body');
