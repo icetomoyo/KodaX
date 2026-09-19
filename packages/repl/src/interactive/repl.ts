@@ -4,7 +4,7 @@
 
 import * as readline from 'readline';
 import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata, readClientHistoryPreview } from '../session/client-session.js';
-import type { ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
+import type { ClientSession, ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
 import * as path from 'path';
@@ -981,7 +981,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     attachPlaneDisplayFor(nextId);
   };
   attachPlaneDisplayFor(context.sessionId);
-  const refreshHostSession = async (id: string): Promise<void> => {
+  const refreshHostSession = async (id: string): Promise<ClientSession | undefined> => {
     if (!options.sessionCommands?.read) {
       const stored = await storage.load(id);
       if (!stored) throw new Error(`Session not found: ${id}`);
@@ -1005,6 +1005,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     currentOptions.session = { ...currentOptions.session, id, tag: loaded.session.tag };
     setContextSessionId(id);
     teamModeHandle?.writer.update({ sessionId: id });
+    return loaded.session;
   };
 
 
@@ -1396,8 +1397,17 @@ Keyboard Shortcuts:
     loadSession: async (id: string) => {
       if (options.sessionCommands?.read) {
         if (!guardSessionTransition('Resuming a saved session')) return 'blocked';
-        await refreshHostSession(id);
-        process.stdout.write(`\n[Loaded session: ${id}]\n`);
+        const previousWorkspace = context.runtimeInfo;
+        const loaded = await refreshHostSession(id);
+        const workspace = context.runtimeInfo;
+        const lines = [`\n[Loaded session: ${id}]`, `  Messages: ${loaded?.msgCount ?? 'unavailable'}`];
+        if (workspace?.workspaceRoot) {
+          if (previousWorkspace?.workspaceRoot && previousWorkspace.workspaceRoot !== workspace.workspaceRoot) {
+            lines.push('[Session workspace changed]', `  Previous workspace: ${formatWorkspaceTruth(previousWorkspace)}`);
+          }
+          lines.push(`  Workspace: ${formatWorkspaceTruth(workspace)}`);
+        }
+        process.stdout.write(lines.join('\n') + '\n');
         return 'loaded';
       }
       const loaded = await storage.load(id);
@@ -1463,7 +1473,12 @@ Keyboard Shortcuts:
             .map(item => ({ ...item, runtimeInfo: { workspaceRoot: item.workspaceRoot, canonicalRepoRoot: item.gitRoot } }))
           : await storage.list(context.gitRoot ?? undefined);
         if (options.sessionCommands?.list) return { success: true, message: sessions.length
-          ? 'Recent Sessions:\n' + sessions.map(item => `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`).join('\n')
+          ? 'Recent Sessions:\n' + sessions.map(item => {
+            const workspace = item.runtimeInfo?.workspaceRoot;
+            const suffix = workspace === context.runtimeInfo?.workspaceRoot ? ' (current workspace)' : '';
+            return `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`
+              + (workspace ? `\n      workspace: ${formatWorkspaceTruth(item.runtimeInfo)}${suffix}` : '');
+          }).join('\n')
           : '[No saved sessions]' };
         if (sessions.length === 0) {
           console.log(chalk.dim('\n[No saved sessions]'));

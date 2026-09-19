@@ -1,7 +1,7 @@
 import readline from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -146,8 +146,10 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     let commandOutput = () => stripVTControlCharacters(stdout.text).replace(/\s/g, '');
     async function* sessionCommands(mode: string): AsyncGenerator<string> {
       const target = `target-${mode}`;
+      const workspace = path.join(homeDir, `sibling-${mode}`);
+      await mkdir(workspace);
       await storage.createGenerated(target, { title: 'Host target', gitRoot: homeDir,
-        runtimeInfo: { workspaceRoot: homeDir, executionCwd: homeDir, workspaceKind: 'detected', branch: 'target-branch' },
+        runtimeInfo: { workspaceRoot: workspace, executionCwd: workspace, workspaceKind: 'detected', branch: 'target-branch' },
         messages: [{ role: 'user', content: 'TARGET_FIRST' }, { role: 'assistant', content: 'TARGET_ANSWER' },
           { role: 'user', content: 'TARGET_SECOND' }, { role: 'assistant', content: 'TARGET_LAST' }] });
       await client.sessions.updateSettings(target, { model: 'target-model', agentMode: 'sa', maxIter: 13 });
@@ -163,7 +165,15 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       yield `/load ${target}`;
       await expect.poll(() => received.at(-1)?.session.id).toBe(target);
       expect(await client.sessions.getSettings(target)).toEqual(settings);
-      expect(await client.sessions.read(target)).toMatchObject({ branch: 'target-branch', executionCwd: homeDir });
+      expect(await client.sessions.read(target)).toMatchObject({ branch: 'target-branch', executionCwd: workspace });
+      if (mode === 'classic') {
+        expect(commandOutput()).toContain('[Sessionworkspacechanged]');
+        expect(commandOutput()).toContain('Messages:4');
+        expect(commandOutput()).toContain(workspace.replace(/\s/g, ''));
+        yield '/sessions';
+        expect(commandOutput()).toContain('workspace:');
+        expect(commandOutput()).toContain('(currentworkspace)');
+      }
       yield '/status';
       expect(commandOutput()).toContain('Messages:4');
       expect(commandOutput()).toMatch(/Tokens:~[1-9]/);
@@ -222,7 +232,9 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       output: stdout as unknown as NodeJS.WritableStream, terminal: false,
     }));
     const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
-    commandOutput = () => stripVTControlCharacters(logs.mock.calls.flat().join(' ')).replace(/\s/g, '');
+    const writes: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
+    commandOutput = () => stripVTControlCharacters(logs.mock.calls.flat().join(' ') + writes.join('')).replace(/\s/g, '');
     const classicCommands = sessionCommands('classic');
     fixture.ask.mockImplementationOnce(async () => {
       await expect.poll(() => received.at(-1)?.activity?.costReport).toBe('Total cost: $0.012');
@@ -232,7 +244,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await runInteractiveMode({ provider: 'anthropic', agentMode: 'sa', session: { id: session.id, resume: true }, storage: clientStorage,
         clientPlane: plane, sessionCommands: createCliSessionCommands(client) });
       expect(logs.mock.calls.flat().join(' ')).toContain('Total cost: $0.012');
-    } finally { readlineSpy.mockRestore(); logs.mockRestore(); }
+    } finally { readlineSpy.mockRestore(); logs.mockRestore(); stdoutSpy.mockRestore(); }
 
   } finally {
     mounted?.unmount();
