@@ -859,6 +859,13 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let displayedPlaneRunId: string | undefined;
   let displayedPlaneView: ClientSessionView | undefined;
   let attachInFlightSessionId: string | undefined;
+  let attachInFlight: Promise<void> | undefined;
+  let attachRetry: ReturnType<typeof setTimeout> | undefined;
+  let planeObservationReady = false;
+  let planeDisplayGeneration = 0;
+  let planeDiffer: ReturnType<typeof createClassicPlaneDisplayDiffer> | undefined;
+  let planeDisplayQueue = { pending: Promise.resolve() };
+  let unsentPlaneDraft: string | undefined;
   let pendingAssistantNewline = false;
   const planeDisplayWrite = (line: string): void => {
     const separator = line.indexOf(':');
@@ -878,23 +885,37 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     else if (kind === 'error') console.log(chalk.red(text));
     else console.log(text);
   };
-  const attachPlaneDisplayFor = (sessionId: string, attempt = 0): void => {
+  const attachPlaneDisplayFor = (sessionId: string, attempt = 0, expectedGeneration = planeDisplayGeneration): void => {
     const plane = options.clientPlane;
     if (plane === undefined || planeDisplayClosed) return;
     if (planeDisplaySessionId === sessionId
       && (detachPlaneDisplay !== undefined || attachInFlightSessionId === sessionId)) return;
     // A backoff retry for a session we switched away from must not detach
     // and hijack the new session's display.
-    if (attempt > 0 && planeDisplaySessionId !== sessionId) return;
+    if (attempt > 0 && (planeDisplaySessionId !== sessionId || expectedGeneration !== planeDisplayGeneration)) return;
+    if (attachRetry !== undefined) clearTimeout(attachRetry);
     detachPlaneDisplay?.();
     detachPlaneDisplay = undefined;
+    if (planeDisplaySessionId !== sessionId) {
+      const generation = ++planeDisplayGeneration;
+      planeDisplayQueue = { pending: Promise.resolve() };
+      planeDiffer = createClassicPlaneDisplayDiffer(line => {
+        if (!planeDisplayClosed && generation === planeDisplayGeneration && context.sessionId === sessionId) planeDisplayWrite(line);
+      }, (id, readOptions) => plane.readItem(sessionId, id, readOptions));
+    }
+    planeObservationReady = false;
     planeDisplaySessionId = sessionId;
     displayedPlaneRunId = undefined;
     displayedPlaneView = undefined;
     attachInFlightSessionId = sessionId;
-    void attachClassicPlaneDisplay(plane, sessionId, {
+    const generation = planeDisplayGeneration;
+    attachInFlight = attachClassicPlaneDisplay(plane, sessionId, {
+      differ: planeDiffer,
+      displayQueue: planeDisplayQueue,
+      isCurrent: () => !planeDisplayClosed && generation === planeDisplayGeneration && context.sessionId === sessionId,
       onView: view => {
-        if (view.session.id !== context.sessionId) return;
+        if (generation !== planeDisplayGeneration || view.session.id !== context.sessionId) return;
+        planeObservationReady = true;
         displayedPlaneView = view;
         displayedPlaneRunId = viewRunsActive(view);
         currentConfig = applyClientSessionViewSettings(currentConfig, view);
@@ -906,16 +927,25 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         permissionMode: () => currentPermissionMode,
       }),
       onNotice: (text) => console.log(chalk.yellow(`\n${text}\n`)),
+      onStatus: status => {
+        if (planeDisplayClosed || generation !== planeDisplayGeneration || planeDisplaySessionId !== sessionId) return;
+        if (status.state === 'closed') {
+          planeObservationReady = false;
+          detachPlaneDisplay = undefined;
+        }
+      },
     }).then((detach) => {
-      if (attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
-      if (planeDisplayClosed || planeDisplaySessionId !== sessionId) {
+      if (generation === planeDisplayGeneration && attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
+      if (planeDisplayClosed || generation !== planeDisplayGeneration || planeDisplaySessionId !== sessionId || !planeObservationReady) {
         detach();
         return;
       }
       detachPlaneDisplay = detach;
     }).catch((error: unknown) => {
-      if (attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
-      if (planeDisplayClosed) return;
+      if (generation === planeDisplayGeneration && attachInFlightSessionId === sessionId) attachInFlightSessionId = undefined;
+      if (planeDisplayClosed || generation !== planeDisplayGeneration || planeDisplaySessionId !== sessionId) return;
+      planeObservationReady = false;
+      if (attempt === 0) planeDisplayWrite(`error:Host observation unavailable: ${error instanceof Error ? error.message : String(error)}`);
       const nextAttempt = attempt + 1;
       if (nextAttempt > 5) {
         emitKodaXDiagnostic({
@@ -926,11 +956,25 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         });
         return;
       }
-      setTimeout(
-        () => attachPlaneDisplayFor(sessionId, nextAttempt),
+      attachRetry = setTimeout(
+        () => attachPlaneDisplayFor(sessionId, nextAttempt, generation),
         Math.min(1000 * nextAttempt, 5000),
       );
     });
+  };
+  const ensurePlaneObservation = async (): Promise<void> => {
+    if (!options.clientPlane || planeObservationReady) return;
+    attachPlaneDisplayFor(context.sessionId);
+    await attachInFlight;
+    if (planeObservationReady) return;
+    if (unsentPlaneDraft) {
+      lastUserMessage = unsentPlaneDraft;
+      // Readline's Up recall preserves the raw input, including attachment references.
+      const history = (rl as readline.Interface & { history: string[] }).history;
+      if (history[0] !== unsentPlaneDraft) history.unshift(unsentPlaneDraft);
+    }
+    planeDisplayWrite(`error:${OBSERVATION_UNAVAILABLE}`);
+    throw new ClientObservationUnavailableError();
   };
   const setContextSessionId = (nextId: string): void => {
     context.sessionId = nextId;
@@ -979,6 +1023,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     if (plane === undefined) {
       throw new Error('runPlaneRoundWithStop requires a bound client plane.');
     }
+    await ensurePlaneObservation();
     const controller = new AbortController();
     activePlaneAbort = controller;
     try {
@@ -1272,16 +1317,27 @@ Keyboard Shortcuts:
     inspectSandbox: options.inspectSandbox,
     learning: options.learning,
     getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
-    workflows: options.workflows,
-    commandClient: options.commandClient,
+    workflows: options.workflows ? { ...options.workflows,
+      start: withObservedExecution(ensurePlaneObservation, options.workflows.start.bind(options.workflows)),
+      resume: withObservedExecution(ensurePlaneObservation, options.workflows.resume.bind(options.workflows)) } : undefined,
+    commandClient: options.commandClient ? { ...options.commandClient, execute: async input => {
+      if (!isCommandHelp(input.args)) {
+        try { await ensurePlaneObservation(); }
+        catch (error: unknown) {
+          if (!(error instanceof ClientObservationUnavailableError)) throw error;
+          return { kind: 'completed', success: false, message: error.message };
+        }
+      }
+      return options.commandClient!.execute(input);
+    } } : undefined,
     listHostCommands: options.listHostCommands,
     inspectExtensions: options.inspectExtensions,
     mcp: options.mcp,
     config: options.config,
     catalog: options.catalog,
     providerCapabilities: options.providerCapabilities,
-    startReview: options.startReview,
-    reviewAgentsLean: options.reviewAgentsLean,
+    startReview: options.startReview ? withObservedExecution(ensurePlaneObservation, input => options.startReview!(input)) : undefined,
+    reviewAgentsLean: options.reviewAgentsLean ? withObservedExecution(ensurePlaneObservation, input => options.reviewAgentsLean!(input)) : undefined,
     // FEATURE_298 T34 — goal persistence goes through the Host binding;
     // after a bound mutation the local view re-reads the lineage the Host
     // wrote (same session file) instead of mutating it here.
@@ -2072,6 +2128,7 @@ Keyboard Shortcuts:
   // Handle cleanup on exit
   const cleanup = () => {
     planeDisplayClosed = true;
+    if (attachRetry !== undefined) clearTimeout(attachRetry);
     detachPlaneDisplay?.();
     // FEATURE_125 — fire-and-forget Team Mode shutdown. The
     // state-writer's shutdown() does its work synchronously
@@ -2300,6 +2357,7 @@ Keyboard Shortcuts:
         console.log(chalk.dim(`\n[Edited message ready to send]`));
         // Process edited content directly, skip askInput - 直接处理编辑后的内容，跳过 askInput
         const trimmed = edited.trim();
+        unsentPlaneDraft = edited;
         touchContext(context);
         autoModeBootstrap.resetTurn();
 
@@ -2496,6 +2554,7 @@ Keyboard Shortcuts:
     if (!isRunning) break;
 
     const trimmed = input.trim();
+    unsentPlaneDraft = input;
     if (!trimmed) continue;
 
     touchContext(context);
@@ -2787,7 +2846,8 @@ function extractTitle(messages: KodaXMessage[]): string {
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
 import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
 import { followClientPlaneRun, runClientPlaneRound, mintInkInputId, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
-import { attachClassicPlaneDisplay } from './classic-plane-display.js';
+import { attachClassicPlaneDisplay, createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
+import { ClientObservationUnavailableError, OBSERVATION_UNAVAILABLE, isCommandHelp, withObservedExecution } from '../ui/client-observation.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 
 // FEATURE_200 Phase E: startup banner extracted to ./startup-banner.ts.

@@ -12,6 +12,7 @@ import type {
   ClientViewItem,
   ClientItemContent,
   ClientItemReadOptions,
+  ClientObservationStatus,
 } from '@kodax-ai/coding/client-contract';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import {
@@ -152,11 +153,16 @@ export async function attachClassicPlaneDisplay(
     dialogs?: ClientPlaneDialogSurface;
     onNotice?: (text: string) => void;
     onView?: (view: ClientSessionView) => void;
+    onStatus?: (status: ClientObservationStatus) => void;
+    differ?: ReturnType<typeof createClassicPlaneDisplayDiffer>;
+    displayQueue?: { pending: Promise<void> };
+    isCurrent?: () => boolean;
   } = {},
 ): Promise<() => void> {
   let closed = false;
+  const isCurrent = (): boolean => !closed && (options.isCurrent?.() ?? true);
   const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
-  const differ = createClassicPlaneDisplayDiffer(line => { if (!closed) write(line); },
+  const differ = options.differ ?? createClassicPlaneDisplayDiffer(line => { if (!closed) write(line); },
     (id, readOptions) => plane.readItem(sessionId, id, readOptions));
   const handledInteractions = new Map<string, AbortController>();
   const closeDialogs = (): void => {
@@ -164,14 +170,14 @@ export async function attachClassicPlaneDisplay(
     handledInteractions.clear();
   };
   let dialogChain: Promise<void> = Promise.resolve();
-  let displayChain: Promise<void> = Promise.resolve();
+  const displayQueue = options.displayQueue ?? { pending: Promise.resolve() };
   const observation = await plane.observe(sessionId, (view: ClientSessionView) => {
-    if (closed) return;
+    if (!isCurrent()) return;
     options.onView?.(view);
-    displayChain = displayChain.then(() => closed ? undefined : differ(view.items)).catch((error: unknown) => {
+    displayQueue.pending = displayQueue.pending.then(() => !isCurrent() ? undefined : differ(view.items)).catch((error: unknown) => {
       const message = `Console output read failed: ${error instanceof Error ? error.message : String(error)}`;
       emitKodaXDiagnostic({ source: 'repl:classic-display', level: 'warn', message });
-      if (!closed) options.onNotice?.(message);
+      if (isCurrent()) options.onNotice?.(message);
     });
     const dialogs = options.dialogs;
     if (dialogs === undefined) return;
@@ -186,13 +192,13 @@ export async function attachClassicPlaneDisplay(
       const controller = new AbortController();
       handledInteractions.set(interaction.requestId, controller);
       dialogChain = dialogChain
-        .then(() => answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal))
+        .then(() => isCurrent() ? answerClientPlaneInteraction(plane, interaction, dialogs, controller.signal) : false)
         .then((accepted) => {
           if (accepted || controller.signal.aborted) return;
           handledInteractions.delete(interaction.requestId);
         })
         .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !isCurrent()) return;
           handledInteractions.delete(interaction.requestId);
           options.onNotice?.(
             `Answer delivery failed (${error instanceof Error ? error.message : String(error)}); the question re-opens or resolves Host-side.`,
@@ -200,6 +206,8 @@ export async function attachClassicPlaneDisplay(
         });
     }
   }, { onStatus: status => {
+    if (!isCurrent()) return;
+    options.onStatus?.(status);
     if (closed || status.state !== 'closed') return;
     closed = true;
     closeDialogs();

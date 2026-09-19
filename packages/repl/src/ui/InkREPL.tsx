@@ -349,6 +349,7 @@ import { findMostRecentResumableSession } from "../session/resumable-session.js"
 export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot };
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { createRecoveryHistoryItem, createRetryHistoryItem } from "./utils/retry-history.js";
+import { ClientObservationUnavailableError, OBSERVATION_UNAVAILABLE, isCommandHelp, withObservedExecution } from './client-observation.js';
 import { createRepoIntelTraceHistoryItem, emitRepoIntelTraceHistoryItem } from "./utils/repo-intel-history.js";
 import {
   formatManagedTaskBreadcrumb,
@@ -1822,6 +1823,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Host input/run faces instead of the in-process runner.
   const [clientView, setClientView] = useState<ClientSessionView | null>(null);
   const [clientObservationStatus, setClientObservationStatus] = useState<ClientObservationStatus | null>(null);
+  const ensureClientObservationRef = useRef<() => Promise<boolean>>(async () => false);
   const clientViewRef = useRef<ClientSessionView | null>(null);
   const clientViewItemMemoRef = useRef<ClientViewItemMemo>({ entries: new Map() });
   useEffect(() => {
@@ -1832,11 +1834,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     let closer: (() => void) | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let ready = false;
+    let pending: Promise<void> | undefined;
     let observedRunId: string | undefined;
     let stopBinding: ReturnType<typeof bindClientPlaneSessionStop> | undefined;
-    const observe = (): void => {
-      void plane.observe(observedSessionId, (view) => {
+    const observe = (): Promise<void> => {
+      if (pending) return pending;
+      if (retry !== undefined) clearTimeout(retry);
+      pending = plane.observe(observedSessionId, (view) => {
         if (closed || context.sessionId !== observedSessionId || view.session.id !== observedSessionId) return;
+        ready = true;
         clientViewRef.current = view;
         setClientView(view);
         const activeRunId = viewRunsActive(view);
@@ -1860,23 +1867,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             memo: clientViewItemMemoRef.current,
           }),
         );
-      }, { onStatus: (status) => { if (!closed) setClientObservationStatus(status); } }).then((close) => {
+      }, { onStatus: (status) => {
+        if (closed || context.sessionId !== observedSessionId) return;
+        if (status.state === 'closed') { ready = false; closer = undefined; }
+        setClientObservationStatus(status);
+      } }).then((close) => {
         if (closed) {
           close();
           return;
         }
         closer = close;
         attempt = 0;
-      }).catch(() => {
+      }).catch((error: unknown) => {
         // FEATURE_298 T17 reconnection: a failed attach (Host briefly
         // unavailable) retries with backoff; the first view restores items,
         // queue, and pending interactions.
         if (closed) return;
+        ready = false;
+        setClientObservationStatus({ state: 'closed', reason: 'unavailable',
+          message: error instanceof Error ? error.message : String(error) });
         attempt += 1;
-        retry = setTimeout(observe, Math.min(1000 * attempt, 5000));
-      });
+        if (attempt <= 5) retry = setTimeout(() => { void observe(); }, Math.min(1000 * attempt, 5000));
+      }).finally(() => { pending = undefined; });
+      return pending;
     };
-    observe();
+    ensureClientObservationRef.current = async () => {
+      if (!ready && !closed) await observe();
+      return ready && !closed && context.sessionId === observedSessionId;
+    };
+    void observe();
     return () => {
       closed = true;
       closer?.();
@@ -1913,6 +1932,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // the list is empty.
     setTimeout(expire, CLIENT_PLANE_NOTICE_TTL_MS + 250);
   }, []);
+  const ensureClientObservation = useCallback(async (): Promise<void> => {
+    if (!options.clientPlane || await ensureClientObservationRef.current()) return;
+    pushClientPlaneNotice('observation-unavailable', OBSERVATION_UNAVAILABLE);
+    throw new ClientObservationUnavailableError();
+  }, [options.clientPlane, pushClientPlaneNotice]);
   const clientInputQueue = useMemo(() => options.clientPlane
     ? createClientInputQueue(options.clientPlane, (error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -8529,6 +8553,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // in-process event/run-option assembly below applies.
     if (options.clientPlane) {
       await settingsWriteRef.current;
+      await ensureClientObservation();
       if (opts.toolInvocation) {
         const plane = options.clientPlane;
         const started = await plane.executeTool({ sessionId: context.sessionId,
@@ -9522,6 +9547,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ? viewRunsActive(clientViewRef.current) : undefined;
     try {
       await settingsWriteRef.current;
+      await ensureClientObservation();
       const acceptance = await clientInputQueue.submitPrompt({
         sessionId, text, inputId: mintInkInputId(), delivery,
         ...(targetRunId !== undefined ? { targetRunId } : {}),
@@ -9530,10 +9556,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         pushClientPlaneNotice(`queue-rejected-${Date.now()}`, 'The input was not queued. Press Up in an empty prompt to retrieve it.');
       }
     } catch (error: unknown) {
+      if (error instanceof ClientObservationUnavailableError) return;
       pushClientPlaneNotice(`queue-unconfirmed-${Date.now()}`,
         `Input acceptance could not be confirmed (${error instanceof Error ? error.message : String(error)}). Its original text is retained; press Up in an empty prompt to query and take it back.`);
     }
-  }, [clientInputQueue, context.sessionId, pushClientPlaneNotice]);
+  }, [clientInputQueue, context.sessionId, pushClientPlaneNotice, ensureClientObservation]);
 
   // Issue 120: drain pending inputs left over from skill / plan-mode rounds.
   // Hands the first queued prompt to `runQueueableAgentSequence`, which then
@@ -10169,16 +10196,27 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           learning: options.learning,
           getLearningSummary: options.learning ? () => options.learning!.getSnapshot() : undefined,
           openLearningCenter,
-          workflows: options.workflows,
-          commandClient: options.commandClient,
+          workflows: options.workflows ? { ...options.workflows,
+            start: withObservedExecution(ensureClientObservation, options.workflows.start.bind(options.workflows)),
+            resume: withObservedExecution(ensureClientObservation, options.workflows.resume.bind(options.workflows)) } : undefined,
+          commandClient: options.commandClient ? { ...options.commandClient, execute: async input => {
+            if (!isCommandHelp(input.args)) {
+              try { await ensureClientObservation(); }
+              catch (error: unknown) {
+                if (!(error instanceof ClientObservationUnavailableError)) throw error;
+                return { kind: 'completed', success: false, message: error.message };
+              }
+            }
+            return options.commandClient!.execute(input);
+          } } : undefined,
           listHostCommands: options.listHostCommands,
           inspectExtensions: options.inspectExtensions,
           mcp: options.mcp,
           config: options.config,
           catalog: options.catalog,
           providerCapabilities: options.providerCapabilities,
-          startReview: options.startReview,
-          reviewAgentsLean: options.reviewAgentsLean,
+          startReview: options.startReview ? withObservedExecution(ensureClientObservation, input => options.startReview!(input)) : undefined,
+          reviewAgentsLean: options.reviewAgentsLean ? withObservedExecution(ensureClientObservation, input => options.reviewAgentsLean!(input)) : undefined,
           // FEATURE_298 T34 — goal persistence goes through the Host
           // binding; after a bound mutation the local view re-reads the
           // lineage the Host wrote instead of mutating it here.
