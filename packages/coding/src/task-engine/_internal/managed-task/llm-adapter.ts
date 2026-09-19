@@ -550,9 +550,10 @@ export function buildRunnerLlmAdapter(
         const resolved = resolveWireEffort({ provider: providerName, model: activeModel ?? provider.getModel(), desiredEffort: providerReasoning.effort, rejectedEfforts });
         providerReasoning = { ...providerReasoning, effort: resolved.effort ?? 'none' };
       }
-      const onReasoningEffortRejected: KodaXProviderStreamOptions['onReasoningEffortRejected'] = (event) => {
+      const onReasoningEffortRejected = (event: Parameters<NonNullable<KodaXProviderStreamOptions['onReasoningEffortRejected']>>[0],
+        providerRequestId: string) => {
         recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome);
-        options.events?.onReasoningEffortRejected?.(event);
+        options.events?.onReasoningEffortRejected?.({ ...event, providerRequestId });
       };
       const supportsNativeEphemeralSuffix =
         typeof provider.supportsEphemeralSuffix === 'function'
@@ -900,7 +901,10 @@ export function buildRunnerLlmAdapter(
               [...wireTools],
               system,
               providerReasoning,
-              { ...streamOptions, onReasoningEffortRejected, ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
+              { ...streamOptions,
+                onReasoningEffortRejected: event => onReasoningEffortRejected(event, requestMeta.providerRequestId),
+                onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...requestMeta }),
+                ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
               credentialSignal,
             ),
           );
@@ -1097,6 +1101,8 @@ export function buildRunnerLlmAdapter(
                   providerReasoning,
                   {
                     promptCacheKey,
+                    onReasoningEffortRejected: event => onReasoningEffortRejected(event, fallbackMeta.providerRequestId),
+                    onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...fallbackMeta }),
                     modelOverride: activeModel,
                     maxOutputTokensOverride: requestMaxOutputTokens,
                     ephemeralSuffix: nativeEphemeralSuffix,
@@ -1308,7 +1314,8 @@ export function buildRunnerLlmAdapter(
               providerReasoning,
               {
                 promptCacheKey,
-                onReasoningEffortRejected,
+                onReasoningEffortRejected: event => onReasoningEffortRejected(event, continuationMeta.providerRequestId),
+                onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...continuationMeta }),
                 modelOverride: activeModel,
                 maxOutputTokensOverride: requestMaxOutputTokens,
                 ephemeralSuffix: nativeEphemeralSuffix,

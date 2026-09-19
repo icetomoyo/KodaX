@@ -73,11 +73,13 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   const abort = vi.fn();
   let events: KodaXEvents | undefined;
   let finish: ((result: KodaXResult) => void) | undefined;
+  let holdNextRun = false;
   fixture.start.mockImplementation((options: KodaXOptions): RunningSession => {
     events = options.events;
-    const result = fixture.start.mock.calls.length > 1
+    const result = fixture.start.mock.calls.length > 1 && !holdNextRun
       ? Promise.resolve<KodaXResult>({ success: true, lastText: 'Continued', messages: [], sessionId: options.session!.id! })
       : new Promise<KodaXResult>(resolve => { finish = resolve; });
+    holdNextRun = false;
     return { id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
       currentReasoning: options.reasoningMode, aborted: false, attached: true,
       setProvider() {}, setModel() {}, setReasoning() {}, abort, result };
@@ -93,6 +95,19 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   const session = await client.sessions.create({ title: 'Activity', projectPath: homeDir });
+  const expectReasoningNotices = async (surface: string, output: () => string): Promise<void> => {
+    const settings = await client.sessions.getSettings(session.id);
+    const providerRequestId = `reasoning-${surface}`;
+    events!.onOutputSegmentStart?.({ responseId: `response-${surface}`, providerRequestId, mode: 'append' });
+    events!.onReasoningEffortRejected?.({ provider: 'anthropic', model: 'display-model', effort: 'high', providerRequestId });
+    await expect.poll(output).toContain("rejectedeffort'high'");
+    expect(output()).not.toContain("senteffort'medium'");
+    events!.onReasoningResolved?.({ provider: 'anthropic', model: 'display-model', requestedEffort: 'high', sentEffort: 'medium',
+      verified: false, fallbacks: [{ effort: 'high', reason: 'unsupported-effort' }], providerRequestId });
+    await expect.poll(output).toContain("senteffort'medium'");
+    await expect.poll(output).toContain("requested'high';unverified");
+    expect(await client.sessions.getSettings(session.id)).toEqual(settings);
+  };
   let repl: Promise<void> | undefined;
   try {
     const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Work started from a different client',
@@ -116,6 +131,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('HOST_BOUNDARY.md');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Validating3findings');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Hostrevieweractive');
+    await expectReasoningNotices('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     const snapshot = createWorkflowProcessTracker({ runId: 'inline-workflow', workflowName: 'Host model workflow' }).getSnapshot();
     events!.onWorkflowProcessEvent?.({ type: 'workflow_updated', snapshot });
     events!.onWorkflowAgentDigest?.({ runId: snapshot.runId, event: { type: 'agent_completed', seq: 1,
@@ -236,8 +252,15 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
     commandOutput = () => stripVTControlCharacters(logs.mock.calls.flat().join(' ') + writes.join('')).replace(/\s/g, '');
     const classicCommands = sessionCommands('classic');
+    holdNextRun = true;
+    const classicRun = await runtime.runs.start({ sessionId: session.id, prompt: 'Classic reasoning feedback', options: { agentMode: 'sa' } });
+    if (events!.getCostReport) events!.getCostReport.current = () => 'Total cost: $0.012';
+    events!.onIterationEnd?.({ iter: 1, maxIter: 10, tokenCount: 10, tokenSource: 'estimate', scope: 'parent' });
     fixture.ask.mockImplementationOnce(async () => {
-      await expect.poll(() => received.at(-1)?.activity?.costReport).toBe('Total cost: $0.012');
+      await expect.poll(() => received.at(-1)?.session.id).toBe(session.id);
+      await expectReasoningNotices('classic', commandOutput);
+      finish?.({ success: true, lastText: 'Done', messages: [], sessionId: session.id });
+      await classicRun.result;
       return '/cost';
     }).mockImplementation(async () => (await classicCommands.next()).value ?? '/exit');
     try {

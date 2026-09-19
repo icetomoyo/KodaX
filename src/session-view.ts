@@ -84,10 +84,19 @@ export class SessionViewOwner {
       this.changed(sessionId);
     };
     const childActivity = createChildActivityUpdater(activity);
+    const currentReasoningRequest = (meta: KodaXActivityEventMeta): boolean => isPrimary(meta)
+      && state.runIds.has(runId)
+      && (meta.providerRequestId === undefined || state.segments.get(runId)?.active?.providerRequestId === meta.providerRequestId);
     return {
       getCostReport: costReport,
       ...notices,
       ...sessionActivityEvents(activity, notices),
+      onReasoningEffortRejected: event => {
+        if (currentReasoningRequest(event)) notices.onReasoningEffortRejected?.(event);
+      },
+      onReasoningResolved: event => {
+        if (currentReasoningRequest(event)) notices.onReasoningResolved?.(event);
+      },
       onOutputSegmentStart: (segment, meta) => {
         if (!isPrimary(meta)) return;
         const current = state.segments.get(runId) ?? createOutputSegmentProjection();

@@ -12,6 +12,16 @@ export function createSessionNoticeEvents(
   return {
     ...rateLimitNotices(append),
     ...compactionNotices(append),
+    onReasoningEffortRejected: event => append({
+      id: `reasoning:${event.providerRequestId ?? 'legacy'}:rejected:${event.provider}:${event.model}:${event.effort}`,
+      type: 'info', text: `[Reasoning] ${event.provider}/${event.model} rejected effort '${event.effort}'.`,
+    }),
+    onReasoningResolved: event => {
+      if (event.fallbacks.length === 0 && (event.requestedEffort === 'auto' || event.requestedEffort === event.sentEffort)) return;
+      const sent = event.sentEffort === undefined ? 'sent without an effort parameter' : `sent effort '${event.sentEffort}'`;
+      append({ id: `reasoning:${event.providerRequestId ?? 'legacy'}:resolved:${event.provider}:${event.model}`,
+        type: 'info', text: `[Reasoning] ${event.provider}/${event.model} ${sent} (requested '${event.requestedEffort}'; unverified).` });
+    },
     onProviderRecovery: (event) => append(createRecoveryHistoryItem(event)),
     onMemoryNotice: (notice) => {
       if (notice.sessionId !== undefined && notice.sessionId !== sessionId) return;

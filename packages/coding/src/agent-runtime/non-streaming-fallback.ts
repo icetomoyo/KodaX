@@ -145,9 +145,9 @@ export async function executeNonStreamingFallback(
           rejectedReasoningEfforts: getCachedRejectedEfforts(input.providerName, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
           onReasoningEffortRejected: (event) => {
             recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
-            input.events.onReasoningEffortRejected?.(event);
+            input.events.onReasoningEffortRejected?.({ ...event, ...requestMeta });
           },
-          onReasoningResolved: (event) => input.events.onReasoningResolved?.(event),
+          onReasoningResolved: (event) => input.events.onReasoningResolved?.({ ...event, ...requestMeta }),
           onTextDelta: (text: string) => {
             input.boundarySession.markTextDelta(text);
             void input.emitActiveExtensionEvent('text:delta', { text });

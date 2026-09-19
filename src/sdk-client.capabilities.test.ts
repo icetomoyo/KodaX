@@ -17,14 +17,16 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-capabilities-'));
   const requestedEfforts: (string | undefined)[] = [];
   const requests: unknown[] = [];
+  let rejectActualEffort: string | undefined;
   const providerServer = createServer(async (request, response) => {
     let body = '';
     for await (const chunk of request) body += String(chunk);
     const input = JSON.parse(body) as { reasoning_effort?: string; max_completion_tokens?: number };
     requests.push(input);
-    if (input.max_completion_tokens === 1 && input.reasoning_effort === 'high') {
+    if (input.max_completion_tokens === 1 && input.reasoning_effort === 'high'
+      || rejectActualEffort !== undefined && input.reasoning_effort === rejectActualEffort) {
       response.writeHead(400, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { message: "Unsupported value: reasoning_effort 'high'.", type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
+      response.end(JSON.stringify({ error: { message: `Unsupported value: reasoning_effort '${input.reasoning_effort}'.`, type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
       return;
     }
     if (input.max_completion_tokens !== 1) requestedEfforts.push(input.reasoning_effort);
@@ -129,6 +131,29 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         await runtime.runs.await(accepted.runId);
         await awaitLatestCodingMemoryReviewDrain(5_000);
         expect(requestedEfforts).toContain('high');
+        for (const agentMode of ['sa', 'ama'] as const) {
+          // The AMA worker's role default is medium, bounded by the user's high ceiling.
+          rejectActualEffort = agentMode === 'sa' ? 'high' : 'medium';
+          const sentEffort = agentMode === 'sa' ? 'medium' : 'low';
+          await awaitLatestCodingMemoryReviewDrain(5_000);
+          await client.catalog.forgetCapabilities(selection);
+          const session = await client.sessions.create({ projectPath: homeDir });
+          await client.sessions.updateSettings(session.id, { ...selection, agentMode, effort: 'high', permissionMode: 'full-access' });
+          const saved = await client.sessions.getSettings(session.id);
+          const defaults = await client.config.read();
+          const notices: string[] = [];
+          const observation = await client.sessions.observe(session.id, view => {
+            notices.push(...view.items.filter(item => item.type === 'info').map(item => item.text));
+          });
+          try {
+            const run = await client.inputs.submit({ sessionId: session.id, inputId: `rejected-${agentMode}`, text: 'Reply briefly.' });
+            expect(await client.runs.await(run.runId!)).toMatchObject({ phase: 'completed' });
+            await expect.poll(() => notices.join('\n'), { message: agentMode }).toContain(`rejected effort '${rejectActualEffort}'`);
+            await expect.poll(() => notices.join('\n')).toContain(`sent effort '${sentEffort}' (requested '${rejectActualEffort}'; unverified)`);
+            expect(await client.sessions.getSettings(session.id)).toEqual(saved);
+            expect(await client.config.read()).toEqual(defaults);
+          } finally { observation.close(); }
+        }
         await client.disconnect();
         const beforeDisconnectedCommands = requests.length;
         expect(await providerCommand.handler(['probe'], context, callbacks, config)).toMatchObject({ success: false });

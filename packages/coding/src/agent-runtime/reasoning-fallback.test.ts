@@ -32,11 +32,12 @@ it('preserves user intent and rejection learning across recreated providers duri
   }));
   const onReasoningResolved = vi.fn();
   const onReasoningEffortRejected = vi.fn();
+  const onOutputSegmentStart = vi.fn();
   for (let turn = 0; turn < 2; turn++) {
     const provider = createCustomProvider({ name: 'recovery-test', protocol: 'openai',
       model: 'model', baseUrl: 'https://recovery.test/v1', apiKeyEnv: 'RECOVERY_TEST_KEY' });
     const outcome = await executeNonStreamingFallback({ streamProvider: provider,
-      events: { onReasoningResolved, onReasoningEffortRejected },
+      events: { onReasoningResolved, onReasoningEffortRejected, onOutputSegmentStart },
       providerMessages: [{ role: 'user', content: 'hello' }], activeToolDefinitions: [],
       effectiveSystemPrompt: '', effectiveProviderReasoning: { effort: 'max' },
       callerAbortSignal: undefined, modelOverride: undefined, hardTimeoutMs: 10_000,
@@ -49,6 +50,10 @@ it('preserves user intent and rejection learning across recreated providers duri
   expect(getCachedRejectedEfforts('recovery-test', 'model')).toEqual(['max']);
   expect(onReasoningEffortRejected).toHaveBeenCalledOnce();
   expect(onReasoningResolved).toHaveBeenCalledTimes(2);
+  expect(onReasoningEffortRejected.mock.calls[0]?.[0].providerRequestId)
+    .toBe(onOutputSegmentStart.mock.calls[0]?.[0].providerRequestId);
+  expect(onReasoningResolved.mock.calls.map(([event]) => event.providerRequestId))
+    .toEqual(onOutputSegmentStart.mock.calls.map(([segment]) => segment.providerRequestId));
   expect(onReasoningResolved.mock.calls[1]?.[0]).toMatchObject({ requestedEffort: 'max', sentEffort: 'xhigh',
     verified: false, fallbacks: [{ effort: 'max', reason: 'cached-rejection' }] });
 });

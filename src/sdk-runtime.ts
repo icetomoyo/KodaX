@@ -19184,6 +19184,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onRetryAfter?.(payload, meta);
     },
     onReasoningEffortRejected(event) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase) || record.abortController?.signal.aborted) return;
+      input.display.onReasoningEffortRejected?.(event);
       emit(
         "provider.recovery",
         { kind: "reasoning_effort_rejected", event },
@@ -19192,6 +19194,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onReasoningEffortRejected?.(event);
     },
     onReasoningResolved(event) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase) || record.abortController?.signal.aborted) return;
+      input.display.onReasoningResolved?.(event);
       emit("provider.recovery", { kind: "reasoning_resolved", event }, event);
       externalCallbacks()?.onReasoningResolved?.(event);
     },

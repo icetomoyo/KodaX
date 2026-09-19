@@ -715,8 +715,8 @@ export interface KodaXEvents {
     provider: string;
     model: string;
     effort: string;
-  } & Partial<KodaXLiveEventMeta>) => void;
-  onReasoningResolved?: (event: KodaXReasoningResolution & Partial<KodaXLiveEventMeta>) => void;
+  } & KodaXActivityEventMeta) => void;
+  onReasoningResolved?: (event: KodaXReasoningResolution & KodaXActivityEventMeta) => void;
   onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent & Partial<KodaXLiveEventMeta>) => void;
   /** Bounded request context and the execution owner's resolved compaction capacity. */
   onContextBudgetSnapshot?: (

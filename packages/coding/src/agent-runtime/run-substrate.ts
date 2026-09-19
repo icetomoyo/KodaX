@@ -709,6 +709,10 @@ function attributeProviderRequest(events: KodaXEvents, providerRequestId: string
       events.onThinkingDelta?.(text, { ...meta, providerRequestId }),
     onThinkingEnd: (thinking, meta) =>
       events.onThinkingEnd?.(thinking, { ...meta, providerRequestId }),
+    onReasoningEffortRejected: event =>
+      events.onReasoningEffortRejected?.({ ...event, providerRequestId }),
+    onReasoningResolved: event =>
+      events.onReasoningResolved?.({ ...event, providerRequestId }),
   };
 }
 
