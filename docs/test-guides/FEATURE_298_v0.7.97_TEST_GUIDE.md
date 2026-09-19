@@ -211,3 +211,27 @@ MCP 冷启动/全局重载和私有会话资源隔离分别验收，保留真实
 本轮原生 Windows PTY：主矩阵 43/43、consumer 14/14、长历史 7/7，退出码均 0。完整测试的首轮失败、定位及最终复验另见 v0.7.97 设计块的本轮证据；不将定向测试或带重试运行描述成一次无重试全量通过。检查全量结果时同时读取退出码、失败列表和未处理错误；JSON 的测试成功字段不能单独证明运行器无错。
 
 最终快照 `c94d73ab` 的完整默认测试集合使用 `--maxWorkers=1 --retry=0 --reporter=dot --reporter=json`：16140 测试通过、零测试失败，但仍有一次 Vitest `onTaskUpdate` 未处理超时，退出码为 1，**全量验收尚未通过**。类型检查、构建和 PTY 通过不能替代这个失败门禁。下一步先定位报告通道的具体任务与处理延迟，不以忽略错误、扩大时限或重复无定位的整套运行结案。
+
+## T48–T52 UI 暴露面复核回归
+
+```bash
+npx vitest run src/session-view.children.test.ts src/session-view.sidecar.test.ts src/sdk-client.repl-activity.test.ts packages/repl/src/interactive/classic-plane-display.test.ts packages/repl/src/ui/client-plane.stop-control.test.ts packages/repl/src/ui/utils/restore-history.test.ts
+npx vitest run src/sdk-client.observe.test.ts packages/repl/src/ui/InkREPL.managed-transcript.test.ts src/sdk-client.repl-observation.test.ts
+node tests/repl-pty-acceptance.mjs --exposure-only
+```
+
+原生 `--exposure-only` 运行双端：开启 light/trace 后真正执行引擎，检查 routing 摘要同时进入 SessionView 和终端；关闭 trace 后下一次请求不产生新摘要。第二个 Product Client 在同一 Session 提交 held Run，终端显示后按 Ctrl+C，Host 必须确认 interrupted，且下一次键盘输入恰好执行一次。classic 的 Stop 日志不能使输入提示符消失；不能通过清理时取消 Run 让断言假通过。
+
+受控引擎事件→真实 IPC Host→生产双 REPL 的用例验证 RepoIntel、Verifier 三种分类、classic 压缩开始提示与外部 Run Stop 接线；这不是实际模型/Verifier 发射链路的 E2E。局部视图测试覆盖两个 child/parent 交错的 progress/result/retry/recovery/rate-limit，去重按 child 与物理请求区分，child 临时进度不写入父历史，换 Run 不接受旧活动。Verifier 的 verdict 和 delivery 是两维：budget-exhausted 仍可能携带真实 verdict；新快照保留两维，旧 icon 只精确解码已知值，未知分类中性显示，不推断默认 revise。观察同一 item 仅分类变化时，Ink 与 classic 缓存必须更新，已恢复的首帧不重复打印，移出窗口后清理去重状态。
+
+classic 复用 compacting 快照，同 Run 同阶段只提示一次、结束或换 Run 可再次提示，同会话重挂接保留 differ。不承诺两个快照间瞬间完成的阶段一定显示。跨会话 Stop、断线重连、已接受输入不重交、草稿与问题框隔离继续运行原有观察/控制回归。以上新增测试不能替代主矩阵、消费者矩阵、长历史预算、类型检查和完整套件。
+
+2026-09-20 本轮定向 7 文件 72 项、类型检查与完整构建通过；原生主矩阵 47/47、consumer 14/14、长历史 7/7，退出码均 0。主矩阵在最终 classic 同 ID 分类缓存修补前执行，该修补由最终定向用例覆盖；最终构建后执行 consumer 与长历史矩阵。consumer 清理阶段仍有 node-pty AttachConsole 辅助进程警告，不隐去该环境噪声，也不将其描述为断言失败。完整默认套件的最终门禁结果另见设计块，不以这些定向通过替代。
+
+追加隔离 profile 的 classic 双 Client 跨会话检查：S1 外部 held Run 启动，切至 S2 按 Ctrl+C 不停止 S1，重新 `/load S1` 后 Ctrl+C 确认 interrupted/confirmed，目标输入及 Provider 请求各一次。该探针同时复现独立残留：冷启动 Session 的首条消息仅来自外部 Client 时，`/new` 仍按本地空 `context.messages` 误报 already empty；先完成本端一轮后才可继续上述切换检查。不能把后续 Stop 隔离通过当作 `/new` 已通过；待补 Host 判空消费接线与双端回归。
+
+完整套件首轮另发现 Verifier 实时条目与 Host 重启恢复的 icon 形状不一致；修复须保留原兼容字段，同时保留新增两维事实，不能放宽原完整相等断言。三种分类往返相等先 RED 3 项、修复后 GREEN；独立 Ink 保存也必须保留两维，未知旧分类再次保存仍不得猜成 revise。收尾定向 9 文件 124 项通过。运行 daemon smoke 前必须先完成构建；运行中重写源码或安装产物会按设计触发 earlier-build 保护。本轮首轮确有此验证安排错误，3 个 daemon 失败不能描述为产品超时，也不能据此移除保护。首轮完整结果为 16144 passed / 6 failed、零未处理错误，最终复验另记于设计块。
+
+最终修正后的构建、源码及测试类型检查均 EXIT 0；在其完成后单独跑默认完整集合，沿用 Windows 4 worker、`--retry=0`，dot/JSON 与 Temp 报告耗时诊断：1112 文件通过、1 跳过；16150 项通过、0 失败、77 跳过、21 todo，EXIT 0，未处理错误 0。收尾两轴复审均无剩余 finding。测试清理未确认的警告仍单独记录，不能把通过的行为断言说成进程树已完整验证；一次未复现 RPC timeout 也不能证明历史运行器故障已根治。当前版本的门禁结果以本段及设计块最终记录为准，前文 c94d73ab 是上一轮历史结果。
+
+最终完整套件后再跑原生 `--exposure-only`，双端 8/8、EXIT 0。限定检查本轮 11 个清理警告目录的 17 条 unresolved 记录，目标 PID 当前均不存在；未证明完整后代树已清理，保留原始记录，不删除目录或终止其他进程。

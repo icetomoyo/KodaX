@@ -58,8 +58,11 @@ function thinkingPreview(text: string): string {
 export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: ReadItem) {
   let baselined = false;
   const printedText = new Map<string, number>();
+  const printedSidecarStates = new Map<string, string>();
+  const sidecarState = (item: ClientViewItem): string => JSON.stringify([item.sidecar?.verdict, item.sidecar?.delivery]);
   const printedToolStages = new Set<string>();
   let streamingRequest: string | undefined;
+  let compactingRunId: string | undefined;
   const printedStreamingPhases = new Set<string>();
 
   const printOnce = (item: ClientViewItem, line: string): void => {
@@ -68,6 +71,8 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
   };
 
   return async (items: readonly ClientViewItem[], activity?: ClientSessionActivity): Promise<void> => {
+    if (activity?.compacting && compactingRunId !== activity.runId) write('info:[KodaX] Compacting context...');
+    compactingRunId = activity?.compacting ? activity.runId : undefined;
     const streaming = activity?.streaming;
     const request = streaming ? JSON.stringify([activity.runId, streaming.providerRequestId]) : undefined;
     if (request !== streamingRequest) {
@@ -88,6 +93,7 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
       baselined = true;
       for (const item of items) {
         printedText.set(item.id, item.totalTextLength ?? item.text.length);
+        if (item.type === 'sidecar') printedSidecarStates.set(item.id, sidecarState(item));
         if (item.type === 'tool') {
           printedToolStages.add(`${item.id}:start`);
           if (item.tool !== undefined && item.tool.status !== 'running'
@@ -100,7 +106,7 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
     }
     const liveIds = new Set(items.map((item) => item.id));
     for (const id of printedText.keys()) {
-      if (!liveIds.has(id)) printedText.delete(id);
+      if (!liveIds.has(id)) { printedText.delete(id); printedSidecarStates.delete(id); }
     }
     for (const stage of printedToolStages) {
       const id = stage.slice(0, stage.lastIndexOf(':'));
@@ -141,6 +147,14 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
             : item.tool.status === 'cancelled' ? '•' : '✓';
           printOnce(item, `tool:${mark} ${item.tool.name} ${output}`.trimEnd());
         }
+        continue;
+      }
+      if (item.type === 'sidecar') {
+        const classificationState = sidecarState(item);
+        if (printedSidecarStates.get(item.id) === classificationState) continue;
+        const classification = item.sidecar?.delivery === 'budget-exhausted' ? 'budget exhausted' : item.sidecar?.verdict;
+        printOnce(item, `sidecar:Sidecar Verifier${classification ? ` — ${classification}` : ''}\n${item.text}`);
+        printedSidecarStates.set(item.id, classificationState);
         continue;
       }
       if (printedText.has(item.id)) continue;

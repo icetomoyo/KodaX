@@ -408,6 +408,9 @@ export interface KodaXSessionUiTextHistoryItem {
   timestamp?: number;
   /** Display-only item that is authoritative even without a canonical message anchor. */
   presentationOnly?: true;
+  /** Verifier facts; absent on legacy items whose icon encoded a single value. */
+  sidecarVerdict?: 'revise' | 'blocked';
+  sidecarDelivery?: 'synthetic-user-message' | 'budget-exhausted' | 'terminal-block';
   icon?: string;
   compactText?: string;
 }

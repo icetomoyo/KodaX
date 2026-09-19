@@ -7,6 +7,36 @@ import { applyClientSessionViewSettings } from '../ui/client-session-settings.js
 import type { CurrentConfig } from '../commands/types.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 
+it('updates a Verifier classification without repeating unchanged or restored notices', async () => {
+  const lines: string[] = [];
+  const display = createClassicPlaneDisplayDiffer(line => lines.push(line));
+  const item = { id: 'verifier', type: 'sidecar' as const, text: 'Same advice' };
+  await display([{ ...item, sidecar: { verdict: 'revise' } }]);
+  await display([{ ...item, sidecar: { verdict: 'revise' } }]);
+  expect(lines).toEqual([]);
+  await display([{ ...item, sidecar: { verdict: 'blocked' } }]);
+  await display([{ ...item, sidecar: { verdict: 'blocked' } }]);
+  expect(lines).toEqual(['sidecar:Sidecar Verifier — blocked\nSame advice']);
+  await display([{ ...item, sidecar: { verdict: 'blocked', delivery: 'budget-exhausted' } }]);
+  expect(lines.at(-1)).toBe('sidecar:Sidecar Verifier — budget exhausted\nSame advice');
+  expect(lines).toHaveLength(2);
+});
+
+it('announces observed compaction once per active phase, including first attach, without replay on reattach', async () => {
+  const lines: string[] = [];
+  const display = createClassicPlaneDisplayDiffer(line => lines.push(line));
+  await display([], { runId: 'first', compacting: true });
+  await display([], { runId: 'first', compacting: true });
+  expect(lines).toEqual(['info:[KodaX] Compacting context...']);
+  await display([], { runId: 'first', compacting: false });
+  await display([], { runId: 'first', compacting: true });
+  expect(lines).toHaveLength(2);
+  await display([], { runId: 'second', compacting: true });
+  expect(lines).toHaveLength(3);
+  await display([], { runId: 'second', compacting: false });
+  expect(lines).toHaveLength(3);
+});
+
 it.each(['client', 'unavailable'] as const)('retires answered questions and %s observations without stale answers', async reason => {
   const input = new PassThrough();
   const output = new PassThrough();

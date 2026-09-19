@@ -1496,17 +1496,18 @@ function toPersistedUiHistoryItem(
     return undefined;
   }
 
-  // Sidecar items encode verdict/delivery into the icon slot so the existing
-  // KodaXSessionUiTextHistoryItem shape requires no extra fields.
+  // Preserve both facts while retaining the icon encoding for older readers.
   if (item.type === "sidecar") {
     const verdictIcon = item.delivery === "budget-exhausted"
       ? "budget-exhausted"
-      : item.verdict ?? "revise";
+      : item.verdict;
     const timestamp = persistedHistoryTimestamp(item);
     return {
       type: "sidecar",
       text,
       icon: verdictIcon,
+      sidecarVerdict: item.verdict,
+      sidecarDelivery: item.delivery,
       ...(timestamp === undefined ? {} : { timestamp }),
       ...(item.isSessionUiOnly === true ? { presentationOnly: true } : {}),
     };

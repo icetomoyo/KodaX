@@ -565,6 +565,11 @@ export interface ClientViewItem {
   readonly timestamp?: number;
   readonly icon?: string;
   readonly compactText?: string;
+  /** Verifier facts, independent of the consumer's label, icon or color. */
+  readonly sidecar?: {
+    readonly verdict?: 'revise' | 'blocked';
+    readonly delivery?: 'synthetic-user-message' | 'budget-exhausted' | 'terminal-block';
+  };
   readonly tool?: {
     readonly callId: string;
     readonly name: string;

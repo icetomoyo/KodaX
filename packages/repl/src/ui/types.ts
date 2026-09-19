@@ -536,15 +536,15 @@ export interface HistoryItemHint extends HistoryItemBase {
  * Displayed as an independent "role" with its own header so the user can
  * clearly see that the Sidecar Verifier is actively reviewing the output.
  * verdict: 'revise' | 'blocked' | undefined; delivery 'budget-exhausted' means
- * the verifier ran out of budget before returning a verdict.
+ * the verifier exhausted its delivery budget instead of injecting the advice.
  */
 export interface HistoryItemSidecar extends HistoryItemBase {
   type: "sidecar";
   text: string;
-  /** 'revise' or 'blocked'; absent when delivery === 'budget-exhausted' */
+  /** Absent on legacy snapshots that retained only a delivery marker. */
   verdict?: "revise" | "blocked";
-  /** Set when the verifier exhausted its token budget before reaching a verdict */
-  delivery?: "budget-exhausted";
+  /** How the verifier result was delivered; absent on older snapshots. */
+  delivery?: "synthetic-user-message" | "budget-exhausted" | "terminal-block";
 }
 
 /**

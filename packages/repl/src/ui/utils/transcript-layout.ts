@@ -802,7 +802,9 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           ? "⚡ Sidecar Verifier — budget exhausted"
           : item.verdict === "blocked"
           ? "⚡ Sidecar Verifier — blocked"
-          : "⚡ Sidecar Verifier — revise";
+          : item.verdict === "revise"
+          ? "⚡ Sidecar Verifier — revise"
+          : "⚡ Sidecar Verifier";
         pushWrappedRows(
           rows,
           `${item.id}-header`,

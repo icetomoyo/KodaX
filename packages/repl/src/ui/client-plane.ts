@@ -557,6 +557,8 @@ function itemFingerprint(item: ClientViewItem): string {
       ? '-'
       : `${item.compactText.length}:${textHash(item.compactText)}`,
     item.icon ?? '',
+    item.sidecar?.verdict ?? '',
+    item.sidecar?.delivery ?? '',
     item.tool?.status ?? '',
     item.tool?.progress ?? '',
     item.tool?.endedAt ?? 0,
@@ -673,6 +675,11 @@ function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
       ...(streaming ? { isStreaming: true } : {}),
     };
   }
+  if (item.type === 'sidecar') return {
+    ...base, type: 'sidecar', text: item.text,
+    ...(item.sidecar?.verdict ? { verdict: item.sidecar.verdict } : {}),
+    ...(item.sidecar?.delivery ? { delivery: item.sidecar.delivery } : {}),
+  };
   return {
     ...base,
     type: item.type as Exclude<ClientViewItem['type'], 'tool' | 'assistant'>,

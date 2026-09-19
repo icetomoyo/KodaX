@@ -19204,6 +19204,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onReasoningResolved?.(event);
     },
     onRepoIntelligenceTrace(event) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase) || record.abortController?.signal.aborted) return;
+      input.display.onRepoIntelligenceTrace?.(event);
       emit("repo_intelligence.trace", event, event);
       externalCallbacks()?.onRepoIntelligenceTrace?.(event);
     },

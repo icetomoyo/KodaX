@@ -25,6 +25,7 @@ const sourceEntry = process.argv.includes('--source');
 const longHistoryOnly = process.argv.includes('--long-history-only');
 const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
+const exposureOnly = process.argv.includes('--exposure-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -477,6 +478,36 @@ async function checkProviderCapabilities(state) {
   await state.client.sessions.updateSettings(state.sessionId, { effort: 'off', thinking: false, reasoningMode: 'off' });
 }
 
+async function checkRepoIntelTrace(state) {
+  const before = await state.client.sessions.getSettings(state.sessionId);
+  try {
+    await state.terminal.submit('/repo-intel mode light');
+    await waitFor('light mode observed', () => state.view.settings.repoIntelligenceMode === 'light');
+    await state.terminal.submit('/repo-intel trace on');
+    await waitFor('trace enabled', () => state.view.settings.repoIntelligenceTrace === true);
+    await state.terminal.submit('ACCEPT_REPO_TRACE');
+    await waitFor('trace-enabled reply', () => state.terminal.screen().includes('END_ACCEPT_REPO_TRACE'));
+    await waitFor('real engine routing trace displayed', () => state.terminal.screen().includes('[RepoIntel]')
+      && state.view.items.some(item => item.text.includes('[RepoIntel] stage=routing')));
+    await waitFor('trace round input ready', () => state.mode === 'ink'
+      ? /^>\s+Type a message/m.test(state.terminal.screen()) : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
+    await waitFor('trace round settled', () => state.view.runs.every(run => !['accepted', 'queued', 'running'].includes(run.phase)));
+    if (state.mode === 'ink') await delay(300); // Await the input handler as in check().
+    const traceIds = () => state.view.items.filter(item => item.text.startsWith('[RepoIntel]')).map(item => item.id);
+    const enabledIds = traceIds();
+    await state.terminal.submit('/repo-intel trace off');
+    await waitFor('trace disabled', () => state.view.settings.repoIntelligenceTrace === false);
+    await state.terminal.submit('ACCEPT_TRACE_DISABLED');
+    await waitFor('trace-disabled reply', () => state.terminal.screen().includes('END_ACCEPT_TRACE_DISABLED'));
+    assert.deepEqual(traceIds(), enabledIds, 'Disabled trace must not produce further display facts');
+  } finally {
+    const reset = { repoIntelligenceMode: before.repoIntelligenceMode ?? null,
+      repoIntelligenceTrace: before.repoIntelligenceTrace ?? null };
+    await state.client.sessions.updateSettings(state.sessionId, reset);
+    await state.client.config.patch(reset);
+  }
+}
+
 async function checkHostSettingCommands(state) {
   const savedBefore = await state.client.config.read();
   const settingsBefore = await state.client.sessions.getSettings(state.sessionId);
@@ -784,6 +815,34 @@ async function checkQueue(state) {
   assert.equal(received(state, 'ACCEPT_WITHDRAW').length, 1, 'Withdrawn original must never execute');
 }
 
+async function checkExternalRunStop(state) {
+  const peer = await connectKodaXClient({ homeDir: state.homeDir });
+  let runId;
+  try {
+    const accepted = await peer.inputs.submit({ sessionId: state.sessionId,
+      inputId: `external-stop-${state.mode}`, text: 'ACCEPT_HOLD_EXTERNAL_STOP' });
+    runId = accepted.runId;
+    assert.ok(runId, 'The second Client must receive an accepted Run');
+    await waitFor('external Run displayed', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_EXTERNAL_STOP'));
+    await state.terminal.type('\x03');
+    await waitFor('external Run stopped by keyboard', async () => {
+      const run = await peer.runs.read(runId);
+      return run.phase === 'interrupted' && run.stop?.state === 'confirmed';
+    });
+    assert.equal(received(state, 'ACCEPT_HOLD_EXTERNAL_STOP').length, 1);
+    await waitFor('external Stop input ready', () => state.mode === 'ink'
+      ? /^>\s+Type a message/m.test(state.terminal.screen()) : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
+    if (state.mode === 'ink') await delay(300);
+    await state.terminal.submit('ACCEPT_AFTER_EXTERNAL_STOP');
+    await waitFor('input after external Stop', () => state.terminal.screen().includes('END_ACCEPT_AFTER_EXTERNAL_STOP'));
+    assert.equal(received(state, 'ACCEPT_AFTER_EXTERNAL_STOP').length, 1);
+  } finally {
+    try {
+      if (runId) { await peer.runs.stop(runId); await peer.runs.await(runId); }
+    } finally { await peer.disconnect(); }
+  }
+}
+
 async function checkStop(state) {
   await state.terminal.submit('ACCEPT_HOLD_STOP');
   await waitFor('stop target stream', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_STOP'));
@@ -1087,6 +1146,12 @@ async function run(mode) {
     await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    if (exposureOnly) {
+      await check(state, 'repointel-trace-exposure', checkRepoIntelTrace);
+      await check(state, 'external-run-keyboard-stop', checkExternalRunStop);
+      await check(state, 'exit', checkExit);
+      return;
+    }
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
     await check(state, 'host-execution-controls', checkHostExecutionControls);
@@ -1109,6 +1174,7 @@ async function run(mode) {
     await check(state, 'registered-extension-no-output', checkHostCommandNoOutput);
     await check(state, 'registered-extension-help', checkHostCommandHelp);
     await check(state, 'host-diagnostics-and-manual-shell', checkHostDiagnosticsAndShell);
+    await check(state, 'repointel-trace-exposure', checkRepoIntelTrace);
     await check(state, 'prompt-stream-complete', checkPrompt);
     await check(state, 'session-settings-roundtrip', checkSettings);
     if (mode === 'ink') await check(state, 'ama-presentation', checkAmaPresentation);
@@ -1121,6 +1187,7 @@ async function run(mode) {
     if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
     if (mode === 'ink') await check(state, 'transcript-control-character-paint', checkTranscriptPaint);
     await check(state, 'stop-and-next-input', checkStop);
+    await check(state, 'external-run-keyboard-stop', checkExternalRunStop);
     await check(state, 'registered-extension-run-and-follow-up', checkHostCommandRun);
     await check(state, 'new-session-isolation', checkNewSession);
     await check(state, 'exit', checkExit);
@@ -1138,7 +1205,7 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only'].includes(argument));
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only'].includes(argument));
   const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);

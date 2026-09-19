@@ -553,6 +553,8 @@ const costReportRef: { current: (() => string) | null } = { current: null };
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let activeStop: RuntimeStopControl | undefined;
+  let observedStop: RuntimeStopControl | undefined;
+  let awaitingInput = false;
   const runtimeStopCallbacks: RuntimeStopCallbacks = {
     onStopControl: (control) => { activeStop = control; },
     onStopState: (state, detail) => {
@@ -857,6 +859,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let planeDisplayClosed = false;
   let planeDisplaySessionId: string | undefined;
   let displayedPlaneRunId: string | undefined;
+  let observedStopBinding: ReturnType<typeof bindClientPlaneSessionStop> | undefined;
   let displayedPlaneView: ClientSessionView | undefined;
   let attachInFlightSessionId: string | undefined;
   let attachInFlight: Promise<void> | undefined;
@@ -897,6 +900,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     detachPlaneDisplay?.();
     detachPlaneDisplay = undefined;
     if (planeDisplaySessionId !== sessionId) {
+      observedStopBinding?.close();
+      observedStopBinding = undefined;
+      displayedPlaneRunId = undefined;
       const generation = ++planeDisplayGeneration;
       planeDisplayQueue = { pending: Promise.resolve() };
       planeDiffer = createClassicPlaneDisplayDiffer(line => {
@@ -905,7 +911,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     }
     planeObservationReady = false;
     planeDisplaySessionId = sessionId;
-    displayedPlaneRunId = undefined;
     displayedPlaneView = undefined;
     attachInFlightSessionId = sessionId;
     const generation = planeDisplayGeneration;
@@ -917,7 +922,24 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         if (generation !== planeDisplayGeneration || view.session.id !== context.sessionId) return;
         planeObservationReady = true;
         displayedPlaneView = view;
-        displayedPlaneRunId = viewRunsActive(view);
+        const activeRunId = viewRunsActive(view);
+        if (displayedPlaneRunId !== activeRunId) {
+          const previous = view.runs.find(run => run.runId === displayedPlaneRunId);
+          if (previous) observedStopBinding?.settled({ phase: previous.phase }, previous.runId);
+          observedStopBinding?.close();
+          displayedPlaneRunId = activeRunId;
+          observedStopBinding = activeRunId ? bindClientPlaneSessionStop({
+            plane, sessionId,
+            onStopControl: control => { observedStop = control; },
+            onStopState: (state, detail) => {
+              if (!planeDisplayClosed && generation === planeDisplayGeneration && context.sessionId === sessionId) {
+                runtimeStopCallbacks.onStopState?.(state, detail);
+                if (awaitingInput && displayedPlaneView?.interactions.length === 0
+                  && (state === 'confirmed' || state === 'rejected')) rl.prompt(true);
+              }
+            },
+          }, () => displayedPlaneRunId) : undefined;
+        }
         currentConfig = applyClientSessionViewSettings(currentConfig, view);
         currentPermissionMode = currentConfig.permissionMode;
       },
@@ -2121,8 +2143,9 @@ Keyboard Shortcuts:
 
   // Handle Ctrl+C - 处理 Ctrl+C
   rl.on('SIGINT', async () => {
-    if (activeStop) {
-      try { await activeStop.request(); }
+    const stop = activeStop ?? (context.sessionId === planeDisplaySessionId ? observedStop : undefined);
+    if (stop) {
+      try { await stop.request(); }
       catch (error: unknown) {
         emitKodaXDiagnostic({ source: 'repl:stop', level: 'error',
           message: error instanceof Error ? error.message : String(error) });
@@ -2143,6 +2166,7 @@ Keyboard Shortcuts:
   // Handle cleanup on exit
   const cleanup = () => {
     planeDisplayClosed = true;
+    observedStopBinding?.close();
     if (attachRetry !== undefined) clearTimeout(attachRetry);
     detachPlaneDisplay?.();
     // FEATURE_125 — fire-and-forget Team Mode shutdown. The
@@ -2564,7 +2588,10 @@ Keyboard Shortcuts:
     }
 
     const prompt = getPrompt(currentConfig.permissionMode, currentConfig);
-    const input = await askInput(rl, prompt);
+    let input: string;
+    awaitingInput = true;
+    try { input = await askInput(rl, prompt); }
+    finally { awaitingInput = false; }
 
     if (!isRunning) break;
 
@@ -2860,7 +2887,7 @@ function extractTitle(messages: KodaXMessage[]): string {
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
 import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
-import { followClientPlaneRun, runClientPlaneRound, mintInkInputId, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
+import { bindClientPlaneSessionStop, followClientPlaneRun, runClientPlaneRound, mintInkInputId, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
 import { attachClassicPlaneDisplay, createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
 import { ClientObservationUnavailableError, OBSERVATION_UNAVAILABLE, isCommandHelp, withObservedExecution } from '../ui/client-observation.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';

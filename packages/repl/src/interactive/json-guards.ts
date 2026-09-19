@@ -214,6 +214,9 @@ export function isKodaXSessionUiHistoryItem(value: unknown): value is KodaXSessi
     && typeof value.text === 'string'
     && isOptionalHistoryTimestamp(value.timestamp)
     && (value.presentationOnly === undefined || value.presentationOnly === true)
+    && (value.sidecarVerdict === undefined || value.sidecarVerdict === 'revise' || value.sidecarVerdict === 'blocked')
+    && (value.sidecarDelivery === undefined || value.sidecarDelivery === 'synthetic-user-message'
+      || value.sidecarDelivery === 'budget-exhausted' || value.sidecarDelivery === 'terminal-block')
     && (value.icon === undefined || typeof value.icon === 'string')
     && (value.compactText === undefined || typeof value.compactText === 'string');
 }

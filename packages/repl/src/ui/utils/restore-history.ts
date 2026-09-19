@@ -110,19 +110,11 @@ function toCreatableTextHistoryItem(
     case "hint":
       return { type: "hint", text: item.text, ...metadata, ...presentationOnly };
     case "sidecar": {
-      // The icon slot carries the encoded verdict/delivery (see toPersistedUiHistoryItem).
+      // New snapshots preserve both facts; old snapshots encoded one in icon.
       const encoded = item.icon;
-      if (encoded === "budget-exhausted") {
-        return {
-          type: "sidecar",
-          text: item.text,
-          delivery: "budget-exhausted",
-          ...metadata,
-          ...presentationOnly,
-        };
-      }
-      const verdict = encoded === "blocked" ? "blocked" : "revise";
-      return { type: "sidecar", text: item.text, verdict, ...metadata, ...presentationOnly };
+      const verdict = item.sidecarVerdict ?? (encoded === 'blocked' || encoded === 'revise' ? encoded : undefined);
+      const delivery = item.sidecarDelivery ?? (encoded === 'budget-exhausted' ? encoded : undefined);
+      return { type: "sidecar", text: item.text, verdict, delivery, ...metadata, ...presentationOnly };
     }
   }
 }

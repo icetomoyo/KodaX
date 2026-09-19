@@ -86,7 +86,8 @@ export class SessionViewOwner {
           itemId: `${runId}:${meta.providerRequestId}:thinking`, charCount: reduced.state.active.thinkingText.length } : undefined });
       }
     };
-    const notices = createSessionNoticeEvents(sessionId, (notice) => {
+    const notices = createSessionNoticeEvents(sessionId, (notice, meta) => {
+        if (!isPrimary(meta)) { childActivity('progress', notice.text, meta); return; }
         upsert({ ...notice, id: `${runId}:${notice.id ?? randomUUID()}`, timestamp: Date.now() });
         this.checkpoint(sessionId);
       });
@@ -172,12 +173,12 @@ export class SessionViewOwner {
             ...(tool.input ? { inputText: JSON.stringify(tool.input) } : {}) } });
       },
       onToolProgress: (update, meta) => {
-        if (!isPrimary(meta)) return;
+        if (!isPrimary(meta)) { childActivity('progress', update.message, meta); return; }
         const item = state.items.find((item) => item.id === `${runId}:tool:${update.id}`);
         if (item?.tool) upsert({ ...item, tool: { ...item.tool, progress: update.message } });
       },
       onToolResult: (result, meta) => {
-        if (!isPrimary(meta)) return;
+        if (!isPrimary(meta)) { childActivity('tool', `${result.name} completed`, meta); return; }
         const previous = state.items.find((item) => item.id === `${runId}:tool:${result.id}`);
         const status = result.toolResult?.metadata?.cancelled === true ? 'cancelled'
           : result.toolResult ? (result.toolResult.is_error === true ? 'error' : 'success')
@@ -190,7 +191,11 @@ export class SessionViewOwner {
       onSidecarMessage: (event) => {
         upsert({ id: `${runId}:sidecar:${randomUUID()}`, type: 'sidecar', timestamp: Date.now(),
           text: event.suggestedFix ? `${event.content}\nSuggested fix: ${event.suggestedFix}` : event.content,
-          icon: event.delivery === 'budget-exhausted' ? 'budget-exhausted' : event.verdict });
+          icon: event.delivery === 'budget-exhausted' ? 'budget-exhausted' : event.verdict,
+          ...(event.verdict || event.delivery ? { sidecar: {
+            ...(event.verdict ? { verdict: event.verdict } : {}),
+            ...(event.delivery ? { delivery: event.delivery } : {}),
+          } } : {}) });
         this.checkpoint(sessionId);
       },
       onManagedTaskStatus: (status) => {
@@ -215,7 +220,7 @@ export class SessionViewOwner {
         this.checkpoint(sessionId);
       },
       onRetry: (reason, attempt, maxAttempts, meta) => {
-        if (!isPrimary(meta)) return;
+        if (!isPrimary(meta)) { childActivity('progress', createRetryHistoryItem(reason, attempt, maxAttempts).text, meta); return; }
         upsert({ ...createRetryHistoryItem(reason, attempt, maxAttempts), id: `${runId}:retry:${randomUUID()}`, timestamp: Date.now() });
         this.checkpoint(sessionId);
       },
@@ -227,6 +232,13 @@ export class SessionViewOwner {
             typeof event.data?.name === 'string' ? event.data.name : undefined), workflowRunId);
         if (!text) return;
         upsert({ id: `${runId}:workflow:${workflowRunId}:digest:${event.seq}`, type: 'assistant', text, timestamp: Date.now() });
+        this.checkpoint(sessionId);
+      },
+      onRepoIntelligenceTrace: event => {
+        if (state.activityRunId !== runId) return;
+        const text = `[RepoIntel] ${event.summary}`;
+        if (!isPrimary(event)) { childActivity('progress', text, event); return; }
+        upsert({ id: `${runId}:repo-intel:${randomUUID()}`, type: 'info', text, timestamp: Date.now() });
         this.checkpoint(sessionId);
       },
     };
@@ -545,10 +557,15 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
       tool: { callId: tool.id, name: tool.name, status: tool.status, inputText: tool.preview,
         startedAt: tool.startTime, endedAt: tool.endTime },
     }));
+    const verdict = item.sidecarVerdict ?? (item.icon === 'revise' || item.icon === 'blocked' ? item.icon : undefined);
+    const delivery = item.sidecarDelivery ?? (item.icon === 'budget-exhausted' ? item.icon : undefined);
     return [{ id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
       text: item.text, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
       ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+      ...(item.type === 'sidecar' && (verdict || delivery) ? { sidecar: {
+        ...(verdict ? { verdict } : {}), ...(delivery ? { delivery } : {}),
+      } } : {}),
       ...(item.icon !== undefined ? { icon: item.icon } : {}), ...(item.compactText !== undefined ? { compactText: item.compactText } : {}) }];
   });
 }
@@ -646,7 +663,12 @@ export function restoreSessionViewItems(
 
 export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaXSessionUiHistoryItem[] {
   return items.flatMap((item): KodaXSessionUiHistoryItem[] => {
-    if (item.type !== 'tool') return [{ ...item, type: item.type, presentationOnly: true }];
+    if (item.type !== 'tool') {
+      const { sidecar, ...persisted } = item;
+      return [{ ...persisted, type: item.type, presentationOnly: true,
+        ...(item.type === 'sidecar' ? { sidecarVerdict: sidecar?.verdict, sidecarDelivery: sidecar?.delivery,
+          icon: sidecar?.delivery === 'budget-exhausted' ? 'budget-exhausted' : sidecar?.verdict ?? item.icon } : {}) }];
+    }
     if (!item.tool) return [];
     return [{ id: item.id, type: 'tool_group', timestamp: item.timestamp, afterInputId: item.afterInputId, tools: [{
       id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' ? 'cancelled' : item.tool.status,

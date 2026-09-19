@@ -95,6 +95,17 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   const session = await client.sessions.create({ title: 'Activity', projectPath: homeDir });
+  const expectRepoTrace = async (surface: string, output: () => string): Promise<void> => {
+    events!.onRepoIntelligenceTrace?.({ stage: 'routing', summary: `routing-${surface}-fixture` });
+    await expect.poll(output).toContain(`[RepoIntel]routing-${surface}-fixture`);
+  };
+  const expectVerifier = async (output: () => string): Promise<void> => {
+    for (const delivery of ['terminal-block', 'budget-exhausted'] as const) {
+      events!.onSidecarMessage?.({ source: 'sidecar-verifier', recipient: 'user', verdict: 'blocked', delivery,
+        content: `Verifier ${delivery}`, suggestedFix: 'Check the assertion.' });
+      await expect.poll(output).toContain(delivery === 'terminal-block' ? 'SidecarVerifier—blocked' : 'SidecarVerifier—budgetexhausted');
+    }
+  };
   const expectReasoningNotices = async (surface: string, output: () => string): Promise<void> => {
     const settings = await client.sessions.getSettings(session.id);
     const providerRequestId = `reasoning-${surface}`;
@@ -147,10 +158,24 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''), { timeout: 10_000 })
       .toContain('VerifytheHostactivityboundary');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('HOST_BOUNDARY.md');
+    const childMeta = { childAgentId: 'child', childAgentName: 'Host child', contextKind: 'child' as const };
+    events!.onToolProgress?.({ id: 'child-call', message: 'HOST_CHILD_PROGRESS' }, childMeta);
+    await expect.poll(() => stripVTControlCharacters(stdout.text)).toContain('HOST_CHILD_PROGRESS');
+    events!.onToolResult?.({ id: 'child-call', name: 'read', content: 'PRIVATE_CHILD_RESULT' }, childMeta);
+    await expect.poll(() => received.at(-1)?.activity?.children?.[0]?.detail).toBe('read completed');
+    events!.onRetry?.('HOST_CHILD_RETRY', 1, 3, childMeta);
+    await expect.poll(() => stripVTControlCharacters(stdout.text)).toContain('HOST_CHILD_RETRY');
+    events!.onRetryAfter?.({ provider: 'child-provider', waitMs: 1000, reason: 'rate-limit', source: 'retry-after-ms',
+      attempt: 1, maxAttempts: 3 }, childMeta);
+    events!.onProviderRateLimit?.(1, 3, 1000, childMeta);
+    await expect.poll(() => received.at(-1)?.activity?.children?.[0]?.detail).toContain('[Rate limited] (child-provider)');
+    expect(received.at(-1)?.items.some(item => /HOST_CHILD|PRIVATE_CHILD|child-provider/.test(item.text))).toBe(false);
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Validating3findings');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Hostrevieweractive');
     await expectReasoningNotices('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     await expectStreamingActivity('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
+    await expectRepoTrace('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
+    await expectVerifier(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     const snapshot = createWorkflowProcessTracker({ runId: 'inline-workflow', workflowName: 'Host model workflow' }).getSnapshot();
     events!.onWorkflowProcessEvent?.({ type: 'workflow_updated', snapshot });
     events!.onWorkflowAgentDigest?.({ runId: snapshot.runId, event: { type: 'agent_completed', seq: 1,
@@ -275,12 +300,22 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     const classicRun = await runtime.runs.start({ sessionId: session.id, prompt: 'Classic reasoning feedback', options: { agentMode: 'sa' } });
     if (events!.getCostReport) events!.getCostReport.current = () => 'Total cost: $0.012';
     events!.onIterationEnd?.({ iter: 1, maxIter: 10, tokenCount: 10, tokenSource: 'estimate', scope: 'parent' });
-    fixture.ask.mockImplementationOnce(async () => {
+    fixture.ask.mockImplementationOnce(async (rl: readline.Interface) => {
       await expect.poll(() => received.at(-1)?.session.id).toBe(session.id);
       await expectReasoningNotices('classic', commandOutput);
       await expectStreamingActivity('classic', commandOutput);
+      await expectRepoTrace('classic', commandOutput);
+      await expectVerifier(commandOutput);
+      events!.onCompactStart?.();
+      await expect.poll(commandOutput).toContain('[KodaX]Compactingcontext...');
+      events!.onCompactEnd?.();
+      const previousStops = abort.mock.calls.length;
+      rl.emit('SIGINT');
+      await expect.poll(() => abort.mock.calls.length).toBe(previousStops + 1);
       finish?.({ success: true, lastText: 'Done', messages: [], sessionId: session.id });
       await classicRun.result;
+      // This controlled executor finishes successfully after abort; observe the Host's actual terminal fact.
+      expect(await client.runs.read(classicRun.runId)).toMatchObject({ phase: 'completed', stop: { state: 'confirmed' } });
       return '/cost';
     }).mockImplementation(async () => (await classicCommands.next()).value ?? '/exit');
     try {

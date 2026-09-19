@@ -75,8 +75,7 @@ describe("restore-history / sidecar items", () => {
     expect(item.verdict).toBeUndefined();
   });
 
-  it("treats unknown icon values as revise (safe default)", () => {
-    // Unrecognized icon value → falls back to revise verdict.
+  it("keeps unknown legacy sidecar classification unspecified", () => {
     const result = restoreHistoryItemsFromSession({
       messages: [],
       uiHistory: [persistedSidecar("Some text.", "unknown-value")],
@@ -84,7 +83,15 @@ describe("restore-history / sidecar items", () => {
     const item = result[0];
     expect(item?.type).toBe("sidecar");
     if (item?.type !== "sidecar") throw new Error("expected sidecar");
-    expect(item.verdict).toBe("revise");
+    expect(item.verdict).toBeUndefined();
+  });
+
+  it('preserves explicit verdict and delivery ahead of the legacy icon', () => {
+    const [item] = restoreHistoryItemsFromSession({ messages: [], uiHistory: [{
+      type: 'sidecar', text: 'Explicit result', icon: 'revise',
+      sidecarVerdict: 'blocked', sidecarDelivery: 'budget-exhausted',
+    }] });
+    expect(item).toMatchObject({ type: 'sidecar', verdict: 'blocked', delivery: 'budget-exhausted' });
   });
 
   it("preserves sidecar items alongside other history item types after restore", () => {
