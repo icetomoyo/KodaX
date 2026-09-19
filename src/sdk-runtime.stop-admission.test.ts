@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { FileSessionStorage } from '@kodax-ai/repl';
+import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { createKodaXRuntime } from './sdk-runtime.js';
@@ -65,6 +66,10 @@ async function fixture(sharedDaemonHost: boolean) {
       releaseNext?.();
       await run.result;
       await runtime.close();
+      // Natural completion can leave the existing review drain reading workspace
+      // metadata. Keep its provider/env alive during the bounded drain wait;
+      // directory removal below still fails if resources remain locked.
+      await awaitLatestCodingMemoryReviewDrain(5_000);
       unregister();
       vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
@@ -163,9 +168,10 @@ it.each(['hydrated', 'persisted-only'] as const)('rejects another live owner for
   // Product Hosts cannot share a Session writer. Share only durable Run controls;
   // the foreign observer has no Session history and must reject by Run ownership first.
   const observer = await createKodaXRuntime({ homeDir: f.root, sessionsDir: path.join(f.root, 'observer-sessions'), sharedDaemonHost: true });
+  let target = f.run;
   try {
     // The second Run did not exist when the observer hydrated its Run records.
-    const target = record === 'hydrated' ? f.run : await f.runtime.runs.start({
+    target = record === 'hydrated' ? f.run : await f.runtime.runs.start({
       sessionId: f.session.id, prompt: 'queued after observer started', mode: 'managed_task',
       options: { model: 'stop-test', lsp: false },
     });
@@ -174,7 +180,15 @@ it.each(['hydrated', 'persisted-only'] as const)('rejects another live owner for
     await expect(observer.sessions.cancel({ sessionId: f.session.id, expectedRunId: target.runId, requestId: 'foreign-owner' }))
       .rejects.toMatchObject({ code: 'conflict', denialSource: 'run_ownership' });
     expect(f.signal()?.aborted).toBe(false);
-  } finally { await observer.close(); await f.close(); }
+  } finally {
+    await observer.close();
+    // Do not release the first Run while this fixture-only queued Run can start.
+    if (target !== f.run) {
+      await f.runtime.runs.abort(target.runId);
+      await target.result;
+    }
+    await f.close();
+  }
 });
 
 it('preserves shared daemon profile and run-control scope checks with a real locked Run', async () => {
