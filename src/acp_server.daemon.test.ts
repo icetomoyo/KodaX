@@ -20,6 +20,8 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
   const llm = await import('@kodax-ai/llm');
   let hold = false;
   let providerStarted = false;
+  let markHeldProviderEntered = () => {};
+  const heldProviderEntered = new Promise<void>(resolve => { markHeldProviderEntered = resolve; });
   let callTool = false;
   let callMcp = false;
   const { createMcpTestServerFixture } = await import('@kodax-ai/agent');
@@ -34,7 +36,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
         return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } } }], stopReason: 'tool_use' };
       }
       providerStarted = true;
-      if (hold) options?.onTextDelta?.('Waiting for Host interaction.');
+      if (hold) { markHeldProviderEntered(); options?.onTextDelta?.('Waiting for Host interaction.'); }
       if (hold) await new Promise<void>((_resolve, reject) => {
         const abort = () => reject(new DOMException('Cancelled', 'AbortError'));
         if (options?.signal?.aborted) abort();
@@ -125,7 +127,8 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     hold = true;
     providerStarted = false;
     const heldPrompt = client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Wait for approval.' }] });
-    await expect.poll(() => providerStarted).toBe(true);
+    await heldProviderEntered;
+    expect(providerStarted).toBe(true);
     const active = (await runtime.runs.list({ sessionId: session.sessionId })).find(run => run.phase === 'running');
     expect(active).toBeDefined();
     let queuedSettled = false;
