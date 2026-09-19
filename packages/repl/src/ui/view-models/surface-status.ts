@@ -70,9 +70,15 @@ export function buildSurfaceStatusBarProps(
   const parentTokens = activity?.parentContextTokens
     ?? (activity?.context?.scope === 'parent' ? activity.context.tokenCount : undefined)
     ?? options.parentContextTokens;
+  // Host-driven AMA sessions never publish parentContextTokens (iteration
+  // ends are worker-scoped), so the idle cell must fall back to the last
+  // API-known reading instead of the dialog-only estimate. Parent-side
+  // sources keep precedence: mixed sessions accumulate in the parent.
+  const lastRunContextTokens = activity?.context?.tokenCount
+    ?? activity?.usage?.totalTokens;
   const currentTokens = options.isLoading
     ? activity?.context?.tokenCount ?? parentTokens
-    : options.agentMode === 'sa' ? parentTokens : options.parentContextTokens ?? parentTokens;
+    : options.agentMode === 'sa' ? parentTokens : options.parentContextTokens ?? parentTokens ?? lastRunContextTokens;
   const scope = options.isLoading ? activity?.context?.scope ?? 'parent' : 'parent';
   const executionBudget = options.isLoading && activity?.contextBudget?.scope === scope ? activity.contextBudget : undefined;
   const contextUsage = executionBudget && currentTokens !== undefined ? {

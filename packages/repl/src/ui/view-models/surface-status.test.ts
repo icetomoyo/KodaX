@@ -165,8 +165,44 @@ describe("surface-status", () => {
   });
 });
 
-it("carries the execution scope on host-budget context usage", () => {
-  const options = {
+// FEATURE_298 idle context truth: Host-driven AMA sessions never publish
+// parentContextTokens (worker-scoped iteration ends), so the idle cell used
+// to fall through to the dialog-only estimate and understate the real
+// LLM-facing context. The last API-known reading must win at idle.
+it("shows the last API-known context at idle when the parent dialog has no token truth", () => {
+  const base = {
+    sessionId: "s1", permissionMode: "accept-edits" as const, agentMode: "ama" as const,
+    provider: "deepseek", model: "deepseek-flash", isTranscriptMode: false, isLoading: false,
+    streamingState: { isThinking: false, thinkingCharCount: 0, activeToolCalls: [],
+      toolInputCharCount: 0, toolInputContent: "", currentIteration: 0, isCompacting: false },
+    contextUsage: { currentTokens: 10200, contextWindow: 1_000_000, triggerPercent: 75 },
+    clientActivity: { runId: "run",
+      context: { tokenCount: 40867, tokenSource: "api" as const, scope: "worker" as const },
+      usage: { inputTokens: 39530, outputTokens: 1337, totalTokens: 40867 } },
+  };
+  const props = buildSurfaceStatusBarProps(base);
+  expect(props.contextUsage?.currentTokens).toBe(40867);
+  // Nothing is running at idle, so the cell carries no scope label.
+  expect(props.contextUsage?.scope).toBeUndefined();
+  expect(props.tokenUsage).toEqual({ input: 39530, output: 1337, total: 40867 });
+  // usage-only truth also beats the dialog estimate
+  const usageOnly = buildSurfaceStatusBarProps({ ...base,
+    clientActivity: { runId: "run", usage: { inputTokens: 39530, outputTokens: 1337, totalTokens: 40867 } } });
+  expect(usageOnly.contextUsage?.currentTokens).toBe(40867);
+  // parent truth keeps precedence over a later worker reading
+  const parentWins = buildSurfaceStatusBarProps({ ...base,
+    clientActivity: { ...base.clientActivity, parentContextTokens: 50000 } });
+  expect(parentWins.contextUsage?.currentTokens).toBe(50000);
+  // fresh session without any truth keeps the dialog estimate
+  const fresh = buildSurfaceStatusBarProps({ ...base, clientActivity: undefined });
+  expect(fresh.contextUsage?.currentTokens).toBe(10200);
+  // SA idle stays on parent-dialog sources and never shows the worker reading
+  const saIdle = buildSurfaceStatusBarProps({ ...base, agentMode: "sa" as const, parentContextTokens: 700,
+    clientActivity: { ...base.clientActivity, parentContextTokens: 800 } });
+  expect(saIdle.contextUsage?.currentTokens).toBe(800);
+});
+
+it("carries the execution scope on host-budget context usage", () => {  const options = {
     sessionId: "session", permissionMode: "accept-edits" as const, agentMode: "ama" as const,
     provider: "p", model: "m", isTranscriptMode: false,
     streamingState: { currentTool: undefined, activeToolCalls: [], isThinking: false,
