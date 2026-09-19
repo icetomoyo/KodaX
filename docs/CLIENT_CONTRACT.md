@@ -85,6 +85,8 @@
 
 `catalog.commands/skills` 的 `source` 是 Host 解析出的注册来源字符串。Provider 的 capabilityProfile 描述后端执行特点；客户端不自行猜测 Provider 行为，不将探测失败伪装成不支持。config/Session 设置可选字段及默认规则由类型与 Host 解析决定，不应靠 UI 复制默认值逻辑。
 
+产品 Session 未在 profile 或会话覆盖中指定权限模式时，Host 的有效模式为 `accept-edits`，`view.settings` 与产品输入实际执行使用同一默认。`getSettings` 继续只返回原始会话覆盖，清除覆盖后重新继承 Host 默认，不补写 config 或 Session 文件。明确的 `plan`、`auto`、`full-access` 等仍按既有优先级处理。底层 `/runtime` 未声明权限的调用不因此取得产品默认授权；UI 不能通过启动时写入本地默认修补两端差异。
+
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 
 无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入和 MCP 表单等人工提问使用既有 `cancel` 回答，不代填默认值。工具收到拒绝或取消，Run 仍按正常执行结果结算；不把取消一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。

@@ -4418,7 +4418,7 @@ async function createKodaXRuntimeInternal(
     const latest = currentRuns.reduce<RuntimeRunStatus | undefined>((last, run) =>
       !last || run.startedAt > last.startedAt ? run : last, undefined);
     const config = readRuntimeConfig(configFile);
-    const settings = resolveEffectiveRuntimeSessionSettings(config, rawSettings);
+    const settings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
     return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation, liveItems),
       parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
@@ -10992,14 +10992,14 @@ function createRuntimeRunService(deps: {
 
   const settingsSubscription = deps.settingsOwner.subscribe(
     (sessionId, current, patch) => {
-      const settings = resolveEffectiveRuntimeSessionSettings(
-        readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")), current.value);
+      const config = readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json"));
       for (const record of deps.runs.values()) {
         if (
           record.sessionId !== sessionId ||
           (record.phase !== "queued" && !isActiveRunPhase(record.phase))
         )
           continue;
+        const settings = resolveEffectiveRuntimeSessionSettings(config, current.value, record.productInput !== undefined);
         // Low-level queued Runs have already captured model selection. Product
         // inputs do not create a Run until consumption, when settings are read.
         if (record.phase !== "queued" && "provider" in patch) {
@@ -11160,7 +11160,8 @@ function createRuntimeRunService(deps: {
       };
     }
     const settings = resolveEffectiveRuntimeSessionSettings(
-      readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")), (await deps.settingsOwner.read(input.sessionId)).value);
+      readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")), (await deps.settingsOwner.read(input.sessionId)).value,
+      productInput !== undefined);
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     const options = buildEffectiveRuntimeOptions(
       { extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
@@ -21016,8 +21017,12 @@ function deleteMutableSetting<K extends keyof RuntimeSessionSettings>(
   )[key];
 }
 
-function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: RuntimeSessionSettings): RuntimeSessionSettings {
-  const settings = { ...parseRuntimeSessionSettings(config), ...overrides };
+function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: RuntimeSessionSettings,
+  productSession = false): RuntimeSessionSettings {
+  // Product defaults are effective facts only; raw overrides and low-level Run
+  // callers retain their existing semantics when no permission was specified.
+  const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const } : {}),
+    ...parseRuntimeSessionSettings(config), ...overrides };
   if (settings.permissionMode === 'plan' && settings.effort === undefined
     && isRecord(config) && typeof config.planModeEffort === 'string') {
     return { ...settings, effort: config.planModeEffort };
@@ -23373,11 +23378,12 @@ function createRuntimeSessionAutoModeGuardrail(input: {
   ): Promise<
     RuntimeOwnedAutoModeGuardrail | undefined
   > => {
+    const record = input.getRecord();
     const settings = resolveEffectiveRuntimeSessionSettings(
       readRuntimeConfig(path.join(input.configHome, 'config.json')),
       (await input.settingsOwner.read(input.sessionId)).value,
+      record?.productInput !== undefined,
     );
-    const record = input.getRecord();
     if (record) {
       record.permissionMode = settings.permissionMode;
       record.autoModeClassifierModel = settings.autoModeClassifierModel;

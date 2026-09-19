@@ -12,6 +12,7 @@ import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 
 /** First scripted Provider turn raises one tool call; later turns answer in plain text. */
 class InteractionProvider extends KodaXBaseProvider {
@@ -87,6 +88,45 @@ function questionToolCall(): KodaXToolUseBlock {
     },
   };
 }
+
+it.each(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const)(
+  'uses the Host effective permission default for questions (%s) without saving an override', async mode => {
+    scriptedToolCall = () => [questionToolCall()];
+    const legacyId = `legacy-${randomUUID()}`;
+    if (mode === 'legacy') {
+      const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'),
+        configHome: path.join(homeDir, '.kodax') });
+      await storage.createGenerated(legacyId, { title: 'Saved without a permission override', gitRoot: homeDir,
+        messages: [{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier answer' }] });
+    }
+    const session = mode === 'legacy' ? await first.sessions.read(legacyId)
+      : await first.sessions.create({ projectPath: homeDir });
+    await first.sessions.updateSettings(session.id, { agentMode: 'sa' });
+    if (mode === 'cleared') {
+      await first.sessions.updateSettings(session.id, { permissionMode: 'plan' });
+      await first.sessions.updateSettings(session.id, { permissionMode: null });
+    } else if (mode !== 'absent' && mode !== 'legacy') await first.sessions.updateSettings(session.id, { permissionMode: mode });
+    const views: ClientSessionView[] = [];
+    const observation = await second.sessions.observe(session.id, view => views.push(view));
+    const active = await first.inputs.submit({ sessionId: session.id, inputId: 'default-question', text: 'Ask me.' });
+    let settled = false;
+    try {
+      await expect.poll(() => views.at(-1)?.interactions[0], { timeout: 15_000 }).toBeTruthy();
+      const question = views.at(-1)!.interactions[0]!;
+      expect(question.kind).toBe('question');
+      expect(views.at(-1)!.settings.permissionMode).toBe(mode === 'plan' ? 'plan' : 'accept-edits');
+      await second.interactions.respond(question.requestId, { kind: 'question', answer: 'hold' });
+      expect(await first.runs.await(active.runId!)).toMatchObject({ phase: 'completed' });
+      settled = true;
+      expect((await first.sessions.getSettings(session.id)).permissionMode)
+        .toBe(mode === 'absent' || mode === 'legacy' || mode === 'cleared' ? undefined : mode);
+      expect((await first.config.read()).permissionMode).toBeUndefined();
+    } finally {
+      observation.close();
+      if (!settled) await first.sessions.cancel({ sessionId: session.id, expectedRunId: active.runId!, requestId: 'cleanup-question' });
+    }
+  },
+);
 
 it('exposes the full plan through both Product clients and applies only the first approval on the Host', async () => {
   const plan = `Final plan\n${'Review the complete implementation and validation details.\n'.repeat(400)}END OF PLAN`;
