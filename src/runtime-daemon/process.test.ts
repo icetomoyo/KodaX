@@ -678,6 +678,15 @@ describe("runtime daemon child startup", () => {
     expect(child.unref).not.toHaveBeenCalled();
   });
 
+  it('reports a conflicting committed candidate instead of claiming it was reclaimed', async () => {
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888, exit: new Promise(() => undefined), unref: vi.fn(),
+      terminate: vi.fn(async () => 'retained' as const),
+    };
+    await expect(waitForHealthyDaemonStartup(paths, {}, child, healthy(999)))
+      .rejects.toThrow(/already published.*competing owner/);
+  });
+
   it("accepts a competing startup child that exits during exact cleanup", async () => {
     const child: RuntimeDaemonStartupProcess = {
       pid: 889,

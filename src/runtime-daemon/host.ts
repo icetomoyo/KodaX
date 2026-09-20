@@ -43,6 +43,8 @@ export interface RuntimeDaemonHostOptions {
   /** Trusted owner fact; never derived from caller-advertised capabilities. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
+  /** @internal Commit shared ownership before this endpoint admits clients. */
+  readonly commitStartup?: () => void;
 }
 
 export interface RuntimeDaemonHost {
@@ -94,6 +96,7 @@ export async function startRuntimeDaemonHost(
   });
   let ready: RuntimeDaemonState;
   try {
+    options.commitStartup?.();
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
       createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({

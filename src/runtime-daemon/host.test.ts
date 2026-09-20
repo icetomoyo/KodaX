@@ -157,6 +157,25 @@ afterEach(async () => {
 });
 
 describe("runtime daemon host", () => {
+  it('does not publish an endpoint when its startup handoff was cancelled', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const runtime = makeRuntime();
+    const endpoint = await makeTestEndpoint();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error('Expected test host lock.');
+    let accidentalHost: Awaited<ReturnType<typeof startRuntimeDaemonHost>> | undefined;
+    try {
+      await expect(startRuntimeDaemonHost({ runtime, paths, lock, endpoint,
+        commitStartup: () => { throw new Error('Startup was cancelled before publication'); },
+      }).then(host => { accidentalHost = host; return host; })).rejects.toThrow(/cancelled/);
+      await expect(createRuntimeDaemonSocketClientTransport(endpoint)).rejects.toThrow();
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+      expect(readRuntimeDaemonState(paths)).toBeUndefined();
+    } finally { await accidentalHost?.close(); }
+  });
+
   it.each(['manual', 'automatic'] as const)(
     'restores %s summary credentials after A is replaced by B, B closes, and A reconnects',
     async (mode) => {

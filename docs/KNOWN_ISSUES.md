@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-14_
+_Last Updated: 2026-09-20_
 
 ---
 
@@ -728,6 +728,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 337 | High | Resolved | Windows startup candidate survives launcher death; safe handoff must preserve concurrent clients | confirmed v0.7.96-rc.8; first affected release unknown | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
+| 336 | High | Resolved | REPL acceptance probes leave temporary shared daemons running after teardown | a72f test fixtures, observed 2026-09-17/19 | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | `v0.7.96-rc.5` | 2026-09-14 | 2026-09-14 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
@@ -950,6 +952,70 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 337: Windows startup candidate survives launcher death
+
+- **Priority**: High
+- **Status**: Resolved; startup handoff implemented and scoped acceptance passed
+- **Introduced**: confirmed v0.7.96-rc.8; first affected release unknown
+- **Created / Resolution Date**: 2026-09-20
+- **Fixed**: v0.7.96-rc.8 working tree; not released
+- **Original Problem**: killing the launcher after low-level Job readiness but
+  before successful daemon handoff leaves the Node wrapper, PowerShell Job
+  owner and target alive. A bounded real-process probe reproduced this and
+  reclaimed its own processes afterward. This is distinct from the ordinary
+  persistent daemon policy and is not proven to have caused the 30 old fixtures.
+- **Root Cause**: the wrapper handles explicit termination but lacks an atomic
+  candidate-to-persistent handoff. Adding unconditional IPC-disconnect cleanup
+  is unsafe: the server can admit another client before the first launcher
+  finishes its health check and releases its startup handle.
+- **Implementation**: the existing Windows wrapper and daemon arbitrate once
+  using exclusive creation of a private decision file. The same commit precedes
+  both A2A and daemon RPC publication. Launcher death, cancellation and timeout
+  reclaim unpublished candidates; committed shared owners survive and return a
+  retained result. Abort markers remain until target exit is verified. No new
+  process, steady-state polling or process scan is added; warm reuse is unchanged.
+- **Verification**: real Windows supervisor tests, host/startup/owner/shutdown
+  regressions and four built lifecycle cases pass, including another client's
+  completed SSE Run after launcher death or cancellation. Ten alternating paired
+  measurements found no repeatable regression: cold medians 3158.69 / 3172.84 ms
+  (baseline / candidate, +0.45%), warm means 42.018 / 41.985 ms. This bounded
+  comparison does not establish absolute zero impact. Full results, file-error
+  coverage and review findings are tracked in the
+  [production regression guide](test-guides/ISSUE_337_v0.7.96_REGRESSION_GUIDE.md).
+  The full run was not green: all 51 failed assertions were classified through
+  environment corrections and baseline controls; 48 passed follow-up checks,
+  three shared output-snapshot assertions failed in both arms, and a Vitest
+  reporting timeout also reproduced without this patch. A HEAD-plus-only-this-fix
+  checkout independently passed package/bundle builds, typechecks, 24 core tests
+  and four built lifecycle acceptance cases.
+
+### Issue 336: REPL probes leave their temporary daemons running
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: a72f test fixtures; observed 2026-09-17 and 2026-09-19
+- **Created / Resolution Date**: 2026-09-20
+- **Fixed**: v0.7.96-rc.8 working tree; not released
+- **Original Problem**: repeated parity probes create unique Homes for Ink and
+  Classic; closing the PTY leaves the shared daemon alive. Inspection found 26
+  parity and four question-gate daemons. Their Windows named pipes remained
+  present even though there were no TCP listeners.
+- **Resolution**: both probes retain their daemon owner, stop pending fixture
+  runs, request shutdown and verify daemon / Job-owner exit before returning.
+  Terminal cleanup failure cannot skip daemon cleanup. An isolated SDK process
+  uses the fixture's Home with auto-start disabled; changed owners are rejected.
+  The existing test-only parent watcher is enabled for abrupt probe exit. The
+  question probe is now tracked and no longer forces exit code zero in finally.
+- **Files Changed**: `tests/repl-pty-parity-probe.mjs`,
+  `tests/repl-question-gate-probe.mjs`, `tests/repl-fixture-daemon.mjs`.
+- **Tests Added**: `tests/repl-fixture-daemon.test.mjs`; real daemon teardown,
+  pending local-provider run cancellation, no-start cleanup, and final cleanup
+  after removal of daemon state. The ordinary teardown and removed-state cases
+  were observed failing before their fixes, then passing.
+- **Limits**: this does not clean pre-existing residue. Fixture teardown uses
+  the existing test-parent mechanism for abrupt probe exit; production cleanup
+  before public service publication is handled separately by Issue 337.
 
 ### Issue 335: Invalid existing image files cause repeated GLM Coding HTTP 400
 
@@ -14871,11 +14937,17 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 214 (34 Open, 180 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 216 (34 Open, 182 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-20: REPL fixture lifecycle and Windows startup handoff fixed
+
+- Resolved fixture teardown Issue 336 and production startup handoff Issue 337
+  with independent review, controlled performance measurements and execution
+  regression checks. Full-run failures and baseline controls remain documented.
 
 ### 2026-09-07: Issue 332 resolved (bundled Provider credential scope identity)
 

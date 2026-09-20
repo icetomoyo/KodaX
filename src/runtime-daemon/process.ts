@@ -107,7 +107,7 @@ export interface RuntimeDaemonStartupProcess {
   readonly exit: Promise<RuntimeDaemonStartupExit>;
   hasExited?(): boolean;
   unref(): void;
-  terminate(): Promise<void>;
+  terminate(): Promise<void | 'retained'>;
 }
 
 export class RuntimeDaemonProcessCleanupIncompleteError extends Error {
@@ -811,7 +811,7 @@ export async function spawnRuntimeDaemonServeProcess(
   const bootstrapLog = openRuntimeDaemonBootstrapLog(paths);
   let child: ChildProcess;
   let daemonPid: number | undefined;
-  let terminateContainedProcess: (() => Promise<void>) | undefined;
+  let terminateContainedProcess: (() => Promise<void | 'retained'>) | undefined;
   let releaseContainedProcess: (() => void) | undefined;
   try {
     if (process.platform === "win32") {
@@ -822,6 +822,7 @@ export async function spawnRuntimeDaemonServeProcess(
         env: launch.env,
         logFile: runtimeDaemonBootstrapLogPath(paths),
         startupTimeoutMs: input.startupTimeoutMs,
+        startupHandoff: true,
       });
       child = contained.supervisor;
       daemonPid = contained.processPid;
@@ -864,7 +865,12 @@ async function terminateCompetingStartupChild(
 ): Promise<void> {
   if (child.hasExited?.() === true) return;
   try {
-    await child.terminate();
+    if (await child.terminate() === 'retained') {
+      throw new RuntimeDaemonStartupError(
+        'Startup candidate already published a service while observing a competing owner.',
+        'identity_mismatch',
+      );
+    }
   } catch (error: unknown) {
     // A lock loser exits before host initialization. On Windows, that exit can
     // land between the liveness check and exact process-tree capture.
@@ -879,7 +885,7 @@ export function createRuntimeDaemonStartupProcess(
   child: ChildProcess,
   exit: Promise<RuntimeDaemonStartupExit>,
   processPid = child.pid,
-  terminateContainedProcess?: () => Promise<void>,
+  terminateContainedProcess?: () => Promise<void | 'retained'>,
   releaseContainedProcess?: () => void,
 ): RuntimeDaemonStartupProcess {
   return {
@@ -894,7 +900,10 @@ export function createRuntimeDaemonStartupProcess(
     },
     async terminate() {
       if (terminateContainedProcess !== undefined) {
-        await terminateContainedProcess();
+        if (await terminateContainedProcess() === 'retained') {
+          releaseContainedProcess?.();
+          return 'retained';
+        }
         if (!(await didExitWithin(exit, 1_000))) {
           throw new Error(
             `Runtime daemon Job supervisor ${child.pid ?? "unknown"} did not exit after termination.`,

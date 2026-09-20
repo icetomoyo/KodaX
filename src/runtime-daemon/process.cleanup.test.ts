@@ -29,6 +29,17 @@ function fakeChild(): ChildProcess {
 }
 
 describe("Runtime daemon startup process cleanup", () => {
+  it('detaches a committed Windows owner without waiting for its intentional persistence', async () => {
+    const child = fakeChild();
+    Object.assign(child, { exitCode: null });
+    const release = vi.fn();
+    const processHandle = createRuntimeDaemonStartupProcess(child,
+      new Promise(() => undefined), 5_252, async () => 'retained' as const, release);
+    await expect(processHandle.terminate()).resolves.toBe('retained');
+    expect(release).toHaveBeenCalledOnce();
+    expect(killChildProcessTreeMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     killChildProcessTreeMock.mockReset();
   });

@@ -9,6 +9,7 @@ const PAYLOAD_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_LAUNCH';
 const READY_FILE_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_READY_FILE';
 const SCRIPT_FILE_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE';
 const OWNER_AFTER_READY_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_TEST_OWNER_AFTER_READY';
+const HANDOFF_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_HANDOFF';
 
 // PowerShell launched detached by Node exits without executing its command on
 // supported Windows hosts. This detached Node bootstrap keeps one ordinary
@@ -17,8 +18,11 @@ const OWNER_AFTER_READY_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_TEST_OWNER_AFTER_READY
 // for startup cleanup and reports the public owner PID over private Node IPC.
 const WINDOWS_JOB_WRAPPER_SOURCE = String.raw`
 const { spawn } = require('node:child_process');
-const { existsSync, writeFileSync } = require('node:fs');
+const { appendFileSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const readyFile = process.env.${READY_FILE_ENV};
+const scriptFile = process.env.${SCRIPT_FILE_ENV};
+const handoffFile = process.env.${HANDOFF_ENV};
+const logFile = JSON.parse(Buffer.from(process.env.${PAYLOAD_ENV}, 'base64').toString('utf8')).logFile;
 const childEnv = { ...process.env };
 delete childEnv.${SCRIPT_FILE_ENV};
 delete childEnv.${OWNER_AFTER_READY_ENV};
@@ -27,10 +31,97 @@ const fail = (message) => {
 };
 let child;
 let childExited = false;
+let phase = 'candidate';
+const reportError = (error) => {
+  try { appendFileSync(logFile, 'Windows Job startup control failed: ' + error.message + '\n'); }
+  catch (logError) { process.stderr.write(String(logError) + '\n'); }
+};
+const cleanHandoff = () => {
+  if (!handoffFile) return;
+  try { rmSync(handoffFile, { force: true }); }
+  catch (error) { reportError(error); }
+};
+const cleanReady = () => {
+  try { rmSync(readyFile, { force: true }); }
+  catch (error) { reportError(error); }
+};
+const cleanScript = () => {
+  try { rmSync(scriptFile, { force: true }); }
+  catch (error) { reportError(error); }
+};
+const cleanAfterExit = async () => {
+  if (!handoffFile) return;
+  cleanScript();
+  if (phase === 'aborting') {
+    // The wrapper owns this ready file until teardown. Missing publication
+    // proves the suspended target was never resumed; malformed data does not.
+    let targetPid;
+    try {
+      const ready = JSON.parse(readFileSync(readyFile, 'utf8'));
+      if (!Number.isSafeInteger(ready.processPid) || ready.processPid <= 0
+        || ready.containmentSupervisorPid !== child.pid) throw new Error('Cannot verify startup target identity after Job owner exit.');
+      targetPid = ready.processPid;
+    } catch (error) {
+      if (error.code !== 'ENOENT') { reportError(error); return; }
+    }
+    const deadline = Date.now() + 2000;
+    while (targetPid !== undefined) {
+      try { process.kill(targetPid, 0); }
+      catch (error) {
+        if (error.code === 'ESRCH') break;
+        reportError(error); return;
+      }
+      if (Date.now() >= deadline) {
+        reportError(new Error('Startup target did not exit; preserving abort marker.'));
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  cleanHandoff();
+  cleanReady();
+};
+const stopCandidate = () => {
+  if (childExited || phase === 'aborting') return 'terminating';
+  if (phase === 'persistent') return 'retained';
+  if (handoffFile) {
+    // Only this wrapper and the trusted target create the one-shot marker.
+    // After observing commit, remember it before removing the marker.
+    let descriptor;
+    try { descriptor = openSync(handoffFile, 'wx', 0o600); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      phase = 'persistent';
+      cleanHandoff();
+      cleanReady();
+      cleanScript();
+      return 'retained';
+    }
+    phase = 'aborting';
+    try { closeSync(descriptor); } catch (error) { reportError(error); }
+  } else phase = 'aborting';
+  if (child?.pid) child.kill();
+  else process.exit(1);
+  return 'terminating';
+};
+const reply = (message) => {
+  if (!process.connected) return;
+  try { process.send(message, (error) => { if (error) reportError(error); }); }
+  catch (error) { reportError(error); }
+};
 process.on('message', (message) => {
   if (message?.kind !== 'terminate') return;
-  if (child?.pid && !childExited) child.kill();
-  else process.exit(1);
+  try {
+    const outcome = stopCandidate();
+    if (handoffFile) reply({ kind: 'termination', requestId: message.requestId, outcome });
+  } catch (error) {
+    reportError(error);
+    reply({ kind: 'termination', requestId: message.requestId, error: error.message });
+  }
+});
+if (handoffFile) process.on('disconnect', () => {
+  try { stopCandidate(); }
+  catch (error) { reportError(error); }
 });
 child = spawn('powershell.exe', [
   '-NoProfile',
@@ -40,18 +131,30 @@ child = spawn('powershell.exe', [
   '-File',
   process.env.${SCRIPT_FILE_ENV},
 ], { detached: false, windowsHide: true, stdio: 'ignore', env: childEnv });
-child.once('error', (error) => fail(error.message));
-child.once('exit', (code) => {
+child.once('error', (error) => {
+  if (!handoffFile) { fail(error.message); return; }
+  reportError(error);
+  if (child.pid !== undefined) return;
+  // A failed spawn emits error without exit; there is no Job or target to wait for.
   childExited = true;
-  if (code !== 0) fail('PowerShell supervisor exited before readiness.');
+  cleanScript();
+  cleanHandoff();
+  cleanReady();
+  process.exit(1);
+});
+child.once('exit', async (code) => {
+  childExited = true;
+  if (code !== 0 && !handoffFile) fail('PowerShell supervisor exited before readiness.');
+  await cleanAfterExit();
   process.exit(code ?? 1);
 });
 const publishOwner = () => {
   if (!Number.isSafeInteger(child.pid) || child.pid <= 0 || !process.send) return;
   process.send({ kind: 'owner', pid: child.pid }, (error) => {
     if (!error) return;
-    child.kill();
-    fail('Could not publish the PowerShell Job owner: ' + error.message);
+    try { stopCandidate(); } catch (cleanupError) { reportError(cleanupError); }
+    if (handoffFile) reportError(new Error('Could not publish the PowerShell Job owner: ' + error.message));
+    else fail('Could not publish the PowerShell Job owner: ' + error.message);
   });
 };
 if (process.env.${OWNER_AFTER_READY_ENV} === '1') {
@@ -375,8 +478,10 @@ export interface WindowsJobContainedProcess {
   /** PID of the PowerShell process that owns the Job handle. */
   readonly containmentSupervisorPid: number;
   readonly supervisor: ChildProcess;
+  /** Handoff-enabled targets must commit publication before their launcher releases. */
   release(): void;
-  terminate(): Promise<void>;
+  /** A committed shared target is retained; this is not proof of process exit. */
+  terminate(): Promise<void | 'retained'>;
 }
 
 export interface WindowsJobContainedSpawnInput {
@@ -386,6 +491,8 @@ export interface WindowsJobContainedSpawnInput {
   readonly env: NodeJS.ProcessEnv;
   readonly logFile: string;
   readonly startupTimeoutMs?: number;
+  /** @internal Enable daemon-owned publication versus startup-abort arbitration. */
+  readonly startupHandoff?: boolean;
 }
 
 export function quoteWindowsCommandLineArg(value: string): string {
@@ -405,6 +512,9 @@ export async function spawnWindowsJobContainedProcess(
   }
   const readyFile = path.join(os.tmpdir(), `kodax-daemon-job-${randomUUID()}.ready`);
   const scriptFile = path.join(os.tmpdir(), `kodax-daemon-job-${randomUUID()}.ps1`);
+  const handoffFile = input.startupHandoff
+    ? path.join(os.tmpdir(), `kodax-daemon-handoff-${randomUUID()}`)
+    : undefined;
   writeFileSync(scriptFile, WINDOWS_JOB_SUPERVISOR_SCRIPT, {
     encoding: 'utf8',
     flag: 'wx',
@@ -422,6 +532,7 @@ export async function spawnWindowsJobContainedProcess(
   delete supervisorEnv.KODAX_DAEMON_JOB_CONTAINED;
   delete supervisorEnv.KODAX_DAEMON_JOB_SUPERVISOR_PID;
   delete supervisorEnv.KODAX_DAEMON_JOB_NAME;
+  delete supervisorEnv[HANDOFF_ENV];
   let supervisor: ChildProcess;
   try {
     supervisor = spawn(process.execPath, ['-e', WINDOWS_JOB_WRAPPER_SOURCE], {
@@ -434,6 +545,7 @@ export async function spawnWindowsJobContainedProcess(
         [PAYLOAD_ENV]: payload,
         [READY_FILE_ENV]: readyFile,
         [SCRIPT_FILE_ENV]: scriptFile,
+        ...(handoffFile === undefined ? {} : { [HANDOFF_ENV]: handoffFile }),
       },
     });
   } catch (error) {
@@ -447,7 +559,9 @@ export async function spawnWindowsJobContainedProcess(
     input.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
   ).catch(async (error: unknown) => {
     try {
-      await terminateSupervisor(supervisor);
+      if (await terminateSupervisor(supervisor, undefined, input.startupHandoff) === 'retained') {
+        releaseSupervisor(supervisor);
+      }
     } catch (cleanupError: unknown) {
       throw new AggregateError(
         [error, cleanupError],
@@ -456,14 +570,21 @@ export async function spawnWindowsJobContainedProcess(
     }
     throw error;
   }).finally(() => {
-    rmSync(readyFile, { force: true });
+    if (handoffFile === undefined) rmSync(readyFile, { force: true });
     rmSync(scriptFile, { force: true });
   });
+  let released = false;
   return {
     ...readiness,
     supervisor,
-    release: () => releaseSupervisor(supervisor),
-    terminate: () => terminateSupervisor(supervisor, readiness.processPid),
+    release: () => {
+      released = true;
+      releaseSupervisor(supervisor);
+    },
+    terminate: () => released && input.startupHandoff
+      && supervisor.exitCode === null && supervisor.signalCode === null
+      ? Promise.resolve('retained')
+      : terminateSupervisor(supervisor, readiness.processPid, input.startupHandoff),
   };
 }
 
@@ -547,17 +668,16 @@ function releaseSupervisor(supervisor: ChildProcess): void {
 async function terminateSupervisor(
   supervisor: ChildProcess,
   daemonPid?: number,
-): Promise<void> {
+  startupHandoff = false,
+): Promise<void | 'retained'> {
   if (supervisor.pid === undefined) return;
+  const deadline = Date.now() + 2_000;
   let controlError: unknown;
   if (supervisor.exitCode === null && supervisor.signalCode === null && supervisor.connected) {
     try {
-      await new Promise<void>((resolve, reject) => {
-        supervisor.send({ kind: 'terminate' }, (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
-      });
+      if (await requestSupervisorTermination(supervisor, startupHandoff, deadline) === 'retained') {
+        return 'retained';
+      }
     } catch (error: unknown) {
       controlError = error;
     }
@@ -565,7 +685,7 @@ async function terminateSupervisor(
   // Natural exit can close IPC before Node delivers the exit event. Only
   // process-exit proof settles cleanup; a lost channel alone never does.
   try {
-    await waitForWrapperExit(supervisor);
+    await waitForWrapperExit(supervisor, deadline);
     if (daemonPid !== undefined) await waitForPidExit(daemonPid, 2_000);
   } catch (error: unknown) {
     if (controlError !== undefined) {
@@ -576,8 +696,45 @@ async function terminateSupervisor(
   }
 }
 
-async function waitForWrapperExit(supervisor: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 2_000;
+async function requestSupervisorTermination(
+  supervisor: ChildProcess,
+  startupHandoff: boolean,
+  deadline: number,
+): Promise<void | 'retained'> {
+  const requestId = randomUUID();
+  let onMessage: ((message: unknown) => void) | undefined;
+  let onExit: (() => void) | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<void | 'retained'>((resolve, reject) => {
+      if (startupHandoff) {
+        onMessage = (message) => {
+          if (message === null || typeof message !== 'object'
+            || !('kind' in message) || message.kind !== 'termination'
+            || !('requestId' in message) || message.requestId !== requestId) return;
+          if ('error' in message && typeof message.error === 'string') {
+            reject(new Error(message.error));
+          } else if ('outcome' in message && message.outcome === 'retained') resolve('retained');
+          else resolve();
+        };
+        onExit = () => resolve();
+        supervisor.on('message', onMessage);
+        supervisor.once('exit', onExit);
+        timeout = setTimeout(() => reject(new Error('Windows Job startup control did not acknowledge termination.')), Math.max(0, deadline - Date.now()));
+      }
+      supervisor.send({ kind: 'terminate', requestId }, (error) => {
+        if (error) reject(error);
+        else if (!startupHandoff) resolve();
+      });
+    });
+  } finally {
+    if (onMessage) supervisor.off('message', onMessage);
+    if (onExit) supervisor.off('exit', onExit);
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function waitForWrapperExit(supervisor: ChildProcess, deadline: number): Promise<void> {
   while (supervisor.exitCode === null && supervisor.signalCode === null) {
     if (Date.now() >= deadline) {
       throw new Error('Windows Job supervisor did not exit after startup cleanup.');

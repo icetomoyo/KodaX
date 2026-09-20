@@ -13,7 +13,9 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { inspect } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readReplFixtureDaemonOwner, replFixtureEnvironment, stopReplFixtureDaemon } from './repl-fixture-daemon.mjs';
 
 const selfRepo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoArg = process.argv.indexOf('--repo');
@@ -55,7 +57,7 @@ function openTerminal(homeDir, mode, extraArgs = []) {
   const terminal = new Terminal({ cols: 110, rows: 32, scrollback: 10000, allowProposedApi: true });
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = '11';
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'NO_COLOR'));
+  const environment = Object.fromEntries(Object.entries(replFixtureEnvironment(homeDir)).filter(([name]) => name.toUpperCase() !== 'NO_COLOR'));
   const bootstrap = sourceEntry ? ['--require', path.join(targetRepo, 'scripts/production-env.cjs'),
     '--import', pathToFileURL(path.join(targetRepo, 'node_modules/tsx/dist/loader.mjs')).href,
     path.join(targetRepo, 'src/kodax_bootstrap.ts')] : [path.join(targetRepo, 'scripts/kodax-bin.cjs')];
@@ -93,7 +95,7 @@ function openTerminal(homeDir, mode, extraArgs = []) {
     },
     async type(text) { child.write(text); await delay(150); },
     async submit(text) { await this.type(text); child.write('\r'); },
-    dispose() { child.kill(); },
+    dispose() { if (!exited) child.kill(); terminal.dispose(); },
   };
 }
 
@@ -215,6 +217,7 @@ async function scenario(state, name, action) {
 const scenarios = {
   async startup(state) {
     await waitFor('provider visible on screen', () => state.terminal.screen().includes('parity-local'), 45_000);
+    state.daemonOwner = await readReplFixtureDaemonOwner(state.homeDir);
     await promptReady(state);
   },
   async prompt(state) {
@@ -315,26 +318,47 @@ const scenarios = {
 async function run(mode) {
   const state = { mode, homeDir: path.join(artifacts, `${label}-${mode}`), requests: [], pending: new Map(), providerErrors: [], probeRequests: 0 };
   await mkdir(state.homeDir, { recursive: true });
-  await setupProvider(state);
   // The question dialog runs last: a Host without askUser callbacks fails it
   // without blocking the independent scenarios ahead of it.
   const order = mode === 'ink'
     ? ['startup', 'prompt', 'slash-help', 'slash-status', 'provider-probe', 'queue', 'stop', 'exit', 'resume', 'question']
     : ['startup', 'prompt', 'slash-help', 'slash-status', 'provider-probe', 'stop', 'exit', 'resume', 'question'];
   try {
+    await setupProvider(state);
     state.terminal = openTerminal(state.homeDir, mode);
     for (const name of order) await scenario(state, name, scenarios[name]);
   } finally {
-    if (state.terminal && !state.terminal.exited) state.terminal.dispose();
-    state.pending.forEach(finish => { try { finish(); } catch { /* stream already closed */ } });
-    state.server.close();
+    const cleanupErrors = [];
+    try {
+      try {
+        if (state.terminal && !state.terminal.exited) {
+          state.terminal.dispose();
+          await waitFor('fixture terminal exit', () => state.terminal.exited, 5_000);
+        }
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        state.pending.forEach(finish => { try { finish(); } catch { /* stream already closed */ } });
+        await stopReplFixtureDaemon({ repo: targetRepo, homeDir: state.homeDir, sourceEntry, owner: state.daemonOwner });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    } finally {
+      state.server?.closeAllConnections();
+      state.server?.close();
+    }
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'REPL fixture cleanup failed');
   }
 }
 
 let failures = 0;
 for (const mode of modes) {
   try { await run(mode); }
-  catch { failures += 1; }
+  catch (error) {
+    failures += 1;
+    process.stderr.write(`${mode}: ${inspect(error)}\n`);
+  }
 }
 process.stdout.write(`\n=== ${label} summary (${targetRepo}) ===\n`);
 for (const entry of results) {

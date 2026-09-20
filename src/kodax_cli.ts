@@ -76,6 +76,7 @@ import {
 } from './runtime-daemon/state.js';
 import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
 import { acquireRuntimeDaemonLease } from './runtime-daemon/manager.js';
+import { captureRuntimeDaemonStartupHandoff } from './runtime-daemon/startup-handoff.js';
 import {
   consumeRuntimeDaemonOwnerBootstrap,
   detachRuntimeDaemonBootstrapOutput,
@@ -776,6 +777,7 @@ async function serveDaemonCommand(input: {
   readonly orphanExitMs?: number;
 }): Promise<void> {
   const daemonConfigHome = path.resolve(input.configHome);
+  const commitStartup = captureRuntimeDaemonStartupHandoff();
   const daemonPaths = resolveRuntimeDaemonPathsFromConfigHome(
     daemonConfigHome,
     input.profile,
@@ -838,6 +840,7 @@ async function serveDaemonCommand(input: {
       // The host is created only after createRuntime returns, so this trusted
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
+      commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),
         ...(a2aHandle ? [a2aHandle.status()] : []),
@@ -891,6 +894,7 @@ async function serveDaemonCommand(input: {
                 listenBaseUrl: `http://${hostname.includes(':') ? `[${hostname}]` : hostname}:${port}`,
               }),
             );
+            commitStartup();
             const baseUrl = await hostedA2AServer.listen({
               hostname,
               port,
