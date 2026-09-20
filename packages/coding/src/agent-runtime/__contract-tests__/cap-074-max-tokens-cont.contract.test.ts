@@ -87,19 +87,21 @@ describe('CAP-074: maybeContinueAfterMaxTokens — gate conditions', () => {
 });
 
 describe('CAP-074: maybeContinueAfterMaxTokens — under cap (continue path)', () => {
-  it('CAP-MAX-TOKENS-CONT-001: stopReason=max_tokens AND no tool_blocks → continue, synthetic user message uses canonical "resume mid-thought" wording, counter increments, onTextDelta fires', () => {
+  it('CAP-MAX-TOKENS-CONT-001: continuation announces retry without adding assistant text', () => {
     const messages: KodaXMessage[] = [{ role: 'assistant', content: 'cut mid-thought' }];
     const onTextDelta = vi.fn();
+    const onRetry = vi.fn();
     const out = maybeContinueAfterMaxTokens({
       result: makeResult({ stopReason: 'max_tokens' }),
       messages,
       maxTokensRetryCount: 0,
       completedTurnTokenSnapshot: fakeSnapshot(),
-      events: { onTextDelta },
+      events: { onTextDelta, onRetry },
     });
     expect(out.outcome).toBe('continue');
     expect(out.nextMaxTokensRetryCount).toBe(1);
-    expect(onTextDelta).toHaveBeenCalledExactlyOnceWith('\n\n[output token limit hit, continuing…]\n\n');
+    expect(onTextDelta).not.toHaveBeenCalled();
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith('output token limit hit, continuing…', 1, KODAX_MAX_MAXTOKENS_RETRIES);
     expect(messages).toHaveLength(2);
     expect(messages[1]!.role).toBe('user');
     expect(messages[1]!._synthetic).toBe(true);
@@ -160,15 +162,17 @@ describe('FEATURE_240: maybeContinueAfterMaxTokens cross-protocol stopReason', (
   it('treats OpenAI finish_reason=length as max-token truncation', () => {
     const messages: KodaXMessage[] = [{ role: 'assistant', content: 'cut' }];
     const onTextDelta = vi.fn();
+    const onRetry = vi.fn();
     const out = maybeContinueAfterMaxTokens({
       result: makeResult({ stopReason: 'length' }),
       messages,
       maxTokensRetryCount: 0,
       completedTurnTokenSnapshot: fakeSnapshot(),
-      events: { onTextDelta },
+      events: { onTextDelta, onRetry },
     });
     expect(out.outcome).toBe('continue');
-    expect(onTextDelta).toHaveBeenCalledOnce();
+    expect(onTextDelta).not.toHaveBeenCalled();
+    expect(onRetry).toHaveBeenCalledOnce();
     expect(messages.at(-1)?.role).toBe('user');
   });
 });

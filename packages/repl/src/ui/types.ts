@@ -431,6 +431,9 @@ export type HistoryItemType =
  * History item base class - 历史项基类
  */
 export interface HistoryItemBase {
+  outputId?: string;
+  outputState?: 'draft' | 'committed';
+  textRevision?: number;
   /** Source input boundary for retained Host output. */
   afterInputId?: string;
   id: string;

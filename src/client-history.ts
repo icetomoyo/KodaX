@@ -246,7 +246,7 @@ function historyItemId(sessionId: string, revision: string, entryIndex: number, 
   return `${sessionId}:history:${revision}:${entryIndex}#${ordinal}`;
 }
 
-async function assembleConversationHistoryEntry(
+export async function assembleConversationHistoryEntry(
   readChunk: (
     input: {
       readonly sessionId: string;

@@ -4555,14 +4555,14 @@ export class FileSessionStorage implements KodaXSessionStorage {
   /** Update display metadata under the same writer lock as canonical Session saves. */
   async mutateUiHistory(
     id: string,
-    mutation: (history: readonly KodaXSessionUiHistoryItem[]) => KodaXSessionUiHistoryItem[],
+    mutation: (history: readonly KodaXSessionUiHistoryItem[], session: Readonly<SessionData>) => KodaXSessionUiHistoryItem[],
   ): Promise<boolean> {
     let found = false;
     await this.serializedWrite(id, async () => {
       const existing = await this.readSession(id);
       if (existing === null) return;
       found = true;
-      const uiHistory = mutation(existing.data.uiHistory ?? []);
+      const uiHistory = mutation(existing.data.uiHistory ?? [], existing.data);
       await this.mergeAndWriteInternal(id, { ...existing.data, uiHistory });
     });
     return found;

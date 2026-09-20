@@ -153,6 +153,35 @@ describe('clientViewToHistoryItems (T17)', () => {
       id: 'changed', text: 'prefix new', offset: 0, totalLength: 10,
     }) }, 'session', items)).rejects.toThrow('Frozen transcript content changed');
   });
+  it.each(['before-read', 'between-pages'] as const)('rejects hidden-prefix revisions %s while expanding a frozen item', async stage => {
+    const prefix = 'a'.repeat(65_536);
+    const items = clientViewToHistoryItems([viewItem({ id: 'revised-prefix', type: 'assistant',
+      text: 'tail', textOffset: prefix.length, totalTextLength: prefix.length + 4, textRevision: 0,
+    })]);
+    let reads = 0;
+    await expect(readFrozenClientPlaneItems({ readItem: async (_session, id, options) => {
+      reads += 1;
+      const offset = typeof options === 'object' ? options.offset ?? 0 : 0;
+      return { id, text: offset === 0 ? prefix : 'tail', offset, totalLength: prefix.length + 4,
+        ...(offset === 0 ? { nextOffset: prefix.length } : {}),
+        ...{ textRevision: stage === 'before-read' || offset > 0 ? 1 : 0 },
+      };
+    } }, 'session', items)).rejects.toThrow('Transcript content changed');
+    expect(reads).toBe(stage === 'before-read' ? 1 : 2);
+  });
+  it('rejects a frozen draft after restart when the committed body has revision zero again', async () => {
+    const memo = { entries: new Map() };
+    const draft = viewItem({ id: 'restarted', type: 'assistant', text: 'tail', textOffset: 4, totalTextLength: 8,
+      outputState: 'draft', textRevision: 0 });
+    const frozen = clientViewToHistoryItems([draft], { memo });
+    const current = clientViewToHistoryItems([{ ...draft, outputState: 'committed' }], { memo });
+    expect(current[0]).not.toBe(frozen[0]);
+    const reader = { readItem: async () => ({ id: 'restarted', text: 'NEW tail', offset: 0, totalLength: 8,
+      textRevision: 0, ...{ outputState: 'committed' as const },
+    }) };
+    await expect(readFrozenClientPlaneItems(reader, 'session', frozen)).rejects.toThrow('Transcript content changed');
+    await expect(readFrozenClientPlaneItems(reader, 'session', current)).resolves.toMatchObject([{ text: 'NEW tail' }]);
+  });
   it('renders Host tool arguments and result details in the transcript', () => {
     const items = clientViewToHistoryItems([viewItem({
       id: 'bash-details', type: 'tool', text: 'Command: git status\nExit: 0\nworking tree clean',
@@ -349,6 +378,24 @@ describe('clientViewToHistoryItems (T17)', () => {
     const third = clientViewToHistoryItems(grown, { memo });
     expect(third[0]).not.toBe(first[0]);
     expect(third[1]).toBe(first[1]);
+  });
+
+  it('invalidates only the revised item when a bounded hidden prefix changes', async () => {
+    const memo = { entries: new Map() };
+    const stable = viewItem({ id: 'stable', type: 'assistant', text: 'previous answer' });
+    const bounded = viewItem({ id: 'revised', type: 'assistant', text: 'tail', textOffset: 4, totalTextLength: 8,
+      outputId: 'logical-output', textRevision: 0 });
+    const first = clientViewToHistoryItems([stable, bounded], { memo });
+    const next = clientViewToHistoryItems([stable, { ...bounded, textRevision: 1 }], { memo });
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).not.toBe(first[1]);
+    expect(next[1]).toMatchObject({ outputId: 'logical-output', textRevision: 1 });
+    const repeated = clientViewToHistoryItems([stable, { ...bounded, textRevision: 1 }], { memo });
+    expect(repeated[1]).toBe(next[1]);
+    const expanded = await readFrozenClientPlaneItems({ readItem: async () => ({
+      id: 'revised', text: 'NEW tail', offset: 0, totalLength: 8, ...{ textRevision: 1 },
+    }) }, 'session', next.slice(1));
+    expect(expanded[0]).toMatchObject({ text: 'NEW tail', textRevision: 1 });
   });
 
   it('remaps the trailing assistant item when its run turns terminal (T27 review)', () => {

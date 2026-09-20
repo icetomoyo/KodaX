@@ -190,6 +190,8 @@ export interface KodaXMessage {
    * sessions and provider-internal synthetic messages.
    */
   turnId?: string;
+  /** Stable identity of one generated assistant message, shared by its live projection. */
+  outputId?: string;
   /** Accepted user input identity; absent on older and system-generated messages. */
   inputId?: string;
   /** User inputs merged into this canonical message by the Host queue. */

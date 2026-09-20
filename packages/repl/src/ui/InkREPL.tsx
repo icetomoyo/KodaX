@@ -7528,6 +7528,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         });
       }
     },
+    onOutputNotice: (_notice, meta) => {
+      if (userInterruptedRef.current) return;
+      const text = '[Model] The provider declined to answer.';
+      if (routeWorkflowLiveOnlyNotice(meta, text) || upsertChildActivityRecord(meta, 'progress', text)) return;
+      if (managedForegroundOwnerRef.current.workerId) {
+        appendManagedForegroundLedgerItem({ type: 'info', text,
+          id: `output-notice-${meta?.providerRequestId ?? Date.now()}`, timestamp: Date.now() });
+      } else addHistoryItem({ type: 'info', text });
+    },
     onRetry: (
       reason: string,
       attempt: number,

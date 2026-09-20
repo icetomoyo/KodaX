@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { PromptResponse } from '@agentclientprotocol/sdk';
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderStreamOptions, type KodaXReasoningRequest,
@@ -53,9 +52,10 @@ it.each(['session', 'settings', 'observe', 'submit'] as const)('honors cancellat
   const client = toKodaXProductClient(runtime);
   launcher.ensure.mockResolvedValue(client);
   let release: () => void = () => {};
-  let reached = false;
+  let reportReached!: () => void;
+  const reached = new Promise<void>(resolve => { reportReached = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const wait = async () => { reached = true; await gate; };
+  const wait = async () => { reportReached(); await gate; };
   if (stage === 'session') {
     const original = client.sessions.create.bind(client.sessions);
     vi.spyOn(client.sessions, 'create').mockImplementation(async input => { const result = await original(input); await wait(); return result; });
@@ -71,23 +71,25 @@ it.each(['session', 'settings', 'observe', 'submit'] as const)('honors cancellat
   }
   const server = new KodaXAcpServer({ homeDir, provider: 'acp-admission', permissionMode: 'full-access', logLevel: 'off' });
   const session = await server.newSession({ cwd: homeDir, mcpServers: [] });
-  let response: PromptResponse | undefined;
-  const prompt = server.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Wait for cancellation' }] })
-    .then(result => { response = result; });
+  const prompt = server.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Wait for cancellation' }] });
   try {
-    await expect.poll(() => reached).toBe(true);
+    await Promise.race([reached, prompt.then(() => { throw new Error('Prompt completed before its admission gate.'); })]);
     await server.cancel({ sessionId: session.sessionId });
     release();
-    await expect.poll(() => response, { timeout: 2_000 }).toMatchObject({ stopReason: 'cancelled' });
+    await expect(prompt).resolves.toMatchObject({ stopReason: 'cancelled' });
     const runs = await runtime.runs.list({ sessionId: session.sessionId });
     if (stage === 'submit') expect(runs.every(run => ['cancelled', 'interrupted'].includes(run.phase))).toBe(true);
     else expect(runs).toHaveLength(0);
   } finally {
-    release();
-    for (const run of await runtime.runs.list({ sessionId: session.sessionId })) await runtime.runs.abort(run.runId);
-    await prompt;
-    await server.dispose();
-    await runtime.close();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 5 });
+    try { await server.cancel({ sessionId: session.sessionId }); }
+    finally {
+      release();
+      try { await prompt; }
+      finally {
+        await server.dispose();
+        await runtime.close();
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5 });
+      }
+    }
   }
 }, 30_000);

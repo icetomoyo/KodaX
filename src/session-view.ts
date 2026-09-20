@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
-import { createOutputSegmentProjection, reduceOutputSegmentProjection } from '@kodax-ai/coding';
+import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
@@ -13,6 +13,7 @@ import { createSessionNoticeEvents } from './session-view-notices.js';
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
 interface ObservedSession {
+  committedOutputIds: ReadonlySet<string>;
   view?: ClientSessionView;
   loading?: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
@@ -31,20 +32,46 @@ interface ObservedSession {
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
 }
 
+interface SessionViewReadResult extends ClientSessionView {
+  /** Internal ownership facts, including messages outside the visible window. */
+  readonly committedOutputIds?: readonly string[];
+}
+
+function outputItemId(sessionId: string, outputId: string, kind: string, ordinal = 0): string {
+  return `${sessionId}:output:${outputId}:${kind}:${ordinal}`;
+}
+
+function revisedTextVersion(previous: ClientViewItem | undefined, text: string): number {
+  return (previous?.textRevision ?? 0) + (previous && !text.startsWith(previous.text) ? 1 : 0);
+}
+
+/** Canonical ownership is independent of the bounded presentation window. */
+export function committedSessionOutputIds(data: KodaXSessionData, conversation: readonly KodaXMessage[] = []): Set<string> {
+  const committed = new Set<string>();
+  for (const messages of [data.messages, conversation]) {
+    for (const message of messages) if (message.outputId) committed.add(message.outputId);
+  }
+  for (const entry of data.lineage?.entries ?? []) {
+    if (entry.type === 'message' && entry.message.outputId) committed.add(entry.message.outputId);
+  }
+  return committed;
+}
+
 /** The current display, coalesced at the REPL's existing 80 ms cadence. */
 export class SessionViewOwner {
   private readonly sessions = new Map<string, ObservedSession>();
 
   constructor(
     private readonly read: (sessionId: string, includeHistory: boolean, previous: ClientSessionView | undefined,
-      liveItems: readonly ClientViewItem[]) => Promise<ClientSessionView>,
+      liveItems: readonly ClientViewItem[]) => Promise<SessionViewReadResult>,
     private readonly save: (sessionId: string, runIds: readonly string[], items: readonly ClientViewItem[]) => Promise<void>,
+    private readonly readCommittedItem?: (sessionId: string, itemId: string) => Promise<ClientViewItem | null>,
   ) {}
 
   private state(sessionId: string): ObservedSession {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
+      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -56,34 +83,43 @@ export class SessionViewOwner {
     state.runIds.add(runId);
     state.activityRunId = runId;
     let segmentInputId: string | undefined;
+    let outputId: string | undefined;
     const toolInputLengths = new Map<string, number>();
     const startedTools = new Set<string>();
     let streamEnded = false;
     const isPrimary = (meta?: KodaXActivityEventMeta) =>
       meta?.contextKind !== 'child' && !meta?.childAgentId
       && !meta?.workflowCorrelation?.workflowRunId && !meta?.workflowCorrelation?.childAgentId;
-    const upsert = (item: ClientViewItem, source?: { inputId: string | undefined }): void => {
+    const upsert = (item: ClientViewItem, source?: { inputId: string | undefined }, revisesText = false): void => {
+      if (item.outputId && state.committedOutputIds.has(item.outputId)) return;
       // Capture safe display facts while the exact credential scope is active;
       // the later coalesced view/checkpoint runs after that scope may expire.
       const index = state.items.findIndex((current) => current.id === item.id);
       const afterInputId = index >= 0 ? state.items[index]!.afterInputId : source ? source.inputId : inputSource?.();
       item = redactScopedProviderCredential({ ...item, afterInputId });
       if (index < 0) state.items.push(item);
-      else state.items[index] = { ...item, timestamp: state.items[index]!.timestamp };
+      else state.items[index] = { ...item,
+        ...(item.outputId ? { textRevision: revisesText ? revisedTextVersion(state.items[index], item.text)
+          : state.items[index]!.textRevision ?? 0 } : {}),
+        timestamp: state.items[index]!.timestamp };
       this.changed(sessionId);
     };
     const delta = (kind: 'assistant' | 'thinking', text: string, meta?: KodaXActivityEventMeta): void => {
       if (!isPrimary(meta)) { childActivity(kind, text, meta); return; }
+      if (outputId && state.committedOutputIds.has(outputId)) return;
       if (!meta?.providerRequestId) return;
       const current = state.segments.get(runId) ?? createOutputSegmentProjection();
       const reduced = reduceOutputSegmentProjection(current, { type: `${kind}.delta`, providerRequestId: meta.providerRequestId, text });
       if (!reduced.accepted || !reduced.state.active) return;
       state.segments.set(runId, reduced.state);
-      upsert({ id: `${runId}:${meta.providerRequestId}:${kind}`, type: kind,
-        text: reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() }, { inputId: segmentInputId });
+      const id = outputId ? outputItemId(sessionId, outputId, kind) : `${runId}:${meta.providerRequestId}:${kind}`;
+      const previous = outputId ? state.items.find(item => item.id === id) : undefined;
+      upsert({ id, type: kind, ...(outputId ? { outputId, outputState: 'draft' as const } : {}),
+        text: outputId ? previous ? previous.text + text : effectiveOutputSegmentText(reduced.state, kind)
+          : reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() }, { inputId: segmentInputId });
       if (currentStream(meta)) {
         activity({ streaming: kind === 'thinking' ? { kind, providerRequestId: meta.providerRequestId,
-          itemId: `${runId}:${meta.providerRequestId}:thinking`, charCount: reduced.state.active.thinkingText.length } : undefined });
+          itemId: id, charCount: reduced.state.active.thinkingText.length } : undefined });
       }
     };
     const notices = createSessionNoticeEvents(sessionId, (notice, meta) => {
@@ -108,6 +144,9 @@ export class SessionViewOwner {
       getCostReport: costReport,
       ...notices,
       ...sessionActivityEvents(activity, notices),
+      onOutputNotice: (notice, meta) => {
+        if (!isPrimary(meta) || (meta && currentReasoningRequest(meta))) notices.onOutputNotice?.(notice, meta);
+      },
       onReasoningEffortRejected: event => {
         if (currentReasoningRequest(event)) notices.onReasoningEffortRejected?.(event);
       },
@@ -116,13 +155,16 @@ export class SessionViewOwner {
       },
       onOutputSegmentStart: (segment, meta) => {
         if (!isPrimary(meta) || state.activityRunId !== runId) return;
-        const current = state.segments.get(runId) ?? createOutputSegmentProjection();
+        const startsOutput = outputId !== segment.outputId;
+        const current = startsOutput ? createOutputSegmentProjection()
+          : state.segments.get(runId) ?? createOutputSegmentProjection();
+        outputId = segment.outputId;
         if (current.active?.providerRequestId !== segment.providerRequestId) {
           toolInputLengths.clear(); startedTools.clear(); streamEnded = false;
-          segmentInputId = inputSource?.();
+          if (startsOutput || !outputId) segmentInputId = inputSource?.();
           activity({ streaming: undefined });
         }
-        if (segment.mode === 'replace' && current.active?.responseId === segment.responseId
+        if (!outputId && segment.mode === 'replace' && current.active?.responseId === segment.responseId
           && current.active.providerRequestId !== segment.providerRequestId) {
           const replaced = `${runId}:${current.active.providerRequestId}:`;
           const retain = (item: ClientViewItem) => item.id !== `${replaced}assistant` && item.id !== `${replaced}thinking`;
@@ -133,6 +175,13 @@ export class SessionViewOwner {
           this.checkpoint(sessionId);
         }
         state.segments.set(runId, reduceOutputSegmentProjection(current, { type: 'segment.started', ...segment }).state);
+        if (outputId && segment.mode === 'replace') {
+          for (const kind of ['assistant', 'thinking'] as const) {
+            const item = state.items.find(candidate => candidate.id === outputItemId(sessionId, outputId!, kind));
+            if (item) upsert({ ...item, text: effectiveOutputSegmentText(state.segments.get(runId)!, kind) }, undefined, true);
+          }
+          this.checkpoint(sessionId);
+        }
         this.changed(sessionId);
       },
       onTextDelta: (text, meta) => delta('assistant', text, meta),
@@ -148,6 +197,12 @@ export class SessionViewOwner {
         if (!isPrimary(meta)) return;
         const current = state.segments.get(runId);
         if (!current?.active || (meta?.providerRequestId && current.active.providerRequestId !== meta.providerRequestId)) return;
+        // Identified output is built from its deltas; an end notification may
+        // describe only the final thinking block of a multi-block message.
+        if (outputId) {
+          if (currentStream(meta)) activity({ streaming: undefined });
+          return;
+        }
         state.segments.set(runId, { ...current, active: { ...current.active, thinkingText: text } });
         upsert({ id: `${runId}:${current.active.providerRequestId}:thinking`, type: 'thinking', text, timestamp: Date.now() }, { inputId: segmentInputId });
         if (currentStream(meta) && state.activity?.streaming?.kind === 'thinking') activity({ streaming: undefined });
@@ -287,6 +342,7 @@ export class SessionViewOwner {
     state.items = [];
     state.history = [];
     state.segments.clear();
+    state.committedOutputIds = new Set();
     state.runIds.clear();
     state.activity = undefined;
     state.activityRunId = undefined;
@@ -323,12 +379,17 @@ export class SessionViewOwner {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Item offset must be a non-negative integer.');
     const state = this.state(sessionId);
     if (!state.view || state.historyDirty) await this.refresh(sessionId, state);
-    const item = state.items.find((item) => item.id === itemId) ?? state.history.find((item) => item.id === itemId);
+    const item = state.history.find((item) => item.id === itemId && item.outputState === 'committed')
+      ?? state.items.find((item) => item.id === itemId) ?? state.history.find((item) => item.id === itemId)
+      ?? await this.readCommittedItem?.(sessionId, itemId);
     if (!item) return null;
     const content = options.part === 'input' ? item.tool?.inputText ?? '' : item.text;
     const text = content.slice(offset, offset + 64 * 1024);
     const nextOffset = offset + text.length;
-    return { id: item.id, text, offset, totalLength: content.length, ...(nextOffset < content.length ? { nextOffset } : {}) };
+    return { id: item.id, text, offset, totalLength: content.length,
+      ...(item.outputState !== undefined ? { outputState: item.outputState } : {}),
+      ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
+      ...(nextOffset < content.length ? { nextOffset } : {}) };
   }
 
   async close(): Promise<void> {
@@ -369,13 +430,19 @@ export class SessionViewOwner {
     const pendingRead = includeHistory && state.persisting ? this.flush(sessionId).then(read) : read();
     const loading = pendingRead.then((view) => {
       if (generation !== state.generation) return;
-      if (includeHistory) state.history = view.items;
+      if (includeHistory) {
+        state.committedOutputIds = new Set(view.committedOutputIds ?? view.items.flatMap(item =>
+          item.outputState === 'committed' && item.outputId ? [item.outputId] : []));
+        state.history = view.items;
+        state.items = state.items.filter(item => !item.outputId || !state.committedOutputIds.has(item.outputId));
+      }
       const items = mergeSessionViewItems(state.history, state.items);
       const costReport = state.costReport?.current?.();
       if (state.activityRunId && view.runs.some(run => run.runId === state.activityRunId && !STREAMING_RUN_PHASES.has(run.phase))) {
         if (state.activity?.streaming) state.activity = { ...state.activity, streaming: undefined };
       }
-      state.view = { ...view, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
+      const { committedOutputIds: _committed, ...publicView } = view;
+      state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
       for (const [listener, report] of state.listeners) {
         try { listener(structuredClone(state.view)); report({ state: 'live' }); }
         catch (error: unknown) {
@@ -436,6 +503,7 @@ export function mergeSessionViewItems(history: readonly ClientViewItem[], live: 
  * trimmed), so the merge falls back to trimmed-text equality.
  */
 function isSettledCanonicalDuplicate(items: readonly ClientViewItem[], item: ClientViewItem): boolean {
+  if (item.outputId !== undefined) return false;
   if (item.type !== 'assistant' && item.type !== 'thinking') return false;
   const liveText = item.text.trim();
   if (!liveText) return false;
@@ -453,7 +521,7 @@ function isSettledCanonicalDuplicate(items: readonly ClientViewItem[], item: Cli
   for (let index = windowStart + 1; index < items.length; index += 1) {
     if (items[index]!.type === 'user') { windowEnd = index; break; }
   }
-  return items.some((candidate, index) => candidate.type === item.type
+  return items.some((candidate, index) => candidate.outputId === undefined && candidate.type === item.type
     && candidate.text.trim() === liveText
     && index > windowStart && (windowEnd < 0 || index < windowEnd));
 }
@@ -560,6 +628,8 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
     const verdict = item.sidecarVerdict ?? (item.icon === 'revise' || item.icon === 'blocked' ? item.icon : undefined);
     const delivery = item.sidecarDelivery ?? (item.icon === 'budget-exhausted' ? item.icon : undefined);
     return [{ id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
+      ...(item.outputId ? { outputId: item.outputId, outputState: 'draft' as const } : {}),
+      ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
       text: item.text, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
       ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
@@ -583,13 +653,14 @@ export function restoreSessionViewItems(
 ): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
+  const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
   const toolResults = new Map(historyMessages.flatMap(message => typeof message.content === 'string' ? []
     : message.content.filter(block => block.type === 'tool_result').map(block => [block.tool_use_id, block] as const)));
   const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
   const savedOutputTime = lastAssistant?.timestamp ? Date.parse(lastAssistant.timestamp) : NaN;
   // A live response can equal an earlier answer before it has been saved.
   // Only finalized output may lend its display identity to canonical history.
-  const savedLiveItems = liveItems.filter(item => item.type !== 'assistant' && item.type !== 'thinking'
+  const savedLiveItems = liveItems.filter(item => item.outputId !== undefined || item.type !== 'assistant' && item.type !== 'thinking'
     || (item.timestamp !== undefined && item.timestamp <= savedOutputTime));
   // A canonical save can precede the display checkpoint. Reuse the current
   // display identities during reconciliation instead of showing both versions.
@@ -611,7 +682,7 @@ export function restoreSessionViewItems(
   }
   const findLegacyDisplayMatch = (item: { type: ClientViewItem['type']; text: string; timestamp?: number }): ClientViewItem | undefined => {
     for (const candidate of persisted) {
-      if (consumed.has(candidate)) continue;
+      if (consumed.has(candidate) || candidate.outputId !== undefined) continue;
       if (candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp) {
         consumed.add(candidate);
         return candidate;
@@ -620,7 +691,8 @@ export function restoreSessionViewItems(
     return undefined;
   };
   const occurrences = new Map<string, number>();
-  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory });
+  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory: uiHistory.filter(item =>
+    item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)) });
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
@@ -637,6 +709,20 @@ export function restoreSessionViewItems(
           status,
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
+    if (item.outputId && (item.type === 'assistant' || item.type === 'thinking')) {
+      const key = `${item.outputId}:${item.type}`;
+      const ordinal = occurrences.get(key) ?? 0;
+      occurrences.set(key, ordinal + 1);
+      const committed = committedOutputs.has(item.outputId);
+      const previous = persisted.find(candidate => candidate.outputId === item.outputId && candidate.type === item.type);
+      return [{ id: outputItemId(sessionId, item.outputId, item.type, ordinal), type: item.type, text: item.text,
+        outputId: item.outputId, outputState: committed ? 'committed' : 'draft',
+        // Canonical content is immutable for an outputId. Its settled version
+        // must be identical on first commit, window reload, and Host restart.
+        // The state transition invalidates snapshots of the former draft.
+        textRevision: committed ? 0 : revisedTextVersion(previous, item.text), timestamp: item.timestamp,
+        ...(!committed && item.afterInputId ? { afterInputId: item.afterInputId } : {}) }];
+    }
     let previous: ClientViewItem | undefined;
     if (item.inputId !== undefined) {
       const identified = persistedByInputId.get(item.inputId);
@@ -663,9 +749,10 @@ export function restoreSessionViewItems(
 
 export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaXSessionUiHistoryItem[] {
   return items.flatMap((item): KodaXSessionUiHistoryItem[] => {
+    if (item.outputState === 'committed') return [];
     if (item.type !== 'tool') {
-      const { sidecar, ...persisted } = item;
-      return [{ ...persisted, type: item.type, presentationOnly: true,
+      const { sidecar, outputState: _state, ...persisted } = item;
+      return [{ ...persisted, type: item.type, ...(item.outputId ? {} : { presentationOnly: true as const }),
         ...(item.type === 'sidecar' ? { sidecarVerdict: sidecar?.verdict, sidecarDelivery: sidecar?.delivery,
           icon: sidecar?.delivery === 'budget-exhausted' ? 'budget-exhausted' : sidecar?.verdict ?? item.icon } : {}) }];
     }

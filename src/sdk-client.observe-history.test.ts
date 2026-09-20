@@ -12,6 +12,7 @@ import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { FileSessionStorage } from '@kodax-ai/repl';
 
 const REPLY_TEXT = 'A sufficiently detailed recorded summary of the exchange that carries usable semantic content for later turns.';
 
@@ -59,6 +60,48 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
+
+it('reads a frozen oversized output by its original identity after it leaves the view and is archived', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+  const data = await storage.load(session.id);
+  if (!data) throw new Error('Fixture session missing');
+  const body = `Archived original ${'x'.repeat(140 * 1024)}`;
+  data.messages = [{ role: 'user', content: 'original query', inputId: 'original' },
+    { role: 'assistant', outputId: 'archived-output', content: body }];
+  delete data.lineage;
+  await storage.save(session.id, data);
+  const views: ClientSessionView[] = [];
+  const observation = await client.sessions.observe(session.id, view => views.push(view));
+  try {
+    const frozen = views.at(-1)!.items.find(item => item.outputId === 'archived-output');
+    expect(frozen).toBeDefined();
+    const current = await storage.load(session.id);
+    if (!current) throw new Error('Fixture session missing');
+    current.messages.push(...Array.from({ length: 85 }, (_, index) => [
+      { role: 'user' as const, content: `Later question ${index}`, inputId: `later-${index}` },
+      { role: 'assistant' as const, content: `Later answer ${index}`, outputId: `later-output-${index}` },
+    ]).flat());
+    delete current.lineage;
+    await storage.save(session.id, current);
+    const compacted = await runtime.sessions.compact({ sessionId: session.id,
+      provider: 'product-history-test', contextWindow: 200_000, triggerTokens: 1 });
+    expect(compacted.compacted, JSON.stringify(compacted)).toBe(true);
+    await expect.poll(() => views.at(-1)?.items.some(item => item.id === frozen!.id)).toBe(false);
+    let offset = 0;
+    let full = '';
+    do {
+      const chunk = await client.sessions.readItem(session.id, frozen!.id, { offset });
+      expect(chunk).not.toBeNull();
+      expect(chunk?.outputState).toBe('committed');
+      full += chunk!.text;
+      if (chunk!.nextOffset === undefined) break;
+      offset = chunk!.nextOffset;
+    } while (offset < body.length);
+    expect(full).toBe(body);
+  } finally { observation.close(); }
+}, 60_000);
 
 it('shows pre-compaction conversation history in the current view after compaction', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });

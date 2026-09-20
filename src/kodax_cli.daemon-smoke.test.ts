@@ -210,20 +210,19 @@ describe('daemon CLI smoke', () => {
         },
       }), 'utf8');
 
-      const daemonEnv = { KODAX_INTERNAL_DAEMON_TEST_READY_DELAY_MS: '1000' };
       const start = runDaemonCommand([
         'start', '--home', homeDir, '--profile', profile,
         '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
-      ], daemonEnv);
+      ]);
       await Promise.race([
         cardRequest,
         start.then(() => {
           throw new Error('Daemon start completed before initial A2A discovery began.');
         }),
       ]);
-      releaseCard?.();
       const paths = resolveRuntimeDaemonPaths(homeDir, profile);
-      await waitForHealthyDaemonStatus(paths, 'starting');
+      // Keep actual discovery pending while both callers attempt to attach.
+      // A fixed ready-delay window can expire before the assertions run.
 
       const concurrentStart = runDaemonCommand([
         'start', '--home', homeDir, '--profile', profile,
@@ -434,11 +433,17 @@ describe('daemon CLI smoke', () => {
     });
     // The serving Host writes stderr continuously; drain it so a full pipe
     // buffer cannot stall the child.
-    child.stderr?.on('data', () => undefined);
+    let bootstrapError = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      bootstrapError = (bootstrapError + chunk.toString('utf8')).slice(-RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES);
+    });
     const baseUrl = `http://127.0.0.1:${listenPort}`;
     const paths = resolveRuntimeDaemonPaths(homeDir, profile);
     try {
-      await waitForHealthyDaemonStatus(paths, 'ready');
+      try { await waitForHealthyDaemonStatus(paths, 'ready'); }
+      catch (error: unknown) {
+        throw new Error(`${String(error)}; hosted A2A exit=${child.exitCode}, signal=${child.signalCode}; ${bootstrapError}`, { cause: error });
+      }
 
       const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
       expect(card.status).toBe(200);
@@ -1617,9 +1622,13 @@ describe('daemon CLI smoke', () => {
       stopped: false,
       reason: 'replacement_running',
       replacementRunning: true,
-      health: 'healthy',
-      state: { pid: replacementPid },
     });
+    // Stop can observe the replacement's claim before it publishes ready.
+    // The completed replacement start, rather than that earlier snapshot,
+    // is the boundary at which health and identity must both be established.
+    await expect(observeRuntimeDaemonHealth(resolveRuntimeDaemonPaths(homeDir, profile)))
+      .resolves.toMatchObject({ pidAlive: true, endpointReachable: true,
+        identityMatches: true, state: { pid: replacementPid, status: 'ready' } });
     await waitForDaemonPidExit(oldPid, 5_000);
   }, 180_000);
 
@@ -1638,33 +1647,47 @@ describe('daemon CLI smoke', () => {
       '--timeout-ms', '30000', '--json',
     ], {
       KODAX_INTERNAL_DAEMON_TEST_STOP_OBSERVED_FILE: observedFile,
-      KODAX_INTERNAL_DAEMON_TEST_STOP_AFTER_OBSERVATION_DELAY_MS: '10000',
-    }, 45_000);
-    await waitForFile(observedFile);
-
-    await expect(runDaemonCommand([
-      'stop', '--home', homeDir, '--profile', profile,
-      '--timeout-ms', '30000', '--json',
-    ])).resolves.toMatchObject({ stopped: true, health: 'missing' });
-    await waitForDaemonPidExit(oldPid, 5_000);
-    const replacement = await runDaemonCommand([
-      'start', '--home', homeDir, '--profile', profile,
-      '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
-    ]);
-    expect(replacement).toMatchObject({ started: true, health: 'healthy' });
-    const replacementPid = readDaemonResultPid(replacement, profile);
-
-    await expect(staleStop).rejects.toThrow(
-      'Runtime daemon owner changed before the stop request',
+    }, 45_000).then(
+      value => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
     );
-    expect(isRuntimeDaemonPidAlive(replacementPid)).toBe(true);
-    await expect(observeRuntimeDaemonHealth(resolveRuntimeDaemonPaths(homeDir, profile)))
-      .resolves.toMatchObject({
-        pidAlive: true,
-        endpointReachable: true,
-        identityMatches: true,
-        state: { pid: replacementPid, status: 'ready' },
-      });
+    const releaseObservation = (): void => {
+      try { fs.unlinkSync(observedFile); }
+      catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    };
+    try {
+      await waitForFile(observedFile);
+      await expect(runDaemonCommand([
+        'stop', '--home', homeDir, '--profile', profile,
+        '--timeout-ms', '30000', '--json',
+      ])).resolves.toMatchObject({ stopped: true, health: 'missing' });
+      await waitForDaemonPidExit(oldPid, 5_000);
+      const replacement = await runDaemonCommand([
+        'start', '--home', homeDir, '--profile', profile,
+        '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
+      ]);
+      expect(replacement).toMatchObject({ started: true, health: 'healthy' });
+      const replacementPid = readDaemonResultPid(replacement, profile);
+      releaseObservation();
+      const outcome = await staleStop;
+      if (outcome.ok) throw new Error('Stale stop unexpectedly succeeded.');
+      expect(() => { throw outcome.error; }).toThrow(
+        'Runtime daemon owner changed before the stop request',
+      );
+      expect(isRuntimeDaemonPidAlive(replacementPid)).toBe(true);
+      await expect(observeRuntimeDaemonHealth(resolveRuntimeDaemonPaths(homeDir, profile)))
+        .resolves.toMatchObject({
+          pidAlive: true,
+          endpointReachable: true,
+          identityMatches: true,
+          state: { pid: replacementPid, status: 'ready' },
+        });
+    } finally {
+      try { releaseObservation(); }
+      finally { await staleStop; }
+    }
   }, 90_000);
 });
 
@@ -1831,8 +1854,10 @@ async function waitForHealthyDaemonStatus(
   timeoutMs = 30_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastObservation: Awaited<ReturnType<typeof observeRuntimeDaemonHealth>> | undefined;
   while (Date.now() <= deadline) {
     const observation = await observeRuntimeDaemonHealth(paths);
+    lastObservation = observation;
     if (
       observation.endpointReachable
       && observation.identityMatches
@@ -1840,7 +1865,10 @@ async function waitForHealthyDaemonStatus(
     ) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`Timed out waiting for healthy daemon status=${expected}.`);
+  throw new Error(`Timed out waiting for healthy daemon status=${expected}; last observation: ${JSON.stringify({
+    status: lastObservation?.state?.status, pidAlive: lastObservation?.pidAlive,
+    endpointReachable: lastObservation?.endpointReachable, identityMatches: lastObservation?.identityMatches,
+  })}`);
 }
 
 async function waitForDaemonPidExit(pid: number, timeoutMs: number): Promise<void> {

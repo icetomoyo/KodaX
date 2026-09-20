@@ -537,6 +537,8 @@ export interface KodaXEvents {
     meta?: KodaXActivityEventMeta,
   ) => void;
   onTextDelta?: (text: string, meta?: KodaXActivityEventMeta) => void;
+  /** A provider declined this output; this fact is not assistant-authored text. */
+  onOutputNotice?: (notice: { code: 'model_refused' }, meta?: KodaXActivityEventMeta) => void;
   onThinkingDelta?: (text: string, meta?: KodaXActivityEventMeta) => void;
   onThinkingEnd?: (thinking: string, meta?: KodaXActivityEventMeta) => void;
   onToolUseStart?: (

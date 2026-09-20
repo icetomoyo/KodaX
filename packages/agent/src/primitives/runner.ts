@@ -642,6 +642,7 @@ async function appendMessageEntry(session: Session, message: AgentMessage): Prom
       // directly through lineage/session payload storage.
       ...(message._synthetic === true ? { synthetic: true } : {}),
       ...(message._source !== undefined ? { source: message._source } : {}),
+      ...(message.outputId !== undefined ? { outputId: message.outputId } : {}),
     },
   });
 }
@@ -1014,6 +1015,7 @@ async function genericRun<TData>(
       // carries a real per-message time.
       assistantMessage = {
         ...assistantMessage,
+        ...(turn.outputId !== undefined ? { outputId: turn.outputId } : {}),
         timestamp: assistantMessage.timestamp ?? new Date().toISOString(),
       };
       transcript.push(assistantMessage);

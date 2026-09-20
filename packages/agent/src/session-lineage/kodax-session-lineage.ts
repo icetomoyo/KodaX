@@ -1049,6 +1049,7 @@ export function evictOldIslandMessageContent(lineage: KodaXSessionLineage): Koda
         ...entry,
         message: {
           role: entry.message.role,
+          ...(entry.message.outputId ? { outputId: entry.message.outputId } : {}),
           content: [{ type: 'text', text: '[compacted]' }],
         } as KodaXMessage,
       };

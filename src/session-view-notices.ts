@@ -13,6 +13,10 @@ export function createSessionNoticeEvents(
   return {
     ...rateLimitNotices(append),
     ...compactionNotices(append),
+    onOutputNotice: (notice, meta) => append({
+      id: `output:${meta?.providerRequestId ?? 'legacy'}:${notice.code}`,
+      type: 'info', text: '[Model] The provider declined to answer.',
+    }, meta),
     onReasoningEffortRejected: event => append({
       id: `reasoning:${event.providerRequestId ?? 'legacy'}:rejected:${event.provider}:${event.model}:${event.effort}`,
       type: 'info', text: `[Reasoning] ${event.provider}/${event.model} rejected effort '${event.effort}'.`,

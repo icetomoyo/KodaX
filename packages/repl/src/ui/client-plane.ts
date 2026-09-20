@@ -111,7 +111,8 @@ export async function readClientPlaneItemText(
   itemId: string,
   part: 'text' | 'input' = 'text',
   historyEntry = false,
-  captured?: { readonly length: number; readonly signal?: AbortSignal },
+  captured?: { readonly length: number; readonly textRevision?: number;
+    readonly outputState?: ClientViewItem['outputState']; readonly signal?: AbortSignal },
 ): Promise<string> {
   const read = historyEntry ? plane.readHistoryEntry : plane.readItem;
   if (!read) throw new Error('Full transcript content is unavailable.');
@@ -126,7 +127,9 @@ export async function readClientPlaneItemText(
     if (content === null) throw new Error('Full transcript content is unavailable; reopen history and try again.');
     totalLength ??= content.totalLength;
     if (content.id !== itemId || content.offset !== offset
-      || (captured ? content.totalLength < totalLength : content.totalLength !== totalLength)) {
+      || (captured ? content.totalLength < totalLength : content.totalLength !== totalLength)
+      || (captured?.textRevision !== undefined && ((content.textRevision ?? 0) !== captured.textRevision
+        || content.outputState !== captured.outputState))) {
       throw new Error('Transcript content changed during the read; try again.');
     }
     const text = content.text.slice(0, totalLength - offset);
@@ -159,7 +162,9 @@ export async function readFrozenClientPlaneItems(
     const read = async (part: 'text' | 'input', length: number | undefined): Promise<string | undefined> => {
       if (length === undefined) return undefined;
       const text = await readClientPlaneItemText(plane, sessionId, item.historyItemId ?? item.id, part,
-        item.historyItemId !== undefined, { length, signal });
+        item.historyItemId !== undefined, { length, signal,
+          ...(part === 'text' ? { textRevision: item.textRevision ?? 0, outputState: item.outputState } : {}),
+        });
       return text;
     };
     const text = await read('text', item.totalTextLength);
@@ -552,6 +557,9 @@ function textHash(value: string | undefined): number {
 function itemFingerprint(item: ClientViewItem): string {
   return [
     item.type,
+    item.outputId ?? '',
+    item.outputState ?? '',
+    item.textRevision ?? 0,
     `${item.text.length}:${textHash(item.text)}`,
     item.compactText === undefined
       ? '-'
@@ -642,6 +650,9 @@ function findLastIndex(
 function mapViewItem(item: ClientViewItem, streaming: boolean): HistoryItem {
   const base = {
     id: item.id,
+    ...(item.outputId !== undefined ? { outputId: item.outputId } : {}),
+    ...(item.outputState !== undefined ? { outputState: item.outputState } : {}),
+    ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
     ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
     timestamp: item.timestamp ?? 0,
     isSessionUiOnly: true,

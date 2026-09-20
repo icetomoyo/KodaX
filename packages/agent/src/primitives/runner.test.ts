@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgent, type Agent, type AgentMessage, type Guardrail } from './agent.js';
-import type { InputGuardrail, ToolGuardrail } from './guardrail.js';
+import type { InputGuardrail, OutputGuardrail, ToolGuardrail } from './guardrail.js';
 import { createInMemorySession } from './session.js';
 import {
   isRunnerIterationLimitError,
@@ -40,6 +40,39 @@ describe('Runner', () => {
     const helloAgent: Agent = createAgent({
       name: 'test-hello',
       instructions: 'Be helpful and concise.',
+    });
+
+    it('preserves assistant ownership through tool reconstruction, output rewriting and Session commit', async () => {
+      const guardrail: OutputGuardrail = { kind: 'output', name: 'rewrite-output',
+        check: async () => ({ action: 'rewrite', payload: { role: 'assistant', content: 'reviewed' } }) };
+      const tool: RunnableTool = { name: 'echo', description: 'Echo',
+        input_schema: { type: 'object', properties: {} }, execute: async () => ({ content: 'ok' }) };
+      const agent = createAgent({ name: 'ownership', instructions: '', tools: [tool], guardrails: [guardrail] });
+      const session = createInMemorySession();
+      let calls = 0;
+      const result = await Runner.run(agent, 'run', { session, llm: async (): Promise<RunnerLlmResult> => {
+        calls += 1;
+        return calls === 1 ? { outputId: 'first-output', text: 'calling',
+          thinkingBlocks: [{ type: 'thinking', thinking: 'one', signature: '' },
+            { type: 'thinking', thinking: 'two', signature: '' }],
+          toolCalls: [{ id: 'call', name: 'echo', input: {} }] }
+          : { outputId: 'final-output', text: 'original' };
+      } });
+      const assistants = result.messages.filter(message => message.role === 'assistant');
+      expect(assistants.map(message => message.outputId)).toEqual(['first-output', 'final-output']);
+      expect(assistants[0]?.content).toEqual([
+        { type: 'thinking', thinking: 'one', signature: '' },
+        { type: 'thinking', thinking: 'two', signature: '' },
+        { type: 'text', text: 'calling' },
+        { type: 'tool_use', id: 'call', name: 'echo', input: {} },
+      ]);
+      expect(assistants[1]?.content).toBe('reviewed');
+      const saved: unknown[] = [];
+      for await (const entry of session.entries()) if (entry.type === 'message') saved.push(entry.payload);
+      expect(saved).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'assistant', outputId: 'first-output' }),
+        expect.objectContaining({ role: 'assistant', outputId: 'final-output', content: 'reviewed' }),
+      ]));
     });
 
     it('calls the injected llm with system + user messages and returns output', async () => {

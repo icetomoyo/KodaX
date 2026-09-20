@@ -9,6 +9,7 @@ import {
   type KodaXProviderStreamOptions, type KodaXReasoningRequest,
 } from '@kodax-ai/llm';
 import { LEARNING_REVIEW_TOOL, awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
+import { FileSessionStorage } from '@kodax-ai/repl';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -27,6 +28,10 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
   const requests: KodaXMessage[][] = [];
   const views: ClientSessionView[] = [];
   let closeObservation = () => {};
+  let releaseQueuedSave = () => {};
+  let restoreSaveGate = () => {};
+  let queuedSaveViewIndex: number | undefined;
+  let historyReadDuringSave = false;
   class BoundaryProvider extends KodaXBaseProvider {
     readonly name = providerName;
     readonly supportsThinking = false;
@@ -86,6 +91,25 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     expect(await client.inputs.withdraw(session.id, followup.inputId)).toMatchObject(followup);
     expect(await client.inputs.read(session.id, followup.inputId)).toMatchObject({ state: 'withdrawn' });
     await client.inputs.submit({ ...followup, inputId: 'followup' });
+    if (agentMode === 'sa' && behavior === 'deliver') {
+      const gate = new Promise<void>(resolve => { releaseQueuedSave = resolve; });
+      const save = FileSessionStorage.prototype.save;
+      const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function(this: FileSessionStorage, id, data) {
+        if (id === session.id && queuedSaveViewIndex === undefined
+          && data.messages.some(message => message.inputId === 'followup')) {
+          queuedSaveViewIndex = views.length;
+          await gate;
+        }
+        return save.call(this, id, data);
+      });
+      const conversationPage = runtime.sessions.conversationPage.bind(runtime.sessions);
+      const pageSpy = vi.spyOn(runtime.sessions, 'conversationPage').mockImplementation(async (input, options) => {
+        const page = await conversationPage(input, options);
+        if (input.sessionId === session.id && queuedSaveViewIndex !== undefined) historyReadDuringSave = true;
+        return page;
+      });
+      restoreSaveGate = () => { saveSpy.mockRestore(); pageSpy.mockRestore(); };
+    }
     if (behavior === 'skill-barrier') {
       await client.inputs.withdraw(session.id, 'followup');
       await client.inputs.submit({ ...followup, inputId: 'skill', text: '/inspect' });
@@ -95,6 +119,14 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
       ? client.inputs.withdraw(session.id, 'followup').then(() => true, () => false) : undefined;
     if (behavior === 'stop') await client.runs.stop(active.runId!);
     releaseFirst();
+    if (agentMode === 'sa' && behavior === 'deliver') {
+      // Consume turn.started's history refresh before the queued input is durable.
+      await expect.poll(() => queuedSaveViewIndex).toBeDefined();
+      await expect.poll(() => historyReadDuringSave && views.slice(queuedSaveViewIndex).some(view =>
+        view.queue.some(input => input.inputId === 'followup')
+        && !view.items.some(item => item.inputId === 'followup'))).toBe(true);
+      releaseQueuedSave();
+    }
     if (behavior === 'stop' || behavior === 'failure') {
       await runtime.runs.await(active.runId!);
       expect(await client.inputs.read(session.id, 'followup')).toMatchObject({ state: 'queued' });
@@ -141,6 +173,8 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     expect(transcript?.messages.filter(message => message.inputId === 'followup')).toHaveLength(1);
     expect(transcript?.messages.some(message => message.inputId === 'withdraw-me')).toBe(false);
   } finally {
+    releaseQueuedSave();
+    restoreSaveGate();
     closeObservation();
     releaseFirst();
     releaseSecond();

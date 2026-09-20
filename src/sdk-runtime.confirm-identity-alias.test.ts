@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { getSessionMessagesFromLineage } from '@kodax-ai/agent';
+import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
@@ -149,6 +150,7 @@ it.each(['unique', 'conflicting duplicate'] as const)('handles %s delivery ident
   } finally {
     releaseFirst();
     await runtime.close();
+    await awaitLatestCodingMemoryReviewDrain(5_000);
     unregister();
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true, maxRetries: 3 });

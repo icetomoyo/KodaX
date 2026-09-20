@@ -17,6 +17,18 @@ import {
 } from "./message-utils.js";
 
 describe("message-utils", () => {
+  it('projects identified canonical blocks consistently without inventing separators or removing literal text', () => {
+    const message: KodaXMessage = { role: 'assistant', outputId: 'owned', content: [
+      { type: 'thinking', thinking: 'first ' }, { type: 'thinking', thinking: 'thought' },
+      { type: 'text', text: '\n```txt\n' }, { type: 'text', text: '...\n```\n' },
+    ] };
+    const expected = [{ type: 'thinking', text: 'first thought', outputId: 'owned' },
+      { type: 'assistant', text: '\n```txt\n...\n```\n', outputId: 'owned' }];
+    expect(extractHistorySeedsFromMessage(message)).toEqual(expected);
+    expect(extractHistorySeedsFromMessages([message])).toEqual(expected);
+    expect(extractHistorySeedsFromMessages([{ role: 'assistant', outputId: 'dots', content: '...' }]))
+      .toEqual([{ type: 'assistant', text: '...', outputId: 'dots' }]);
+  });
   it("keeps extractTextContent focused on plain text blocks", () => {
     const text = extractTextContent([
       { type: "thinking", thinking: "plan silently" },

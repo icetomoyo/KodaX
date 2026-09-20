@@ -15,6 +15,7 @@ import type {
   ClientObservationStatus,
   ClientSessionActivity,
 } from '@kodax-ai/coding/client-contract';
+import { createHash, type Hash } from 'node:crypto';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import {
   answerClientPlaneInteraction,
@@ -27,13 +28,17 @@ type WriteLine = (line: string) => void;
 type ReadItem = (id: string, options: ClientItemReadOptions) => Promise<ClientItemContent | null>;
 
 async function readClassicItemRange(readItem: ReadItem | undefined, id: string, offset: number,
-  end: number, part: 'text' | 'input' = 'text'): Promise<string> {
+  end: number, part: 'text' | 'input' = 'text', captured?: ClientViewItem): Promise<string> {
   if (!readItem) throw new Error('Complete console output is unavailable.');
   const parts: string[] = [];
   while (offset < end) {
     const chunk = await readItem(id, { offset, part });
     if (!chunk || chunk.id !== id || chunk.offset !== offset || chunk.text.length === 0) {
       throw new Error(`Console output ${id} is incomplete; open session history to retry.`);
+    }
+    if (captured && ((chunk.textRevision ?? 0) !== (captured.textRevision ?? 0)
+      || chunk.outputState !== captured.outputState)) {
+      throw new Error(`Console output ${id} changed during the read; retry from the current view.`);
     }
     const text = chunk.text.slice(0, end - offset);
     parts.push(text);
@@ -51,6 +56,12 @@ function thinkingPreview(text: string): string {
     : singleLine;
 }
 
+function assistantDigest(text: string): Hash {
+  // Page offsets and deltas use UTF-16 code units; preserve split surrogate
+  // pairs exactly when a provider splits one character across two deltas.
+  return createHash('sha256').update(text, 'utf16le');
+}
+
 /**
  * Pure differ; the tests drive it directly. `write` receives one formatted
  * line per change (`kind:text`), the caller owns chalk styling.
@@ -58,6 +69,10 @@ function thinkingPreview(text: string): string {
 export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: ReadItem) {
   let baselined = false;
   const printedText = new Map<string, number>();
+  // Keep only the Host's bounded preview. textRevision identifies changes to
+  // an omitted prefix without rereading the complete response on every delta.
+  const assistantSnapshots = new Map<string, ClientViewItem>();
+  const assistantDigests = new Map<string, Hash>();
   const printedSidecarStates = new Map<string, string>();
   const sidecarState = (item: ClientViewItem): string => JSON.stringify([item.sidecar?.verdict, item.sidecar?.delivery]);
   const printedToolStages = new Set<string>();
@@ -93,6 +108,10 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
       baselined = true;
       for (const item of items) {
         printedText.set(item.id, item.totalTextLength ?? item.text.length);
+        if (item.type === 'assistant') {
+          assistantSnapshots.set(item.id, item);
+          if (!item.textOffset) assistantDigests.set(item.id, assistantDigest(item.text));
+        }
         if (item.type === 'sidecar') printedSidecarStates.set(item.id, sidecarState(item));
         if (item.type === 'tool') {
           printedToolStages.add(`${item.id}:start`);
@@ -106,7 +125,10 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
     }
     const liveIds = new Set(items.map((item) => item.id));
     for (const id of printedText.keys()) {
-      if (!liveIds.has(id)) { printedText.delete(id); printedSidecarStates.delete(id); }
+      if (!liveIds.has(id)) {
+        printedText.delete(id); printedSidecarStates.delete(id);
+        assistantSnapshots.delete(id); assistantDigests.delete(id);
+      }
     }
     for (const stage of printedToolStages) {
       const id = stage.slice(0, stage.lastIndexOf(':'));
@@ -116,14 +138,34 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
       if (item.type === 'assistant') {
         const previous = printedText.get(item.id) ?? 0;
         const end = item.totalTextLength ?? item.text.length;
-        if (end > previous) {
-          const start = item.textOffset ?? 0;
+        const start = item.textOffset ?? 0;
+        const snapshot = assistantSnapshots.get(item.id);
+        const overlapStart = Math.max(start, snapshot?.textOffset ?? 0);
+        const overlapEnd = Math.min(end, previous);
+        const revised = snapshot !== undefined && ((item.textRevision ?? 0) !== (snapshot.textRevision ?? 0)
+          || end < previous || (overlapEnd > overlapStart
+          && item.text.slice(overlapStart - start, overlapEnd - start)
+            !== snapshot.text.slice(overlapStart - (snapshot.textOffset ?? 0), overlapEnd - (snapshot.textOffset ?? 0))));
+        const boundedHandoff = start > 0 && snapshot !== undefined && item.outputState !== snapshot.outputState;
+        if (revised || boundedHandoff) {
+          const text = start > 0 ? await readClassicItemRange(readItem, item.id, 0, end, 'text', item) : item.text;
+          const digest = assistantDigests.get(item.id);
+          const samePrefix = end >= previous && digest !== undefined
+            && assistantDigest(text.slice(0, previous)).digest('hex') === digest.copy().digest('hex');
+          if (!samePrefix) write(`assistant:\n[Updated response]\n${text}`);
+          else if (end > previous) write(`assistant:${text.slice(previous)}`);
+          assistantDigests.set(item.id, assistantDigest(text));
+          printedText.set(item.id, end);
+        } else if (end > previous) {
           const text = previous < start
-            ? await readClassicItemRange(readItem, item.id, previous, end)
+            ? await readClassicItemRange(readItem, item.id, previous, end, 'text', item)
             : item.text.slice(previous - start);
           write(`assistant:${text}`);
+          const digest = assistantDigests.get(item.id) ?? (previous === 0 ? assistantDigest('') : undefined);
+          if (digest) { digest.update(text, 'utf16le'); assistantDigests.set(item.id, digest); }
           printedText.set(item.id, end);
         }
+        assistantSnapshots.set(item.id, item);
         continue;
       }
       if (item.type === 'tool' && item.tool) {

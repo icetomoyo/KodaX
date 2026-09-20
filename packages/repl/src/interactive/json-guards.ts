@@ -211,6 +211,8 @@ export function isKodaXSessionUiHistoryItem(value: unknown): value is KodaXSessi
   }
 
   return UI_TEXT_ITEM_TYPES.has(value.type)
+    && (value.outputId === undefined || typeof value.outputId === 'string')
+    && (value.textRevision === undefined || (typeof value.textRevision === 'number' && Number.isSafeInteger(value.textRevision) && value.textRevision >= 0))
     && typeof value.text === 'string'
     && isOptionalHistoryTimestamp(value.timestamp)
     && (value.presentationOnly === undefined || value.presentationOnly === true)

@@ -12,6 +12,8 @@ export async function observeAcpClientPrompt(
   describeTool: (name: string, input: string) => Pick<ToolCall, 'rawInput' | 'kind' | 'locations'>,
 ) {
   const emitted = new Map<string, string>();
+  const emittedRevisions = new Map<string, number>();
+  const emittedStates = new Map<string, ClientViewItem['outputState']>();
   const priorItems = new Set<string>();
   const toolFingerprints = new Map<string, string>();
   const seenInteractionIds = new Set<string>();
@@ -24,22 +26,26 @@ export async function observeAcpClientPrompt(
   const failed = new Promise<unknown>(resolve => { reportFailure = resolve; });
   function fail(error: unknown): void { failure = error; reportFailure(error); }
 
-  async function fullText(item: ClientViewItem, part: 'text' | 'input'): Promise<string> {
+  async function fullText(item: ClientViewItem, part: 'text' | 'input', from = 0): Promise<string> {
     const preview = part === 'text' ? item.text : item.tool?.inputText ?? '';
-    const total = part === 'text' ? item.totalTextLength : item.tool?.totalInputLength;
-    if ((total ?? preview.length) <= preview.length && (part === 'input' || !item.textOffset)) return preview;
+    const total = (part === 'text' ? item.totalTextLength : item.tool?.totalInputLength) ?? preview.length;
+    if (total <= preview.length && (part === 'input' || !item.textOffset)) return preview.slice(from);
     let text = '';
-    let offset: number | undefined = 0;
-    while (offset !== undefined) {
+    let offset = from;
+    while (offset < total) {
       const page = await client.sessions.readItem(sessionId, item.id, { part, offset });
       if (!page) throw new Error(`ACP Host item disappeared during read: ${item.id}`);
+      if (part === 'text' && ((page.textRevision ?? 0) !== (item.textRevision ?? 0)
+        || page.outputState !== item.outputState)) {
+        throw new Error(`ACP Host item changed during read: ${item.id}`);
+      }
       const end = offset + page.text.length;
-      if (page.offset !== offset || end > page.totalLength
+      if (page.id !== item.id || page.offset !== offset || end > page.totalLength || page.totalLength < total
         || (page.nextOffset === undefined ? end !== page.totalLength : page.nextOffset !== end || end <= offset)) {
         throw new Error(`ACP Host returned an inconsistent page for item: ${item.id}`);
       }
-      text += page.text;
-      offset = page.nextOffset;
+      text += page.text.slice(0, total - offset);
+      offset = end;
     }
     return text;
   }
@@ -64,8 +70,20 @@ export async function observeAcpClientPrompt(
       return;
     }
     if (item.type !== 'assistant' && item.type !== 'thinking') return;
-    const text = await fullText(item, 'text');
     const previous = emitted.get(item.id) ?? '';
+    const start = item.textOffset ?? 0;
+    const end = item.totalTextLength ?? item.text.length;
+    const revision = item.textRevision ?? 0;
+    const overlap = Math.max(0, previous.length - start);
+    // Same-item appends reuse already emitted text; an explicit revision is
+    // the only way a bounded view can signal that its hidden prefix changed.
+    const appending = emitted.has(item.id) && emittedRevisions.get(item.id) === revision
+      && emittedStates.get(item.id) === item.outputState && end >= previous.length
+      && item.text.slice(0, overlap) === previous.slice(start);
+    const text = appending ? previous + (previous.length < start
+      ? await fullText(item, 'text', previous.length) : item.text.slice(previous.length - start)) : await fullText(item, 'text');
+    emittedRevisions.set(item.id, revision);
+    emittedStates.set(item.id, item.outputState);
     if (text === previous) return;
     // ACP cannot replace an earlier chunk; make a Host revision explicit.
     const delta = text.startsWith(previous) ? text.slice(previous.length) : `\n[Updated response]\n${text}`;

@@ -8,6 +8,102 @@ import { createKodaXRuntime } from './sdk-runtime.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
 
+it.each(['revision', 'state'] as const)('rejects mixed ACP pages when %s changes without replaying emitted content', async change => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-page-identity-'));
+  const runtime = await createKodaXRuntime({ homeDir });
+  const client = toKodaXProductClient(runtime);
+  const session = await client.sessions.create({ projectPath: homeDir });
+  let view: ClientSessionView = { session, settings: {}, items: [], queue: [], interactions: [], runs: [] };
+  vi.spyOn(client.sessions, 'observe').mockImplementation(async (_id, receive) => {
+    receive(view);
+    return { close() {} };
+  });
+  const read = vi.spyOn(client.sessions, 'readItem').mockImplementation(async (_session, id, options) => {
+    const offset = options?.offset ?? 0;
+    return { id, text: offset === 4 ? 'efgh' : 'tail', offset, totalLength: 12,
+      ...(offset === 4 ? { nextOffset: 8 } : {}), textRevision: offset === 8 && change === 'revision' ? 1 : 0,
+      ...{ outputState: offset === 8 && change === 'state' ? 'committed' as const : 'draft' as const },
+    };
+  });
+  const updates: SessionNotification[] = [];
+  const projection = await observeAcpClientPrompt(client, session.id, async update => { updates.push(update); },
+    async () => ({ type: 'allow_once' }), () => ({}));
+  try {
+    const item = { id: 'output', type: 'assistant' as const, textRevision: 0, outputState: 'draft' as const };
+    view = { ...view, items: [{ ...item, text: 'abcd' }] };
+    await projection.flush();
+    view = { ...view, items: [{ ...item, text: 'tail', textOffset: 8, totalTextLength: 12 }] };
+    await expect(projection.flush()).rejects.toThrow('changed');
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(updates.flatMap(({ update }) => update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+      ? [update.content.text] : [])).toEqual(['abcd']);
+  } finally {
+    projection.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+it('projects continuous Host identities once through settlement and repeated snapshots, reading only revised bounded bodies', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-identity-'));
+  const runtime = await createKodaXRuntime({ homeDir });
+  const client = toKodaXProductClient(runtime);
+  const session = await client.sessions.create({ projectPath: homeDir });
+  let view: ClientSessionView = { session, settings: {}, items: [], queue: [], interactions: [], runs: [] };
+  let listener: ((next: ClientSessionView) => void) | undefined;
+  vi.spyOn(client.sessions, 'observe').mockImplementation(async (_id, receive) => {
+    listener ??= receive;
+    receive(view);
+    return { close() {} };
+  });
+  let body = 'abcdefgh';
+  let bodyRevision = 0;
+  let bodyState: 'draft' | 'committed' = 'draft';
+  const read = vi.spyOn(client.sessions, 'readItem').mockImplementation(async (_id, itemId, options) => ({
+    id: itemId, text: body.slice(options?.offset), offset: options?.offset ?? 0, totalLength: body.length,
+    textRevision: bodyRevision, ...{ outputState: bodyState },
+  }));
+  const updates: SessionNotification[] = [];
+  const projection = await observeAcpClientPrompt(client, session.id, async update => { updates.push(update); },
+    async () => ({ type: 'allow_once' }), () => ({}));
+  const push = async (items: ClientSessionView['items']) => {
+    view = { ...view, items };
+    listener!(view);
+    await projection.flush();
+  };
+  try {
+    const output = { id: 'output', outputId: 'logical-output', type: 'assistant' as const, textRevision: 0 };
+    await push([{ ...output, text: 'abcdef', outputState: 'draft' }]);
+    await push([{ ...output, text: 'fgh', textOffset: 5, totalTextLength: 8, outputState: 'draft' }]);
+    expect(read).not.toHaveBeenCalled();
+    body = 'XYZdefgh';
+    bodyRevision = 1;
+    const revised = { ...output, text: 'fgh', textOffset: 5, totalTextLength: 8, textRevision: 1, outputState: 'draft' as const };
+    await push([revised]);
+    await push([revised]);
+    expect(read).toHaveBeenCalledOnce();
+    // Missing append characters are fetched from the last emitted offset only;
+    // a newer readItem body must not leak past this captured frame's length.
+    body = 'XYZdefghijklmnop-not-in-this-frame';
+    const extended = { ...revised, text: 'mnop', textOffset: 12, totalTextLength: 16 };
+    await push([extended]);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith(session.id, 'output', { part: 'text', offset: 8 });
+    bodyState = 'committed';
+    body = 'XYZdefghijklmnop';
+    const committed = { ...extended, outputState: 'committed' as const };
+    await push([committed]);
+    await push([committed, { ...output, id: 'other', outputId: 'other-output', text: body }]);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(updates.flatMap(({ update }) => update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+      ? [update.content.text] : [])).toEqual(['abcdef', 'gh', '\n[Updated response]\nXYZdefgh', 'ijklmnop', 'XYZdefghijklmnop']);
+  } finally {
+    projection.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it.each(['interrupted', 'closed'] as const)('fails ACP projection when observation is %s and ignores a late permission answer', async state => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-status-'));
   const runtime = await createKodaXRuntime({ homeDir });

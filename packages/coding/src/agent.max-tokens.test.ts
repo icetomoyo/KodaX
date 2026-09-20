@@ -169,10 +169,12 @@ describe('runKodaX max_tokens continuation (L5)', () => {
     ];
 
     const textDeltas: string[] = [];
+    const notices: string[] = [];
     const segments: Array<{
       responseId: string;
       providerRequestId: string;
       mode: 'append' | 'replace';
+      outputId?: string;
     }> = [];
     const result = await runKodaX(
       {
@@ -180,6 +182,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
         reasoningMode: 'off',
         events: {
           onTextDelta: (t) => textDeltas.push(t),
+          onRetry: reason => notices.push(reason),
           onOutputSegmentStart: (segment) => segments.push(segment),
         },
       },
@@ -191,12 +194,15 @@ describe('runKodaX max_tokens continuation (L5)', () => {
     // Both turns at the capped budget — no escalation to 64K.
     expect(MaxTokensScriptedProvider.observedBudgets[0]).toBe(KODAX_CAPPED_MAX_OUTPUT_TOKENS);
     expect(MaxTokensScriptedProvider.observedBudgets[1]).toBe(KODAX_CAPPED_MAX_OUTPUT_TOKENS);
-    // The Claude-Code-style meta message surfaces via onTextDelta.
-    const joined = textDeltas.join('');
-    expect(joined).toContain('output token limit hit');
+    expect(textDeltas).toEqual(['first half of the long file', 'second half']);
+    expect(notices).toEqual(['output token limit hit, continuing…']);
     expect(segments.map((segment) => segment.mode)).toEqual(['append', 'append']);
     expect(segments[1]?.responseId).toBe(segments[0]?.responseId);
     expect(segments[1]?.providerRequestId).not.toBe(segments[0]?.providerRequestId);
+    expect(segments.every(segment => typeof segment.outputId === 'string')).toBe(true);
+    expect(new Set(segments.map(segment => segment.outputId)).size).toBe(2);
+    expect(result.messages.filter(message => message.role === 'assistant').map(message => message.outputId))
+      .toEqual(segments.map(segment => segment.outputId));
   }, 30_000);
 
   it('honors a run-scoped maxOutputTokens passed to runKodaX (SDK ALS wrap)', async () => {

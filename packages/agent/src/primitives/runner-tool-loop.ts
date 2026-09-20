@@ -60,6 +60,8 @@ export interface RunnerToolCall {
  */
 export interface RunnerLlmResult {
   readonly text: string;
+  /** Identity shared by live output and the assistant message committed from this result. */
+  readonly outputId?: string;
   readonly toolCalls?: readonly RunnerToolCall[];
   readonly stopReason?: string;
   /**
@@ -303,7 +305,8 @@ export function buildAssistantMessageFromLlmResult(
   if (blocks.length === 0) {
     blocks.push({ type: 'text', text: '' } satisfies KodaXTextBlock);
   }
-  return { role: 'assistant', content: blocks };
+  return { role: 'assistant', content: blocks,
+    ...(result.outputId !== undefined ? { outputId: result.outputId } : {}) };
 }
 
 /**

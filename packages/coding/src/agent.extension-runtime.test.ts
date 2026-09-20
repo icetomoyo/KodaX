@@ -611,8 +611,10 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
     try {
+      // The Map isolates Session data; the review inbox also needs its own home.
       await runKodaX({ provider: TEST_PROVIDER_NAME, extensionRuntime: runtime,
-        context: { executionCwd: tempDir }, session: { id: path.basename(tempDir), storage } }, 'A persisted foreground request');
+        context: { executionCwd: tempDir, configHome: path.join(tempDir, '.kodax') },
+        session: { id: path.basename(tempDir), storage } }, 'A persisted foreground request');
       await started;
       expect(Feature034TestProvider.calls).toHaveLength(1);
       // Reproduce the next beforeEach reset while the previous review is late.

@@ -291,11 +291,12 @@ it('distinguishes a missing AGENTS file from a failed read without starting a Ru
 
 it('runs registered prompt hooks under Host policy and preserves fork history', async () => {
   const commandDir = path.join(homeDir, '.kodax', 'commands');
+  const releaseHook = path.join(homeDir, 'command-hooks.release');
   await mkdir(commandDir, { recursive: true });
   await writeFile(path.join(commandDir, 'fork-review.md'), [
     '---', 'name: fork-review', 'context: fork', 'allowed-tools: Bash, Read', 'hooks:',
     '  SessionStart:', '    - command: echo started>> command-hooks.txt',
-    '  SubagentStop:', `    - command: ${JSON.stringify(`node -e "require('fs').appendFileSync('command-hooks.txt','stopping ');setTimeout(()=>require('fs').appendFileSync('command-hooks.txt','stopped'),700)"`)}`,
+    '  SubagentStop:', `    - command: ${JSON.stringify(`node -e "const fs=require('fs');fs.appendFileSync('command-hooks.txt','stopping ');const gate=setInterval(()=>{if(fs.existsSync('command-hooks.release')){clearInterval(gate);fs.appendFileSync('command-hooks.txt','stopped')}},10)"`)}`,
     '---', 'Inspect the release independently.',
   ].join('\n'));
   const session = await first.sessions.create({ projectPath: homeDir });
@@ -306,13 +307,28 @@ it('runs registered prompt hooks under Host policy and preserves fork history', 
   const result = await first.commands.execute({ sessionId: session.id, inputId: 'fork-command', name: 'fork-review', args: ['auth'] });
   if (result.kind !== 'started') throw new Error('Expected a fork Run.');
   let settled = false;
-  const done = first.runs.await(result.runId).then(outcome => { settled = true; return outcome; });
-  await vi.waitFor(async () => expect(await readFile(path.join(homeDir, 'command-hooks.txt'), 'utf8')).toContain('stopping'), { timeout: 15_000, interval: 10 });
-  expect(settled).toBe(false);
-  await expect(second.inputs.submit({ sessionId: session.id, inputId: 'during-stop-hook', text: 'Do not enter until hooks settle.' }))
-    .rejects.toMatchObject({ code: 'conflict' });
-  const outcome = await done;
-  expect(outcome, JSON.stringify(outcome)).toMatchObject({ phase: 'completed' });
+  const done = first.runs.await(result.runId).then(
+    outcome => { settled = true; return { ok: true as const, outcome }; },
+    error => { settled = true; return { ok: false as const, error }; },
+  );
+  try {
+    await vi.waitFor(async () => expect(await readFile(path.join(homeDir, 'command-hooks.txt'), 'utf8')).toContain('stopping'), { timeout: 15_000, interval: 10 });
+    expect(settled).toBe(false);
+    await expect(second.inputs.submit({ sessionId: session.id, inputId: 'during-stop-hook', text: 'Do not enter until hooks settle.' }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    await writeFile(releaseHook, 'release');
+    const outcome = await done;
+    if (!outcome.ok) throw outcome.error;
+    expect(outcome.outcome, JSON.stringify(outcome.outcome)).toMatchObject({ phase: 'completed' });
+  } finally {
+    await writeFile(releaseHook, 'release');
+    try {
+      if (!settled) await first.runs.stop(result.runId);
+    } finally {
+      const outcome = await done;
+      if (!outcome.ok) throw outcome.error;
+    }
+  }
   expect(await readFile(path.join(homeDir, 'command-hooks.txt'), 'utf8')).toMatch(/started[\s\S]*stopped/);
   const forkRequests = requests.filter((_messages, index) => requestOptions[index]?.system.includes('Inspect the release independently.'));
   expect(forkRequests.length).toBeGreaterThan(0);

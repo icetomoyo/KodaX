@@ -79,6 +79,7 @@ export interface NonStreamingFallbackInput {
   readonly providerName: string;
   readonly attempt: number;
   readonly responseId: string;
+  readonly outputId?: string;
   /** Capability-cache location override (custom KODAX_HOME); must match the host turn loop. */
   readonly configHome?: string;
   /**
@@ -127,6 +128,7 @@ export async function executeNonStreamingFallback(
     );
     input.events.onOutputSegmentStart?.({
       responseId: input.responseId,
+      ...(input.outputId !== undefined ? { outputId: input.outputId } : {}),
       providerRequestId,
       mode: 'replace',
     });

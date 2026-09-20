@@ -194,6 +194,53 @@ export function sanitizeManagedStreamingText(text: string): string {
   return (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
 }
 
+const OUTPUT_MARKERS = [...MANAGED_CONTROL_PLANE_MARKERS, '```kodax'];
+
+/** Holds only a possible marker prefix, never the accumulated answer. */
+export function createManagedOutputTextFilter(): { push(text: string): string; finish(): string } {
+  let pending = '';
+  let stopped = false;
+  let lastCharacter = '';
+  return {
+    push(text) {
+      if (stopped) return '';
+      const next = pending + text;
+      const lower = next.toLowerCase();
+      let cut = next.length;
+      let held = 0;
+      for (const marker of OUTPUT_MARKERS) {
+        const source = marker === '```kodax' ? lower : next;
+        const wordMarker = /^[A-Za-z]/.test(marker);
+        const isBoundary = (index: number): boolean => !wordMarker
+          || !/[A-Za-z0-9_]/.test(next[index - 1] ?? lastCharacter);
+        let index = source.indexOf(marker);
+        while (index >= 0 && !isBoundary(index)) index = source.indexOf(marker, index + 1);
+        if (index >= 0) { cut = Math.min(cut, index); stopped = true; }
+        for (let size = 1; size < marker.length && size <= source.length; size++) {
+          if (isBoundary(source.length - size) && source.endsWith(marker.slice(0, size))) held = Math.max(held, size);
+        }
+      }
+      if (stopped) { pending = ''; return next.slice(0, cut); }
+      pending = held > 0 ? next.slice(-held) : '';
+      const visible = next.slice(0, next.length - held);
+      lastCharacter = visible.at(-1) ?? lastCharacter;
+      return visible;
+    },
+    finish() {
+      const tail = pending;
+      pending = '';
+      // A truncated managed fence name is internal; bare Markdown backticks are not.
+      return /^```k(?:o(?:d(?:a)?)?)?$/i.test(tail) ? '' : tail;
+    },
+  };
+}
+
+/** The same transformation for the final result, independent of chunk boundaries. */
+export function sanitizeManagedOutputText(text: string): string {
+  const filter = createManagedOutputTextFilter();
+  return filter.push(text) + filter.finish();
+}
+
 export function sanitizeEvaluatorPublicAnswer(text: string): string {
   const sanitized = sanitizeManagedUserFacingText(text).trim();
   if (!sanitized) {

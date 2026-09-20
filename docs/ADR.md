@@ -5329,6 +5329,25 @@ because a fallback or escalation may reuse an attempt number.
    without stable source/request identity cannot be losslessly deduplicated by
    text equality.
 
+**2026-09-20 clarification — output ownership**: The streaming callback and
+the completed provider result represent stages of one assistant message, not
+two independently displayable bodies. Each newly generated assistant message
+carries an `outputId` from generation through canonical persistence. This is
+distinct from the user turn and the physical provider request. SA outer-loop
+continuations create the next message; AMA adapter-internal continuations remain
+part of the current message. Existing response/turn identifiers keep their meaning.
+Canonical persistence completes the same output. The Host retires its draft and
+serves canonical content from both the view and item reads. Display checkpoints
+retain independent notices and uncommitted partial output; a canonical mirror
+must not become another authoritative UI-only message. New identified output
+never relies on text equality to infer existence or ownership. Legacy data
+without provenance remains explicitly limited. Stream end is not a durable
+commit receipt. No event journal or separate output registry is introduced.
+Ordinary text transformations preserve whitespace and have the same semantics
+across streaming and final content. Control notices use their own existing
+channel. Append-only consumers distinguish append from revision of the same
+item; a bounded suffix alone is insufficient evidence of an unchanged prefix.
+
 **Consequences**: raw audit truth and effective live truth are both preserved;
 fallback and continuation no longer require UI heuristics. KodaX CLI, Runtime,
 and Space converge on one projection after streaming, reconnect, or snapshot

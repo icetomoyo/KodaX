@@ -45,6 +45,7 @@ type JsonEvent =
       scope?: 'parent' | 'worker';
     } & JsonLiveMeta)
   | ({ type: 'text.delta'; text: string } & JsonActivityMeta)
+  | ({ type: 'output.notice'; code: 'model_refused'; providerRequestId?: string } & JsonActivityMeta)
   | ({ type: 'thinking.delta'; text: string } & JsonActivityMeta)
   | ({ type: 'thinking.end'; thinking: string } & JsonActivityMeta)
   | ({
@@ -317,6 +318,10 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
       writeJsonLine(stdout, { type: 'compact.end', ...activityMetaFields(meta) });
     },
 
+    onOutputNotice: (notice, meta) => {
+      writeJsonLine(stdout, { type: 'output.notice', ...notice, ...activityMetaFields(meta),
+        ...(meta?.providerRequestId ? { providerRequestId: meta.providerRequestId } : {}) });
+    },
     onRetry: (reason, attempt, maxAttempts, meta) => {
       writeJsonLine(stdout, {
         type: 'retry',

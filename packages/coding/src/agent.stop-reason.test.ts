@@ -131,7 +131,7 @@ describe('runKodaX stopReason normalization', () => {
 
     expect(result.success).toBe(true);
     expect(StopReasonScriptedProvider.streamCalls).toBe(2);
-    expect(textDeltas.join('')).toContain('output token limit hit');
+    expect(textDeltas).toEqual(['first half', 'second half']);
   }, 30_000);
 
   it('auto-continues managed protocol when OpenAI finish_reason=stop', async () => {
@@ -196,6 +196,7 @@ describe('runKodaX stopReason normalization', () => {
         response(stopReason, ''),
       ];
       const textDeltas: string[] = [];
+      const notices: string[] = [];
 
       const result = await runKodaX(
         {
@@ -203,6 +204,7 @@ describe('runKodaX stopReason normalization', () => {
           reasoningMode: 'off',
           events: {
             onTextDelta: (text) => textDeltas.push(text),
+            onOutputNotice: notice => notices.push(notice.code),
           },
         },
         'Sensitive prompt.',
@@ -210,7 +212,8 @@ describe('runKodaX stopReason normalization', () => {
 
       expect(result.success).toBe(true);
       expect(StopReasonScriptedProvider.streamCalls).toBe(1);
-      expect(textDeltas.join('')).toContain('model declined');
+      expect(textDeltas.join('')).toBe('');
+      expect(notices).toEqual(['model_refused']);
     },
     30_000,
   );

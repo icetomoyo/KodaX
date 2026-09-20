@@ -220,6 +220,9 @@ export function withLiveTurnAttribution(
     onTextDelta: (text, meta) => {
       baseEvents.onTextDelta?.(text, withActivityMeta(scope, meta));
     },
+    onOutputNotice: (notice, meta) => {
+      baseEvents.onOutputNotice?.(notice, withActivityMeta(scope, meta));
+    },
     onThinkingDelta: (text, meta) => {
       baseEvents.onThinkingDelta?.(text, withActivityMeta(scope, meta));
     },

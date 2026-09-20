@@ -458,6 +458,9 @@ export interface ClientHistorySearchResult {
 }
 
 export interface ClientItemContent {
+  readonly outputState?: 'draft' | 'committed';
+  /** Same revision and outputState as the observed item, for frozen reads. */
+  readonly textRevision?: number;
   readonly id: string;
   readonly text: string;
   readonly offset: number;
@@ -552,6 +555,11 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** One generated assistant message, shared by its draft and canonical items. */
+  readonly outputId?: string;
+  readonly outputState?: 'draft' | 'committed';
+  /** Draft revision changes on replacement, never append; immutable committed output uses 0. Compare with outputState. */
+  readonly textRevision?: number;
   /** Host recovery metadata; clients render the supplied item order. */
   readonly afterInputId?: string;
   readonly id: string;

@@ -26,6 +26,12 @@ function createWritable() {
 }
 
 describe('createJsonEvents', () => {
+  it('emits refusal as a control notice without adding an assistant delta', () => {
+    const stdout = createWritable();
+    const events = createJsonEvents({ stdout: stdout.stream, stderr: createWritable().stream });
+    events.onOutputNotice?.({ code: 'model_refused' }, { providerRequestId: 'request' });
+    expect(stdout.readLines()).toEqual([{ type: 'output.notice', code: 'model_refused', providerRequestId: 'request' }]);
+  });
   it('serializes lifecycle events to stdout as JSONL', () => {
     const stdout = createWritable();
     const stderr = createWritable();

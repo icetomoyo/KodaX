@@ -72,7 +72,7 @@ export function maybeContinueAfterMaxTokens(
 
   const nextCount = maxTokensRetryCount + 1;
   if (nextCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
-    events.onTextDelta?.('\n\n[output token limit hit, continuing…]\n\n');
+    events.onRetry?.('output token limit hit, continuing…', nextCount, KODAX_MAX_MAXTOKENS_RETRIES);
     messages.push({
       role: 'user',
       content: [

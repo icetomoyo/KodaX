@@ -38,6 +38,7 @@ import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
   KodaXContextOverflowError,
+  classifyStopReason,
   resolvePromptCacheDisabled,
   resolveWireEffort,
   withProviderRequestCredential,
@@ -124,8 +125,8 @@ import {
 } from '../../../agent-runtime/prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from '../../../agent-runtime/prompt-cache-affinity.js';
 import {
-  MANAGED_CONTROL_PLANE_MARKERS,
-  sanitizeManagedStreamingText,
+  createManagedOutputTextFilter,
+  sanitizeManagedOutputText,
 } from './sanitize.js';
 import type { ContextTokenSnapshotRef } from './compaction.js';
 import type { TodoStore } from '../../todo-store.js';
@@ -391,6 +392,10 @@ export function buildRunnerLlmAdapter(
       formatCostReport(getCostSummary(costTracker));
   }
   return async (messages, agent) => {
+    const outputId = `output_${randomUUID()}`;
+    let activeProviderRequestId: string | undefined;
+    let outputTextFilter = createManagedOutputTextFilter();
+    try {
     const activeModel = options.modelOverride ?? options.model;
     // Strip every leading contiguous system message and concatenate their
     // content. v0.7.22-style flows pushed a single agent-instructions system
@@ -535,7 +540,6 @@ export function buildRunnerLlmAdapter(
       )[];
       usage?: KodaXTokenUsage;
     };
-    let activeProviderRequestId: string | undefined;
     if (overrideStream) {
       streamResult = await overrideStream(
         transcript,
@@ -778,6 +782,7 @@ export function buildRunnerLlmAdapter(
         ?.turnId ?? `response_${randomUUID().replace(/-/g, '')}`;
       let nextRequestMode: KodaXOutputSegmentMode = 'append';
       while (true) {
+        outputTextFilter = createManagedOutputTextFilter();
         system = withEffectivePermissionContext(baseSystem, options.context);
         throwIfManagedProviderAborted(options.abortSignal, providerMessages);
         attempt += 1;
@@ -794,7 +799,7 @@ export function buildRunnerLlmAdapter(
         const requestMeta = { providerRequestId: request.requestId } as const;
         activeProviderRequestId = request.requestId;
         options.events?.onOutputSegmentStart?.(
-          { responseId, providerRequestId: request.requestId, mode: nextRequestMode },
+          { responseId, outputId, providerRequestId: request.requestId, mode: nextRequestMode },
           requestMeta,
         );
 
@@ -847,20 +852,7 @@ export function buildRunnerLlmAdapter(
           onTextDelta: (text: string) => {
             boundaryTracker.markTextDelta(text);
             resetIdleTimer();
-            // M2 parity (v0.7.26) — scrub managed control-plane markers
-            // and incomplete managed fences from the streamed delta
-            // before surfacing to `events.onTextDelta`. Without this,
-            // mid-turn `[managed-task] ...` / `<scout_verdict>` tags
-            // briefly appear in REPL live output even though they're
-            // stripped from the final turn text. Matches legacy
-            // behaviour where managed-worker streams routed through
-            // `sanitizeManagedStreamingText` before the REPL saw them.
-            // The sanitize call trims — only apply it when we actually
-            // detect a marker in this delta to preserve mid-token
-            // whitespace in the common clean-delta case.
-            const hasMarker = text.includes('```')
-              || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
-            const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
+            const outText = outputTextFilter.push(text);
             if (outText.length === 0) return;
             options.events?.onTextDelta?.(outText, requestMeta);
           },
@@ -919,7 +911,7 @@ export function buildRunnerLlmAdapter(
           // KODAX_MAX_OUTPUT_TOKENS or the effective budget already meets
           // the escalated threshold. Mirrors agent.ts:2264-2284.
           if (
-            raw.stopReason === 'max_tokens'
+            classifyStopReason(raw.stopReason) === 'truncated'
             && !hasEscalatedForCurrentAdapterCall
             && !process.env.KODAX_MAX_OUTPUT_TOKENS
             && requestMaxOutputTokens < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
@@ -973,7 +965,7 @@ export function buildRunnerLlmAdapter(
           // ladder above keeps sole ownership of that path.
           if (
             isEmptyCompletion(raw)
-            && raw.stopReason !== 'max_tokens'
+            && classifyStopReason(raw.stopReason) !== 'truncated'
             && emptyCompletionRetries < KODAX_MAX_EMPTY_COMPLETION_RETRIES
             && !options.abortSignal?.aborted
           ) {
@@ -1084,8 +1076,9 @@ export function buildRunnerLlmAdapter(
                 providerRequestId: fallbackRequest.requestId,
               } as const;
               activeProviderRequestId = fallbackRequest.requestId;
+              outputTextFilter = createManagedOutputTextFilter();
               options.events?.onOutputSegmentStart?.(
-                { responseId, providerRequestId: fallbackRequest.requestId, mode: 'replace' },
+                { responseId, outputId, providerRequestId: fallbackRequest.requestId, mode: 'replace' },
                 fallbackMeta,
               );
               emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
@@ -1114,7 +1107,8 @@ export function buildRunnerLlmAdapter(
                     ephemeralSuffix: nativeEphemeralSuffix,
                     onTextDelta: (text: string) => {
                       boundaryTracker.markTextDelta(text);
-                      options.events?.onTextDelta?.(text, fallbackMeta);
+                      const outText = outputTextFilter.push(text);
+                      if (outText) options.events?.onTextDelta?.(outText, fallbackMeta);
                     },
                     onThinkingDelta: (text: string) => {
                       boundaryTracker.markThinkingDelta(text);
@@ -1240,7 +1234,7 @@ export function buildRunnerLlmAdapter(
         ? [...raw.thinkingBlocks]
         : undefined;
       while (
-        raw.stopReason === 'max_tokens'
+        classifyStopReason(raw.stopReason) === 'truncated'
         && (raw.toolBlocks?.length ?? 0) === 0
         && accumulatedText.trim().length > 0
         && l5Retries < KODAX_MAX_MAXTOKENS_RETRIES
@@ -1302,7 +1296,7 @@ export function buildRunnerLlmAdapter(
           } as const;
           activeProviderRequestId = continuationRequest.requestId;
           options.events?.onOutputSegmentStart?.(
-            { responseId, providerRequestId: continuationRequest.requestId, mode: 'append' },
+            { responseId, outputId, providerRequestId: continuationRequest.requestId, mode: 'append' },
             continuationMeta,
           );
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
@@ -1327,13 +1321,10 @@ export function buildRunnerLlmAdapter(
                 maxOutputTokensOverride: requestMaxOutputTokens,
                 ephemeralSuffix: nativeEphemeralSuffix,
                 onTextDelta: (text: string) => {
-                  const hasMarker = text.includes('```')
-                    || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
-                  const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
-                  if (outText.length === 0) return;
-                  continuationText += outText;
+                  continuationText += text;
                   boundaryTracker.markTextDelta(text);
-                  options.events?.onTextDelta?.(outText, continuationMeta);
+                  const outText = outputTextFilter.push(text);
+                  if (outText) options.events?.onTextDelta?.(outText, continuationMeta);
                 },
                 onThinkingDelta: (text: string) => {
                   boundaryTracker.markThinkingDelta(text);
@@ -1380,7 +1371,7 @@ export function buildRunnerLlmAdapter(
           accumulatedThinking.push(...raw.thinkingBlocks);
         }
         // Exit early on tool calls or natural stop.
-        if ((raw.toolBlocks?.length ?? 0) > 0 || raw.stopReason !== 'max_tokens') {
+        if ((raw.toolBlocks?.length ?? 0) > 0 || classifyStopReason(raw.stopReason) !== 'truncated') {
           break;
         }
       }
@@ -1419,6 +1410,10 @@ export function buildRunnerLlmAdapter(
     // onStreamEnd fires after the provider finishes the current turn's
     // stream. The Runner-driven adapter funnels every turn through this
     // single return-path so the event fires once per stream.
+    const remainingText = outputTextFilter.finish();
+    if (remainingText && activeProviderRequestId) {
+      options.events?.onTextDelta?.(remainingText, { providerRequestId: activeProviderRequestId });
+    }
     if (options.events) emitStreamEnd(options.events,
       activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined);
 
@@ -1439,7 +1434,7 @@ export function buildRunnerLlmAdapter(
       });
     }
 
-    const text = (streamResult.textBlocks ?? []).map((b) => b.text).join('');
+    const text = sanitizeManagedOutputText((streamResult.textBlocks ?? []).map((b) => b.text).join(''));
     const toolCalls = (streamResult.toolBlocks ?? []).map((b) => ({
       id: b.id,
       name: b.name,
@@ -1464,6 +1459,7 @@ export function buildRunnerLlmAdapter(
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
       text,
+      outputId,
       toolCalls,
       thinkingBlocks,
       injectedInputMessages,
@@ -1504,5 +1500,13 @@ export function buildRunnerLlmAdapter(
       }
     }
     return runnerResult;
+    } finally {
+      // Preserve an unfinished ordinary suffix when this generation exits.
+      // Replaced attempts reset their filter internally and never flush here.
+      const tail = outputTextFilter.finish();
+      if (tail && activeProviderRequestId) {
+        options.events?.onTextDelta?.(tail, { providerRequestId: activeProviderRequestId });
+      }
+    }
   };
 }

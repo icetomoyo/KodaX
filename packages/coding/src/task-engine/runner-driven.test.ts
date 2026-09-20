@@ -2397,6 +2397,7 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       responseId: string;
       providerRequestId: string;
       mode: 'replace' | 'append';
+      outputId?: string;
     }> = [];
     registerScriptedProvider(
       [
@@ -2413,7 +2414,7 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         onOutputSegmentStart: (segment) => segments.push(segment),
       },
     });
-    await adapter(
+    const result = await adapter(
       [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Big task.' }],
       { name: 'scout', instructions: '' },
     );
@@ -2421,6 +2422,8 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
     expect(segments.map((segment) => segment.mode)).toEqual(['append', 'replace', 'append']);
     expect(new Set(segments.map((segment) => segment.responseId)).size).toBe(1);
     expect(new Set(segments.map((segment) => segment.providerRequestId)).size).toBe(3);
+    expect(typeof result.outputId).toBe('string');
+    expect(segments.map(segment => segment.outputId)).toEqual([result.outputId, result.outputId, result.outputId]);
   }, 15_000);
 
   it('keeps streamed L5 partial text when the continuation request fails', async () => {

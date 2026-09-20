@@ -235,3 +235,32 @@ classic 复用 compacting 快照，同 Run 同阶段只提示一次、结束或�
 最终修正后的构建、源码及测试类型检查均 EXIT 0；在其完成后单独跑默认完整集合，沿用 Windows 4 worker、`--retry=0`，dot/JSON 与 Temp 报告耗时诊断：1112 文件通过、1 跳过；16150 项通过、0 失败、77 跳过、21 todo，EXIT 0，未处理错误 0。收尾两轴复审均无剩余 finding。测试清理未确认的警告仍单独记录，不能把通过的行为断言说成进程树已完整验证；一次未复现 RPC timeout 也不能证明历史运行器故障已根治。当前版本的门禁结果以本段及设计块最终记录为准，前文 c94d73ab 是上一轮历史结果。
 
 最终完整套件后再跑原生 `--exposure-only`，双端 8/8、EXIT 0。限定检查本轮 11 个清理警告目录的 17 条 unresolved 记录，目标 PID 当前均不存在；未证明完整后代树已清理，保留原始记录，不删除目录或终止其他进程。
+
+## T53–T56 输出所有权回归
+
+```bash
+npx vitest run src/sdk-client.output-ownership.test.ts src/session-view.output-ownership.test.ts src/session-view.output-notice.test.ts packages/coding/src/task-engine/_internal/managed-task/llm-adapter-output.test.ts
+npx vitest run packages/repl/src/ui/client-plane.test.ts packages/repl/src/interactive/classic-plane-display.test.ts src/acp-client-view.test.ts packages/repl/src/ui/utils/message-utils.test.ts packages/repl/src/ui/utils/restore-history.test.ts
+```
+
+第一组使用真实 HTTP Provider、SA/AMA 执行器、Host、IPC Client、Session 存储和生产显示适配器；HTTP fixture 只替代模型，不替代运行时。观察流式阶段、正式提交和 Host 重启，要求同一输出身份持续、正文只出现一次、重启不调用模型。真实 `finish_reason=length` 验证 SA 下一消息与 AMA adapter 内续写的不同边界。Sidecar 的独立验证请求不得计作第二份主回答。
+
+正文用例包含普通代码围栏、首尾空白、标记的每个可能切分、续写请求间分割标记及中断时尚未发出的普通尾巴。主回答与续写/拒答提示分别计数，不允许提示拼进正式正文。多 thinking/text 块必须保留全部内容且不凭空添加分隔符。
+
+Host 验证 canonical 先保存、display checkpoint 后到、取消 partial 的保存恢复、窗口外已提交内容、压缩归档的 outputId 保留，以及不同身份的相同文字均存在。新身份数据不得成为旧文本匹配算法的候选。显示正文提交后不能由旧 draft 覆盖；`readItem` 与当前正文权威一致。
+
+消费者检查整个帧序列：重复快照/重挂接不重印，同一项修订明确显示，不同项同文分别保留。长正文普通追加不全文重读；有界前缀修订与 draft→committed 交接校验完整内容。冻结展开在分页之间发生 revision/state 改变必须明确失败，尤其不能把重启后的 committed revision 0 当成旧 draft revision 0。已展开旧全文仍维持冻结浏览行为。
+
+不修改用户的原始 Session，不承诺旧无来源身份记录可无损修复，也不把尚未 checkpoint 的每个 token 承诺为崩溃可恢复。最终构建、全量门禁和独立评审结果在本次执行完成后追加，前面 T48–T52 的历史结果不替代本轮验证。
+
+原生 PTY 首轮曾在 AMA held reply 暴露普通标识符末尾 A 被暂存的问题；最终 marker 检查只在合法单词边界暂存词类前缀，并保留 fence/bracket 规则。真实 adapter 必须在 Provider 尚未结束时完整发出 `BEGIN_ACCEPT_HOLD_AMA`，且非法候选不能挡住后面的合法 marker。修复后主矩阵 47/47、EXIT 0；首轮失败不能删除。guardrail 修订提交后冻结的长项移出窗口仍须完整展开，committed revision 固定 0，旧 draft 的同 revision 不能跨阶段误读。
+
+本轮全量首轮 EXIT 1（25 项失败、3 个未处理错误）；16 个失败文件串行复验为 240 通过、1 失败、2 个未处理错误。剩余 stale-stop 测试用明确 marker 释放代替固定 10 秒时序假设，保留原超时与身份断言；最终与 filter 定向 13 项通过。`onTaskUpdate` 运行器超时仍须采集诊断，不能忽略或凭重跑通过宣称已根治。完整日志为 `%TEMP%/kodax-output-full.log`、`kodax-output-failures-isolated.log`，本轮最终结果另行追加。
+
+第二次完整集合为 16209 通过、4 失败、1 个未处理 RPC 超时，EXIT 1。Memory review 的共享用户 home 扫描通过阶段计时确认：给该请求设置独立 `context.configHome`，等待 review 启动从 14.707s 降到 150ms，保留原断言与超时，完整 fixture 文件 7/7 通过。两项真实 IPC 历史读取冲突继续查写入边界；A2A ready 等待虽单独复验通过，不能据此宣称根因已修。完整日志及 JSON：`%TEMP%/kodax-output-full-final.log`、`kodax-output-full-final-results.json`。
+
+补充 `npx vitest run src/sdk-client.history.test.ts --maxWorkers=1 --retry=0`：真实 Host 的 terminal display checkpoint 持锁时，page／entry 读取应等待其结束；释放后新页返回完整正文、旧 entry 仍返回 `resync_required`。两个缓存入口复用现有预算内 flush，保持外部并发写入检查；两项先 RED 后 GREEN，完整文件 7/7。这证明已修复可确定复现的自身 checkpoint 竞态，不能反推没有 writer 标识的旧全量日志。增量双轴评审均 0 finding。
+
+追加真实队列保存前 gate：观察端先读旧历史，保存放行后输入行与其 afterInputId 输出应在原 3 秒限内同时出现，不需要额外输入或查询刺激。`src/sdk-client.queue-boundary.test.ts` 10/10；第三轮完整集合仍有 8 项失败及 2 个未处理错误，EXIT 1，失败与 fixture/RPC 定位记录见设计块，不能覆盖历史失败。worktree 假进程边界隔离后 37/37，RPC 5/5 返回；hook 23/23、ACP/alias 8/8。完整门禁须读取最终退出码、失败与未处理错误计数。
+
+最终源码构建与类型检查均 EXIT 0；其后原生 `--long-history-only` 与 `--queue-boundary-only` 分别 7/7、EXIT 0。独立完整运行默认 4 worker、retry 0：1117 文件通过、1 跳过；16217 项通过、0 失败、77 跳过、21 todo，EXIT 0，未处理错误 0，源码哈希无变化。日志/JSON：`%TEMP%/kodax-output-final-gate.log`、`kodax-output-final-gate-results.json`。两轴评审无剩余 finding；清理未确认警告仍保留，真实 GUI 人工验收与覆盖率未在本轮测量。此前主 PTY 47/47、consumer 14/14，不与本轮最后两项重复累计为独立用例总数。

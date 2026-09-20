@@ -1364,7 +1364,7 @@ async function getDaemonStopResult(input: {
     };
   }
   const expectedProcessStartIdentity = readProcessStartIdentity(stoppedState.pid);
-  await delayDaemonStopAfterObservationForTest();
+  await waitForDaemonStopObservationReleaseForTest(input.timeoutMs);
   const endpoint = runtimeDaemonEndpointFromState(stoppedState);
   const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {
     connectTimeoutMs: input.timeoutMs,
@@ -1478,15 +1478,23 @@ async function getDaemonStopResult(input: {
   return result;
 }
 
-async function delayDaemonStopAfterObservationForTest(): Promise<void> {
+async function waitForDaemonStopObservationReleaseForTest(timeoutMs: number): Promise<void> {
   const markerFile = process.env.KODAX_INTERNAL_DAEMON_TEST_STOP_OBSERVED_FILE;
-  if (markerFile !== undefined) {
-    fsSync.writeFileSync(markerFile, `${process.pid}\n`, 'utf8');
+  if (markerFile === undefined) return;
+  fsSync.writeFileSync(markerFile, `${process.pid}\n`, 'utf8');
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { fsSync.statSync(markerFile); }
+    catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`Timed out waiting for test to release daemon stop observation after ${timeoutMs}ms.`);
+    }
+    await delay(Math.min(50, remaining));
   }
-  const delayMs = parseInternalDaemonTestDuration(
-    process.env.KODAX_INTERNAL_DAEMON_TEST_STOP_AFTER_OBSERVATION_DELAY_MS,
-  );
-  if (delayMs > 0) await delay(delayMs);
 }
 
 function daemonStopTargetMatches(

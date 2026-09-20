@@ -5,10 +5,12 @@
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import {
   containWindowsEffectProcess,
   killChildProcessTree,
+  registerManagedChildProcess,
   setAgentConfigHome,
   terminateWindowsEffectJob,
 } from '@kodax-ai/agent';
@@ -26,6 +28,8 @@ import type { KodaXToolExecutionContext } from '../types.js';
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@kodax-ai/agent')>()),
+  // Child identity and durable registration belong to the fake process boundary.
+  registerManagedChildProcess: vi.fn(() => vi.fn()),
   containWindowsEffectProcess: vi.fn(async (pid: number) => ({
     drained: Promise.resolve(),
     supervisorPid: pid,
@@ -58,6 +62,8 @@ vi.mock('child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('child_process')>();
   return {
     ...original,
+    // A fake Git child must never probe real host process identities.
+    spawnSync: vi.fn(() => { throw new Error('Fake Git escaped into synchronous host process probing.'); }),
     spawn: vi.fn((cmd: string, args: string[], opts: Record<string, unknown>) => {
       const hardenedArgs = JSON.parse(
         String((opts.env as NodeJS.ProcessEnv | undefined)?.KODAX_GIT_ARGS_JSON ?? '[]'),
@@ -123,6 +129,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   setMockExecFileImpl(null);
   mockStdinEndError = undefined;
+  vi.mocked(spawnSync).mockClear();
+  vi.mocked(registerManagedChildProcess).mockClear();
   vi.mocked(containWindowsEffectProcess).mockClear();
   vi.mocked(killChildProcessTree).mockClear();
   vi.mocked(terminateWindowsEffectJob).mockClear();
@@ -138,6 +146,49 @@ afterEach(async () => {
 });
 
 describe('toolWorktreeCreate', () => {
+  it('isolates fake Git children from synchronous host process probes', async () => {
+    await expect(toolWorktreeCreate({ branch_name: 'fake-child-boundary' }, mockContext))
+      .resolves.toContain('fake-child-boundary');
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(registerManagedChildProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 2_147_483_647 }),
+      expect.objectContaining({ kind: 'worktree-git', cwd: mockContext.executionCwd }),
+      { manualUnregister: true, requireDurableRecord: true },
+    );
+  });
+
+  it.runIf(process.platform === 'win32')('unregisters a fake Git child only after its effects drain', async () => {
+    const unregister = vi.fn();
+    vi.mocked(registerManagedChildProcess).mockReturnValueOnce(unregister);
+    let releaseDrain!: () => void;
+    const drained = new Promise<void>(resolve => { releaseDrain = resolve; });
+    let reportClosed!: () => void;
+    const closed = new Promise<void>(resolve => { reportClosed = resolve; });
+    vi.mocked(containWindowsEffectProcess).mockResolvedValueOnce({
+      drained, supervisorPid: 2_147_483_647,
+      jobName: 'Global\\KodaXEffect-00000000-0000-4000-8000-000000000004',
+      unref: () => undefined,
+    });
+    setMockExecFileImpl((_cmd: string, _args: string[], _opts: unknown, cb: (error: Error | null, stdout: string, stderr: string) => void) => {
+      cb(null, '', '');
+      reportClosed();
+    });
+    const result = toolWorktreeCreate({ branch_name: 'drain-before-unregister' }, mockContext).then(
+      value => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    try {
+      await closed;
+      expect(unregister).not.toHaveBeenCalled();
+      releaseDrain();
+      await expect(result).resolves.toMatchObject({ ok: true });
+      expect(unregister).toHaveBeenCalledOnce();
+    } finally {
+      releaseDrain();
+      await result;
+    }
+  });
+
   it('preserves the host global and system Git configuration', async () => {
     vi.stubEnv('GIT_CONFIG_GLOBAL', 'C:\\host\\.gitconfig');
     vi.stubEnv('GIT_CONFIG_SYSTEM', 'C:\\host\\gitconfig');

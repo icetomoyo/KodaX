@@ -117,6 +117,7 @@ describe('runKodaX provider recovery integration', () => {
       readonly responseId: string;
       readonly providerRequestId: string;
       readonly mode: 'replace' | 'append';
+      readonly outputId?: string;
     }> = [];
     const deltas: Array<{ readonly text: string; readonly providerRequestId?: string }> = [];
 
@@ -155,6 +156,10 @@ describe('runKodaX provider recovery integration', () => {
     expect(segments.map((segment) => segment.mode)).toEqual(['append', 'replace', 'replace']);
     expect(new Set(segments.map((segment) => segment.responseId)).size).toBe(1);
     expect(new Set(segments.map((segment) => segment.providerRequestId)).size).toBe(3);
+    expect(segments.every(segment => segment.outputId === segments[0]?.outputId)).toBe(true);
+    expect(typeof segments[0]?.outputId).toBe('string');
+    expect(result.messages.filter(message => message.role === 'assistant').map(message => message.outputId))
+      .toEqual([segments[0]?.outputId]);
     expect(deltas.map((delta) => delta.text)).toEqual([
       'abandoned 1',
       'abandoned 2',

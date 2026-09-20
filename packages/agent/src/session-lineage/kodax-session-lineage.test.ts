@@ -1608,6 +1608,17 @@ describe('FEATURE_072: postCompactAttachments and slicer-layer emission', () => 
     expect(postCompactMessageEntries).toHaveLength(0);
   });
 
+  it('retains committed output ownership when old message bodies are evicted', () => {
+    const original = createSessionLineage([userMsg, { ...asstMsg, outputId: 'archived-output' }]);
+    const compacted = applySessionCompaction(original,
+      [att('system', '[对话历史摘要]\n\nNew island'), keptUser], { summary: 'New island' });
+    const evicted = evictOldIslandMessageContent(compacted);
+    const output = evicted.entries.find(entry => entry.type === 'message' && entry.message.outputId === 'archived-output');
+    expect(output?.type === 'message' ? output.message : undefined).toMatchObject({
+      outputId: 'archived-output', content: [{ type: 'text', text: '[compacted]' }],
+    });
+  });
+
   it('evictOldIslandMessageContent strips postCompactAttachments on old-island compaction entries, preserves memorySeed and summary', () => {
     // Build island 1 with attachments
     const base1 = createSessionLineage([userMsg, asstMsg]);

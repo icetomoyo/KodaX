@@ -4,6 +4,7 @@
  * Agent 主循环 - Core 层核心入口
  */
 
+import { randomUUID } from 'node:crypto';
 import { buildLocalExecutionFailure } from '../execution-failure.js';
 import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
 ﻿import {
@@ -723,7 +724,6 @@ export async function runSubstrate(
   prompt: string,
   declaredAgent?: Agent,
 ): Promise<KodaXResult> {
-  const { randomUUID } = await import('node:crypto');
   const boundOptions = { ...options, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
   let prepareImages = false;
@@ -1958,6 +1958,7 @@ async function runSubstrateInContext(
       };
 
       const responseId = liveTurnScopeRef.current.turnId;
+      const outputId = `output_${randomUUID()}`;
       let nextOutputSegmentMode: 'append' | 'replace' = 'append';
       let activeProviderRequestId: string | undefined;
       // FEATURE_296 T5/T6 (ADR-067): `wireMessages` is the request-only view
@@ -2002,6 +2003,7 @@ async function runSubstrateInContext(
         activeProviderRequestId = providerRequestId;
         events.onOutputSegmentStart?.({
           responseId,
+          outputId,
           providerRequestId,
           mode: nextOutputSegmentMode,
         });
@@ -2203,6 +2205,7 @@ async function runSubstrateInContext(
               providerName: turnState.currentProviderName,
               attempt,
               responseId,
+              outputId,
               clearStreamTimers: streamTimers.clearAll,
               configHome: options.context?.configHome,
             });
@@ -2426,6 +2429,7 @@ async function runSubstrateInContext(
       messages.push({
         role: 'assistant',
         content: assistantContent,
+        outputId,
         turnId: liveTurnScopeRef.current.turnId,
         timestamp: new Date().toISOString(),
       });
@@ -2564,8 +2568,8 @@ async function runSubstrateInContext(
 
       const stopClass = classifyStopReason(result.stopReason);
       if (stopClass === 'refused') {
-        events.onTextDelta?.(
-          '\n\n[model declined to answer]\n\n',
+        events.onOutputNotice?.(
+          { code: 'model_refused' },
           activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined,
         );
       } else if (stopClass === 'unknown' && typeof result.stopReason === 'string') {

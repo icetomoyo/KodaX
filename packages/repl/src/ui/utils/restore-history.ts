@@ -59,6 +59,8 @@ function toCreatableTextHistoryItem(
   item: Exclude<KodaXSessionUiHistoryItem, { type: "tool_group" }>,
 ): CreatableHistoryItem {
   const metadata = {
+    ...(item.outputId ? { outputId: item.outputId } : {}),
+    ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
     ...(item.timestamp === undefined ? {} : { timestamp: item.timestamp }),
     ...(item.inputId ? { inputId: item.inputId } : {}),
     ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
@@ -162,6 +164,10 @@ function matchesTimestampSource(
   candidate: CreatableHistoryItem,
 ): boolean {
   if (item.type !== candidate.type) return false;
+  // Identified generated output is owned by its canonical message, never by
+  // an unrelated same-text display item (including a legacy item).
+  if (item.outputId !== undefined || candidate.outputId !== undefined) return false;
+  if (item.inputId !== undefined || candidate.inputId !== undefined) return item.inputId === candidate.inputId;
   if (item.type === "tool_group" && candidate.type === "tool_group") {
     return item.tools.map((tool) => tool.id).join("\n")
       === candidate.tools.map((tool) => tool.id).join("\n");
@@ -370,7 +376,7 @@ function markUiOnlyItem(
   const isOrdinaryText = item.type === "assistant"
     || item.type === "thinking"
     || (item.type === "user" && !item.text.trimStart().startsWith("/"));
-  return isOrdinaryText && !allowOrdinaryText && item.isSessionUiOnly !== true
+  return isOrdinaryText && !allowOrdinaryText && item.isSessionUiOnly !== true && item.outputId === undefined
     ? undefined
     : { ...item, isSessionUiOnly: true };
 }
@@ -463,7 +469,9 @@ function enrichCanonicalUiHistory(
 export function restoreHistoryItemsFromSession(
   input: RestoreHistoryItemsFromSessionInput,
 ): CreatableHistoryItem[] {
-  const persistedHistory = normalizePersistedUiHistory(input.uiHistory);
+  const committedOutputs = new Set(input.messages.flatMap(message => message.outputId ? [message.outputId] : []));
+  const persistedHistory = normalizePersistedUiHistory(input.uiHistory?.filter(item =>
+    item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)));
   const hasPersistedUiHistory = Boolean(persistedHistory?.length);
   const fullDerivedItems = extractHistorySeedsFromMessages(input.messages)
     .filter((seed) => !hasPersistedUiHistory || seed.type !== "task_completed")

@@ -24,7 +24,7 @@ export type RestoredHistorySeed = (
   | { type: "task_completed"; text: string }
   | { type: "tool_summary"; text: string }
   | { type: "tool_group"; tools: KodaXSessionUiToolCall[] }
-) & { timestamp?: number };
+) & { timestamp?: number; outputId?: string };
 
 /** Convert a RestoredHistorySeed to a CreatableHistoryItem. tool_summary / task_completed → event with icon. */
 export function seedToHistoryItem(
@@ -324,9 +324,10 @@ function parseLegacyAssistantContent(content: string): RestoredHistorySeed[] {
 function extractAssistantHistorySeeds(
   content: string | readonly unknown[],
   toolResults?: ReadonlyMap<string, ToolResultSeed>,
+  identified = false,
 ): RestoredHistorySeed[] {
   if (typeof content === "string") {
-    return parseLegacyAssistantContent(content);
+    return identified ? (content.length > 0 ? [{ type: 'assistant', text: content }] : []) : parseLegacyAssistantContent(content);
   }
 
   if (!Array.isArray(content)) {
@@ -342,7 +343,8 @@ function extractAssistantHistorySeeds(
       return;
     }
 
-    pushSeed(items, "assistant", textBuffer.join("\n"));
+    if (identified) items.push({ type: 'assistant', text: textBuffer.join('') });
+    else pushSeed(items, "assistant", textBuffer.join("\n"));
     textBuffer.length = 0;
   };
 
@@ -371,7 +373,10 @@ function extractAssistantHistorySeeds(
         flushAssistantBuffer();
         flushToolBuffer();
         if ("thinking" in block) {
-          pushSeed(items, "thinking", String(block.thinking));
+          const previous = items.at(-1);
+          if (identified && previous?.type === 'thinking') previous.text += String(block.thinking);
+          else if (identified) items.push({ type: 'thinking', text: String(block.thinking) });
+          else pushSeed(items, "thinking", String(block.thinking));
         }
         break;
       case "tool_use":
@@ -408,6 +413,7 @@ function extractAssistantHistorySeeds(
  * Minimal message shape required to restore UI history items.
  */
 export interface HistorySeedSourceMessage {
+  outputId?: string;
   inputId?: string;
   role: KodaXMessage["role"];
   content: string | KodaXContentBlock[];
@@ -453,7 +459,8 @@ function extractHistorySeedsFromMessageWithoutTimestamp(
 ): RestoredHistorySeed[] {
   switch (message.role) {
     case "assistant": {
-      const seeds = extractAssistantHistorySeeds(message.content);
+      const seeds = extractAssistantHistorySeeds(message.content, undefined, message.outputId !== undefined);
+      if (message.outputId) return seeds;
       // Strip protocol blocks from assistant text; drop seeds that become empty.
       return seeds.flatMap((seed): RestoredHistorySeed[] => {
         if (seed.type !== "assistant") {
@@ -529,7 +536,9 @@ export function extractHistorySeedsFromMessage(
 ): RestoredHistorySeed[] {
   return withMessageTimestamp(extractHistorySeedsFromMessageWithoutTimestamp(message), message.timestamp)
     .map(seed => seed.type === "user" && message.inputId !== undefined
-      ? { ...seed, inputId: message.inputId } : seed);
+      ? { ...seed, inputId: message.inputId }
+      : message.outputId && (seed.type === 'assistant' || seed.type === 'thinking')
+        ? { ...seed, outputId: message.outputId } : seed);
 }
 
 export function extractHistorySeedsFromMessages(
@@ -546,19 +555,21 @@ export function extractHistorySeedsFromMessages(
     if (message.role === "assistant") {
       const toolResults = collectToolResultSeeds(messages[index + 1]);
       const assistantSeeds = withMessageTimestamp(
-        extractAssistantHistorySeeds(message.content, toolResults),
+        extractAssistantHistorySeeds(message.content, toolResults, message.outputId !== undefined),
         message.timestamp,
       );
       seeds.push(
         ...assistantSeeds
           .map((seed) => (
-            seed.type === "assistant"
+            message.outputId && (seed.type === 'assistant' || seed.type === 'thinking')
+              ? { ...seed, outputId: message.outputId }
+              : seed.type === "assistant"
               ? { ...seed, text: stripManagedProtocolBlocks(seed.text) }
               : seed
           ))
           // Drop empty + bare '...' placeholder assistant seeds (legacy
           // pre-fix sessions); they must not restore as a fake assistant bubble.
-          .filter((seed) => seed.type !== "assistant" || (seed.text.length > 0 && seed.text.trim() !== "...")),
+          .filter((seed) => seed.type !== "assistant" || (seed.text.length > 0 && (message.outputId !== undefined || seed.text.trim() !== "..."))),
       );
       continue;
     }

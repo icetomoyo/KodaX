@@ -396,6 +396,9 @@ export type KodaXSessionUiHistoryItemType =
   | 'tool_group';
 
 export interface KodaXSessionUiTextHistoryItem {
+  /** Uncommitted generated output; canonical messages take ownership on save. */
+  outputId?: string;
+  textRevision?: number;
   /** Source input boundary for retained output without a canonical message. */
   afterInputId?: string;
   /** Stable display identity, retained when a live item becomes history. */

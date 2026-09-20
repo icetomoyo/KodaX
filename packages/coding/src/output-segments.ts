@@ -2,6 +2,8 @@ export type KodaXOutputSegmentMode = 'replace' | 'append';
 
 export interface KodaXOutputSegmentStarted {
   readonly responseId: string;
+  /** Assistant message being generated; distinct from its owning Turn and physical requests. */
+  readonly outputId?: string;
   readonly providerRequestId: string;
   readonly mode: KodaXOutputSegmentMode;
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import { createCliClientPlane } from './cli-client-plane.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { FileSessionStorage } from '@kodax-ai/repl';
 
 it('projects the actual request compaction capacity including Memory reserve without enabling diagnostics', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
@@ -125,6 +127,64 @@ async function toolRound(sessionId: string): Promise<void> {
   const accepted = await client.inputs.submit({ sessionId, inputId: 'tool-round', text: 'TOOL-REQUEST run the echo' });
   await runtime.runs.await(accepted.runId!);
 }
+
+it.each(['page', 'entry'] as const)('waits for the Host display checkpoint before reading a prepared history %s', async kind => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(session.id, 1);
+  const earlier = await client.sessions.readHistory(session.id);
+  let terminal = false;
+  let checkpointWrite = false;
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const writing = new Promise<void>(resolve => { entered = resolve; });
+  const subscription = runtime.events.subscribe({ sessionId: session.id, type: ['run.completed'] }, () => { terminal = true; });
+  const mutate = FileSessionStorage.prototype.mutateUiHistory;
+  const mutateSpy = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory').mockImplementation(async function (this: FileSessionStorage, id, mutation) {
+    try {
+      return await mutate.call(this, id, (history, data) => {
+        if (id === session.id && terminal) checkpointWrite = true;
+        return mutation(history, data);
+      });
+    } finally { checkpointWrite = false; }
+  });
+  const rename = fs.rename;
+  const renameSpy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+    if (checkpointWrite && String(to).endsWith(`${session.id}.jsonl`)) {
+      entered();
+      await gate;
+    }
+    return rename(from, to);
+  });
+  type ReadOutcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: unknown };
+  let reading: Promise<ReadOutcome> | undefined;
+  try {
+    await runRound(session.id, 2);
+    await writing;
+    let outcome: ReadOutcome | undefined;
+    const request = kind === 'page' ? client.sessions.readHistory(session.id)
+      : client.sessions.readHistoryEntry(session.id, earlier.items[0]!.id);
+    reading = request.then(
+      value => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    ).then(result => { outcome = result; return result; });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(outcome).toBeUndefined();
+    release();
+    await expect(reading).resolves.toMatchObject(kind === 'page'
+      ? { ok: true, value: { items: expect.arrayContaining([
+        expect.objectContaining({ type: 'assistant', text: 'FACT-2 acknowledged.' }),
+      ]) } }
+      : { ok: false, error: { code: 'resync_required', message: expect.stringMatching(/history changed/i) } });
+  } finally {
+    release();
+    await Promise.allSettled(reading ? [reading] : []);
+    subscription.close();
+    renameSpy.mockRestore();
+    mutateSpy.mockRestore();
+  }
+});
 
 it('shares accepted input identity across history and observation for identical prompts', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });

@@ -235,6 +235,10 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       // Silently finish if compaction was aborted
     },
 
+    onOutputNotice: () => {
+      if (spinner) { spinner.stop(); spinner = null; }
+      process.stdout.write(chalk.yellow('\n[KodaX] The provider declined to answer.\n'));
+    },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
       console.log(chalk.yellow(`[KodaX] Retry ${attempt}/${maxAttempts}: ${reason}`));
     },

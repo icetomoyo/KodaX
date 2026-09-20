@@ -92,7 +92,9 @@ describe('Host launcher waits for the original process', () => {
       expect(() => process.kill(pid, 0)).not.toThrow();
 
       const controller = new AbortController();
-      const cancelled = waitForRuntimeDaemonOwnerExit(owner, 1_000, controller.signal);
+      // Exercise cancellation independently of the short deadline above:
+      // the real Windows identity probe can itself take more than a second.
+      const cancelled = waitForRuntimeDaemonOwnerExit(owner, 30_000, controller.signal);
       controller.abort();
       await expect(cancelled).rejects.toThrow('startup cancelled');
       expect(child.exitCode).toBeNull();

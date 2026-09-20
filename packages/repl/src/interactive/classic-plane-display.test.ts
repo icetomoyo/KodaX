@@ -96,6 +96,98 @@ function item(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | '
 }
 
 describe('createClassicPlaneDisplayDiffer (T18)', () => {
+  it('prints explicit same-item revisions and resumes appending without replaying settled snapshots', async () => {
+    const lines: string[] = [];
+    const readItem = vi.fn(async () => null);
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), readItem);
+    const output = (id: string, text: string) => item({ id, type: 'assistant', text });
+    await display([]);
+    await display([output('first', 'abc')]);
+    await display([output('first', 'xyz')]);
+    await display([output('first', 'xy')]);
+    await display([output('first', 'xy!')]);
+    // Settlement and reconnect replace the view with the same identities.
+    await display([output('first', 'xy!')]);
+    await display([output('first', 'xy!'), output('second', 'xy!')]);
+    await display([output('first', 'xy!'), output('second', 'xy!')]);
+    expect(lines).toEqual(['assistant:abc', 'assistant:\n[Updated response]\nxyz',
+      'assistant:\n[Updated response]\nxy', 'assistant:!', 'assistant:xy!']);
+    expect(readItem).not.toHaveBeenCalled();
+  });
+
+  it('reads an omitted prefix once when the Host revises it and keeps ordinary bounded appends local', async () => {
+    const lines: string[] = [];
+    const readItem = vi.fn(async (id: string, options: { offset?: number }) => ({
+      id, text: 'XYZdefgh'.slice(options.offset), offset: options.offset ?? 0, totalLength: 8, textRevision: 1,
+    }));
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), readItem);
+    const output = (text: string, offset: number, length: number, revision: number) => item({
+      id: 'output', type: 'assistant', text, textOffset: offset, totalTextLength: length,
+      ...{ textRevision: revision },
+    });
+    await display([]);
+    await display([output('abcdef', 0, 6, 0)]);
+    await display([output('fgh', 5, 8, 0)]);
+    expect(readItem).not.toHaveBeenCalled();
+    // The retained suffix is identical, but the Host changed the omitted prefix.
+    await display([output('fgh', 5, 8, 1)]);
+    await display([output('fgh', 5, 8, 1)]);
+    await display([output('ghi', 6, 9, 1)]);
+    expect(lines).toEqual(['assistant:abcdef', 'assistant:gh',
+      'assistant:\n[Updated response]\nXYZdefgh', 'assistant:i']);
+    expect(readItem).toHaveBeenCalledOnce();
+    expect(readItem).toHaveBeenCalledWith('output', { offset: 0, part: 'text' });
+  });
+
+  it.each([false, true])('verifies a bounded draft-to-commit handoff once after revision reset (changed=%s)', async changed => {
+    const lines: string[] = [];
+    const read = vi.fn(async (id: string) => ({ id, text: changed ? 'XYZdefgh' : 'abcdefgh', offset: 0,
+      totalLength: 8, textRevision: 0, ...{ outputState: 'committed' as const },
+    }));
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), read);
+    const base = { id: 'output', type: 'assistant' as const, textRevision: 0 };
+    await display([]);
+    await display([{ ...base, text: 'abcdef', outputState: 'draft' }]);
+    await display([{ ...base, text: 'fgh', textOffset: 5, totalTextLength: 8, outputState: 'draft' }]);
+    expect(read).not.toHaveBeenCalled();
+    const committed = { ...base, text: 'fgh', textOffset: 5, totalTextLength: 8, outputState: 'committed' as const };
+    await display([committed]);
+    await display([committed]);
+    expect(read).toHaveBeenCalledOnce();
+    expect(lines).toEqual(['assistant:abcdef', 'assistant:gh',
+      ...(changed ? ['assistant:\n[Updated response]\nXYZdefgh'] : [])]);
+  });
+  it.each(['revision', 'state'] as const)('rejects mixed assistant pages when %s changes without replaying printed text', async change => {
+    const lines: string[] = [];
+    const read = vi.fn(async (id: string, options: { offset?: number }) => {
+      const offset = options.offset ?? 0;
+      return { id, text: offset === 4 ? 'efgh' : 'tail', offset, totalLength: 12,
+        ...(offset === 4 ? { nextOffset: 8 } : {}), textRevision: offset === 8 && change === 'revision' ? 1 : 0,
+        ...{ outputState: offset === 8 && change === 'state' ? 'committed' as const : 'draft' as const },
+      };
+    });
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), read);
+    const base = { id: 'output', type: 'assistant' as const, textRevision: 0, outputState: 'draft' as const };
+    await display([]);
+    await display([{ ...base, text: 'abcd' }]);
+    await expect(display([{ ...base, text: 'tail', textOffset: 8, totalTextLength: 12 }])).rejects.toThrow('changed');
+    expect(lines).toEqual(['assistant:abcd']);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+  it('keeps split UTF-16 characters unchanged when confirming the committed prefix', async () => {
+    const lines: string[] = [];
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), async id => ({
+      id, text: '😀tail', offset: 0, totalLength: 6, outputState: 'committed', textRevision: 0,
+    }));
+    const draft = { id: 'unicode', type: 'assistant' as const, outputState: 'draft' as const, textRevision: 0 };
+    await display([]);
+    await display([{ ...draft, text: '\uD83D' }]);
+    await display([{ ...draft, text: '😀' }]);
+    await display([{ ...draft, text: 'tail', textOffset: 2, totalTextLength: 6 }]);
+    await display([{ ...draft, text: 'tail', textOffset: 2, totalTextLength: 6, outputState: 'committed' }]);
+    expect(lines).toEqual(['assistant:\uD83D', 'assistant:\uDE00', 'assistant:tail']);
+  });
+
   it('prints one count snapshot per streaming phase, retaining it across reconnect snapshots', async () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));

@@ -36,10 +36,10 @@ import type {
   ClientLineageSummary,
   ClientCommandInput,
 } from "@kodax-ai/coding/client-contract";
-import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems } from "./session-view.js";
+import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems, committedSessionOutputIds } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
-import { projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from "./client-history.js";
+import { assembleConversationHistoryEntry, projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from "./client-history.js";
 import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
@@ -4421,17 +4421,46 @@ async function createKodaXRuntimeInternal(
     const settings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
     return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation, liveItems),
+      ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation ?? [])] } : {}),
       parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
       queue: runService.queuedInputs(sessionId),
       interactions: await interactions.list({ sessionId }),
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
         .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
   }, async (sessionId, runIds, items) => {
-    const found = await sessionManager.storage.mutateUiHistory(sessionId, (history) => {
-      const older = history.filter((item) => !runIds.some((runId) => item.id?.startsWith(`${runId}:`)));
-      return [...older, ...persistSessionViewItems(items)].slice(-150);
+    const found = await sessionManager.storage.mutateUiHistory(sessionId, (history, data) => {
+      const committed = committedSessionOutputIds(data);
+      const currentIds = new Set(items.map(item => item.id));
+      const older = history.filter((item) => !currentIds.has(item.id ?? '')
+        && !runIds.some((runId) => item.id?.startsWith(`${runId}:`)));
+      return [...older, ...persistSessionViewItems(items)].filter(item =>
+        item.type === 'tool_group' || !item.outputId || !committed.has(item.outputId)).slice(-150);
     });
     if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
+  }, async (sessionId, itemId) => {
+    const prefix = `${sessionId}:output:`;
+    if (!itemId.startsWith(prefix)) return null;
+    const identity = /^(.*):(assistant|thinking):\d+$/.exec(itemId.slice(prefix.length));
+    if (!identity) return null;
+    let cursor: string | undefined;
+    do {
+      // Read only the active conversation, including archived bodies. No
+      // retained body cache is needed after an item leaves the display window.
+      const page = await sessionService.conversationPage({ sessionId, limit: 80, ...(cursor ? { cursor } : {}) });
+      if (!page) return null;
+      for (const entry of page.entries) {
+        const canonical = entry.entry ?? (entry.oversized
+          ? await assembleConversationHistoryEntry(
+            (input) => sessionService.conversationEntryChunk(input), sessionId, page.revision, entry.index)
+          : null);
+        if (canonical?.message.outputId !== identity[1]) continue;
+        const messages = [canonical.message];
+        return restoreSessionViewItems(sessionId, { title: '', gitRoot: '', messages }, messages)
+          .find((item) => item.id === itemId) ?? null;
+      }
+      cursor = page.hasMore ? page.nextCursor : undefined;
+    } while (cursor !== undefined);
+    return null;
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
@@ -7983,6 +8012,8 @@ function createRuntimeSessionService(
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
+      // Cached pages need the same Host checkpoint boundary as a fresh capture.
+      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       const limit = input.limit ?? DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT;
       if (!Number.isSafeInteger(limit) || limit <= 0) {
         throw new Error("transcript page limit must be a positive safe integer");
@@ -8147,6 +8178,7 @@ function createRuntimeSessionService(
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
+      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       if (!Number.isSafeInteger(input.entryIndex) || input.entryIndex < 0) {
         throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
       }
@@ -10493,6 +10525,7 @@ function createRuntimeRunService(deps: {
           || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
         const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, persist);
         outputInputId = consumed.at(-1)?.inputId ?? outputInputId;
+        if (consumed.length > 0) deps.sessionViews.changed(record.sessionId, true);
         return consumed;
       }),
     });
@@ -18926,6 +18959,11 @@ function wrapKodaXEvents(input: {
       input.display.onOutputSegmentStart?.(segment, outputMeta);
       emit("output.segment.started", { ...segment, meta: outputMeta }, outputMeta);
       externalCallbacks()?.onOutputSegmentStart?.(segment, outputMeta);
+    },
+    onOutputNotice(notice, meta) {
+      if (actorDurabilityFenced()) return;
+      input.display.onOutputNotice?.(notice, meta);
+      externalCallbacks()?.onOutputNotice?.(notice, meta);
     },
     onTextDelta(text, meta) {
       if (actorDurabilityFenced()) return;

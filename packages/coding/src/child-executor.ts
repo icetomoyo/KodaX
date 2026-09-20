@@ -2363,6 +2363,9 @@ export function buildChildEvents(
     onTextDelta: (text, meta) => {
       parentEvents?.onTextDelta?.(text, activityEventMeta(meta, { liveOnly: true }));
     },
+    onOutputNotice: (notice, meta) => {
+      parentEvents?.onOutputNotice?.(notice, activityEventMeta(meta, { liveOnly: true }));
+    },
     onThinkingDelta: (text, meta) => {
       parentEvents?.onThinkingDelta?.(text, activityEventMeta(meta, { liveOnly: true }));
     },
