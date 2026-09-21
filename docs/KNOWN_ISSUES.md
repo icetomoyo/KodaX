@@ -1,11 +1,55 @@
 # Known Issues
 
-_Last Updated: 2026-09-14_
+_Last Updated: 2026-09-20_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## Main-branch fix — Windows unpublished daemon cleanup (Issue 337)
+
+Main independently reproduced a Windows launcher dying before service publication
+and leaving its detached Node wrapper, PowerShell Job owner and daemon alive.
+This differs from the historical parity-test residue, whose fixture scripts live
+only on the next-version development branch.
+
+The isolated runtime fix arbitrates publication against launcher loss once. An
+unpublished candidate is reclaimed; an already published shared service survives
+the launcher's death or cancellation so another client's work can finish. It adds
+no new process, recurring timer or work to existing-owner reuse. Main's standalone
+A2A serving and client architecture remain unchanged.
+
+The original reproduction, 76 focused tests and four built CLI/SDK acceptance
+cases pass. Ten alternating performance pairs measured a 54.53 ms cold-median
+increase, accepted by the owner as distinct from prior second-scale regressions;
+warm reuse did not slow down. Corrected full-suite validation completed with
+15,843 passing tests, eight failures and two unhandled errors. The unchanged main
+baseline has ten failures and two unhandled errors, reproducing seven candidate
+cases and the reporting error. Follow-up probes reproduced the worktree deadline
+on unchanged main: a simulated child still performed real synchronous OS identity
+queries. Consistent fixture isolation removes those queries, preserves the
+original deadline, and adds registration-before-execution/failure contracts.
+All 40 worktree tests and 20 real registration tests pass, without a runtime code
+change. Corrected full-suite verification has 15,845 passes, nine failures and one
+MCP unhandled error; worktree passes and the report timeout no longer occurs.
+A parallel SDK child exit before health remains unexplained because its original
+log was deleted by fixture cleanup. The authorized follow-up preserved startup
+logs and passed 40 four-worker Space repetitions on each version, the SDK's first
+33 cases under mixed CLI/Stop/Bash load on each version, and four no-disk-cache
+starts on each version. A further complete candidate run passed all 344 SDK
+cases: 15,845 total passes, nine failures and two unhandled errors. Worktree 40/40
+and Windows supervisor 20/20 also passed. Remaining failures include known Stop
+`EBUSY`/MCP issues and CLI timing/start/stop observations whose causes are not all
+established. A separate baseline fault injection demonstrates the A2A test timing
+vulnerability, not the cause of every CLI failure. No production source changed
+during that diagnostic follow-up. On 2026-09-21 the owner explicitly requested
+landing the existing fix on `KodaX` and synchronizing it into the 0.7.97 development
+branch. The unexplained observations remain open; this integration decision is
+not a claim that the complete test suite passed. The final development-to-main
+fast-forward remains a later owner action.
+See the
+[main-branch regression guide](test-guides/ISSUE_337_v0.7.96_REGRESSION_GUIDE.md).
 
 ## Implemented 2026-09-13 — New Session startup and event-sequence recovery (Issue 334)
 

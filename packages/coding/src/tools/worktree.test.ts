@@ -4,11 +4,13 @@
 
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import {
   containWindowsEffectProcess,
   killChildProcessTree,
+  registerManagedChildProcess,
   setAgentConfigHome,
   terminateWindowsEffectJob,
 } from '@kodax-ai/agent';
@@ -28,6 +30,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@kodax-ai/agent')>()),
+  registerManagedChildProcess: vi.fn(() => () => undefined),
   containWindowsEffectProcess: vi.fn(async (pid: number) => ({
     drained: Promise.resolve(),
     supervisorPid: pid,
@@ -60,6 +63,7 @@ vi.mock('child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('child_process')>();
   return {
     ...original,
+    spawnSync: vi.fn(original.spawnSync),
     spawn: vi.fn((cmd: string, args: string[], opts: Record<string, unknown>) => {
       const hardenedArgs = JSON.parse(
         String((opts.env as NodeJS.ProcessEnv | undefined)?.KODAX_GIT_ARGS_JSON ?? '[]'),
@@ -79,7 +83,7 @@ vi.mock('child_process', async (importOriginal) => {
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = {
-        end: () => {
+        end: vi.fn(() => {
           if (mockStdinEndError !== undefined) throw mockStdinEndError;
           queueMicrotask(() => {
           const complete = (error: Error | null, stdout: string, stderr: string): void => {
@@ -102,7 +106,7 @@ vi.mock('child_process', async (importOriginal) => {
             complete(null, '', '');
           }
           });
-        },
+        }),
       };
       return child;
     }),
@@ -122,6 +126,8 @@ const mockContext: KodaXToolExecutionContext = {
 const TEST_AGENT_HOME = path.join(os.tmpdir(), `kodax-worktree-agent-home-${process.pid}`);
 
 afterEach(async () => {
+  vi.mocked(spawnSync).mockClear();
+  vi.mocked(registerManagedChildProcess).mockReset().mockReturnValue(() => undefined);
   vi.unstubAllEnvs();
   setMockExecFileImpl(null);
   mockStdinEndError = undefined;
@@ -141,6 +147,45 @@ afterEach(async () => {
 });
 
 describe('toolWorktreeCreate', () => {
+  it('keeps the simulated Git process lifecycle free of real OS queries', async () => {
+    await toolWorktreeCreate({ branch_name: 'simulated-process' }, mockContext);
+
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it('durably registers the Git child before opening its execution gate', async () => {
+    await toolWorktreeCreate({ branch_name: 'registered-before-gate' }, mockContext);
+
+    const registration = vi.mocked(registerManagedChildProcess);
+    const child = registration.mock.calls[0]![0];
+    expect(registration).toHaveBeenNthCalledWith(1, child, {
+      kind: 'worktree-git',
+      command: expect.stringMatching(/^git /),
+      cwd: mockContext.gitRoot,
+    }, { manualUnregister: true, requireDurableRecord: true });
+    expect(child.stdin!.end).toHaveBeenCalledWith('go\n');
+    expect(registration.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(child.stdin!.end).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('never opens the Git gate when durable registration fails', async () => {
+    const executeGit = vi.fn();
+    setMockExecFileImpl(executeGit);
+    vi.mocked(registerManagedChildProcess).mockImplementationOnce(() => {
+      throw new Error('injected durable registration failure');
+    });
+
+    await expect(toolWorktreeCreate(
+      { branch_name: 'registration-failed' }, mockContext,
+    )).rejects.toThrow('injected durable registration failure');
+
+    const child = vi.mocked(registerManagedChildProcess).mock.calls[0]![0];
+    expect(child.stdin!.end).not.toHaveBeenCalled();
+    expect(executeGit).not.toHaveBeenCalled();
+    expect(killChildProcessTree).toHaveBeenCalledWith(child);
+  });
+
   it('preserves the host global and system Git configuration', async () => {
     vi.stubEnv('GIT_CONFIG_GLOBAL', 'C:\\host\\.gitconfig');
     vi.stubEnv('GIT_CONFIG_SYSTEM', 'C:\\host\\gitconfig');

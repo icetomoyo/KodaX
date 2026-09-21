@@ -42,6 +42,8 @@ export interface RuntimeDaemonLeaseOptions {
   /** True only when this host owns the live A2A config reconciler. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
+  /** @internal Commit shared ownership before the daemon endpoint is published. */
+  readonly commitStartup?: () => void;
   createRuntime(runtimeId: string): Promise<KodaXRuntime>;
 }
 
@@ -173,6 +175,7 @@ async function createClaimedDaemonLease(
       paths,
       endpoint,
       lock,
+      ...(options.commitStartup ? { commitStartup: options.commitStartup } : {}),
       ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
       ...(options.ownsA2AConfigReconciler === true
         ? { ownsA2AConfigReconciler: true }
