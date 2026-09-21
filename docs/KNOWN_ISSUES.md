@@ -9,6 +9,13 @@ _Last Updated: 2026-09-21_
 
 ## Source-only diagnostic follow-up — Windows Runtime identity probes
 
+The investigation below records the diagnostic checkpoint `0ec6aa41`, including
+the original failed Electron gate. The subsequent source repair is tracked as
+[Issue 338](#issue-338-windows-daemon-state-replacement-fails-under-concurrent-json-readers).
+Its complete packaged Electron run now passes, including restart. Original
+failures remain documented as historical evidence; the customer-specific
+PowerShell/CIM cause is still not established by this state-file repair.
+
 The 2026-09-21 customer investigation found that a generic Windows exit-evidence
 error cannot distinguish failed boot identity, process identity, and Job metadata.
 The original missing daemon capability can also be obscured by a later safe-exit
@@ -873,6 +880,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | source only; unreleased | 2026-09-21 | 2026-09-21 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | `v0.7.96-rc.5` | 2026-09-14 | 2026-09-14 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
@@ -1095,6 +1103,32 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 338: Windows daemon state replacement fails under concurrent JSON readers
+
+- **Priority**: High
+- **Status**: Resolved in source; unreleased
+- **Introduced**: reproduced at diagnostic checkpoint `0ec6aa41` and unchanged `6b71837`; first affected release not established
+- **Created**: 2026-09-21
+- **Resolved**: 2026-09-21
+- **Release**: source only; no version bump or publication
+
+**Original problem:** The packaged Electron restart can fail publishing daemon
+state from `starting` to `ready`: an atomic rename returns Windows `EPERM`.
+An independent ordinary Node reader reproduces the same failure with the real
+baseline writer. The original failing handle was not captured. The earlier
+NUL-device setup failure and ASRT packaging guard error are separate findings.
+
+**Repair:** Retry only that Windows EPERM rename of the same flushed temporary
+file, with a 200 ms monotonic failure-path budget and short waits. Preserve the
+old state, ownership ordering, errors and temporary-file cleanup. Normal writes
+do not wait. No sandbox/Bash hot-path work or authentication change is added.
+The synchronous budget may accumulate across state publications and is not a
+strict wall-clock deadline, so lifecycle and paired performance are explicit
+acceptance gates.
+
+**Tests and evidence:** See the
+[regression guide](test-guides/ISSUE_338_v0.7.96_REGRESSION_GUIDE.md).
 
 ### Issue 335: Invalid existing image files cause repeated GLM Coding HTTP 400
 
@@ -15016,7 +15050,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 214 (34 Open, 180 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 215 (34 Open, 181 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

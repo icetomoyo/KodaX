@@ -2,7 +2,7 @@ import fsDefault, * as fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   claimRuntimeDaemonOwnership,
@@ -32,8 +32,12 @@ import {
 } from './state.js';
 
 const tempRoots: string[] = [];
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  Object.defineProperty(process, 'platform', originalPlatform);
+  syncBuiltinESMExports();
   for (const dir of tempRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -205,6 +209,147 @@ describe('runtime daemon state paths', () => {
     if (process.platform !== 'win32') {
       expect(fs.statSync(paths.stateFile).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it.skipIf(process.platform !== 'win32')('publishes daemon state after a transient Windows rename denial', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const previous = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, previous);
+    const rename = fsDefault.renameSync;
+    const transient = Object.assign(new Error('temporary sharing denial'), { code: 'EPERM' });
+    const replacement = state({ status: 'ready' });
+    const renameCalls = vi.spyOn(fsDefault, 'renameSync').mockImplementationOnce(() => {
+      expect(readRuntimeDaemonState(paths)).toEqual(previous);
+      throw transient;
+    }).mockImplementation(rename);
+    const writes = vi.spyOn(fsDefault, 'writeFileSync');
+    const flushes = vi.spyOn(fsDefault, 'fsyncSync');
+    syncBuiltinESMExports();
+
+    writeRuntimeDaemonState(paths, replacement);
+
+    expect(readRuntimeDaemonState(paths)).toEqual(replacement);
+    expect(renameCalls).toHaveBeenCalledTimes(2);
+    expect(renameCalls.mock.calls[1]).toEqual(renameCalls.mock.calls[0]);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(flushes).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('publishes uncontended daemon state without allocating a wait cell or reading the clock', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const now = vi.spyOn(performance, 'now');
+    const allocate = vi.spyOn(globalThis, 'SharedArrayBuffer');
+    const wait = vi.spyOn(Atomics, 'wait');
+
+    writeRuntimeDaemonState(paths, state());
+
+    expect(now).not.toHaveBeenCalled();
+    expect(allocate).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(readRuntimeDaemonState(paths)).toEqual(state());
+  });
+
+  it('preserves old daemon state and the first EPERM after the Windows retry budget expires', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const previous = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, previous);
+    const first = Object.assign(new Error('first rename denial'), { code: 'EPERM' });
+    let elapsed = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    vi.spyOn(Atomics, 'wait').mockImplementation((_cell, _index, _expected, timeout) => {
+      elapsed += timeout!;
+      return 'timed-out';
+    });
+    const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementationOnce(() => { throw first; })
+      .mockImplementation(() => { throw Object.assign(new Error('later denial'), { code: 'EPERM' }); });
+    syncBuiltinESMExports();
+
+    let caught: unknown;
+    try { writeRuntimeDaemonState(paths, state()); } catch (error: unknown) { caught = error; }
+
+    expect(caught).toBe(first);
+    expect(elapsed).toBe(200);
+    expect(rename).toHaveBeenCalledTimes(20);
+    expect(readRuntimeDaemonState(paths)).toEqual(previous);
+    expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it.each([
+    ['linux', 'EPERM'], ['win32', 'EACCES'], ['win32', 'EBUSY'], ['win32', 'EIO'],
+  ] as const)('does not retry daemon state rename on %s for %s', (platform, code) => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const failure = Object.assign(new Error('not a retryable rename'), { code });
+    const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementation(() => { throw failure; });
+    const wait = vi.spyOn(Atomics, 'wait');
+    const now = vi.spyOn(performance, 'now');
+    syncBuiltinESMExports();
+
+    expect(() => writeRuntimeDaemonState(paths, state())).toThrow(failure);
+
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(now).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.stateFile)).toBe(false);
+    expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('does not begin another daemon state rename after a retry wait exhausts its budget', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const failure = Object.assign(new Error('rename denied'), { code: 'EPERM' });
+    let elapsed = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    vi.spyOn(Atomics, 'wait').mockImplementation(() => { elapsed = 205; return 'timed-out'; });
+    const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementation(() => { throw failure; });
+    syncBuiltinESMExports();
+
+    expect(() => writeRuntimeDaemonState(paths, state())).toThrow(failure);
+
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(paths.stateFile)).toBe(false);
+  });
+
+  it('counts failed rename duration in the cumulative retry budget', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const first = Object.assign(new Error('temporary denial'), { code: 'EPERM' });
+    let elapsed = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const wait = vi.spyOn(Atomics, 'wait').mockImplementation((_cell, _index, _expected, timeout) => {
+      elapsed += timeout!;
+      return 'timed-out';
+    });
+    const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementationOnce(() => { throw first; })
+      .mockImplementation(() => { elapsed += 200; throw first; });
+    syncBuiltinESMExports();
+
+    expect(() => writeRuntimeDaemonState(paths, state())).toThrow(first);
+
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('propagates a new non-EPERM rename error immediately after a transient denial', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const first = Object.assign(new Error('temporary denial'), { code: 'EPERM' });
+    const final = Object.assign(new Error('device failure'), { code: 'EIO' });
+    const wait = vi.spyOn(Atomics, 'wait');
+    const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementationOnce(() => { throw first; })
+      .mockImplementation(() => { throw final; });
+    syncBuiltinESMExports();
+
+    let caught: unknown;
+    try { writeRuntimeDaemonState(paths, state()); } catch (error: unknown) { caught = error; }
+
+    expect(caught).toBe(final);
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('treats malformed daemon state as missing instead of throwing', () => {

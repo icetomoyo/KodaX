@@ -183,8 +183,11 @@ describe('GitHub release workflow', () => {
     expect(source).toContain('asarUnpack: [');
     expect(source).toContain('node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/**/*');
     expect(source).toContain('node_modules/@kodax-ai/kodax/dist/native/**/*');
-    expect(source).toContain('verifyPackagedNativeArtifacts');
-    expect(source).toContain("'app.asar.unpacked'");
+    expect(source).toContain('await verifyPackagedNativeArtifacts();');
+    expect(source).toContain("sdkRequire.resolve('@anthropic-ai/sandbox-runtime/package.json')");
+    expect(source).toContain('path.relative(archive, resolution.asrtPackagePath)');
+    expect(source).toContain('`${archive}.unpacked`');
+    expect(source).toContain('assert.ok(existsSync(artifact)');
   });
 
   it('packages both verified Windows native authorities with standalone binaries', () => {
