@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
-import { killPidTree, readProcessStartIdentity, withKodaXFileLock } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, killPidTree, readProcessStartIdentity, withKodaXFileLock } from '@kodax-ai/agent';
 
 import { readWindowsSandboxBootIdentity } from '../sandbox-runtime.js';
 import { isRuntimeDaemonPidAlive } from './lifecycle.js';
@@ -925,6 +925,17 @@ function validateWindowsOwner(
     || !Number.isSafeInteger(owner.supervisorPid)
     || owner.supervisorPid! <= 0
   ) {
+    const missing = [
+      ...(intent.windowsBootIdentity === undefined ? ['windowsBootIdentity'] : []),
+      ...(owner.processStartIdentity === undefined ? ['processStartIdentity'] : []),
+      ...(owner.processContainment !== 'windows-job' ? ['processContainment'] : []),
+      ...(!Number.isSafeInteger(owner.supervisorPid) || owner.supervisorPid! <= 0 ? ['supervisorPid'] : []),
+    ];
+    emitKodaXDiagnostic({
+      source: 'runtime:windows', level: 'warn',
+      message: 'Windows exit owner evidence is unavailable.',
+      detail: { stage: 'exit-owner-validation', missing, nextAction },
+    });
     return blocked(
       'containment_unavailable',
       nextAction,

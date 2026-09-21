@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 
 import {
   parseDarwinBootIdentity,
@@ -112,6 +113,30 @@ function dependencies(
 }
 
 describe('runtime exit settlement', () => {
+  it.each([false, true])('reports missing Windows evidence without changing settlement when sink throws=%s', async (throws) => {
+    const configHome = tempConfigHome();
+    const expectedOwner = owner({ processStartIdentity: undefined, processContainment: undefined, supervisorPid: undefined });
+    seedDaemon(configHome, expectedOwner);
+    const managedRuntime = runtime(expectedOwner);
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      diagnostics.push(diagnostic);
+      if (throws) throw new Error('sink failure');
+    });
+    try {
+      await expect(settleRuntimeDaemonExitForTest({ configHome, profile: 'coder', runtime: managedRuntime },
+        dependencies({ readWindowsBootIdentity: () => undefined }))).resolves.toMatchObject({
+        status: 'blocked', reason: 'containment_unavailable', nextAction: 'keep-open',
+      });
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        source: 'runtime:windows',
+        detail: { stage: 'exit-owner-validation', missing: ['windowsBootIdentity', 'processStartIdentity', 'processContainment', 'supervisorPid'], nextAction: 'keep-open' },
+      }));
+      expect(JSON.stringify(diagnostics)).not.toContain(expectedOwner.runtimeId);
+      expect(managedRuntime.daemon.stopForInline).not.toHaveBeenCalled();
+      expect(managedRuntime.close).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
   it('parses only canonical Linux and Darwin boot identities', () => {
     expect(parseLinuxBootIdentity('11111111-1111-1111-1111-111111111111\n'))
       .toBe('linux-boot-11111111-1111-1111-1111-111111111111');

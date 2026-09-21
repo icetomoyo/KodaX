@@ -1,11 +1,124 @@
 # Known Issues
 
-_Last Updated: 2026-09-20_
+_Last Updated: 2026-09-21_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## Source-only diagnostic follow-up — Windows Runtime identity probes
+
+The 2026-09-21 customer investigation found that a generic Windows exit-evidence
+error cannot distinguish failed boot identity, process identity, and Job metadata.
+The original missing daemon capability can also be obscured by a later safe-exit
+failure. The customer-specific PowerShell/CIM cause remains unconfirmed.
+
+This working change adds structured diagnostics only. Existing probes, arguments,
+timeouts, positive/negative caches, ownership checks, credentials and compaction
+behavior remain unchanged. It does not remove PowerShell dependencies or claim to
+fix the customer's Windows lifecycle failure. No version bump or publication is
+included. Space dependency updates must use a separately reviewed SDK artifact.
+
+The existing daemon log now captures the synchronous owner probes that occur
+before the daemon host installs its persistent sink. The temporary sink restores
+the previous registration in `finally`; diagnostic write failures cannot change
+the probe result. Payloads contain bounded status fields, not subprocess output,
+environment, credential or owner identity values. See the embedder guide's
+Runtime exit section for the existing public diagnostic sink and event stages.
+
+Validation: each new diagnostic seam was observed RED before implementation.
+Focused Windows/settlement/upgrade/diagnostic tests passed (155, 3 platform skips),
+followed by host/manager/probe regressions (66), history/credential/compaction/exit
+regressions (58), and sandbox regressions (93, 40 platform skips). These batches
+overlap and are not an aggregate full-suite count. Source/test type checks and
+package, bundle and declaration builds passed. Built-SDK credential and daemon
+manual/managed compaction tests passed (15). Tests use synthetic credentials and
+isolated temporary state; customer credential material was not accessed.
+
+The follow-up end-to-end gate on 2026-09-21 rebuilt the SDK and passed both
+source and test type checks. All four real Windows launcher handoff cases
+passed, including launcher death and cancellation before publication. The
+24 real cross-process CLI cases passed, as did 36 built-artifact tests covering
+provider credentials, manual/managed compaction, text recovery, image validation
+and native packaging. A separate serial source regression run passed 680 tests
+across 22 files (one platform skip), including all 344 SDK Runtime cases.
+
+The Electron smoke first exposed a pre-existing artifact-check error: the
+installer's nested ASRT path differs from electron-builder's hoisted layout.
+The guard now resolves ASRT using the packaged Electron executable from inside
+the SDK's ASAR location, rejects resolution outside that archive, and retains
+all physical native-file checks. Five regression cases pass, including rejecting
+an existing but incorrectly resolved copy. The next attempt stopped before
+Runtime startup because this host's NUL-device account ACE was missing or
+duplicated. The unchanged native verifier reproduced that failure. Standard
+`kodax sandbox setup` restored readiness in place; both account SIDs remained
+unchanged and the native NUL verifier then returned zero. Setup recalculated its
+existing read scopes and refreshed the generation using its normal policy; no
+product checks were bypassed.
+
+The restored-host Electron run passed 20 sandboxed commands, four concurrent
+sessions, independent-process sandbox sharing, environment isolation, GUI
+detach with daemon survival, and the first exact-owner shutdown. It then failed
+on restart: replacing `daemon.json` from `starting` to `ready` returned `EPERM`
+and the new daemon exited before becoming healthy. The first state write had
+succeeded approximately 10 ms earlier. The state writer and startup transition
+are unchanged from HEAD; this observation alone does not rule out a timing
+regression. A later 100-replacement probe of independent files in the same
+directory passed, so that probe did not reproduce a persistent directory write
+failure. The competing handle or other cause of the original failure remains
+unknown. No retry, timeout increase or lifecycle behavior change was added.
+
+The end-to-end acceptance gate is therefore **not passed**; commit and push were
+withheld under the owner's conditional instruction. Retained evidence is under
+`%TEMP%/kodax-electron-daemon-smoke-j1CxUv/` (`result.json`,
+`restart-result.json`, and the profile's `bootstrap.log`/`daemon.log`), with the
+runner output in `%TEMP%/kodax-diag-electron-e2e-restored.log`. A next investigation
+should compare unchanged-HEAD and candidate packaged restarts under the same
+host state and capture Windows file-operation/handle evidence at the failing
+replace, keeping original startup deadlines and ownership checks intact.
+
+Follow-up analysis reproduced the same `EPERM` using the unchanged HEAD writer
+and a separate process doing ordinary `readFileSync` calls. Both HEAD and the
+candidate fail under a continuous reader with Node 22 and Electron 42 writers.
+With a 100 ms reader interval, both Electron writers fail near the first read;
+both Node writers complete 1,000 replacements. This deliberately aligned startup
+phase is not a steady-state failure-rate measurement. After each reader exits,
+the same file accepts 200 replacements. The extraction hashes match HEAD and
+candidate, and the natural-reader experiments do not inject ACL changes or
+special sharing flags. Failure-time native sampling was delayed by 38–60 ms,
+so it does not identify the original competing handle or its instantaneous
+Win32 error. Separate controlled ACL and sharing experiments produce the same
+Node `EPERM`; the error code alone is not sufficient evidence of either cause.
+
+The retained candidate package subsequently passed a reduced restart replay
+and a 20-command/four-session replay. An isolated build of exact HEAD `6b71837`
+also passed the 20-command/four-session replay using the same Electron fixture,
+dependencies and native binaries. These replays preserve lifecycle assertions
+and deadlines but skip repackaging and independent-process sandbox warmup; they
+do not erase the original failed gate. Evidence and frozen scripts are in
+`%TEMP%/kodax-state-rename-probe-20260921-211832/` and
+`%TEMP%/kodax-eperm-investigation-q3eWnz/replay-results.json`; baseline package
+provenance is in `%TEMP%/kodax-sdk-head-6b71837-ccb2b9c0/provenance.json`.
+This establishes an existing Windows state-replacement contention weakness,
+not a new credential or compaction defect. No product fix has been applied;
+a bounded Windows-only retry of the same atomic rename is being evaluated
+separately from the approved diagnostic-only patch.
+
+A temporary writer-only prototype subsequently completed 1,000 contended
+replacements in each HEAD/candidate × Node/Electron combination. Readers saw
+no malformed JSON or read errors. Simulated permanent EPERM still propagated
+the original error, preserved the previous state and cleaned temporary files.
+Its 200 ms retry budget took 206.8–215.3 ms in permanent-failure controls due to
+scheduling, so it is not a strict wall-clock bound. This is feasibility evidence,
+not an implemented fix or complete lifecycle validation. Detailed analysis and
+artifact references are retained in
+`%TEMP%/kodax-eperm-investigation-q3eWnz/ANALYSIS.md`.
+
+The owner subsequently requested a separate checkpoint commit on the `KodaX`
+branch before implementing the bounded state-replacement repair. This checkpoint
+records the diagnostic changes and the unresolved contention evidence; it does
+not declare the original Electron acceptance gate passed or publish an SDK.
 
 ## Main-branch fix — Windows unpublished daemon cleanup (Issue 337)
 

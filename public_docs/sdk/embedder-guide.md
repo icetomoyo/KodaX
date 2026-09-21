@@ -4874,6 +4874,29 @@ function with only `configHome` and `profile` to resume a still-exact prepared
 ticket. Do not delete `exit-settlement.json`, clear ACL markers, or start a
 replacement owner while a settlement is `prepared` or `stop_accepted`.
 
+Windows lifecycle diagnostics use the existing process-local
+`setKodaXDiagnosticSink` export from `@kodax-ai/kodax/agent`. Install the sink
+before connecting or settling Runtime ownership, and call its returned cleanup
+function when the host closes. The daemon already writes its own diagnostics
+to `daemon.log`; a client-process sink does not subscribe to daemon-process
+events.
+
+`source: 'runtime:windows'` identifies boot identity, Job membership, process
+snapshot, process-start identity, and exit-owner validation stages. Probe
+details report availability, whether a cached result was used, and (for an
+executed probe) elapsed time, timeout, exit code, and a bounded OS error code.
+Exit validation lists the missing evidence field names without serializing
+owner identities. `source: 'runtime.daemon.capabilities'` with
+`stage: 'capability-check'` records the original required capability and version
+before a subsequent upgrade or settlement failure can obscure it.
+
+These records omit commands, environment variables, stdout, stderr, credentials,
+and identity values. They do not add probes or retries, change existing failure
+caching, relax Job/identity checks, or alter settlement results. A missing
+capability diagnostic is evidence for troubleshooting, not permission to bypass
+the required capability. Diagnostic sink exceptions remain isolated from the
+Runtime operation.
+
 ### Historical v0.7.92 filesystem-effect coordinator and managed terminal authority
 
 The coordinator described below applied to v0.7.92-v0.7.95. v0.7.96 retires

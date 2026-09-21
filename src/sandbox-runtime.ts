@@ -1754,6 +1754,10 @@ function windowsAclPowerShellExecutable(): string {
 function readWindowsBootIdentity(): string | undefined {
   if (process.platform !== 'win32') return undefined;
   if (cachedWindowsBootIdentity !== undefined) {
+    emitKodaXDiagnostic({
+      source: 'runtime:windows', level: 'debug', message: 'Using cached Windows boot identity probe result.',
+      detail: { stage: 'boot-identity', cached: true, available: cachedWindowsBootIdentity !== null },
+    });
     return cachedWindowsBootIdentity ?? undefined;
   }
   const script = String.raw`
@@ -1761,8 +1765,10 @@ function readWindowsBootIdentity(): string | undefined {
 $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
 [Console]::Out.Write($boot.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture))
 `;
+  const executable = windowsAclPowerShellExecutable();
+  const startedAt = Date.now();
   const result = spawnSync(
-    windowsAclPowerShellExecutable(),
+    executable,
     [
       '-NoProfile',
       '-NonInteractive',
@@ -1778,6 +1784,18 @@ $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
   const ticks = result.status === 0 ? result.stdout.trim() : '';
   const identity = /^\d+$/.test(ticks) ? `windows-boot-${ticks}` : undefined;
   cachedWindowsBootIdentity = identity ?? null;
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  emitKodaXDiagnostic({
+    source: 'runtime:windows', level: identity === undefined ? 'warn' : 'debug',
+    message: 'Windows boot identity probe completed.',
+    detail: {
+      stage: 'boot-identity', cached: false, available: identity !== undefined,
+      executableKind: path.basename(executable).toLowerCase() === 'pwsh.exe' ? 'pwsh' : 'powershell',
+      durationMs: Date.now() - startedAt, timeoutMs: 5_000, exitCode: result.status,
+      errorCode: code === undefined ? undefined
+        : ['ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT', 'ENOEXEC', 'ENOMEM', 'EIO'].includes(code) ? code : 'OTHER',
+    },
+  });
   return identity;
 }
 

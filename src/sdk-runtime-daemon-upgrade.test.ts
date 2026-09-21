@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KODAX_VERSION } from '@kodax-ai/repl';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 
 const upgradeMocks = vi.hoisted(() => ({
   acquireProcessLease: vi.fn(),
@@ -190,6 +191,31 @@ describe('Runtime daemon capability upgrade', () => {
 
     await runtime.close();
     expect(newClose).toHaveBeenCalled();
+  });
+
+  it('reports the original missing capability even when a diagnostic sink throws', async () => {
+    const calls: string[] = [];
+    const transport = createLegacyTransport({
+      preflight: createPreflight({ blockers: ['queued_runs'], canStop: false }),
+      calls, close: vi.fn(async () => undefined),
+    });
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport));
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      diagnostics.push(diagnostic);
+      throw new Error('sink failure');
+    });
+    try {
+      await expect(connectKodaXRuntime({ autoStart: true, profile: PROFILE,
+        homeDir: path.join('C:', 'kodax-upgrade-test'), daemonToken: 'private-token',
+      })).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required', capability: 'runtimeAutoModeGuardrail' });
+      expect(diagnostics).toContainEqual(expect.objectContaining({ detail: {
+        stage: 'capability-check', capability: 'runtimeAutoModeGuardrail', requiredVersion: 6,
+      } }));
+      expect(JSON.stringify(diagnostics)).not.toContain('private-token');
+      expect(calls).toEqual(['old:initialize', 'old:daemon.management.get', 'old:close']);
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
   });
 
   it('lets concurrent temporary upgrade clients converge on one legacy daemon replacement', async () => {

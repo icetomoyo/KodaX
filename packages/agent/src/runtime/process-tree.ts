@@ -1,8 +1,24 @@
 import {
   spawnSync,
   type ChildProcess,
+  type SpawnSyncReturns,
 } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { emitKodaXDiagnostic } from '../diagnostics.js';
+
+function reportWindowsProbe(stage: string, result: SpawnSyncReturns<string>, startedAt: number, available: boolean): void {
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  emitKodaXDiagnostic({
+    source: 'runtime:windows', level: available ? 'debug' : 'warn',
+    message: 'Windows process probe completed.',
+    detail: {
+      stage, cached: false, available, durationMs: Date.now() - startedAt, timeoutMs: 5_000,
+      exitCode: result.status,
+      errorCode: code === undefined ? undefined
+        : ['ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT', 'ENOEXEC', 'ENOMEM', 'EIO'].includes(code) ? code : 'OTHER',
+    },
+  });
+}
 
 // Keep Windows snapshot, identity-fence, and termination semantics in sync with
 // packages/llm/src/cli-events/process-tree.ts. Public exports and timeout
@@ -351,6 +367,7 @@ function readWindowsProcessSnapshotFallback(): WindowsProcessIdentity[] | undefi
     '})',
     '$rows | ConvertTo-Json -Compress',
   ].join('\n');
+  const startedAt = Date.now();
   const result = spawnSync('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
@@ -365,6 +382,7 @@ function readWindowsProcessSnapshotFallback(): WindowsProcessIdentity[] | undefi
     const snapshot = parseWindowsProcessSnapshotJson(result.stdout);
     if (snapshot.length > 0) return snapshot;
   }
+  reportWindowsProbe('process-snapshot-cim', result, startedAt, false);
 
   const cutoffUnixMs = Date.now();
   const wmic = spawnSync('wmic', [
@@ -377,7 +395,10 @@ function readWindowsProcessSnapshotFallback(): WindowsProcessIdentity[] | undefi
     timeout: DEFAULT_TASKKILL_MS,
     windowsHide: true,
   });
-  if (wmic.error || wmic.status !== 0) return undefined;
+  if (wmic.error || wmic.status !== 0) {
+    reportWindowsProbe('process-snapshot-wmic', wmic, cutoffUnixMs, false);
+    return undefined;
+  }
   const snapshot = wmic.stdout.split(/\r?\n\s*\r?\n/).flatMap((block) => {
     const values = new Map(
       block.split(/\r?\n/).flatMap((line): Array<[string, string]> => {
@@ -411,6 +432,7 @@ function readWindowsProcessSnapshotNative(): WindowsProcessIdentity[] | undefine
     'Add-Type -TypeDefinition $source',
     '[KodaXNativeProcessSnapshot]::ReadRows()',
   ].join('\n');
+  const startedAt = Date.now();
   const result = spawnSync('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
@@ -421,8 +443,13 @@ function readWindowsProcessSnapshotNative(): WindowsProcessIdentity[] | undefine
     timeout: DEFAULT_TASKKILL_MS,
     windowsHide: true,
   });
-  if (result.error || result.status !== 0) return undefined;
-  return parseWindowsNativeProcessRows(result.stdout);
+  if (result.error || result.status !== 0) {
+    reportWindowsProbe('process-snapshot-native', result, startedAt, false);
+    return undefined;
+  }
+  const snapshot = parseWindowsNativeProcessRows(result.stdout);
+  if (snapshot === undefined) reportWindowsProbe('process-snapshot-native', result, startedAt, false);
+  return snapshot;
 }
 
 function parseWindowsNativeProcessRows(stdout: string): WindowsProcessIdentity[] | undefined {
@@ -449,6 +476,12 @@ export function readProcessStartIdentity(pid: number): string | undefined {
   if (process.platform === 'win32') {
     const identity = readWindowsProcessSnapshot()
       ?.find((candidate) => candidate.pid === pid);
+    if (identity === undefined || identity.creationTime === '0') {
+      emitKodaXDiagnostic({
+        source: 'runtime:windows', level: 'warn', message: 'Windows process start identity is unavailable.',
+        detail: { stage: 'process-start-identity', pid, available: false },
+      });
+    }
     return identity?.creationTime === '0' ? undefined : identity?.creationTime;
   }
   if (process.platform === 'linux') {
@@ -475,6 +508,10 @@ let currentProcessWindowsJobContained: boolean | undefined;
 export function isCurrentProcessWindowsJobContained(): boolean {
   if (process.platform !== 'win32') return false;
   if (currentProcessWindowsJobContained !== undefined) {
+    emitKodaXDiagnostic({
+      source: 'runtime:windows', level: 'debug', message: 'Using cached Windows Job probe result.',
+      detail: { stage: 'job-membership', cached: true, available: currentProcessWindowsJobContained },
+    });
     return currentProcessWindowsJobContained;
   }
   const supervisorPid = Number.parseInt(
@@ -488,8 +525,13 @@ export function isCurrentProcessWindowsJobContained(): boolean {
     || supervisorPid <= 0
   ) {
     currentProcessWindowsJobContained = false;
+    emitKodaXDiagnostic({
+      source: 'runtime:windows', level: 'warn', message: 'Windows Job supervisor metadata is unavailable.',
+      detail: { stage: 'job-membership', cached: false, available: false, reason: 'supervisor-metadata' },
+    });
     return false;
   }
+  const startedAt = Date.now();
   const result = spawnSync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_JOB_MEMBERSHIP_SCRIPT],
@@ -507,6 +549,7 @@ export function isCurrentProcessWindowsJobContained(): boolean {
     },
   );
   currentProcessWindowsJobContained = result.status === 0 && result.stdout.trim() === '1';
+  reportWindowsProbe('job-membership', result, startedAt, currentProcessWindowsJobContained);
   return currentProcessWindowsJobContained;
 }
 

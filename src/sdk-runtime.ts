@@ -5372,6 +5372,11 @@ function firstUpgradeableCapability(
       typeof version === "number"
       && !hasVersionedRuntimeCapability(capabilities, name, version)
     ) {
+      emitKodaXDiagnostic({
+        source: "runtime.daemon.capabilities", level: "warn",
+        message: "Runtime daemon does not satisfy a required capability.",
+        detail: { stage: "capability-check", capability: name, requiredVersion: version },
+      });
       return { name, version };
     }
   }

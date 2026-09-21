@@ -378,7 +378,8 @@ function normalizeDiagnosticDetail(detail: unknown, seen = new Set<unknown>()): 
   if (Array.isArray(detail)) return detail.map((entry) => normalizeDiagnosticDetail(entry, seen));
   return detail;
 }
-function appendRuntimeDiagnostic(paths: RuntimeDaemonPaths, diagnostic: KodaXDiagnostic): void {
+/** @internal Also used before host publication for the existing owner identity probes. */
+export function appendRuntimeDiagnostic(paths: RuntimeDaemonPaths, diagnostic: KodaXDiagnostic): void {
   try {
     appendRuntimeDaemonLog(
       paths,
