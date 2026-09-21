@@ -83,7 +83,7 @@ vi.mock('child_process', async (importOriginal) => {
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.stdin = {
-        end: () => {
+        end: vi.fn(() => {
           if (mockStdinEndError !== undefined) throw mockStdinEndError;
           queueMicrotask(() => {
           const complete = (error: Error | null, stdout: string, stderr: string): void => {
@@ -106,7 +106,7 @@ vi.mock('child_process', async (importOriginal) => {
             complete(null, '', '');
           }
           });
-        },
+        }),
       };
       return child;
     }),
@@ -130,7 +130,7 @@ afterEach(async () => {
   setMockExecFileImpl(null);
   mockStdinEndError = undefined;
   vi.mocked(spawnSync).mockClear();
-  vi.mocked(registerManagedChildProcess).mockClear();
+  vi.mocked(registerManagedChildProcess).mockReset().mockImplementation(() => vi.fn());
   vi.mocked(containWindowsEffectProcess).mockClear();
   vi.mocked(killChildProcessTree).mockClear();
   vi.mocked(terminateWindowsEffectJob).mockClear();
@@ -155,6 +155,39 @@ describe('toolWorktreeCreate', () => {
       expect.objectContaining({ kind: 'worktree-git', cwd: mockContext.executionCwd }),
       { manualUnregister: true, requireDurableRecord: true },
     );
+  });
+
+  it('durably registers the Git child before opening its execution gate', async () => {
+    await toolWorktreeCreate({ branch_name: 'registered-before-gate' }, mockContext);
+
+    const registration = vi.mocked(registerManagedChildProcess);
+    const child = registration.mock.calls[0]![0];
+    expect(registration).toHaveBeenNthCalledWith(1, child, {
+      kind: 'worktree-git',
+      command: expect.stringMatching(/^git /),
+      cwd: mockContext.gitRoot,
+    }, { manualUnregister: true, requireDurableRecord: true });
+    expect(child.stdin!.end).toHaveBeenCalledWith('go\n');
+    expect(registration.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(child.stdin!.end).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('never opens the Git gate when durable registration fails', async () => {
+    const executeGit = vi.fn();
+    setMockExecFileImpl(executeGit);
+    vi.mocked(registerManagedChildProcess).mockImplementationOnce(() => {
+      throw new Error('injected durable registration failure');
+    });
+
+    await expect(toolWorktreeCreate(
+      { branch_name: 'registration-failed' }, mockContext,
+    )).rejects.toThrow('injected durable registration failure');
+
+    const child = vi.mocked(registerManagedChildProcess).mock.calls[0]![0];
+    expect(child.stdin!.end).not.toHaveBeenCalled();
+    expect(executeGit).not.toHaveBeenCalled();
+    expect(killChildProcessTree).toHaveBeenCalledWith(child);
   });
 
   it.runIf(process.platform === 'win32')('unregisters a fake Git child only after its effects drain', async () => {

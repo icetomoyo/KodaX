@@ -52,7 +52,8 @@ async function launcher() {
   const controller = new AbortController();
   process.on('message', message => { if (message.kind === 'abort') controller.abort(); });
   const contained = await spawnWindowsJobContainedProcess({
-    executable: process.execPath, args: [cli, 'daemon', 'serve', '--home', home],
+    executable: process.execPath, args: [cli, 'daemon', 'serve', '--home', home,
+      '--provider', 'handoff-local', '--model', 'handoff-model'],
     cwd: repo, env: process.env, logFile: path.join(home, 'bootstrap.log'), startupHandoff: true,
   });
   const exited = contained.supervisor.exitCode !== null
@@ -226,7 +227,10 @@ async function scenario(kind) {
     }
     b = worker(kind === 'ensure' ? 'ensure' : 'client', homeDir, environment);
     owner = (await message(b, 'connected')).owner;
-    await until('active local SSE request', () => provider.pending);
+    await until('active local SSE request', () => {
+      if (b.exited) throw new Error(`Client exited before provider request: ${b.logs}`);
+      return provider.pending;
+    });
     if (a2aPort) assert.equal(await served(a2aPort), true, 'A2A must be public before cancellation');
     if (kind === 'kill') {
       a.child.kill();
@@ -264,6 +268,7 @@ async function rejectedA2A() {
     });
     assert.notEqual(child.exited.code, 0, child.logs);
     assert.match(child.logs, /startup cancelled before service publication/i);
+    assert.equal(await readReplFixtureDaemonOwner(homeDir), undefined);
     assert.equal(await served(port), false);
   } finally {
     if (!child.exited) { child.child.kill(); await finishChild(child, true); }

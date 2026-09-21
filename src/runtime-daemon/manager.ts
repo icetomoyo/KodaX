@@ -42,7 +42,7 @@ export interface RuntimeDaemonLeaseOptions {
   /** True only when this host owns the live A2A config reconciler. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
-  /** @internal Shared with any earlier A2A publication in createRuntime. */
+  /** @internal Commit shared ownership before the first hosted A2A or daemon RPC publication. */
   readonly commitStartup?: () => void;
   createRuntime(runtimeId: string): Promise<KodaXRuntime>;
 }
