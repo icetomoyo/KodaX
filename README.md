@@ -786,6 +786,18 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.10 release:** Tenth release candidate of the v0.7.96 line.
+Runtime shutdown owns and drains the background work it starts: managed
+terminal maintenance and memory setup/finalization IO plus background review
+drains are registered with the owning Runtime, close refuses new work and
+awaits already-started work before releasing resources, and managed execution
+finishes its durable memory finalization before publishing completion.
+Edits-mode `edit`/`write` no longer reject ordinary project files when a
+workspace root contains protected native state: trusted text transaction
+cache protection targets only the authorized canonical file while
+development artifact trust still checks every authorized write root. Every
+rc.9 contract is retained.
+
 **v0.7.96-rc.9 release:** Ninth release candidate of the v0.7.96 line.
 Arbitrates daemon publication against launcher loss with a one-shot startup
 handoff: unpublished Windows daemon startup trees and their Job descendants

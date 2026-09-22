@@ -137,6 +137,64 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.10 release preparation
+
+Release state: `v0.7.96-rc.10` is the GitHub pre-release for the exact
+tagged commit — the tenth release candidate of the v0.7.96 line, making
+Runtime shutdown own and drain the background work it starts (managed
+terminal maintenance, memory setup/finalization IO, background review
+drains) and scoping trusted text transaction cache protection to the
+authorized canonical target. The tag-triggered Release workflow builds every
+platform archive and the universal npm tarball, publishes checksums, and
+creates the GitHub pre-release. npm registry publication remains a separate
+manual maintainer action.
+
+On top of rc.9 it includes:
+
+- Runtime close drains owned managed terminal maintenance: the optional
+  repo-intelligence/artifact maintenance factory is registered with its own
+  Runtime before it can start; close refuses new optional maintenance and
+  waits for existing owned work before releasing resources, while Run
+  completion, successor admission, and Stop stay independent of maintenance.
+- Runtime owns and settles memory work on shutdown: close refuses new work,
+  cancels pending review requests, and awaits already-started work; managed
+  execution finishes its durable memory finalization before publishing
+  completion, and the classic finalizer owns learned-Skill outcome and
+  binding-release IO (test guide:
+  `docs/test-guides/FEATURE_289_v0.7.85_TEST_GUIDE.md`).
+- Trusted text transactions scope cache protection to the authorized
+  canonical target at snapshot and commit, so Edits/Auto/Full Access no
+  longer reject ordinary project files when a workspace root contains
+  protected native state; development artifact trust still checks every
+  authorized write root (test guide:
+  `docs/test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md`).
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.10`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, Windows text transaction regressions
+   (`src/windows-text-transaction.test.ts`), Windows daemon state/handoff
+   regressions, managed maintenance shutdown regressions
+   (`packages/agent/src/sdk-runtime.maintenance.test.ts`), memory shutdown
+   regressions (`packages/agent/src/memory-control/`), and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.10`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.9 release preparation
 
 Release state: `v0.7.96-rc.9` is the GitHub pre-release for the exact

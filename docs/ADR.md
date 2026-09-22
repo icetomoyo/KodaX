@@ -2,7 +2,27 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-12
+> Last updated: 2026-09-22
+>
+> **v0.7.96-rc.10 release addendum:** Runtime shutdown owns and drains the
+> background work it starts. The optional managed terminal maintenance
+> factory is registered with its own Runtime before it can start; close
+> stops accepting new optional maintenance and waits for existing owned work
+> before releasing Actor, executor, and owner-liveness resources, without
+> cancelling shared repo caches or serializing other Runtimes. Runtime also
+> registers its memory setup/finalization IO and background review drains
+> before execution: close refuses new work, cancels pending review requests,
+> and awaits already-started work, while managed execution finishes its
+> required durable memory finalization before publishing completion and the
+> classic finalizer owns learned-Skill outcome and binding-release IO.
+> Trusted text transaction cache protection targets only the authorized
+> canonical file at snapshot and commit, so Edits-mode `edit`/`write` no
+> longer reject ordinary project files when a workspace root contains
+> protected native state (for example a home root); development artifact
+> trust still checks every authorized write root, keeping a writable
+> manifest unable to redefine trusted native bytes, and target
+> authorization, protected native state/alias rejection, and shell policy
+> checks remain in place.
 >
 > **v0.7.96-rc.9 release addendum:** Windows daemon publication is arbitrated
 > against launcher loss through a one-shot startup handoff: unpublished daemon

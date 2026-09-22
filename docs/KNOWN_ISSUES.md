@@ -9,7 +9,7 @@ _Last Updated: 2026-09-22_
 
 ## rc.9 follow-up — text tools reject a workspace root containing native state
 
-Fixed in local source on 2026-09-22; not included in published `0.7.96-rc.9`.
+Fixed in local source on 2026-09-22; first published in `0.7.96-rc.10`.
 Edits-mode `edit` and `write` could fail with `Runtime write policy targets
 protected native text state: <user home>` even for ordinary project files.
 The same root configuration also affects Auto and Full Access.
@@ -46,7 +46,7 @@ as the repository's native test runner does. No native binary was replaced.
 
 ## rc.9 follow-up — MCP cancellation fixture and managed maintenance ownership
 
-These follow-up changes are local source, not included in published `0.7.96-rc.9`.
+These follow-up changes are first published in `0.7.96-rc.10`.
 They do not publish a package or change the Space Registry dependency.
 
 The MCP image-validation cancellation regression used the default one-second
@@ -178,7 +178,7 @@ ordering and cancellation-before-effect findings were corrected and the scoped
 credential distinction was clarified. The final Spec recheck found no new
 production gap.
 
-This repair is source-only and not included in published rc.9. Reproduction and
+This repair is first published in `0.7.96-rc.10`. Reproduction and
 acceptance details are in
 `docs/test-guides/FEATURE_289_v0.7.85_TEST_GUIDE.md`; evidence is retained under
 `%TEMP%/kodax-memory-exit-20260922-171632` and

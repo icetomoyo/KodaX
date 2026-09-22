@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.9` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-rc.9` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.10` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.10` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.9` |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.10` |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Total tracked features | `83` |
 | InProgress | `1` |
@@ -28,7 +28,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.9; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.10; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -518,9 +518,25 @@
 
 ---
 
+## v0.7.96-rc.10 Release Record
+
+`v0.7.96-rc.10` is the tenth release candidate of the v0.7.96 line. Runtime
+shutdown owns and drains the background work it starts: managed terminal
+maintenance and memory setup/finalization IO plus background review drains
+are registered with the owning Runtime, close refuses new work and awaits
+already-started work before releasing resources, and managed execution
+finishes its durable memory finalization before publishing completion.
+Edits-mode `edit`/`write` no longer reject ordinary project files when a
+workspace root contains protected native state: trusted text transaction
+cache protection targets only the authorized canonical file while
+development artifact trust still checks every authorized write root. The MCP
+image-validation cancellation fixture is stabilized against legal
+initialization delays. Every rc.9 contract is retained. npm publication
+remains a manual maintainer step.
+
 ## v0.7.96-rc.9 Release Record
 
-`v0.7.96-rc.9` is the ninth release candidate of the v0.7.96 line. A
+`v0.7.96-rc.9` was the ninth release candidate of the v0.7.96 line. A
 one-shot startup handoff arbitrates Windows daemon publication against
 launcher loss: unpublished daemon startup trees and their Job descendants
 are reclaimed while published shared services and other clients' execution

@@ -8,6 +8,39 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.10] - 2026-09-22
+
+Tenth release candidate of the v0.7.96 line: Runtime shutdown now owns and
+drains the background work it starts, Edits-mode text tools no longer reject
+ordinary project files when a workspace root contains protected native state,
+and the MCP image-validation cancellation fixture is stabilized. Every rc.9
+contract is retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Drain owned managed terminal maintenance on Runtime close: the optional
+  repo-intelligence/artifact maintenance factory is registered with its own
+  Runtime before it can start, close stops accepting new optional maintenance
+  and waits for existing owned work before releasing Actor, executor, and
+  owner-liveness resources, so test workspaces are no longer held after
+  `Runtime.close()` returns. Run completion, successor admission, and Stop
+  stay independent of maintenance; shared repo caches are not cancelled.
+- Own and settle memory work on shutdown: Runtime registers its memory
+  setup/finalization IO and background review drains before execution; close
+  refuses new work, cancels pending review requests, and awaits
+  already-started work before releasing the owner. Managed execution finishes
+  its required durable memory finalization before publishing completion, the
+  classic finalizer owns learned-Skill outcome and binding-release IO, and
+  branch-authority setup checks cancellation before prompt/Git work.
+- Scope trusted text transaction cache protection to the authorized canonical
+  target: Edits-mode `edit`/`write` no longer fail with `Runtime write policy
+  targets protected native text state` for ordinary project files when a
+  workspace root contains the protected native cache (for example a home
+  root). Development artifact trust still checks every authorized write root,
+  so a writable manifest cannot redefine trusted native bytes.
+
+---
+
 ## [0.7.96-rc.9] - 2026-09-21
 
 Ninth release candidate of the v0.7.96 line: Windows daemon startup trees
