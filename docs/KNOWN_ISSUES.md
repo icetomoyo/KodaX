@@ -7,6 +7,43 @@ _Last Updated: 2026-09-22_
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## rc.9 follow-up — text tools reject a workspace root containing native state
+
+Fixed in local source on 2026-09-22; not included in published `0.7.96-rc.9`.
+Edits-mode `edit` and `write` could fail with `Runtime write policy targets
+protected native text state: <user home>` even for ordinary project files.
+The same root configuration also affects Auto and Full Access.
+
+The trusted text host passed every authorized workspace root to native artifact
+loading as an untrusted write grant. A home root contains the protected native
+cache, so the loader rejected the entire operation before accessing its target.
+Snapshot and commit now use the authorized canonical target for cache protection:
+a trusted text transaction can mutate that file, whereas a shell grant exposes
+a subtree. Development artifact sources still check every authorized write root
+so a writable manifest cannot redefine trusted native bytes; production artifacts
+remain pinned by the embedded manifest. Review caught and corrected an initial
+patch that also narrowed the development-source check. Target authorization,
+protected native state/alias rejection, and shell policy checks remain in place.
+
+Regression tests in `src/windows-text-transaction.test.ts` exercise actual
+write/edit transactions in Edits, Auto, and Full Access, broad ancestor roots,
+and protected targets/aliases at both snapshot and commit. Cold-loading tests
+reject writable development sources and allow digest-pinned production artifacts
+with home/installation roots authorized. All three mode cases reproduced the
+original error before the fix. Windows validation passes;
+the portable cases still require native Linux/macOS execution on those runners.
+Manual steps are in `docs/test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md`.
+
+Additional Windows regression checks cover Bash and sandbox lifecycle/routing,
+same-revision CAS and stale-write preservation. Four real sandbox cases pass:
+restricted target startup, replacing sandbox-created files with text tools,
+cross-policy write isolation, and simultaneous background Bash, second-Runtime
+Bash, and text writes. The protocol-5 native binding smoke also passes its
+cross-process CAS race (one writer succeeds, one receives stale). An initial
+direct smoke invocation found an old protocol-4 addon in the development node
+directory; verification used the hash-checked protocol-5 artifact in `dist/native`
+as the repository's native test runner does. No native binary was replaced.
+
 ## rc.9 follow-up — MCP cancellation fixture and managed maintenance ownership
 
 These follow-up changes are local source, not included in published `0.7.96-rc.9`.

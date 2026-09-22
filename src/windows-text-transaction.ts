@@ -195,12 +195,16 @@ function authorizeTarget(target: string, roots: readonly string[], allowOutsideR
   });
 }
 
-function loadNativeBinding(writeRoots: readonly string[]): NativeTextTransactionBinding {
-  assertTrustedTextNativeStateNotDirectlyWritable(writeRoots);
+function loadNativeBinding(
+  mutationTargets: readonly string[],
+  writeRoots: readonly string[] = mutationTargets,
+): NativeTextTransactionBinding {
+  assertTrustedTextNativeStateNotDirectlyWritable(mutationTargets);
   if (loadedBinding !== undefined) return loadedBinding;
   const bindingPath = resolveTrustedTextNativeArtifact(
     import.meta.url,
     TRUSTED_TEXT_TRANSACTION_PROTOCOL,
+    mutationTargets,
     writeRoots,
   );
   const candidate = loadNativeBindingFile(bindingPath);
@@ -418,7 +422,9 @@ export function createTrustedTextMutationHost(
       authorizeCanonicalTarget(target.canonicalTarget);
       assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {
-        const binding = loadNativeBinding(roots());
+        // Cache protection checks this transaction's target; development artifact
+        // trust still checks every writable root that could redefine its manifest.
+        const binding = loadNativeBinding([target.canonicalTarget], roots());
         const nativeRoot = createNativeRoot(binding, target.canonicalRoot, fullAccess);
         return publicSnapshot(await nativeRoot.snapshot(target.canonicalTarget));
       } catch (error: unknown) {
@@ -434,7 +440,7 @@ export function createTrustedTextMutationHost(
       authorizeCanonicalTarget(target.canonicalTarget);
       assertTrustedTextNativeStateNotDirectlyWritable([target.canonicalTarget]);
       try {
-        const binding = loadNativeBinding(roots());
+        const binding = loadNativeBinding([target.canonicalTarget], roots());
         const nativeRoot = createNativeRoot(binding, target.canonicalRoot, fullAccess);
         const outcome = await nativeRoot.commit(
           target.canonicalTarget,
