@@ -176,7 +176,11 @@ Review — Standards: earlier fixture-failure cleanup findings were corrected;
 no remaining finding in that review. Spec: foreground ownership, completion
 ordering and cancellation-before-effect findings were corrected and the scoped
 credential distinction was clarified. The final Spec recheck found no new
-production gap.
+production gap. A follow-up review correction settled a caller signal already
+aborted at entry as an interrupt terminal at the post-setup gate instead of a
+raw rejection, keeping the CAP-005-001b and CAP-086-003 contracts (defined
+`KodaXResult`, terminal `onComplete`, no escaped exception) while preserving
+cancellation-before-prompt/Git work.
 
 This repair is first published in `0.7.96-rc.10`. Reproduction and
 acceptance details are in

@@ -947,7 +947,24 @@ async function runSubstrateInContext(
       if (options.abortSignal?.aborted) await learnedSkillBinding?.release();
     }
   });
-  throwCallerAbort(options.abortSignal);
+  if (options.abortSignal?.aborted) {
+    // CAP-005-001b / CAP-086-003: a caller signal already aborted at entry
+    // settles as an interrupt terminal here — before any transcript, Git, or
+    // provider work — instead of escaping runKodaX as a raw rejection. The
+    // memory setup above released its learned-skill binding in `finally`;
+    // the classic memory session and its review drain only exist after this
+    // point, so no owned background work is skipped.
+    await applyAbortErrorTerminal({ events, emitActiveExtensionEvent });
+    emitComplete(events);
+    emitTurnCompleted(events, liveTurnScopeRef.current, 'interrupted');
+    return {
+      success: true,
+      interrupted: true,
+      lastText: '',
+      messages: [],
+      sessionId,
+    };
+  }
   options = {
     ...options,
     events,

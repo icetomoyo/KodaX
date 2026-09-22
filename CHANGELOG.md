@@ -31,7 +31,10 @@ contract is retained. npm publication remains a manual maintainer action.
   already-started work before releasing the owner. Managed execution finishes
   its required durable memory finalization before publishing completion, the
   classic finalizer owns learned-Skill outcome and binding-release IO, and
-  branch-authority setup checks cancellation before prompt/Git work.
+  branch-authority setup checks cancellation before prompt/Git work. A caller
+  signal already aborted at entry settles as an interrupt terminal (defined
+  `KodaXResult`, terminal `onComplete`) instead of a raw rejection, keeping
+  the CAP-005-001b and CAP-086-003 contracts.
 - Scope trusted text transaction cache protection to the authorized canonical
   target: Edits-mode `edit`/`write` no longer fail with `Runtime write policy
   targets protected native text state` for ordinary project files when a
