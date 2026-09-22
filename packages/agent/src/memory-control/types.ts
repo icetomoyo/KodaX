@@ -379,7 +379,12 @@ export interface MemoryReviewPersistenceDecision {
   readonly proposalId?: string;
 }
 
-export type MemoryReviewRunner = (input: MemoryReviewModelInput) => Promise<MemoryReviewPlan>;
+/** Reviewers should honor cancellation and settle after their active work stops.
+ * Runtime shutdown waits for that settlement rather than detaching the request. */
+export type MemoryReviewRunner = (
+  input: MemoryReviewModelInput,
+  signal?: AbortSignal,
+) => Promise<MemoryReviewPlan>;
 
 export interface MemoryController {
   listInbox(): Promise<readonly MemoryActionProposal[]>;
@@ -395,7 +400,7 @@ export interface MemoryController {
   runCurator(input?: MemoryCuratorInput): Promise<MemoryGovernanceReport>;
   maybeRunAutoCurator(input?: MemoryAutoCuratorInput): Promise<MemoryAutoCuratorResult>;
   buildMemoryPack(input: MemoryPackInput): Promise<MemoryPack>;
-  reviewMemoryFeedback(input: MemoryReviewInput): Promise<MemoryReviewPlan>;
+  reviewMemoryFeedback(input: MemoryReviewInput, signal?: AbortSignal): Promise<MemoryReviewPlan>;
   prepareEpisodeReview?(digest: KodaXMemoryOutcomeDigest): Promise<MemoryReviewModelInput>;
   applyReviewedEpisode?(
     plan: MemoryReviewPlan,

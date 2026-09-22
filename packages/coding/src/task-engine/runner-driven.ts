@@ -83,6 +83,7 @@ import {
   drainCodingMemoryReviewInbox,
   maybeRunMemoryMaintenanceWindow,
   persistMemoryOutcomeToSession,
+  runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { installProductionLearningReviewer } from '../learning-reviewer.js';
 import {
@@ -864,58 +865,60 @@ async function finishRunnerMemoryRuntime(
   },
 ): Promise<void> {
   if (runtime === undefined || runtime.finished) return;
-  runtime.finished = true;
-  const completedAt = new Date().toISOString();
-  const checks = collectVerifiedCheckFacts(outcome.artifactLedger ?? []);
-  try {
-    await runtime.session.complete({
-        status: outcome.status,
-        summary: outcome.summary,
-        evidence: [
-          ...(outcome.status === 'cancelled'
-            ? []
-            : [
-              ...(checks.length > 0
-                ? checks.map((check) => ({
-                      ref: check.ref,
-                      requestedGrade: 'verified' as const,
-                      source: check.source,
-                      verdict: check.verdict,
-                      observedAt: check.observedAt,
-                    }))
-                : [{
-                    ref: `host:run-terminal:${sessionId}`,
-                    requestedGrade: 'observed' as const,
-                    source: 'host' as const,
-                    observedAt: completedAt,
-                  }]),
-              ]),
-        ],
-        ...(runtime.handledMemoryOperations.length === 0
-          ? {}
-          : { handledMemoryOperations: [...runtime.handledMemoryOperations] }),
-    });
-    await runtime.session.close();
-  } catch (error) {
-    emitResilienceDebug('[memory:episode-finalize:error]', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    await runtime.session.close({ drain: false }).catch(() => undefined);
-  }
-  runtime.reviewDrain = runtime.reviewDrain.then(
-    () => drainCodingMemoryReviewInbox(
-      options,
-      runtime.identity,
-      runtime.controller,
-      '',
-      // FEATURE_289 §3.1: bound the decide phase so a shutdown-window drain
-      // releases its claim via defer instead of fossilizing mid-judge.
-      Date.now() + 15_000,
-      runtime.preferredReviewJobRef.current,
-    ).then(() => undefined),
-  ).catch((error: unknown) => {
-    emitResilienceDebug('[memory:review-inbox:drain-error]', {
-      error: error instanceof Error ? error.message : String(error),
+  await runOwnedMemoryWork(options, async () => {
+    runtime.finished = true;
+    const completedAt = new Date().toISOString();
+    const checks = collectVerifiedCheckFacts(outcome.artifactLedger ?? []);
+    try {
+      await runtime.session.complete({
+          status: outcome.status,
+          summary: outcome.summary,
+          evidence: [
+            ...(outcome.status === 'cancelled'
+              ? []
+              : [
+                ...(checks.length > 0
+                  ? checks.map((check) => ({
+                        ref: check.ref,
+                        requestedGrade: 'verified' as const,
+                        source: check.source,
+                        verdict: check.verdict,
+                        observedAt: check.observedAt,
+                      }))
+                  : [{
+                      ref: `host:run-terminal:${sessionId}`,
+                      requestedGrade: 'observed' as const,
+                      source: 'host' as const,
+                      observedAt: completedAt,
+                    }]),
+                ]),
+          ],
+          ...(runtime.handledMemoryOperations.length === 0
+            ? {}
+            : { handledMemoryOperations: [...runtime.handledMemoryOperations] }),
+      });
+      await runtime.session.close();
+    } catch (error) {
+      emitResilienceDebug('[memory:episode-finalize:error]', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await runtime.session.close({ drain: false }).catch(() => undefined);
+    }
+    runtime.reviewDrain = runtime.reviewDrain.then(
+      () => drainCodingMemoryReviewInbox(
+        options,
+        runtime.identity,
+        runtime.controller,
+        '',
+        // FEATURE_289 §3.1: bound the decide phase so a shutdown-window drain
+        // releases its claim via defer instead of fossilizing mid-judge.
+        Date.now() + 15_000,
+        runtime.preferredReviewJobRef.current,
+      ).then(() => undefined),
+    ).catch((error: unknown) => {
+      emitResilienceDebug('[memory:review-inbox:drain-error]', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   });
 }
@@ -956,7 +959,8 @@ export async function runManagedTaskViaRunner(
     actorQueueId(initialSessionId, '/root'),
   );
   try {
-  await maybeRunMemoryMaintenanceWindow(effectiveOptions);
+  await runOwnedMemoryWork(effectiveOptions, () => maybeRunMemoryMaintenanceWindow(effectiveOptions));
+  effectiveOptions.abortSignal?.throwIfAborted();
   // Fire onSessionStart early so REPL / CLI listeners bound to session
   // init trigger for AMA runs the same way they trigger for SA runs.
   // Ad-hoc askUser callers without a stable host session id get a run-local id:
@@ -1025,12 +1029,20 @@ export async function runManagedTaskViaRunner(
     },
     events: liveEvents,
   };
-  const startedMemoryRuntime = await startRunnerMemoryRuntime(
-    optionsWithLiveEvents,
-    prompt,
-    initialSessionId,
-    liveTurnScopeRef.current.turnId,
-  );
+  const startedMemoryRuntime = await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
+    const started = await startRunnerMemoryRuntime(
+      optionsWithLiveEvents,
+      prompt,
+      initialSessionId,
+      liveTurnScopeRef.current.turnId,
+    );
+    if (optionsWithLiveEvents.abortSignal?.aborted) {
+      await started.runtime?.session.close({ drain: false });
+    }
+    return started;
+  }) ?? { options: withoutMemoryIntentTool(optionsWithLiveEvents) };
+  // Cancellation during setup must not start prompt Git or error-snapshot work.
+  optionsWithLiveEvents.abortSignal?.throwIfAborted();
   const optionsWithSessionId = startedMemoryRuntime.options;
   const runnerMemoryRuntime = startedMemoryRuntime.runtime;
   let liveLifecycleStarted = false;
@@ -3043,8 +3055,13 @@ async function runManagedTaskViaRunnerInner(
   // snapshot is durable before downstream observers see completion. Repository
   // intelligence and task artifact projection are maintenance work and must
   // not keep the Runtime Run active or make Stop indeterminate. Memory outcome
-  // persistence remains part of the outer managed Promise's durable
-  // finalization contract.
+  // persistence is durable foreground work and must finish before completion
+  // observers can close the Runtime. The outer finalizer remains idempotent.
+  await finishRunnerMemoryRuntime(options, memoryRuntime, resolvedSessionId, {
+    status: result.interrupted ? 'cancelled' : result.success ? 'succeeded' : 'failed',
+    summary: result.lastText,
+    artifactLedger: result.artifactLedger,
+  });
   observer.completed(signal, reason ?? userAnswer);
   scheduleManagedTaskMaintenance(options, managedTask, {
     success: result.success,

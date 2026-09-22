@@ -268,6 +268,18 @@ export async function revalidatePendingEpisodeReview(
 // bounded-await it via awaitLatestCodingMemoryReviewDrain.
 let latestMemoryReviewDrain: Promise<unknown> | undefined;
 
+/** Own short memory IO separately from the Run's potentially unbounded model work. */
+export function runOwnedMemoryWork<T>(
+  options: KodaXOptions,
+  work: (signal?: AbortSignal) => Promise<T>,
+): Promise<T | undefined> {
+  if (!options.events?.runMemoryWork) return work();
+  let result: T | undefined;
+  return options.events.runMemoryWork(async (signal) => {
+    result = await work(signal);
+  }).then(() => result);
+}
+
 export function drainCodingMemoryReviewInbox(
   options: KodaXOptions,
   identity: MemoryContextIdentity,
@@ -279,14 +291,15 @@ export function drainCodingMemoryReviewInbox(
   if (isInternalAgentRun(options)
     || (options.memoryReviewer === undefined && options.learningReviewer === undefined)
     || options.session?.storage === undefined) return Promise.resolve(undefined);
-  const drain = drainStartedCodingMemoryReviewInbox(
+  const drain = runOwnedMemoryWork(options, (abortSignal) => drainStartedCodingMemoryReviewInbox(
     options,
     identity,
     controller,
     currentSessionId,
     drainDeadlineAtMs,
     preferredJobId,
-  );
+    abortSignal,
+  ));
   latestMemoryReviewDrain = drain;
   return drain;
 }
@@ -319,13 +332,15 @@ async function drainStartedCodingMemoryReviewInbox(
   currentSessionId: string,
   drainDeadlineAtMs: number | undefined,
   preferredJobId: string | undefined,
+  abortSignal?: AbortSignal,
 ): Promise<EpisodeReviewDrainResult | undefined> {
   const drainOptions: Omit<EpisodeReviewDrainOptions, 'maxEntries'> = {
+    ...(abortSignal === undefined ? {} : { abortSignal }),
     ...(drainDeadlineAtMs === undefined ? {} : { deadlineAtMs: drainDeadlineAtMs }),
     revalidate: async (entry) => entry.ownerSessionRef === currentSessionId
       ? 'defer'
       : revalidatePendingEpisodeReview(options.session?.storage, entry),
-    review: async (entry) => reviewPendingEpisode(options, controller, entry),
+    review: async (entry, signal) => reviewPendingEpisode(options, controller, entry, signal),
     prepareV2Input: async (entry) => ({
       evidence: await buildUnifiedReviewInput(options, identity, controller, entry),
       promptRevision: `sha256:${LEARNING_REVIEW_PROMPT_SHA256}`,
@@ -339,7 +354,7 @@ async function drainStartedCodingMemoryReviewInbox(
       }
       const raw = options.learningReviewer === undefined
         ? {
-            memoryPlan: await options.memoryReviewer?.(checkpoint.evidence.memory),
+            memoryPlan: await options.memoryReviewer?.(checkpoint.evidence.memory, signal),
           }
         : await options.learningReviewer(checkpoint.evidence, signal);
       if (!isReviewEnvelope(raw)) {
@@ -415,6 +430,7 @@ async function drainStartedCodingMemoryReviewInbox(
   };
   if (preferredJobId !== undefined) {
     for (const ownerIdentity of deriveCodingMemoryReviewIdentities(options, identity)) {
+      if (abortSignal?.aborted) break;
       const partial = await drainPendingEpisodeReviews(ownerIdentity, {
         ...drainOptions,
         maxEntries: 1,
@@ -426,6 +442,7 @@ async function drainStartedCodingMemoryReviewInbox(
     }
   }
   for (const ownerIdentity of deriveCodingMemoryReviewIdentities(options, identity)) {
+    if (abortSignal?.aborted) break;
     const spent = result.reviewed + result.discarded + result.failed;
     if (spent >= 2) break;
     const partial = await drainPendingEpisodeReviews(ownerIdentity, {
@@ -854,14 +871,19 @@ async function reviewPendingEpisode(
   options: KodaXOptions,
   controller: MemoryController,
   entry: PendingEpisodeReview,
+  signal?: AbortSignal,
 ): Promise<readonly string[]> {
+  signal?.throwIfAborted();
   await persistMemoryOutcomeToSession(
     options,
     entry.ownerSessionRef,
     entry.digest,
     { emitEvent: false },
   );
-  const review = await reviewEpisodeWithTimeout(controller, entry.digest);
+  signal?.throwIfAborted();
+  const review = await reviewEpisodeWithTimeout(controller, entry.digest, signal);
+  // A successful legacy review may already have applied effects. Finish its
+  // receipt even if cancellation arrives now, so recovery cannot replay them.
   const completedAt = new Date().toISOString();
   await persistMemoryReviewReceiptToSession(options, entry.ownerSessionRef, {
     reviewKey: entry.reviewKey,
@@ -883,12 +905,22 @@ async function reviewPendingEpisode(
 async function reviewEpisodeWithTimeout(
   controller: MemoryController,
   digest: KodaXMemoryOutcomeDigest,
+  signal?: AbortSignal,
 ): ReturnType<MemoryController['reviewEpisode']> {
   const abort = new AbortController();
+  signal?.throwIfAborted();
+  const onAbort = () => abort.abort(signal?.reason);
+  signal?.addEventListener('abort', onAbort, { once: true });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    const review = controller.reviewEpisode(digest, abort.signal);
+    // Owned reviews retain their promise until cancellation has really unwound.
+    if (signal !== undefined) {
+      timeout = setTimeout(() => abort.abort(), 30_000);
+      return await review;
+    }
     return await Promise.race([
-      controller.reviewEpisode(digest, abort.signal),
+      review,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
           abort.abort();
@@ -898,6 +930,7 @@ async function reviewEpisodeWithTimeout(
     ]);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 

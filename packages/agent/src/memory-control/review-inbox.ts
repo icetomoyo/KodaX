@@ -192,10 +192,17 @@ export interface EpisodeReviewDrainOptions {
   /** Epoch-ms deadline: stop claiming new jobs once passed and release an
    * in-flight claim instead of committing a decision. */
   readonly deadlineAtMs?: number;
+  /** Cancel new work and await the active reviewer before releasing its claim.
+   * Owned reviewers must honor their signal and settle; neither cancellation nor
+   * the provider timeout detaches a still-running owned reviewer. */
+  readonly abortSignal?: AbortSignal;
   readonly revalidate: (
     entry: PendingEpisodeReview,
   ) => Promise<EpisodeReviewDrainEligibility>;
-  readonly review: (entry: PendingEpisodeReview) => Promise<readonly string[]>;
+  readonly review: (
+    entry: PendingEpisodeReview,
+    signal?: AbortSignal,
+  ) => Promise<readonly string[]>;
   readonly prepareV2Input?: (
     entry: PendingEpisodeReviewV2,
   ) => Promise<EpisodeReviewInputSpec>;
@@ -1262,6 +1269,9 @@ export async function drainPendingEpisodeReviews(
   identity: MemoryContextIdentity,
   options: EpisodeReviewDrainOptions,
 ): Promise<EpisodeReviewDrainResult> {
+  if (options.abortSignal?.aborted) {
+    return { reviewed: 0, discarded: 0, deferred: 0, failed: 0, failures: [] };
+  }
   const ownerFilter = {
     ...(identity.configHome === undefined ? {} : { configHome: identity.configHome }),
     tenantId: identity.tenantId,
@@ -1299,6 +1309,7 @@ export async function drainPendingEpisodeReviews(
   let spentEntries = 0;
   let visitedEntries = 0;
   for (const entry of owned) {
+    if (options.abortSignal?.aborted) break;
     if (spentEntries >= maxEntries) break;
     // Past the deadline no new job is claimed; unvisited entries are counted
     // as deferred by the tail accounting below.
@@ -1351,10 +1362,13 @@ async function drainLegacyEpisodeReview(
   | { readonly kind: 'failed'; readonly error: string }
 > {
   return withEpisodeReviewSessionLock(identity, async () => {
+    if (options.abortSignal?.aborted) return { kind: 'deferred' };
     const claimPath = await claimPendingReview(identity, entry.reviewKey);
     if (claimPath === undefined) return { kind: 'not_claimed' };
     try {
+      options.abortSignal?.throwIfAborted();
       const eligibility = await options.revalidate(entry);
+      options.abortSignal?.throwIfAborted();
       if (eligibility === 'defer') {
         await restoreClaim(identity, entry, claimPath);
         return { kind: 'deferred' };
@@ -1363,12 +1377,15 @@ async function drainLegacyEpisodeReview(
         await rm(claimPath, { force: true });
         return { kind: 'discarded' };
       }
-      const proposalIds = await options.review(entry);
+      const proposalIds = await options.review(entry, options.abortSignal);
+      // A successful legacy effect has no action checkpoint: commit its receipt
+      // even if shutdown arrived during the effect, so recovery cannot replay it.
       await writeEpisodeReviewReceipt(identity, entry.reviewKey, proposalIds);
       await removeCompletedPendingBestEffort(claimPath, entry.reviewKey);
       return { kind: 'reviewed' };
     } catch (error) {
       await restoreClaim(identity, entry, claimPath);
+      if (isReviewDrainCancellation(error, options.abortSignal)) return { kind: 'deferred' };
       return {
         kind: 'failed',
         error: error instanceof Error ? error.message : String(error),
@@ -1391,7 +1408,9 @@ async function drainFencedEpisodeReview(
   let decisionCommitted = false;
   let deliveringCompletion = false;
   try {
+    options.abortSignal?.throwIfAborted();
     const eligibility = await options.revalidate(entry);
+    options.abortSignal?.throwIfAborted();
     if (eligibility === 'defer') {
       await deferEpisodeReview(identity, claim, 'review eligibility deferred');
       return { kind: 'deferred' };
@@ -1401,6 +1420,7 @@ async function drainFencedEpisodeReview(
       return { kind: 'discarded' };
     }
     const snapshot = await inspectEpisodeReviewJob(identity, entry.jobId);
+    options.abortSignal?.throwIfAborted();
     const input = snapshot?.input ?? await freezeEpisodeReviewInput(
       identity,
       claim,
@@ -1414,6 +1434,7 @@ async function drainFencedEpisodeReview(
           }
         : await options.prepareV2Input(entry),
     );
+    options.abortSignal?.throwIfAborted();
     let decision = snapshot?.decision;
     decisionCommitted = decision !== undefined;
     if (decision === undefined) {
@@ -1421,8 +1442,11 @@ async function drainFencedEpisodeReview(
       try {
         decisionInput = options.decideV2 === undefined
           ? { inputHash: input.evidenceHash, memoryProposalIds: [] }
-          : await decideEpisodeReviewWithHardTimeout(options.decideV2, entry, input);
+          : await decideEpisodeReviewWithHardTimeout(
+            options.decideV2, entry, input, options.abortSignal,
+          );
       } catch (error) {
+        if (isReviewDrainCancellation(error, options.abortSignal)) throw error;
         const message = error instanceof Error ? error.message : String(error);
         const kind = classifyEpisodeReviewFailure(error);
         await failEpisodeReviewAttempt(
@@ -1432,7 +1456,9 @@ async function drainFencedEpisodeReview(
         );
         return { kind: 'failed', error: message };
       }
+      options.abortSignal?.throwIfAborted();
       const beforeDecision = await options.revalidate(entry);
+      options.abortSignal?.throwIfAborted();
       if (beforeDecision !== 'eligible') {
         if (beforeDecision === 'discard') {
           await discardFencedEpisodeReview(identity, claim, 'review branch changed before decision');
@@ -1441,8 +1467,7 @@ async function drainFencedEpisodeReview(
         await deferEpisodeReview(identity, claim, 'review branch unavailable before decision');
         return { kind: 'deferred' };
       }
-      // The decide phase is not interruptible, so enforce the drain deadline
-      // before committing: release the claim back to pending instead of
+      // Enforce the drain deadline before committing: release the claim instead of
       // leaving the job in processing until its lease expires.
       if (options.deadlineAtMs !== undefined && Date.now() >= options.deadlineAtMs) {
         await deferEpisodeReview(identity, claim, 'drain deadline reached before decision commit');
@@ -1451,7 +1476,9 @@ async function drainFencedEpisodeReview(
       decision = await commitEpisodeReviewDecision(identity, claim, decisionInput);
       decisionCommitted = true;
     }
+    options.abortSignal?.throwIfAborted();
     const beforeEffects = await options.revalidate(entry);
+    options.abortSignal?.throwIfAborted();
     if (beforeEffects !== 'eligible') {
       if (beforeEffects === 'discard') {
         await discardFencedEpisodeReview(identity, claim, 'review branch changed before effects');
@@ -1485,7 +1512,9 @@ async function drainFencedEpisodeReview(
       }
       for (const carrier of carriers) {
         if (committed.has(carrier)) continue;
+        options.abortSignal?.throwIfAborted();
         const authority = await options.revalidate(entry);
+        options.abortSignal?.throwIfAborted();
         if (authority !== 'eligible') {
           if (authority === 'discard') {
             await discardFencedEpisodeReview(identity, claim, 'review branch changed before effect');
@@ -1504,6 +1533,7 @@ async function drainFencedEpisodeReview(
             identity,
             claim,
             async (revalidateAuthority) => {
+              options.abortSignal?.throwIfAborted();
               const refs = await effect(revalidateAuthority);
               await commitEpisodeReviewActionWithSessionFence(identity, claim, {
                 actionId: `${decision.decisionId}:${carrier}`,
@@ -1521,9 +1551,12 @@ async function drainFencedEpisodeReview(
       actions = applied;
     } else {
       actions = await withEpisodeReviewClaimAuthority(identity, claim, async () => {
+        options.abortSignal?.throwIfAborted();
+        const committed = snapshot?.actions.find((action) => action.carrier === 'memory');
+        if (committed !== undefined) return [committed];
         const results = [{
           carrier: 'memory' as const,
-          resultRefs: await options.review(entry),
+          resultRefs: await options.review(entry, options.abortSignal),
         }];
         for (const action of results) {
           await commitEpisodeReviewActionWithSessionFence(identity, claim, {
@@ -1536,12 +1569,14 @@ async function drainFencedEpisodeReview(
         return results;
       });
     }
+    options.abortSignal?.throwIfAborted();
     const memoryRefs = actions
       .filter((action) => action.carrier === 'memory')
       .flatMap((action) => action.resultRefs);
     deliveringCompletion = true;
     if (options.onV2Completed !== undefined) {
       await withEpisodeReviewClaimAuthority(identity, claim, async (revalidateAuthority) => {
+        options.abortSignal?.throwIfAborted();
         await options.onV2Completed?.(entry, decision, memoryRefs);
         await revalidateAuthority();
         await completeFencedEpisodeReviewWithSessionFence(identity, claim, memoryRefs);
@@ -1553,8 +1588,11 @@ async function drainFencedEpisodeReview(
     return { kind: 'reviewed' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const cancelled = isReviewDrainCancellation(error, options.abortSignal);
     try {
-      if (decisionCommitted) {
+      if (cancelled) {
+        await deferEpisodeReview(identity, claim, 'review drain cancelled');
+      } else if (decisionCommitted) {
         if (deliveringCompletion) {
           await failEpisodeReviewCompletion(identity, claim, message);
         } else {
@@ -1578,6 +1616,7 @@ async function drainFencedEpisodeReview(
         throw cleanupError;
       }
     }
+    if (cancelled) return { kind: 'deferred' };
     return { kind: 'failed', error: message };
   }
 }
@@ -1588,23 +1627,50 @@ async function decideEpisodeReviewWithHardTimeout(
   decide: NonNullable<EpisodeReviewDrainOptions['decideV2']>,
   entry: PendingEpisodeReviewV2,
   input: EpisodeReviewInputCheckpoint,
+  abortSignal?: AbortSignal,
 ): Promise<EpisodeReviewDecisionInput> {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let timeoutError: EpisodeReviewFailure | undefined;
+  const abort = () => controller.abort(abortSignal?.reason);
+  abortSignal?.throwIfAborted();
+  abortSignal?.addEventListener('abort', abort, { once: true });
   try {
-    return await new Promise<EpisodeReviewDecisionInput>((resolve, reject) => {
+    const decision = await new Promise<EpisodeReviewDecisionInput>((resolve, reject) => {
       timeout = setTimeout(() => {
-        controller.abort();
-        reject(new EpisodeReviewFailure(
+        timeoutError = new EpisodeReviewFailure(
           'provider_timeout',
           `episode reviewer timed out after ${EPISODE_REVIEW_PROVIDER_TIMEOUT_MS}ms`,
-        ));
+        );
+        controller.abort();
+        // An owned drain must retain the reviewer until it really settles.
+        // Unowned callers keep the existing hard-timeout compatibility.
+        if (abortSignal === undefined) reject(timeoutError);
       }, EPISODE_REVIEW_PROVIDER_TIMEOUT_MS);
       void decide(entry, input, controller.signal).then(resolve, reject);
     });
+    abortSignal?.throwIfAborted();
+    if (timeoutError !== undefined) throw timeoutError;
+    return decision;
+  } catch (error) {
+    // Normalize provider-specific abort wrappers only at the model-call boundary.
+    // Storage failures elsewhere retain their original failure classification.
+    abortSignal?.throwIfAborted();
+    if (timeoutError !== undefined) throw timeoutError;
+    throw error;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    abortSignal?.removeEventListener('abort', abort);
   }
+}
+
+function isReviewDrainCancellation(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true && (
+    error === signal.reason
+    || (error instanceof Error && (
+      error.name === 'AbortError' || ('code' in error && error.code === 'ABORT_ERR')
+    ))
+  );
 }
 
 function classifyEpisodeReviewFailure(error: unknown): EpisodeReviewFailureKind {

@@ -2996,6 +2996,278 @@ describe("FEATURE_289 episode review drain fixes", () => {
     if (home !== undefined) await rm(home, { recursive: true, force: true });
   });
 
+  it.each(['interrupted', 'completed'] as const)("settles a cancelled legacy reviewer that %s without repeating completed effects", async (outcome) => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-v1-cancel-"));
+    const owner = { ...identity, configHome: home };
+    const pendingDir = path.join(home, "memory-review-inbox",
+      hashMemoryIdentityComponent("tenant", owner.tenantId),
+      hashMemoryIdentityComponent("session", owner.sessionId), "pending");
+    await mkdir(pendingDir, { recursive: true });
+    await writeFile(path.join(pendingDir,
+      `${hashMemoryIdentityComponent("review", digest().reviewKey)}.json`), JSON.stringify({
+      version: 1, reviewKey: digest().reviewKey, digest: digest(),
+      ownerSessionRef: owner.sessionId,
+      ownerAgentHash: hashMemoryIdentityComponent("agent", owner.agentId),
+      ownerProjectHash: hashMemoryIdentityComponent("project", owner.projectId),
+      createdAt: digest().createdAt,
+    }));
+    const controller = new AbortController();
+    let received: AbortSignal | undefined;
+    const result = await drainPendingEpisodeReviews(owner, {
+      abortSignal: controller.signal,
+      revalidate: async () => "eligible",
+      review: async (_entry, signal) => {
+        received = signal;
+        controller.abort();
+        if (outcome === 'interrupted') signal?.throwIfAborted();
+        return ['applied-proposal'];
+      },
+    });
+    expect(received).toBe(controller.signal);
+    const completed = outcome === 'completed';
+    expect(result).toMatchObject({ reviewed: completed ? 1 : 0, failed: 0, deferred: completed ? 0 : 1 });
+    await expect(listPendingEpisodeReviews({ configHome: home, tenantId: owner.tenantId }))
+      .resolves.toMatchObject(completed ? [] : [{ version: 1, reviewKey: digest().reviewKey }]);
+    await expect(drainPendingEpisodeReviews(owner, {
+      revalidate: async () => "eligible", review: async () => [],
+    })).resolves.toMatchObject({ reviewed: completed ? 0 : 1, failed: 0 });
+  });
+
+  it.each([false, true])("cancels the reviewer, awaits cleanup and returns its claim (wrapped error: %s)", async (wrappedError) => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-owner-abort-"));
+    setAgentConfigHome(home);
+    const persisted = await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let reviewerSignal: AbortSignal | undefined;
+    let settled = false;
+    const options = {
+      abortSignal: controller.signal,
+      revalidate: async () => "eligible" as const,
+      review: async () => [],
+      decideV2: async (_entry, input, signal) => {
+        reviewerSignal = signal;
+        entered();
+        await cleanup;
+        if (signal.aborted && wrappedError) throw new Error('provider wrapped cancellation');
+        signal.throwIfAborted();
+        return { inputHash: input.evidenceHash, memoryProposalIds: [] };
+      },
+    } satisfies EpisodeReviewDrainOptions;
+    const draining = drainPendingEpisodeReviews(identity, options).then((result) => {
+      settled = true;
+      return result;
+    });
+    try {
+      await started;
+      controller.abort();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(reviewerSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await draining;
+    }
+    expect(await draining).toMatchObject({ reviewed: 0, failed: 0, deferred: 1 });
+    const snapshot = await inspectEpisodeReviewJob(identity, persisted.entry.jobId);
+    expect(snapshot?.state).toMatchObject({ status: "pending", providerAttempts: 0 });
+    expect(snapshot?.state.claimToken).toBeUndefined();
+    expect(snapshot?.input).toBeDefined();
+    expect(snapshot?.decision).toBeUndefined();
+    await expect(drainPendingEpisodeReviews(identity, {
+      revalidate: async () => "eligible",
+      review: async () => [],
+    })).resolves.toMatchObject({ reviewed: 1, failed: 0 });
+  });
+
+  it("does not claim queued reviews after owner cancellation", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-aborted-queue-"));
+    setAgentConfigHome(home);
+    const persisted = await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    controller.abort();
+    const review = vi.fn(async () => []);
+    await drainPendingEpisodeReviews(identity, {
+      abortSignal: controller.signal,
+      revalidate: async () => "eligible",
+      review,
+    });
+    expect(review).not.toHaveBeenCalled();
+    expect((await inspectEpisodeReviewJob(identity, persisted.entry.jobId))?.state)
+      .toMatchObject({ status: "pending", claimEpoch: 0 });
+  });
+
+  it("keeps a timed-out owned reviewer attached until its request settles", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const request = new Promise<void>((resolve) => { release = resolve; });
+    let draining: Promise<unknown> | undefined;
+    try {
+      home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-owned-timeout-"));
+      setAgentConfigHome(home);
+      const persisted = await persistPendingEpisodeReview(identity, digest());
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      let received: AbortSignal | undefined;
+      let settled = false;
+      draining = drainPendingEpisodeReviews(identity, {
+        abortSignal: new AbortController().signal,
+        revalidate: async () => "eligible",
+        review: async () => [],
+        decideV2: async (_entry, input, signal) => {
+          received = signal;
+          enter();
+          await request;
+          if (signal.aborted) throw new Error('provider wrapped timeout');
+          return { inputHash: input.evidenceHash, memoryProposalIds: [] };
+        },
+      }).then((result) => { settled = true; return result; });
+      await entered;
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(received?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      release();
+      await expect(draining).resolves.toMatchObject({ reviewed: 0, failed: 1,
+        failures: [{ error: 'episode reviewer timed out after 90000ms' }] });
+      const snapshot = await inspectEpisodeReviewJob(identity, persisted.entry.jobId);
+      expect(snapshot?.state).toMatchObject({ status: "pending", providerAttempts: 1 });
+      expect(snapshot?.decision).toBeUndefined();
+    } finally {
+      release();
+      await draining;
+      vi.useRealTimers();
+    }
+  });
+
+  it("finishes preparing input but starts no reviewer after owner cancellation", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-aborted-prepare-"));
+    setAgentConfigHome(home);
+    const persisted = await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    const review = vi.fn(async () => []);
+    const decideV2 = vi.fn<NonNullable<EpisodeReviewDrainOptions['decideV2']>>(async (_entry, input) => ({
+      inputHash: input.evidenceHash, memoryProposalIds: [],
+    }));
+    const result = await drainPendingEpisodeReviews(identity, {
+      abortSignal: controller.signal,
+      revalidate: async () => "eligible",
+      review,
+      prepareV2Input: async () => {
+        controller.abort();
+        return {
+          evidence: { digest: digest() }, promptRevision: "p1", schemaRevision: "s1",
+          policyRevision: "g1", providerRevision: "provider-a",
+        };
+      },
+      decideV2,
+    });
+    expect(result).toMatchObject({ reviewed: 0, failed: 0, deferred: 1 });
+    expect(decideV2).not.toHaveBeenCalled();
+    expect(review).not.toHaveBeenCalled();
+    const snapshot = await inspectEpisodeReviewJob(identity, persisted.entry.jobId);
+    expect(snapshot?.state).toMatchObject({ status: "pending", providerAttempts: 0 });
+    expect(snapshot?.decision).toBeUndefined();
+  });
+
+  it("waits for an active effect and preserves its receipt without starting another carrier", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-aborted-effect-"));
+    setAgentConfigHome(home);
+    const persisted = await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const applied: string[] = [];
+    const completed = vi.fn(async () => undefined);
+    let settled = false;
+    const options: EpisodeReviewDrainOptions = {
+      abortSignal: controller.signal,
+      revalidate: async () => "eligible",
+      review: async () => [],
+      listV2Actions: () => ["memory", "skill"],
+      decideV2: async (_entry, input) => ({
+        inputHash: input.evidenceHash, memoryProposalIds: [], requiredCarriers: ["memory", "skill"],
+      }),
+      applyV2Action: async (_entry, _decision, carrier, _claim, commit) => commit(async () => {
+        applied.push(carrier);
+        if (carrier === "memory") { enter(); await gate; }
+        return [`${carrier}-proposal`];
+      }),
+      onV2Completed: completed,
+    };
+    const draining = drainPendingEpisodeReviews(identity, options).then((result) => {
+      settled = true;
+      return result;
+    });
+    try {
+      await entered;
+      controller.abort();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await draining;
+    }
+    expect(await draining).toMatchObject({ reviewed: 0, failed: 0, deferred: 1 });
+    expect(applied).toEqual(["memory"]);
+    expect(completed).not.toHaveBeenCalled();
+    const snapshot = await inspectEpisodeReviewJob(identity, persisted.entry.jobId);
+    expect(snapshot?.state).toMatchObject({ status: "pending", providerAttempts: 0 });
+    expect(snapshot?.actions).toMatchObject([{ carrier: "memory", resultRefs: ["memory-proposal"] }]);
+    await expect(drainPendingEpisodeReviews(identity, { ...options, abortSignal: undefined }))
+      .resolves.toMatchObject({ reviewed: 1, failed: 0 });
+    expect(applied).toEqual(["memory", "skill"]);
+    expect(completed).toHaveBeenCalledOnce();
+  });
+
+  it("does not repeat a completed compatibility effect after cancellation", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-compat-retry-"));
+    setAgentConfigHome(home);
+    await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    const review = vi.fn(async () => {
+      controller.abort();
+      return ["already-applied"];
+    });
+    const options = { revalidate: async () => "eligible" as const, review };
+    await expect(drainPendingEpisodeReviews(identity, {
+      ...options, abortSignal: controller.signal,
+    })).resolves.toMatchObject({ reviewed: 0, deferred: 1 });
+    await expect(drainPendingEpisodeReviews(identity, options))
+      .resolves.toMatchObject({ reviewed: 1, failed: 0 });
+    expect(review).toHaveBeenCalledOnce();
+  });
+
+  it.each(['prepare', 'apply'] as const)("preserves a real %s failure racing owner cancellation", async (stage) => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-cancel-io-error-"));
+    setAgentConfigHome(home);
+    const persisted = await persistPendingEpisodeReview(identity, digest());
+    const controller = new AbortController();
+    const fail = async () => {
+      controller.abort();
+      throw Object.assign(new Error('EACCES: review storage inaccessible'), { code: 'EACCES' });
+    };
+    const result = await drainPendingEpisodeReviews(identity, {
+      abortSignal: controller.signal,
+      revalidate: async () => 'eligible',
+      review: async () => [],
+      ...(stage === 'prepare' ? { prepareV2Input: fail } : { applyV2Action: fail }),
+    });
+    expect(result).toMatchObject({ reviewed: 0, failed: 1, deferred: 0,
+      failures: [{ error: 'EACCES: review storage inaccessible' }] });
+    const snapshot = await inspectEpisodeReviewJob(identity, persisted.entry.jobId);
+    expect(snapshot?.state).toMatchObject({ status: 'pending',
+      providerAttempts: stage === 'prepare' ? 1 : 0,
+      applyAttempts: stage === 'apply' ? 1 : 0,
+    });
+    expect(snapshot?.state.lastError).toContain('EACCES');
+    expect(snapshot?.state.claimToken).toBeUndefined();
+  });
+
   it("does not spend the drain entry budget on deferred jobs", async () => {
     home = await mkdtemp(
       path.join(os.tmpdir(), "kodax-review-f289-defer-budget-"),

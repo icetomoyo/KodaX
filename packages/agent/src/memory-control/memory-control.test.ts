@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setAgentConfigHome } from '../runtime/agent-home.js';
 import { resolveScopedMemoryRoot } from '../memory/paths.js';
 import { resetSkillRegistry } from '../capabilities/skills/index.js';
+import { acquireLearningFileLock } from '../learning/store-lock.js';
 import {
   readLearningProposalStore,
   updateLearningProposalStatus,
@@ -1366,6 +1367,80 @@ describe('MemoryControlPlane', () => {
       targetRefIds: ['memdir:project_stack.md'],
       requiresApproval: true,
     });
+  });
+
+  it.each([false, true])('propagates episode cancellation and awaits reviewer cleanup (wrapped error: %s)', async (wrappedError) => {
+    const abort = new AbortController();
+    let received: AbortSignal | undefined;
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    const controller = createMemoryControlPlane({
+      cwd, learningStorePath, memoryRoot, discoverSkills: false,
+      memoryReviewer: async (input, signal) => {
+        received = signal;
+        enter();
+        await cleanup;
+        if (wrappedError) throw new Error('provider wrapped cancellation');
+        return {
+          trigger: input.trigger, createdAt: '2026-07-06T00:00:00.000Z',
+          sourceRefs: input.sourceRefs, candidateRefs: input.candidateRefs,
+          actions: [], warnings: [],
+        };
+      },
+    });
+    let settled = false;
+    const reviewing = controller.reviewEpisode(memoryEpisode('session-a', ['tool:test']), abort.signal)
+      .then(() => { settled = true; return undefined; }, (error: unknown) => {
+        settled = true;
+        return error;
+      });
+    try {
+      await entered;
+      abort.abort();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toBe(abort.signal);
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await reviewing;
+    }
+    expect(await reviewing).toMatchObject({ name: 'AbortError' });
+    expect(await controller.listInbox()).toEqual([]);
+  });
+
+  it('rejects cancellation while awaiting the effect lock without losing the reviewed work', async () => {
+    const lockPath = join(memoryRoot, '.explicit-memory.lock');
+    const releaseLock = await acquireLearningFileLock(lockPath);
+    const abort = new AbortController();
+    let modelReturned = false;
+    const controller = createMemoryControlPlane({
+      cwd, learningStorePath, memoryRoot, discoverSkills: false,
+      memoryReviewer: async () => {
+        modelReturned = true;
+        return packageManagerReviewPlan('This project uses pnpm.', 'low');
+      },
+    });
+    const episode = memoryEpisode('session-cancel-lock', ['artifact:package-json']);
+    const reviewing = controller.reviewEpisode(episode, abort.signal)
+      .then((result) => result, (error: unknown) => error);
+    try {
+      // Observe the real lock waiter, after the model returned, before cancelling.
+      await expect.poll(async () => (await readdir(`${lockPath}.queue`)).length)
+        .toBeGreaterThan(0);
+      expect(modelReturned).toBe(true);
+      abort.abort();
+    } finally {
+      await releaseLock();
+      await reviewing;
+    }
+    expect(await reviewing).toBe(abort.signal.reason);
+    expect(await controller.listInbox()).toEqual([]);
+    expect(await controller.listRefs({ kinds: ['memdir'] })).toEqual([]);
+    const retried = await controller.reviewEpisode(episode);
+    expect(retried.proposalIds).toHaveLength(1);
+    expect(retried.appliedProposalIds).toEqual(retried.proposalIds);
   });
 
   it('persists and host-applies an eligible verified episode through the governed proposal path', async () => {

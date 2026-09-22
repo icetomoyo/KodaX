@@ -7,6 +7,61 @@
 
 ---
 
+## Runtime shutdown follow-up (0.7.96 source, 2026-09-22)
+
+This follow-up is not in the published rc.9 package. It covers the SDK Runtime
+ownership of background episode review, including startup backlog and terminal
+drains in both `coding` and `managed_task` execution.
+
+Required behavior:
+
+- Run completion, Stop and successor admission do not wait for background review.
+- Closing Runtime A cancels and settles only A's reviews; it does not cancel or
+  wait for Runtime B's reviewer. Concurrent close calls share the same attempt.
+- No new review factory starts after closing begins. Cancellation reaches the
+  production review request, not merely a timer that abandons its promise.
+- A decision cancelled by Runtime close returns its job to pending, releases its
+  claim and keeps frozen input without consuming a provider-failure attempt.
+  Revoking a Run-scoped credential lease is a separate existing cancellation
+  path: its provider failure/backoff policy is unchanged.
+- Already-started durable effects finish and retain their action receipt before
+  close returns. Recovery must not execute a completed action again.
+- After successful close, review code performs no further Memory/Skill/session
+  writes. Restart with the same home can process the unfinished job.
+- Legacy single-argument reviewers remain accepted. Custom reviewers that perform
+  asynchronous work should honor the optional signal and settle after cleanup;
+  arbitrary callbacks that ignore cancellation cannot be forcibly terminated.
+  Owned reviews wait for actual settlement. Existing unowned timeout behavior is
+  retained. Close also waits for already-started filesystem operations.
+
+Automated verification:
+
+```sh
+npx vitest run src/sdk-runtime.memory-review.test.ts packages/agent/src/memory-control/review-inbox.test.ts packages/agent/src/memory-control/memory-control.test.ts packages/coding/src/memory-runtime.test.ts packages/coding/src/learning-reviewer.test.ts --maxWorkers=1
+npm run build
+node --test tests/bundled-memory-review-shutdown.test.mjs
+```
+
+The public Runtime test uses actual review jobs with an offline reviewer gate;
+the built acceptance uses a loopback HTTP provider with synthetic credentials.
+Verify the actual Worker/daemon shutdown and released owner, not just acceptance
+of `management.stop`. The default Worker shutdown budget must remain unchanged;
+force-terminating a timed-out Worker is a failure. Tests must clean up only their
+own profiles and processes and must not inspect customer credentials.
+
+The built scoped-credential case follows Stop before daemon quit. It establishes
+a pending job, starts its review under the next Run's active credential lease,
+aborts that Run, verifies both HTTP requests disconnect and the owner exits,
+then waits the existing retry backoff and verifies exactly one recovery receipt.
+The ambient-credential cases instead cancel terminal review through Runtime
+close and verify zero provider attempts and immediate recovery.
+
+Original RED evidence: `%TEMP%/kodax-memory-exit-20260922-171632/runtime-red.log`
+shows `Runtime.close()` returning while the real background review signal remains
+unaborted. Follow-up aggregate results are recorded in `docs/KNOWN_ISSUES.md`.
+
+---
+
 ## Test 1: `/memory doctor` on a fresh project (zero-state)
 
 **Steps:**

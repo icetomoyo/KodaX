@@ -59,27 +59,94 @@ temporary-root cleanup. Both independent review axes have zero remaining
 findings after test failure-cleanup corrections. No complete 15,000+ SDK suite
 was rerun in this follow-up; the original unexplained observations remain open.
 
-### Open: independent memory-review shutdown ownership
+### Source repair: independent memory-review shutdown ownership
 
 During the lifecycle regression setup, the normal root-agent path also produced
 an `ENOTEMPTY` cleanup failure under `memory-review-inbox/.../.branch-authority.lock.queue`.
-Source inspection confirms separate background review chains in `runner-driven`
-and `run-substrate`; they are not covered by the managed repo/artifact tracker.
-`memory-runtime` stores only a module-global latest drain, while Runtime close
-does not own those chains. The new isolated maintenance gate uses the existing
+The separate background review chains in `runner-driven` and `run-substrate`
+were not covered by the managed repo/artifact tracker. `memory-runtime` stored
+only a module-global latest drain, while Runtime close did not own those chains.
+The earlier isolated maintenance gate used the existing
 child-agent context to exclude this independent path; the real slow-Git feedback
 retains the original root context and passed in that sample. Neither result
 claims that all memory-related cleanup races have been eliminated.
 
-Do not simply await the global drain or race it against a timeout: ownership
-would cross Runtime instances, and the review decision can take 90 seconds;
-the 15-second loop deadline does not interrupt an in-flight decision. This
-requires a separate close/cancellation contract: stop claiming new jobs, settle
-or release the owner's existing claim, preserve recoverable jobs, and ensure no
-post-close writes. Regression gates must cover managed and classic start/final
-review chains, two-Runtime isolation, Run/Stop latency and claim recovery.
-No production memory-review change is included in this follow-up. Customer
-PowerShell/CIM capability failure likewise remains unconfirmed.
+The dedicated 2026-09-22 follow-up reproduced the public Runtime defect:
+close returned while the actual review callback's signal was still unaborted.
+Runtime now registers its own short memory setup/finalization IO and background
+drains before execution; closing refuses new work, cancels review requests and
+awaits already-started work before releasing the owner. It does not await the
+global latest drain or another Runtime's work. Run/Stop/successor behavior stays
+independent of background review.
+
+A completion-callback regression also exposed foreground memory persistence
+after close. Managed execution now finishes its already-required durable memory
+finalization before publishing completion. The outer finalizer remains
+idempotent. Close during an unfinished/cancelled Run may decline memory work
+that has not started; a completed Run's digest/job is durable before observers
+can close the Runtime. No whole-provider-lifetime wait is added.
+
+Real filesystem gates additionally reproduced close during branch-authority
+setup and managed curator-report persistence. A process observer identified the
+subsequent `getGitContext` Git child holding the workspace after close. Setup
+now checks cancellation before continuing to prompt/Git work; already-started
+memory IO remains owned. These tests remove their exact temporary directory
+immediately after close, without retries or delayed cleanup.
+The classic finalizer also owns learned-Skill outcome and binding-release IO,
+including when no memory session exists. A real project-canary binding write
+reproduced premature close and passes after this correction.
+
+Runtime-close cancellation returns decisions to pending with frozen input and no claim, without
+consuming provider attempts. Started effects finish and record action receipts;
+resumption skips completed carriers. Legacy successful reviews finish their
+receipt even if cancellation arrives afterwards, while cancellation before any
+effect (including while waiting for its lock) remains retryable. Actual storage
+failures retain their failure/attempt diagnostics rather than being disguised
+as cancellation.
+
+The optional reviewer signal is backward compatible with single-argument
+reviewers. Owned work waits for real settlement: custom callbacks that ignore
+cancellation, or an already-started filesystem operation, cannot be forcibly
+terminated by a Promise timeout. Unowned callers retain the old hard-timeout
+behavior. The default production reviewer already propagates cancellation to
+the HTTP provider. Worker shutdown budgets, generic file-lock protocols,
+Shell/sandbox behavior and provider retry policies are unchanged.
+
+Credential scope remains an explicit boundary: a terminal review cannot reuse
+a settled Run's revoked scoped credential authority. The job stays pending for
+a later authorized Run. Cancellation by revoking an active Run's credential
+scope follows the existing provider-failure/backoff path; it is distinct from
+Runtime-close cancellation of an owned review. This follow-up does not extend
+credential lifetimes or change credential fallback. Built tests distinguish
+ambient terminal review from scoped startup review followed by Stop and quit.
+
+Validation: the memory/control/coding batch passes 174/174; public Runtime
+memory/maintenance/Stop gates pass 29/29 (12 new memory cases); Runtime/managed
+and classic integration passes 472 with two pre-existing TODOs; final classic
+and learned-Skill checks pass 32/32; Shell cleanup checks pass 7/7. These batches
+overlap and are not additive. Full build, source and test type checks pass.
+The eight existing built acceptance files pass 36/36. Build validation used the
+shared workspace, which also contains an independent Windows native-text repair;
+that repair is not part of this memory change. The full SDK suite was not rerun.
+The three new real-HTTP built cases pass 3/3: Worker close 136ms within the
+unchanged two-second budget, ambient daemon close/owner verification 436ms, and
+scoped Stop/quit followed by recovery after its real retry deadline. Both daemon
+cases confirm process/Windows Job exit and released ownership. All three recover
+exactly one receipt and clean their own temporary directory. Final evidence:
+`%TEMP%/kodax-bundle-memory-final-f838dfe5154d4859b37b78c52404da3c.log`.
+
+Review — Standards: earlier fixture-failure cleanup findings were corrected;
+no remaining finding in that review. Spec: foreground ownership, completion
+ordering and cancellation-before-effect findings were corrected and the scoped
+credential distinction was clarified. The final Spec recheck found no new
+production gap.
+
+This repair is source-only and not included in published rc.9. Reproduction and
+acceptance details are in
+`docs/test-guides/FEATURE_289_v0.7.85_TEST_GUIDE.md`; evidence is retained under
+`%TEMP%/kodax-memory-exit-20260922-171632` and
+`%TEMP%/kodax-memory-close-followup-20260922`.
+Customer PowerShell/CIM capability failure remains a separate unconfirmed issue.
 
 ## Source-only diagnostic follow-up — Windows Runtime identity probes
 

@@ -4623,6 +4623,24 @@ export async function createKodaXRuntime(
   let ownerLivenessClosed = false;
   let busClosed = false;
   const pendingManagedTaskMaintenance = new Set<Promise<void>>();
+  const memoryReviewAbort = new AbortController();
+  const pendingMemoryWork = new Set<Promise<void>>();
+  const runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]> = (work) => {
+    if (closed) return Promise.resolve();
+    const pending = Promise.resolve().then(() => {
+      if (!memoryReviewAbort.signal.aborted) return work(memoryReviewAbort.signal);
+    });
+    pendingMemoryWork.add(pending);
+    void pending.then(
+      () => { pendingMemoryWork.delete(pending); },
+      (error: unknown) => {
+        pendingMemoryWork.delete(pending);
+        emitKodaXDiagnostic({ source: "runtime.memory-review", level: "error",
+          message: "Owned memory work failed.", detail: normalizeError(error) });
+      },
+    );
+    return pending;
+  };
   const scheduleManagedTaskMaintenance = (maintenance: () => Promise<void>): void => {
     if (closed) return;
     // Register before the microtask can run, independently of Run settlement.
@@ -4653,6 +4671,7 @@ export async function createKodaXRuntime(
     ensureOpen,
     isClosed: () => closed,
     scheduleManagedTaskMaintenance,
+    runMemoryWork,
     artifacts,
     permissions,
     userInputs,
@@ -4738,6 +4757,7 @@ export async function createKodaXRuntime(
   const closeRuntime = (): Promise<void> => {
     if (closeAttempt) return closeAttempt;
     closed = true;
+    memoryReviewAbort.abort(new Error("runtime closed"));
     const attempt = (async (): Promise<void> => {
       if (!shutdownStarted) {
         runService.closeAll("runtime closed");
@@ -4753,6 +4773,7 @@ export async function createKodaXRuntime(
       beginCloseTranscriptSnapshots = undefined;
       closeTranscriptSnapshots = undefined;
       await Promise.all([...pendingManagedTaskMaintenance]);
+      await Promise.all([...pendingMemoryWork]);
       if (!actorRegistryClosed) {
         await actorRegistry.close("runtime closed");
         actorRegistryClosed = true;
@@ -8590,6 +8611,7 @@ function createRuntimeRunService(deps: {
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
   readonly scheduleManagedTaskMaintenance: NonNullable<KodaXEvents["scheduleManagedTaskMaintenance"]>;
+  readonly runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]>;
   readonly permissions: RuntimePermissionRegistry;
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
@@ -9888,6 +9910,7 @@ function createRuntimeRunService(deps: {
         deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds),
     });
     events.scheduleManagedTaskMaintenance = deps.scheduleManagedTaskMaintenance;
+    events.runMemoryWork = deps.runMemoryWork;
     events.registerShellCleanup = (reference, retry) => {
       if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
         throw new Error("Invalid Runtime Shell cleanup binding");
