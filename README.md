@@ -786,6 +786,17 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.9 release:** Ninth release candidate of the v0.7.96 line.
+Arbitrates daemon publication against launcher loss with a one-shot startup
+handoff: unpublished Windows daemon startup trees and their Job descendants
+are reclaimed while published shared services stay untouched (Issue 337).
+Windows daemon state replacement retries only contended EPERM while
+atomically publishing the same flushed state under a bounded failure budget,
+so concurrent JSON readers no longer break replacement (Issue 338). Windows
+Runtime identity probes emit structured lifecycle diagnostics through
+`setKodaXDiagnosticSink` with bounded evidence and no commands, environment,
+output, or identity values. Every rc.8 contract is retained.
+
 **v0.7.96-rc.8 release:** Eighth release candidate of the v0.7.96 line.
 Custom OpenAI-compatible reasoning is negotiated from `auto`: rejected
 efforts lower through explicit levels without losing disable intent,
@@ -934,7 +945,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc8-release-preparation).
+[release checklist](docs/release.md#v0796-rc9-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider

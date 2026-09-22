@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-rc.8 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-rc.9 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,11 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-rc.8 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-rc.9 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The rc.9 release arbitrates daemon publication against launcher loss with a one-shot startup');
+    expect(sdk).toContain('concurrent JSON readers no longer break replacement');
+    expect(sdk).toContain("`source: 'runtime:windows'`");
+    expect(sdk).toContain('probes, retries, and checks are unchanged.');
     expect(sdk).toContain('The rc.8 release negotiates custom OpenAI-compatible reasoning from `auto`');
     expect(sdk).toContain('lower through explicit levels without losing disable intent');
     expect(sdk).toContain('keep native DOMException semantics, nested causes, and');

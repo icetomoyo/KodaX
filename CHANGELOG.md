@@ -8,6 +8,33 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.9] - 2026-09-21
+
+Ninth release candidate of the v0.7.96 line: Windows daemon startup trees
+are reclaimed when a launcher dies before publication, contended daemon state
+replacement retries only Windows EPERM, and Windows Runtime identity probes
+gained structured, privacy-bounded lifecycle diagnostics. Every rc.8
+contract is retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Arbitrate daemon publication against launcher loss with a one-shot startup
+  handoff: unpublished daemon candidates and their Windows Job descendants are
+  reclaimed, while published shared services and other clients' execution are
+  preserved (Issue 337).
+- Retry only Windows EPERM while atomically publishing the same flushed
+  daemon state, under a bounded monotonic failure-path budget; permanent
+  errors and staging cleanup are preserved and ownership ordering is
+  unchanged, so concurrent JSON readers no longer break state replacement
+  (Issue 338).
+- Add structured Windows Runtime lifecycle diagnostics: `setKodaXDiagnosticSink`
+  reports boot identity, Job membership, process snapshot, start identity, and
+  exit-owner validation stages with bounded evidence and no commands,
+  environment, output, or identity values; probes, retries, and checks are
+  unchanged.
+
+---
+
 ## [0.7.96-rc.8] - 2026-09-17
 
 Eighth release candidate of the v0.7.96 line: custom OpenAI-compatible

@@ -137,9 +137,61 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.9 release preparation
+
+Release state: `v0.7.96-rc.9` is the GitHub pre-release for the exact
+tagged commit — the ninth release candidate of the v0.7.96 line, hardening
+the Windows daemon lifecycle (startup-tree reclamation, EPERM-bounded state
+replacement, identity-probe lifecycle diagnostics). The tag-triggered
+Release workflow builds every platform archive and the universal npm
+tarball, publishes checksums, and creates the GitHub pre-release. npm
+registry publication remains a separate manual maintainer action.
+
+On top of rc.8 it includes:
+
+- A one-shot startup handoff arbitrates Windows daemon publication against
+  launcher loss: unpublished daemon startup trees and their Job descendants
+  are reclaimed while published shared services and other clients' execution
+  stay untouched (Issue 337,
+  `docs/test-guides/ISSUE_337_v0.7.96_REGRESSION_GUIDE.md`).
+- Daemon state replacement retries only contended Windows EPERM for the same
+  flushed state under a bounded monotonic failure budget; permanent errors
+  and staging cleanup are preserved (Issue 338,
+  `docs/test-guides/ISSUE_338_v0.7.96_REGRESSION_GUIDE.md`).
+- Windows Runtime identity probes emit structured lifecycle diagnostics via
+  `setKodaXDiagnosticSink` (`source: 'runtime:windows'`), with bounded
+  evidence and no commands, environment, output, or identity values; probes,
+  retries, and checks are unchanged.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.9`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, Windows daemon state/handoff regressions
+   (`src/runtime-daemon/state.test.ts`, `state.windows.test.ts`,
+   `src/runtime-daemon/host.test.ts`), managed child-process run regressions,
+   NODE_ENV shell environment regressions, reasoning negotiation regressions,
+   Issue 335 image-validation regressions, and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.9`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.8 release preparation
 
-Release state: `v0.7.96-rc.8` is the GitHub pre-release for the exact
+Release state: `v0.7.96-rc.8` was the GitHub pre-release for the exact
 tagged commit — the eighth release candidate of the v0.7.96 line, negotiating
 custom OpenAI-compatible reasoning from `auto` and keeping KodaX's default
 `NODE_ENV` out of user shell commands. The tag-triggered Release workflow

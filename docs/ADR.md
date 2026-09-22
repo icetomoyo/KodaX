@@ -4,6 +4,17 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-12
 >
+> **v0.7.96-rc.9 release addendum:** Windows daemon publication is arbitrated
+> against launcher loss through a one-shot startup handoff: unpublished daemon
+> candidates and their Job descendants are reclaimed while published shared
+> services and other clients' execution stay untouched (Issue 337). Daemon
+> state replacement retries only contended Windows EPERM for the same flushed
+> state under a bounded monotonic failure budget; permanent errors and staging
+> cleanup are preserved and ownership ordering is unchanged (Issue 338).
+> Windows Runtime identity probes emit structured lifecycle diagnostics via
+> `setKodaXDiagnosticSink` with bounded evidence; probes, retries, and checks
+> are unchanged.
+>
 > **v0.7.96-rc.8 release addendum:** Custom OpenAI-compatible reasoning is
 > negotiated from `auto`: rejected efforts lower through explicit levels
 > without losing explicit disable intent, hard-rejection caches span

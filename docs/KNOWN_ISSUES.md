@@ -880,7 +880,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | source only; unreleased | 2026-09-21 | 2026-09-21 |
+| 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | `v0.7.96-rc.5` | 2026-09-14 | 2026-09-14 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |

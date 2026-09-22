@@ -163,7 +163,7 @@ summary temporarily included an unsupported `ready` counter. The release test
 now checks the actual SDK-relative dependency resolution, ASAR mapping and
 physical artifact guard; all five behavior fixtures remain unchanged. That
 file and the behavior fixture file pass 22/22 tests. Issue 338 is recorded as
-resolved in source, unreleased, using the existing tracker summary format.
+resolved in source and released in `v0.7.96-rc.9`, using the existing tracker summary format.
 
 - Final source and test type checks passed.
 - All 36 built-artifact tests passed, including provider credentials,
