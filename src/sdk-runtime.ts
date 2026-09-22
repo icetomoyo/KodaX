@@ -4622,6 +4622,21 @@ export async function createKodaXRuntime(
   let agentPlaneClosed = agentPlane === undefined;
   let ownerLivenessClosed = false;
   let busClosed = false;
+  const pendingManagedTaskMaintenance = new Set<Promise<void>>();
+  const scheduleManagedTaskMaintenance = (maintenance: () => Promise<void>): void => {
+    if (closed) return;
+    // Register before the microtask can run, independently of Run settlement.
+    const pending = Promise.resolve().then(maintenance);
+    pendingManagedTaskMaintenance.add(pending);
+    void pending.then(
+      () => { pendingManagedTaskMaintenance.delete(pending); },
+      (error: unknown) => {
+        pendingManagedTaskMaintenance.delete(pending);
+        emitKodaXDiagnostic({ source: "runtime.maintenance", level: "error",
+          message: "Managed task maintenance failed.", detail: normalizeError(error) });
+      },
+    );
+  };
   const ensureOpen = (): void => {
     if (closed) {
       throw new Error("KodaX runtime is closed");
@@ -4637,6 +4652,7 @@ export async function createKodaXRuntime(
     autoReview: options.autoReview,
     ensureOpen,
     isClosed: () => closed,
+    scheduleManagedTaskMaintenance,
     artifacts,
     permissions,
     userInputs,
@@ -4736,6 +4752,7 @@ export async function createKodaXRuntime(
       await closeTranscriptSnapshots?.();
       beginCloseTranscriptSnapshots = undefined;
       closeTranscriptSnapshots = undefined;
+      await Promise.all([...pendingManagedTaskMaintenance]);
       if (!actorRegistryClosed) {
         await actorRegistry.close("runtime closed");
         actorRegistryClosed = true;
@@ -8572,6 +8589,7 @@ function createRuntimeRunService(deps: {
   readonly defaultAgentContext?: AgentDispatchContext;
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
+  readonly scheduleManagedTaskMaintenance: NonNullable<KodaXEvents["scheduleManagedTaskMaintenance"]>;
   readonly permissions: RuntimePermissionRegistry;
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
@@ -9869,6 +9887,7 @@ function createRuntimeRunService(deps: {
       onMidTurnUserMessages: (queuedMessageIds, queuedMessageEntryIds) =>
         deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds),
     });
+    events.scheduleManagedTaskMaintenance = deps.scheduleManagedTaskMaintenance;
     events.registerShellCleanup = (reference, retry) => {
       if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
         throw new Error("Invalid Runtime Shell cleanup binding");

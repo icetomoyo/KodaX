@@ -643,26 +643,35 @@ function scheduleManagedTaskMaintenance(
     'success' | 'lastText' | 'sessionId' | 'signal' | 'signalReason' | 'signalDebugReason'
   >,
 ): void {
-  queueMicrotask(() => {
-    void (async () => {
-      const taskWithRepoIntelligence = await attachManagedTaskRepoIntelligence(options, task)
-        .catch((error: unknown) => {
-          emitResilienceDebug('[managed-task:repo-intelligence:error]', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return task;
+  const maintenance = () => (async () => {
+    const taskWithRepoIntelligence = await attachManagedTaskRepoIntelligence(options, task)
+      .catch((error: unknown) => {
+        emitResilienceDebug('[managed-task:repo-intelligence:error]', {
+          error: error instanceof Error ? error.message : String(error),
         });
-      await writeManagedTaskArtifacts(
-        taskWithRepoIntelligence.evidence.workspaceDir,
-        taskWithRepoIntelligence,
-        result,
-      );
-    })().catch((error: unknown) => {
-      emitResilienceDebug('[managed-task:artifact-projection:error]', {
-        error: error instanceof Error ? error.message : String(error),
+        return task;
       });
+    await writeManagedTaskArtifacts(
+      taskWithRepoIntelligence.evidence.workspaceDir,
+      taskWithRepoIntelligence,
+      result,
+    );
+  })().catch((error: unknown) => {
+    emitResilienceDebug('[managed-task:artifact-projection:error]', {
+      error: error instanceof Error ? error.message : String(error),
     });
   });
+  if (options.events?.scheduleManagedTaskMaintenance) {
+    try {
+      options.events.scheduleManagedTaskMaintenance(maintenance);
+    } catch (error: unknown) {
+      emitResilienceDebug('[managed-task:maintenance-scheduling:error]', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+  queueMicrotask(() => { void maintenance(); });
 }
 
 interface RunnerMemoryRuntime {

@@ -14,8 +14,11 @@ beforeEach(async () => {
   vi.stubEnv('KODAX_HOME', directory);
   const server = path.join(directory, 'server.cjs');
   await writeFile(server, `
-    require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+    require('node:readline').createInterface({ input: process.stdin }).on('line', async line => {
       const m = JSON.parse(line); if (m.id === undefined) return;
+      if (m.method === 'initialize' && process.env.KODAX_MCP_TEST_INITIALIZE_DELAY_MS) {
+        await new Promise(resolve => setTimeout(resolve, Number(process.env.KODAX_MCP_TEST_INITIALIZE_DELAY_MS)));
+      }
       let result = {};
       const resource = { uri: 'image://pixel', mimeType: 'image/png', blob: '${PNG}' };
       if (m.method === 'initialize') result = { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'media', version: '1' } };
@@ -81,20 +84,37 @@ it('MCP uses its first unverified verdict without immediately revalidating retai
   });
 });
 
-it('cancels MCP receipt during initial validation instead of decoding the rest of the response', async () => {
+it.each([0, 1200])('cancels MCP receipt during initial validation instead of decoding the rest of the response (startup delay %ims)', async (startupDelayMs) => {
+  vi.stubEnv('KODAX_MCP_TEST_INITIALIZE_DELAY_MS', String(startupDelayMs));
   let finish!: (result: validation.ImageValidation) => void;
-  const inspect = vi.spyOn(validation, 'validateImageBytes').mockReturnValue(
-    new Promise(resolve => { finish = resolve; }));
+  const validationResult = new Promise<validation.ImageValidation>(resolve => { finish = resolve; });
+  let markValidationStarted!: () => void;
+  const validationStarted = new Promise<void>(resolve => { markValidationStarted = resolve; });
+  const inspect = vi.spyOn(validation, 'validateImageBytes').mockImplementation(() => {
+    markValidationStarted();
+    return validationResult;
+  });
   const abort = new AbortController();
   const pending = withPreparedImageHistory(() => runtime.callTool('mixed', {}), abort.signal);
-  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  const outcome = pending.then(
+    () => ({ status: 'fulfilled' as const }),
+    (error: unknown) => ({ status: 'rejected' as const, error }),
+  );
   try {
-    await vi.waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+    // Startup may validly exceed waitFor's one-second default. Cancel only
+    // after validation starts, and fail promptly if receipt settles before it.
+    await Promise.race([validationStarted, outcome.then(result => {
+      throw new Error('MCP receipt settled before initial validation', { cause: result });
+    })]);
     abort.abort();
-    await rejected;
+    expect(await outcome).toMatchObject({ status: 'rejected', error: { name: 'AbortError' } });
     expect(inspect).toHaveBeenCalledOnce();
-  } finally { finish({ status: 'valid', mediaType: 'image/png' }); }
-});
+  } finally {
+    abort.abort();
+    finish({ status: 'valid', mediaType: 'image/png' });
+    await outcome;
+  }
+}, 10_000);
 
 it('prepares MCP bytes at receipt before the persisted attachment can be changed', async () => {
   await withPreparedImageHistory(async () => {

@@ -1,11 +1,85 @@
 # Known Issues
 
-_Last Updated: 2026-09-21_
+_Last Updated: 2026-09-22_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## rc.9 follow-up — MCP cancellation fixture and managed maintenance ownership
+
+These follow-up changes are local source, not included in published `0.7.96-rc.9`.
+They do not publish a package or change the Space Registry dependency.
+
+The MCP image-validation cancellation regression used the default one-second
+`vi.waitFor` to wait for validation. A legal 1.2-second initialization delay
+reproduced failure before cancellation was actually exercised. Teardown then
+interrupted initialization and caused a secondary framing/fixture-server error
+and an unhandled rejection. The test now waits for the validation-entry event,
+observes early operation failure, and always aborts/releases/settles pending work.
+It covers immediate and delayed initialization. Production startup/request
+timeouts, MCP behavior and validation are unchanged. The MCP/image-history batch
+passes 18/18 with no unhandled errors. Evidence is retained under
+`%TEMP%/kodax-mcp-cancel-diagnosis-mlmiyv4c`.
+
+A separate Windows Stop cleanup investigation established that asynchronous
+managed terminal repo-intelligence/artifact maintenance can still hold the test
+workspace after `Runtime.close()` returns. A natural observation found an owned
+Git process during cleanup; a four-second delay applied only to that real
+maintenance Git invocation reproduced the original `EBUSY` test on both rc.9
+and checkpoint `0ec6aa41`. It preserved the real cwd, output and original Git
+timeout rather than mocking deletion failure. The six historical failures have
+no original PID trace, so this does not establish every individual cause.
+
+The minimal repair registers the whole optional maintenance factory with its
+own Runtime before it can start. Run completion, successor admission and Stop
+remain independent of it. Close stops accepting new optional maintenance and
+waits for existing owned work before releasing Actor/executor/owner-liveness
+resources. It does not cancel shared repo caches or serialize other Runtimes.
+The public-Runtime gate was observed RED before the repair. Four new cases cover
+nonblocking Run/successor completion, instance isolation, concurrent/idempotent
+close, late scheduling and failed projection cleanup. The original real slow-Git
+feedback now passes with zero tracked children at directory cleanup. A slow
+maintenance operation may extend **Runtime close**, not normal Run or Stop.
+Evidence: `%TEMP%/kodax-stop-ebusy-analysis-20260922-152607/FINDINGS.txt` and its
+adjacent RED/GREEN logs. The discarded initial observer is explicitly invalid:
+it failed to preserve `execFile`'s custom promisify contract; corrected evidence
+uses the self-checked v3 observer.
+
+Final verification: the complete Runtime test file and four new maintenance
+cases pass 348/348, with no failures or skips. Five focused files pass 156/156,
+including all Stop-admission cases, Shell recovery, daemon host and managed
+runner regressions; these batches overlap and must not be summed. Source/test
+type checks, package builds and the distribution bundle build pass. A separate
+rebuilt-distribution acceptance case uses the public Runtime, offline Provider
+and a real Shell command: command Exit 0, completed Run, confirmed Stop, close
+waiting for the held artifact, shared concurrent close promise, and successful
+temporary-root cleanup. Both independent review axes have zero remaining
+findings after test failure-cleanup corrections. No complete 15,000+ SDK suite
+was rerun in this follow-up; the original unexplained observations remain open.
+
+### Open: independent memory-review shutdown ownership
+
+During the lifecycle regression setup, the normal root-agent path also produced
+an `ENOTEMPTY` cleanup failure under `memory-review-inbox/.../.branch-authority.lock.queue`.
+Source inspection confirms separate background review chains in `runner-driven`
+and `run-substrate`; they are not covered by the managed repo/artifact tracker.
+`memory-runtime` stores only a module-global latest drain, while Runtime close
+does not own those chains. The new isolated maintenance gate uses the existing
+child-agent context to exclude this independent path; the real slow-Git feedback
+retains the original root context and passed in that sample. Neither result
+claims that all memory-related cleanup races have been eliminated.
+
+Do not simply await the global drain or race it against a timeout: ownership
+would cross Runtime instances, and the review decision can take 90 seconds;
+the 15-second loop deadline does not interrupt an in-flight decision. This
+requires a separate close/cancellation contract: stop claiming new jobs, settle
+or release the owner's existing claim, preserve recoverable jobs, and ensure no
+post-close writes. Regression gates must cover managed and classic start/final
+review chains, two-Runtime isolation, Run/Stop latency and claim recovery.
+No production memory-review change is included in this follow-up. Customer
+PowerShell/CIM capability failure likewise remains unconfirmed.
 
 ## Source-only diagnostic follow-up — Windows Runtime identity probes
 
