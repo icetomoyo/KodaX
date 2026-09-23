@@ -15,6 +15,7 @@
 import { exec } from 'node:child_process';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 
 const execAsync = promisify(exec);
 
@@ -36,6 +37,7 @@ function pathFromPorcelainLine(line: string): string | undefined {
  */
 export async function getRecentWorkingSetFiles(cwd: string, limit = 10): Promise<string[]> {
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const [{ stdout: rootOut }, { stdout: statusOut }] = await Promise.all([
       execAsync('git rev-parse --show-toplevel', { cwd, windowsHide: true }),
       execAsync('git status --porcelain=v1 -uall', { cwd, windowsHide: true }),

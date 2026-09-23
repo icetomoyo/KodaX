@@ -21,6 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import { assertNoGitInstallPromptSync } from '../runtime/macos-git.js';
 import * as path from 'node:path';
 
 import { getAgentConfigPath } from '../runtime/agent-home.js';
@@ -98,6 +99,7 @@ export function hashCwd(cwd: string): string {
  */
 export function tryGitRemote(cwd: string): string | undefined {
   try {
+    assertNoGitInstallPromptSync({ cwd });
     const stdout = execSync('git config --get remote.origin.url', {
       cwd,
       encoding: 'utf-8',

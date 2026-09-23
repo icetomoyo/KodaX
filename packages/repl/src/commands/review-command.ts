@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 
 import chalk from 'chalk';
 import { writeReviewPackets, type ReviewPacketMetadata } from '@kodax-ai/coding';
@@ -10,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const MAX_DIFF_CHARS = 100_000;
 
 async function git(args: string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   const { stdout } = await execFileAsync('git', args, {
     cwd,
     maxBuffer: 64 * 1024 * 1024,

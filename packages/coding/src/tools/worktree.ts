@@ -8,6 +8,7 @@ import { spawn } from 'child_process';
 import { mkdirSync, realpathSync, statSync } from 'fs';
 import path from 'path';
 import {
+  assertNoGitInstallPrompt,
   containWindowsEffectProcess,
   emitKodaXDiagnostic,
   killChildProcessTree,
@@ -89,11 +90,17 @@ function gatedGitInvocation(args: readonly string[]): {
   return { executable: launch.command, args: launch.args, env: launch.env };
 }
 
-function execGitFile(
+async function execGitFile(
   args: readonly string[],
   cwd: string,
   allowedExitCodes: readonly number[] = [0],
 ): Promise<{ readonly stdout: string; readonly stderr: string }> {
+  const invocation = gatedGitInvocation(args);
+  await assertNoGitInstallPrompt({
+    cwd,
+    env: invocation.env,
+    executable: invocation.env.KODAX_GIT_EXECUTABLE,
+  });
   return new Promise((resolve, reject) => {
     let binding = Promise.resolve();
     let unregister = (): void => {};
@@ -177,7 +184,6 @@ function execGitFile(
       scheduleDrainRecovery();
       throw new Error('Git process tree has not been proven drained.');
     };
-    const invocation = gatedGitInvocation(args);
     const child = spawn(invocation.executable, [...invocation.args], {
       cwd,
       detached: process.platform !== 'win32',

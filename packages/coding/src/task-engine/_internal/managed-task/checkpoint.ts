@@ -12,6 +12,7 @@
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import type {
@@ -72,6 +73,7 @@ function checkpointBelongsToSession(
 export async function getGitHeadCommit(gitRoot: string | undefined | null): Promise<string | undefined> {
   const cwd = path.resolve(gitRoot?.trim() || process.cwd());
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const { stdout } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
       cwd,
       windowsHide: true,

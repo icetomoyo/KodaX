@@ -10,6 +10,7 @@
 
 import { buildLocalExecutionFailure, childExecutionFailure } from './execution-failure.js';
 import { execFileSync } from 'child_process';
+import { assertNoGitInstallPromptSync } from '@kodax-ai/agent';
 import { randomUUID } from 'node:crypto';
 import fsPromises from 'fs/promises';
 import os from 'os';
@@ -2049,6 +2050,7 @@ export async function resolveEvidenceRef(
   if (ref.startsWith('diff:')) {
     const filePath = ref.slice(5);
     try {
+      assertNoGitInstallPromptSync({ cwd: resolveExecutionCwd(ctx) });
       const diff = execFileSync('git', [
         'diff',
         'HEAD',

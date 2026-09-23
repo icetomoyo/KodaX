@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./runtime/macos-git": {
+      "types": "./dist/runtime/macos-git.d.ts",
+      "import": "./dist/runtime/macos-git.js"
+    },
     "./messaging/queue": {
       "types": "./dist/messaging/queue.d.ts",
       "import": "./dist/messaging/queue.js"

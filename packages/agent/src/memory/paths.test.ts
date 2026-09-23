@@ -14,8 +14,13 @@ import * as fs from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { execSyncMock } = vi.hoisted(() => ({
+const { execSyncMock, gitPreflight } = vi.hoisted(() => ({
   execSyncMock: vi.fn(() => ''),
+  gitPreflight: vi.fn(),
+}));
+
+vi.mock('../runtime/macos-git.js', () => ({
+  assertNoGitInstallPromptSync: gitPreflight,
 }));
 
 vi.mock('node:child_process', () => ({
@@ -105,6 +110,7 @@ describe('resolveMemoryRoot / resolveMemoryEntrypoint', () => {
 
   beforeEach(() => {
     execSyncMock.mockClear();
+    gitPreflight.mockReset();
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-memory-paths-'));
     setAgentConfigHome(tempHome);
   });
@@ -134,6 +140,24 @@ describe('resolveMemoryRoot / resolveMemoryEntrypoint', () => {
         windowsHide: true,
       }),
     );
+  });
+
+  it('keeps the local memory fallback without launching blocked Git and recovers the remote identity', () => {
+    gitPreflight.mockImplementation(() => { throw new Error('macOS developer tools unavailable'); });
+    execSyncMock.mockReturnValue('https://github.com/user/repo.git');
+    try {
+      expect(resolveMemoryRoot(tempHome)).toBe(
+        path.join(tempHome, 'projects', `local-${hashCwd(tempHome)}`, 'memory'),
+      );
+      expect(execSyncMock).not.toHaveBeenCalled();
+      gitPreflight.mockReset();
+      expect(resolveMemoryRoot(tempHome)).toBe(
+        path.join(tempHome, 'projects', 'github.com-user-repo', 'memory'),
+      );
+      expect(execSyncMock).toHaveBeenCalledTimes(1);
+    } finally {
+      execSyncMock.mockReturnValue('');
+    }
   });
 
   it('fallback key for no-remote cwd starts with local-', () => {

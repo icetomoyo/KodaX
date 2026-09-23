@@ -23,6 +23,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { promisify } from 'node:util';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,7 +57,8 @@ interface WorktreeEntry {
   readonly branch?: string;
 }
 
-function defaultRunGit(args: readonly string[], cwd: string): Promise<string> {
+async function defaultRunGit(args: readonly string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   return execFileAsync('git', [...args], { cwd, windowsHide: true }).then((r) => r.stdout);
 }
 

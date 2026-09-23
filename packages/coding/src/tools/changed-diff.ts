@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { promisify } from 'node:util';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
@@ -18,6 +19,7 @@ const BUNDLE_GIT_CONCURRENCY = 4;
 const GIT_TIMEOUT_MS = 10000;
 
 async function runGit(args: string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   const result = await execFileAsync('git', args, {
     cwd,
     timeout: GIT_TIMEOUT_MS,

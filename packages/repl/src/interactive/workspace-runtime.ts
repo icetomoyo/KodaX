@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import type { KodaXSessionData, KodaXSessionRuntimeInfo, KodaXSessionWorkspaceKind } from '@kodax-ai/agent';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent/runtime/macos-git';
 
 const execFileAsync = promisify(execFileCallback);
 
@@ -20,6 +21,7 @@ async function gitStdout(
   timeout = 5_000,
 ): Promise<string | undefined> {
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const { stdout } = await execFileAsync('git', args, {
       cwd,
       windowsHide: true,

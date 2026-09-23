@@ -7,7 +7,7 @@ import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import { exec, spawnSync, type SpawnSyncReturns } from 'child_process';
-import { getAgentConfigHome, getCachedRejectedEfforts } from '@kodax-ai/agent';
+import { assertNoGitInstallPrompt, getAgentConfigHome, getCachedRejectedEfforts } from '@kodax-ai/agent';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { setLocale } from './i18n.js';
@@ -1558,6 +1558,7 @@ export function resolvePermissionModeEffort(config: {
  */
 export async function getGitRoot(cwd?: string): Promise<string | null> {
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const { stdout } = await execAsync('git rev-parse --show-toplevel', {
       cwd,
       windowsHide: true,

@@ -42,6 +42,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
         '@kodax-ai/coding/internal/file-system-effects': resolveFromRoot('packages', 'coding', 'src', 'internal', 'file-system-effects.ts'),
         '@kodax-ai/agent/capabilities/skills/shared/yaml': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'shared', 'yaml.ts'),
         '@kodax-ai/agent/messaging/queue': resolveFromRoot('packages', 'agent', 'src', 'messaging', 'queue.ts'),
+        '@kodax-ai/agent/runtime/macos-git': resolveFromRoot('packages', 'agent', 'src', 'runtime', 'macos-git.ts'),
         // FEATURE_217: value-imported subpath — MUST precede the root alias
         // so the prefix-ordered matcher does not shadow it (unlike the
         // type-only subpaths below, which are erased at runtime).

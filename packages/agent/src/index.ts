@@ -399,6 +399,12 @@ export {
 
 // FEATURE_208 (v0.7.45): process hardening (debug-preserving subset).
 export {
+  assertNoGitInstallPrompt,
+  assertNoGitInstallPromptSync,
+  type GitInstallPromptOptions,
+} from './runtime/macos-git.js';
+
+export {
   applyProcessHardening,
   prepareJavaScriptChildLaunch,
   prepareInternalNodeLaunch,

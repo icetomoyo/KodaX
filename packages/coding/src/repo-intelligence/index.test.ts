@@ -84,9 +84,20 @@ describe('repo overview baseline cache', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       tempDir = '';
     }
+  });
+
+  it('replaces a filesystem overview after the workspace becomes an unborn Git repository', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-overview-git-recovery-'));
+    createWorkspaceFixture(tempDir);
+    const context = { executionCwd: tempDir };
+
+    expect((await getRepoOverview(context)).source).toBe('filesystem');
+    initGitRepo(tempDir);
+
+    expect((await getRepoOverview(context)).source).toBe('git');
   });
 
   it('rebuilds filesystem overviews when cached overview artifacts are on an older schema', async () => {

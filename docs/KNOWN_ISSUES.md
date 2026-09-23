@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-22_
+_Last Updated: 2026-09-23_
 
 ---
 
@@ -1062,6 +1062,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
 | 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | `v0.7.96-rc.5` | 2026-09-14 | 2026-09-14 |
@@ -1285,6 +1286,74 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
+
+- Priority: Medium
+- Status: Resolved (macOS on-device UI verification is still recommended)
+- Introduced: Observed with the v0.7.96-rc.10 baseline; first affected release unknown
+- Fixed: `v0.7.96-rc.11`
+- Created / Source Resolution Date: 2026-09-23
+
+#### Original Problem
+
+On a Mac without usable command-line developer tools, background repository/status,
+memory-identity and workspace probes can launch Apple's `/usr/bin/git` shim. The
+system asks to install developer tools; dismissing it does not prevent the next
+probe from displaying the same dialog. Reproduce by opening a workspace on such
+a Mac and allowing background Git queries to repeat. Expected: background work
+does not repeatedly request installation, while existing usable Git remains usable.
+
+#### Root Cause and Scope
+
+The macOS shim has an installation UI side effect before ordinary Git failure
+handling runs. Windows/Linux missing-command errors do not use this Apple mechanism.
+This repair covers SDK-owned Git calls, including repo-intelligence, worktree,
+REPL helpers and synchronous memory paths. It does not intercept arbitrary Bash,
+PTY commands or custom wrapper scripts that independently launch system Git.
+
+#### Source Resolution
+
+- A shared agent leaf checks only Darwin calls whose selected executable resolves
+  to `/usr/bin/git`; normal PATH preference and independent Git remain unchanged.
+- Before system Git starts, `/usr/bin/xcode-select -p` runs with the same cwd and
+  effective environment, including `DEVELOPER_DIR`. Only exit code 2 blocks Git.
+  Unknown probe failures retain the original execution behavior; they are not
+  cached as missing tools. This is a narrow known-condition guard, not a guarantee
+  against every broken or custom installation.
+- Determinate results expire after 5 seconds, keyed by the relevant environment;
+  concurrent asynchronous checks share a probe. Later calls can recover after
+  installation. There is no permanent global Git disable state.
+- Existing runners keep their argument, output, timeout and error contracts.
+  Worktree operations retain actionable errors; synchronous memory identity keeps
+  its existing remote-based identity and local-path fallback rules.
+- Repo-intelligence can use filesystem overview while Git is unavailable and
+  recover to Git-backed analysis, including an unborn repository, after recovery.
+- Full `runGit` / `runGitSync` consolidation remains **Planned**, separately tracked
+  as [FEATURE_300 / v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight).
+
+#### Files Changed and Verification
+
+- Platform guard/export: `packages/agent/src/runtime/macos-git.ts`,
+  `packages/agent/src/index.ts`; memory consumer: `packages/agent/src/memory/paths.ts`.
+- Existing Git call sites under `packages/coding/src/` and `packages/repl/src/`
+  receive the preflight without a shared-runner migration.
+- Regression coverage: `macos-git.test.ts`, `memory/paths.test.ts`, coding
+  `macos-git-callers.test.ts`, `repo-intelligence/git-unavailable.test.ts`, and
+  REPL `interactive/git-unavailable.test.ts` cover the shared guard and consumers.
+- Native macOS UI verification is still pending. See
+  [Issue 339 regression guide](test-guides/ISSUE_339_v0.7.96-rc.10_REGRESSION_GUIDE.md).
+- Validation on 2026-09-23: final focused SDK regression run passed 79 tests;
+  the platform guard has 95.08% line and 80% branch coverage. Package compilation,
+  SDK/worker bundles and declaration bundles passed. Bare resume remains 125 kB
+  and the Runtime Worker child-process audit passed. Standards and Spec reviews
+  have no remaining findings. These checks ran on Windows with simulated Darwin
+  boundaries, not native macOS UI acceptance.
+- The registry SDK is still v0.7.96-rc.10. The next Space release is paired with
+  the new SDK containing this repair and upgrades its dependency pin on release;
+  local source/link validation does not establish that existing customer packages contain the fix.
+
+---
 
 ### Issue 338: Windows daemon state replacement fails under concurrent JSON readers
 
@@ -15232,7 +15301,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 215 (34 Open, 181 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 216 (34 Open, 182 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
