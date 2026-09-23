@@ -2,7 +2,22 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-22
+> Last updated: 2026-09-23
+>
+> **v0.7.96-rc.11 release addendum:** SDK-owned Git call sites preflight the
+> macOS system Git shim through a shared platform guard
+> (`@kodax-ai/agent/runtime/macos-git`). The guard recognizes only the known
+> developer-tools-missing condition (exit code 2, `DEVELOPER_DIR`-aware),
+> caches probes behind a bounded TTL, shares one probe across concurrent
+> callers, and recovers after installation with no permanent global disable
+> state. Repo-intelligence, worktree, changed-diff, managed-task checkpoint,
+> agent-adapter, worktree-sweep, session-snapshot, REPL helpers, and
+> synchronous memory paths apply the guard; ordinary Git on `PATH`,
+> independent Git installations, and arbitrary Bash/PTY commands are not
+> intercepted. Worktree operations retain actionable errors and synchronous
+> memory identity keeps its remote-based identity and local-path fallback
+> rules. Consolidating ordinary Git execution behind a shared runner with
+> this macOS preflight is planned as FEATURE_300 for v0.7.99 (Issue 339).
 >
 > **v0.7.96-rc.10 release addendum:** Runtime shutdown owns and drains the
 > background work it starts. The optional managed terminal maintenance

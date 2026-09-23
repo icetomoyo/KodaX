@@ -137,6 +137,61 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.11 release preparation
+
+Release state: `v0.7.96-rc.11` is the GitHub pre-release for the exact
+tagged commit — the eleventh release candidate of the v0.7.96 line,
+preflighting the macOS system Git shim before SDK-owned background Git calls
+so machines without usable command-line developer tools stop receiving
+repeated Apple installation prompts (Issue 339). The tag-triggered Release
+workflow builds every platform archive and the universal npm tarball,
+publishes checksums, and creates the GitHub pre-release. npm registry
+publication remains a separate manual maintainer action.
+
+On top of rc.10 it includes:
+
+- A shared macOS platform guard (`@kodax-ai/agent/runtime/macos-git`)
+  recognizes the known developer-tools-missing condition only (exit code 2,
+  `DEVELOPER_DIR`-aware), TTL-caches probes, shares one probe across
+  concurrent callers, and recovers after installation with no permanent
+  disable state.
+- Repo-intelligence, worktree, changed-diff, managed-task checkpoint,
+  agent-adapter, worktree-sweep, session-snapshot, REPL helpers, and
+  synchronous memory paths apply the guard; ordinary Git on `PATH`,
+  independent Git, and arbitrary Bash/PTY commands are unchanged.
+- Worktree operations keep actionable errors; synchronous memory identity
+  keeps its remote-based identity and local-path fallback rules. Regression
+  guide: `docs/test-guides/ISSUE_339_v0.7.96-rc.10_REGRESSION_GUIDE.md`.
+- FEATURE_300 (v0.7.99) is added as planned design-only work: consolidate
+  ordinary Git execution behind a shared runner with this macOS preflight.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.11`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, macOS Git preflight regressions
+   (`packages/agent/src/runtime/macos-git.test.ts`,
+   `packages/coding/src/macos-git-callers.test.ts`,
+   `packages/coding/src/repo-intelligence/git-unavailable.test.ts`,
+   `packages/repl/src/interactive/git-unavailable.test.ts`), tracker
+   consistency, and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.11`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.10 release preparation
 
 Release state: `v0.7.96-rc.10` is the GitHub pre-release for the exact

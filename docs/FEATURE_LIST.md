@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.10` (Git tag / GitHub pre-release) |
+| Current released version | `v0.7.96-rc.11` (Git tag / GitHub pre-release) |
 | Current package version | `@kodax-ai/kodax@0.7.96-rc.10` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.10` |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.11` |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
@@ -29,7 +29,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.10; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.11; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
@@ -521,9 +521,23 @@
 
 ---
 
+## v0.7.96-rc.11 Release Record
+
+`v0.7.96-rc.11` is the eleventh release candidate of the v0.7.96 line.
+SDK-owned background Git calls preflight the macOS system Git shim: a shared
+DEVELOPER_DIR-aware platform guard detects the known developer-tools-missing
+condition (exit code 2 only, TTL-cached, concurrent probes shared, and
+recoverable after installation) so repo-intelligence, worktree, changed-diff,
+checkpoint, agent-adapter, worktree-sweep, session-snapshot, REPL helpers,
+and synchronous memory paths no longer repeat Apple's developer-tools
+installation prompt. Ordinary Git on PATH, independent Git, and arbitrary
+Bash/PTY commands are unchanged. FEATURE_300 is added as planned design-only
+work for v0.7.99 (Issue 339). Every rc.10 contract is retained. npm
+publication remains a manual maintainer step.
+
 ## v0.7.96-rc.10 Release Record
 
-`v0.7.96-rc.10` is the tenth release candidate of the v0.7.96 line. Runtime
+`v0.7.96-rc.10` was the tenth release candidate of the v0.7.96 line. Runtime
 shutdown owns and drains the background work it starts: managed terminal
 maintenance and memory setup/finalization IO plus background review drains
 are registered with the owning Runtime, close refuses new work and awaits

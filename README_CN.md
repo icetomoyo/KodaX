@@ -296,6 +296,15 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.11 发布**：v0.7.96 线第十一个发布候选。macOS 上 SDK 拥有的后台
+Git 调用会先预检系统 Git 垫片：共享的平台守卫（`@kodax-ai/agent/runtime/macos-git`）
+能识别已知的开发者工具缺失状态（仅限退出码 2，感知 `DEVELOPER_DIR`，探测按有界
+TTL 缓存并在并发调用间共享，安装后可恢复，无永久禁用状态），使 repo-intelligence、
+worktree、changed-diff、托管任务 checkpoint、agent-adapter、worktree-sweep、
+session-snapshot、REPL 辅助路径与同步内存路径不再反复触发 Apple 开发者工具安装
+弹窗。`PATH` 上的普通 Git、独立安装的 Git 与任意 Bash/PTY 命令不受影响
+（Issue 339）。所有 rc.10 契约全部保留。
+
 **v0.7.96-rc.10 发布**：v0.7.96 线第十个发布候选。Runtime 关闭时拥有并
 排空自己启动的后台工作：托管终端维护与内存 setup/finalization IO 及后台
 review 排空都注册到所属 Runtime，close 拒绝新工作并等待已开始的工作完成后
@@ -437,7 +446,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.10 发布清单](docs/release.md#v0796-rc10-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.11 发布清单](docs/release.md#v0796-rc11-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

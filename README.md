@@ -786,6 +786,18 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.11 release:** Eleventh release candidate of the v0.7.96 line.
+SDK-owned background Git calls on macOS preflight the system Git shim: a
+shared `DEVELOPER_DIR`-aware platform guard (`@kodax-ai/agent/runtime/macos-git`)
+detects the known developer-tools-missing condition (exit code 2 only,
+TTL-cached probes shared across concurrent callers, recoverable after
+installation, no permanent disable state) so repo-intelligence, worktree,
+changed-diff, managed-task checkpoint, agent-adapter, worktree-sweep,
+session-snapshot, REPL helpers, and synchronous memory paths no longer
+repeat Apple's developer-tools installation prompt. Ordinary Git on `PATH`,
+independent Git, and arbitrary Bash/PTY commands are unchanged (Issue 339).
+Every rc.10 contract is retained.
+
 **v0.7.96-rc.10 release:** Tenth release candidate of the v0.7.96 line.
 Runtime shutdown owns and drains the background work it starts: managed
 terminal maintenance and memory setup/finalization IO plus background review

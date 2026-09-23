@@ -8,6 +8,32 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.11] - 2026-09-23
+
+Eleventh release candidate of the v0.7.96 line: SDK-owned background Git
+calls on macOS preflight the system Git shim so a machine without usable
+command-line developer tools no longer receives repeated Apple installation
+prompts. Every rc.10 contract is retained. npm publication remains a manual
+maintainer action.
+
+### Fixed
+
+- Preflight the macOS system Git shim before SDK-owned Git calls
+  (`@kodax-ai/agent/runtime/macos-git`): the shared platform guard detects
+  the known developer-tools-missing condition only (exit code 2,
+  `DEVELOPER_DIR`-aware), caches probes with a bounded TTL, shares one probe
+  across concurrent callers, and recovers after installation with no
+  permanent disable state. Repo-intelligence, worktree, changed-diff,
+  managed-task checkpoint, agent-adapter, worktree-sweep, session-snapshot,
+  REPL helpers, and synchronous memory paths apply the guard while ordinary
+  Git on `PATH`, independent Git installations, and arbitrary Bash/PTY
+  commands remain unchanged (Issue 339). Worktree operations keep actionable
+  errors; synchronous memory identity keeps its remote-based identity and
+  local-path fallback rules. Native macOS on-device UI verification remains
+  recommended on real hardware.
+
+---
+
 ## [0.7.96-rc.10] - 2026-09-22
 
 Tenth release candidate of the v0.7.96 line: Runtime shutdown now owns and
