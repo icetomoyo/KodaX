@@ -257,3 +257,42 @@ shell lifetime.
   identity-routed ingress for unlike policies. Neither closure is claimed by
   FEATURE_295. Stable root capabilities also do not claim to override a child
   DACL deliberately widened to an ambient Codex-compatible trustee by its owner.
+
+## rc.9 follow-up: Edits with a home-directory workspace root
+
+1. Use a build containing the local 2026-09-22 text-root fix. Start a fresh
+   session from the user home directory and select Edits. Create a disposable
+   project subdirectory for this check.
+2. Ask KodaX to create a text file in that subdirectory with `write`, then change
+   a unique line with `edit`, without using Bash. Verify both operations succeed
+   and the file contains the changed line. There must be no `Runtime write
+   policy targets protected native text state: <user home>` error.
+3. Repeat from fresh sessions using Auto and Full Access. Also repeat from the
+   project directory. Verify the same file behavior in all cases.
+4. Run the automated protected-state cases instead of manually modifying live
+   runtime state. They use disposable directories and verify direct and aliased
+   protected targets are refused at snapshot and commit, including Full Access:
+
+   ```sh
+   npx vitest run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts tests/feature-295-text-tool-boundary.test.ts packages/coding/src/tools/edit.test.ts
+   ```
+
+Run on Windows, Linux, and macOS with matching native text artifacts. A passing
+Windows run alone does not verify macOS native transactions.
+
+The suite also checks cold loading: a development manifest inside an authorized
+write root remains forbidden; a production artifact pinned by the embedded
+manifest works when home and installation directories are authorized. Keep both
+cases when changing the cache guard so the fix cannot weaken source integrity.
+
+For the Windows shell/text concurrency regression, with sandbox setup already
+ready, run in PowerShell:
+
+```powershell
+$env:KODAX_REAL_WINDOWS_SANDBOX_V2='1'
+npx vitest run tests/feature-295-windows-v2-policy.test.ts -t 'starts an inbox Windows command|lets every trusted text tool replace|keeps real background Bash|allows policy A in A' --maxWorkers=1
+```
+
+All four selected cases must run and pass; skipped cases are not evidence for
+this gate. This covers restricted execution, shell-created file replacement,
+cross-policy write isolation, and background Shell/text concurrency.

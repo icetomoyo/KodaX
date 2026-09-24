@@ -491,21 +491,36 @@ export function writeRuntimeDaemonState(
     } finally {
       fs.closeSync(fd);
     }
-    // Windows readers/AV may briefly deny replacement. Keep the same fsynced
-    // staging file and atomic rename; five attempts wait at most 200 ms.
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        fs.renameSync(temporary, paths.stateFile);
-        break;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (process.platform !== 'win32' || attempt >= 5 ||
-            !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) throw error;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 20);
-      }
-    }
+    renameRuntimeDaemonState(temporary, paths.stateFile);
   } finally {
     fs.rmSync(temporary, { force: true });
+  }
+}
+
+function renameRuntimeDaemonState(temporary: string, target: string): void {
+  try {
+    fs.renameSync(temporary, target);
+  } catch (error: unknown) {
+    if (process.platform !== 'win32' || !isNodeFileError(error) || error.code !== 'EPERM') {
+      throw error;
+    }
+    // Windows readers can briefly deny replacement. Keep the flushed staging
+    // file and the old state intact; permanent denials still fail closed. The
+    // monotonic budget starts at this first failure, including subsequent I/O.
+    const deadline = performance.now() + 200;
+    const waitCell = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw error;
+      Atomics.wait(waitCell, 0, 0, Math.min(10, remaining));
+      if (performance.now() >= deadline) throw error;
+      try {
+        fs.renameSync(temporary, target);
+        return;
+      } catch (retryError: unknown) {
+        if (!isNodeFileError(retryError) || retryError.code !== 'EPERM') throw retryError;
+      }
+    }
   }
 }
 

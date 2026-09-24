@@ -44,7 +44,7 @@ import { exec } from 'child_process';
 import path from 'path';
 import { promisify } from 'util';
 
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { assertNoGitInstallPrompt, emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type { KodaXContentBlock, KodaXMessage } from '@kodax-ai/llm';
 import type { KodaXSessionData, KodaXSessionLineage, KodaXSessionRuntimeInfo } from '@kodax-ai/agent';
 
@@ -65,6 +65,7 @@ const execAsync = promisify(exec);
  */
 async function getGitRoot(cwd?: string): Promise<string | null> {
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const { stdout } = await execAsync('git rev-parse --show-toplevel', {
       cwd,
       windowsHide: true,

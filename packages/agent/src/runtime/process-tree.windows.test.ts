@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '../diagnostics.js';
 
 const { spawnMock, spawnSyncMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   killChildProcessTreeSync,
   killPidTree,
   readProcessStartIdentity,
+  isCurrentProcessWindowsJobContained,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
   withSharedWindowsProcessSnapshot,
@@ -59,6 +61,60 @@ function snapshot(stdout: string) {
 }
 
 describe('Windows process-tree identity fences', () => {
+  it('reports a failed Job probe and its cached result without retrying or exposing subprocess content', () => {
+    setWindows();
+    vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');
+    vi.stubEnv('KODAX_DAEMON_JOB_NAME', 'private-job-name');
+    vi.stubEnv('KODAX_DAEMON_JOB_SUPERVISOR_PID', '1234');
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => { diagnostics.push(diagnostic); throw new Error('sink failure'); });
+    spawnSyncMock.mockReset().mockReturnValue({ ...snapshot('secret-output'), status: null,
+      stderr: 'secret-error', error: Object.assign(new Error('secret-command'), { code: 'ETIMEDOUT' }) });
+    try {
+      expect(isCurrentProcessWindowsJobContained()).toBe(false);
+      expect(isCurrentProcessWindowsJobContained()).toBe(false);
+      expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+      expect(diagnostics).toContainEqual(expect.objectContaining({ detail: expect.objectContaining({
+        stage: 'job-membership', cached: false, available: false, errorCode: 'ETIMEDOUT', timeoutMs: 5000,
+      }) }));
+      expect(diagnostics).toContainEqual(expect.objectContaining({ detail: expect.objectContaining({
+        stage: 'job-membership', cached: true, available: false,
+      }) }));
+      expect(JSON.stringify(diagnostics)).not.toMatch(/secret-|private-job/);
+    } finally { restore(); vi.unstubAllEnvs(); }
+  });
+
+  it('reports unavailable process identity without changing snapshot fallback calls', () => {
+    setWindows();
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    spawnSyncMock.mockReset().mockReturnValue(snapshot('1,0,100\n'));
+    try {
+      expect(readProcessStartIdentity(4242)).toBeUndefined();
+      expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+      expect(diagnostics).toContainEqual(expect.objectContaining({ detail: {
+        stage: 'process-start-identity', pid: 4242, available: false,
+      } }));
+    } finally { restore(); }
+  });
+
+  it('reports each failed existing snapshot route without adding subprocess calls', () => {
+    setWindows();
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    spawnSyncMock.mockReset().mockReturnValue({ ...snapshot('secret-output'), status: null,
+      stderr: 'secret-error', error: Object.assign(new Error('private-command'), { code: 'EACCES' }) });
+    try {
+      expect(readProcessStartIdentity(4242)).toBeUndefined();
+      expect(spawnSyncMock).toHaveBeenCalledTimes(3);
+      for (const stage of ['process-snapshot-native', 'process-snapshot-cim', 'process-snapshot-wmic']) {
+        expect(diagnostics).toContainEqual(expect.objectContaining({ detail: expect.objectContaining({
+          stage, available: false, errorCode: 'EACCES',
+        }) }));
+      }
+      expect(JSON.stringify(diagnostics)).not.toMatch(/secret-|private-command/);
+    } finally { restore(); }
+  });
   it('verifies a drained tree using the fresh snapshot from the termination process', async () => {
     setWindows();
     spawnSyncMock.mockReset();

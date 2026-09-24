@@ -3,6 +3,7 @@ import path from 'path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import {
@@ -314,6 +315,7 @@ function isRepoOverviewManifestPayload(value: unknown): value is RepoOverviewMan
 }
 
 async function runGit(args: string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   const result = await execFileAsync('git', args, {
     cwd,
     timeout: GIT_TIMEOUT_MS,
@@ -1035,6 +1037,7 @@ export async function resolveRepoOverviewSnapshot(
     const gitMatches = source === 'git'
       && (
         cached?.schemaVersion === SCHEMA_VERSION
+        && cached.source === 'git'
         && liveGit?.hasUncommittedChanges !== true
         && cached.git?.head === liveGit?.head
         && cached.git?.branch === liveGit?.branch

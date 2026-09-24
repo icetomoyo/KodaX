@@ -1,11 +1,313 @@
 # Known Issues
 
-_Last Updated: 2026-09-21_
+_Last Updated: 2026-09-23_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## rc.9 follow-up — text tools reject a workspace root containing native state
+
+Fixed in local source on 2026-09-22; first published in `0.7.96-rc.10`.
+Edits-mode `edit` and `write` could fail with `Runtime write policy targets
+protected native text state: <user home>` even for ordinary project files.
+The same root configuration also affects Auto and Full Access.
+
+The trusted text host passed every authorized workspace root to native artifact
+loading as an untrusted write grant. A home root contains the protected native
+cache, so the loader rejected the entire operation before accessing its target.
+Snapshot and commit now use the authorized canonical target for cache protection:
+a trusted text transaction can mutate that file, whereas a shell grant exposes
+a subtree. Development artifact sources still check every authorized write root
+so a writable manifest cannot redefine trusted native bytes; production artifacts
+remain pinned by the embedded manifest. Review caught and corrected an initial
+patch that also narrowed the development-source check. Target authorization,
+protected native state/alias rejection, and shell policy checks remain in place.
+
+Regression tests in `src/windows-text-transaction.test.ts` exercise actual
+write/edit transactions in Edits, Auto, and Full Access, broad ancestor roots,
+and protected targets/aliases at both snapshot and commit. Cold-loading tests
+reject writable development sources and allow digest-pinned production artifacts
+with home/installation roots authorized. All three mode cases reproduced the
+original error before the fix. Windows validation passes;
+the portable cases still require native Linux/macOS execution on those runners.
+Manual steps are in `docs/test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md`.
+
+Additional Windows regression checks cover Bash and sandbox lifecycle/routing,
+same-revision CAS and stale-write preservation. Four real sandbox cases pass:
+restricted target startup, replacing sandbox-created files with text tools,
+cross-policy write isolation, and simultaneous background Bash, second-Runtime
+Bash, and text writes. The protocol-5 native binding smoke also passes its
+cross-process CAS race (one writer succeeds, one receives stale). An initial
+direct smoke invocation found an old protocol-4 addon in the development node
+directory; verification used the hash-checked protocol-5 artifact in `dist/native`
+as the repository's native test runner does. No native binary was replaced.
+
+## rc.9 follow-up — MCP cancellation fixture and managed maintenance ownership
+
+These follow-up changes are first published in `0.7.96-rc.10`.
+They do not publish a package or change the Space Registry dependency.
+
+The MCP image-validation cancellation regression used the default one-second
+`vi.waitFor` to wait for validation. A legal 1.2-second initialization delay
+reproduced failure before cancellation was actually exercised. Teardown then
+interrupted initialization and caused a secondary framing/fixture-server error
+and an unhandled rejection. The test now waits for the validation-entry event,
+observes early operation failure, and always aborts/releases/settles pending work.
+It covers immediate and delayed initialization. Production startup/request
+timeouts, MCP behavior and validation are unchanged. The MCP/image-history batch
+passes 18/18 with no unhandled errors. Evidence is retained under
+`%TEMP%/kodax-mcp-cancel-diagnosis-mlmiyv4c`.
+
+A separate Windows Stop cleanup investigation established that asynchronous
+managed terminal repo-intelligence/artifact maintenance can still hold the test
+workspace after `Runtime.close()` returns. A natural observation found an owned
+Git process during cleanup; a four-second delay applied only to that real
+maintenance Git invocation reproduced the original `EBUSY` test on both rc.9
+and checkpoint `0ec6aa41`. It preserved the real cwd, output and original Git
+timeout rather than mocking deletion failure. The six historical failures have
+no original PID trace, so this does not establish every individual cause.
+
+The minimal repair registers the whole optional maintenance factory with its
+own Runtime before it can start. Run completion, successor admission and Stop
+remain independent of it. Close stops accepting new optional maintenance and
+waits for existing owned work before releasing Actor/executor/owner-liveness
+resources. It does not cancel shared repo caches or serialize other Runtimes.
+The public-Runtime gate was observed RED before the repair. Four new cases cover
+nonblocking Run/successor completion, instance isolation, concurrent/idempotent
+close, late scheduling and failed projection cleanup. The original real slow-Git
+feedback now passes with zero tracked children at directory cleanup. A slow
+maintenance operation may extend **Runtime close**, not normal Run or Stop.
+Evidence: `%TEMP%/kodax-stop-ebusy-analysis-20260922-152607/FINDINGS.txt` and its
+adjacent RED/GREEN logs. The discarded initial observer is explicitly invalid:
+it failed to preserve `execFile`'s custom promisify contract; corrected evidence
+uses the self-checked v3 observer.
+
+Final verification: the complete Runtime test file and four new maintenance
+cases pass 348/348, with no failures or skips. Five focused files pass 156/156,
+including all Stop-admission cases, Shell recovery, daemon host and managed
+runner regressions; these batches overlap and must not be summed. Source/test
+type checks, package builds and the distribution bundle build pass. A separate
+rebuilt-distribution acceptance case uses the public Runtime, offline Provider
+and a real Shell command: command Exit 0, completed Run, confirmed Stop, close
+waiting for the held artifact, shared concurrent close promise, and successful
+temporary-root cleanup. Both independent review axes have zero remaining
+findings after test failure-cleanup corrections. No complete 15,000+ SDK suite
+was rerun in this follow-up; the original unexplained observations remain open.
+
+### Source repair: independent memory-review shutdown ownership
+
+During the lifecycle regression setup, the normal root-agent path also produced
+an `ENOTEMPTY` cleanup failure under `memory-review-inbox/.../.branch-authority.lock.queue`.
+The separate background review chains in `runner-driven` and `run-substrate`
+were not covered by the managed repo/artifact tracker. `memory-runtime` stored
+only a module-global latest drain, while Runtime close did not own those chains.
+The earlier isolated maintenance gate used the existing
+child-agent context to exclude this independent path; the real slow-Git feedback
+retains the original root context and passed in that sample. Neither result
+claims that all memory-related cleanup races have been eliminated.
+
+The dedicated 2026-09-22 follow-up reproduced the public Runtime defect:
+close returned while the actual review callback's signal was still unaborted.
+Runtime now registers its own short memory setup/finalization IO and background
+drains before execution; closing refuses new work, cancels review requests and
+awaits already-started work before releasing the owner. It does not await the
+global latest drain or another Runtime's work. Run/Stop/successor behavior stays
+independent of background review.
+
+A completion-callback regression also exposed foreground memory persistence
+after close. Managed execution now finishes its already-required durable memory
+finalization before publishing completion. The outer finalizer remains
+idempotent. Close during an unfinished/cancelled Run may decline memory work
+that has not started; a completed Run's digest/job is durable before observers
+can close the Runtime. No whole-provider-lifetime wait is added.
+
+Real filesystem gates additionally reproduced close during branch-authority
+setup and managed curator-report persistence. A process observer identified the
+subsequent `getGitContext` Git child holding the workspace after close. Setup
+now checks cancellation before continuing to prompt/Git work; already-started
+memory IO remains owned. These tests remove their exact temporary directory
+immediately after close, without retries or delayed cleanup.
+The classic finalizer also owns learned-Skill outcome and binding-release IO,
+including when no memory session exists. A real project-canary binding write
+reproduced premature close and passes after this correction.
+
+Runtime-close cancellation returns decisions to pending with frozen input and no claim, without
+consuming provider attempts. Started effects finish and record action receipts;
+resumption skips completed carriers. Legacy successful reviews finish their
+receipt even if cancellation arrives afterwards, while cancellation before any
+effect (including while waiting for its lock) remains retryable. Actual storage
+failures retain their failure/attempt diagnostics rather than being disguised
+as cancellation.
+
+The optional reviewer signal is backward compatible with single-argument
+reviewers. Owned work waits for real settlement: custom callbacks that ignore
+cancellation, or an already-started filesystem operation, cannot be forcibly
+terminated by a Promise timeout. Unowned callers retain the old hard-timeout
+behavior. The default production reviewer already propagates cancellation to
+the HTTP provider. Worker shutdown budgets, generic file-lock protocols,
+Shell/sandbox behavior and provider retry policies are unchanged.
+
+Credential scope remains an explicit boundary: a terminal review cannot reuse
+a settled Run's revoked scoped credential authority. The job stays pending for
+a later authorized Run. Cancellation by revoking an active Run's credential
+scope follows the existing provider-failure/backoff path; it is distinct from
+Runtime-close cancellation of an owned review. This follow-up does not extend
+credential lifetimes or change credential fallback. Built tests distinguish
+ambient terminal review from scoped startup review followed by Stop and quit.
+
+Validation: the memory/control/coding batch passes 174/174; public Runtime
+memory/maintenance/Stop gates pass 29/29 (12 new memory cases); Runtime/managed
+and classic integration passes 472 with two pre-existing TODOs; final classic
+and learned-Skill checks pass 32/32; Shell cleanup checks pass 7/7. These batches
+overlap and are not additive. Full build, source and test type checks pass.
+The eight existing built acceptance files pass 36/36. Build validation used the
+shared workspace, which also contains an independent Windows native-text repair;
+that repair is not part of this memory change. The full SDK suite was not rerun.
+The three new real-HTTP built cases pass 3/3: Worker close 136ms within the
+unchanged two-second budget, ambient daemon close/owner verification 436ms, and
+scoped Stop/quit followed by recovery after its real retry deadline. Both daemon
+cases confirm process/Windows Job exit and released ownership. All three recover
+exactly one receipt and clean their own temporary directory. Final evidence:
+`%TEMP%/kodax-bundle-memory-final-f838dfe5154d4859b37b78c52404da3c.log`.
+
+Review — Standards: earlier fixture-failure cleanup findings were corrected;
+no remaining finding in that review. Spec: foreground ownership, completion
+ordering and cancellation-before-effect findings were corrected and the scoped
+credential distinction was clarified. The final Spec recheck found no new
+production gap. A follow-up review correction settled a caller signal already
+aborted at entry as an interrupt terminal at the post-setup gate instead of a
+raw rejection, keeping the CAP-005-001b and CAP-086-003 contracts (defined
+`KodaXResult`, terminal `onComplete`, no escaped exception) while preserving
+cancellation-before-prompt/Git work.
+
+This repair is first published in `0.7.96-rc.10`. Reproduction and
+acceptance details are in
+`docs/test-guides/FEATURE_289_v0.7.85_TEST_GUIDE.md`; evidence is retained under
+`%TEMP%/kodax-memory-exit-20260922-171632` and
+`%TEMP%/kodax-memory-close-followup-20260922`.
+Customer PowerShell/CIM capability failure remains a separate unconfirmed issue.
+
+## Source-only diagnostic follow-up — Windows Runtime identity probes
+
+The investigation below records the diagnostic checkpoint `0ec6aa41`, including
+the original failed Electron gate. The subsequent source repair is tracked as
+[Issue 338](#issue-338-windows-daemon-state-replacement-fails-under-concurrent-json-readers).
+Its complete packaged Electron run now passes, including restart. Original
+failures remain documented as historical evidence; the customer-specific
+PowerShell/CIM cause is still not established by this state-file repair.
+
+The 2026-09-21 customer investigation found that a generic Windows exit-evidence
+error cannot distinguish failed boot identity, process identity, and Job metadata.
+The original missing daemon capability can also be obscured by a later safe-exit
+failure. The customer-specific PowerShell/CIM cause remains unconfirmed.
+
+This working change adds structured diagnostics only. Existing probes, arguments,
+timeouts, positive/negative caches, ownership checks, credentials and compaction
+behavior remain unchanged. It does not remove PowerShell dependencies or claim to
+fix the customer's Windows lifecycle failure. No version bump or publication is
+included. Space dependency updates must use a separately reviewed SDK artifact.
+
+The existing daemon log now captures the synchronous owner probes that occur
+before the daemon host installs its persistent sink. The temporary sink restores
+the previous registration in `finally`; diagnostic write failures cannot change
+the probe result. Payloads contain bounded status fields, not subprocess output,
+environment, credential or owner identity values. See the embedder guide's
+Runtime exit section for the existing public diagnostic sink and event stages.
+
+Validation: each new diagnostic seam was observed RED before implementation.
+Focused Windows/settlement/upgrade/diagnostic tests passed (155, 3 platform skips),
+followed by host/manager/probe regressions (66), history/credential/compaction/exit
+regressions (58), and sandbox regressions (93, 40 platform skips). These batches
+overlap and are not an aggregate full-suite count. Source/test type checks and
+package, bundle and declaration builds passed. Built-SDK credential and daemon
+manual/managed compaction tests passed (15). Tests use synthetic credentials and
+isolated temporary state; customer credential material was not accessed.
+
+The follow-up end-to-end gate on 2026-09-21 rebuilt the SDK and passed both
+source and test type checks. All four real Windows launcher handoff cases
+passed, including launcher death and cancellation before publication. The
+24 real cross-process CLI cases passed, as did 36 built-artifact tests covering
+provider credentials, manual/managed compaction, text recovery, image validation
+and native packaging. A separate serial source regression run passed 680 tests
+across 22 files (one platform skip), including all 344 SDK Runtime cases.
+
+The Electron smoke first exposed a pre-existing artifact-check error: the
+installer's nested ASRT path differs from electron-builder's hoisted layout.
+The guard now resolves ASRT using the packaged Electron executable from inside
+the SDK's ASAR location, rejects resolution outside that archive, and retains
+all physical native-file checks. Five regression cases pass, including rejecting
+an existing but incorrectly resolved copy. The next attempt stopped before
+Runtime startup because this host's NUL-device account ACE was missing or
+duplicated. The unchanged native verifier reproduced that failure. Standard
+`kodax sandbox setup` restored readiness in place; both account SIDs remained
+unchanged and the native NUL verifier then returned zero. Setup recalculated its
+existing read scopes and refreshed the generation using its normal policy; no
+product checks were bypassed.
+
+The restored-host Electron run passed 20 sandboxed commands, four concurrent
+sessions, independent-process sandbox sharing, environment isolation, GUI
+detach with daemon survival, and the first exact-owner shutdown. It then failed
+on restart: replacing `daemon.json` from `starting` to `ready` returned `EPERM`
+and the new daemon exited before becoming healthy. The first state write had
+succeeded approximately 10 ms earlier. The state writer and startup transition
+are unchanged from HEAD; this observation alone does not rule out a timing
+regression. A later 100-replacement probe of independent files in the same
+directory passed, so that probe did not reproduce a persistent directory write
+failure. The competing handle or other cause of the original failure remains
+unknown. No retry, timeout increase or lifecycle behavior change was added.
+
+The end-to-end acceptance gate is therefore **not passed**; commit and push were
+withheld under the owner's conditional instruction. Retained evidence is under
+`%TEMP%/kodax-electron-daemon-smoke-j1CxUv/` (`result.json`,
+`restart-result.json`, and the profile's `bootstrap.log`/`daemon.log`), with the
+runner output in `%TEMP%/kodax-diag-electron-e2e-restored.log`. A next investigation
+should compare unchanged-HEAD and candidate packaged restarts under the same
+host state and capture Windows file-operation/handle evidence at the failing
+replace, keeping original startup deadlines and ownership checks intact.
+
+Follow-up analysis reproduced the same `EPERM` using the unchanged HEAD writer
+and a separate process doing ordinary `readFileSync` calls. Both HEAD and the
+candidate fail under a continuous reader with Node 22 and Electron 42 writers.
+With a 100 ms reader interval, both Electron writers fail near the first read;
+both Node writers complete 1,000 replacements. This deliberately aligned startup
+phase is not a steady-state failure-rate measurement. After each reader exits,
+the same file accepts 200 replacements. The extraction hashes match HEAD and
+candidate, and the natural-reader experiments do not inject ACL changes or
+special sharing flags. Failure-time native sampling was delayed by 38–60 ms,
+so it does not identify the original competing handle or its instantaneous
+Win32 error. Separate controlled ACL and sharing experiments produce the same
+Node `EPERM`; the error code alone is not sufficient evidence of either cause.
+
+The retained candidate package subsequently passed a reduced restart replay
+and a 20-command/four-session replay. An isolated build of exact HEAD `6b71837`
+also passed the 20-command/four-session replay using the same Electron fixture,
+dependencies and native binaries. These replays preserve lifecycle assertions
+and deadlines but skip repackaging and independent-process sandbox warmup; they
+do not erase the original failed gate. Evidence and frozen scripts are in
+`%TEMP%/kodax-state-rename-probe-20260921-211832/` and
+`%TEMP%/kodax-eperm-investigation-q3eWnz/replay-results.json`; baseline package
+provenance is in `%TEMP%/kodax-sdk-head-6b71837-ccb2b9c0/provenance.json`.
+This establishes an existing Windows state-replacement contention weakness,
+not a new credential or compaction defect. No product fix has been applied;
+a bounded Windows-only retry of the same atomic rename is being evaluated
+separately from the approved diagnostic-only patch.
+
+A temporary writer-only prototype subsequently completed 1,000 contended
+replacements in each HEAD/candidate × Node/Electron combination. Readers saw
+no malformed JSON or read errors. Simulated permanent EPERM still propagated
+the original error, preserved the previous state and cleaned temporary files.
+Its 200 ms retry budget took 206.8–215.3 ms in permanent-failure controls due to
+scheduling, so it is not a strict wall-clock bound. This is feasibility evidence,
+not an implemented fix or complete lifecycle validation. Detailed analysis and
+artifact references are retained in
+`%TEMP%/kodax-eperm-investigation-q3eWnz/ANALYSIS.md`.
+
+The owner subsequently requested a separate checkpoint commit on the `KodaX`
+branch before implementing the bounded state-replacement repair. This checkpoint
+records the diagnostic changes and the unresolved contention evidence; it does
+not declare the original Electron acceptance gate passed or publish an SDK.
 
 ## Main-branch fix — Windows unpublished daemon cleanup (Issue 337)
 
@@ -772,6 +1074,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
+| 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 337 | High | Resolved | Windows startup candidate survives launcher death; safe handoff must preserve concurrent clients | confirmed v0.7.96-rc.8; first affected release unknown | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
 | 336 | High | Resolved | REPL acceptance probes leave temporary shared daemons running after teardown | a72f test fixtures, observed 2026-09-17/19 | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
@@ -997,6 +1301,99 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 
+### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
+
+- Priority: Medium
+- Status: Resolved (macOS on-device UI verification is still recommended)
+- Introduced: Observed with the v0.7.96-rc.10 baseline; first affected release unknown
+- Fixed: `v0.7.96-rc.11`
+- Created / Source Resolution Date: 2026-09-23
+
+#### Original Problem
+
+On a Mac without usable command-line developer tools, background repository/status,
+memory-identity and workspace probes can launch Apple's `/usr/bin/git` shim. The
+system asks to install developer tools; dismissing it does not prevent the next
+probe from displaying the same dialog. Reproduce by opening a workspace on such
+a Mac and allowing background Git queries to repeat. Expected: background work
+does not repeatedly request installation, while existing usable Git remains usable.
+
+#### Root Cause and Scope
+
+The macOS shim has an installation UI side effect before ordinary Git failure
+handling runs. Windows/Linux missing-command errors do not use this Apple mechanism.
+This repair covers SDK-owned Git calls, including repo-intelligence, worktree,
+REPL helpers and synchronous memory paths. It does not intercept arbitrary Bash,
+PTY commands or custom wrapper scripts that independently launch system Git.
+
+#### Source Resolution
+
+- A shared agent leaf checks only Darwin calls whose selected executable resolves
+  to `/usr/bin/git`; normal PATH preference and independent Git remain unchanged.
+- Before system Git starts, `/usr/bin/xcode-select -p` runs with the same cwd and
+  effective environment, including `DEVELOPER_DIR`. Only exit code 2 blocks Git.
+  Unknown probe failures retain the original execution behavior; they are not
+  cached as missing tools. This is a narrow known-condition guard, not a guarantee
+  against every broken or custom installation.
+- Determinate results expire after 5 seconds, keyed by the relevant environment;
+  concurrent asynchronous checks share a probe. Later calls can recover after
+  installation. There is no permanent global Git disable state.
+- Existing runners keep their argument, output, timeout and error contracts.
+  Worktree operations retain actionable errors; synchronous memory identity keeps
+  its existing remote-based identity and local-path fallback rules.
+- Repo-intelligence can use filesystem overview while Git is unavailable and
+  recover to Git-backed analysis, including an unborn repository, after recovery.
+- Full `runGit` / `runGitSync` consolidation remains **Planned**, separately tracked
+  as [FEATURE_300 / v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight).
+
+#### Files Changed and Verification
+
+- Platform guard/export: `packages/agent/src/runtime/macos-git.ts`,
+  `packages/agent/src/index.ts`; memory consumer: `packages/agent/src/memory/paths.ts`.
+- Existing Git call sites under `packages/coding/src/` and `packages/repl/src/`
+  receive the preflight without a shared-runner migration.
+- Regression coverage: `macos-git.test.ts`, `memory/paths.test.ts`, coding
+  `macos-git-callers.test.ts`, `repo-intelligence/git-unavailable.test.ts`, and
+  REPL `interactive/git-unavailable.test.ts` cover the shared guard and consumers.
+- Native macOS UI verification is still pending. See
+  [Issue 339 regression guide](test-guides/ISSUE_339_v0.7.96-rc.10_REGRESSION_GUIDE.md).
+- Validation on 2026-09-23: final focused SDK regression run passed 79 tests;
+  the platform guard has 95.08% line and 80% branch coverage. Package compilation,
+  SDK/worker bundles and declaration bundles passed. Bare resume remains 125 kB
+  and the Runtime Worker child-process audit passed. Standards and Spec reviews
+  have no remaining findings. These checks ran on Windows with simulated Darwin
+  boundaries, not native macOS UI acceptance.
+- The registry SDK is still v0.7.96-rc.10. The next Space release is paired with
+  the new SDK containing this repair and upgrades its dependency pin on release;
+  local source/link validation does not establish that existing customer packages contain the fix.
+
+---
+
+### Issue 338: Windows daemon state replacement fails under concurrent JSON readers
+
+- **Priority**: High
+- **Status**: Resolved in source; unreleased
+- **Introduced**: reproduced at diagnostic checkpoint `0ec6aa41` and unchanged `6b71837`; first affected release not established
+- **Created**: 2026-09-21
+- **Resolved**: 2026-09-21
+- **Release**: source only; no version bump or publication
+
+**Original problem:** The packaged Electron restart can fail publishing daemon
+state from `starting` to `ready`: an atomic rename returns Windows `EPERM`.
+An independent ordinary Node reader reproduces the same failure with the real
+baseline writer. The original failing handle was not captured. The earlier
+NUL-device setup failure and ASRT packaging guard error are separate findings.
+
+**Repair:** Retry only that Windows EPERM rename of the same flushed temporary
+file, with a 200 ms monotonic failure-path budget and short waits. Preserve the
+old state, ownership ordering, errors and temporary-file cleanup. Normal writes
+do not wait. No sandbox/Bash hot-path work or authentication change is added.
+The synchronous budget may accumulate across state publications and is not a
+strict wall-clock deadline, so lifecycle and paired performance are explicit
+acceptance gates.
+
+**Tests and evidence:** See the
+[regression guide](test-guides/ISSUE_338_v0.7.96_REGRESSION_GUIDE.md).
 ### Issue 337: Windows startup candidate survives launcher death
 
 - **Priority**: High
@@ -14981,7 +15378,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 216 (34 Open, 182 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 218 (34 Open, 184 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

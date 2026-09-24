@@ -170,6 +170,7 @@ import {
   deriveCodingMemoryIdentity,
   drainCodingMemoryReviewInbox,
   persistMemoryOutcomeToSession,
+  runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import {
@@ -719,6 +720,33 @@ function attributeProviderRequest(events: KodaXEvents, providerRequestId: string
   };
 }
 
+async function completeClassicMemorySession(
+  session: MemorySession,
+  result: KodaXResult,
+  sessionId: string,
+  handledMemoryOperations: readonly KodaXHandledMemoryOperation[],
+): Promise<void> {
+  const checks = collectVerifiedCheckFacts(result.artifactLedger ?? []);
+  try {
+    const completedAt = new Date().toISOString();
+    await session.complete({
+      status: result.interrupted ? 'cancelled' : result.success ? 'succeeded' : 'failed',
+      summary: result.lastText,
+      evidence: result.interrupted ? [] : checks.length > 0
+        ? checks.map((check) => ({ ref: check.ref, requestedGrade: 'verified' as const,
+            source: check.source, verdict: check.verdict, observedAt: check.observedAt }))
+        : [{ ref: `host:run-terminal:${sessionId}`, requestedGrade: 'observed' as const,
+            source: 'host' as const, observedAt: completedAt }],
+      ...(handledMemoryOperations.length === 0 ? {} : { handledMemoryOperations: [...handledMemoryOperations] }),
+    });
+    await session.close();
+  } catch (error) {
+    emitResilienceDebug('[memory:episode-finalize:error]', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function runSubstrate(
   options: KodaXOptions,
   prompt: string,
@@ -879,52 +907,71 @@ async function runSubstrateInContext(
   events = withCompletionEventOnce(events);
   const memoryIdentity = options.context?.memoryIdentity
     ?? deriveCodingMemoryIdentity(options, resolveExecutionCwd(options.context), sessionId);
-  const learnedSkillBinding = await prepareCodingLearnedSkillBinding(
-    options,
-    memoryIdentity,
-    sessionId,
-  );
+  let learnedSkillBinding: Awaited<ReturnType<typeof prepareCodingLearnedSkillBinding>>;
   let memoryController: MemoryManagementController | undefined;
   let memoryPack: MemoryPack | undefined;
   let memoryBranchEpoch: number | undefined;
   let memoryReviewDrain: Promise<void> = Promise.resolve();
   let preferredMemoryReviewJobId: string | undefined;
-  if (options.context?.currentAgentId === undefined
-    && options.context?.parentAgentId === undefined) {
+  await runOwnedMemoryWork(options, async () => {
+    learnedSkillBinding = await prepareCodingLearnedSkillBinding(options, memoryIdentity, sessionId);
     try {
-      memoryController = createMemoryControlPlane({
-        cwd: resolveExecutionCwd(options.context),
-        identity: memoryIdentity,
-        projectDocs: [],
-        discoverSkills: false,
-        ...(options.memoryReviewer !== undefined ? { memoryReviewer: options.memoryReviewer } : {}),
-      });
-      memoryPack = await memoryController.buildMemoryPack({
-        task: prompt,
-        identity: memoryIdentity,
-        maxCandidates: 12,
-        maxHints: 5,
-        includeSnippets: false,
-      });
-      await memoryController.maybeRunAutoCurator();
-      memoryReviewDrain = drainCodingMemoryReviewInbox(
-        options,
-        memoryIdentity,
-        memoryController,
-        sessionId,
-      ).then(() => undefined).catch((error: unknown) => {
-        emitResilienceDebug('[memory:review-inbox:startup-drain-error]', {
-          error: error instanceof Error ? error.message : String(error),
+      if (options.context?.currentAgentId === undefined
+        && options.context?.parentAgentId === undefined) {
+        memoryController = createMemoryControlPlane({
+          cwd: resolveExecutionCwd(options.context),
+          identity: memoryIdentity,
+          projectDocs: [],
+          discoverSkills: false,
+          ...(options.memoryReviewer !== undefined ? { memoryReviewer: options.memoryReviewer } : {}),
         });
-      });
-      if (options.session?.storage !== undefined) {
-        memoryBranchEpoch = await captureEpisodeReviewBranchEpoch(memoryIdentity);
+        memoryPack = await memoryController.buildMemoryPack({
+          task: prompt,
+          identity: memoryIdentity,
+          maxCandidates: 12,
+          maxHints: 5,
+          includeSnippets: false,
+        });
+        await memoryController.maybeRunAutoCurator();
+        memoryReviewDrain = drainCodingMemoryReviewInbox(
+          options,
+          memoryIdentity,
+          memoryController,
+          sessionId,
+        ).then(() => undefined).catch((error: unknown) => {
+          emitResilienceDebug('[memory:review-inbox:startup-drain-error]', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+        if (options.session?.storage !== undefined) {
+          memoryBranchEpoch = await captureEpisodeReviewBranchEpoch(memoryIdentity);
+        }
       }
     } catch (error) {
       emitResilienceDebug('[memory:session-start:error]', {
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      if (options.abortSignal?.aborted) await learnedSkillBinding?.release();
     }
+  });
+  if (options.abortSignal?.aborted) {
+    // CAP-005-001b / CAP-086-003: a caller signal already aborted at entry
+    // settles as an interrupt terminal here — before any transcript, Git, or
+    // provider work — instead of escaping runKodaX as a raw rejection. The
+    // memory setup above released its learned-skill binding in `finally`;
+    // the classic memory session and its review drain only exist after this
+    // point, so no owned background work is skipped.
+    await applyAbortErrorTerminal({ events, emitActiveExtensionEvent });
+    emitComplete(events);
+    emitTurnCompleted(events, liveTurnScopeRef.current, 'interrupted');
+    return {
+      success: true,
+      interrupted: true,
+      lastText: '',
+      messages: [],
+      sessionId,
+    };
   }
   options = {
     ...options,
@@ -1165,70 +1212,36 @@ async function runSubstrateInContext(
       ...(payload ? { managedProtocolPayload: payload } : {}),
       ...(runtimeSessionSnapshot ? { runtimeSessionSnapshot } : {}),
     };
-    if (memorySession !== undefined) {
-      const checks = collectVerifiedCheckFacts(finalized.artifactLedger ?? []);
+    await runOwnedMemoryWork(options, async () => {
+      if (memorySession !== undefined) {
+        await completeClassicMemorySession(memorySession, finalized, sessionId, handledMemoryOperations);
+      }
+      if (options.context?.completeLearnedSkillOutcomes !== undefined) {
+        const checks = collectVerifiedCheckFacts(finalized.artifactLedger ?? []);
+        try {
+          await options.context.completeLearnedSkillOutcomes({
+            sessionId,
+            outcome: resolveLearnedSkillCanaryOutcome(finalized.success, checks),
+            evidenceRefs: checks.length > 0
+              ? checks.map((check) => check.ref)
+              : [`host:run-terminal:${sessionId}`],
+          });
+        } catch (error) {
+          emitResilienceDebug('[learning:skill-outcome:error]', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       try {
-        const completedAt = new Date().toISOString();
-        await memorySession.complete({
-            status: finalized.interrupted
-              ? 'cancelled'
-              : finalized.success ? 'succeeded' : 'failed',
-            summary: finalized.lastText,
-            evidence: [
-              ...(finalized.interrupted
-                ? []
-                : [
-                    ...(checks.length > 0
-                      ? checks.map((check) => ({
-                          ref: check.ref,
-                          requestedGrade: 'verified' as const,
-                          source: check.source,
-                          verdict: check.verdict,
-                          observedAt: check.observedAt,
-                        }))
-                      : [{
-                          ref: `host:run-terminal:${sessionId}`,
-                          requestedGrade: 'observed' as const,
-                          source: 'host' as const,
-                          observedAt: completedAt,
-                        }]),
-                  ]),
-            ],
-            ...(handledMemoryOperations.length === 0
-              ? {}
-              : { handledMemoryOperations: [...handledMemoryOperations] }),
-        });
-        await memorySession.close();
+        await learnedSkillBinding?.release();
       } catch (error) {
-        emitResilienceDebug('[memory:episode-finalize:error]', {
+        emitResilienceDebug('[learning:skill-binding-release:error]', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
-    }
-    if (options.context?.completeLearnedSkillOutcomes !== undefined) {
-      const checks = collectVerifiedCheckFacts(finalized.artifactLedger ?? []);
-      try {
-        await options.context.completeLearnedSkillOutcomes({
-          sessionId,
-          outcome: resolveLearnedSkillCanaryOutcome(finalized.success, checks),
-          evidenceRefs: checks.length > 0
-            ? checks.map((check) => check.ref)
-            : [`host:run-terminal:${sessionId}`],
-        });
-      } catch (error) {
-        emitResilienceDebug('[learning:skill-outcome:error]', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    try {
-      await learnedSkillBinding?.release();
-    } catch (error) {
-      emitResilienceDebug('[learning:skill-binding-release:error]', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    });
     if (memoryController !== undefined) {
+      const controller = memoryController;
       // Deliberately not awaited: the foreground durability boundary is the
       // persisted review job. This chain serializes same-process drains, while
       // a later run recovers any job left behind by process exit.
@@ -1236,7 +1249,7 @@ async function runSubstrateInContext(
         () => drainCodingMemoryReviewInbox(
           options,
           memoryIdentity,
-          memoryController,
+          controller,
           '',
           // FEATURE_289 §3.1: bound the decide phase so a shutdown-window
           // drain releases its claim via defer instead of fossilizing
@@ -1358,9 +1371,11 @@ async function runSubstrateInContext(
   let memoryObservationSequence = 0;
   let pendingMemoryInterventionTriggers: MemoryInterventionTrigger[] = [];
   if (memoryController !== undefined && memoryPack !== undefined) {
-    memorySession = await createMemoryAgent({
-      controlPlane: memoryController,
-      initialMemoryPack: memoryPack,
+    const controlPlane = memoryController;
+    const initialMemoryPack = memoryPack;
+    memorySession = await runOwnedMemoryWork(options, () => createMemoryAgent({
+      controlPlane,
+      initialMemoryPack,
       sourcePolicy: codingMemorySourcePolicy,
       ...(options.memoryRecallRunner !== undefined
         ? { recallRunner: options.memoryRecallRunner }
@@ -1434,8 +1449,8 @@ async function runSubstrateInContext(
       identity: memoryIdentity,
       objective: prompt,
       episodeId: options.context?.learnedSkillBindingId ?? liveTurnScopeRef.current.turnId,
-    });
-    if (memoryRecallToolAllowed) {
+    }));
+    if (memoryRecallToolAllowed && memorySession !== undefined) {
       runtimeSessionState.activeTools = activateMemoryRecallTool(
         runtimeSessionState.activeTools,
         true,
@@ -1451,7 +1466,7 @@ async function runSubstrateInContext(
               throughSequence: memoryDecisionBinding.throughSequence,
             });
     }
-    if (memoryIntentToolAllowed) {
+    if (memoryIntentToolAllowed && memorySession !== undefined) {
       runtimeSessionState.activeTools = activateMemoryIntentTool(
         runtimeSessionState.activeTools,
         true,

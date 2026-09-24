@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +22,7 @@ import {
   _internalWindowsTextTransaction,
   createWindowsTrustedTextMutationHost,
 } from './windows-text-transaction.js';
+import { trustedTextNativeArtifactStateRoots } from './windows-native-artifacts.js';
 
 const windowsIt = process.platform === 'win32' ? it : it.skip;
 const posixIt = process.platform === 'win32' ? it.skip : it;
@@ -56,8 +58,88 @@ describe('Windows trusted text transaction integration', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     await fs.rm(root, { recursive: true, force: true });
   });
+
+  portableIt('rejects cold loading development native artifacts from an authorized write root', async () => {
+    vi.resetModules();
+    const { createTrustedTextMutationHost } = await import('./windows-text-transaction.js');
+    const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const host = createTrustedTextMutationHost(
+      () => [root, repositoryRoot], authorizeOrdinaryCanonicalTarget,
+    );
+    await expect(host.snapshot({ path: path.join(root, 'index.js'), createParentDirectories: false }))
+      .rejects.toThrow(/native artifact source overlaps a writable Runtime root/);
+  });
+
+  portableIt.each(['accept-edits', 'auto', 'full-access'] as const)(
+    'cold loads pinned %s text tools when write roots include home and installation', async (mode) => {
+      vi.resetModules();
+      const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+      const platformKey = `${process.platform}-${process.arch}`;
+      const manifestPath = path.join(repositoryRoot, 'dist', 'native', platformKey, 'manifest.json');
+      vi.stubGlobal('KODAX_NATIVE_MANIFESTS_JSON', JSON.stringify({
+        [platformKey]: await fs.readFile(manifestPath, 'utf8'),
+      }));
+      const { createTrustedTextMutationHost } = await import('./windows-text-transaction.js');
+      const target = path.join(root, 'index.js');
+      const host = createTrustedTextMutationHost(
+        () => [root, repositoryRoot, os.homedir()],
+        authorizeOrdinaryCanonicalTarget,
+        () => mode === 'full-access',
+      );
+      const ctx: KodaXToolExecutionContext = {
+        backups: new Map(), executionCwd: root, gitRoot: root,
+        trustedTextMutationHost: host, resolveShellPermissionMode: () => mode,
+      };
+
+      await expect(toolWrite({ path: target, content: 'before' }, ctx)).resolves.toContain('File created');
+      await expect(toolEdit({ path: target, old_string: 'before', new_string: 'after' }, ctx))
+        .resolves.toContain('File edited');
+      await expect(fs.readFile(target, 'utf8')).resolves.toBe('after');
+    },
+  );
+
+  portableIt('allows a text target when its only authorization root contains native state', async () => {
+    const target = path.join(root, 'index.js');
+    const host = createWindowsTrustedTextMutationHost(
+      () => [root], authorizeOrdinaryCanonicalTarget,
+    );
+    // Load the binding in its normal cache before relocating protected state
+    // inside the fixture; Windows cannot remove a directory holding a loaded DLL.
+    await host.snapshot({ path: target, createParentDirectories: false });
+    vi.stubEnv('LOCALAPPDATA', root);
+    vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+    const observed = await host.snapshot({ path: target, createParentDirectories: false });
+    await expect(host.commit({ path: target, expectedRevision: observed.revision,
+      content: 'after', createParentDirectories: false })).resolves.toMatchObject({ status: 'written' });
+    await expect(fs.readFile(target, 'utf8')).resolves.toBe('after');
+  });
+
+  portableIt.each([false, true])(
+    'protects native state and its aliases at snapshot and commit with Full Access = %s', async (fullAccess) => {
+      vi.stubEnv('LOCALAPPDATA', root);
+      vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+      const [protectedRoot] = trustedTextNativeArtifactStateRoots();
+      if (protectedRoot === undefined) throw new Error('expected protected native state');
+      await fs.mkdir(path.join(protectedRoot, 'nested'), { recursive: true, mode: 0o700 });
+      const alias = path.join(root, 'alias');
+      await fs.symlink(protectedRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      const host = createWindowsTrustedTextMutationHost(
+        () => [root], authorizeOrdinaryCanonicalTarget, () => fullAccess,
+      );
+      for (const directory of [protectedRoot, alias]) {
+        const target = path.join(directory, 'nested', 'protected.txt');
+        await expect(host.snapshot({ path: target, createParentDirectories: false }))
+          .rejects.toThrow(/protected native text state/);
+        await expect(host.commit({ path: target, expectedRevision: 'missing:probe',
+          content: 'must not write', createParentDirectories: false }))
+          .rejects.toThrow(/protected native text state/);
+      }
+      await expect(fs.readdir(path.join(protectedRoot, 'nested'))).resolves.toEqual([]);
+    },
+  );
 
   portableIt('uses Full Access authority for Git metadata and external targets while keeping explicit protected paths', async () => {
     const workspace = path.join(root, 'workspace');

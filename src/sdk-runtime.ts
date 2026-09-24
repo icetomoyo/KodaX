@@ -4777,6 +4777,39 @@ async function createKodaXRuntimeInternal(
   let agentPlaneClosed = agentPlane === undefined;
   let ownerLivenessClosed = false;
   let busClosed = false;
+  const pendingManagedTaskMaintenance = new Set<Promise<void>>();
+  const memoryReviewAbort = new AbortController();
+  const pendingMemoryWork = new Set<Promise<void>>();
+  const runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]> = (work) => {
+    if (closed) return Promise.resolve();
+    const pending = Promise.resolve().then(() => {
+      if (!memoryReviewAbort.signal.aborted) return work(memoryReviewAbort.signal);
+    });
+    pendingMemoryWork.add(pending);
+    void pending.then(
+      () => { pendingMemoryWork.delete(pending); },
+      (error: unknown) => {
+        pendingMemoryWork.delete(pending);
+        emitKodaXDiagnostic({ source: "runtime.memory-review", level: "error",
+          message: "Owned memory work failed.", detail: normalizeError(error) });
+      },
+    );
+    return pending;
+  };
+  const scheduleManagedTaskMaintenance = (maintenance: () => Promise<void>): void => {
+    if (closed) return;
+    // Register before the microtask can run, independently of Run settlement.
+    const pending = Promise.resolve().then(maintenance);
+    pendingManagedTaskMaintenance.add(pending);
+    void pending.then(
+      () => { pendingManagedTaskMaintenance.delete(pending); },
+      (error: unknown) => {
+        pendingManagedTaskMaintenance.delete(pending);
+        emitKodaXDiagnostic({ source: "runtime.maintenance", level: "error",
+          message: "Managed task maintenance failed.", detail: normalizeError(error) });
+      },
+    );
+  };
   const ensureOpen = (): void => {
     if (closed) {
       throw new Error("KodaX runtime is closed");
@@ -5056,6 +5089,8 @@ async function createKodaXRuntimeInternal(
     autoReview: options.autoReview,
     ensureOpen,
     isClosed: () => closed,
+    scheduleManagedTaskMaintenance,
+    runMemoryWork,
     artifacts,
     permissions,
     userInputs,
@@ -5194,6 +5229,7 @@ async function createKodaXRuntimeInternal(
   const closeRuntime = (): Promise<void> => {
     if (closeAttempt) return closeAttempt;
     closed = true;
+    memoryReviewAbort.abort(new Error("runtime closed"));
     const attempt = (async (): Promise<void> => {
       if (!shutdownStarted) {
         preparationController.abort(new DOMException('runtime closed', 'AbortError'));
@@ -5210,6 +5246,8 @@ async function createKodaXRuntimeInternal(
       await closeTranscriptSnapshots?.();
       beginCloseTranscriptSnapshots = undefined;
       closeTranscriptSnapshots = undefined;
+      await Promise.all([...pendingManagedTaskMaintenance]);
+      await Promise.all([...pendingMemoryWork]);
       if (!actorRegistryClosed) {
         await actorRegistry.close("runtime closed");
         actorRegistryClosed = true;
@@ -5703,6 +5741,11 @@ function firstUpgradeableCapability(
       typeof version === "number"
       && !hasVersionedRuntimeCapability(capabilities, name, version)
     ) {
+      emitKodaXDiagnostic({
+        source: "runtime.daemon.capabilities", level: "warn",
+        message: "Runtime daemon does not satisfy a required capability.",
+        detail: { stage: "capability-check", capability: name, requiredVersion: version },
+      });
       return { name, version };
     }
   }
@@ -9075,6 +9118,8 @@ function createRuntimeRunService(deps: {
   readonly defaultAgentContext?: AgentDispatchContext;
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
+  readonly scheduleManagedTaskMaintenance: NonNullable<KodaXEvents["scheduleManagedTaskMaintenance"]>;
+  readonly runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]>;
   readonly permissions: RuntimePermissionRegistry;
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
@@ -10470,6 +10515,8 @@ function createRuntimeRunService(deps: {
         outputInputId = deliverInterruptInputs(record, queuedMessageIds, queuedMessageEntryIds) ?? outputInputId;
       },
     });
+    events.scheduleManagedTaskMaintenance = deps.scheduleManagedTaskMaintenance;
+    events.runMemoryWork = deps.runMemoryWork;
     events.registerShellCleanup = (reference, retry) => {
       if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
         throw new Error("Invalid Runtime Shell cleanup binding");

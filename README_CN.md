@@ -298,6 +298,31 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.11 发布**：v0.7.96 线第十一个发布候选。macOS 上 SDK 拥有的后台
+Git 调用会先预检系统 Git 垫片：共享的平台守卫（`@kodax-ai/agent/runtime/macos-git`）
+能识别已知的开发者工具缺失状态（仅限退出码 2，感知 `DEVELOPER_DIR`，探测按有界
+TTL 缓存并在并发调用间共享，安装后可恢复，无永久禁用状态），使 repo-intelligence、
+worktree、changed-diff、托管任务 checkpoint、agent-adapter、worktree-sweep、
+session-snapshot、REPL 辅助路径与同步内存路径不再反复触发 Apple 开发者工具安装
+弹窗。`PATH` 上的普通 Git、独立安装的 Git 与任意 Bash/PTY 命令不受影响
+（Issue 339）。所有 rc.10 契约全部保留。
+
+**v0.7.96-rc.10 发布**：v0.7.96 线第十个发布候选。Runtime 关闭时拥有并
+排空自己启动的后台工作：托管终端维护与内存 setup/finalization IO 及后台
+review 排空都注册到所属 Runtime，close 拒绝新工作并等待已开始的工作完成后
+才释放资源，托管执行在发布完成前先落地持久内存 finalization。当工作区根
+包含受保护原生状态时，Edits 模式的 `edit`/`write` 不再拒绝普通项目文件：
+受信文本事务的缓存保护只针对授权的规范化目标文件，而开发工件信任仍检查
+全部授权可写根。所有 rc.9 契约全部保留。
+
+**v0.7.96-rc.9 发布**：v0.7.96 线第九个发布候选。以一次性启动交接仲裁
+daemon 发布与 launcher 失联：未发布的 Windows daemon 启动树及其 Job 后代被
+回收，已发布的共享服务不受影响（Issue 337）。Windows daemon 状态替换在有界
+失败预算下只对竞争性 EPERM 重试，原子发布同一份已 flush 状态，并发 JSON
+读取者不再破坏替换（Issue 338）。Windows Runtime 身份探测通过
+`setKodaXDiagnosticSink` 输出结构化生命周期诊断，证据有界且不含命令、环境
+变量、输出或身份值。所有 rc.8 契约全部保留。
+
 **v0.7.96-rc.8 发布**：v0.7.96 线第八个发布候选。自定义 OpenAI 兼容推理从
 `auto` 开始协商：被拒绝的 effort 沿显式档位降级且不丢失显式禁用意图，硬拒绝
 缓存跨流式与非流式回合复用，请求/实际发送的 effort 与回退原因上报给 SDK 宿主，
@@ -423,7 +448,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.8 发布清单](docs/release.md#v0796-rc8-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.11 发布清单](docs/release.md#v0796-rc11-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

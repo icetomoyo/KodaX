@@ -50,7 +50,7 @@ import path from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { createMemoryControlPlane, type MemoryPack } from '@kodax-ai/agent';
+import { assertNoGitInstallPrompt, createMemoryControlPlane, type MemoryPack } from '@kodax-ai/agent';
 
 import { emitResilienceDebug } from '../agent-runtime/resilience-debug.js';
 import { loadAgentsFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
@@ -475,6 +475,7 @@ function getRuntimeFact(options: KodaXOptions): string | null {
 
 async function getGitContext(cwd: string): Promise<string> {
   try {
+    await assertNoGitInstallPrompt({ cwd });
     const { stdout: check } = await execAsync(
       'git rev-parse --is-inside-work-tree',
       { cwd, windowsHide: true },

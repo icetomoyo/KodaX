@@ -11,6 +11,7 @@ import type {
   AgentTurnExecutor,
 } from '@kodax-ai/agent';
 import { execFile } from 'node:child_process';
+import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
@@ -227,6 +228,7 @@ function selectWorkflowFinalText(childSummary: string, digest: string | undefine
 }
 
 async function runGit(args: readonly string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   const result = await execFileAsync('git', [...args], {
     cwd,
     timeout: GIT_STATUS_TIMEOUT_MS,

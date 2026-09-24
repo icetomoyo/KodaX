@@ -7,7 +7,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > extensions, custom CLIs. If you are an end-user running the `kodax`
 > command-line tool, see the root [README.md](../../README.md) instead.
 
-This guide describes the `v0.7.97` development branch, based on `v0.7.96-rc.8`; npm publication remains a
+This guide describes the `v0.7.97` development branch, based on `v0.7.96-rc.11`; npm publication remains a
 separate manual maintainer step. The SDK
 advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:6`,
 `sharedSessionSettings:2`, and `crashOutcomeModel:2`;
@@ -4776,6 +4776,30 @@ delete old coordinator files to recover a current Runtime; an older process
 must instead be stopped/upgraded. `reclaimStaleKodaXFileLock` remains an
 explicit stale-lock helper for APIs that still use file locks, not a general
 lock-deletion primitive.
+
+### Windows lifecycle diagnostics
+
+Windows lifecycle diagnostics use the existing process-local
+`setKodaXDiagnosticSink` export from `@kodax-ai/kodax/agent`. Install the sink
+before connecting or ensuring Runtime ownership, and call its returned cleanup
+function when the host closes. The daemon already writes its own diagnostics
+to `daemon.log`; a client-process sink does not subscribe to daemon-process
+events.
+
+`source: 'runtime:windows'` identifies boot identity, Job membership, process
+snapshot, and process-start identity stages. Probe
+details report availability, whether a cached result was used, and (for an
+executed probe) elapsed time, timeout, exit code, and a bounded OS error code.
+`source: 'runtime.daemon.capabilities'` with
+`stage: 'capability-check'` records the original required capability and version
+before a subsequent upgrade failure can obscure it.
+
+These records omit commands, environment variables, stdout, stderr, credentials,
+and identity values. They do not add probes or retries, change existing failure
+caching, relax Job/identity checks, or alter shutdown results. A missing
+capability diagnostic is evidence for troubleshooting, not permission to bypass
+the required capability. Diagnostic sink exceptions remain isolated from the
+Runtime operation.
 
 ### Historical v0.7.92 filesystem-effect coordinator and managed terminal authority
 

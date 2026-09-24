@@ -5,7 +5,6 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -303,24 +302,35 @@ async function preparePackagedApplication(electronVersion) {
     'utf8',
   );
   await run(process.execPath, [electronBuilderCli, '--dir', '--win', '--x64', '--config', 'electron-builder.json'], appDir, 300_000);
-  verifyPackagedNativeArtifacts();
+  await verifyPackagedNativeArtifacts();
 }
 
-function verifyPackagedNativeArtifacts() {
-  const sdkRequire = createRequire(path.join(appDir, 'node_modules', '@kodax-ai', 'kodax', 'package.json'));
-  const asrtDirectory = path.dirname(sdkRequire.resolve('@anthropic-ai/sandbox-runtime/package.json'));
-  const unpackedModules = path.join(
-    appDir,
-    'release',
-    'win-unpacked',
-    'resources',
-    'app.asar.unpacked',
-    'node_modules',
-  );
+async function verifyPackagedNativeArtifacts() {
+  const packagedDirectory = path.join(appDir, 'release', 'win-unpacked');
+  const archive = path.join(packagedDirectory, 'resources', 'app.asar');
+  // electron-builder can hoist a dependency that npm installed inside the SDK.
+  // Resolve using the packaged Electron filesystem, not the build-time tree.
+  const probe = `
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const archive = path.join(path.dirname(process.execPath), 'resources', 'app.asar');
+const sdkRequire = createRequire(path.join(archive, 'node_modules', '@kodax-ai', 'kodax', 'package.json'));
+process.stdout.write(JSON.stringify({ asrtPackagePath: sdkRequire.resolve('@anthropic-ai/sandbox-runtime/package.json') }));
+`;
+  const resolution = JSON.parse(await run(
+    path.join(packagedDirectory, 'kodax-daemon-smoke.exe'), ['-e', probe], appDir, 30_000,
+    { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  ));
+  assert.equal(typeof resolution.asrtPackagePath, 'string', 'Packaged ASRT resolution is missing.');
+  const relativePackage = path.relative(archive, resolution.asrtPackagePath);
+  assert.ok(relativePackage !== '' && !path.isAbsolute(relativePackage)
+    && relativePackage !== '..' && !relativePackage.startsWith(`..${path.sep}`),
+  `Packaged ASRT resolved outside app.asar: ${resolution.asrtPackagePath}`);
+  const unpackedModules = path.join(`${archive}.unpacked`, 'node_modules');
   const required = [
     path.join(
-      unpackedModules,
-      path.relative(path.join(appDir, 'node_modules'), asrtDirectory),
+      `${archive}.unpacked`,
+      path.dirname(relativePackage),
       'vendor',
       'srt-win',
       'x64',

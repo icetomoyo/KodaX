@@ -568,6 +568,10 @@ export interface KodaXEvents {
     reference: ManagedRunChildProcessReference,
     retry: () => Promise<void>,
   ) => () => void;
+  /** Internal host ownership: optional terminal projections must drain on Runtime close. */
+  scheduleManagedTaskMaintenance?: (maintenance: () => Promise<void>) => void;
+  /** Internal host ownership: settle memory IO and cancel background review before close. */
+  runMemoryWork?: (work: (signal: AbortSignal) => Promise<void>) => Promise<void>;
   /** FEATURE_067 v2: Real-time tool execution progress update. Updates the tool's display in the REPL transcript. */
   onToolProgress?: (
     update: { id: string; message: string; extension?: {

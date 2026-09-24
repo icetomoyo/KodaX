@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.8`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.96-rc.11`.
 > The GitHub pre-release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
@@ -205,8 +205,16 @@ scoped bindings and fail closed without one, External Agents remain on their
 independent `credentialRef` plane, and Agent authority wire records are
 closed against unknown fields.
 
-The v0.7.96-rc.8 release carries FEATURE_297 and FEATURE_299 and negotiates
-custom OpenAI-compatible reasoning from `auto`: rejected efforts lower
+The v0.7.96-rc.11 release carries FEATURE_297 and FEATURE_299 and hardens the
+Windows daemon lifecycle: a one-shot startup handoff arbitrates daemon
+publication against launcher loss, reclaiming unpublished daemon startup
+trees and their Job descendants while published shared services stay
+untouched (Issue 337), and daemon state replacement retries only contended
+Windows EPERM while atomically publishing the same flushed state under a
+bounded failure budget, so concurrent JSON readers no longer break
+replacement (Issue 338). Windows Runtime identity probes emit structured,
+privacy-bounded lifecycle diagnostics through `setKodaXDiagnosticSink`. The rc.8 reasoning negotiation holds: custom
+OpenAI-compatible reasoning negotiates from `auto`, rejected efforts lower
 through explicit levels without losing disable intent, hard-rejection caches
 span streaming and non-streaming turns, and requested/sent effort plus
 fallback reasons reach SDK hosts while `reasoning` and `reasoning_details`

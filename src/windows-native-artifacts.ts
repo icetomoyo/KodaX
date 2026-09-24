@@ -45,6 +45,8 @@ export interface ResolvedWindowsNativeArtifact {
 export interface ResolveWindowsNativeArtifactOptions {
   readonly sandboxReadSid?: string;
   readonly untrustedWriteRoots?: readonly string[];
+  /** Text transactions check their target separately from mutable development sources. */
+  readonly developmentWriteRoots?: readonly string[];
   readonly provision?: boolean;
 }
 
@@ -597,6 +599,7 @@ export function resolveTrustedTextNativeArtifact(
   moduleUrl: string,
   expectedProtocol: number,
   untrustedWriteRoots: readonly string[],
+  developmentWriteRoots: readonly string[] = untrustedWriteRoots,
 ): string {
   assertTrustedTextNativeStateNotDirectlyWritable(untrustedWriteRoots);
   if (process.platform === 'win32') {
@@ -604,7 +607,7 @@ export function resolveTrustedTextNativeArtifact(
       moduleUrl,
       'textTransaction',
       expectedProtocol,
-      { untrustedWriteRoots },
+      { untrustedWriteRoots, developmentWriteRoots },
     ).path;
   }
   if (process.platform !== 'linux' && process.platform !== 'darwin') {
@@ -615,7 +618,9 @@ export function resolveTrustedTextNativeArtifact(
   for (const directory of portableTextArtifactDirectories(moduleUrl, embedded !== undefined)) {
     const manifestPath = path.join(directory, 'manifest.json');
     try {
-      assertDevelopmentSourceIsOutsideWriteRoots(directory, untrustedWriteRoots);
+      assertDevelopmentSourceIsOutsideWriteRoots(
+        directory, embedded === undefined ? developmentWriteRoots : untrustedWriteRoots,
+      );
       const manifest = parsePortableTextManifest(
         embedded ?? fs.readFileSync(manifestPath, 'utf8'),
       );
@@ -1262,7 +1267,9 @@ export function resolveWindowsNativeArtifact(
   for (const directory of artifactDirectories(moduleUrl, trustedManifestText !== undefined)) {
     const manifestPath = path.join(directory, 'manifest.json');
     try {
-      assertDevelopmentSourceIsOutsideWriteRoots(directory, options.untrustedWriteRoots ?? []);
+      assertDevelopmentSourceIsOutsideWriteRoots(directory, trustedManifestText === undefined
+        ? options.developmentWriteRoots ?? options.untrustedWriteRoots ?? []
+        : options.untrustedWriteRoots ?? []);
       const { manifest, entry } = parseManifestEntryText(
         trustedManifestText ?? fs.readFileSync(manifestPath, 'utf8'),
         kind,

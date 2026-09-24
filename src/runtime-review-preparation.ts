@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { assertNoGitInstallPrompt } from "@kodax-ai/agent";
 import { writeReviewPackets } from "@kodax-ai/coding";
 import {
   buildLeanReviewPrompt,
@@ -23,6 +24,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 async function git(args: string[], cwd: string): Promise<string> {
+  await assertNoGitInstallPrompt({ cwd });
   const { stdout } = await execFileAsync("git", args, {
     cwd,
     maxBuffer: 64 * 1024 * 1024,

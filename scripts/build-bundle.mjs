@@ -164,9 +164,10 @@ function assertStartupImportBoundary(label, result, options = {}) {
   );
 }
 
-function assertStartupInputBoundary(label, result, forbiddenInputs) {
+function assertStartupInputBoundary(label, result, forbiddenInputs, allowedInputs = []) {
   const inputs = Object.keys(result.metafile?.inputs ?? {})
-    .map((input) => input.replaceAll('\\', '/'));
+    .map((input) => path.relative(repoRoot, path.resolve(repoRoot, input)).replaceAll('\\', '/'))
+    .filter((input) => !allowedInputs.includes(input));
   const violations = forbiddenInputs.filter((forbidden) =>
     inputs.some((input) => forbidden.endsWith('/')
       ? input.includes(forbidden)
@@ -426,6 +427,10 @@ assertStartupInputBoundary('Resume', resumeResult, [
   'packages/llm/',
   'packages/repl/src/interactive/storage.ts',
   'packages/repl/src/session/conversation-page-cache.ts',
+], [
+  // This Node-only leaf protects resume discovery without loading the agent/LLM graph.
+  'packages/agent/src/runtime/macos-git.ts',
+  'packages/agent/dist/runtime/macos-git.js',
 ]);
 const resumeBytes = statSync(path.join(distDir, 'kodax_resume.js')).size;
 assertBundleSize('Resume', resumeBytes, 160 * 1024);

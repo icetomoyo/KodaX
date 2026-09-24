@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isCurrentProcessWindowsJobContained } from '@kodax-ai/agent';
+import { isCurrentProcessWindowsJobContained, setKodaXDiagnosticSink } from '@kodax-ai/agent';
 
 import type {
   KodaXRuntime,
@@ -14,7 +14,7 @@ import {
   runtimeDaemonEndpointFromState,
   type RuntimeDaemonHealthCheckOptions,
 } from './lifecycle.js';
-import { startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
+import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   assertRuntimeDaemonOwnerAllowed,
   readRuntimeOwnerProcessStartIdentity,
@@ -79,13 +79,8 @@ export async function acquireRuntimeDaemonLease(
     process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID ?? '',
     10,
   );
-  const jobContained = isCurrentProcessWindowsJobContained()
-    && Number.isSafeInteger(supervisorPid)
-    && supervisorPid > 0;
-  const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
-  const supervisorProcessStartIdentity = jobContained
-    ? readRuntimeOwnerProcessStartIdentity(supervisorPid)
-    : undefined;
+  const { jobContained, processStartIdentity, supervisorProcessStartIdentity } =
+    readOwnerIdentityWithDiagnostics(paths, supervisorPid);
   if (jobContained && supervisorProcessStartIdentity === undefined) {
     throw new Error(
       'Could not read the Windows Job supervisor process identity; refusing PID-only ownership.',
@@ -126,6 +121,25 @@ export async function acquireRuntimeDaemonLease(
 
 function resolveRuntimeDaemonHomeDir(homeDir: string | undefined): string {
   return path.resolve(homeDir ?? os.homedir());
+}
+
+function readOwnerIdentityWithDiagnostics(paths: RuntimeDaemonPaths, supervisorPid: number) {
+  // These existing synchronous probes precede the host's diagnostic sink.
+  const restore = setKodaXDiagnosticSink((diagnostic) => {
+    if (diagnostic.source === 'runtime:windows') appendRuntimeDiagnostic(paths, diagnostic);
+  });
+  try {
+    const jobContained = isCurrentProcessWindowsJobContained()
+      && Number.isSafeInteger(supervisorPid)
+      && supervisorPid > 0;
+    const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
+    const supervisorProcessStartIdentity = jobContained
+      ? readRuntimeOwnerProcessStartIdentity(supervisorPid)
+      : undefined;
+    return { jobContained, processStartIdentity, supervisorProcessStartIdentity };
+  } finally {
+    restore();
+  }
 }
 
 async function waitForDaemonLease(

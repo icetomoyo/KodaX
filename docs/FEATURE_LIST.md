@@ -11,25 +11,27 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.8` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-rc.8` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.11` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.11` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.8` |
-| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T47 implemented; release verification pending (Vitest reporting timeout remains) |
-| Total tracked features | `83` |
+| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.11` |
+| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T47 implemented; [2026-09-24 merge verification](research/mainline-merge-gap-audit-2026-09-24.md) completed without reporter timeout; cross-platform/manual release verification pending |
+| Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
+| Total tracked features | `84` |
 | InProgress | `2` |
-| Planned | `16` |
+| Planned | `17` |
 | Completed | `59` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.8; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.11; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: prior core implementation and automated evidence retained; 2026-09-18 consumer-completion T38–T42 implemented and reviewed; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
+| Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -82,6 +84,7 @@
 | `v0.7.95` | `0` |
 | `v0.7.96` | `0` |
 | `v0.7.97` | `1` |
+| `v0.7.99` | `1` |
 | `v0.7.100` | `0` |
 | `v0.7.105` | `0` |
 | `v0.8.10` | `5` |
@@ -518,9 +521,55 @@
 
 ---
 
+## v0.7.96-rc.11 Release Record
+
+`v0.7.96-rc.11` is the eleventh release candidate of the v0.7.96 line.
+SDK-owned background Git calls preflight the macOS system Git shim: a shared
+DEVELOPER_DIR-aware platform guard detects the known developer-tools-missing
+condition (exit code 2 only, TTL-cached, concurrent probes shared, and
+recoverable after installation) so repo-intelligence, worktree, changed-diff,
+checkpoint, agent-adapter, worktree-sweep, session-snapshot, REPL helpers,
+and synchronous memory paths no longer repeat Apple's developer-tools
+installation prompt. Ordinary Git on PATH, independent Git, and arbitrary
+Bash/PTY commands are unchanged. FEATURE_300 is added as planned design-only
+work for v0.7.99 (Issue 339). Every rc.10 contract is retained. npm
+publication remains a manual maintainer step.
+
+## v0.7.96-rc.10 Release Record
+
+`v0.7.96-rc.10` was the tenth release candidate of the v0.7.96 line. Runtime
+shutdown owns and drains the background work it starts: managed terminal
+maintenance and memory setup/finalization IO plus background review drains
+are registered with the owning Runtime, close refuses new work and awaits
+already-started work before releasing resources, and managed execution
+finishes its durable memory finalization before publishing completion.
+Edits-mode `edit`/`write` no longer reject ordinary project files when a
+workspace root contains protected native state: trusted text transaction
+cache protection targets only the authorized canonical file while
+development artifact trust still checks every authorized write root. The MCP
+image-validation cancellation fixture is stabilized against legal
+initialization delays. Every rc.9 contract is retained. npm publication
+remains a manual maintainer step.
+
+## v0.7.96-rc.9 Release Record
+
+`v0.7.96-rc.9` was the ninth release candidate of the v0.7.96 line. A
+one-shot startup handoff arbitrates Windows daemon publication against
+launcher loss: unpublished daemon startup trees and their Job descendants
+are reclaimed while published shared services and other clients' execution
+stay untouched (Issue 337). Daemon state replacement retries only contended
+Windows EPERM while atomically publishing the same flushed state under a
+bounded monotonic failure budget; permanent errors and staging cleanup are
+preserved and ownership ordering is unchanged, so concurrent JSON readers no
+longer break replacement (Issue 338). Windows Runtime identity probes emit
+structured lifecycle diagnostics through `setKodaXDiagnosticSink` with
+bounded evidence and no commands, environment, output, or identity values.
+Every rc.8 contract is retained. npm publication remains a manual maintainer
+step.
+
 ## v0.7.96-rc.8 Release Record
 
-`v0.7.96-rc.8` is the eighth release candidate of the v0.7.96 line. Custom
+`v0.7.96-rc.8` was the eighth release candidate of the v0.7.96 line. Custom
 OpenAI-compatible reasoning is negotiated from `auto`: rejected efforts lower
 through explicit levels without losing disable intent, hard-rejection caches
 span streaming and non-streaming turns, and requested/sent effort plus
@@ -1794,6 +1843,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
 | `278` | Durable AskUser History Projection + Compact SDK/REPL Visualization | Enhancement / SDK + Session UX | High | `v0.8.10` | [v0.8.10](features/v0.8.10.md#feature_278-durable-askuser-history-projection--compact-sdkrepl-visualization) |
@@ -1810,6 +1860,20 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-09-23 FEATURE_300 Addition
+
+- Status: Planned; target `v0.7.99`; implementation has not started.
+- Category / Priority: Refactor / Medium.
+- Design: [Git Execution Consolidation with Shared macOS Preflight](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight).
+- Scope: coding owns ordinary `runGit` / `runGitSync`; agent shares only the
+  macOS platform check and preserves synchronous memory identity rules. Space
+  large-output handling and worktree governance retain their dedicated executors.
+  Lock existing behavior with tests before migrating callers in batches.
+- This future consolidation is separate from the current macOS popup fix;
+  arbitrary Bash/PTY execution, package versions and current release state are unchanged.
 
 ---
 

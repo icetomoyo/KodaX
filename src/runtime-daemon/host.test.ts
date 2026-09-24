@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -42,6 +43,7 @@ import {
   readRuntimeOwnerPolicy,
   resolveRuntimeDaemonPaths,
   tryAcquireRuntimeDaemonLock,
+  writeRuntimeDaemonState,
 } from "./state.js";
 import {
   createRuntimeDaemonSocketClientTransport,
@@ -148,6 +150,29 @@ async function exerciseBrokerTakeover(
 const tempRoots: string[] = [];
 const cleanupTasks: Array<() => Promise<void>> = [];
 
+function interruptStatePublication(stateFile: string, failures: Record<string, number>) {
+  const original = fsDefault.renameSync;
+  const error = Object.assign(new Error("Injected daemon state sharing violation"), { code: "EPERM" });
+  fsDefault.renameSync = (source, destination) => {
+    if (String(destination) === stateFile) {
+      const state = JSON.parse(fs.readFileSync(String(source), "utf8")) as { status: string };
+      if ((failures[state.status] ?? 0) > 0) {
+        failures[state.status] -= 1;
+        throw error;
+      }
+    }
+    original(source, destination);
+  };
+  syncBuiltinESMExports();
+  return {
+    error,
+    restore() {
+      fsDefault.renameSync = original;
+      syncBuiltinESMExports();
+    },
+  };
+}
+
 afterEach(async () => {
   const tasks = cleanupTasks.splice(0);
   await Promise.allSettled(tasks.map((task) => task()));
@@ -157,6 +182,81 @@ afterEach(async () => {
 });
 
 describe("runtime daemon host", () => {
+  it.runIf(process.platform === "win32")("survives transient state publication contention across ready and concurrent close", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const close = vi.spyOn(runtime, "close");
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected host publication test lock.");
+    const failure = interruptStatePublication(paths.stateFile, { ready: 1, stopping: 1 });
+    try {
+      const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: await makeTestEndpoint() });
+      cleanupTasks.push(() => host.close());
+      const ready = readRuntimeDaemonState(paths);
+      expect(ready).toMatchObject({ status: "ready", runtimeId: runtime.identity.runtimeId });
+      expect(close).not.toHaveBeenCalled();
+      const first = host.close();
+      expect(host.close()).toBe(first);
+      await expect(first).resolves.toBeUndefined();
+      await expect(host.closed).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(readRuntimeDaemonState(paths)).toBeUndefined();
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+
+      if (!ready) throw new Error("Expected published ready state.");
+      const replacement = { ...lock.owner, runtimeId: "replacement-runtime" };
+      expect(tryAcquireRuntimeDaemonLock(paths, replacement)).toBeDefined();
+      writeRuntimeDaemonState(paths, { ...ready, runtimeId: replacement.runtimeId });
+      await host.close();
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toEqual(replacement);
+      expect(readRuntimeDaemonState(paths)?.runtimeId).toBe(replacement.runtimeId);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally { failure.restore(); }
+  });
+
+  it.runIf(process.platform === "win32")("rejects persistent ready publication failure without advertising a ready host", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const endpoint = await makeTestEndpoint();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected host publication test lock.");
+    const failure = interruptStatePublication(paths.stateFile, { ready: Infinity });
+    try {
+      await expect(startRuntimeDaemonHost({ runtime, paths, lock, endpoint })).rejects.toBe(failure.error);
+      expect(readRuntimeDaemonState(paths)).toBeUndefined();
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+      expect(fs.readFileSync(paths.logFile, "utf8")).not.toContain("Runtime daemon ready.");
+      await expect(createRuntimeDaemonSocketClientTransport(endpoint)).rejects.toThrow();
+    } finally { failure.restore(); }
+  });
+
+  it.runIf(process.platform === "win32")("reports persistent stopping publication failure without repeating Runtime cleanup", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const close = vi.spyOn(runtime, "close");
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected host publication test lock.");
+    const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: await makeTestEndpoint() });
+    cleanupTasks.push(() => host.close());
+    const failure = interruptStatePublication(paths.stateFile, { stopping: Infinity });
+    try {
+      const first = host.close();
+      expect(host.close()).toBe(first);
+      await expect(first).rejects.toThrow("state transition: Injected daemon state sharing violation");
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    } finally { failure.restore(); }
+    await expect(host.close()).resolves.toBeUndefined();
+    await expect(host.closed).resolves.toBeUndefined();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('does not publish an endpoint when its startup handoff was cancelled', async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
     const runtime = makeRuntime();

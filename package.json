@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/kodax",
-  "version": "0.7.96-rc.8",
+  "version": "0.7.96-rc.11",
   "description": "KodaX lightweight coding agent - TypeScript implementation with 16 built-in LLM provider aliases, published as a Node-free single-file CLI and SDK",
   "type": "module",
   "private": true,
@@ -105,7 +105,7 @@
     "build:binary": "node scripts/build-binary.mjs",
     "build:binary:all": "node scripts/build-binary.mjs --all",
     "test": "vitest run",
-    "test:bundle": "node --test tests/bundled-provider-credentials.test.mjs tests/bundled-daemon-compaction.test.mjs tests/bundled-text-permissions.test.mjs tests/bundled-image-validation.test.mjs tests/bundled-text-recovery.test.mjs tests/image-codec-release.test.mjs tests/asrt-wfp-probe.test.mjs tests/asrt-wfp-build.test.mjs",
+    "test:bundle": "node --test tests/bundled-provider-credentials.test.mjs tests/bundled-daemon-compaction.test.mjs tests/bundled-memory-review-shutdown.test.mjs tests/bundled-text-permissions.test.mjs tests/bundled-image-validation.test.mjs tests/bundled-text-recovery.test.mjs tests/image-codec-release.test.mjs tests/asrt-wfp-probe.test.mjs tests/asrt-wfp-build.test.mjs",
     "test:native": "node scripts/test-native.mjs",
     "test:packed-native": "node scripts/test-packed-native.mjs",
     "test:fast": "vitest run -c vitest.fast.config.ts",

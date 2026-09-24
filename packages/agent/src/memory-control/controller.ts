@@ -776,9 +776,11 @@ export class MemoryControlPlane implements MemoryManagementController {
     };
   }
 
-  async reviewMemoryFeedback(input: MemoryReviewInput): Promise<MemoryReviewPlan> {
+  async reviewMemoryFeedback(input: MemoryReviewInput, signal?: AbortSignal): Promise<MemoryReviewPlan> {
+    signal?.throwIfAborted();
     const createdAt = this.now();
     const modelInput = await this.prepareReviewInput(input);
+    signal?.throwIfAborted();
     const sourceRefs = modelInput.sourceRefs;
 
     if (this.memoryReviewer === undefined) {
@@ -798,7 +800,14 @@ export class MemoryControlPlane implements MemoryManagementController {
       return plan;
     }
 
-    const reviewed = await this.memoryReviewer(modelInput);
+    let reviewed: MemoryReviewPlan;
+    try {
+      reviewed = await this.memoryReviewer(modelInput, signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw error;
+    }
+    signal?.throwIfAborted();
     const plan: MemoryReviewPlan = input.episodeDigest === undefined
       ? reviewed
       : { ...reviewed, episodeDigest: input.episodeDigest };
@@ -1072,7 +1081,7 @@ export class MemoryControlPlane implements MemoryManagementController {
       userFeedback: digest.summary,
       task: digest.objective,
       sourceRefs: digest.evidenceRefs,
-    });
+    }, signal);
     return this.applyReviewedEpisode(plan, digest, signal);
   }
 
@@ -1096,7 +1105,9 @@ export class MemoryControlPlane implements MemoryManagementController {
     const plan = reviewedPlan.episodeDigest === digest
       ? reviewedPlan
       : { ...reviewedPlan, episodeDigest: digest };
-    if (isAborted(signal)) return cancelledEpisodeReview(plan, 'episode review timed out');
+    // Before the first durable effect, cancellation must remain retryable work.
+    // Returning an empty success here would let legacy drains commit a receipt.
+    signal?.throwIfAborted();
     const persisted = await this.persistReviewPlanWithDecisions(plan, revalidateAuthority);
     const proposalIds = persisted.proposalIds;
     const appliedProposalIds: string[] = [];
@@ -3146,19 +3157,6 @@ function skippedApply(proposalId: string, skippedReason: string): MemoryApplyRes
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
-}
-
-function cancelledEpisodeReview(
-  plan: MemoryReviewPlan,
-  warning: string,
-): MemoryEpisodeReviewResult {
-  return {
-    plan,
-    proposalIds: [],
-    appliedProposalIds: [],
-    decisions: [],
-    warnings: [...plan.warnings, warning],
-  };
 }
 
 function lifecycleNotFound(

@@ -8,6 +8,95 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.11] - 2026-09-23
+
+Eleventh release candidate of the v0.7.96 line: SDK-owned background Git
+calls on macOS preflight the system Git shim so a machine without usable
+command-line developer tools no longer receives repeated Apple installation
+prompts. Every rc.10 contract is retained. npm publication remains a manual
+maintainer action.
+
+### Fixed
+
+- Preflight the macOS system Git shim before SDK-owned Git calls
+  (`@kodax-ai/agent/runtime/macos-git`): the shared platform guard detects
+  the known developer-tools-missing condition only (exit code 2,
+  `DEVELOPER_DIR`-aware), caches probes with a bounded TTL, shares one probe
+  across concurrent callers, and recovers after installation with no
+  permanent disable state. Repo-intelligence, worktree, changed-diff,
+  managed-task checkpoint, agent-adapter, worktree-sweep, session-snapshot,
+  REPL helpers, and synchronous memory paths apply the guard while ordinary
+  Git on `PATH`, independent Git installations, and arbitrary Bash/PTY
+  commands remain unchanged (Issue 339). Worktree operations keep actionable
+  errors; synchronous memory identity keeps its remote-based identity and
+  local-path fallback rules. Native macOS on-device UI verification remains
+  recommended on real hardware.
+
+---
+
+## [0.7.96-rc.10] - 2026-09-22
+
+Tenth release candidate of the v0.7.96 line: Runtime shutdown now owns and
+drains the background work it starts, Edits-mode text tools no longer reject
+ordinary project files when a workspace root contains protected native state,
+and the MCP image-validation cancellation fixture is stabilized. Every rc.9
+contract is retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Drain owned managed terminal maintenance on Runtime close: the optional
+  repo-intelligence/artifact maintenance factory is registered with its own
+  Runtime before it can start, close stops accepting new optional maintenance
+  and waits for existing owned work before releasing Actor, executor, and
+  owner-liveness resources, so test workspaces are no longer held after
+  `Runtime.close()` returns. Run completion, successor admission, and Stop
+  stay independent of maintenance; shared repo caches are not cancelled.
+- Own and settle memory work on shutdown: Runtime registers its memory
+  setup/finalization IO and background review drains before execution; close
+  refuses new work, cancels pending review requests, and awaits
+  already-started work before releasing the owner. Managed execution finishes
+  its required durable memory finalization before publishing completion, the
+  classic finalizer owns learned-Skill outcome and binding-release IO, and
+  branch-authority setup checks cancellation before prompt/Git work. A caller
+  signal already aborted at entry settles as an interrupt terminal (defined
+  `KodaXResult`, terminal `onComplete`) instead of a raw rejection, keeping
+  the CAP-005-001b and CAP-086-003 contracts.
+- Scope trusted text transaction cache protection to the authorized canonical
+  target: Edits-mode `edit`/`write` no longer fail with `Runtime write policy
+  targets protected native text state` for ordinary project files when a
+  workspace root contains the protected native cache (for example a home
+  root). Development artifact trust still checks every authorized write root,
+  so a writable manifest cannot redefine trusted native bytes.
+
+---
+
+## [0.7.96-rc.9] - 2026-09-21
+
+Ninth release candidate of the v0.7.96 line: Windows daemon startup trees
+are reclaimed when a launcher dies before publication, contended daemon state
+replacement retries only Windows EPERM, and Windows Runtime identity probes
+gained structured, privacy-bounded lifecycle diagnostics. Every rc.8
+contract is retained. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Arbitrate daemon publication against launcher loss with a one-shot startup
+  handoff: unpublished daemon candidates and their Windows Job descendants are
+  reclaimed, while published shared services and other clients' execution are
+  preserved (Issue 337).
+- Retry only Windows EPERM while atomically publishing the same flushed
+  daemon state, under a bounded monotonic failure-path budget; permanent
+  errors and staging cleanup are preserved and ownership ordering is
+  unchanged, so concurrent JSON readers no longer break state replacement
+  (Issue 338).
+- Add structured Windows Runtime lifecycle diagnostics: `setKodaXDiagnosticSink`
+  reports boot identity, Job membership, process snapshot, start identity, and
+  exit-owner validation stages with bounded evidence and no commands,
+  environment, output, or identity values; probes, retries, and checks are
+  unchanged.
+
+---
+
 ## [0.7.96-rc.8] - 2026-09-17
 
 Eighth release candidate of the v0.7.96 line: custom OpenAI-compatible

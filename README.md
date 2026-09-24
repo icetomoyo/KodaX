@@ -784,6 +784,41 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.11 release:** Eleventh release candidate of the v0.7.96 line.
+SDK-owned background Git calls on macOS preflight the system Git shim: a
+shared `DEVELOPER_DIR`-aware platform guard (`@kodax-ai/agent/runtime/macos-git`)
+detects the known developer-tools-missing condition (exit code 2 only,
+TTL-cached probes shared across concurrent callers, recoverable after
+installation, no permanent disable state) so repo-intelligence, worktree,
+changed-diff, managed-task checkpoint, agent-adapter, worktree-sweep,
+session-snapshot, REPL helpers, and synchronous memory paths no longer
+repeat Apple's developer-tools installation prompt. Ordinary Git on `PATH`,
+independent Git, and arbitrary Bash/PTY commands are unchanged (Issue 339).
+Every rc.10 contract is retained.
+
+**v0.7.96-rc.10 release:** Tenth release candidate of the v0.7.96 line.
+Runtime shutdown owns and drains the background work it starts: managed
+terminal maintenance and memory setup/finalization IO plus background review
+drains are registered with the owning Runtime, close refuses new work and
+awaits already-started work before releasing resources, and managed execution
+finishes its durable memory finalization before publishing completion.
+Edits-mode `edit`/`write` no longer reject ordinary project files when a
+workspace root contains protected native state: trusted text transaction
+cache protection targets only the authorized canonical file while
+development artifact trust still checks every authorized write root. Every
+rc.9 contract is retained.
+
+**v0.7.96-rc.9 release:** Ninth release candidate of the v0.7.96 line.
+Arbitrates daemon publication against launcher loss with a one-shot startup
+handoff: unpublished Windows daemon startup trees and their Job descendants
+are reclaimed while published shared services stay untouched (Issue 337).
+Windows daemon state replacement retries only contended EPERM while
+atomically publishing the same flushed state under a bounded failure budget,
+so concurrent JSON readers no longer break replacement (Issue 338). Windows
+Runtime identity probes emit structured lifecycle diagnostics through
+`setKodaXDiagnosticSink` with bounded evidence and no commands, environment,
+output, or identity values. Every rc.8 contract is retained.
+
 **v0.7.96-rc.8 release:** Eighth release candidate of the v0.7.96 line.
 Custom OpenAI-compatible reasoning is negotiated from `auto`: rejected
 efforts lower through explicit levels without losing disable intent,
@@ -932,7 +967,7 @@ requests, preserves structured Child Agent Provider failures, honors exact
 run-scoped credential verification, and omits empty `tools` arrays for strict
 vLLM gateways (Issues 329-332). npm publication remains a
 manual maintainer action. See the
-[release checklist](docs/release.md#v0796-rc8-release-preparation).
+[release checklist](docs/release.md#v0796-rc9-release-preparation).
 
 **v0.7.96-alpha.3 release:** Provider credentials are lazy, scoped,
 revocable capabilities (ADR-068). The v2 credential broker keeps Provider
