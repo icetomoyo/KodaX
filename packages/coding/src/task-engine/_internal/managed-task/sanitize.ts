@@ -137,29 +137,7 @@ export function findIncompleteManagedFenceIndex(text: string): number {
 }
 
 export function sanitizeManagedUserFacingText(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return '';
-  }
-  let cutIndex = -1;
-  for (const marker of MANAGED_CONTROL_PLANE_MARKERS) {
-    const index = trimmed.indexOf(marker);
-    if (index >= 0 && (cutIndex === -1 || index < cutIndex)) {
-      cutIndex = index;
-    }
-  }
-  if (cutIndex === 0) {
-    return '';
-  }
-  let visibleText = (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
-  // Strip complete managed fences (with closing ```).
-  for (;;) {
-    const stripped = visibleText.replace(/\r?\n?```kodax[\w-]*\s*[\s\S]*?```\s*$/i, '').trim();
-    if (stripped === visibleText) {
-      break;
-    }
-    visibleText = stripped;
-  }
+  let visibleText = sanitizeManagedOutputText(text).trim();
   // Strip trailing incomplete managed fence (no closing ``` — max_tokens truncation).
   const incompleteFenceIdx = findIncompleteManagedFenceIndex(visibleText);
   if (incompleteFenceIdx >= 0) {
@@ -169,29 +147,7 @@ export function sanitizeManagedUserFacingText(text: string): string {
 }
 
 export function sanitizeManagedStreamingText(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  let cutIndex = -1;
-  for (const marker of MANAGED_CONTROL_PLANE_MARKERS) {
-    const index = trimmed.indexOf(marker);
-    if (index >= 0 && (cutIndex === -1 || index < cutIndex)) {
-      cutIndex = index;
-    }
-  }
-
-  const incompleteManagedFenceIndex = findIncompleteManagedFenceIndex(trimmed);
-  if (incompleteManagedFenceIndex >= 0 && (cutIndex === -1 || incompleteManagedFenceIndex < cutIndex)) {
-    cutIndex = incompleteManagedFenceIndex;
-  }
-
-  if (cutIndex === 0) {
-    return '';
-  }
-
-  return (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
+  return sanitizeManagedUserFacingText(text);
 }
 
 const OUTPUT_MARKERS = [...MANAGED_CONTROL_PLANE_MARKERS, '```kodax'];
@@ -200,7 +156,10 @@ const OUTPUT_MARKERS = [...MANAGED_CONTROL_PLANE_MARKERS, '```kodax'];
 export function createManagedOutputTextFilter(): { push(text: string): string; finish(): string } {
   let pending = '';
   let stopped = false;
-  let lastCharacter = '';
+  // Only a control line can terminate public output. Prose that quotes a
+  // marker (for example a code review of this filter) is ordinary text.
+  // Retain only whitespace/list-prefix state, never the accumulated answer.
+  let linePrefix: string | undefined = '';
   return {
     push(text) {
       if (stopped) return '';
@@ -208,11 +167,14 @@ export function createManagedOutputTextFilter(): { push(text: string): string; f
       const lower = next.toLowerCase();
       let cut = next.length;
       let held = 0;
+      const isBoundary = (index: number): boolean => {
+        const start = index > 0 ? next.lastIndexOf('\n', index - 1) + 1 : 0;
+        if (start === 0 && linePrefix === undefined) return false;
+        const prefix = (start === 0 ? linePrefix : '') + next.slice(start, index);
+        return /^[\t \r]*(?:[-*+][\t ]+)?$/.test(prefix);
+      };
       for (const marker of OUTPUT_MARKERS) {
         const source = marker === '```kodax' ? lower : next;
-        const wordMarker = /^[A-Za-z]/.test(marker);
-        const isBoundary = (index: number): boolean => !wordMarker
-          || !/[A-Za-z0-9_]/.test(next[index - 1] ?? lastCharacter);
         let index = source.indexOf(marker);
         while (index >= 0 && !isBoundary(index)) index = source.indexOf(marker, index + 1);
         if (index >= 0) { cut = Math.min(cut, index); stopped = true; }
@@ -223,7 +185,12 @@ export function createManagedOutputTextFilter(): { push(text: string): string; f
       if (stopped) { pending = ''; return next.slice(0, cut); }
       pending = held > 0 ? next.slice(-held) : '';
       const visible = next.slice(0, next.length - held);
-      lastCharacter = visible.at(-1) ?? lastCharacter;
+      const lineStart = visible.lastIndexOf('\n') + 1;
+      if (lineStart > 0 || linePrefix !== undefined) {
+        const prefix = (lineStart > 0 ? '' : linePrefix) + visible.slice(lineStart);
+        linePrefix = /^[\t \r]*(?:[-*+][\t ]*)?$/.test(prefix)
+          ? prefix.replace(/[\t \r]+/g, ' ') : undefined;
+      }
       return visible;
     },
     finish() {

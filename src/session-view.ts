@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, getSessionLineagePath } from '@kodax-ai/agent';
 import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
@@ -640,6 +640,83 @@ function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[]
   });
 }
 
+function locateLineageMessages(data: KodaXSessionData, messages: readonly KodaXMessage[]): ReadonlyMap<number, KodaXMessage> {
+  const entries = data.lineage?.entries ?? [];
+  const activeIds = new Set(data.lineage ? getSessionLineagePath(data.lineage).map(entry => entry.id) : []);
+  const located = new Map<number, KodaXMessage>();
+  let cursor = entries.length - 1;
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]!;
+    let index = entries.findIndex((entry, position) => position <= cursor && entry.type === 'message' && entry.message === message);
+    if (index < 0) {
+      for (let candidate = cursor; candidate >= 0; candidate -= 1) {
+        const entry = entries[candidate]!;
+        if (entry.type !== 'message' || entry.message.role !== message.role) continue;
+        const source = entry.message;
+        const matches = message.outputId !== undefined || source.outputId !== undefined ? message.outputId === source.outputId
+          : message.inputId !== undefined || source.inputId !== undefined ? message.inputId === source.inputId
+          : activeIds.has(entry.id) && message._source === source._source && message._synthetic === source._synthetic
+            && JSON.stringify(message.content) === JSON.stringify(source.content);
+        if (matches) { index = candidate; break; }
+      }
+    }
+    if (index < 0) continue;
+    located.set(index, message);
+    cursor = index - 1;
+  }
+  return located;
+}
+
+type NoticeAnchor = Pick<ClientViewItem, 'type' | 'text' | 'inputId' | 'outputId'> & { entryIndex: number; callId?: string };
+
+function noticeAnchors(data: KodaXSessionData, messages: readonly KodaXMessage[], items: readonly ClientViewItem[]): NoticeAnchor[] {
+  const located = locateLineageMessages(data, messages);
+  const visibleCalls = new Set(items.flatMap(item => item.tool ? [item.tool.callId] : []));
+  return (data.lineage?.entries ?? []).flatMap((entry, entryIndex): NoticeAnchor[] => {
+    if (!located.has(entryIndex)) return entry.type !== 'message' || typeof entry.message.content === 'string' ? []
+      : entry.message.content.flatMap(block => block.type === 'tool_use' && visibleCalls.has(block.id)
+        ? [{ entryIndex, type: 'tool', callId: block.id, text: '' }] : []);
+    return restoreHistoryItemsFromSession({ messages: [located.get(entryIndex)!] }).flatMap((item): NoticeAnchor[] => item.type === 'tool_group'
+      ? item.tools.map(tool => ({ entryIndex, type: 'tool' as const, callId: tool.id, inputId: undefined, outputId: undefined, text: '' }))
+      : [{ entryIndex, type: item.type, callId: undefined, inputId: item.inputId, outputId: item.outputId, text: item.text }]);
+  });
+}
+
+function restoreLineageNotices(data: KodaXSessionData, messages: readonly KodaXMessage[], items: ClientViewItem[]): ClientViewItem[] {
+  const entries = data.lineage?.entries ?? [];
+  if (!entries.some(entry => entry.type === 'client_notice')) return items;
+  const sources = noticeAnchors(data, messages, items);
+  const anchors = new Map<number, number>();
+  let cursor = sources.length - 1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    for (let sourceIndex = cursor; sourceIndex >= 0; sourceIndex -= 1) {
+      const source = sources[sourceIndex]!;
+      if (item.type !== source.type) continue;
+      const matches = item.tool ? item.tool.callId === source.callId
+        : item.outputId !== undefined || source.outputId !== undefined ? item.outputId === source.outputId
+        : item.inputId !== undefined || source.inputId !== undefined ? item.inputId === source.inputId
+        : item.text === source.text;
+      if (!matches) continue;
+      anchors.set(index, source.entryIndex);
+      cursor = sourceIndex - 1;
+      break;
+    }
+  }
+  const insertions = new Map<number, ClientViewItem[]>();
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex]!;
+    if (entry.type !== 'client_notice') continue;
+    const boundary = items.findIndex((_item, index) => (anchors.get(index) ?? -1) > entryIndex);
+    const index = boundary < 0 ? items.length : boundary;
+    const notices = insertions.get(index) ?? [];
+    notices.push({ id: entry.id, type: 'info', text: entry.content, timestamp: Date.parse(entry.timestamp) });
+    insertions.set(index, notices);
+  }
+  return items.flatMap((item, index) => [...(insertions.get(index) ?? []), item])
+    .concat(insertions.get(items.length) ?? []);
+}
+
 /**
  * The conversation messages are the canonical history source (they include
  * pre-compaction entries resolved from lineage); the storage tail is the
@@ -665,8 +742,9 @@ export function restoreSessionViewItems(
   // A canonical save can precede the display checkpoint. Reuse the current
   // display identities during reconciliation instead of showing both versions.
   const liveIds = new Set(liveItems.map(item => item.id));
+  const noticeIds = new Set((data.lineage?.entries ?? []).flatMap(entry => entry.type === 'client_notice' ? [entry.id] : []));
   const uiHistory = [...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
-    ...persistSessionViewItems(savedLiveItems)];
+    ...persistSessionViewItems(savedLiveItems)].filter(item => !item.id || !noticeIds.has(item.id));
   const persisted = restorePersistedViewItems(uiHistory);
   // Display-identity reconciliation is identity-first: an accepted input
   // joins its persisted display item by inputId only, so same-text inputs
@@ -741,10 +819,7 @@ export function restoreSessionViewItems(
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...('icon' in item ? { icon: item.icon } : {}), ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
   });
-  for (const entry of data.lineage?.entries ?? []) {
-    if (entry.type === 'client_notice') items.push({ id: entry.id, type: 'info', text: entry.content, timestamp: Date.parse(entry.timestamp) });
-  }
-  return items.slice(-150);
+  return restoreLineageNotices(data, historyMessages, items).slice(-150);
 }
 
 export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaXSessionUiHistoryItem[] {

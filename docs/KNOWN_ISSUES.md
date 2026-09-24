@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-23_
+_Last Updated: 2026-09-24_
 
 ---
 
@@ -1074,6 +1074,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 343 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
+| 342 | Medium | needs-info | Normal REPL scrolling reportedly stops after a long tool turn | observed at `d552be47`; first affected version unknown | — | 2026-09-24 | — |
+| 341 | High | Resolved | Quoted managed protocol markers truncate ordinary assistant answers | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
+| 340 | High | Resolved | Partial conversation pages place the final answer before older tools | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
 | 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 337 | High | Resolved | Windows startup candidate survives launcher death; safe handoff must preserve concurrent clients | confirmed v0.7.96-rc.8; first affected release unknown | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
@@ -1300,6 +1304,96 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 343: Historical client notices displace the following Run output from the viewport tail
+
+- **Priority / Status**: High / Resolved (reproduced and ready before fixing).
+- **Introduced**: Confirmed at `d552be47`; first affected version unknown.
+- **Created**: 2026-09-24.
+- **Original Problem**: Append enough client notices to exceed the viewport,
+  then submit another prompt. The Host has the new assistant delta, but its view
+  places all older notices after that answer. The terminal bottom shows old
+  notices and a Thinking indicator instead of the current response.
+- **Context / Root Cause**: Discovered by the complete PTY sequence after the
+  ordinary-mode scrolling check. `restoreSessionViewItems` appended every
+  lineage `client_notice` after all restored messages, losing chronological
+  placement. Expected notices to retain their lineage position across later
+  inputs, checkpointing, and reload.
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased) / 2026-09-24.
+- **Resolution**: Place notices at lineage boundaries using message and tool
+  identities, including visible tools outside the current conversation page.
+  Deduplicate checkpointed notices by entry ID. Unidentified legacy messages
+  prefer object references, then exact content in the active lineage path,
+  matched backwards to the latest occurrence. No timestamp sorting is used.
+  Session-level notice visibility remains unchanged; no-notice restores return
+  before performing the additional alignment.
+- **Files Changed**: `src/session-view.ts`.
+- **Tests Added**: `src/session-view.notices-order.test.ts` covers public
+  observation, paging, checkpoint deduplication, stable output ownership,
+  misleading notice timestamps, repeated legacy text and window-external tools.
+  The PTY scrolling probe is followed by a streaming/Stop/next-input check.
+
+### Issue 342: Normal REPL scrolling reportedly stops after a long tool turn
+
+- **Priority / Status**: Medium / needs-info
+- **Introduced**: Observed at `d552be47`; first affected version unknown.
+- **Created**: 2026-09-24.
+- **Original Problem**: After a long tool turn the ordinary prompt reportedly
+  cannot scroll, while Ctrl+O transcript mode can. Expected both owned fullscreen
+  views to scroll their history and preserve the input draft.
+- **Context**: Same Session as Issues 340–341. A read-only copy of its history
+  was replayed in isolated PTYs before and after the fixes. Both wheel and
+  PageUp worked in both versions; this does not reproduce the reported terminal.
+- **Missing information**: Whether the failure uses the mouse wheel, PageUp/
+  PageDown, or both; if it persists, terminal dimensions and fullscreen setting.
+- **Tests added**: `tests/repl-pty-acceptance.mjs --prompt-scroll-only` checks
+  wheel, PageUp, End and draft retention in ordinary mode. This is regression
+  coverage, not proof that the reported scrolling failure is resolved.
+
+### Issue 341: Quoted managed protocol markers truncate ordinary assistant answers
+
+- **Priority / Status**: High / Resolved (reproduced and ready before fixing).
+- **Introduced**: Confirmed at `d552be47`; first affected version unknown.
+- **Fixed**: v0.7.96-rc.11 worktree (unreleased).
+- **Created / Resolution Date**: 2026-09-24.
+- **Original Problem**: A code-review answer quoting a managed protocol marker
+  stops mid-sentence although the Run completes successfully. Expected quoted
+  examples and the following prose to survive in live output and final results.
+- **Context / Root Cause**: Both the streaming filter and final-result sanitizer
+  matched internal markers inside ordinary prose. The streaming filter latched
+  permanently; fixing only it still left AMA `runs.await().result.lastText`
+  truncated by the final sanitizer.
+- **Resolution**: Share the control-line boundary filter between streaming and
+  final sanitization. Inline quotes remain ordinary text; actual control headers
+  and protocol fences still terminate public output. The historical suffix was
+  not persisted, so this fix cannot reconstruct that missing text.
+- **Files Changed**: `packages/coding/src/task-engine/_internal/managed-task/sanitize.ts`.
+- **Tests Added**: `llm-adapter-output.test.ts` checks every two-chunk split of
+  three quoted-marker answers; `src/sdk-client.streaming.test.ts` checks SA/AMA
+  public Host result and Session view text against the full scripted answer.
+
+### Issue 340: Partial conversation pages place the final answer before older tools
+
+- **Priority / Status**: High / Resolved (reproduced and ready before fixing).
+- **Introduced**: Confirmed at `d552be47`; first affected version unknown.
+- **Fixed**: v0.7.96-rc.11 worktree (unreleased).
+- **Created / Resolution Date**: 2026-09-24.
+- **Original Problem**: A completed long tool turn ends visually with tools and
+  a verifier notice, making its final answer appear absent in both prompt and
+  transcript. Expected the answer after the tools that preceded it.
+- **Context / Root Cause**: A bounded conversation page begins mid-turn while
+  the display checkpoint retains older tools. History alignment recognized only
+  text anchors, so it appended unmatched older tools after the canonical answer.
+  Passive observation of the affected Session placed the answer at index 90 and
+  the last tool at index 141 despite the answer's later timestamp.
+- **Resolution**: Match tool anchors by stable call IDs. Split mixed known/
+  unknown persisted groups for alignment so a matched call cannot drop its
+  window-external siblings. Canonical message ownership stays with the Host.
+- **Files Changed**: `packages/repl/src/ui/utils/restore-history.ts`.
+- **Tests Added**: `src/session-view.output-ownership.test.ts` exercises public
+  observation with a mid-turn page and separately grouped or coalesced tools.
+  Both wrong ordering and lost group siblings were reproduced before fixing.
+- **Manual validation**: See [regression guide](test-guides/ISSUE_340_v0.7.96-rc.11_REGRESSION_GUIDE.md).
 
 ### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
 
@@ -15378,7 +15472,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 218 (34 Open, 184 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 222 (35 Open including 1 needs-info, 187 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

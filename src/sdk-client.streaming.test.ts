@@ -20,6 +20,7 @@ it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input fa
   const toolGate = new Promise<void>(resolve => { releaseTool = resolve; });
   let firstRequest = true;
   const thought = 'Checking the existing file.';
+  const answer = 'The file documents `Tool policy:` and `[Managed Task Protocol Retry]`.\nFinal finding: these are quoted examples.';
   const toolInput = JSON.stringify({ path: 'fixture.txt' });
   const providerServer = createServer(async (request, response) => {
     for await (const _chunk of request) { /* Drain the real request before replying. */ }
@@ -35,7 +36,7 @@ it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input fa
       chunk({ tool_calls: [{ index: 0, function: { arguments: toolInput.slice(8) } }] });
       await toolGate;
       chunk({}, 'tool_calls');
-    } else chunk({ content: 'File checked.' }, 'stop');
+    } else chunk({ content: answer }, 'stop');
     response.end('data: [DONE]\n\n');
   });
   await new Promise<void>(resolve => providerServer.listen(0, '127.0.0.1', resolve));
@@ -79,9 +80,11 @@ it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input fa
       providerRequestId: thinking.providerRequestId, toolName: 'read', callId: 'read-fixture', charCount: toolInput.length });
     expect(JSON.stringify(views.at(-1)?.activity?.streaming)).not.toContain('fixture.txt');
     releaseTool();
-    expect(await client.runs.await(runId!)).toMatchObject({ phase: 'completed' });
+    const result = await client.runs.await(runId!);
     completed = true;
+    expect(result).toMatchObject({ phase: 'completed', result: { lastText: answer } });
     await expect.poll(() => views.at(-1)?.activity?.streaming).toBeUndefined();
+    await expect.poll(() => views.at(-1)?.items.filter(item => item.type === 'assistant').at(-1)?.text).toBe(answer);
   } finally {
     releaseThinking(); releaseTool(); observation.close();
     if (runId && !completed) await client.sessions.cancel({ sessionId: session.id, expectedRunId: runId, requestId: 'cleanup-stream' });

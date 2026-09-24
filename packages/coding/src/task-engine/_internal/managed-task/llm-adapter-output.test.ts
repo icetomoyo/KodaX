@@ -49,6 +49,16 @@ async function generate(turns: readonly (readonly string[])[], abortAfterText = 
 }
 
 describe('managed output text through the real provider adapter', () => {
+  it.each([
+    'Review: quoting `Tool policy:` must not hide the following finding.\nFinal finding.',
+    'Review: quoting `[Managed Task Protocol Retry]` must not stop the answer.\nFinal finding.',
+    'Review: the token ```kodax-task-verdict is documented here.\nFinal finding.',
+  ])('preserves quoted protocol descriptions across every provider chunk split: %s', async raw => {
+    for (let split = 0; split <= raw.length; split++) {
+      expect(await generate([[raw.slice(0, split), raw.slice(split)]]), `split at ${split}`)
+        .toEqual({ live: raw, final: raw, calls: 1 });
+    }
+  });
   it('emits an ordinary identifier suffix before the provider finishes', async () => {
     const text = 'BEGIN_ACCEPT_HOLD_AMA';
     await generate([[text]], false, 'max_tokens', live => expect(live).toBe(text));

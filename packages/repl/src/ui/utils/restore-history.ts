@@ -186,7 +186,7 @@ function hasDisplayPrefix(displayText: string, sourceText: string): boolean {
   return /^\[[^\]\r\n]+\]\s+$/.test(prefix);
 }
 
-function alignCanonicalTextItems(
+function alignCanonicalItems(
   persistedItems: readonly CreatableHistoryItem[],
   derivedItems: readonly CreatableHistoryItem[],
 ): ReadonlyMap<number, number> {
@@ -197,11 +197,15 @@ function alignCanonicalTextItems(
   // occurrence instead of an older round.
   for (let derivedIndex = derivedItems.length - 1; derivedIndex >= 0; derivedIndex -= 1) {
     const derived = derivedItems[derivedIndex];
-    if (!derived || derived.type === "tool_group") continue;
+    if (!derived) continue;
     for (let index = persistedCursor; index >= 0; index -= 1) {
       const persisted = persistedItems[index];
-      if (!persisted || persisted.type === "tool_group") continue;
-      if (!matchesTimestampSource(persisted, derived)) continue;
+      if (!persisted) continue;
+      const matches = derived.type === "tool_group"
+        ? persisted.type === "tool_group" && derived.tools.some(tool =>
+          persisted.tools.some(saved => saved.id === tool.id))
+        : persisted.type !== "tool_group" && matchesTimestampSource(persisted, derived);
+      if (!matches) continue;
       anchors.set(derivedIndex, index);
       persistedCursor = index - 1;
       break;
@@ -309,7 +313,7 @@ function alignCanonicalWindow(
 } {
   const anchors = new Map<number, number>();
   const outOfWindowPersistedIndices = new Set<number>();
-  const fullAnchors = alignCanonicalTextItems(persistedItems, fullDerivedItems);
+  const fullAnchors = alignCanonicalItems(persistedItems, fullDerivedItems);
   for (const [derivedIndex, persistedIndex] of fullAnchors) {
     if (derivedIndex < windowStartIndex) {
       outOfWindowPersistedIndices.add(persistedIndex);
@@ -483,9 +487,16 @@ export function restoreHistoryItemsFromSession(
 
   const inputAliases = new Map(input.messages.flatMap(message => message.inputId
     ? (message.inputIds ?? []).map(inputId => [inputId, message.inputId!] as const) : []));
+  const canonicalToolIds = collectCanonicalToolIds(fullDerivedItems);
   const persistedItems = dedupeToolGroups(persistedHistory
     .map(persistedUiHistoryItemToCreatableHistoryItem)
     .filter((item): item is CreatableHistoryItem => Boolean(item))
+    // A saved group can straddle the message page. Anchor its known calls
+    // individually so matching one cannot discard the older, UI-only calls.
+    .flatMap((item): CreatableHistoryItem[] => item.type === 'tool_group'
+      && item.tools.some(tool => canonicalToolIds.has(tool.id))
+      && item.tools.some(tool => !canonicalToolIds.has(tool.id))
+      ? item.tools.map(tool => ({ ...item, tools: [tool] })) : [item])
     .map(item => item.afterInputId && inputAliases.has(item.afterInputId)
       ? { ...item, afterInputId: inputAliases.get(item.afterInputId) } : item));
 

@@ -26,6 +26,7 @@ const longHistoryOnly = process.argv.includes('--long-history-only');
 const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
+const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -1001,6 +1002,27 @@ async function checkTranscriptKeys(state) {
   state.pending.get('ACCEPT_HOLD_TRANSCRIPT')();
 }
 
+async function checkPromptScroll(state) {
+  for (let index = 0; index < 24; index += 1) {
+    await state.client.sessions.appendNotice(state.sessionId, { content: `PROMPT_SCROLL_${index}` });
+  }
+  await waitFor('ordinary prompt reaches latest notice', () => state.terminal.screen().includes('PROMPT_SCROLL_23'));
+  await state.terminal.type('UNSUBMITTED_SCROLL_DRAFT');
+  const before = state.terminal.screen();
+  await state.terminal.type('\x1b[<64;20;8M');
+  await waitFor('ordinary prompt wheel moves history', () => {
+    const screen = state.terminal.screen();
+    return screen !== before && !screen.includes('PROMPT_SCROLL_23');
+  }, 5000);
+  assert.ok(!state.terminal.screen().includes('Ctrl+E show all'), 'Wheel scrolling must stay in ordinary prompt mode');
+  await state.terminal.type('\x1b[5~');
+  await waitFor('ordinary prompt page up reaches older history', () => state.terminal.screen().includes('PROMPT_SCROLL_0'), 5000);
+  await state.terminal.type('\x1b[F');
+  await waitFor('ordinary prompt returns to latest', () => state.terminal.screen().includes('PROMPT_SCROLL_23'), 5000);
+  assert.ok(state.terminal.screen().includes('UNSUBMITTED_SCROLL_DRAFT'), 'History scrolling must preserve the draft');
+  await state.terminal.type('\x15');
+}
+
 async function checkTranscriptPaint(state) {
   await state.terminal.resize(240, 64);
   await state.terminal.submit('/agent-mode ama');
@@ -1146,6 +1168,12 @@ async function run(mode) {
     await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    if (promptScrollOnly) {
+      await check(state, 'ordinary-prompt-wheel-and-page-scroll', checkPromptScroll);
+      await check(state, 'output-after-scrolled-notices', checkStop);
+      await check(state, 'exit', checkExit);
+      return;
+    }
     if (exposureOnly) {
       await check(state, 'repointel-trace-exposure', checkRepoIntelTrace);
       await check(state, 'external-run-keyboard-stop', checkExternalRunStop);
@@ -1186,6 +1214,7 @@ async function run(mode) {
     if (mode === 'ink') await check(state, 'history-search-frozen-live-view', checkFrozenHistory);
     if (mode === 'ink') await check(state, 'transcript-keyboard-frozen-content-and-draft', checkTranscriptKeys);
     if (mode === 'ink') await check(state, 'transcript-control-character-paint', checkTranscriptPaint);
+    if (mode === 'ink') await check(state, 'ordinary-prompt-wheel-and-page-scroll', checkPromptScroll);
     await check(state, 'stop-and-next-input', checkStop);
     await check(state, 'external-run-keyboard-stop', checkExternalRunStop);
     await check(state, 'registered-extension-run-and-follow-up', checkHostCommandRun);
@@ -1205,8 +1234,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

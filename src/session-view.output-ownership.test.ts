@@ -8,6 +8,39 @@ import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { SessionViewOwner, persistSessionViewItems, restoreSessionViewItems, mergeSessionViewItems } from './session-view.js';
 import { readFrozenClientPlaneItems } from '../packages/repl/src/ui/client-plane.js';
 
+it.each([false, true])('keeps older checkpointed tools before the final answer when the conversation page starts mid-turn (grouped: %s)', async (grouped) => {
+  const data: KodaXSessionData = { title: 'Long tool turn', gitRoot: '', messages: [
+    { role: 'user', inputId: 'input', content: 'Review the changes' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'old', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: 'Old evidence' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'recent', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'recent', content: 'Recent evidence' }] },
+    { role: 'assistant', outputId: 'final', content: 'The final review' },
+  ], uiHistory: persistSessionViewItems([
+    { id: 'old-tool', type: 'tool', text: 'Old evidence', afterInputId: 'input',
+      tool: { callId: 'old', name: 'read', status: 'success' } },
+    { id: 'recent-tool', type: 'tool', text: 'Recent evidence', afterInputId: 'input',
+      tool: { callId: 'recent', name: 'read', status: 'success' } },
+    { id: 'verifier', type: 'event', text: 'Verifier accepted', afterInputId: 'input' },
+  ]) };
+  if (grouped) {
+    const tools = data.uiHistory!.flatMap(item => item.type === 'tool_group' ? item.tools : []);
+    data.uiHistory = [{ type: 'tool_group', tools, afterInputId: 'input' },
+      ...data.uiHistory!.filter(item => item.type !== 'tool_group')];
+  }
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: data.title }, settings: {}, queue: [], interactions: [], runs: [],
+    items: restoreSessionViewItems('session', data, data.messages.slice(3)),
+  }), async () => undefined);
+  let view: ClientSessionView | undefined;
+  const observation = await owner.observe('session', next => { view = next; });
+  try {
+    expect(view!.items.map(item => item.text)).toEqual([
+      'Old evidence', 'Recent evidence', 'The final review', 'Verifier accepted',
+    ]);
+  } finally { observation.close(); await owner.close(); }
+});
+
 it('keeps a revised committed frozen output readable after it leaves the display window', async () => {
   const body = `FINAL${'x'.repeat(70_000)}`;
   const data: KodaXSessionData = { title: 'Frozen ownership', gitRoot: '', messages: [] };
