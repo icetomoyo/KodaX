@@ -11,7 +11,9 @@ import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata
  * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { usePromptHistoryBrowse } from './hooks/usePromptHistoryBrowse.js';
+import { capturePromptBrowseAnchor, resolvePromptBrowseAnchor } from './utils/prompt-history-browse.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from '../interactive/runtime-stop.js';
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
@@ -3633,6 +3635,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     shouldWindowTranscript(transcriptDisplayState),
   );
   const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
+  const promptBrowse = usePromptHistoryBrowse(options.clientPlane, context.sessionId,
+    !isTranscriptMode && transcriptOwnsViewport && rendererMode === 'owned');
   const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
   const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => {
@@ -3878,23 +3882,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setPromptSurfaceSnapshot((prev) => prev ?? createPromptSurfaceSnapshot());
   }, [createPromptSurfaceSnapshot, promptSelectionFreezeActive]);
 
-  const effectivePromptDisplayItems = promptSurfaceSnapshot?.items ?? promptDisplayItems;
-  const effectivePromptIsLoading = promptSurfaceSnapshot?.isLoading ?? isLoading;
-  const effectivePromptStreamingState = promptSurfaceSnapshot
+  const frozenPromptSnapshot = promptBrowse.display?.snapshot ?? promptSurfaceSnapshot;
+  const effectivePromptDisplayItems = frozenPromptSnapshot?.items ?? promptDisplayItems;
+  const effectivePromptIsLoading = frozenPromptSnapshot?.isLoading ?? isLoading;
+  const effectivePromptStreamingState = frozenPromptSnapshot
     ? {
-      isThinking: promptSurfaceSnapshot.isThinking,
-      thinkingCharCount: promptSurfaceSnapshot.thinkingCharCount,
-      thinkingContent: promptSurfaceSnapshot.thinkingContent,
-      currentResponse: promptSurfaceSnapshot.currentResponse,
-      currentTool: promptSurfaceSnapshot.currentTool,
-      activeToolCalls: promptSurfaceSnapshot.activeToolCalls,
-      toolInputCharCount: promptSurfaceSnapshot.toolInputCharCount,
-      toolInputContent: promptSurfaceSnapshot.toolInputContent,
-      managedLiveEvents: promptSurfaceSnapshot.managedLiveEvents,
-      lastLiveActivityLabel: promptSurfaceSnapshot.lastLiveActivityLabel,
-      iterationHistory: promptSurfaceSnapshot.iterationHistory,
-      currentIteration: promptSurfaceSnapshot.currentIteration,
-      isCompacting: promptSurfaceSnapshot.isCompacting,
+      isThinking: frozenPromptSnapshot.isThinking,
+      thinkingCharCount: frozenPromptSnapshot.thinkingCharCount,
+      thinkingContent: frozenPromptSnapshot.thinkingContent,
+      currentResponse: frozenPromptSnapshot.currentResponse,
+      currentTool: frozenPromptSnapshot.currentTool,
+      activeToolCalls: frozenPromptSnapshot.activeToolCalls,
+      toolInputCharCount: frozenPromptSnapshot.toolInputCharCount,
+      toolInputContent: frozenPromptSnapshot.toolInputContent,
+      managedLiveEvents: frozenPromptSnapshot.managedLiveEvents,
+      lastLiveActivityLabel: frozenPromptSnapshot.lastLiveActivityLabel,
+      iterationHistory: frozenPromptSnapshot.iterationHistory,
+      currentIteration: frozenPromptSnapshot.currentIteration,
+      isCompacting: frozenPromptSnapshot.isCompacting,
     }
     : promptStreamingState;
   const currentSurfaceItems = isTranscriptMode
@@ -3907,9 +3912,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ? transcriptStreamingState
     : effectivePromptStreamingState;
   const promptNeedsFallbackLiveStatus = effectivePromptIsLoading
-    && !streamingState.currentResponse
-    && !streamingState.thinkingContent
-    && activeToolCalls.length === 0;
+    && !effectivePromptStreamingState.currentResponse
+    && !effectivePromptStreamingState.thinkingContent
+    && effectivePromptStreamingState.activeToolCalls.length === 0;
   const workflowLiveTick = useSharedSpinnerTick(workflowLiveStatus?.status === "running");
   const workflowLiveViewModel = useMemo(
     () => buildWorkflowLiveViewModel(workflowLiveStatus, Date.now()),
@@ -4474,14 +4479,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [clearWorkStripTimers]);
 
   const transcriptChrome = useMemo(
-    () => buildTranscriptChromeModel({
+    () => ({ ...buildTranscriptChromeModel({
       state: transcriptDisplayState,
       ownsViewport: transcriptOwnsViewport,
       isAwaitingUserInteraction,
       isHistorySearchActive,
       isTranscriptMode,
       historySearchQuery,
-    }),
+    }), ...(promptBrowse.display ? {
+      browseHintText: promptBrowse.display.hint,
+      jumpToLatest: { visible: true, label: 'Back to live', hint: 'End', tone: 'accent' as const },
+    } : {}) }),
     [
       historySearchQuery,
       isAwaitingUserInteraction,
@@ -4489,6 +4497,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isTranscriptMode,
       transcriptDisplayState,
       transcriptOwnsViewport,
+      promptBrowse.display,
     ],
   );
 
@@ -4548,19 +4557,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptDisplayState.searchAnchorItemId,
     transcriptSearchIndex,
   ]);
+  const promptControlStreamingState = promptBrowse.display ? promptStreamingState : effectivePromptStreamingState;
   const statusBarStreamingState = isTranscriptMode
     ? transcriptStreamingState
     : {
-      isThinking: effectivePromptStreamingState.isThinking,
-      thinkingCharCount: effectivePromptStreamingState.thinkingCharCount,
-      currentTool: effectivePromptStreamingState.currentTool,
-      activeToolCalls: effectivePromptStreamingState.activeToolCalls,
-      toolInputCharCount: effectivePromptStreamingState.toolInputCharCount,
-      toolInputContent: effectivePromptStreamingState.toolInputContent,
-      currentIteration: effectivePromptStreamingState.currentIteration,
-      isCompacting: effectivePromptStreamingState.isCompacting,
+      isThinking: promptControlStreamingState.isThinking,
+      thinkingCharCount: promptControlStreamingState.thinkingCharCount,
+      currentTool: promptControlStreamingState.currentTool,
+      activeToolCalls: promptControlStreamingState.activeToolCalls,
+      toolInputCharCount: promptControlStreamingState.toolInputCharCount,
+      toolInputContent: promptControlStreamingState.toolInputContent,
+      currentIteration: promptControlStreamingState.currentIteration,
+      isCompacting: promptControlStreamingState.isCompacting,
     };
-  const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : effectivePromptIsLoading;
+  const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : (promptBrowse.display ? isLoading : effectivePromptIsLoading);
   const settingsWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const settingsSelectionRef = useRef({ sessionId: context.sessionId,
     patch: clientSessionSettings(currentConfig, options.maxIter) });
@@ -4672,7 +4682,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const activity = buildPromptActivityViewModel({
       isTranscriptMode,
       isLoading: statusBarIsLoading,
-      streamingState: effectivePromptStreamingState,
+      streamingState: promptControlStreamingState,
       managedState: statusBarIsLoading
         ? {
           phase: managedTaskStatus?.phase,
@@ -4685,7 +4695,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       backgroundWorkflowMessage: workflowActivityText,
       });
       if (activity?.kind !== 'busy' || !hostStreamingActivity || isLivePaused || workflowBuilderMessage
-        || (sessionView?.activity?.compacting ?? effectivePromptStreamingState.isCompacting)) return activity;
+        || (sessionView?.activity?.compacting ?? promptControlStreamingState.isCompacting)) return activity;
       const label = hostStreamingActivity.kind === 'thinking' ? 'Thinking' : `Receiving ${hostStreamingActivity.toolName}`;
       const count = hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
       return { ...activity, text: `${label}${count}` };
@@ -4694,13 +4704,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       hostStreamingActivity,
       isLivePaused,
       sessionView?.activity?.compacting,
-      effectivePromptStreamingState.activeToolCalls,
-      effectivePromptStreamingState.currentTool,
-      effectivePromptStreamingState.isCompacting,
-      effectivePromptStreamingState.isThinking,
-      effectivePromptStreamingState.thinkingCharCount,
-      effectivePromptStreamingState.toolInputCharCount,
-      effectivePromptStreamingState.toolInputContent,
+      promptControlStreamingState.activeToolCalls,
+      promptControlStreamingState.currentTool,
+      promptControlStreamingState.isCompacting,
+      promptControlStreamingState.isThinking,
+      promptControlStreamingState.thinkingCharCount,
+      promptControlStreamingState.toolInputCharCount,
+      promptControlStreamingState.toolInputContent,
       isTranscriptMode,
       managedTaskStatus?.activeWorkerTitle,
       managedTaskStatus?.harnessProfile,
@@ -5099,6 +5109,52 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ? activeTranscriptRenderModel.rows.length + activeTranscriptRenderModel.previewRows.length
     : transcriptScrollHeight;
   const effectiveTranscriptScrollHeight = effectiveTranscriptBaseScrollHeight;
+  const promptBrowseAnchorRef = useRef(promptBrowse.display?.anchor);
+  const previousPromptLayoutRef = useRef({ width: terminalWidth, rows: activeTranscriptRenderModel?.rows,
+    items: effectivePromptDisplayItems, viewportRows: viewportBudget.messageRows });
+  useLayoutEffect(() => {
+    const previous = previousPromptLayoutRef.current;
+    previousPromptLayoutRef.current = { width: terminalWidth, rows: activeTranscriptRenderModel?.rows,
+      items: effectivePromptDisplayItems, viewportRows: viewportBudget.messageRows };
+    if (!promptBrowse.display || !activeTranscriptRenderModel) return;
+    const incoming = promptBrowse.display.anchor;
+    const anchor = incoming !== promptBrowseAnchorRef.current ? incoming
+      : previous.rows && (previous.width !== terminalWidth || previous.viewportRows !== viewportBudget.messageRows)
+        ? capturePromptBrowseAnchor(previous.items, previous.rows,
+          Math.max(0, previous.rows.length - previous.viewportRows - historyScrollOffset)) : undefined;
+    if (!anchor) return;
+    promptBrowseAnchorRef.current = incoming;
+    const top = resolvePromptBrowseAnchor(effectivePromptDisplayItems, activeTranscriptRenderModel.rows, anchor);
+    if (top !== undefined) scrollTranscriptTo(Math.max(0,
+      activeTranscriptRenderModel.rows.length - viewportBudget.messageRows - top));
+  }, [promptBrowse.display, activeTranscriptRenderModel, effectivePromptDisplayItems,
+    viewportBudget.messageRows, terminalWidth, historyScrollOffset, scrollTranscriptTo]);
+
+  const scrollSurfaceBy = useCallback((delta: number) => {
+    if (isTranscriptMode || !transcriptOwnsViewport || rendererMode !== 'owned' || !options.clientPlane) {
+      scrollTranscriptBy(delta);
+      return;
+    }
+    const atNewerBoundary = delta < 0 && historyScrollOffset + delta <= 0;
+    if (atNewerBoundary && !promptBrowse.display?.window?.newerCursors.length) {
+      promptBrowse.reset();
+      scrollTranscriptToBottom();
+      return;
+    }
+    if (promptBrowse.loading()) return;
+    const maxOffset = Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows);
+    const offset = Math.max(0, Math.min(maxOffset, historyScrollOffset + delta));
+    if (delta > 0 || atNewerBoundary) {
+      const rows = activeTranscriptRenderModel?.rows ?? transcriptAllRowsRef.current;
+      const anchor = capturePromptBrowseAnchor(effectivePromptDisplayItems, rows,
+        Math.max(0, rows.length - viewportBudget.messageRows - offset), delta < 0 ? 'bottom' : 'top');
+      promptBrowse.browse(createPromptSurfaceSnapshot(), anchor,
+        delta < 0 || offset === maxOffset, delta < 0 ? 'newer' : 'older');
+    }
+    scrollTranscriptBy(delta);
+  }, [isTranscriptMode, transcriptOwnsViewport, rendererMode, options.clientPlane, historyScrollOffset,
+    effectiveTranscriptScrollHeight, viewportBudget.messageRows, activeTranscriptRenderModel,
+    effectivePromptDisplayItems, createPromptSurfaceSnapshot, promptBrowse, scrollTranscriptBy, scrollTranscriptToBottom]);
   const handleTranscriptMetricsChange = useCallback((metrics: {
     scrollHeight: number;
     viewportHeight: number;
@@ -6466,7 +6522,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       if (pointerAction.kind === "scroll-by") {
         disarmHistorySearchSelection();
-        scrollTranscriptBy(pointerAction.delta);
+        scrollSurfaceBy(pointerAction.delta);
         return true;
       }
 
@@ -6493,7 +6549,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         isTranscriptMode,
         pageScrollDelta: reviewPageSize,
         disarmHistorySearchSelection,
-        scrollTranscriptBy,
+        scrollTranscriptBy: scrollSurfaceBy,
         closeHistorySearchSurface,
         backspaceHistorySearchQuery: () => {
           setHistorySearchQuery((prev) => prev.slice(0, -1));
@@ -6520,9 +6576,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           exitTranscriptModeSurface,
           toggleTranscriptShowAll,
           scrollTranscriptHome: () => {
-            scrollTranscriptTo(Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows));
+            scrollSurfaceBy(Math.max(1, effectiveTranscriptScrollHeight));
           },
         scrollTranscriptToBottom: () => {
+          promptBrowse.reset();
           scrollTranscriptToBottom();
           clearTranscriptMouseSelection();
         },
@@ -6585,6 +6642,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       effectiveTranscriptScrollHeight,
       reviewPageSize,
       reviewWheelStep,
+      scrollSurfaceBy,
+      promptBrowse.reset,
       selectedTranscriptItemId,
       clearTranscriptSelectionFocus,
       exitTranscriptModeSurface,
@@ -9364,6 +9423,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       applyInteractiveRuntimeInfo(resolveSessionRuntimeInfo(stored) ?? context.runtimeInfo ?? {});
       currentOptionsRef.current.session = { ...currentOptionsRef.current.session, id, tag: stored.tag };
       persistedUiHistoryRef.current = context.uiHistory ?? [];
+      promptBrowse.reset();
       clearUIHistory();
       setLiveTokenCount(null);
       setTodoItems([]);
@@ -9382,7 +9442,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentOptionsRef.current.session = { ...currentOptionsRef.current.session, id, tag: loaded.session.tag };
     persistedUiHistoryRef.current = [];
     setLiveTokenCount(null);
-    if (changedSession) clearUIHistory();
+    if (changedSession) { promptBrowse.reset(); clearUIHistory(); }
     setTodoItems([]);
     getActivePasteStore()?.reset();
     setSessionId(id);
@@ -9515,6 +9575,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
 
     setLiveTokenCount(null);
+    promptBrowse.reset();
     clearUIHistory();
     setTodoItems([]);
     getActivePasteStore()?.reset();
@@ -9839,6 +9900,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
       // Prevent concurrent execution while the agent is busy or awaiting confirmation.
       if (!fullText.trim() || !isRunning || confirmRequest || uiRequest) return;
+      promptBrowse.reset();
+      clearTranscriptMouseSelection();
+      scrollTranscriptToBottom();
 
       // Issue 121: fire-and-forget write of large pasted text to the disk
       // paste-cache. Runs async — never blocks submit.
@@ -10354,6 +10418,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               id: nextSessionId,
             };
             setLiveTokenCount(null);
+            promptBrowse.reset();
             clearUIHistory();
             // FEATURE_151 (v0.7.38): drop the persisted todo plan surface
             // at session boundary so the new session starts visually
@@ -10421,6 +10486,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               };
               persistedUiHistoryRef.current = context.uiHistory ?? [];
               setLiveTokenCount(null);
+              promptBrowse.reset();
               clearUIHistory();
               // FEATURE_151 (v0.7.38): reset todo plan surface on session
               // load — the loaded session has its own message stream and
@@ -10456,6 +10522,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             // Only clear UI history, not context.messages
             // context.messages should only be cleared by specific commands like /clear
             context.uiHistory = [];
+            promptBrowse.reset();
             clearUIHistory();
             // FEATURE_151 (v0.7.38): also drop the persisted todo plan
             // surface so a new prompt starts from a clean slate. Without
@@ -10652,6 +10719,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               !== JSON.stringify(savedRuntime);
             persistedUiHistoryRef.current = context.uiHistory ?? [];
             setLiveTokenCount(null);
+            promptBrowse.reset();
             clearUIHistory();
             // FEATURE_151 (v0.7.38): reset todo plan surface on tree-switch.
             setTodoItems([]);
@@ -10750,6 +10818,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               tag: forked.data.tag,
             };
             setLiveTokenCount(null);
+            promptBrowse.reset();
             clearUIHistory();
             // FEATURE_151 (v0.7.38): reset todo plan surface on fork —
             // the new fork starts a fresh task tree.
@@ -10811,6 +10880,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               !== JSON.stringify(savedRuntime);
             persistedUiHistoryRef.current = context.uiHistory ?? [];
             setLiveTokenCount(null);
+            promptBrowse.reset();
             clearUIHistory();
             // FEATURE_151 (v0.7.38): reset todo plan surface on rewind.
             setTodoItems([]);
@@ -11377,6 +11447,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       onExit,
       addHistoryItem,
       clearUIHistory,
+      promptBrowse.reset,
+      clearTranscriptMouseSelection,
+      scrollTranscriptToBottom,
       startStreaming,
       stopStreaming,
       clearResponse,
@@ -11847,7 +11920,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           scrollTop={historyScrollOffset}
           scrollHeight={effectiveTranscriptScrollHeight}
           viewportHeight={viewportBudget.messageRows}
-          stickyScroll={!isTranscriptMode && !isAwaitingUserInteraction && viewportSticky}
+          stickyScroll={!isTranscriptMode && !promptBrowse.display && !isAwaitingUserInteraction && viewportSticky}
           overscanRows={FULLSCREEN_SCROLL_OVERSCAN_ROWS}
           scrollRef={transcriptScrollRef}
           onWindowChange={handleTranscriptWindowChange}

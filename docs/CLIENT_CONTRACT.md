@@ -93,6 +93,8 @@ Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示�
 
 产品 Session 未在 profile 或会话覆盖中指定权限模式时，Host 的有效模式为 `accept-edits`，`view.settings` 与产品输入实际执行使用同一默认。`getSettings` 继续只返回原始会话覆盖，清除覆盖后重新继承 Host 默认，不补写 config 或 Session 文件。明确的 `plan`、`auto`、`full-access` 等仍按既有优先级处理。底层 `/runtime` 未声明权限的调用不因此取得产品默认授权；UI 不能通过启动时写入本地默认修补两端差异。
 
+产品 `workflows.start` 同样采用这些有效默认值，不能因为它没有普通 inputId 就退回另一套执行设置。产品适配器通过既有底层 workflow.start 的 `settingsDefaults: 'product'` 意图选择该规则；这不是认证凭据，也不写入 Session 覆盖。Host 在首次执行及运行中设置变化时保持同一解析规则。该可选底层参数要求 Host 声明 `workflowSettingsDefaults: { version: 1 }`；新 SDK 在旧 Host 上发送此类请求前返回 `daemon_upgrade_required`，不静默忽略。未指定该参数的底层 Runtime 调用保留原权限默认，`KodaXProductClient` 不增加方法或调用参数。
+
 Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在模式为 `plan` 且没有 Session `effort` 覆盖时采用它；离开计划模式后恢复原有 effort 解析，客户端无需回写缓存。`null` 清除覆盖。既有 `sharedSessionSettings.keys` 声明支持；旧 Host 未列出该键时，新 SDK 在发送包含该字段的设置 mutation 前返回 `daemon_upgrade_required`，其他设置仍可使用，不提升整个 productClient 版本。ACP 初始化只提交明确的选项/环境意图，普通 prompt 不回写缓存设置；显式 prompt effort 和模式切换仍提交对应的窄设置意图。计划批准使用完整 `options.plan`，Host 模式变化通过 ACP `current_mode_update` 显示。
 
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
@@ -284,6 +286,10 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 相邻工具可以在客户端共用一个展示标题，重复摘要可以折叠计数，但每个工具仍保留原 Host itemId。搜索定位、选择高亮、展开和复制必须指向该工具（或包含它的折叠摘要行），不能因合并展示而读到另一工具，或只滚到整段标题便判定目标已可见。
 
 历史与实时 view 不同：`readHistory` 首次给最新页，页内由旧到新，nextCursor 指向更旧页；拼接完整历史要反转页顺序，不能反转页内顺序。cursor 是不透明值。每页必须属于同一 revision；变更时重新从最新页读。`oversized` 给出超大条目的 itemId/byteLength，page.items 保留可定位的有界投影；这些正文须由 `readHistoryEntry` 读取，不能静默遗漏或用截断预览冒充。搜索可按角色过滤，scope 为 all 或 compacted；hit 的 snippet 是检索预览，不是复制原文。每个命中包含不透明 itemId，可直接交给 readHistoryEntry 分页读取原文，包括压缩前长正文。命中身份使用 transcript 修订空间，与 conversation 身份分开；entryIndex 不能当作 conversation 页数组下标或 fork 的 entryId。现有快照过期时 reader 明确报 resync_required，调用方须重新搜索，不按全文匹配恢复身份。
+
+历史页中的一条 canonical 消息可以展开为多个显示项；实时视图的 150 项限制不裁剪历史消息内部的内容块。历史保留已有 inputId、outputId 和工具 callId 作为来源关联，但同一 outputId 可对应多个不同类型或同类型块，不能把它单独当作显示项 ID。跨读取面定位需要验证来源是否唯一，不能猜测块序号或按正文相等去重。正文分块在 Host 以独立 base64 字节块传输，SDK 先各自解码再合并字节，最后统一解码 UTF-8，保留跨块字符。
+
+已接受的 canonical 用户输入按 inputId 保持观察项身份，普通追加或压缩移出当前显示窗口后，原 readItem 引用仍可回源；回退到不含该输入的分支后明确不可用。升级前旧显示 ID 不要求跨 Host 版本继续解析；消费者重连取得当前完整视图，不解析 ID 字符串格式。旧无 inputId 消息不获得追溯身份，也不能借用同文的已标识输入。
 
 冻结浏览属于 UI 操作：进入浏览时捕获项身份、顺序和已显示长度，补读所捕获长度内的正文/工具输入，拒绝读取中缩短、替换或不连续的内容。新产生输出不能改变冻结页的滚动位置与搜索结果；退出后再回当前 view。现有 Ink 通过 [client-plane.ts](../packages/repl/src/ui/client-plane.ts) 的 frozen reader 实现，不新增 Host 租约或另一套恢复框架。产品 `readItem` 本身没有任意时点不可变快照参数，不能据此承诺任意并发替换时仍可取回旧正文。
 

@@ -1,0 +1,36 @@
+
+ RUN  v3.2.7 C:/Users/ADMIN/.codex/worktrees/a72f/KodaX
+
+ ❯ src/sdk-client.history-boundaries.test.ts (2 tests | 1 failed) 1205ms
+   ✓ reads oversized history and search references through independently encoded chunks  982ms
+   × keeps every ordered block of a single message through history page and item reads 223ms
+     → expected [ Array(150) ] to have a length of 160 but got 150
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/sdk-client.history-boundaries.test.ts > keeps every ordered block of a single message through history page and item reads
+AssertionError: expected [ Array(150) ] to have a length of 160 but got 150
+
+- Expected
++ Received
+
+- 160
++ 150
+
+ ❯ src/sdk-client.history-boundaries.test.ts:89:24
+     87|     const page = await client.sessions.readHistory(sessionId, { limit:…
+     88|     expect(page.nextCursor).toBeUndefined();
+     89|     expect(page.items).toHaveLength(160);
+       |                        ^
+     90|     expect(page.items.map(item => [item.type, item.text])).toEqual(Arr…
+     91|       ['thinking', ` thought-${index}\n`], ['assistant', ` answer-${in…
+ ❯ withHistory src/sdk-client.history-boundaries.test.ts:39:5
+ ❯ src/sdk-client.history-boundaries.test.ts:86:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  20:18:42
+   Duration  14.79s (transform 4.24s, setup 35ms, collect 13.34s, tests 1.21s, environment 0ms, prepare 52ms)

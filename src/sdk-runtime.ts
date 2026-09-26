@@ -1938,6 +1938,7 @@ export interface RuntimeStartRunInput {
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
+  readonly productSession?: boolean;
   readonly commandInput?: ClientCommandInput;
   /** Host-only deferred work, after the canonical input and Run have been saved. */
   readonly prepare?: (options: KodaXOptions, signal: AbortSignal) => Promise<void>;
@@ -3352,6 +3353,8 @@ export type RuntimeWorkflowStartSource =
   | { readonly kind: "name"; readonly name: string };
 
 export interface RuntimeWorkflowStartInput {
+  /** Select product defaults; omitted low-level calls retain their existing defaults. */
+  readonly settingsDefaults?: 'product';
   readonly sessionId?: string;
   readonly credential?: RuntimeCredentialBinding;
   readonly projectRoot: string;
@@ -3644,6 +3647,7 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
   readonly runId: string;
   readonly sessionId: string;
@@ -4176,6 +4180,7 @@ async function createKodaXRuntimeInternal(
   // advertises on `runtime.capabilities`.
   const embeddedCapabilities: Record<string, unknown> = {
     productClient: { version: 1 },
+    workflowSettingsDefaults: { version: 1 },
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
     interruptInput: { version: 1, availability: "per_run" },
@@ -4496,11 +4501,13 @@ async function createKodaXRuntimeInternal(
     const identity = itemId.startsWith(prefix) ? /^(.*):(assistant|thinking):\d+$/.exec(itemId.slice(prefix.length)) : null;
     const toolId = itemId.startsWith('tool:') ? itemId.slice(5)
       : itemId.includes(':tool:') ? itemId.slice(itemId.indexOf(':tool:') + 6) : undefined;
-    if (!identity && !toolId) return null;
+    const inputPrefix = `${sessionId}:input:`;
+    const inputId = itemId.startsWith(inputPrefix) ? itemId.slice(inputPrefix.length) : undefined;
+    if (!identity && !toolId && inputId === undefined) return null;
     const boundary = await sessionService.conversationPage({ sessionId, limit: 1 });
     if (!boundary) return null;
     const sources = await locateConversationSources(sessionId, boundary.revision, identity
-      ? [`output:${identity[1]}`] : [`tool-use:${toolId}`, `tool-result:${toolId}`]);
+      ? [`output:${identity[1]}`] : inputId !== undefined ? [`input:${inputId}`] : [`tool-use:${toolId}`, `tool-result:${toolId}`]);
     const messages: KodaXMessage[] = [];
     for (const entry of sources.entries) {
       const source = entry.entry ?? await assembleConversationHistoryEntry(
@@ -4508,7 +4515,7 @@ async function createKodaXRuntimeInternal(
       if (source) messages.push(source.message);
     }
     const restored = restoreSessionViewItems(sessionId, { title: '', gitRoot: '', messages }, messages)
-      .find(item => identity ? item.id === itemId : item.tool?.callId === toolId);
+      .find(item => identity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
@@ -4554,6 +4561,7 @@ async function createKodaXRuntimeInternal(
         ...(origin !== undefined ? { origin } : {}),
         ...(trustedRunId !== undefined ? { trustedRunId } : {}),
         sessionId,
+        productSession: input.settingsDefaults === 'product',
         input: { type: 'text', text: productInput?.text ?? `Start workflow ${input.source.kind === 'name' ? input.source.name : 'from reviewed source'}.` },
         ...(productInput !== undefined ? { productInput } : {}),
         mode: 'managed_task',
@@ -4881,6 +4889,9 @@ async function createKodaXRuntimeInternal(
     servers: Readonly<Record<string, McpServerConfig>>,
   ): void => {
     fs.mkdirSync(sessionMcpDir, { recursive: true });
+    if (fs.existsSync(sessionMcpFile(sessionId))) {
+      throw Object.assign(new Error(`Session MCP configuration already exists: ${sessionId}`), { code: 'conflict' });
+    }
     writeRuntimeTextAtomic(sessionMcpFile(sessionId), JSON.stringify(
       { version: 1, workspaceRoot, servers },
       null,
@@ -7851,6 +7862,7 @@ function createRuntimeSessionService(
       }
       creatingSessionIds.add(sessionId);
       let ownsSessionResources = false;
+      let ownsSessionMcpConfig = false;
       try {
         if (input.sessionId !== undefined && (await manager.loadSession(sessionId)) !== null) {
           throw Object.assign(
@@ -7879,6 +7891,7 @@ function createRuntimeSessionService(
         };
         const sessionWorkspaceRoot = projectPath ?? gitRoot ?? process.cwd();
         await integrations.createSession(sessionId, sessionWorkspaceRoot, input.mcpServers);
+        ownsSessionResources = true;
         if (
           input.mcpServers !== undefined
           && Object.keys(input.mcpServers).length > 0
@@ -7888,8 +7901,8 @@ function createRuntimeSessionService(
             sessionWorkspaceRoot,
             input.mcpServers,
           );
+          ownsSessionMcpConfig = true;
         }
-        ownsSessionResources = true;
         bus.prepareSessionEvents(sessionId);
         if (input.sessionId === undefined) {
           await manager.storage.createGenerated(sessionId, data);
@@ -7904,7 +7917,16 @@ function createRuntimeSessionService(
         bus.emit("session.created", session, { sessionId, runId: sessionId });
         return session;
       } catch (error: unknown) {
-        if (ownsSessionResources) await integrations.releaseSession(sessionId);
+        const cleanupErrors: unknown[] = [];
+        if (ownsSessionResources) {
+          try { await integrations.releaseSession(sessionId); }
+          catch (cleanupError: unknown) { cleanupErrors.push(cleanupError); }
+        }
+        if (ownsSessionMcpConfig) {
+          try { sessionMcpStore.remove(sessionId); }
+          catch (cleanupError: unknown) { cleanupErrors.push(cleanupError); }
+        }
+        if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], 'Session creation and cleanup failed.');
         throw error;
       } finally {
         creatingSessionIds.delete(sessionId);
@@ -11133,7 +11155,7 @@ function createRuntimeRunService(deps: {
           (record.phase !== "queued" && !isActiveRunPhase(record.phase))
         )
           continue;
-        const settings = resolveEffectiveRuntimeSessionSettings(config, current.value, record.productInput !== undefined);
+        const settings = resolveEffectiveRuntimeSessionSettings(config, current.value, record.productSession === true);
         // Low-level queued Runs have already captured model selection. Product
         // inputs do not create a Run until consumption, when settings are read.
         if (record.phase !== "queued" && "provider" in patch) {
@@ -11295,7 +11317,7 @@ function createRuntimeRunService(deps: {
     }
     const settings = resolveEffectiveRuntimeSessionSettings(
       readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")), (await deps.settingsOwner.read(input.sessionId)).value,
-      productInput !== undefined);
+      trustedInput.productSession === true || productInput !== undefined);
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     const options = buildEffectiveRuntimeOptions(
       { extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
@@ -11459,6 +11481,7 @@ function createRuntimeRunService(deps: {
       requiredAfterRun !== undefined || activeRunBySession.has(input.sessionId)
       || stoppingSessions.has(input.sessionId);
     const record: RuntimeRunRecord = {
+      productSession: trustedInput.productSession === true || productInput !== undefined,
       runId,
       sessionId: input.sessionId,
       ...(productInput !== undefined && inputDigest !== undefined
@@ -16252,6 +16275,8 @@ function writeRuntimeTextAtomic(file: string, content: string): void {
   } catch (error: unknown) {
     operationError = error;
   }
+  // A successful rename consumes the temporary path; there is nothing left to clean.
+  if (operationCompleted) return;
   const cleanupErrors: unknown[] = [];
   if (descriptor !== undefined) {
     try {
@@ -23557,7 +23582,7 @@ function createRuntimeSessionAutoModeGuardrail(input: {
     const settings = resolveEffectiveRuntimeSessionSettings(
       readRuntimeConfig(path.join(input.configHome, 'config.json')),
       (await input.settingsOwner.read(input.sessionId)).value,
-      record?.productInput !== undefined,
+      record?.productSession === true,
     );
     if (record) {
       record.permissionMode = settings.permissionMode;

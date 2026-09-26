@@ -15,6 +15,8 @@ const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
 export interface RestoreHistoryItemsFromSessionInput {
   messages: readonly KodaXMessage[];
   uiHistory?: readonly KodaXSessionUiHistoryItem[];
+  /** Canonical history pages must retain all blocks; live restoration stays bounded. */
+  historyScope?: 'window' | 'all';
 }
 
 function trimHistoryWindow<T extends { readonly type: string }>(
@@ -480,7 +482,7 @@ export function restoreHistoryItemsFromSession(
   const fullDerivedItems = extractHistorySeedsFromMessages(input.messages)
     .filter((seed) => !hasPersistedUiHistory || seed.type !== "task_completed")
     .map(seedToHistoryItem);
-  const derivedItems = trimHistoryWindow(fullDerivedItems);
+  const derivedItems = input.historyScope === 'all' ? fullDerivedItems : trimHistoryWindow(fullDerivedItems);
   if (!persistedHistory || persistedHistory.length === 0) {
     return dedupeToolGroups(derivedItems);
   }

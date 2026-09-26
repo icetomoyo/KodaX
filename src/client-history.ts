@@ -192,10 +192,9 @@ function projectHistoryEntry(
   entryIndex: number,
   messages: readonly KodaXMessage[],
 ): ClientViewItem[] {
-  // One entry (plus its pairing successor) at a time keeps the repl
-  // projection inside its trimming window and gives every item an
-  // unambiguous entry anchor; ordinals count emitted items flatly.
-  const restored = restoreHistoryItemsFromSession({ messages });
+  // A single entry may exceed the live display window. Keep all its blocks
+  // under the same entry anchor; ordinals count emitted items flatly.
+  const restored = restoreHistoryItemsFromSession({ messages, historyScope: 'all' });
   const tools = canonicalTools(messages);
   const items: ClientViewItem[] = [];
   let ordinal = 0;
@@ -217,6 +216,9 @@ function projectHistoryEntry(
       type: item.type as ClientViewItem['type'],
       text: item.text,
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
+      ...(item.outputId !== undefined ? {
+        outputId: item.outputId, outputState: 'committed' as const, textRevision: 0,
+      } : {}),
       ...('icon' in item ? { icon: item.icon } : {}),
       ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
     });
@@ -254,13 +256,14 @@ export async function assembleConversationHistoryEntry(
   entryIndex: number,
 ): Promise<{ message: KodaXMessage } | null> {
   let cursor: string | undefined;
-  const encoded: string[] = [];
+  const bytes: Buffer[] = [];
   for (let read = 0; read < HISTORY_CHUNK_READ_LIMIT; read += 1) {
     const chunk = await readChunk({ sessionId, revision, entryIndex, ...(cursor !== undefined ? { cursor } : {}) });
     if (chunk === null) return null;
-    encoded.push(chunk.data);
+    // Each chunk has its own base64 padding; UTF-8 may span chunk boundaries.
+    bytes.push(Buffer.from(chunk.data, 'base64'));
     if (!chunk.hasMore) {
-      const decoded = decodeEntryJson(encoded.join(''));
+      const decoded = decodeEntryJson(Buffer.concat(bytes));
       if (decoded === undefined) {
         emitKodaXDiagnostic({
           source: 'client.history',
@@ -288,9 +291,9 @@ export async function assembleConversationHistoryEntry(
   );
 }
 
-function decodeEntryJson(encoded: string): { message: KodaXMessage } | undefined {
+function decodeEntryJson(bytes: Buffer): { message: KodaXMessage } | undefined {
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    const parsed: unknown = JSON.parse(bytes.toString('utf8'));
     if (typeof parsed !== 'object' || parsed === null) return undefined;
     const message = (parsed as { message?: unknown }).message;
     if (typeof message !== 'object' || message === null) return undefined;

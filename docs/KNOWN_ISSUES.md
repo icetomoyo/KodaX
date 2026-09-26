@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-24_
+_Last Updated: 2026-09-26_
 
 ---
 
@@ -1075,7 +1075,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 343 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
-| 342 | Medium | needs-info | Normal REPL scrolling reportedly stops after a long tool turn | observed at `d552be47`; first affected version unknown | — | 2026-09-24 | — |
+| 342 | Medium | Resolved | Normal REPL loses browsable history when a bounded Host view replaces it | Product Client display replacement; confirmed against `c447c0f3` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-26 |
 | 341 | High | Resolved | Quoted managed protocol markers truncate ordinary assistant answers | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 340 | High | Resolved | Partial conversation pages place the final answer before older tools | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
@@ -1333,22 +1333,62 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   misleading notice timestamps, repeated legacy text and window-external tools.
   The PTY scrolling probe is followed by a streaming/Stop/next-input check.
 
-### Issue 342: Normal REPL scrolling reportedly stops after a long tool turn
+### Issue 342: Normal REPL loses browsable history when a bounded Host view replaces it
 
-- **Priority / Status**: Medium / needs-info
+- **Priority / Status**: Medium / Resolved
+- **Fixed**: v0.7.96-rc.11 worktree (unreleased), 2026-09-26.
 - **Introduced**: Observed at `d552be47`; first affected version unknown.
 - **Created**: 2026-09-24.
 - **Original Problem**: After a long tool turn the ordinary prompt reportedly
   cannot scroll, while Ctrl+O transcript mode can. Expected both owned fullscreen
   views to scroll their history and preserve the input draft.
+- **Clarification (2026-09-26)**: The user suspects the ordinary view contains
+  only the visible tool block, leaving nothing to scroll. Treat missing content
+  and incorrect scroll geometry as separate hypotheses; working input on a
+  synthetic notice list does not rule out this report.
 - **Context**: Same Session as Issues 340–341. A read-only copy of its history
   was replayed in isolated PTYs before and after the fixes. Both wheel and
   PageUp worked in both versions; this does not reproduce the reported terminal.
-- **Missing information**: Whether the failure uses the mouse wheel, PageUp/
-  PageDown, or both; if it persists, terminal dimensions and fullscreen setting.
+- **Confirmed regression (2026-09-26)**: A live source-entry A/B against main
+  `c447c0f3` reproduces normal-mode history loss in branch `6e5d6298`. With 250
+  read calls (100 distinct, then 150 repeats), long final reasoning and a short
+  answer, main still scrolls to the original query/first tool. The branch
+  replaces its list with 150 Host items; repeated retained tools collapse to
+  one summary, leaving less than one screen after completion. Ordinary wheel
+  and PageUp no longer expose earlier content, while Ctrl+O expands reasoning
+  and scrolls, and Ctrl+E retrieves the original query. This reproduces the
+  reported symptom class without dropping the final answer.
+- **Cause / scope**: The new whole-list replacement treats a bounded live
+  snapshot as the complete ordinary browsing history. Mouse protocol, parsing,
+  renderer selection and wheel dispatch are unchanged from main. The exact
+  original Session's live snapshots were not captured; its separate truncated
+  answer remains Issue 341. This issue no longer waits on user reproduction.
+- **Fix requirement**: Ordinary browsing must retrieve older Host-owned history
+  through existing read interfaces, preserve the browsing position/draft, and
+  return to the current live view explicitly. Do not merely raise the snapshot
+  cap or retain stale history across Session/lineage changes.
+- **Resolution (2026-09-26)**: Upward intent now opens an ordinary body-only
+  browse snapshot and reads existing canonical history interfaces on demand.
+  Same-revision pages remain bounded and preserve source/character anchors;
+  evicted newer pages can be revisited in order. Execution controls stay live.
+  End, submission and Session/surface changes invalidate late reads. Ambiguous,
+  expired or out-of-range positions preserve the screen and show recovery help.
+- **Acceptance**: Both live retention cases pass through source and rebuilt
+  bundle entry points; additional bundle runs verify downward traversal through
+  intervening history. They await the actual Host terminal state and verify
+  activity/prompt updates while browsing. See
+  [repair verification](research/contract-browse-fix-verification-2026-09-26.md).
 - **Tests added**: `tests/repl-pty-acceptance.mjs --prompt-scroll-only` checks
-  wheel, PageUp, End and draft retention in ordinary mode. This is regression
-  coverage, not proof that the reported scrolling failure is resolved.
+  wheel, PageUp, End and draft retention in ordinary mode. The new
+  `tests/repl-history-browse-acceptance.mjs` adds the live retention cases;
+  notice-only scrolling was insufficient to establish this fix.
+- **Supplemental check (2026-09-26)**: An isolated history fixture derived from
+  the reported Session, using the current bundle in a 220-column, 58-row ConPTY,
+  retained the saved answer in ordinary mode. PageUp and wheel moved through
+  earlier content; the banner scrolled with history. Transcript PageUp also
+  worked. This is a restart/restore check, not reproduction of the original
+  live transition. See the Issues 340–343 regression guide for evidence and
+  the distinction between bounded history and viewport clipping.
 
 ### Issue 341: Quoted managed protocol markers truncate ordinary assistant answers
 
@@ -15472,11 +15512,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 222 (35 Open including 1 needs-info, 187 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 222 (34 Open, 188 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-26: Ordinary history browsing repaired
+
+- Resolved Issue 342 with Host-owned, bounded history paging, stable reading
+  anchors and live execution controls. Source/bundle live PTY retention
+  scenarios and bidirectional paging checks pass; physical mouse delivery
+  remains a separate manual check.
 
 ### 2026-09-20: REPL fixture lifecycle and Windows startup handoff fixed
 

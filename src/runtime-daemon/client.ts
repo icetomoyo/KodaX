@@ -1080,6 +1080,13 @@ export function createRuntimeDaemonClient(
         return request('workflow.stop', { runId, ...options }) as Promise<boolean>;
       },
       async start(input: RuntimeWorkflowStartInput): Promise<RuntimeWorkflowStartResult> {
+        const defaults = options.capabilities?.workflowSettingsDefaults;
+        if (input.settingsDefaults === 'product' && (!defaults || typeof defaults !== 'object'
+          || !('version' in defaults) || defaults.version !== 1)) {
+          throw Object.assign(new Error('Host does not support product Workflow defaults. Upgrade and restart the Host.'), {
+            code: 'daemon_upgrade_required', capability: 'workflowSettingsDefaults', restartRequired: true,
+          });
+        }
         return request('workflow.start', input as unknown as Record<string, unknown>) as Promise<RuntimeWorkflowStartResult>;
       },
     },
@@ -1662,7 +1669,12 @@ function subscribeToDaemonEvents(
     const result = requireRecord(value);
     remoteSubscriptionId = requireStringField(result, 'subscriptionId');
     if (closed) {
-      void request('subscription.close', { subscriptionId: remoteSubscriptionId }).catch(() => undefined);
+      void request('subscription.close', { subscriptionId: remoteSubscriptionId }).catch((error: unknown) => {
+        emitKodaXDiagnostic({
+          source: 'runtime.daemon.client', level: 'warn',
+          message: 'Failed to close a remote Session observation subscription.', detail: error,
+        });
+      });
       pendingNotifications.length = 0;
       return;
     }

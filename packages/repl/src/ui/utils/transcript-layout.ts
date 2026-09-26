@@ -127,6 +127,8 @@ export interface TranscriptRow {
   itemId?: string;
   /** Original items represented by a tool summary or its detail rows. */
   itemIds?: readonly string[];
+  /** UTF-16 position in this item's plain text; present only for original body rows. */
+  contentOffset?: number;
   color?: TranscriptColorToken;
   /**
    * Optional row background accent for diff rows. Resolved to
@@ -400,18 +402,34 @@ function pushWrappedRows(
   style: Omit<TranscriptRow, "key" | "text">
 ): void {
   const plainText = stripAnsi(text);
-  const lines = wrapText(plainText, width);
+  const logicalLines = plainText.split('\n');
+  const layout = style.contentOffset === undefined ? undefined
+    : calculateVisualLayout(logicalLines, Math.max(1, width), 0, 0);
+  const lines = layout?.visualLines ?? wrapText(plainText, width);
+  const lineStarts: number[] = [];
+  let position = 0;
+  for (const line of logicalLines) { lineStarts.push(position); position += line.length + 1; }
   if (lines.length === 0) {
     rows.push({ key: `${keyPrefix}-0`, text: "", ...style });
     return;
   }
 
+  let logicalRow = -1;
+  let consumedCharacters = 0;
   lines.forEach((line, index) => {
+    const nextLogicalRow = layout?.visualToLogicalMap[index]?.[0];
+    if (nextLogicalRow !== undefined && nextLogicalRow !== logicalRow) {
+      logicalRow = nextLogicalRow;
+      consumedCharacters = 0;
+    }
     rows.push({
       key: `${keyPrefix}-${index}`,
       text: line,
       ...style,
+      ...(layout ? { contentOffset: (style.contentOffset ?? 0)
+        + (lineStarts[logicalRow] ?? 0) + consumedCharacters } : {}),
     });
+    consumedCharacters += line.length;
   });
 }
 
@@ -609,7 +627,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
   for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
     const item = items[itemIndex]!;
     switch (item.type) {
-      case "user":
+      case "user": {
         pushWrappedRows(
           rows,
           `${item.id}-header`,
@@ -619,13 +637,17 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         );
         // Issue 121 Layer 3: cap extremely long user messages so giant text
         // nodes don't force Ink to wrap/output on every frame.
-        pushWrappedRows(rows, `${item.id}-body`, truncateUserMessageForDisplay(item.text), getBodyWidth(viewportWidth, 2), {
+        const userDisplayText = truncateUserMessageForDisplay(item.text);
+        pushWrappedRows(rows, `${item.id}-body`, userDisplayText, getBodyWidth(viewportWidth, 2), {
           color: "text",
           indent: 2,
           itemId: item.id,
+          ...(userDisplayText === item.text && stripAnsi(item.text) === item.text
+            ? { contentOffset: item.textOffset ?? 0 } : {}),
         });
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
+      }
       case "assistant": {
         // Strip OUTER blank lines from the body before wrapping. The model
         // output frequently ends with a trailing newline; `wrapText` turns
@@ -649,7 +671,9 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-body`,
           displayText,
           getBodyWidth(viewportWidth, 2),
-          { color: "text", indent: 2, itemId: item.id }
+          { color: "text", indent: 2, itemId: item.id,
+            ...(item.compactText === undefined && stripAnsi(displayText) === displayText
+              ? { contentOffset: (item.textOffset ?? 0) + item.text.indexOf(displayText) } : {}) }
         );
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;

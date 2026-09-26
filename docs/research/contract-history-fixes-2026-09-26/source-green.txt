@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 C:/Users/ADMIN/.codex/worktrees/a72f/KodaX
+
+ ✓ src/sdk-client.history-boundaries.test.ts (2 tests) 1873ms
+   ✓ reads oversized history and search references through independently encoded chunks  1013ms
+   ✓ keeps every ordered block of a single message through history page and item reads  859ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  20:20:11
+   Duration  15.73s (transform 4.30s, setup 36ms, collect 13.61s, tests 1.87s, environment 0ms, prepare 56ms)

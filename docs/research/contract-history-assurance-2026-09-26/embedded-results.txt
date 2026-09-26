@@ -1,0 +1,112 @@
+
+ RUN  v3.2.7 C:/Users/ADMIN/.codex/worktrees/a72f/KodaX
+
+ ❯ src/client-history.contract-review.tmp.test.ts (6 tests | 4 failed) 2546ms
+   × reads a 300 KiB oversized assistant through the public history page 741ms
+     → promise rejected "Error: History entry 20260926_192654_gncd… { code: '…' }" instead of resolving
+   × keeps an observed long user input readable after append moves it outside the window 653ms
+     → expected null to match object { totalLength: 9009 }
+   × reads a 300 KiB search result through its public reference 309ms
+     → promise rejected "Error: History entry 20260926_192655_pt54… { code: '…' }" instead of resolving
+   × does not silently drop content blocks from a single canonical history entry 254ms
+     → expected 150 to be 160 // Object.is equality
+   ✓ control: preserves canonical text whitespace and typed thinking through history item reads  302ms
+   ✓ control: preserves explicit cancelled tool output, input and search reference 285ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/client-history.contract-review.tmp.test.ts > reads a 300 KiB oversized assistant through the public history page
+AssertionError: promise rejected "Error: History entry 20260926_192654_gncd… { code: '…' }" instead of resolving
+ ❯ src/client-history.contract-review.tmp.test.ts:28:57
+     26| it('reads a 300 KiB oversized assistant through the public history pag…
+     27|   await withMessages([{ role: 'assistant', outputId: 'large', content:…
+     28|     await expect(runtime.sessions.readHistory(sessionId)).resolves.toM…
+       |                                                         ^
+     29|   });
+     30| });
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:11
+ ❯ src/client-history.contract-review.tmp.test.ts:27:3
+
+Caused by: Error: History entry 20260926_192654_gncd115bb803f5#0 is unreadable.
+ ❯ assembleConversationHistoryEntry src/client-history.ts:271:11
+ ❯ projectConversationHistoryPage src/client-history.ts:37:9
+ ❯ src/client-history.contract-review.tmp.test.ts:28:5
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:5
+ ❯ src/client-history.contract-review.tmp.test.ts:27:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'internal_error' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/client-history.contract-review.tmp.test.ts > keeps an observed long user input readable after append moves it outside the window
+AssertionError: expected null to match object { totalLength: 9009 }
+
+- Expected:
+{
+  "totalLength": 9009,
+}
+
++ Received:
+null
+
+ ❯ src/client-history.contract-review.tmp.test.ts:53:74
+     51|       await runtime.sessions.appendNotice({ sessionId, content: 'refre…
+     52|       await expect.poll(() => visibleIds.includes(selectedId)).toBe(fa…
+     53|       expect(await runtime.sessions.readViewItem(sessionId, selectedId…
+       |                                                                          ^
+     54|     } finally { observation.close(); }
+     55|   });
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:5
+ ❯ src/client-history.contract-review.tmp.test.ts:34:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/client-history.contract-review.tmp.test.ts > reads a 300 KiB search result through its public reference
+AssertionError: promise rejected "Error: History entry 20260926_192655_pt54… { code: '…' }" instead of resolving
+ ❯ src/client-history.contract-review.tmp.test.ts:62:86
+     60|     const result = await runtime.sessions.searchHistory(sessionId, { q…
+     61|     expect(result.hits).toHaveLength(1);
+     62|     await expect(runtime.sessions.readHistoryEntry(sessionId, result.h…
+       |                                                                                      ^
+     63|   });
+     64| });
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:5
+ ❯ src/client-history.contract-review.tmp.test.ts:59:3
+
+Caused by: Error: History entry 20260926_192655_pt54f9ae6c0e40#0 is unreadable.
+ ❯ assembleConversationHistoryEntry src/client-history.ts:271:11
+ ❯ readConversationHistoryEntry src/client-history.ts:84:17
+ ❯ src/client-history.contract-review.tmp.test.ts:62:5
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:5
+ ❯ src/client-history.contract-review.tmp.test.ts:59:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'internal_error' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/client-history.contract-review.tmp.test.ts > does not silently drop content blocks from a single canonical history entry
+AssertionError: expected 150 to be 160 // Object.is equality
+
+- Expected
++ Received
+
+- 160
++ 150
+
+ ❯ src/client-history.contract-review.tmp.test.ts:74:31
+     72|     const page = await runtime.sessions.readHistory(sessionId);
+     73|     expect(page.nextCursor).toBeUndefined();
+     74|     expect(page.items.length).toBe(160);
+       |                               ^
+     75|   });
+     76| });
+ ❯ withMessages src/client-history.contract-review.tmp.test.ts:19:5
+ ❯ src/client-history.contract-review.tmp.test.ts:71:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  19:26:36
+   Duration  20.20s (transform 5.44s, setup 48ms, collect 17.37s, tests 2.55s, environment 0ms, prepare 57ms)

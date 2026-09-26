@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { KodaXSessionUiHistoryItem } from "@kodax-ai/agent";
+import type { KodaXMessage, KodaXSessionUiHistoryItem } from "@kodax-ai/agent";
 import {
   restoreHistoryItemsFromSession,
   trimPersistedUiHistorySnapshot,
@@ -14,6 +14,27 @@ function persistedSidecar(
 }
 
 describe("restore-history / sidecar items", () => {
+  it('preserves the live window while full history retains every canonical block and round', () => {
+    const messages: KodaXMessage[] = [{ role: 'assistant', outputId: 'blocks', content:
+      Array.from({ length: 80 }, (_, index) => [
+        { type: 'thinking' as const, thinking: `thought-${index}` },
+        { type: 'text' as const, text: `answer-${index}` },
+      ]).flat(),
+    }];
+    const window = restoreHistoryItemsFromSession({ messages });
+    const all = restoreHistoryItemsFromSession({ messages, historyScope: 'all' });
+    expect(window).toHaveLength(150);
+    expect(window[0]).toMatchObject({ type: 'thinking', text: 'thought-5' });
+    expect(all).toHaveLength(160);
+    expect(all[0]).toMatchObject({ type: 'thinking', text: 'thought-0' });
+    const rounds: KodaXMessage[] = Array.from({ length: 60 }, (_, index) => [
+      { role: 'user' as const, content: `question-${index}` },
+      { role: 'assistant' as const, content: `answer-${index}` },
+    ]).flat();
+    expect(restoreHistoryItemsFromSession({ messages: rounds })).toHaveLength(100);
+    expect(restoreHistoryItemsFromSession({ messages: rounds, historyScope: 'all' })).toHaveLength(120);
+  });
+
   it('anchors retained output to any recorded input in a batch across a trimmed history window', () => {
     const messages = Array.from({ length: 60 }, (_, index) => [
       { role: 'user' as const, content: `Old ${index}`, inputId: `old-${index}` },

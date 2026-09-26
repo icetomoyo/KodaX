@@ -225,7 +225,7 @@ export function toKodaXProductClient(
       listTools: (filter) => runtime.mcp.listTools(filter),
     },
     workflows: {
-      start: (input) => runtime.workflows.start(input),
+      start: (input) => runtime.workflows.start({ ...input, settingsDefaults: 'product' }),
       list: async (filter) => (await runtime.workflows.list(filter ?? {})).map((run) => ({
         runId: run.runId,
         workflowName: run.workflow,

@@ -2168,6 +2168,7 @@ async function dispatchRuntimeDaemonRequest(
       // and resolved/validated inside the runtime, never a prepared module.
       const params = requireRecord(request.params);
       const workflowInput: RuntimeWorkflowStartInput = {
+        ...(params.settingsDefaults === 'product' ? { settingsDefaults: 'product' as const } : {}),
         ...(optionalStringField(params, "sessionId") !== undefined ? { sessionId: optionalStringField(params, "sessionId")! } : {}),
         projectRoot: requireStringField(params, "projectRoot"),
         source: params.source as RuntimeWorkflowStartInput["source"],
@@ -2468,7 +2469,7 @@ function runtimeDaemonCapabilities(
   runtimeEventCoalescing = false,
   ownerCapabilities: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
-  const { productClient, toolInvocation, sessionCancellation } = ownerCapabilities;
+  const { productClient, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2487,6 +2488,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.workflowSettingsDefaults;
   delete safeOverrides.subscriptionLifecycle;
   delete safeOverrides.sessionCancellation;
   delete safeOverrides.toolInvocation;
@@ -2510,6 +2512,8 @@ function runtimeDaemonCapabilities(
     // older Host would reject with an unsettled id-less invalid_frame.
     invocationPreparation: { version: 1 },
     subscriptionLifecycle: { version: 1, errorNotifications: true },
+    ...(isRecord(workflowSettingsDefaults) && workflowSettingsDefaults.version === 1
+      ? { workflowSettingsDefaults: { version: 1 } } : {}),
     ...(isRecord(productClient) && productClient.version === 1
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(toolInvocation) && toolInvocation.version === 1

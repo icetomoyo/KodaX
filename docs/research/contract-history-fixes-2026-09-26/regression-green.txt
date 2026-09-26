@@ -1,0 +1,33 @@
+
+ RUN  v3.2.7 C:/Users/ADMIN/.codex/worktrees/a72f/KodaX
+
+ ✓ src/sdk-client.history.test.ts (7 tests) 20120ms
+   ✓ projects the actual request compaction capacity including Memory reserve without enabling diagnostics  2481ms
+   ✓ waits for the Host display checkpoint before reading a prepared history page  1903ms
+   ✓ waits for the Host display checkpoint before reading a prepared history entry  1840ms
+   ✓ shares accepted input identity across history and observation for identical prompts  1539ms
+   ✓ preserves failed tool outcomes in history after the run settles  1195ms
+   ✓ pages older history with stable ids, copyable bodies, and oversized entry reads  6589ms
+   ✓ marks old cursors stale after history changes and searches the whole history  4571ms
+ ✓ src/sdk-client.observe-history.test.ts (11 tests) 7574ms
+   ✓ keeps an interrupted draft inside its aliased input round when that input is outside the byte-budget page  785ms
+   ✓ keeps checkpointed tools before continuations when the real byte-budget page has no shared anchor  358ms
+   ✓ preserves accepted user identity when the literal text mentions internal worker prompts  1408ms
+   ✓ reads a frozen oversized assistant by its original identity after it leaves the view and is archived  505ms
+   ✓ reads a frozen oversized tool by its original identity after it leaves the view and is archived  542ms
+   ✓ invalidates frozen tool and output locators after switching the canonical branch  359ms
+   ✓ shows pre-compaction conversation history in the current view after compaction  1558ms
+   ✓ keeps settled output single between live items and conversation history  1308ms
+ ✓ src/sdk-client.history-boundaries.test.ts (6 tests) 4087ms
+   ✓ reads oversized history and search references: below 256 KiB  854ms
+   ✓ reads oversized history and search references: at 256 KiB  350ms
+   ✓ reads oversized history and search references: above 256 KiB  385ms
+   ✓ reads oversized history and search references: UTF-8 across three chunks  534ms
+   ✓ retains tool blocks, results and inputs when an entry expands past the display window  1182ms
+   ✓ keeps every ordered block of a single message through history page and item reads  781ms
+ ✓ packages/repl/src/ui/utils/restore-history.test.ts (37 tests) 15ms
+
+ Test Files  4 passed (4)
+      Tests  61 passed (61)
+   Start at  20:21:16
+   Duration  49.59s (transform 4.36s, setup 49ms, collect 17.00s, tests 31.80s, environment 0ms, prepare 216ms)

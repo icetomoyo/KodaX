@@ -1,0 +1,45 @@
+
+ RUN  v3.2.7 C:/Users/ADMIN/.codex/worktrees/a72f/KodaX
+
+ ❯ src/sdk-client.history-boundaries.test.ts (2 tests | 1 failed) 1230ms
+   ✓ reads oversized history and search references through independently encoded chunks  988ms
+   × keeps every ordered block of a single message through history page and item reads 241ms
+     → expected { …(3) } to match object { outputId: 'many-blocks', …(2) }
+(3 matching properties omitted from actual)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/sdk-client.history-boundaries.test.ts > keeps every ordered block of a single message through history page and item reads
+AssertionError: expected { …(3) } to match object { outputId: 'many-blocks', …(2) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "outputId": "many-blocks",
+-   "outputState": "committed",
+-   "textRevision": 0,
++   "id": "20260926_201956_cy8c61967ffefa:history:sha256:4574a02a33086b9f49721fc1aad3707bcfa2e1ae157b8b9c8381e91d815f7b82:0#0",
++   "text": " thought-0
++ ",
++   "type": "thinking",
+  }
+
+ ❯ src/sdk-client.history-boundaries.test.ts:94:20
+     92|     ]).flat());
+     93|     for (const item of page.items) {
+     94|       expect(item).toMatchObject({ outputId: 'many-blocks', outputStat…
+       |                    ^
+     95|       expect(await readBody(client, sessionId, item.id)).toBe(item.tex…
+     96|     }
+ ❯ withHistory src/sdk-client.history-boundaries.test.ts:39:5
+ ❯ src/sdk-client.history-boundaries.test.ts:86:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  20:19:41
+   Duration  14.87s (transform 4.25s, setup 34ms, collect 13.38s, tests 1.23s, environment 0ms, prepare 54ms)

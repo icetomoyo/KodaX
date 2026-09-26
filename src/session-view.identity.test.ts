@@ -25,7 +25,7 @@ it('keeps distinct input identities distinct when legacy display text and timest
   ] };
   const users = restoreSessionViewItems('distinct', data, data.messages).filter(item => item.type === 'user');
   expect(users.map(item => item.inputId)).toEqual(['input-one', 'input-two']);
-  expect(users.map(item => item.id)).toEqual(['display-one', 'display-two']);
+  expect(users.map(item => item.id)).toEqual(['distinct:input:input-one', 'distinct:input:input-two']);
 });
 
 it('consumes each legacy display match once instead of lending the same identity repeatedly', () => {
@@ -71,6 +71,6 @@ it('round-trips accepted input identities through persisted display history', ()
     { role: 'assistant', content: 'answer', timestamp: new Date(4100).toISOString() },
   ], uiHistory: persisted };
   const users = restoreSessionViewItems('round-trip', data, data.messages).filter(item => item.type === 'user');
-  expect(users.map(item => item.id)).toEqual(['display-live']);
+  expect(users.map(item => item.id)).toEqual(['round-trip:input:input-live']);
   expect(users.map(item => item.inputId)).toEqual(['input-live']);
 });

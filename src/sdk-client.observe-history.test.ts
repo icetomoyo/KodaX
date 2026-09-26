@@ -301,7 +301,7 @@ it('shows pre-compaction conversation history in the current view after compacti
     // history source, so the pre-compaction exchange remains visible.
     expect(items.some((item) => item.type === 'user' && item.text === 'Ancient pre-compaction fact worth keeping.')).toBe(true);
     const ancientItem = items.find((item) => item.text === 'Ancient pre-compaction fact worth keeping.')!;
-    expect(ancientItem.id).toContain('history');
+    expect(ancientItem.id).toBe(`${session.id}:input:ancient`);
 
     // Stable identity: a fresh observation resolves the same item id.
     const second: ClientSessionView[] = [];

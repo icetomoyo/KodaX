@@ -441,6 +441,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'workflow.stop': { params: objectSchema({ runId: stringSchema, sessionId: stringSchema }, ['runId']), result: booleanSchema },
   'workflow.start': {
     params: objectSchema({
+      settingsDefaults: { type: 'string', enum: ['product'] },
       sessionId: stringSchema,
       credential: credentialBindingSchema(),
       projectRoot: stringSchema,

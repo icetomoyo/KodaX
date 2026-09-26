@@ -755,11 +755,10 @@ export function restoreSessionViewItems(
   const uiHistory = [...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
     ...persistSessionViewItems(savedLiveItems)].filter(item => !item.id || !noticeIds.has(item.id));
   const persisted = restorePersistedViewItems(uiHistory);
-  // Display-identity reconciliation is identity-first: an accepted input
-  // joins its persisted display item by inputId only, so same-text inputs
-  // can never borrow one identity. Legacy items without identity may
-  // borrow a text/time lookalike, but each persisted item is lent at most
-  // once — leftovers mint fresh derived identities.
+  // Identified users derive their identity from inputId, including legacy
+  // checkpoints. Other identified items join by inputId only. Legacy items
+  // may borrow an unowned text/time lookalike at most once; they never borrow
+  // an accepted input's identity.
   const consumed = new Set<ClientViewItem>();
   const persistedByInputId = new Map<string, ClientViewItem>();
   for (const candidate of persisted) {
@@ -769,7 +768,7 @@ export function restoreSessionViewItems(
   }
   const findLegacyDisplayMatch = (item: { type: ClientViewItem['type']; text: string; timestamp?: number }): ClientViewItem | undefined => {
     for (const candidate of persisted) {
-      if (consumed.has(candidate) || candidate.outputId !== undefined) continue;
+      if (consumed.has(candidate) || candidate.outputId !== undefined || candidate.inputId !== undefined) continue;
       if (candidate.type === item.type && candidate.text === item.text && candidate.timestamp === item.timestamp) {
         consumed.add(candidate);
         return candidate;
@@ -807,6 +806,10 @@ export function restoreSessionViewItems(
         // The state transition invalidates snapshots of the former draft.
         textRevision: committed ? 0 : revisedTextVersion(previous, item.text), timestamp: item.timestamp,
         ...(!committed && item.afterInputId ? { afterInputId: item.afterInputId } : {}) }];
+    }
+    if (item.type === 'user' && item.inputId !== undefined) {
+      return [{ id: `${sessionId}:input:${item.inputId}`, type: 'user', text: item.text,
+        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
     }
     let previous: ClientViewItem | undefined;
     if (item.inputId !== undefined) {
