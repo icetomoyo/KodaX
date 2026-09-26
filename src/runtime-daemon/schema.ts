@@ -426,12 +426,12 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
 
   'workflow.list': { params: workflowFilterSchema(), result: arrayAnySchema },
   'workflow.get': { params: runIdParamsSchema(), result: { oneOf: [objectAnySchema, { type: 'null' }] } },
-  'workflow.subscribe': { params: filterParamsSchema(workflowFilterSchema()), result: subscriptionSchema() },
+  'workflow.subscribe': { params: objectSchema({ filter: workflowFilterSchema(), reportErrors: booleanSchema }), result: subscriptionSchema() },
   'workflow.unsubscribe': {
     params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
     result: okSchema,
   },
-  'learning.subscribe': { params: objectSchema({ afterRevision: integerSchema }, [], true), result: subscriptionSchema() },
+  'learning.subscribe': { params: objectSchema({ afterRevision: integerSchema, reportErrors: booleanSchema }, [], true), result: subscriptionSchema() },
   'learning.unsubscribe': {
     params: objectSchema({ subscriptionId: stringSchema }, ['subscriptionId']),
     result: okSchema,
@@ -785,6 +785,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
 } satisfies Record<RuntimeDaemonMethod, RuntimeDaemonMethodSchema>;
 
 export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS = {
+  'subscription.error': objectSchema({ subscriptionId: stringSchema, message: stringSchema }, ['subscriptionId', 'message']),
   'session.view': objectSchema({ subscriptionId: stringSchema, view: objectAnySchema }, ['subscriptionId', 'view']),
   event: objectSchema({ subscriptionId: stringSchema, event: objectAnySchema }, ['subscriptionId', 'event']),
   'observation.invalidated': objectSchema({

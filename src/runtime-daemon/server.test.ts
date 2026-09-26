@@ -64,6 +64,29 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('waits for Learning service readiness and releases a failed registration', async () => {
+    const runtime = makeRuntime();
+    let fail!: (error: unknown) => void;
+    const ready = new Promise<void>((_resolve, reject) => { fail = reject; });
+    const close = vi.fn(async () => ({ done: true as const, value: undefined }));
+    vi.spyOn(runtime.learning, 'subscribe').mockReturnValue({ ready,
+      [Symbol.asyncIterator]() { return this; },
+      next: async () => ({ done: true, value: undefined }), return: close,
+    });
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    try {
+      await initializeDispatcher(dispatcher);
+      let acknowledged = false;
+      const registration = dispatcher.handle(createRuntimeDaemonRequest('learning-ready', 'learning.subscribe', { reportErrors: true }))
+        .then((response) => { acknowledged = true; return response; });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(acknowledged).toBe(false);
+      fail(new Error('backend registration failed'));
+      expect(await registration).toMatchObject({ kind: 'error', error: { message: 'backend registration failed' } });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally { dispatcher.close(); }
+  });
+
   it('does not let an observe-only client execute dynamic Skill preparation', async () => {
     const runtime = makeRuntime();
     const prepare = vi.spyOn(runtime.invocations, 'prepareSkill');
@@ -3649,7 +3672,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 0 };
       },
       async events() { return []; },
-      async *subscribe() {},
+      subscribe() { return Object.assign((async function* () {})(), { ready: Promise.resolve() }); },
       async acknowledge() {},
       async snooze() {},
       async reject() {},

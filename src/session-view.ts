@@ -9,6 +9,7 @@ import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItem
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
 import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
+import { canonicalTools } from './client-canonical-tools.js';
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
@@ -27,6 +28,8 @@ interface ObservedSession {
   readonly runIds: Set<string>;
   persistRequested: boolean;
   persisting?: Promise<void>;
+  hasPersistFailure: boolean;
+  persistFailure?: unknown;
   activity?: ClientSessionActivity;
   activityRunId?: string;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
@@ -71,7 +74,7 @@ export class SessionViewOwner {
   private state(sessionId: string): ObservedSession {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false };
+      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, hasPersistFailure: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -308,7 +311,13 @@ export class SessionViewOwner {
       while (state.persistRequested) {
         state.persistRequested = false;
         await this.save(sessionId, [...state.runIds], state.items);
+        state.hasPersistFailure = false;
+        state.persistFailure = undefined;
       }
+    }).catch((error: unknown) => {
+      state.hasPersistFailure = true;
+      state.persistFailure = error;
+      throw error;
     }).finally(() => { state.persisting = undefined; });
     void state.persisting.catch((error: unknown) => {
       emitKodaXDiagnostic({ source: 'session.view', level: 'error', message: 'Unable to persist Session display history.', detail: error });
@@ -393,7 +402,7 @@ export class SessionViewOwner {
   }
 
   async close(): Promise<void> {
-    const checkpoints = await Promise.allSettled([...this.sessions.values()].map((state) => state.persisting));
+    const checkpoints = await Promise.allSettled([...this.sessions.keys()].map(sessionId => this.flush(sessionId)));
     for (const state of this.sessions.values()) {
       if (state.timer) clearTimeout(state.timer);
       for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
@@ -408,6 +417,7 @@ export class SessionViewOwner {
   async flush(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     while (state?.persisting) await state.persisting;
+    if (state?.hasPersistFailure) throw state.persistFailure;
   }
 
   release(sessionId: string): void {
@@ -427,7 +437,7 @@ export class SessionViewOwner {
     const read = () => this.read(sessionId, includeHistory, state.view, state.items);
     // A replacement checkpoint retires prior output on disk. A fresh history
     // read must wait for that write, just as an invalidated read does below.
-    const pendingRead = includeHistory && state.persisting ? this.flush(sessionId).then(read) : read();
+    const pendingRead = includeHistory ? this.flush(sessionId).then(read) : read();
     const loading = pendingRead.then((view) => {
       if (generation !== state.generation) return;
       if (includeHistory) {
@@ -731,8 +741,7 @@ export function restoreSessionViewItems(
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
   const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
-  const toolResults = new Map(historyMessages.flatMap(message => typeof message.content === 'string' ? []
-    : message.content.filter(block => block.type === 'tool_result').map(block => [block.tool_use_id, block] as const)));
+  const tools = canonicalTools(historyMessages);
   const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
   const savedOutputTime = lastAssistant?.timestamp ? Date.parse(lastAssistant.timestamp) : NaN;
   // A live response can equal an earlier answer before it has been saved.
@@ -774,17 +783,15 @@ export function restoreSessionViewItems(
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
-      const result = toolResults.get(tool.id);
-      // Older sessions encoded cancellation in text alongside is_error=true.
-      const legacyCancellation = result?.metadata?.cancelled === undefined && result?.is_error !== false
-        && typeof result?.content === 'string' && /^\[(?:Cancelled|Blocked)\]/.test(result.content);
-      const status = result?.metadata?.cancelled === true || legacyCancellation ? 'cancelled'
-        : result?.is_error !== undefined ? (result.is_error ? 'error' : 'success')
-        : previous?.tool?.status ?? (tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled');
-      return previous ? { ...previous, tool: previous.tool ? { ...previous.tool, status } : undefined }
+      const canonical = tools.get(tool.id);
+      if (canonical) return { ...previous, ...canonical, id: previous?.id ?? canonical.id,
+        timestamp: previous?.timestamp ?? item.timestamp,
+        tool: { ...previous?.tool, ...canonical.tool!, startedAt: previous?.tool?.startedAt ?? canonical.tool?.startedAt,
+          endedAt: previous?.tool?.endedAt ?? canonical.tool?.endedAt } };
+      return previous ? previous
         : { id: `tool:${tool.id}`, type: 'tool', text: String(tool.output ?? tool.error ?? ''), timestamp: item.timestamp,
         tool: { callId: tool.id, name: tool.name,
-          status,
+          status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
     if (item.outputId && (item.type === 'assistant' || item.type === 'thinking')) {

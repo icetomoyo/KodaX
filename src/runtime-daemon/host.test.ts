@@ -1623,7 +1623,7 @@ function makeRuntime(
       async get() { throw new Error("Learning is not used by this fixture."); },
       async getSnapshot() { return { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: 0 }; },
       async events() { return []; },
-      async *subscribe() {},
+      subscribe() { return Object.assign((async function* () {})(), { ready: Promise.resolve() }); },
       async acknowledge() {},
       async snooze() {},
       async reject() {},

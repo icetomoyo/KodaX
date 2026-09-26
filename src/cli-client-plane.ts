@@ -49,7 +49,7 @@ export function createCliWorkflowControl(client: KodaXProductClient): NonNullabl
       ...(run.error !== undefined ? { error: run.error } : {}),
     })),
     get: runId => client.workflows.get(runId),
-    subscribe: (filter, listener) => client.workflows.subscribe(filter, listener),
+    subscribe: (filter, listener, onError) => client.workflows.subscribe(filter, listener, onError),
     pause: runId => client.workflows.pause(runId),
     resume: runId => client.workflows.resume(runId),
     stop: (runId, options) => client.workflows.stop(runId, options),

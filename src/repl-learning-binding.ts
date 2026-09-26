@@ -8,14 +8,20 @@ export function createReplLearningBinding(client: Pick<KodaXProductClient, 'lear
     getSnapshot: () => client.learning.getSnapshot(),
     list: (query) => client.learning.list(query),
     get: (nameOrSlug) => client.learning.get(nameOrSlug),
-    subscribe(listener, options) {
-      const iterator = client.learning.subscribe(options)[Symbol.asyncIterator]();
+    subscribe(listener, options, onError) {
+      const stream = client.learning.subscribe(options);
+      const iterator = stream[Symbol.asyncIterator]();
       let active = true;
-      void consumeLearningEvents(iterator, () => active, listener);
+      void consumeLearningEvents(iterator, () => active, listener, onError);
       return {
+        ready: stream.ready,
         close() {
           active = false;
-          void iterator.return?.();
+          void iterator.return?.().catch((error: unknown) => {
+            emitKodaXDiagnostic({ source: 'runtime:learning-binding', level: 'warn',
+              message: 'Failed to close Learning Center observation.',
+              detail: error instanceof Error ? error.message : String(error) });
+          });
         },
       };
     },
@@ -34,6 +40,7 @@ async function consumeLearningEvents(
   iterator: AsyncIterator<Awaited<ReturnType<KodaXProductClient['learning']['events']>>[number]>,
   isActive: () => boolean,
   listener: Parameters<LearningBinding['subscribe']>[0],
+  onError?: (error: unknown) => void,
 ): Promise<void> {
   try {
     while (isActive()) {
@@ -49,5 +56,6 @@ async function consumeLearningEvents(
       message: 'Learning Center event subscription stopped.',
       detail: error instanceof Error ? error.message : String(error),
     });
+    onError?.(error);
   }
 }

@@ -83,9 +83,17 @@
 
 `workflows.get` 返回现有工作流进程的完整数据快照，包括 items、counts、progress 与 lineage；`list` 保留计数、起止时间和 runDir，不让 UI 从摘要推算进度。`subscribe` 复用已有事件流，返回可关闭的订阅，不代表断线期间事件会无限重放。客户端重新连接后应重新读取快照。所有这些类型都是数据，不暴露 Host 执行对象。
 
+Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示快照同步。Workflow 可传可选 `onError`；Learning 的 `ready` 及 iterator `next` 保留早期失败，多个 `next` 按 FIFO 接收事件。故障拒绝所有等待并终止观察；显式 `return` 清空事件、令剩余等待 `done`，不会重写已经拒绝的 Promise。主动关闭发生在握手前时 `ready` 拒绝，迟到的成功握手只释放远端订阅。
+
+传输断连、Host 学习服务故障与 Run 终态是独立事实。消费者报告观察错误，重新订阅并等待 `ready`，再读取 snapshot/list/get；读取期间的通知作为再次刷新信号，按领域 revision 去重，不重放 mutation。Ink Learning 和工作流完成观察使用这一恢复顺序，Session.observe 保留自身恢复语义。
+
+该保证要求 Host 公告 `subscriptionLifecycle: { version: 1, errorNotifications: true }`。订阅请求显式 opt-in `reportErrors`，Host 才发送 `subscription.error`，避免旧 SDK 收到未知通知；不新增 RPC，也不提升 productClient v1。新 SDK 可连接旧 Host 使用其他兼容功能，但 Learning/Workflow 订阅在发送 RPC 前返回 `daemon_upgrade_required`，不宣称旧 Host 能报告内部观察失败。自实现 Product Client 需为这两类订阅提供 `ready`；同步注册可返回已完成 Promise。
+
 `catalog.commands/skills` 的 `source` 是 Host 解析出的注册来源字符串。Provider 的 capabilityProfile 描述后端执行特点；客户端不自行猜测 Provider 行为，不将探测失败伪装成不支持。config/Session 设置可选字段及默认规则由类型与 Host 解析决定，不应靠 UI 复制默认值逻辑。
 
 产品 Session 未在 profile 或会话覆盖中指定权限模式时，Host 的有效模式为 `accept-edits`，`view.settings` 与产品输入实际执行使用同一默认。`getSettings` 继续只返回原始会话覆盖，清除覆盖后重新继承 Host 默认，不补写 config 或 Session 文件。明确的 `plan`、`auto`、`full-access` 等仍按既有优先级处理。底层 `/runtime` 未声明权限的调用不因此取得产品默认授权；UI 不能通过启动时写入本地默认修补两端差异。
+
+Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在模式为 `plan` 且没有 Session `effort` 覆盖时采用它；离开计划模式后恢复原有 effort 解析，客户端无需回写缓存。`null` 清除覆盖。既有 `sharedSessionSettings.keys` 声明支持；旧 Host 未列出该键时，新 SDK 在发送包含该字段的设置 mutation 前返回 `daemon_upgrade_required`，其他设置仍可使用，不提升整个 productClient 版本。ACP 初始化只提交明确的选项/环境意图，普通 prompt 不回写缓存设置；显式 prompt effort 和模式切换仍提交对应的窄设置意图。计划批准使用完整 `options.plan`，Host 模式变化通过 ACP `current_mode_update` 显示。
 
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 

@@ -3,12 +3,13 @@ import type { ClientConfig, ClientSessionSettings } from '@kodax-ai/coding/clien
 /** Expose product choices without leaking the Host's execution or sandbox contract. */
 export function toClientSessionSettings(settings: ClientSessionSettings): ClientSessionSettings {
   const {
-    provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
+    provider, model, effort, planModeEffort, thinking, reasoningMode, permissionMode, agentMode,
     autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
     compactionReasoning, repoIntelligenceMode, repoIntelligenceTrace,
   } = settings;
   return {
     provider, model, effort, thinking, reasoningMode, permissionMode, agentMode,
+    ...(planModeEffort !== undefined ? { planModeEffort } : {}),
     autoModeClassifierModel, compactionTriggerPercent, compactionTriggerTokens, maxIter,
     ...(compactionReasoning !== undefined ? { compactionReasoning } : {}),
     ...(repoIntelligenceMode !== undefined ? { repoIntelligenceMode } : {}),

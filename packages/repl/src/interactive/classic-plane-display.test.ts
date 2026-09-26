@@ -96,6 +96,17 @@ function item(overrides: Partial<ClientViewItem> & Pick<ClientViewItem, 'id' | '
 }
 
 describe('createClassicPlaneDisplayDiffer (T18)', () => {
+  it('rejects a body page whose declared length contradicts the captured view', async () => {
+    const lines: string[] = [];
+    const display = createClassicPlaneDisplayDiffer(line => lines.push(line), async (id, options) => ({
+      id, offset: options.offset ?? 0, text: 'whole-body', totalLength: 2,
+    }));
+    await display([]);
+    await expect(display([item({ id: 'body', type: 'assistant', text: 'body', textOffset: 6, totalTextLength: 10 })]))
+      .rejects.toThrow(/inconsistent|changed|incomplete/i);
+    expect(lines).toEqual([]);
+  });
+
   it('prints explicit same-item revisions and resumes appending without replaying settled snapshots', async () => {
     const lines: string[] = [];
     const readItem = vi.fn(async () => null);

@@ -17,6 +17,7 @@ import type {
 } from '@kodax-ai/coding/client-contract';
 import { createHash, type Hash } from 'node:crypto';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { readClientItemRange } from '@kodax-ai/coding';
 import {
   answerClientPlaneInteraction,
   viewRunsActive,
@@ -30,21 +31,8 @@ type ReadItem = (id: string, options: ClientItemReadOptions) => Promise<ClientIt
 async function readClassicItemRange(readItem: ReadItem | undefined, id: string, offset: number,
   end: number, part: 'text' | 'input' = 'text', captured?: ClientViewItem): Promise<string> {
   if (!readItem) throw new Error('Complete console output is unavailable.');
-  const parts: string[] = [];
-  while (offset < end) {
-    const chunk = await readItem(id, { offset, part });
-    if (!chunk || chunk.id !== id || chunk.offset !== offset || chunk.text.length === 0) {
-      throw new Error(`Console output ${id} is incomplete; open session history to retry.`);
-    }
-    if (captured && ((chunk.textRevision ?? 0) !== (captured.textRevision ?? 0)
-      || chunk.outputState !== captured.outputState)) {
-      throw new Error(`Console output ${id} changed during the read; retry from the current view.`);
-    }
-    const text = chunk.text.slice(0, end - offset);
-    parts.push(text);
-    offset += text.length;
-  }
-  return parts.join('');
+  return readClientItemRange(offset => readItem(id, { offset, part }), id,
+    { offset, length: end, ...(captured ? { version: captured } : {}) });
 }
 
 const THINKING_PREVIEW_LENGTH = 100;

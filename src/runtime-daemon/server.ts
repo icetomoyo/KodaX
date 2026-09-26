@@ -952,6 +952,19 @@ function parseRuntimeClientInstanceSecret(value: unknown): string | undefined {
   return typeof secret === "string" ? secret : undefined;
 }
 
+function reportSubscriptionFailure(
+  options: RuntimeDaemonDispatcherOptions,
+  params: Record<string, unknown>,
+  subscriptionId: string,
+  error: unknown,
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  emitKodaXDiagnostic({ source: 'runtime.daemon.server', level: 'warn', message: 'Subscription stopped.', detail: message });
+  if (params.reportErrors === true) {
+    options.notify?.(createRuntimeDaemonNotification('subscription.error', { subscriptionId, message }));
+  }
+}
+
 async function dispatchRuntimeDaemonRequest(
   request: RuntimeDaemonRequest,
   options: RuntimeDaemonDispatcherOptions,
@@ -2121,8 +2134,13 @@ async function dispatchRuntimeDaemonRequest(
         (event) => {
           notify(subscriptionId, event);
         },
+        (error) => queueMicrotask(() => {
+          closeSubscription(subscriptionId);
+          reportSubscriptionFailure(options, params, subscriptionId, error);
+        }),
       );
       rememberSubscription(subscriptionId, subscription);
+      await subscription.ready;
       return { subscriptionId };
     }
     case "workflow.unsubscribe":
@@ -2200,28 +2218,35 @@ async function dispatchRuntimeDaemonRequest(
         ),
       );
     case "learning.subscribe": {
-      // Push subscription over the generic event notification channel, the
-      // same wiring workflow.subscribe uses; a bound client no longer has to
-      // poll learning.events to observe learning lifecycle changes.
+      const params = optionalRecord(request.params) ?? {};
       const subscriptionId = createSubscriptionId();
-      const iterator = bindRuntimeLearningClient(runtime.learning, principalId).subscribe({
-        afterRevision: optionalIntegerField(optionalRecord(request.params) ?? {}, "afterRevision"),
-      })[Symbol.asyncIterator]();
-      const driver = (async () => {
+      const stream = bindRuntimeLearningClient(runtime.learning, principalId).subscribe({
+        afterRevision: optionalIntegerField(params, "afterRevision"),
+      });
+      const iterator = stream[Symbol.asyncIterator]();
+      let active = true;
+      rememberSubscription(subscriptionId, { close: () => {
+        active = false;
+        void iterator.return?.().catch((error: unknown) => {
+          emitKodaXDiagnostic({ source: 'runtime.daemon.server', level: 'warn',
+            message: 'Failed to close Learning observation.', detail: String(error) });
+        });
+      } });
+      await stream.ready;
+      void (async () => {
         try {
-          for (;;) {
+          while (active) {
             const next = await iterator.next();
-            if (next.done) break;
+            if (!active) return;
+            if (next.done) throw new Error('Learning observation ended.');
             notify(subscriptionId, next.value);
           }
-        } catch { /* closed or the learning service failed */ }
+        } catch (error: unknown) {
+          if (!active) return;
+          closeSubscription(subscriptionId);
+          reportSubscriptionFailure(options, params, subscriptionId, error);
+        }
       })();
-      rememberSubscription(subscriptionId, {
-        close: () => {
-          void iterator.return?.();
-          void driver.catch(() => undefined);
-        },
-      });
       return { subscriptionId };
     }
     case "learning.unsubscribe":
@@ -2462,6 +2487,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.subscriptionLifecycle;
   delete safeOverrides.sessionCancellation;
   delete safeOverrides.toolInvocation;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
@@ -2483,6 +2509,7 @@ function runtimeDaemonCapabilities(
     // dispatches; clients gate on this fact instead of RPC'ing methods an
     // older Host would reject with an unsettled id-less invalid_frame.
     invocationPreparation: { version: 1 },
+    subscriptionLifecycle: { version: 1, errorNotifications: true },
     ...(isRecord(productClient) && productClient.version === 1
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(toolInvocation) && toolInvocation.version === 1
@@ -2626,6 +2653,7 @@ function runtimeDaemonCapabilities(
         "provider",
         "model",
         "effort",
+        "planModeEffort",
         "thinking",
         "reasoningMode",
         "permissionMode",

@@ -240,7 +240,10 @@ export function toKodaXProductClient(
         ...(run.error !== undefined ? { error: run.error } : {}),
       })),
       get: (runId) => runtime.workflows.get(runId),
-      subscribe: (filter, listener) => runtime.workflows.subscribe(filter, listener),
+      subscribe: (filter, listener, onError) => {
+        const subscription = runtime.workflows.subscribe(filter, listener, onError);
+        return { ready: subscription.ready ?? Promise.resolve(), close: () => subscription.close() };
+      },
       pause: (runId) => runtime.workflows.pause(runId),
       resume: (runId) => runtime.workflows.resume(runId),
       stop: (runId, options) => runtime.workflows.stop(runId, options),

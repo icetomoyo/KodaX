@@ -26,6 +26,8 @@
 // AI types are re-exported for backward compatibility
 // New code should import directly from @kodax-ai/llm
 
+export { readClientItemRange } from './client-item-reader.js';
+
 export type {
   KodaXImageBlock,
   KodaXContentBlock,

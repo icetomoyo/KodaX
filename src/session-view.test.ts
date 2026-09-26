@@ -201,11 +201,14 @@ it('retires checkpointed replacement output without removing other responses or 
 it('does not revive replacement output from an in-flight history read', async () => {
   let saved: ClientSessionView['items'] = [];
   let releaseRead: (() => void) | undefined;
+  let startRead!: () => void;
+  const readStarted = new Promise<void>(resolve => { startRead = resolve; });
   let holdRead = true;
   const owner = new SessionViewOwner(async () => {
     const items = structuredClone(saved);
     if (holdRead) {
       holdRead = false;
+      startRead();
       await new Promise<void>(resolve => { releaseRead = resolve; });
     }
     return { session: { id: 'session', title: 'Replacement' }, settings: {}, queue: [], interactions: [], runs: [], items };
@@ -218,6 +221,7 @@ it('does not revive replacement output from an in-flight history read', async ()
     owner.checkpoint('session');
     await owner.flush('session');
     const observing = owner.observe('session', view => views.push(view));
+    await readStarted;
     events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'replacement', mode: 'replace' });
     events.onTextDelta?.('Replacement answer', { providerRequestId: 'replacement' });
     releaseRead?.();

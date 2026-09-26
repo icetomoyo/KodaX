@@ -192,6 +192,7 @@ export function workflowEventSink(
 export interface WorkflowLiveUpdateEmitter {
   onEvent(event: WorkflowEvent): void;
   onProcessEvent(event: WorkflowProcessEvent): void;
+  onSnapshot(snapshot: WorkflowProcessSnapshot): void;
   complete(status: 'completed' | 'failed' | 'stopped', message?: string): void;
   running(message?: string): void;
 }
@@ -246,27 +247,23 @@ export function createWorkflowLiveUpdateEmitter(
     });
   };
 
+  const publishSnapshot = (snapshot: WorkflowProcessSnapshot, message?: string): void => {
+    if (isFinalWorkflowProcessStatus(snapshot.status)) terminal = true;
+    callbacks.onWorkflowRunUpdate?.(workflowLiveSnapshotFromProcess(
+      snapshot, message === undefined ? { locale } : { locale, message },
+    ));
+  };
   return {
     running: (message) => {
       if (!terminal) emit('running', message);
     },
     onProcessEvent: (event) => {
       if (terminal && event.type !== 'workflow_finished') return;
-      const status = event.snapshot.status;
-      if (
-        event.type === 'workflow_finished'
-        || status === 'completed'
-        || status === 'failed'
-        || status === 'cancelled'
-      ) {
-        terminal = true;
-      }
+      if (event.type === 'workflow_finished') terminal = true;
       const message = event.type === 'workflow_updated' ? event.message : undefined;
-      callbacks.onWorkflowRunUpdate?.(workflowLiveSnapshotFromProcess(
-        event.snapshot,
-        message === undefined ? { locale } : { locale, message },
-      ));
+      publishSnapshot(event.snapshot, message);
     },
+    onSnapshot: (snapshot) => { if (!terminal) publishSnapshot(snapshot); },
     onEvent: (event) => {
       if (terminal) return;
       switch (event.type) {
@@ -530,33 +527,61 @@ export function observeHostWorkflowDone(
       });
     }
   };
-  const subscription = hostControl.subscribe({ runId }, (event) => {
-    if (event.snapshot.runId !== runId) return;
-    live?.onProcessEvent(event);
-    if (event.type === 'workflow_finished' && !done) {
-      done = true;
-      finish(event.snapshot);
+  let generation = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let retryDelay = 1_000;
+  let observedEvents = 0;
+  const restoreSnapshot = async (current: number, ready: Promise<void> | undefined): Promise<void> => {
+    await ready;
+    while (!done && current === generation) {
+      const beforeRead = observedEvents;
+      const snapshot = await hostControl.get(runId);
+      if (done || current !== generation) return;
+      // A concurrent event may be newer than this reply. Read again after it.
+      if (beforeRead !== observedEvents) continue;
+      retryDelay = 1_000;
+      if (snapshot === undefined || snapshot.runId !== runId) return;
+      live?.onSnapshot(snapshot);
+      if (isFinalWorkflowProcessStatus(snapshot.status)) {
+        done = true;
+        finish(snapshot);
+      }
+      return;
     }
-  });
-  subscriptionRef = subscription;
-  if (done) {
-    // The Host dispatched a synchronous workflow_finished during subscribe(),
-    // before subscriptionRef was assigned; close what finish() could not.
-    subscription.close();
-  }
-  void (async () => {
-    const snapshot = await hostControl.get(runId);
-    if (done || snapshot === undefined || snapshot.runId !== runId) return;
-    if (!isFinalWorkflowProcessStatus(snapshot.status)) return;
-    done = true;
-    finish(snapshot);
-  })().catch((error: unknown) => {
+  };
+  const open = (): void => {
     if (done) return;
-    emitWorkflowRunMessage(callbacks, {
-      type: 'error',
-      text: `Workflow completion watch failed (run ${runId}): ${error instanceof Error ? error.message : String(error)}`,
-    });
-  });
+    const current = ++generation;
+    const failed = (error: unknown): void => {
+      if (done || current !== generation) return;
+      generation += 1;
+      subscriptionRef?.close();
+      const upgradeRequired = typeof error === 'object' && error !== null
+        && 'code' in error && error.code === 'daemon_upgrade_required';
+      emitWorkflowRunMessage(callbacks, {
+        type: 'error',
+        text: `Workflow observation interrupted (run ${runId})${upgradeRequired ? '' : '; reconnecting'}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      if (upgradeRequired) return;
+      retry = setTimeout(open, retryDelay);
+      retry.unref?.();
+      retryDelay = Math.min(retryDelay * 2, 10_000);
+    };
+    const subscription = hostControl.subscribe({ runId }, (event) => {
+      if (done || current !== generation || event.snapshot.runId !== runId) return;
+      observedEvents += 1;
+      live?.onProcessEvent(event);
+      if (event.type === 'workflow_finished') {
+        done = true;
+        if (retry) clearTimeout(retry);
+        finish(event.snapshot);
+      }
+    }, failed);
+    subscriptionRef = subscription;
+    if (done || current !== generation) subscription.close();
+    void restoreSnapshot(current, subscription.ready).catch(failed);
+  };
+  open();
 }
 
 export type GeneratedWorkflowApprovalMode = 'required' | 'silent';

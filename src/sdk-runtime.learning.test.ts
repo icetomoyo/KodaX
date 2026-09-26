@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LearnedAreaStore,
@@ -133,10 +133,58 @@ describe('runtime.learning inline facade', () => {
       defaultClientIdentity: 'default-client',
     });
     const client = bindRuntimeLearningClient(owner, 'disconnecting-principal');
-    const iterator = client.subscribe()[Symbol.asyncIterator]();
+    const initialize = LearnedAreaStore.prototype.initialize;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let initialization: Promise<void> | undefined;
+    let initialized = false;
+    const spy = vi.spyOn(LearnedAreaStore.prototype, 'initialize').mockImplementation(function (this: LearnedAreaStore) {
+      initialization = gate.then(async () => { await initialize.call(this); initialized = true; });
+      return initialization;
+    });
+    try {
+      const iterator = client.subscribe();
+      const pending = iterator.next();
+      let closed = false;
+      const returned = iterator.return?.().then((result) => { closed = true; return result; });
+      const repeatedReturn = iterator.return?.();
+      await expect(pending).resolves.toEqual({ done: true, value: undefined });
+      await expect(iterator.ready).rejects.toThrow('closed before registration');
+      expect(closed).toBe(false);
+      release();
+      await expect(returned).resolves.toEqual({ done: true, value: undefined });
+      await expect(repeatedReturn).resolves.toEqual({ done: true, value: undefined });
+      expect(initialized).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    } finally {
+      release();
+      await initialization;
+      spy.mockRestore();
+    }
+  });
 
-    await expect(iterator.return?.()).resolves.toEqual({ done: true, value: undefined });
-    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  it('reports initialization failure from every return without delaying closed next calls', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kodax-runtime-learning-failed-init-'));
+    tempDirs.push(homeDir);
+    const failure = new Error('Learning storage initialization failed');
+    let rejectInitialization!: (error: unknown) => void;
+    const gate = new Promise<void>((_resolve, reject) => { rejectInitialization = reject; });
+    const spy = vi.spyOn(LearnedAreaStore.prototype, 'initialize').mockReturnValue(gate);
+    try {
+      const owner = createRuntimeLearningOwner({ rootDir: join(homeDir, 'learned'), defaultClientIdentity: 'test' });
+      const iterator = owner.subscribe();
+      const first = iterator.return?.();
+      const repeated = iterator.return?.();
+      const firstRejected = expect(first).rejects.toBe(failure);
+      const repeatedRejected = expect(repeated).rejects.toBe(failure);
+      await expect(iterator.ready).rejects.toThrow('closed before registration');
+      await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+      rejectInitialization(failure);
+      await Promise.all([firstRejected, repeatedRejected]);
+      await expect(iterator.return?.()).rejects.toBe(failure);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally { spy.mockRestore(); }
   });
 
   it('persists a stable client cursor independently from other clients', async () => {

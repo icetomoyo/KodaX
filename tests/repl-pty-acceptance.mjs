@@ -878,7 +878,9 @@ async function checkQueueModelBoundary(state) {
     await waitFor('AMA selection reaches the Host and terminal', () => state.view.settings.agentMode === 'ama'
       && state.terminal.screen().split('\n').slice(-2).join(' ').includes('AMA'));
     await writeFile(path.join(state.homeDir, 'boundary.txt'), 'BOUNDARY_TOOL_COMPLETED\n');
-    const beforeRequests = state.requests.length;
+    const boundaryRequests = () => state.requests.filter(request =>
+      /^ACCEPT_BOUNDARY_(HOLD|NEXT)\b/.test(lastUserText(request.messages)));
+    const beforeRequests = boundaryRequests().length;
     await state.terminal.submit('ACCEPT_BOUNDARY_HOLD');
     await waitFor('initial boundary response remains streaming', () => state.terminal.screen().includes('BEGIN_ACCEPT_BOUNDARY_HOLD'));
     const runId = await waitFor('initial boundary Run identity', () => state.view.runs.find(run => run.phase === 'running')?.runId);
@@ -886,9 +888,9 @@ async function checkQueueModelBoundary(state) {
     const queued = await waitFor('busy keyboard input reaches the Host queue', () =>
       state.view.queue.find(input => input.text === 'ACCEPT_BOUNDARY_NEXT'));
     await waitFor('the terminal displays the queued input', () => state.terminal.screen().includes('[1/1] ACCEPT_BOUNDARY_NEXT'));
-    assert.equal(state.requests.length, beforeRequests + 1, 'The first provider response must still be held');
+    assert.equal(boundaryRequests().length, beforeRequests + 1, 'The first provider response must still be held');
     state.pending.get('boundary-tool')();
-    const secondRequest = await waitFor('same Run reaches the provider again after its tool', () => state.requests[beforeRequests + 1]);
+    const secondRequest = await waitFor('same Run reaches the provider again after its tool', () => boundaryRequests()[beforeRequests + 1]);
     await state.terminal.save('queue-model-boundary');
     await saveFacts(state, 'queue-model-boundary');
     const userMessages = secondRequest.messages.filter(message => message.role === 'user');

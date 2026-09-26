@@ -8,6 +8,7 @@ import {
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolUseBlock, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import type { ClientInteraction, ClientSessionView } from '@kodax-ai/coding/client-contract';
+import type { AskUserAnswer } from '@kodax-ai/agent';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -213,6 +214,28 @@ function questionToolCallForRace(): KodaXToolUseBlock[] {
   return [{ ...questionToolCall(), id: 'call-question-race' }];
 }
 
+it('keeps constrained questions pending after invalid answers and consumes only one valid IPC answer', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const started = await first.runs.startTool({ sessionId: session.id, inputId: 'constraints', rawInput: '!ask Choose two', name: 'ask_user_question',
+    input: { question: 'Choose two', multi_select: true, min_selections: 2, max_selections: 2,
+      allow_custom_input: false, options: ['red', 'green', 'blue'].map(value => ({ label: value, value })) } });
+  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length).toBe(1);
+  const question = (await second.interactions.list({ sessionId: session.id }))[0]!;
+  for (const answer of [[], ['red'], ['red', 'red'], ['red', 'green', 'blue'], ['red', 'unknown'],
+    ['red', { kind: 'customInput' as const, value: 'custom' }], 'red']) {
+    await expect(first.interactions.respond(question.requestId, { kind: 'question', answer }))
+      .rejects.toMatchObject({ code: 'invalid_params' });
+    expect((await second.interactions.list({ sessionId: session.id })).map(item => item.requestId)).toEqual([question.requestId]);
+  }
+  const winners = await Promise.all([first, second].map(client => client.interactions.respond(question.requestId,
+    { kind: 'question', answer: ['red', 'green'] })));
+  expect(winners.filter(result => result.accepted)).toHaveLength(1);
+  expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'completed', result: {
+    lastText: expect.stringContaining('"choices":["red","green"]'),
+  } });
+});
+
 function pendingQuestion(views: readonly ClientSessionView[]): ClientInteraction | undefined {
   for (const view of views) {
     const found = view.interactions.find((item) => item.kind === 'question');
@@ -306,6 +329,14 @@ it('returns multi-question answers with arrays, zero selections, and custom inpu
     const interaction = views.flatMap((view) => view.interactions).find((item) => item.kind === 'question_multi')!;
     if (interaction.kind !== 'question_multi') throw new Error(`Expected question_multi, got ${interaction.kind}`);
     expect(interaction.options.questions.map((item) => item.question)).toEqual(['Pick many', 'Pick one']);
+
+    const invalidAnswers: Record<string, AskUserAnswer>[] = [{}, { 'Pick many': [] }, { 'Pick many': [], 'Pick one': 'unknown' },
+      { 'Pick many': [], 'Pick one': 'yes', Extra: 'yes' }];
+    for (const answers of invalidAnswers) {
+      await expect(first.interactions.respond(interaction.requestId, { kind: 'question_multi', answers }))
+        .rejects.toMatchObject({ code: 'invalid_params' });
+      expect((await second.interactions.list({ sessionId: session.id }))[0]?.requestId).toBe(interaction.requestId);
+    }
 
     const accepted = await first.interactions.respond(interaction.requestId, {
       kind: 'question_multi',

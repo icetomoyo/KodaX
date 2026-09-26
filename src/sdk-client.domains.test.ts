@@ -591,6 +591,53 @@ it('keeps Learning notices client scoped while governance and subscriptions shar
   }
 }, 60_000);
 
+it('settles disconnected Learning waits and rebuilds from Host facts after ready', async () => {
+  const stream = first.learning.subscribe();
+  await stream.ready;
+  const waiting = stream.next().then(() => 'unexpected event', () => 'disconnected');
+  await first.disconnect();
+  expect(await waiting).toBe('disconnected');
+  await stream.return?.();
+  const seed = createLearningCenterService({ rootDir: path.join(homeDir, '.kodax', 'learned'), clientIdentity: 'seed' });
+  await seed.record({
+    schemaVersion: 1, capabilityId: 'lc_while_disconnected', displayName: 'Recovered Skill', slug: 'recovered-skill',
+    carrier: 'skill', lifecycle: 'ready', revision: 1,
+    createdAt: '2026-09-26T00:00:00.000Z', updatedAt: '2026-09-26T00:00:00.000Z',
+    source: { kind: 'learning_controller' },
+  });
+  first = await connectKodaXClient({ homeDir, endpoint: endpointPath, clientInfo: { name: 'domain-test', instanceId: 'first' } });
+  const rebuilt = first.learning.subscribe();
+  try {
+    await rebuilt.ready;
+    expect((await first.learning.list()).items.map((record) => record.capabilityId)).toEqual(['lc_while_disconnected']);
+    expect(await first.learning.get('lc_while_disconnected')).toMatchObject({ lifecycle: 'ready' });
+    expect(await first.learning.getSnapshot()).toMatchObject({ ready: 1 });
+    expect((await rebuilt.next()).value).toMatchObject({ capabilityId: 'lc_while_disconnected' });
+  } finally { await rebuilt.return?.(); }
+}, 60_000);
+
+it('reports a Host Learning store failure to the waiting client without disconnecting the client', async () => {
+  const store = new LearnedAreaStore(path.join(homeDir, '.kodax', 'learned'));
+  await store.initialize();
+  const stream = first.learning.subscribe();
+  await stream.ready;
+  const next = stream.next().then(() => 'unexpected event', (error: unknown) => error instanceof Error ? error.message : String(error));
+  try {
+    await writeFile(path.join(store.paths.events, 'broken-event.json'), '{invalid');
+    const result = await Promise.race([next, new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 1_000))]);
+    expect(result).toContain('invalid JSON');
+    expect((await first.sessions.list()).length).toBe(0);
+  } finally { await stream.return?.(); }
+}, 60_000);
+
+it('rejects Learning ready when Host registration fails before its acknowledgement', async () => {
+  const stream = first.learning.subscribe({ afterRevision: -1 });
+  try {
+    await expect(stream.ready).rejects.toThrow('afterRevision');
+    await expect(stream.next()).rejects.toThrow('afterRevision');
+  } finally { await stream.return?.(); }
+}, 60_000);
+
 it('manages project Memory through both clients and rejects stale approval and forget previews', async () => {
   const plane = await first.memory.forProject(homeDir);
   const other = await second.memory.forProject(homeDir);

@@ -1523,6 +1523,7 @@ export type RuntimeCompactionReasoning = boolean | {
 };
 
 export interface RuntimeSessionSettings {
+  readonly planModeEffort?: KodaXOptions["effort"];
   readonly repoIntelligenceMode?: NonNullable<KodaXOptions['context']>['repoIntelligenceMode'];
   readonly repoIntelligenceTrace?: boolean;
   /** Shared manual/automatic summary policy; independent of the main turn's effort. */
@@ -1546,6 +1547,7 @@ export interface RuntimeSessionSettings {
 }
 
 export interface RuntimeSessionSettingsPatch {
+  readonly planModeEffort?: KodaXOptions["effort"] | null;
   readonly repoIntelligenceMode?: RuntimeSessionSettings['repoIntelligenceMode'] | null;
   readonly repoIntelligenceTrace?: boolean | null;
   readonly compactionReasoning?: RuntimeCompactionReasoning | null;
@@ -3382,6 +3384,7 @@ export interface RuntimeWorkflowService {
   subscribe(
     filter: RuntimeWorkflowFilter,
     listener: RuntimeWorkflowListener,
+    onError?: (error: unknown) => void,
   ): RuntimeSubscription;
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
@@ -4271,6 +4274,7 @@ async function createKodaXRuntimeInternal(
         "provider",
         "model",
         "effort",
+        "planModeEffort",
         "thinking",
         "reasoningMode",
         "permissionMode",
@@ -4353,19 +4357,57 @@ async function createKodaXRuntimeInternal(
   // so pre-compaction entries survive); the recent storage tail is only the
   // fallback when the conversation page cannot be served.
   const conversationHistoryFallbacks = new Set<string>();
+  const locateConversationSources = async (sessionId: string, revision: string, sourceKeys: readonly string[]) => {
+    const cached = await sessionManager.storage.readConversationPageCache(sessionId, {
+      sourceKeys, limit: 80,
+      maxPageBytes: MAX_RUNTIME_TRANSCRIPT_PAGE_BYTES, maxInlineEntryBytes: 0, reservedBytes: 0,
+      authorize: admission => sessionAdmission.assertCachedIdentity(sessionId, admission),
+    });
+    if (cached) {
+      if (cached.revision !== revision) throw createRuntimeResyncError('Conversation changed during source lookup.');
+      return cached;
+    }
+    // A legacy/read-only store may serve an immutable snapshot without a cache.
+    // Keep that compatibility path readable; prepared caches never scan bodies.
+    const pending = new Set(sourceKeys);
+    const entries: RuntimeConversationHistorySliceEntry[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await sessionService.conversationPage({ sessionId, limit: 80, ...(cursor ? { cursor } : {}) });
+      if (!page || page.revision !== revision) throw createRuntimeResyncError('Conversation changed during source lookup.');
+      for (const entry of page.entries) {
+        const source = entry.entry ?? await assembleConversationHistoryEntry(
+          input => sessionService.conversationEntryChunk(input), sessionId, revision, entry.index);
+        if (!source) continue;
+        const keys = [...(source.message.outputId ? [`output:${source.message.outputId}`] : []),
+          ...[source.message.inputId, ...(source.message.inputIds ?? [])].flatMap(id => id ? [`input:${id}`] : []),
+          ...(typeof source.message.content === 'string' ? [] : source.message.content.flatMap(block =>
+            block.type === 'tool_use' ? [`tool-use:${block.id}`] : block.type === 'tool_result' ? [`tool-result:${block.tool_use_id}`] : []))];
+        if (!keys.some(key => pending.has(key))) continue;
+        for (const key of keys) pending.delete(key);
+        entries.push(entry);
+      }
+      cursor = page.hasMore ? page.nextCursor : undefined;
+    } while (cursor && pending.size > 0);
+    return { revision, entries: entries.sort((left, right) => left.index - right.index) };
+  };
   const readConversationHistory = async (
     sessionId: string,
+    retainedSourceKeys: readonly string[],
   ): Promise<readonly KodaXMessage[] | null> => {
     const readOnce = (): Promise<readonly KodaXMessage[] | null> =>
-      sessionService.conversationPage({ sessionId, limit: 80 }).then((page) => {
+      sessionService.conversationPage({ sessionId, limit: 80 }).then(async (page) => {
         if (!page) return null;
-        // Oversized entries carry no inline body; the storage tail keeps
-        // their full text for display and readItem, so fall back wholesale
-        // rather than dropping them from the view.
-        if (page.entries.some((entry) => entry.oversized)) return null;
-        const messages = page.entries.flatMap((entry) => (
-          entry.entry !== undefined ? [entry.entry.message] : []
-        ));
+        const sources = retainedSourceKeys.length === 0 ? null : await locateConversationSources(sessionId, page.revision, retainedSourceKeys);
+        // Positions come from this exact canonical revision, never physical lineage order.
+        const entries = new Map(page.entries.map(entry => [entry.index, entry]));
+        for (const entry of sources?.entries ?? []) if (!entries.has(entry.index)) entries.set(entry.index, entry);
+        const messages: KodaXMessage[] = [];
+        for (const entry of [...entries.values()].sort((left, right) => left.index - right.index)) {
+          const source = entry.entry ?? await assembleConversationHistoryEntry(
+            input => sessionService.conversationEntryChunk(input), sessionId, page.revision, entry.index);
+          if (source) messages.push(source.message);
+        }
         return messages.length > 0 ? messages : null;
       });
     // One re-armed history reload per session so an idle view eventually
@@ -4408,10 +4450,22 @@ async function createKodaXRuntimeInternal(
     }
   };
   const sessionViews = new SessionViewOwner(async (sessionId, includeHistory, previous, liveItems) => {
+    const readingData = includeHistory ? sessionManager.storage.load(sessionId) : Promise.resolve(undefined);
     const [session, data, conversation] = await Promise.all([
       includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
-      includeHistory ? sessionManager.storage.load(sessionId) : undefined,
-      includeHistory ? readConversationHistory(sessionId) : undefined,
+      readingData,
+      includeHistory ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
+        ...(data?.uiHistory ?? []).flatMap(item => [
+          ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
+          ...(item.type === 'tool_group' ? item.tools.flatMap(tool => [`tool-use:${tool.id}`, `tool-result:${tool.id}`])
+            : item.inputId ? [`input:${item.inputId}`] : []),
+        ]),
+        ...liveItems.flatMap(item => [
+          ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
+          ...(item.inputId ? [`input:${item.inputId}`] : []),
+          ...(item.tool ? [`tool-use:${item.tool.callId}`, `tool-result:${item.tool.callId}`] : []),
+        ]),
+      ])])) : undefined,
     ]);
     const rawSettings = (settingsOwner.peek(sessionId) ?? await settingsOwner.read(sessionId)).value;
     const currentRuns = [...runs.values()].filter((run) => run.sessionId === sessionId).map(statusFromRecord);
@@ -4439,28 +4493,23 @@ async function createKodaXRuntimeInternal(
     if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
   }, async (sessionId, itemId) => {
     const prefix = `${sessionId}:output:`;
-    if (!itemId.startsWith(prefix)) return null;
-    const identity = /^(.*):(assistant|thinking):\d+$/.exec(itemId.slice(prefix.length));
-    if (!identity) return null;
-    let cursor: string | undefined;
-    do {
-      // Read only the active conversation, including archived bodies. No
-      // retained body cache is needed after an item leaves the display window.
-      const page = await sessionService.conversationPage({ sessionId, limit: 80, ...(cursor ? { cursor } : {}) });
-      if (!page) return null;
-      for (const entry of page.entries) {
-        const canonical = entry.entry ?? (entry.oversized
-          ? await assembleConversationHistoryEntry(
-            (input) => sessionService.conversationEntryChunk(input), sessionId, page.revision, entry.index)
-          : null);
-        if (canonical?.message.outputId !== identity[1]) continue;
-        const messages = [canonical.message];
-        return restoreSessionViewItems(sessionId, { title: '', gitRoot: '', messages }, messages)
-          .find((item) => item.id === itemId) ?? null;
-      }
-      cursor = page.hasMore ? page.nextCursor : undefined;
-    } while (cursor !== undefined);
-    return null;
+    const identity = itemId.startsWith(prefix) ? /^(.*):(assistant|thinking):\d+$/.exec(itemId.slice(prefix.length)) : null;
+    const toolId = itemId.startsWith('tool:') ? itemId.slice(5)
+      : itemId.includes(':tool:') ? itemId.slice(itemId.indexOf(':tool:') + 6) : undefined;
+    if (!identity && !toolId) return null;
+    const boundary = await sessionService.conversationPage({ sessionId, limit: 1 });
+    if (!boundary) return null;
+    const sources = await locateConversationSources(sessionId, boundary.revision, identity
+      ? [`output:${identity[1]}`] : [`tool-use:${toolId}`, `tool-result:${toolId}`]);
+    const messages: KodaXMessage[] = [];
+    for (const entry of sources.entries) {
+      const source = entry.entry ?? await assembleConversationHistoryEntry(
+        input => sessionService.conversationEntryChunk(input), sessionId, sources.revision, entry.index);
+      if (source) messages.push(source.message);
+    }
+    const restored = restoreSessionViewItems(sessionId, { title: '', gitRoot: '', messages }, messages)
+      .find(item => identity ? item.id === itemId : item.tool?.callId === toolId);
+    return restored ? { ...restored, id: itemId } : null;
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
@@ -5268,12 +5317,17 @@ async function createKodaXRuntimeInternal(
         ownerLivenessClosed = true;
       }
       if (!busClosed) {
-        await sessionViews.close();
-        bus.close();
-        // The run-status index rebuild used to ride on the event journal's
-        // close hook; it is canonical Run durability and stays on close.
-        persistence.close();
-        busClosed = true;
+        const results = await Promise.allSettled([sessionViews.close()]);
+        results.push(...await Promise.allSettled([
+          Promise.resolve().then(() => bus.close()),
+          // The run-status index rebuild used to ride on the event journal's
+          // close hook; it is canonical Run durability and stays on close.
+          Promise.resolve().then(() => persistence.close()),
+        ]));
+        busClosed = results.slice(1).every(result => result.status === 'fulfilled');
+        const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : []);
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) throw new AggregateError(failures, 'Runtime display and event cleanup failed.');
       }
     })();
     closeAttempt = attempt;
@@ -17765,7 +17819,7 @@ function createRuntimeUserInputRegistry(
       return { requestId, accepted: false, status: "already_resolved" };
     }
     if (resolution.status === "answered") {
-      assertRuntimeUserInputAnswer(item.request.kind, resolution.answer);
+      assertRuntimeUserInputAnswer(item.request, resolution.answer);
     }
     settlePending(item, resolution, reason);
     return { requestId, accepted: true, status: resolution.status };
@@ -17883,37 +17937,52 @@ function createRuntimeUserInputRegistry(
 }
 
 function assertRuntimeUserInputAnswer(
-  kind: RuntimeUserInputKind,
+  request: RuntimeUserInputRequest,
   answer: unknown,
 ): void {
+  const { kind, options } = request;
   const valid =
     kind === "askUser"
-      ? isAskUserAnswer(answer)
+      ? isRuntimeQuestionAnswer(options, answer)
       : kind === "askUserMulti"
-        ? isAskUserMultiAnswer(answer)
+        ? isRuntimeMultiQuestionAnswer(options, answer)
         : typeof answer === "string";
   if (!valid) {
     throw createRuntimeInvalidInputError(`Invalid answer for ${kind}`);
   }
 }
 
-function isAskUserAnswer(value: unknown): value is AskUserAnswer {
-  return Array.isArray(value)
-    ? value.every(isAskUserSelectionAnswer)
-    : isAskUserSelectionAnswer(value);
+function isRuntimeQuestionAnswer(options: unknown, answer: unknown): boolean {
+  if (!isRecord(options)) return false;
+  if (options.kind === "input") return typeof answer === "string";
+  if (!Array.isArray(options.options)) return false;
+  if ((options.multiSelect === true) !== Array.isArray(answer)) return false;
+  const values = new Set(options.options.map((option: unknown) =>
+    isRecord(option) ? option.value ?? option.label : undefined));
+  const selections: unknown[] = Array.isArray(answer) ? answer : [answer];
+  const identities = new Set<string>();
+  for (const selection of selections) {
+    let identity: string;
+    if (typeof selection === "string" && values.has(selection)) identity = `option:${selection}`;
+    else if (isRecord(selection) && selection.kind === "customInput"
+      && typeof selection.value === "string" && options.allowCustomInput !== false) {
+      identity = `custom:${selection.value}`;
+    } else return false;
+    if (identities.has(identity)) return false;
+    identities.add(identity);
+  }
+  return options.multiSelect !== true
+    || ((typeof options.minSelections !== "number" || identities.size >= options.minSelections)
+      && (typeof options.maxSelections !== "number" || identities.size <= options.maxSelections));
 }
 
-function isAskUserSelectionAnswer(value: unknown): boolean {
-  return (
-    typeof value === "string" ||
-    (isRecord(value) &&
-      value.kind === "customInput" &&
-      typeof value.value === "string")
-  );
-}
-
-function isAskUserMultiAnswer(value: unknown): boolean {
-  return isRecord(value) && Object.values(value).every(isAskUserAnswer);
+function isRuntimeMultiQuestionAnswer(options: unknown, answer: unknown): boolean {
+  if (!isRecord(options) || !Array.isArray(options.questions) || !isRecord(answer)) return false;
+  const questions: unknown[] = options.questions;
+  return Object.keys(answer).length === questions.length && questions.every(question =>
+    isRecord(question) && typeof question.question === "string"
+      && Object.hasOwn(answer, question.question)
+      && isRuntimeQuestionAnswer(question, answer[question.question]));
 }
 
 function resolveRuntimeUserInputDefault(
@@ -20891,6 +20960,7 @@ function applySessionSettingsPatch(
     patch.autoModeClassifierModel,
   );
   applyNullablePatch(next, "effort", patch.effort);
+  applyNullablePatch(next, "planModeEffort", patch.planModeEffort);
   applyNullablePatch(next, "thinking", patch.thinking);
   applyNullablePatch(next, "reasoningMode", patch.reasoningMode);
   applyNullablePatch(next, "agentMode", patch.agentMode);
@@ -20907,6 +20977,10 @@ function applySessionSettingsPatch(
 function canonicalizeRuntimeSessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettingsPatch {
+  if (patch.planModeEffort !== undefined && patch.planModeEffort !== null
+    && (typeof patch.planModeEffort !== 'string' || patch.planModeEffort.trim().length === 0)) {
+    throw createRuntimeInvalidInputError('planModeEffort must be a nonempty effort string');
+  }
   if (patch.repoIntelligenceMode !== undefined && patch.repoIntelligenceMode !== null
     && !['auto', 'off', 'light', 'full'].includes(patch.repoIntelligenceMode)) {
     throw new Error('repoIntelligenceMode must be one of: auto, off, light, full');
@@ -21118,6 +21192,9 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
   // callers retain their existing semantics when no permission was specified.
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const } : {}),
     ...parseRuntimeSessionSettings(config), ...overrides };
+  if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
+    return { ...settings, effort: overrides.planModeEffort };
+  }
   if (settings.permissionMode === 'plan' && settings.effort === undefined
     && isRecord(config) && typeof config.planModeEffort === 'string') {
     return { ...settings, effort: config.planModeEffort };
@@ -21161,6 +21238,7 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
     value.autoModeClassifierModel,
   );
   setStringIfPresent(settings, "effort", value.effort);
+  setStringIfPresent(settings, "planModeEffort", value.planModeEffort);
   if (typeof value.thinking === "boolean") {
     setMutableSetting(settings, "thinking", value.thinking);
   }
@@ -21920,6 +21998,8 @@ function serializeSessionSettings(
     setMutableSetting(result, "model", settings.model);
   if (settings.effort !== undefined)
     setMutableSetting(result, "effort", settings.effort);
+  if (settings.planModeEffort !== undefined)
+    setMutableSetting(result, "planModeEffort", settings.planModeEffort);
   if (settings.thinking !== undefined)
     setMutableSetting(result, "thinking", settings.thinking);
   if (settings.reasoningMode !== undefined)

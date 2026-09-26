@@ -310,10 +310,31 @@ it.each(Object.entries(idleSourceReads))(
       await Promise.race([flushed.promise, reading.catch(() => undefined)]);
       release.resolve();
       await expect(reading).rejects.toThrow('checkpoint-save-failed');
+      await expect(runtime.close()).rejects.toThrow('checkpoint-save-failed');
     } finally {
       release.resolve();
       if (reading) await Promise.allSettled([reading]);
       restoreFlush?.();
+      writer.mockRestore();
+    }
+  },
+);
+
+it.each(Object.entries(idleSourceReads))(
+  '%s rejects a checkpoint failure that settled before the public IPC read',
+  async (_name, readSource) => {
+    const session = await first.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    const writer = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory')
+      .mockRejectedValue(new Error('late-checkpoint-save-failed'));
+    try {
+      await runRound(session.id, 1);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await expect(readSource(session.id)).rejects.toThrow('late-checkpoint-save-failed');
+      await expect(readSource(session.id)).rejects.toThrow('late-checkpoint-save-failed');
+      await expect(runtime.close()).rejects.toThrow('late-checkpoint-save-failed');
+      expect(() => runtime.events.subscribe({ sessionId: session.id }, () => undefined)).toThrow('event bus is closed');
+    } finally {
       writer.mockRestore();
     }
   },

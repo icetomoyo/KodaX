@@ -5,6 +5,7 @@
  * large-entry reads stay unambiguous.
  */
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
+import { canonicalTools, toolResultText } from './client-canonical-tools.js';
 import { emitKodaXDiagnostic, type KodaXMessage } from '@kodax-ai/agent';
 import type {
   ClientHistoryPage,
@@ -195,24 +196,17 @@ function projectHistoryEntry(
   // projection inside its trimming window and gives every item an
   // unambiguous entry anchor; ordinals count emitted items flatly.
   const restored = restoreHistoryItemsFromSession({ messages });
-  const ownerBlocks = Array.isArray(messages[0]?.content) ? messages[0].content : [];
-  const resultBlocks = Array.isArray(messages[1]?.content) ? messages[1].content : [];
+  const tools = canonicalTools(messages);
   const items: ClientViewItem[] = [];
   let ordinal = 0;
   for (const item of restored) {
     if (item.type === 'tool_group') {
       for (const tool of item.tools) {
-        const call = ownerBlocks.find(block => block.type === 'tool_use' && block.id === tool.id);
-        const result = resultBlocks.find(block => block.type === 'tool_result' && block.tool_use_id === tool.id);
+        const canonical = tools.get(tool.id);
+        if (!canonical) continue;
         items.push({
+          ...canonical,
           id: historyItemId(sessionId, revision, entryIndex, ordinal),
-          type: 'tool',
-          text: result?.type === 'tool_result' ? toolResultText(result.content) : String(tool.output ?? tool.error ?? ''),
-          tool: {
-            callId: tool.id, name: tool.name,
-            status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
-            inputText: JSON.stringify(call?.type === 'tool_use' ? call.input : tool.input), startedAt: tool.startTime, endedAt: tool.endTime,
-          },
         });
         ordinal += 1;
       }
@@ -326,15 +320,4 @@ function entryBody(message: KodaXMessage, part: 'text' | 'input'): string {
   }
   if (parts.length === 0 && typeof message.content === 'string') parts.push(message.content);
   return parts.join('\n');
-}
-
-function toolResultText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((item) => (typeof item === 'object' && item !== null && (item as { readonly type?: unknown }).type === 'text'
-      ? String((item as { readonly text?: unknown }).text ?? '')
-      : ''))
-    .filter((text) => text.length > 0)
-    .join('\n');
 }

@@ -104,6 +104,35 @@ afterEach(async () => {
 });
 
 describe('Conversation page cache durability', () => {
+  it('locates canonical identities without reading unrelated large bodies and rejects old revisions', async () => {
+    const value = await fixture('original');
+    value.lineage.entries.push({
+      type: 'message', id: 'output', logicalId: 'output', parentId: 'entry-1', timestamp: '2026-08-01T00:00:02.000Z',
+      message: { role: 'assistant', outputId: 'target', content: 'x'.repeat(200_000) },
+    });
+    value.lineage.activeEntryId = 'output';
+    const history = buildSessionConversationHistory(value.lineage, createSessionSourceRevision(value.sourceRevisionState));
+    await writeConversationPageCache(value.mainPath, 'boundary:lookup', value.sourceRevisionState,
+      history, value.lineage, undefined, 64 * 1024);
+    const open = fs.open;
+    const dataHandles: Awaited<ReturnType<typeof fs.open>>[] = [];
+    vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).endsWith('.data')) { vi.spyOn(handle, 'read'); dataHandles.push(handle); }
+      return handle;
+    });
+    const input = { sourceKeys: ['output:target'], limit: 80, maxPageBytes: 512 * 1024, maxInlineEntryBytes: 0, reservedBytes: 0 };
+    const located = await readConversationPageCache(value.mainPath, 'boundary:lookup', input);
+    expect(located?.entries).toMatchObject([{ index: 1, boundaryId: 'output', oversized: true }]);
+    expect(located?.entries[0]?.entry).toBeUndefined();
+    const readBytes = dataHandles.flatMap(handle => vi.mocked(handle.read).mock.calls)
+      .reduce((total, call) => total + Number(call[2] ?? 0), 0);
+    expect(readBytes).toBeLessThan(10_000);
+    await expect(readConversationPageCache(value.mainPath, 'boundary:lookup', {
+      ...input, expectedRevision: 'old-revision',
+    })).rejects.toBeInstanceOf(ConversationPageCacheStaleError);
+  });
+
   it('reuses immutable entry files when a full save keeps canonical history unchanged', async () => {
     const value = await fixture('unchanged-entry');
     await writeConversationPageCache(
@@ -156,7 +185,7 @@ describe('Conversation page cache durability', () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it.each([3, 4, 5])('invalidates v%s caches after the ordinary-history projection changes', async (version) => {
+  it.each([3, 4, 5, 6])('invalidates v%s caches after the ordinary-history projection changes', async (version) => {
     const value = await fixture('old-projection');
     await writeConversationPageCache(
       value.mainPath,

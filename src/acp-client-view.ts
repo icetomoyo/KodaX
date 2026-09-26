@@ -1,4 +1,5 @@
 import type { SessionNotification, ToolCall } from '@agentclientprotocol/sdk';
+import { readClientItemRange } from '@kodax-ai/coding';
 import type { ClientInteraction, ClientPermissionDecision, ClientSessionView, ClientViewItem, KodaXProductClient } from '@kodax-ai/coding/client-contract';
 
 type PermissionInteraction = Extract<ClientInteraction, { kind: 'permission' }>;
@@ -10,6 +11,7 @@ export async function observeAcpClientPrompt(
   notify: (notification: SessionNotification) => Promise<void>,
   permission: (request: PermissionInteraction) => Promise<ClientPermissionDecision>,
   describeTool: (name: string, input: string) => Pick<ToolCall, 'rawInput' | 'kind' | 'locations'>,
+  settingsChanged?: (settings: ClientSessionView['settings']) => Promise<void>,
 ) {
   const emitted = new Map<string, string>();
   const emittedRevisions = new Map<string, number>();
@@ -30,24 +32,8 @@ export async function observeAcpClientPrompt(
     const preview = part === 'text' ? item.text : item.tool?.inputText ?? '';
     const total = (part === 'text' ? item.totalTextLength : item.tool?.totalInputLength) ?? preview.length;
     if (total <= preview.length && (part === 'input' || !item.textOffset)) return preview.slice(from);
-    let text = '';
-    let offset = from;
-    while (offset < total) {
-      const page = await client.sessions.readItem(sessionId, item.id, { part, offset });
-      if (!page) throw new Error(`ACP Host item disappeared during read: ${item.id}`);
-      if (part === 'text' && ((page.textRevision ?? 0) !== (item.textRevision ?? 0)
-        || page.outputState !== item.outputState)) {
-        throw new Error(`ACP Host item changed during read: ${item.id}`);
-      }
-      const end = offset + page.text.length;
-      if (page.id !== item.id || page.offset !== offset || end > page.totalLength || page.totalLength < total
-        || (page.nextOffset === undefined ? end !== page.totalLength : page.nextOffset !== end || end <= offset)) {
-        throw new Error(`ACP Host returned an inconsistent page for item: ${item.id}`);
-      }
-      text += page.text.slice(0, total - offset);
-      offset = end;
-    }
-    return text;
+    return readClientItemRange(offset => client.sessions.readItem(sessionId, item.id, { part, offset }), item.id,
+      { offset: from, length: total, ...(part === 'text' ? { version: item } : {}) });
   }
 
   async function projectItem(item: ClientViewItem): Promise<void> {
@@ -112,6 +98,7 @@ export async function observeAcpClientPrompt(
   function receive(view: ClientSessionView): void {
     if (closed) return;
     latest = view;
+    chain = chain.then(() => settingsChanged?.(view.settings)).catch(fail);
     if (!initialized) {
       initialized = true;
       for (const item of view.items) {
@@ -129,6 +116,8 @@ export async function observeAcpClientPrompt(
     closed = true;
     fail(new Error(status.message ?? `ACP Host observation ${status.state === 'interrupted' ? 'was interrupted' : 'is unavailable'}.`));
   } });
+  await chain;
+  if (failure !== undefined) { observation.close(); throw failure; }
   return {
     failed,
     async flush() {

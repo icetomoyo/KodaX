@@ -89,6 +89,8 @@ import { ensureKodaXClient } from './sdk-client.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
 import type {
   ClientPermissionDecision,
+  ClientSessionSettings,
+  ClientSessionSettingsPatch,
   KodaXProductClient,
 } from '@kodax-ai/coding/client-contract';
 
@@ -174,6 +176,7 @@ interface KodaXAcpSessionState {
   sessionId: string;
   cwd: string;
   permissionMode: AcpPermissionMode;
+  permissionModeExplicit?: boolean;
   mcpServers: McpServer[];
   activeRunIds: Set<string>;
   /** Connection-local protocol requests; execution remains exclusively in the Host. */
@@ -601,6 +604,7 @@ export class KodaXAcpServer implements Agent {
    */
   private readonly clientReady: Promise<KodaXProductClient>;
   private readonly ownsClient: boolean;
+  private readonly initialHostSettings: ClientSessionSettingsPatch;
   private readonly logger: AcpLogger;
   private readonly events: AcpEventEmitter;
   private readonly configuredExtensions: string[];
@@ -650,6 +654,17 @@ export class KodaXAcpServer implements Agent {
       options.permissionMode ?? config.permissionMode,
       'accept-edits',
     );
+    this.initialHostSettings = {
+      ...(options.provider !== undefined || environmentProvider?.trim() ? { provider: this.provider } : {}),
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(hasExplicitEffort ? { effort: this.effort ?? null } : {}),
+      ...(options.planModeEffort !== undefined ? { planModeEffort: options.planModeEffort } : {}),
+      ...(options.thinking !== undefined ? { thinking: options.thinking } : {}),
+      ...(options.reasoningMode !== undefined ? { reasoningMode: options.reasoningMode } : {}),
+      ...(options.permissionMode !== undefined ? { permissionMode: this.defaultPermissionMode } : {}),
+      ...(process.env.KODAX_REPO_INTELLIGENCE !== undefined ? { repoIntelligenceMode: this.repoIntelligence.mode } : {}),
+      ...(process.env.KODAX_REPO_INTELLIGENCE_TRACE !== undefined ? { repoIntelligenceTrace: this.repoIntelligence.trace } : {}),
+    };
     const defaultCwd = path.resolve(options.cwd ?? process.cwd());
     const configuredExtensions = normalizeConfiguredExtensionPaths(configWithExtensions.extensions);
     const logger = new AcpLogger({
@@ -871,7 +886,6 @@ export class KodaXAcpServer implements Agent {
     const session = this.requireSession(params.sessionId);
     const previousMode = session.permissionMode;
     const nextMode = parseSessionMode(params.modeId);
-    session.permissionMode = nextMode;
     if (session.runtimeSessionReady) {
       await session.runtimeSessionReady;
       const client = await this.clientReady;
@@ -879,6 +893,8 @@ export class KodaXAcpServer implements Agent {
         permissionMode: nextMode,
       });
     }
+    session.permissionMode = nextMode;
+    session.permissionModeExplicit = true;
     this.events.emit({
       type: 'session_mode_changed',
       sessionId: session.sessionId,
@@ -1034,24 +1050,19 @@ export class KodaXAcpServer implements Agent {
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
     const client = await this.clientReady;
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
-    const effort = this.resolveSessionEffort(session, effortOverride);
-    await client.sessions.updateSettings(session.sessionId, {
-      provider: this.provider, model: this.model ?? null, effort: effort ?? null,
-      thinking: effort === 'none' ? false : this.thinking,
-      reasoningMode: effort === 'none' ? 'off' : this.reasoningMode,
-      permissionMode: session.permissionMode,
-      repoIntelligenceMode: this.repoIntelligence.mode,
-      repoIntelligenceTrace: this.repoIntelligence.trace,
-    });
+    if (effortOverride.kind === 'value') {
+      await client.sessions.updateSettings(session.sessionId, { effort: effortOverride.value ?? null });
+    }
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
     const projection = await observeAcpClientPrompt(client, session.sessionId,
       notification => this.sendSessionUpdate(notification),
       async request => toClientPermissionDecision(await this.requestPermissionFromClient(session,
-        request.options.toolName, parsePermissionInputPreview(request.options.inputPreview), request.options.toolCallId), request.options),
+        request.options.toolName, request.options.plan === undefined
+          ? parsePermissionInputPreview(request.options.inputPreview) : { plan: request.options.plan }, request.options.toolCallId), request.options),
       (name, inputText) => {
         const rawInput = parsePermissionInputPreview(inputText);
         return { rawInput, kind: inferToolKind(name), locations: inferToolLocations(name, rawInput) };
-      });
+      }, settings => this.applyHostSettings(session, settings));
     let runId: string | undefined;
     try {
       if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
@@ -1099,9 +1110,9 @@ export class KodaXAcpServer implements Agent {
         surface: 'acp',
         ...(!this.runtimeReady && session.mcpServers.length > 0 ? { mcpServers: convertAcpMcpServers(session.mcpServers) } : {}),
       }).then(async () => {
-        await client.sessions.updateSettings(session.sessionId, {
-          permissionMode: session.permissionMode,
-        });
+        const settings = this.runtimeReady ? { permissionMode: session.permissionMode }
+          : { ...this.initialHostSettings, ...(session.permissionModeExplicit ? { permissionMode: session.permissionMode } : {}) };
+        if (Object.keys(settings).length > 0) await client.sessions.updateSettings(session.sessionId, settings);
       });
     }
     try {
@@ -1154,6 +1165,16 @@ export class KodaXAcpServer implements Agent {
       : session.permissionMode === 'plan' && this.planModeEffort !== undefined
         ? this.planModeEffort
         : this.effort;
+  }
+
+  private async applyHostSettings(session: KodaXAcpSessionState, settings: ClientSessionSettings): Promise<void> {
+    const mode = settings.permissionMode;
+    if (mode === undefined || mode === session.permissionMode) return;
+    const previousMode = session.permissionMode;
+    session.permissionMode = mode;
+    this.events.emit({ type: 'session_mode_changed', sessionId: session.sessionId, from: previousMode, to: mode });
+    await this.sendSessionUpdate({ sessionId: session.sessionId,
+      update: { sessionUpdate: 'current_mode_update', currentModeId: mode } });
   }
 
   private buildKodaXOptions(
@@ -1334,7 +1355,7 @@ export class KodaXAcpServer implements Agent {
         this.requestPermissionFromClient(
           session,
           request.toolName,
-          parsePermissionInputPreview(request.inputPreview),
+          request.plan === undefined ? parsePermissionInputPreview(request.inputPreview) : { plan: request.plan },
           request.toolCallId,
         ),
         settlement.settled.then(() => null),
@@ -1406,6 +1427,8 @@ export class KodaXAcpServer implements Agent {
       title: toolName,
       kind: inferToolKind(toolName),
       rawInput: input,
+      ...(toolName === 'exit_plan_mode' && typeof input.plan === 'string'
+        ? { content: [{ type: 'content' as const, content: { type: 'text' as const, text: input.plan } }] } : {}),
       locations: inferToolLocations(toolName, input),
       status: 'pending',
     };

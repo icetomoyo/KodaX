@@ -35,8 +35,8 @@ export {
   removeConversationPageCachesInDirectory,
 } from './conversation-page-cache-files.js';
 
-// v6 includes persisted operator-confirmed identity aliases in the projection.
-const CACHE_VERSION = 6;
+// v7 adds canonical source identities to descriptors for bounded body lookup.
+const CACHE_VERSION = 7;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -53,7 +53,7 @@ export interface ConversationPageCacheAdmission {
 }
 
 interface ConversationCacheManifest {
-  readonly version: 6;
+  readonly version: 7;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;
@@ -78,6 +78,7 @@ interface ConversationCacheManifest {
 interface ConversationCacheDescriptor {
   readonly chunkDigests: readonly string[];
   readonly boundaryId?: string;
+  readonly sourceKeys: readonly string[];
 }
 
 interface ConversationCacheIndexRecord {
@@ -94,6 +95,8 @@ export interface ConversationPageCacheInput {
   readonly maxPageBytes: number;
   readonly maxInlineEntryBytes: number;
   readonly reservedBytes: number;
+  /** Internal source lookup: returns matching entry locators without reading bodies. */
+  readonly sourceKeys?: readonly string[];
   readonly authorize?: (
     admission: ConversationPageCacheAdmission,
   ) => void | Promise<void>;
@@ -424,11 +427,13 @@ function parseDescriptor(value: unknown): ConversationCacheDescriptor {
     || !value.chunkDigests.every((digest) =>
       typeof digest === 'string' && /^[0-9a-f]{64}$/.test(digest))
     || (value.boundaryId !== undefined && typeof value.boundaryId !== 'string')
+    || !Array.isArray(value.sourceKeys) || !value.sourceKeys.every(key => typeof key === 'string')
   ) {
     throw new ConversationPageCacheStaleError('Conversation page descriptor is invalid');
   }
   return {
     chunkDigests: value.chunkDigests,
+    sourceKeys: value.sourceKeys,
     ...(typeof value.boundaryId === 'string' ? { boundaryId: value.boundaryId } : {}),
   };
 }
@@ -549,6 +554,12 @@ async function readConversationPageCacheInternal(
   const paths = cachePaths(mainPath, manifest);
   const { data, index } = await openCachePair(paths.dataPath, paths.indexPath, 'r');
   try {
+    if (input.sourceKeys) {
+      const entries = await findConversationSourceEntries(data, index, manifest, input);
+      await assertCacheFilesStable(mainPath, manifest);
+      return { revision: manifest.revision, sourceRevision: manifest.sourceRevision,
+        status: manifest.status, issues: structuredClone(manifest.issues), entries, hasMore: false };
+    }
     const encodedIndex = await readFully(
       index,
       start * INDEX_RECORD_BYTES,
@@ -605,6 +616,36 @@ async function readConversationPageCacheInternal(
   } finally {
     await Promise.all([data.close(), index.close()]);
   }
+}
+
+async function findConversationSourceEntries(
+  data: Awaited<ReturnType<typeof fs.open>>,
+  index: Awaited<ReturnType<typeof fs.open>>,
+  manifest: ConversationCacheManifest,
+  input: ConversationPageCacheInput,
+): Promise<ConversationPageCacheEntry[]> {
+  const pending = new Set(input.sourceKeys);
+  const entries: ConversationPageCacheEntry[] = [];
+  let bytes = input.reservedBytes;
+  for (let end = manifest.entryCount; end > 0 && pending.size > 0;) {
+    const start = Math.max(0, end - 256);
+    const encoded = await readFully(index, start * INDEX_RECORD_BYTES, (end - start) * INDEX_RECORD_BYTES);
+    for (let position = end - 1; position >= start && pending.size > 0; position -= 1) {
+      throwIfAborted(input.signal);
+      const record = decodeIndexRecord(encoded, (position - start) * INDEX_RECORD_BYTES);
+      assertIndexRecordBounds(record, manifest.dataBytes, manifest.chunkBytes);
+      const descriptor = await readDescriptor(data, record);
+      if (!descriptor.sourceKeys.some(key => pending.has(key))) continue;
+      for (const key of descriptor.sourceKeys) pending.delete(key);
+      const entry = { index: position, boundaryId: descriptor.boundaryId,
+        byteLength: record.entryLength, oversized: true };
+      bytes += Buffer.byteLength(JSON.stringify(entry), 'utf8');
+      if (bytes > input.maxPageBytes) throw new ConversationPageCacheCapacityError();
+      entries.push(entry);
+    }
+    end = start;
+  }
+  return entries.reverse();
 }
 
 export async function readConversationPageCacheChunk(
@@ -683,6 +724,13 @@ function createDescriptor(
 ): Buffer {
   return Buffer.from(JSON.stringify({
     ...(entry.boundaryId !== undefined ? { boundaryId: entry.boundaryId } : {}),
+    sourceKeys: [
+      ...(entry.message.outputId ? [`output:${entry.message.outputId}`] : []),
+      ...[entry.message.inputId, ...(entry.message.inputIds ?? [])].flatMap(id => id ? [`input:${id}`] : []),
+      ...(typeof entry.message.content === 'string' ? [] : entry.message.content.flatMap(block =>
+        block.type === 'tool_use' ? [`tool-use:${block.id}`]
+          : block.type === 'tool_result' ? [`tool-result:${block.tool_use_id}`] : [])),
+    ],
     chunkDigests: entryChunkDigests(encoded, chunkBytes),
   }), 'utf8');
 }

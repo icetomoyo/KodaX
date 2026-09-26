@@ -8,6 +8,7 @@
  * both implement the same faces). Unbound REPLs keep the standalone
  * in-process paths.
  */
+import { readClientItemRange } from '@kodax-ai/coding';
 import type {
   ClientInteraction,
   ClientHistoryPage,
@@ -116,37 +117,10 @@ export async function readClientPlaneItemText(
 ): Promise<string> {
   const read = historyEntry ? plane.readHistoryEntry : plane.readItem;
   if (!read) throw new Error('Full transcript content is unavailable.');
-  const parts: string[] = [];
-  let offset = 0;
-  let totalLength: number | undefined = captured?.length;
-  for (;;) {
-    captured?.signal?.throwIfAborted();
-    if (totalLength !== undefined && offset >= totalLength) return parts.join('');
-    const content = await read(sessionId, itemId, { offset, part });
-    captured?.signal?.throwIfAborted();
-    if (content === null) throw new Error('Full transcript content is unavailable; reopen history and try again.');
-    totalLength ??= content.totalLength;
-    if (content.id !== itemId || content.offset !== offset
-      || (captured ? content.totalLength < totalLength : content.totalLength !== totalLength)
-      || (captured?.textRevision !== undefined && ((content.textRevision ?? 0) !== captured.textRevision
-        || content.outputState !== captured.outputState))) {
-      throw new Error('Transcript content changed during the read; try again.');
-    }
-    const text = content.text.slice(0, totalLength - offset);
-    parts.push(text);
-    offset += text.length;
-    if (offset === totalLength) {
-      if (!captured && content.nextOffset !== undefined) throw new Error('Transcript paging exceeded the content length.');
-      return parts.join('');
-    }
-    if (content.nextOffset === undefined) {
-      if (offset !== totalLength) throw new Error('Full transcript content is unavailable.');
-      return parts.join('');
-    }
-    if (content.text.length === 0 || content.nextOffset !== offset) {
-      throw new Error('Transcript content paging did not advance.');
-    }
-  }
+  return readClientItemRange(offset => read(sessionId, itemId, { offset, part }), itemId, captured ? {
+    length: captured.length, signal: captured.signal,
+    ...(captured.textRevision !== undefined ? { version: captured } : {}),
+  } : undefined);
 }
 
 type ViewToolStatus = NonNullable<ClientViewItem['tool']>['status'];

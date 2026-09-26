@@ -2166,53 +2166,98 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (!binding) return undefined;
     let active = true;
     let subscription: ReturnType<LearningBinding['subscribe']> | undefined;
-    const refresh = async (): Promise<LearningSurfaceSnapshot> => {
-      const snapshot = await binding.getSnapshot();
-      if (!active) return snapshot;
-      setLearningSnapshot((current) => (
-        current !== undefined && current.revision > snapshot.revision ? current : snapshot
-      ));
-      return snapshot;
-    };
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let generation = 0;
+    let revision = 0;
+    let retryDelay = 1_000;
     const reportRefreshFailure = (error: unknown): void => {
-      emitKodaXDiagnostic({
-        source: "repl:learning",
-        level: "warn",
+      emitKodaXDiagnostic({ source: "repl:learning", level: "warn",
         message: "Failed to refresh the Learning Center snapshot.",
-        detail: error instanceof Error ? error.message : String(error),
-      });
+        detail: error instanceof Error ? error.message : String(error) });
     };
-    const onEvent = (event: LearningEvent): void => {
-      if (!active) return;
-      if (event.kind === "ready" || event.kind === "activated" || event.kind === "attention") {
-        const action = event.kind === "ready"
-          ? "is ready for review"
-          : event.kind === "activated" ? "became active" : "requires attention";
-        setLearningNotices((current) => [{
-          id: event.eventId,
-          text: `A learned ${event.carrier} ${action}: ${event.displayName}  [/learn]`,
-          tone: event.kind === "activated" ? "accent" as const : "warning" as const,
-        }, ...current.filter((notice) => notice.id !== event.eventId)].slice(0, 2));
-      }
-      void refresh().catch(reportRefreshFailure);
+    const showEvent = (event: LearningEvent): void => {
+      if (event.kind !== "ready" && event.kind !== "activated" && event.kind !== "attention") return;
+      const action = event.kind === "ready" ? "is ready for review"
+        : event.kind === "activated" ? "became active" : "requires attention";
+      setLearningNotices((current) => [{ id: event.eventId,
+        text: `A learned ${event.carrier} ${action}: ${event.displayName}  [/learn]`,
+        tone: event.kind === "activated" ? "accent" as const : "warning" as const,
+      }, ...current.filter((notice) => notice.id !== event.eventId)].slice(0, 2));
     };
-    void refresh().then((snapshot) => {
-      if (!active) return;
+    const recoverObservation = (currentGeneration: number, error: unknown): void => {
+      if (!active || currentGeneration !== generation) return;
+      generation += 1;
+      subscription?.close();
+      reportRefreshFailure(error);
+      const upgradeRequired = typeof error === 'object' && error !== null
+        && 'code' in error && error.code === 'daemon_upgrade_required';
+      setLearningNotices((notices) => [{ id: 'learning-observation-error', tone: 'warning' as const,
+        text: upgradeRequired ? 'Learning Center updates require a Host upgrade and restart. [/learn]'
+          : 'Learning Center updates interrupted; reconnecting. [/learn]',
+      }, ...notices.filter((notice) => notice.id !== 'learning-observation-error')].slice(0, 2));
+      if (upgradeRequired) return;
+      retry = setTimeout(open, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 10_000);
+    };
+    const showRecovery = (snapshot: LearningSurfaceSnapshot): void => {
+      retryDelay = 1_000;
+      setLearningNotices((notices) => notices.filter((notice) => notice.id !== 'learning-observation-error'));
       const recovery = formatLearningRecoverySummary(snapshot);
       if (recovery && !hasSubmittedQueryRef.current) {
-        const tone: 'warning' | 'accent' = snapshot.attention > 0 || snapshot.ready > 0
-          ? 'warning'
-          : 'accent';
-        setLearningNotices((current) => [{
-          id: 'learning-recovery',
-          text: recovery,
-          tone,
-        }, ...current.filter((notice) => notice.id !== 'learning-recovery')].slice(0, 2));
+        const tone: 'warning' | 'accent' = snapshot.attention > 0 || snapshot.ready > 0 ? 'warning' : 'accent';
+        setLearningNotices((notices) => [{ id: 'learning-recovery', text: recovery, tone },
+          ...notices.filter((notice) => notice.id !== 'learning-recovery')].slice(0, 2));
       }
-      subscription = binding.subscribe(onEvent, { afterRevision: snapshot.revision });
-    }).catch(reportRefreshFailure);
+    };
+    const open = (): void => {
+      if (!active) return;
+      const currentGeneration = ++generation;
+      let syncing = true;
+      let dirty = false;
+      let refreshing = false;
+      const pending: LearningEvent[] = [];
+      const current = (): boolean => active && currentGeneration === generation;
+      const failed = (error: unknown): void => recoverObservation(currentGeneration, error);
+      const refresh = async (): Promise<void> => {
+        dirty = true;
+        if (refreshing || syncing) return;
+        refreshing = true;
+        try {
+          while (dirty && current()) {
+            dirty = false;
+            const snapshot = await binding.getSnapshot();
+            if (!current()) return;
+            revision = Math.max(revision, snapshot.revision);
+            setLearningSnapshot((previous) => previous && previous.revision > snapshot.revision ? previous : snapshot);
+          }
+        } finally { refreshing = false; }
+      };
+      const opened = binding.subscribe((event) => {
+        if (!current()) return;
+        if (syncing) { pending.push(event); return; }
+        if (event.sequence <= revision) return;
+        showEvent(event);
+        void refresh().catch(failed);
+      }, { afterRevision: revision }, failed);
+      subscription = opened;
+      if (!current()) opened.close();
+      void (async () => {
+        await opened.ready;
+        if (!current()) return;
+        const snapshot = await binding.getSnapshot();
+        if (!current()) return;
+        revision = Math.max(revision, snapshot.revision);
+        setLearningSnapshot((previous) => previous && previous.revision > snapshot.revision ? previous : snapshot);
+        showRecovery(snapshot);
+        syncing = false;
+        for (const event of pending) if (event.sequence > revision) showEvent(event);
+        if (pending.length > 0) await refresh();
+      })().catch(failed);
+    };
+    open();
     return () => {
       active = false;
+      if (retry) clearTimeout(retry);
       subscription?.close();
     };
   }, [options.learning]);

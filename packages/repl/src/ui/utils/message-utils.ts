@@ -500,7 +500,7 @@ function extractHistorySeedsFromMessageWithoutTimestamp(
       }
       const content = extractTextContent(message.content);
       // Skip internal worker prompts (Scout/Generator/Planner/Evaluator role instructions).
-      if (content.trim().length === 0 || isManagedWorkerPrompt(content)) {
+      if (content.trim().length === 0 || (message.inputId === undefined && isManagedWorkerPrompt(content))) {
         return [];
       }
       return [{ type: "user", text: content }];

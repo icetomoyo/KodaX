@@ -179,7 +179,8 @@ export interface KodaXProductClient {
     list(filter?: { readonly runId?: string; readonly limit?: number }): Promise<readonly ClientWorkflowRun[]>;
     get(runId: string): Promise<ClientWorkflowProcess | undefined>;
     /** Existing Host process events; subscriptions carry facts, never executable workflow modules. */
-    subscribe(filter: { readonly runId?: string }, listener: (event: ClientWorkflowEvent) => void): { close(): void };
+    /** Terminates on transport failure; rebuild, await ready, then read a snapshot. */
+    subscribe(filter: { readonly runId?: string }, listener: (event: ClientWorkflowEvent) => void, onError?: (error: unknown) => void): { readonly ready: Promise<void>; close(): void };
     pause(runId: string): Promise<boolean>;
     resume(runId: string): Promise<boolean>;
     stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;
@@ -774,6 +775,8 @@ export interface ClientPermissionGrants {
 }
 
 export interface ClientSessionSettings {
+  /** Host-owned plan-mode default; an explicit Session effort takes precedence. */
+  readonly planModeEffort?: string;
   readonly repoIntelligenceMode?: 'auto' | 'off' | 'light' | 'full';
   readonly repoIntelligenceTrace?: boolean;
   /** Shared manual/automatic summary policy, independent of main-turn effort. */

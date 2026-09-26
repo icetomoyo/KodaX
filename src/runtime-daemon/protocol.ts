@@ -273,6 +273,7 @@ export type RuntimeDaemonMutationMethod =
   | 'agents.interrupt';
 
 export type RuntimeDaemonNotificationMethod =
+  | 'subscription.error'
   | 'session.view'
   | 'event'
   | 'observation.invalidated'
@@ -642,6 +643,7 @@ const REVERSE_BRIDGE_STATE_METHODS: ReadonlySet<RuntimeDaemonMethod> = new Set([
 ]);
 
 const NOTIFICATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonNotificationMethod>([
+  'subscription.error',
   'session.view',
   'event',
   'observation.invalidated',

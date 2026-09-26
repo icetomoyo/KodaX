@@ -62,12 +62,17 @@ export interface ClientMemoryService {
 }
 
 /** Learning notifications belong to the authenticated client; governance is shared. */
+export interface ClientLearningSubscription extends AsyncIterableIterator<LearningEvent> {
+  /** Registration only; read a snapshot after awaiting ready. */
+  readonly ready: Promise<void>;
+}
+
 export interface ClientLearningService {
   list(query?: LearningQuery): Promise<LearningPage>;
   get(nameOrSlugOrId: string): Promise<LearnedCapabilityRecord>;
   getSnapshot(): Promise<LearningSurfaceSnapshot>;
   events(afterRevision?: number): Promise<readonly LearningEvent[]>;
-  subscribe(options?: LearningSubscribeOptions): AsyncIterable<LearningEvent>;
+  subscribe(options?: LearningSubscribeOptions): ClientLearningSubscription;
   acknowledge(nameOrSlugOrId: string): Promise<void>;
   snooze(nameOrSlugOrId: string, until: string): Promise<void>;
   reject(nameOrSlugOrId: string): Promise<void>;

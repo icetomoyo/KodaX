@@ -508,7 +508,8 @@ export interface WorkflowHostControl {
   subscribe(
     filter: { readonly runId?: string },
     listener: (event: import('@kodax-ai/agent').WorkflowProcessEvent) => void,
-  ): { close(): void };
+    onError?: (error: unknown) => void,
+  ): { readonly ready?: Promise<void>; close(): void };
   pause(runId: string): Promise<boolean>;
   resume(runId: string): Promise<boolean>;
   stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;

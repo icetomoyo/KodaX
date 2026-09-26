@@ -27,6 +27,21 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it('rejects unsupported plan-mode Session effort before sending a settings mutation', async () => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'older-settings', mode: 'daemon', profile: 'default', startedAt: '2026-09-26T00:00:00Z', version: '0.7.96' },
+      capabilities: { sharedSessionSettings: { version: 2, keys: ['effort'] } },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    await expect(client.sessions.updateSettings('session', { planModeEffort: 'medium' }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
+    await expect(client.sessions.updateSettingsVersioned('session', { planModeEffort: null }, { expectedRevision: 0 }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
+    expect(sent).toEqual([]);
+    await client.sessions.updateSettings('session', { effort: 'high' });
+    expect(sent).toEqual(['session.settings.update']);
+  });
   it('sends compact params plainly with no operation envelope (T25)', async () => {
     let captured: {
       readonly params?: unknown;
@@ -1235,6 +1250,7 @@ describe('runtime daemon client proxy', () => {
         version: '0.7.66',
       },
       transport,
+      capabilities: { subscriptionLifecycle: { version: 1, errorNotifications: true } },
     });
 
     const subscription = client.workflows.subscribe({}, () => undefined);

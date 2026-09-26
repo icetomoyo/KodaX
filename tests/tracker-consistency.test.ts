@@ -33,6 +33,7 @@ type FeatureOverview = {
 type IssueSummary = {
   total: number;
   open: number;
+  needsInfo: number;
   resolved: number;
   partiallyResolved: number;
   wontFix: number;
@@ -284,7 +285,7 @@ function parseIssueIndex(markdown: string): IssueIndexRow[] {
 function parseIssueSummary(markdown: string): IssueSummary {
   const section = getSection(markdown, 'Summary');
   const totalMatch = section.match(
-    /- Total: (\d+) \((\d+) Open, (\d+) Resolved, (\d+) Partially Resolved, (\d+) Won't Fix\)/
+    /- Total: (\d+) \((\d+) Open(?: including \d+ needs-info)?, (\d+) Resolved, (\d+) Partially Resolved, (\d+) Won't Fix\)/
   );
   const highestPriorityMatch = section.match(
     /- Highest Priority Open: (\d+) - (.+) \((High|Medium|Low)\)/
@@ -297,6 +298,7 @@ function parseIssueSummary(markdown: string): IssueSummary {
   return {
     total: Number(totalMatch[1]),
     open: Number(totalMatch[2]),
+    needsInfo: Number(totalMatch[0].match(/including (\d+) needs-info/)?.[1] ?? 0),
     resolved: Number(totalMatch[3]),
     partiallyResolved: Number(totalMatch[4]),
     wontFix: Number(totalMatch[5]),
@@ -459,7 +461,8 @@ describe('tracker consistency', () => {
     const highestPriorityOpenIssue = selectHighestPriorityOpenIssue(issueRows);
 
     expect(issueSummary.total).toBe(issueRows.length);
-    expect(issueSummary.open).toBe(issueRows.filter((row) => row.status === 'Open').length);
+    expect(issueSummary.open).toBe(issueRows.filter((row) => row.status === 'Open' || row.status === 'needs-info').length);
+    expect(issueSummary.needsInfo).toBe(issueRows.filter((row) => row.status === 'needs-info').length);
     expect(issueSummary.resolved).toBe(issueRows.filter((row) => row.status === 'Resolved').length);
     expect(issueSummary.partiallyResolved).toBe(
       issueRows.filter((row) => row.status === 'Partially Resolved').length

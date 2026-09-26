@@ -223,7 +223,8 @@ export interface LearningBinding {
   subscribe(
     listener: (event: LearningEvent) => void,
     options?: LearningSubscribeOptions,
-  ): { close(): void };
+    onError?: (error: unknown) => void,
+  ): { readonly ready?: Promise<void>; close(): void };
   acknowledge(nameOrSlug: string): Promise<void>;
   snooze(nameOrSlug: string, until: string): Promise<void>;
   reject(nameOrSlug: string): Promise<void>;

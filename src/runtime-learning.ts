@@ -12,12 +12,17 @@ import {
   type LearningSurfaceSnapshot,
 } from '@kodax-ai/agent';
 
+export interface RuntimeLearningSubscription extends AsyncIterableIterator<LearningEvent> {
+  /** Registration only; read a snapshot after awaiting ready. */
+  readonly ready: Promise<void>;
+}
+
 export interface RuntimeLearningService {
   list(query?: LearningQuery): Promise<LearningPage>;
   get(nameOrSlugOrId: string): Promise<LearnedCapabilityRecord>;
   getSnapshot(): Promise<LearningSurfaceSnapshot>;
   events(afterRevision?: number): Promise<readonly LearningEvent[]>;
-  subscribe(options?: LearningSubscribeOptions): AsyncIterable<LearningEvent>;
+  subscribe(options?: LearningSubscribeOptions): RuntimeLearningSubscription;
   acknowledge(nameOrSlugOrId: string): Promise<void>;
   snooze(nameOrSlugOrId: string, until: string): Promise<void>;
   reject(nameOrSlugOrId: string): Promise<void>;
@@ -159,30 +164,51 @@ async function withExplicitUserAuthority(
 }
 
 function subscribeWhenReady(
-  ready: Promise<void>,
+  initialization: Promise<void>,
   service: ReturnType<typeof createLearningCenterService>,
   options: LearningSubscribeOptions | undefined,
-): AsyncIterable<LearningEvent> {
+): RuntimeLearningSubscription {
+  let closed = false;
+  let failed = false;
+  let failure: unknown;
+  let rejectFailure!: (error: unknown) => void;
+  const failing = new Promise<never>((_resolve, reject) => { rejectFailure = reject; });
+  void failing.catch(() => undefined); // Retained failure is also delivered to current and future next calls.
+  let active: AsyncIterator<LearningEvent> | undefined;
+  let closeResult: Promise<IteratorResult<LearningEvent>> | undefined;
+  let finishClose!: (result: IteratorResult<LearningEvent>) => void;
+  const closing = new Promise<IteratorResult<LearningEvent>>((resolve) => { finishClose = resolve; });
+  const opening = initialization.then(() => {
+    if (closed) throw new Error('Learning subscription closed before registration completed.');
+    active = service.subscribe(options)[Symbol.asyncIterator]();
+    return active;
+  });
+  const ready = Promise.race([opening.then(() => undefined), closing.then(() => {
+    throw new Error('Learning subscription closed before registration completed.');
+  })]);
+  void ready.catch(() => undefined); // The same error is exposed by ready and next.
   return {
-    [Symbol.asyncIterator]() {
-      let closed = false;
-      let active: AsyncIterator<LearningEvent> | undefined;
-      const opening = ready.then(() => {
-        if (closed) return undefined;
-        active = service.subscribe(options)[Symbol.asyncIterator]();
-        return active;
-      });
-      return {
-        async next(): Promise<IteratorResult<LearningEvent>> {
-          const opened = await opening;
-          if (closed || !opened) return { done: true, value: undefined };
-          return opened.next();
-        },
-        async return(): Promise<IteratorResult<LearningEvent>> {
-          closed = true;
-          return active?.return?.() ?? { done: true, value: undefined };
-        },
-      };
+    ready,
+    [Symbol.asyncIterator]() { return this; },
+    async next() {
+      if (closed) return { done: true, value: undefined };
+      if (failed) throw failure;
+      try {
+        return await Promise.race([opening.then((iterator) => closed
+          ? { done: true as const, value: undefined } : iterator.next()), closing, failing]);
+      } catch (error: unknown) {
+        failed = true;
+        failure = error;
+        rejectFailure(error);
+        throw error;
+      }
+    },
+    return() {
+      closed = true;
+      finishClose({ done: true, value: undefined });
+      // Settle next() waiters immediately; return() waits for initialization and iterator cleanup.
+      closeResult ??= initialization.then(() => active?.return?.() ?? { done: true as const, value: undefined });
+      return closeResult;
     },
   };
 }

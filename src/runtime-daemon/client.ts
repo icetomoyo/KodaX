@@ -224,6 +224,16 @@ export class RuntimeRunLifecycleUpgradeRequiredError extends Error {
   }
 }
 
+export class RuntimeSubscriptionUpgradeRequiredError extends Error {
+  readonly code = 'daemon_upgrade_required' as const;
+  readonly capability = 'subscriptionLifecycle' as const;
+  readonly requiredVersion = 1 as const;
+  constructor() {
+    super('Runtime daemon lacks subscriptionLifecycle v1. Upgrade and restart the Host before observing Learning or Workflow.');
+    this.name = 'RuntimeSubscriptionUpgradeRequiredError';
+  }
+}
+
 export interface RuntimeDaemonClientOptions {
   readonly identity: RuntimeIdentity;
   readonly transport: RuntimeDaemonClientTransport;
@@ -263,6 +273,15 @@ export function createRuntimeDaemonClient(
     params,
     control,
   );
+  const subscriptionRequest: RuntimeDaemonClientTransport['request'] = (method, params) => {
+    const capability = options.capabilities?.subscriptionLifecycle;
+    if (typeof capability !== 'object' || capability === null
+      || !('version' in capability) || capability.version !== 1
+      || !('errorNotifications' in capability) || capability.errorNotifications !== true) {
+      return Promise.reject(new RuntimeSubscriptionUpgradeRequiredError());
+    }
+    return request(method, method.endsWith('.subscribe') ? { ...requireRecord(params), reportErrors: true } : params);
+  };
   const readRequest = (
     method: RuntimeDaemonMethod,
     params: Readonly<Record<string, unknown>>,
@@ -601,13 +620,15 @@ export function createRuntimeDaemonClient(
       getAutoModeStats(sessionId) {
         return request('session.autoMode.getStats', { sessionId }) as ReturnType<KodaXRuntime['sessions']['getAutoModeStats']>;
       },
-      updateSettings(sessionId, patch) {
+      async updateSettings(sessionId, patch) {
+        assertPlanModeEffortSupported(options.capabilities, patch);
         return request('session.settings.update', { sessionId, patch }) as Promise<RuntimeSessionSettings>;
       },
-      updateSettingsVersioned(sessionId, patch, options) {
+      async updateSettingsVersioned(sessionId, patch, updateOptions) {
+        assertPlanModeEffortSupported(options.capabilities, patch);
         return request(
           'session.settings.updateVersioned',
-          { sessionId, patch, expectedRevision: options.expectedRevision },
+          { sessionId, patch, expectedRevision: updateOptions.expectedRevision },
         ) as ReturnType<KodaXRuntime['sessions']['updateSettingsVersioned']>;
       },
       appendNotice(input) {
@@ -1046,8 +1067,8 @@ export function createRuntimeDaemonClient(
       get(runId: string) {
         return request('workflow.get', { runId }).then(nullToUndefined<RuntimeWorkflowSnapshot>);
       },
-      subscribe(filter: RuntimeWorkflowFilter, listener: RuntimeWorkflowListener) {
-        return subscribeToDaemonWorkflowEvents(options.transport, request, filter, listener);
+      subscribe(filter: RuntimeWorkflowFilter, listener: RuntimeWorkflowListener, onError?: (error: unknown) => void) {
+        return subscribeToDaemonWorkflowEvents(options.transport, subscriptionRequest, filter, listener, onError);
       },
       pause(runId: string) {
         return request('workflow.pause', { runId }) as Promise<boolean>;
@@ -1078,7 +1099,7 @@ export function createRuntimeDaemonClient(
         }) as ReturnType<KodaXRuntime['learning']['events']>;
       },
       subscribe(subscribeOptions) {
-        return learningEventPushIterable(options.transport, request, subscribeOptions);
+        return learningEventPushIterable(options.transport, subscriptionRequest, subscribeOptions);
       },
       async acknowledge(nameOrSlug) {
         await request('learning.acknowledge', { nameOrSlug });
@@ -1408,41 +1429,46 @@ function learningEventPushIterable(
   transport: RuntimeDaemonClientTransport,
   request: RuntimeDaemonClientTransport["request"],
   options: LearningSubscribeOptions | undefined,
-): AsyncIterableIterator<LearningEvent> {
+): AsyncIterableIterator<LearningEvent> & { readonly ready: Promise<void> } {
   const buffered: LearningEvent[] = [];
-  let wake: (() => void) | undefined;
-  let failure: ((error: unknown) => void) | undefined;
+  const waiters: Array<{
+    resolve: (result: IteratorResult<LearningEvent>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
   let closed = false;
+  let failed = false;
+  let failureReason: unknown;
+  const fail = (error: unknown): void => {
+    if (closed || failed) return;
+    failed = true;
+    failureReason = error;
+    buffered.length = 0;
+    for (const waiter of waiters.splice(0)) waiter.reject(error);
+  };
   const subscription = subscribeToDaemonNotification(transport, request, "learning.subscribe", {
     ...(options?.afterRevision !== undefined ? { afterRevision: options.afterRevision } : {}),
-  }, (event) => {
-    buffered.push(event as LearningEvent);
-    const resolve = wake;
-    wake = undefined;
-    resolve?.();
-  });
-  subscription.ready?.catch((error: unknown) => {
-    const reject = failure;
-    failure = undefined;
-    reject?.(error);
-  });
-  const iterator: AsyncIterableIterator<LearningEvent> = {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
+  }, (value) => {
+    if (closed || failed) return;
+    const event = value as LearningEvent;
+    const waiter = waiters.shift();
+    if (waiter) waiter.resolve({ value: event, done: false });
+    else buffered.push(event);
+  }, fail);
+  void subscription.ready?.catch(fail);
+  const iterator: AsyncIterableIterator<LearningEvent> & { readonly ready: Promise<void> } = {
+    ready: subscription.ready,
+    [Symbol.asyncIterator]() { return this; },
     async next(): Promise<IteratorResult<LearningEvent>> {
-      for (;;) {
-        if (buffered.length > 0) return { value: buffered.shift()!, done: false };
-        if (closed) return { done: true, value: undefined };
-        await new Promise<void>((resolve, reject) => {
-          wake = resolve;
-          failure = reject;
-        });
-      }
+      if (closed) return { done: true, value: undefined };
+      if (failed) throw failureReason;
+      if (buffered.length > 0) return { value: buffered.shift()!, done: false };
+      return new Promise((resolve, reject) => { waiters.push({ resolve, reject }); });
     },
     async return(): Promise<IteratorResult<LearningEvent>> {
       closed = true;
+      buffered.length = 0;
       subscription.close();
+      for (const waiter of waiters.splice(0)) waiter.resolve({ done: true, value: undefined });
       return { done: true, value: undefined };
     },
   };
@@ -2240,12 +2266,13 @@ function subscribeToDaemonWorkflowEvents(
   request: RuntimeDaemonClientTransport['request'],
   filter: RuntimeWorkflowFilter,
   listener: RuntimeWorkflowListener,
-): RuntimeSubscription {
+  onError?: (error: unknown) => void,
+): RuntimeSubscription & { readonly ready: Promise<void> } {
   return subscribeToDaemonNotification(transport, request, 'workflow.subscribe', {
     filter,
   }, (event) => {
     listener(event as Parameters<RuntimeWorkflowListener>[0]);
-  });
+  }, onError);
 }
 
 function subscribeToDaemonNotification(
@@ -2254,54 +2281,72 @@ function subscribeToDaemonNotification(
   method: 'workflow.subscribe' | 'learning.subscribe',
   params: unknown,
   listener: (event: unknown) => void,
-): RuntimeSubscription {
+  onError?: (error: unknown) => void,
+): RuntimeSubscription & { readonly ready: Promise<void> } {
   let closed = false;
   let remoteSubscriptionId: string | undefined;
-  const pendingNotifications: Array<Record<string, unknown>> = [];
-  const local = transport.subscribe((notification) => {
-    if (closed || notification.method !== 'event') return;
+  let lifecycle: RuntimeSubscription | undefined;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  void ready.catch(() => undefined); // The public promise and onError retain the failure.
+  const pendingNotifications: Array<{ payload: Record<string, unknown>; failed: boolean }> = [];
+  let local: RuntimeSubscription | undefined;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    pendingNotifications.length = 0;
+    local?.close();
+    lifecycle?.close();
+    if (remoteSubscriptionId !== undefined) unsubscribeRemote(request, method, remoteSubscriptionId);
+  };
+  const fail = (error: unknown): void => {
+    if (closed) return;
+    close();
+    rejectReady(error);
+    if (onError) {
+      try { onError(error); } catch (callbackError: unknown) {
+        emitKodaXDiagnostic({ source: 'runtime.daemon.client', level: 'warn',
+          message: 'Subscription error listener failed.', detail: String(callbackError) });
+      }
+    } else emitKodaXDiagnostic({ source: 'runtime.daemon.client', level: 'warn',
+      message: `${method} observation stopped.`, detail: error instanceof Error ? error.message : String(error) });
+  };
+  local = transport.subscribe((notification) => {
+    if (closed || (notification.method !== 'event' && notification.method !== 'subscription.error')) return;
     const payload = requireRecord(notification.params);
     if (remoteSubscriptionId === undefined) {
       if (pendingNotifications.length >= MAX_PENDING_SUBSCRIPTION_NOTIFICATIONS) {
-        pendingNotifications.shift();
+        fail(new Error('Subscription handshake notification buffer overflowed; rebuild from a snapshot.'));
+        return;
       }
-      pendingNotifications.push(payload);
+      pendingNotifications.push({ payload, failed: notification.method === 'subscription.error' });
       return;
     }
     if (payload.subscriptionId !== remoteSubscriptionId) return;
-    listener(payload.event);
+    if (notification.method === 'subscription.error') fail(new Error(requireStringField(payload, 'message')));
+    else listener(payload.event);
   });
-  const ready = request(method, params).then((result) => {
+  if (closed) local.close();
+  lifecycle = transport.subscribeLifecycle?.((state) => {
+    if (state.state === 'disconnected') fail(new Error(state.reason ?? 'Runtime transport disconnected; rebuild the subscription and read a snapshot.'));
+  });
+  if (closed) lifecycle?.close();
+  void request(method, params).then((result) => {
     remoteSubscriptionId = requireStringField(requireRecord(result), 'subscriptionId');
-    if (closed) {
-      unsubscribeRemote(request, method, remoteSubscriptionId);
-      pendingNotifications.length = 0;
-      return;
+    if (closed) { unsubscribeRemote(request, method, remoteSubscriptionId); return; }
+    for (const { payload, failed } of pendingNotifications.splice(0)) {
+      if (closed) break;
+      if (payload.subscriptionId !== remoteSubscriptionId) continue;
+      if (failed) fail(new Error(requireStringField(payload, 'message')));
+      else listener(payload.event);
     }
-    for (const payload of pendingNotifications.splice(0)) {
-      if (payload.subscriptionId === remoteSubscriptionId) {
-        listener(payload.event);
-      }
-    }
-  }).catch((error: unknown) => {
-    pendingNotifications.length = 0;
-    local.close();
-    throw error;
-  });
-  // Callers that need a cross-connection happens-before can await `ready`.
-  // Attach a handler here as well so legacy callers that ignore it do not
-  // create an unhandled rejection when the remote handshake fails.
-  void ready.catch(() => undefined);
-  return {
-    ready,
-    close() {
-      closed = true;
-      local.close();
-      if (remoteSubscriptionId !== undefined) {
-        unsubscribeRemote(request, method, remoteSubscriptionId);
-      }
-    },
-  };
+    if (!closed) resolveReady();
+  }).catch(fail);
+  return { ready, close() {
+    close();
+    rejectReady(new Error('Subscription closed before registration completed.'));
+  } };
 }
 
 function requestRuntimeRunResult(
@@ -2351,7 +2396,10 @@ function unsubscribeRemote(
   const unsubscribeMethod = subscribeMethod === 'workflow.subscribe'
     ? 'workflow.unsubscribe'
     : 'learning.unsubscribe';
-  void request(unsubscribeMethod, { subscriptionId }).catch(() => undefined);
+  void request(unsubscribeMethod, { subscriptionId }).catch((error: unknown) => {
+    emitKodaXDiagnostic({ source: 'runtime.daemon.client', level: 'warn', message: 'Failed to release a remote subscription.',
+      detail: error instanceof Error ? error.message : String(error) });
+  });
 }
 
 function nullToUndefined<T>(value: unknown): T | undefined {
@@ -2363,6 +2411,19 @@ function requireRecord(value: unknown): Record<string, unknown> {
     throw new Error('Expected daemon response object.');
   }
   return value as Record<string, unknown>;
+}
+
+function assertPlanModeEffortSupported(
+  capabilities: Readonly<Record<string, unknown>> | undefined,
+  patch: { readonly planModeEffort?: string | null },
+): void {
+  if (patch.planModeEffort === undefined) return;
+  const settings = capabilities?.sharedSessionSettings;
+  if (settings && typeof settings === 'object' && 'keys' in settings
+    && Array.isArray(settings.keys) && settings.keys.includes('planModeEffort')) return;
+  throw Object.assign(new Error('Host does not support Session planModeEffort. Upgrade and restart the Host.'), {
+    code: 'daemon_upgrade_required', capability: 'sharedSessionSettings', restartRequired: true,
+  });
 }
 
 function supportsRunLifecycleControl(
