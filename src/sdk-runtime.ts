@@ -36,7 +36,7 @@ import type {
   ClientLineageSummary,
   ClientCommandInput,
 } from "@kodax-ai/coding/client-contract";
-import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems, committedSessionOutputIds } from "./session-view.js";
+import { SessionViewOwner, restoreSessionViewItems, restoreSessionContentItems, persistSessionViewItems, committedSessionOutputIds } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
 import { assembleConversationHistoryEntry, projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from "./client-history.js";
@@ -4514,7 +4514,7 @@ async function createKodaXRuntimeInternal(
         input => sessionService.conversationEntryChunk(input), sessionId, sources.revision, entry.index);
       if (source) messages.push(source.message);
     }
-    const restored = restoreSessionViewItems(sessionId, { title: '', gitRoot: '', messages }, messages)
+    const restored = restoreSessionContentItems(sessionId, { title: '', gitRoot: '', messages }, messages)
       .find(item => identity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });

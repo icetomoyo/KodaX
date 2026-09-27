@@ -56,6 +56,8 @@ export interface ResolveTranscriptPointerActionOptions {
   keyName: string | undefined;
   hasTranscript: boolean;
   historyScrollOffset: number;
+  /** A saved window can be at offset zero while newer live content still exists. */
+  isBrowsingHistory?: boolean;
   reviewPageSize: number;
   reviewWheelStep: number;
   hasMouse: boolean;
@@ -121,7 +123,7 @@ export function resolveTranscriptPointerAction(
       return { kind: "none" };
     }
 
-    return options.historyScrollOffset === 0
+    return options.historyScrollOffset === 0 && !options.isBrowsingHistory
       ? { kind: "consume" }
       : { kind: "scroll-by", delta: -options.reviewWheelStep };
   }

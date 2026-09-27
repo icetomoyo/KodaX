@@ -54,7 +54,8 @@ export function toKodaXProductClient(
       resumeGoal: (sessionId) => runtime.sessions.resumeGoal(sessionId),
       clearGoal: (sessionId) => runtime.sessions.clearGoal(sessionId),
       appendNotice: async (sessionId, input) => {
-        await runtime.sessions.appendNotice({ sessionId, ...input });
+        const saved = await runtime.sessions.appendNotice({ sessionId, ...input });
+        if (!saved) throw new Error('Host did not save the Session notice.');
       },
       readLineage: (sessionId) => runtime.sessions.readLineage(sessionId),
       labelEntry: (sessionId, input) => runtime.sessions.labelEntry({ sessionId, ...input }),

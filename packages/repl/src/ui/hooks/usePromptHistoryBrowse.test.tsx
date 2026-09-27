@@ -74,4 +74,28 @@ describe('ordinary history body ownership', () => {
     await vi.waitFor(() => expect(host.view.lastFrame()).toContain('Saved response'));
     host.view.unmount();
   });
+
+  it('releases a stalled browse, preserves the body, and ignores the late result after retry', async () => {
+    let resolveLate!: (value: ClientHistoryPage) => void;
+    const read = vi.fn().mockImplementationOnce(() => new Promise<ClientHistoryPage>(resolve => { resolveLate = resolve; }))
+      .mockResolvedValue(page);
+    const host = setup(read);
+    try {
+      await new Promise(done => setTimeout(done, 0));
+      vi.useFakeTimers();
+      host.api.browse(snapshot, anchor, true);
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(host.api.loading()).toBe(false);
+      expect(host.api.display?.hint).toContain('timed out');
+      expect(host.view.lastFrame()).toContain('Captured response');
+      expect(read).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      host.api.browse(snapshot, anchor, true);
+      await vi.waitFor(() => expect(host.view.lastFrame()).toContain('Saved response'));
+      resolveLate({ ...page, items: [{ ...page.items[0]!, text: 'Stale response' }] });
+      await new Promise(done => setTimeout(done, 20));
+      expect(host.view.lastFrame()).toContain('Saved response');
+      expect(host.api.loading()).toBe(false);
+    } finally { vi.useRealTimers(); host.view.unmount(); }
+  });
 });

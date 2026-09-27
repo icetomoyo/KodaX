@@ -93,6 +93,29 @@ export async function readPromptBrowseWindow(
   previous?: PromptBrowseWindow, signal?: AbortSignal,
   direction: 'older' | 'newer' = 'older',
 ): Promise<PromptBrowseWindow> {
+  const controller = new AbortController();
+  const readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  readSignal.throwIfAborted();
+  // Bound the entire gesture, including all pages and body chunks. A stalled
+  // transport must not hold the UI's loading lock until the user presses End.
+  const timeout = setTimeout(() => controller.abort(new Error('Saved history read timed out.')), 15_000);
+  let onAbort: () => void = () => {};
+  try {
+    return await new Promise<PromptBrowseWindow>((resolve, reject) => {
+      onAbort = () => reject(readSignal.reason);
+      readSignal.addEventListener('abort', onAbort, { once: true });
+      void readPromptBrowsePages(plane, sessionId, anchor, previous, readSignal, direction).then(resolve, reject);
+    });
+  } finally {
+    clearTimeout(timeout);
+    readSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function readPromptBrowsePages(
+  plane: Pick<InkClientPlane, 'readHistory' | 'readHistoryEntry'>, sessionId: string, anchor: PromptBrowseAnchor,
+  previous: PromptBrowseWindow | undefined, signal: AbortSignal, direction: 'older' | 'newer',
+): Promise<PromptBrowseWindow> {
   if (!plane.readHistory) throw new Error('Saved history is unavailable.');
   if (direction === 'newer' && previous) return readNewerWindow(plane, sessionId, anchor, previous, signal);
   let pages = [...(previous?.pages ?? [])];

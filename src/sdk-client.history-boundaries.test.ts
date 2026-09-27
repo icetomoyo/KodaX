@@ -13,7 +13,7 @@ import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtim
 
 async function withHistory(
   messages: KodaXMessage[],
-  check: (client: KodaXProductClient, sessionId: string) => Promise<void>,
+  check: (client: KodaXProductClient, sessionId: string, storage: FileSessionStorage) => Promise<void>,
 ): Promise<void> {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-boundaries-'));
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
@@ -36,7 +36,7 @@ async function withHistory(
     data.messages = messages;
     delete data.lineage;
     await storage.save(session.id, data);
-    await check(client, session.id);
+    await check(client, session.id, storage);
   } finally {
     await client.disconnect();
     await host.close();
@@ -115,6 +115,12 @@ it('retains tool blocks, results and inputs when an entry expands past the displ
       const input = await client.sessions.readHistoryEntry(sessionId, item.id, { part: 'input' });
       expect(input?.text).toBe(`{"command":"echo ${index}"}`);
     }
+    // Live tool references must remain readable even when their canonical
+    // message expands beyond the observation window.
+    expect(await client.sessions.readItem(sessionId, 'tool:call-0')).toMatchObject({ text: 'result-0' });
+    expect(await client.sessions.readItem(sessionId, 'tool:call-0', { part: 'input' }))
+      .toMatchObject({ text: '{"command":"echo 0"}' });
+    expect(await client.sessions.readItem(sessionId, 'tool:call-79')).toMatchObject({ text: 'result-79' });
   });
 });
 
@@ -134,5 +140,33 @@ it('keeps every ordered block of a single message through history page and item 
       expect(item).toMatchObject({ outputId: 'many-blocks', outputState: 'committed', textRevision: 0 });
       expect(await readBody(client, sessionId, item.id)).toBe(item.text);
     }
+  });
+});
+
+it('keeps observed block identities and bodies consistent after a large output leaves the window', async () => {
+  const content = Array.from({ length: 80 }, (_, index) => [
+    { type: 'thinking' as const, thinking: `thought-${index}` },
+    { type: 'text' as const, text: `answer-${index}` },
+  ]).flat();
+  await withHistory([{ role: 'assistant', outputId: 'many-blocks', content }], async (client, sessionId, storage) => {
+    let visible: readonly { id: string; text: string }[] = [];
+    const observation = await client.sessions.observe(sessionId, view => { visible = view.items; });
+    try {
+      expect(visible).toHaveLength(150);
+      const captured = visible.filter(item => ['thought-5', 'answer-5', 'thought-79', 'answer-79'].includes(item.text));
+      expect(captured).toHaveLength(4);
+      const data = (await storage.load(sessionId))!;
+      data.messages.push(...Array.from({ length: 85 }, (_, index): KodaXMessage =>
+        ({ role: 'user', inputId: `later-${index}`, content: `question-${index}` })));
+      delete data.lineage;
+      await storage.save(sessionId, data);
+      await client.sessions.appendNotice(sessionId, { content: 'refresh' });
+      await expect.poll(() => visible.some(item => item.id === captured[0]!.id)).toBe(false);
+      for (const item of captured) {
+        expect(await client.sessions.readItem(sessionId, item.id)).toMatchObject({
+          id: item.id, text: item.text, outputState: 'committed', textRevision: 0,
+        });
+      }
+    } finally { observation.close(); }
   });
 });

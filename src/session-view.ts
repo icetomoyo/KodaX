@@ -4,7 +4,7 @@ import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
-import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
+import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
 import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
@@ -738,6 +738,16 @@ export function restoreSessionViewItems(
   conversation?: readonly KodaXMessage[] | null,
   liveItems: readonly ClientViewItem[] = [],
 ): ClientViewItem[] {
+  return trimPersistedUiHistorySnapshot(restoreSessionContentItems(sessionId, data, conversation, liveItems));
+}
+
+/** Assign identities before applying the display window; item reads need every block. */
+export function restoreSessionContentItems(
+  sessionId: string,
+  data: KodaXSessionData | null | undefined,
+  conversation?: readonly KodaXMessage[] | null,
+  liveItems: readonly ClientViewItem[] = [],
+): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
   const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
@@ -777,7 +787,7 @@ export function restoreSessionViewItems(
     return undefined;
   };
   const occurrences = new Map<string, number>();
-  const restored = restoreHistoryItemsFromSession({ messages: historyMessages, uiHistory: uiHistory.filter(item =>
+  const restored = restoreHistoryItemsFromSession({ historyScope: 'all', messages: historyMessages, uiHistory: uiHistory.filter(item =>
     item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)) });
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
@@ -829,7 +839,7 @@ export function restoreSessionViewItems(
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...('icon' in item ? { icon: item.icon } : {}), ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
   });
-  return restoreLineageNotices(data, historyMessages, items).slice(-150);
+  return restoreLineageNotices(data, historyMessages, items);
 }
 
 export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaXSessionUiHistoryItem[] {

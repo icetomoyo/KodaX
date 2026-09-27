@@ -107,6 +107,8 @@ one-shot 的调用设置仍临时写入共享 Session，并非独立的 Run 设�
 
 prompt/extension 的模型偏好、工具限制、hooks 和 fork 由 Host 从可信注册来源执行。hook shell 沿用正常工具授权路径；PostToolUse 与 Stop/SubagentStop 结算后才报告终态，fork 结果提交回原 Session 后才完成。`disableModelInvocation` 不禁止用户显式调用。低层 daemon 输入也不能携带 Host-only command 描述符来注入这些策略。
 
+Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 保存为 client-only 通知，再由 Host view 显示；不能只追加到会被下一帧替换的本地 history。通用命令输出收集路径（如 `/model` 查询、切换结果和错误）在没有启动 Run/模型 invocation 时，将输入与结果一起记录；设置快捷键和会话操作 callback 的反馈单独记录结果。这些通知不提交给模型；已启动 Run 的输入继续由 Host 唯一保存。通知保存失败应显示原结果及保存失败原因，不重试执行命令。切换 Session 后的反馈属于切换后的 Session，不携带旧 Session 的命令回显。
+
 注册命令的第一个参数为 `help`、`--help` 或 `-h` 时，沿用原帮助语义，只返回说明，不执行 handler 或模型。客户端使用 Host 命令目录的名称及 aliases 判定注册命令，不能因为本地没有 extension runtime 就当作未知命令，也不能让同名 Skill 抢占已注册命令；`/skill:name` 保留显式 Skill 含义。
 
 交互式 CLI 和单次 CLI 都把 Skill 原文通过 `inputs.submit` 交给 Host，不在客户端预先执行动态上下文或 hooks。单次调用的既有 repoIntelligenceMode/Trace 参数与模型、effort 等参数通过 Session 设置表达；持久 Session 在调用结束后恢复原覆盖，临时 Session 由 Host 按既有生命周期清理。设置恢复失败会明确诊断。单次 CLI 为保留原 JSON/text 进度格式，仍使用底层只读进度适配器；它不执行任务、不提交输入、不裁决终态，产品结算由 `runs.await` 决定。
@@ -291,7 +293,13 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 
 已接受的 canonical 用户输入按 inputId 保持观察项身份，普通追加或压缩移出当前显示窗口后，原 readItem 引用仍可回源；回退到不含该输入的分支后明确不可用。升级前旧显示 ID 不要求跨 Host 版本继续解析；消费者重连取得当前完整视图，不解析 ID 字符串格式。旧无 inputId 消息不获得追溯身份，也不能借用同文的已标识输入。
 
+Host 在完整内容投影中分配显示项身份，再应用已有显示窗口限制；`readItem` 回源读取不应用该窗口裁剪。单条消息展开超过 150 项时，早期工具结果与参数仍可回读，已观察的多块回答离窗后不因块序号变化读到另一段正文。
+
 冻结浏览属于 UI 操作：进入浏览时捕获项身份、顺序和已显示长度，补读所捕获长度内的正文/工具输入，拒绝读取中缩短、替换或不连续的内容。新产生输出不能改变冻结页的滚动位置与搜索结果；退出后再回当前 view。现有 Ink 通过 [client-plane.ts](../packages/repl/src/ui/client-plane.ts) 的 frozen reader 实现，不新增 Host 租约或另一套恢复框架。产品 `readItem` 本身没有任意时点不可变快照参数，不能据此承诺任意并发替换时仍可取回旧正文。
+
+普通界面的历史窗口即使不足一屏、滚动偏移为零，也仍可能处于冻结浏览。向下滚轮必须继续进入已有的向新内容导航逻辑，在最后一页返回实时 view；不能用偏移为零判定已经实时。End 保留直接返回最新内容的快捷操作。
+
+普通浏览的一次翻页操作（包括后续正文补读）有 15 秒等待上限。超时保留当前正文、显示重试提示并释放浏览等待；End、切换 Session/模式等取消立即结束客户端等待。迟到响应不得覆盖新页面或继续补读。该上限是 UI 恢复策略，不承诺取消已发送的 Host RPC，也不改变公共 Client 方法。
 
 复制、外部编辑器和全文历史使用读取到的原文；终端排版可转换不可打印控制字符，但不能将排版处理后的字符串保存回历史，或混入 Host 原文。工具输入、执行输出、thinking 和助手文本保持各自类型与边界；隐藏/折叠是 UI 决策。
 

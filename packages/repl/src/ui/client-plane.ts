@@ -53,6 +53,8 @@ export interface InkClientPlane {
   cancelSession(input: ClientSessionCancelInput): Promise<ClientSessionCancelReceipt>;
   /** Configure the Host-owned Session before starting or changing a round. */
   updateSettings?(sessionId: string, patch: ClientSessionSettingsPatch): Promise<void>;
+  /** Persist client-only command feedback without submitting model input. */
+  appendNotice?(sessionId: string, input: { content: string; source?: string }): Promise<void>;
   /**
    * Submit user text. 'immediate' starts the run, 'after_turn' queues
    * Host-side, 'redirect' queues and cancels the target run (FEATURE_149

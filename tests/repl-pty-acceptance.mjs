@@ -27,6 +27,7 @@ const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
 const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
+const modelNoticesOnly = process.argv.includes('--model-notices-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -208,13 +209,15 @@ async function setupProvider(state) {
   }
   await mkdir(path.join(state.homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(state.homeDir, '.kodax', 'config.json'), JSON.stringify({
-    provider: 'acceptance-local', planModeEffort: 'high', customProviders: [{
-      name: 'acceptance-local', protocol: 'openai',
+    provider: 'acceptance-local', planModeEffort: 'high', customProviders: [
+      ['acceptance-local', 'acceptance-model'], ['acceptance-alternate', 'alternate-model'],
+    ].map(([name, model]) => ({
+      name, protocol: 'openai',
       baseUrl: `http://127.0.0.1:${state.server.address().port}/v1`,
-      apiKeyEnv: 'KODAX_ACCEPTANCE_KEY', model: 'acceptance-model',
+      apiKeyEnv: 'KODAX_ACCEPTANCE_KEY', model,
       reasoning: { efforts: ['low', 'medium', 'high'], default: 'medium' },
       contextWindow: longHistoryOnly ? 262144 : 65536, maxOutputTokens: 1024,
-    }],
+    })),
   }));
 }
 
@@ -588,6 +591,9 @@ async function checkHostSessionTransitions(state) {
   await delay(400);
   assert.deepEqual(await state.client.sessions.getSettings(target.id), settings);
   await observeSession(state, target.id);
+  await state.client.sessions.updateSettings(target.id, { maxIter: 14 });
+  await delay(500);
+  assert.match(state.terminal.screen(), /Session loaded:/, 'Session switch feedback must survive a Host refresh');
   await state.terminal.submit('ACCEPT_LOADED_HISTORY');
   await waitFor('loaded response', () => state.terminal.screen().includes('END_ACCEPT_LOADED_HISTORY'));
   await waitFor('loaded run settled', () => state.view.runs.every(run => !['accepted', 'queued', 'running', 'waiting_user', 'waiting_agent'].includes(run.phase)));
@@ -597,11 +603,19 @@ async function checkHostSessionTransitions(state) {
   const lineage = await state.client.sessions.readLineage(target.id);
   const first = lineage.entries.find(entry => entry.role === 'user');
   await state.terminal.submit(`/rewind ${first.id}`);
-  await waitFor('rewind head', async () => (await state.client.sessions.readLineage(target.id)).activeEntryId === first.id);
+  await waitFor('rewind head', async () => {
+    const current = await state.client.sessions.readLineage(target.id);
+    let head = current.entries.find(entry => entry.id === current.activeEntryId);
+    while (head?.type === 'client_notice') head = current.entries.find(entry => entry.id === head.parentId);
+    return head?.id === first.id;
+  });
   if (state.mode === 'ink') await waitFor('rewound history remains visible', () => state.terminal.screen().includes('ACCEPT_LOADED_HISTORY'));
   await delay(400);
   await state.terminal.submit('/tree');
   await waitFor('Host tree rendered', () => state.terminal.screen().includes(first.id.slice(0, 12)));
+  await state.client.sessions.updateSettings(target.id, { maxIter: 13 });
+  await delay(500);
+  assert.match(state.terminal.screen(), /Session Tree:/, 'Tree command feedback must survive a Host refresh');
   state.terminal.dispose();
   await state.terminal.exit;
   state.terminal = openTerminal(state.homeDir, state.mode, ['--resume', target.id, '--repo-intelligence', 'full', '--repo-intelligence-trace']);
@@ -1019,10 +1033,75 @@ async function checkPromptScroll(state) {
   assert.ok(!state.terminal.screen().includes('Ctrl+E show all'), 'Wheel scrolling must stay in ordinary prompt mode');
   await state.terminal.type('\x1b[5~');
   await waitFor('ordinary prompt page up reaches older history', () => state.terminal.screen().includes('PROMPT_SCROLL_0'), 5000);
+  for (let tick = 0; tick < 40; tick += 1) await state.terminal.type('\x1b[<65;20;8M');
+  await waitFor('wheel down returns to latest without End', () => state.terminal.screen().includes('PROMPT_SCROLL_23'), 5000);
   await state.terminal.type('\x1b[F');
   await waitFor('ordinary prompt returns to latest', () => state.terminal.screen().includes('PROMPT_SCROLL_23'), 5000);
   assert.ok(state.terminal.screen().includes('UNSUBMITTED_SCROLL_DRAFT'), 'History scrolling must preserve the draft');
   await state.terminal.type('\x15');
+}
+
+async function checkShortPromptScroll(state) {
+  await state.terminal.resize(220, 64);
+  await state.client.sessions.appendNotice(state.sessionId, { content: 'SHORT_HISTORY_BEFORE' });
+  await waitFor('short history displayed', () => state.terminal.screen().includes('SHORT_HISTORY_BEFORE'));
+  await state.terminal.type('\x1b[<64;20;8M');
+  await delay(400);
+  await state.client.sessions.appendNotice(state.sessionId, { content: 'SHORT_HISTORY_AFTER' });
+  await delay(400);
+  assert.ok(!state.terminal.screen().includes('SHORT_HISTORY_AFTER'), 'Reading history must freeze the body');
+  await state.terminal.type('\x1b[<65;20;8M');
+  await waitFor('wheel down exits a short frozen history without End', () => state.terminal.screen().includes('SHORT_HISTORY_AFTER'), 5000);
+  await state.terminal.resize(110, 32);
+}
+
+async function checkModelNotices(state) {
+  const requestCount = state.requests.length;
+  const settingsBefore = await state.client.sessions.getSettings(state.sessionId);
+  await state.terminal.resize(220, 64);
+  await state.terminal.submit('/model acceptance-alternate/alternate-model');
+  await waitFor('model switch success stays visible', () => state.terminal.screen().includes('[Model: acceptance-alternate/alternate-model] Host default saved; Session applied'), 5000);
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).provider, 'acceptance-alternate');
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).model, 'alternate-model');
+  await state.client.sessions.updateSettings(state.sessionId, { maxIter: 8 });
+  await delay(500);
+  assert.match(state.terminal.screen(), /\/model acceptance-alternate\/alternate-model/, 'The submitted command must remain visible after a Host refresh');
+  assert.match(state.terminal.screen(), /Host default saved; Session applied/, 'The success message must survive a Host refresh');
+  await state.terminal.type('\x14');
+  await waitFor('effort shortcut feedback visible', () => state.terminal.screen().includes('Reasoning effort:'), 5000);
+  await state.client.sessions.updateSettings(state.sessionId, { maxIter: 10 });
+  await delay(500);
+  assert.match(state.terminal.screen(), /Reasoning effort:/, 'Settings shortcut feedback must survive a Host refresh');
+  await state.terminal.submit('/model');
+  await waitFor('model query displayed', () => state.terminal.screen().includes('[configured]'), 5000);
+  await state.client.sessions.updateSettings(state.sessionId, { maxIter: 9 });
+  await delay(500);
+  assert.match(state.terminal.screen(), /\[configured\]/, 'Query output must survive a Host refresh');
+  const notices = (await state.client.sessions.readLineage(state.sessionId)).entries.filter(entry => entry.type === 'client_notice');
+  let observedQuery;
+  const peer = await state.client.sessions.observe(state.sessionId, view => {
+    observedQuery = view.items.find(item => item.text.startsWith('/model\n\n'));
+  });
+  try {
+    assert.ok(observedQuery?.text.includes('acceptance-alternate * [configured]'), 'A new observer must receive the query and result together');
+    assert.ok(notices.some(entry => entry.id === observedQuery.id), 'Query feedback must be saved as client-only lineage');
+  } finally { peer.close(); }
+  await state.terminal.submit('/model missing-fixture-provider');
+  await waitFor('model error displayed', () => state.terminal.screen().includes('Unknown Host provider: missing-fixture-provider'), 5000);
+  await state.client.sessions.updateSettings(state.sessionId, { maxIter: settingsBefore.maxIter ?? null });
+  await delay(500);
+  assert.match(state.terminal.screen(), /Unknown Host provider: missing-fixture-provider/, 'Command errors must survive a Host refresh');
+  await state.terminal.submit('/model acceptance-local/acceptance-model');
+  await waitFor('model restored', async () => (await state.client.sessions.getSettings(state.sessionId)).provider === 'acceptance-local');
+  await state.client.config.patch({ effort: null });
+  await state.client.sessions.updateSettings(state.sessionId, { effort: settingsBefore.effort ?? null });
+  await delay(500);
+  assert.equal(state.requests.length, requestCount, 'Model commands must not invoke a model');
+  await state.terminal.submit('ACCEPT_NOTICE_CONTEXT');
+  await waitFor('reply after command notices', () => state.terminal.screen().includes('END_ACCEPT_NOTICE_CONTEXT'));
+  assert.ok(!JSON.stringify(received(state, 'ACCEPT_NOTICE_CONTEXT')[0].messages).includes('missing-fixture-provider'),
+    'Client notices must not become model context');
+  await state.terminal.resize(110, 32);
 }
 
 async function checkTranscriptPaint(state) {
@@ -1170,6 +1249,14 @@ async function run(mode) {
     await setupHostCommands(state);
     state.terminal = openTerminal(state.homeDir, mode);
     await check(state, 'startup', checkStartup);
+    if (mode === 'ink' && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
+      await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
+    }
+    if (modelNoticesOnly) {
+      await check(state, 'model-command-visible-feedback', checkModelNotices);
+      await check(state, 'exit', checkExit);
+      return;
+    }
     if (promptScrollOnly) {
       await check(state, 'ordinary-prompt-wheel-and-page-scroll', checkPromptScroll);
       await check(state, 'output-after-scrolled-notices', checkStop);
@@ -1184,6 +1271,7 @@ async function run(mode) {
     }
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
+    if (mode === 'ink') await check(state, 'model-command-visible-feedback', checkModelNotices);
     await check(state, 'host-execution-controls', checkHostExecutionControls);
     await check(state, 'host-session-list', checkHostSessionList);
     if (consumerOnly) {
@@ -1236,8 +1324,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--model-notices-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

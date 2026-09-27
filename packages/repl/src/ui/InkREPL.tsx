@@ -2803,6 +2803,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, [addHistoryItem, appendManagedForegroundLedgerItem]);
 
+  const publishCommandFeedback = useCallback(async (content: string): Promise<void> => {
+    if (!content) return;
+    if (!options.clientPlane?.appendNotice) {
+      emitInfoItemToCorrectLayer({ type: 'info', text: content }, 'command');
+      return;
+    }
+    const sessionId = context.sessionId;
+    try {
+      await options.clientPlane.appendNotice(sessionId, { content, source: 'repl:command' });
+    } catch (error: unknown) {
+      pushClientPlaneNotice(`command-notice-${sessionId}-${Date.now()}`,
+        `${content}\n[Could not save command feedback: ${error instanceof Error ? error.message : String(error)}]`);
+    }
+  }, [context, options.clientPlane, emitInfoItemToCorrectLayer, pushClientPlaneNotice]);
+
   /**
    * Emit a sidecar verifier history item to the correct transcript layer.
    * Follows the same foreground-layering rule as emitInfoItemToCorrectLayer:
@@ -6021,9 +6036,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         setEffort: async effort => selectClientConfig({ ...currentConfigRef.current, effort, effortOverride: effort !== undefined }, ['effort']),
         setReasoningMode: async reasoningMode => selectClientConfig({ ...currentConfigRef.current, reasoningMode, thinking: reasoningMode !== 'off' }, ['reasoningMode', 'thinking']),
       }, current);
-      emitInfoItemToCorrectLayer({ type: 'info', text: result.message ?? '' }, 'settings');
+      await publishCommandFeedback(result.message ?? '');
     } catch (error) {
-      emitInfoItemToCorrectLayer({ type: 'info', text: `Host effort selection failed: ${String(error)}` }, 'settings');
+      await publishCommandFeedback(`Host effort selection failed: ${String(error)}`);
     }
   };
 
@@ -6031,7 +6046,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const agentMode = nextAgentMode(currentConfigRef.current.agentMode);
     const result = await saveAndApplyHostSetting({ config: options.config }, { agentMode },
       () => selectClientConfig({ ...currentConfigRef.current, agentMode }, ['agentMode']), `Agent mode: ${agentMode.toUpperCase()}`);
-    emitInfoItemToCorrectLayer({ type: 'info', text: result.message ?? '' }, 'settings');
+    await publishCommandFeedback(result.message ?? '');
   };
 
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
@@ -6340,6 +6355,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         keyName: key.name,
         hasTranscript,
         historyScrollOffset,
+        isBrowsingHistory: !isTranscriptMode && promptBrowse.display !== null,
         reviewPageSize,
         reviewWheelStep,
         hasMouse: Boolean(key.mouse),
@@ -6643,6 +6659,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       reviewPageSize,
       reviewWheelStep,
       scrollSurfaceBy,
+      promptBrowse.display,
       promptBrowse.reset,
       selectedTranscriptItemId,
       clearTranscriptSelectionFocus,
@@ -9474,7 +9491,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return "failed";
       }
       await refreshHostSession(recoveredId);
-      emitInfoItemToCorrectLayer({ type: 'info', text: `Recovered into session: ${recoveredId}` }, 'command');
+      await publishCommandFeedback(`Recovered into session: ${recoveredId}`);
       const continuation = normalizeRecoveryPrompt(prompt);
       if (continuation.length > 0) {
         try {
@@ -9642,6 +9659,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     runQueueableAgentSequence,
     runQueuedUserSkillRound,
     stageQueuedPrompt,
+    publishCommandFeedback,
     storage,
     teamModeHandle,
   ]);
@@ -10436,7 +10454,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (options.sessionCommands?.read) {
               if (!enforceSessionTransitionGuard(currentConfig, 'Resuming a saved session', logSessionTransitionGuard)) return 'blocked';
               await refreshHostSession(id);
-              emitInfoItemToCorrectLayer({ type: 'info', text: `Session loaded: ${id}` }, 'command');
+              await publishCommandFeedback(`Session loaded: ${id}`);
               return 'loaded';
             }
             const loaded = await storage.load(id);
@@ -10651,7 +10669,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           printSessionTree: async () => {
             if (options.sessionCommands?.readLineage) {
               const lines = formatClientSessionTree(await options.sessionCommands.readLineage(context.sessionId));
-              emitInfoItemToCorrectLayer({ type: 'info', text: 'Session Tree:\n' + lines.join('\n') }, 'command');
+              await publishCommandFeedback('Session Tree:\n' + lines.join('\n'));
               return;
             }
             const lineage = await storage.getLineage?.(context.sessionId);
@@ -10687,7 +10705,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "missing";
               }
               await refreshHostSession(context.sessionId);
-              emitInfoItemToCorrectLayer({ type: 'info', text: `Session switched: ${context.sessionId}` }, 'command');
+              await publishCommandFeedback(`Session switched: ${context.sessionId}`);
               return "switched";
             }
 
@@ -10781,7 +10799,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "failed";
               }
               await refreshHostSession(boundForkedId);
-              emitInfoItemToCorrectLayer({ type: 'info', text: `Session forked: ${boundForkedId}` }, 'command');
+              await publishCommandFeedback(`Session forked: ${boundForkedId}`);
               return "forked";
             }
 
@@ -10852,7 +10870,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "failed";
               }
               await refreshHostSession(context.sessionId);
-              emitInfoItemToCorrectLayer({ type: 'info', text: `Session rewound: ${context.sessionId}` }, 'command');
+              await publishCommandFeedback(`Session rewound: ${context.sessionId}`);
               return "rewound";
             }
 
@@ -10997,6 +11015,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         let invocationToExecute: CommandInvocationRequest | undefined = inlineSkillInvocation;
         let workflowToExecute: CommandWorkflowInvocationRequest | undefined = undefined;
         let startedRunId: string | undefined;
+        const commandSessionId = context.sessionId;
 
         try {
           if (options.clientPlane) {
@@ -11028,13 +11047,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           console.log = originalLog;
         }
 
-        // Add captured command output to history as info item
+        // Host snapshots replace local history. Keep command feedback in the
+        // existing client-only notice lineage, outside the model conversation.
         const capturedText = joinCapturedConsoleOutput(capturedOutput);
         if (capturedText) {
-          addHistoryItem({
-            type: "info",
-            text: capturedText,
-          });
+          if (options.clientPlane?.appendNotice) {
+            const echo = parsed && !startedRunId && !invocationToExecute && !workflowToExecute
+              && context.sessionId === commandSessionId ? `${displayText}\n\n` : '';
+            await publishCommandFeedback(echo + capturedText);
+          } else {
+            addHistoryItem({ type: 'info', text: capturedText });
+          }
         }
 
         if (startedRunId && options.clientPlane) {
@@ -11446,6 +11469,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       exit,
       onExit,
       addHistoryItem,
+      publishCommandFeedback,
       clearUIHistory,
       promptBrowse.reset,
       clearTranscriptMouseSelection,

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-26_
+_Last Updated: 2026-09-27_
 
 ---
 
@@ -24,6 +24,19 @@ so a writable manifest cannot redefine trusted native bytes; production artifact
 remain pinned by the embedded manifest. Review caught and corrected an initial
 patch that also narrowed the development-source check. Target authorization,
 protected native state/alias rejection, and shell policy checks remain in place.
+
+Source-mode self-hosting remains restricted: `npm run dev` while authorizing the
+KodaX installation itself as a writable workspace rejects the mutable native
+manifest/artifacts (`native artifact source overlaps a writable Runtime root`).
+Confirmed again on 2026-09-27, unchanged from main, in Session
+`20260927_200619_obcfd6345fd92c`. Use a bundle with an embedded manifest for this
+workspace. After rebuilding and finishing all work on the old source Host, stop
+that Host normally and launch `node scripts/kodax-bin.cjs`; source and bundle
+entries have different build origins. An isolated bundled Product Client/daemon
+successfully wrote and edited a scratch file with this repository as projectRoot.
+The existing cold-load test rejects development artifacts, while all three
+pinned text-tool modes (Edits/Auto/Full Access) pass. Do not remove the source trust
+check or treat `NODE_ENV=production` as an embedded artifact manifest.
 
 Regression tests in `src/windows-text-transaction.test.ts` exercise actual
 write/edit transactions in Edits, Auto, and Full Access, broad ancestor roots,
@@ -1074,6 +1087,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 347 | Medium | Resolved | Off-window item reads truncate high-block canonical messages | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
+| 346 | Medium | Resolved | Stalled ordinary-history reads keep wheel navigation waiting indefinitely | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
+| 345 | Medium | Resolved | Wheel down cannot leave a short frozen ordinary-history window | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
+| 344 | Medium | Resolved | Model commands and local command feedback disappear after Host view replacement | confirmed at `394d4134`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
 | 343 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 342 | Medium | Resolved | Normal REPL loses browsable history when a bounded Host view replaces it | Product Client display replacement; confirmed against `c447c0f3` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-26 |
 | 341 | High | Resolved | Quoted managed protocol markers truncate ordinary assistant answers | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
@@ -1304,6 +1321,44 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 347: Off-window item reads truncate high-block canonical messages
+
+- **Priority / Status**: Medium / Resolved (isolated Host regression reproduced before fixing).
+- **Introduced / Created**: Confirmed at `394d4134`; 2026-09-27.
+- **Original Problem**: A canonical message with 80 alternating tool/text pairs retains every result in `readHistoryEntry`, but `readItem` returns null for the first tool. Display restoration was also assigning block ordinals after trimming.
+- **Root Cause / Resolution**: The fallback reused bounded view restoration. Reuse full projection before assigning identities, apply the existing 50-round/150-item policy only at the display boundary, and read canonical items without that policy. No new Product method or ID registry.
+- **Files / Tests**: `session-view.ts`, `sdk-runtime.ts`, `restore-history.ts`; `sdk-client.history-boundaries.test.ts` checks early tool text/input and captured multi-block identities after observation rollover. Existing ownership, notices, compaction and rewind tests remain required.
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+
+### Issue 346: Stalled ordinary-history reads keep wheel navigation waiting indefinitely
+
+- **Priority / Status**: Medium / Resolved (stalled-reader hook regression reproduced before fixing).
+- **Introduced / Created**: Confirmed at `394d4134`; 2026-09-27.
+- **Original Problem**: A history/body Promise that never settles keeps the browse loading lock held. Wheel navigation can remain unresponsive until End. This injected failure is not proof that the user's screenshot involved a stalled RPC.
+- **Root Cause / Resolution**: Abort was checked only around awaits. Bound the whole browse gesture to 15 seconds and race cancellation against pending reads; preserve the captured body and surface manual retry. Late responses cannot replace the page or request more chunks. This releases UI waiting, not the already-dispatched Host RPC.
+- **Files / Tests**: `prompt-history-browse.ts` and adjacent tests; `usePromptHistoryBrowse.test.tsx` covers timeout, preserved body, retry and stale response. Reader tests cover immediate cancellation, stalled hydration, cleanup and no further chunk reads.
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+
+### Issue 345: Wheel down cannot leave a short frozen ordinary-history window
+
+- **Priority / Status**: Medium / Resolved (PTY reproduction confirmed ready before fixing).
+- **Introduced / Created**: Confirmed at `394d4134`; 2026-09-27.
+- **Original Problem**: In ordinary Ink mode, wheel up when saved content fits within the viewport. New content stops appearing, and wheel down cannot return to live content; only End works.
+- **Root Cause**: The pointer policy consumed downward wheel input at offset zero, conflating the bottom of a frozen window with the live bottom. Short windows have zero offset even while browsing.
+- **Resolution**: Pass the existing browsing state to the pointer policy so downward wheel input reaches the existing newer-page/live navigation. Transcript and live-bottom behavior remain unchanged. No Host API or new state machine.
+- **Files / Tests**: `InkREPL.tsx`, `transcript-input-policy.ts`; `repl-pty-acceptance.mjs` now covers short frozen windows and top-to-bottom wheel travel without End. The short-window test failed before the fix and passed after it.
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+
+### Issue 344: Model commands and local command feedback disappear after Host view replacement
+
+- **Priority / Status**: Medium / Resolved (PTY reproduction confirmed ready before fixing).
+- **Introduced / Created**: Confirmed at `394d4134`; first affected version unknown; 2026-09-27.
+- **Original Problem**: `/model` changes the selected provider/model, but the submitted command and success/query output disappear. A subsequent Host settings/view refresh reproduces the loss even without a model Run.
+- **Root Cause**: Product mode omitted local command echoes, and captured command output plus direct setting/session callback feedback only updated local history, which `sessions.observe` replaces. Review also found that a null notice-write result was incorrectly acknowledged as success by the Product adapter.
+- **Resolution**: Route command feedback through the existing Host `appendNotice` client-only lineage. Generic non-Run command output includes its command echo; setting/session callbacks retain their result notices. Capture the destination Session before the write, show errors without re-executing the command, and reject null write results in the Product adapter. No new Product API or model-context messages.
+- **Files / Tests**: `InkREPL.tsx`, `client-plane.ts`, `cli-client-plane.ts`, `client-runtime-adapter.ts`; real PTY provider/model switching, query, invalid provider, Ctrl+T, Host refresh, new observer and model-context exclusion; `client-runtime-adapter.notices.test.ts` rejects failed writes. Reproductions were red before their respective fixes.
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
 
 ### Issue 343: Historical client notices displace the following Run output from the viewport tail
 
@@ -15512,11 +15567,15 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 222 (34 Open, 188 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 226 (34 Open, 192 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-09-27: Command feedback and history boundary repairs
+
+- Resolved Issues 344–347: durable command feedback, reverse wheel routing, bounded/cancellable browse waiting, and complete canonical item fallback. Details and isolated verification are in the Issue 344 regression guide.
 
 ### 2026-09-26: Ordinary history browsing repaired
 

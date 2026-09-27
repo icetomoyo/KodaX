@@ -41,9 +41,9 @@ function trimHistoryWindow<T extends { readonly type: string }>(
   return firstUserIndex > 0 ? windowed.slice(firstUserIndex) : windowed;
 }
 
-export function trimPersistedUiHistorySnapshot(
-  items: readonly KodaXSessionUiHistoryItem[],
-): KodaXSessionUiHistoryItem[] {
+export function trimPersistedUiHistorySnapshot<T extends { readonly type: string }>(
+  items: readonly T[],
+): T[] {
   return trimHistoryWindow(items);
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
+import type { ClientItemContent, ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { clientViewToHistoryItems } from '../client-plane.js';
 import { buildHistoryItemTranscriptSections, flattenTranscriptSections } from './transcript-layout.js';
 import { capturePromptBrowseAnchor, readPromptBrowseWindow, resolvePromptBrowseAnchor } from './prompt-history-browse.js';
@@ -12,6 +12,43 @@ const renderRows = (items: ReturnType<typeof clientViewToHistoryItems>) =>
   flattenTranscriptSections(buildHistoryItemTranscriptSections(items, 100, 12, false));
 
 describe('ordinary saved history browsing', () => {
+  it('cancels a stalled page read immediately and clears its deadline', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    try {
+      const read = readPromptBrowseWindow({ readHistory: () => new Promise(() => {}) }, 's',
+        { source: 'assistant:o', character: 0, screenRow: 0 }, undefined, controller.signal);
+      const rejected = expect(read).rejects.toThrow('Leaving history');
+      controller.abort(new Error('Leaving history'));
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['timeout', 'cancel'])('stops a stalled body read on %s and never requests another chunk', async mode => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let resolveLate!: (chunk: ClientItemContent) => void;
+    const readHistoryEntry = vi.fn(() => new Promise<ClientItemContent>(resolve => { resolveLate = resolve; }));
+    try {
+      const read = readPromptBrowseWindow({
+        readHistory: async () => ({ revision: 'r', oversized: [], items: [
+          { id: 'saved', outputId: 'o', type: 'assistant', text: 'preview', textOffset: 93, totalTextLength: 100 },
+        ] }), readHistoryEntry,
+      }, 's', { source: 'assistant:o', character: 0, screenRow: 0 }, undefined, controller.signal);
+      const rejected = expect(read).rejects.toThrow(mode === 'timeout' ? 'timed out' : 'Leaving history');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readHistoryEntry).toHaveBeenCalledTimes(1);
+      if (mode === 'timeout') await vi.advanceTimersByTimeAsync(16_000);
+      else controller.abort(new Error('Leaving history'));
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+      resolveLate({ id: 'saved', text: 'x'.repeat(50), offset: 0, totalLength: 100, nextOffset: 50 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readHistoryEntry).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it.each([false, true])('recovers the original input and first tool after bounded observe rolls over (folded=%s)', async folded => {
     const source: ClientViewItem[] = [{ id: 'query', inputId: 'input-1', type: 'user', text: 'Original query' },
       ...Array.from({ length: folded ? 250 : 160 }, (_, index) => tool(index, folded && index >= 100))];
