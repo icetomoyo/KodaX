@@ -1,48 +1,127 @@
-# KodaX SDK — Embedder Integration Guide
+# KodaX SDK — Product Client and Host Integration
 
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+This page describes the current FEATURE_298/299 development tree, whose package
+version is still `0.7.96-rc.11` and whose design target is `v0.7.97`. It does not
+claim that this contract is already published to npm. Check the installed
+package exports and the connected Host's capabilities when migrating.
 
-> Audience: host applications embedding `@kodax-ai/kodax` (and its
-> subpaths) as a substrate — e.g. KodaX Space's desktop wrapper, IDE
-> extensions, custom CLIs. If you are an end-user running the `kodax`
-> command-line tool, see the root [README.md](../../README.md) instead.
+For applications sharing KodaX sessions, use `KodaXProductClient` from
+`@kodax-ai/kodax/client`. The Host owns execution, configuration and persistence;
+clients submit intent, answer interactions and render Host facts. The old
+`KodaXClient` / `Client` classes and low-level Runtime facade are different
+objects, not alternate names for this contract.
 
-This guide describes the `v0.7.97` development branch, based on `v0.7.96-rc.11`; npm publication remains a
-separate manual maintainer step. The SDK
-advertises Windows `sandboxRuntime:11`, `runtimeAutoModeGuardrail:6`,
-`sharedSessionSettings:2`, and `crashOutcomeModel:2`;
-trusted text transactions are split from platform shell containment
-(cross-Runtime per-file kernel locking, revision CAS, flushed atomic
-replacement, and a native restricted-token Windows shell runner behind
-native shell protocol version 10/setup generation 10 with no command-lifetime
-global admission lock), and local tool-result capacity overflow
-records bounded `capacityDebt` and commits through a bounded recovery ladder
-instead of aborting the Run. On top of v0.7.95: per-command Windows sandbox
-runner/pipe/Job lifecycles, setup-only machine migration and recovery, rolling
-failed-broker replacement without an ordinary command lock or queue, stale learning-lock
-reclamation with fullscreen terminal teardown, exact-input Explicit Skill
-execution, and coding-result finalization before the public completion
-signal, on top of concurrent sandboxed text mutations,
-Session-persisted and Git-backlink-validated KodaX worktree roots (including
-strict `core.worktree` identity for a real submodule Session root),
-authorized-root git trust (`gitSafeDirectory: authorized-repo-roots`),
-scheduled shutdown failure reporting, missing-workspace Run start,
-`conversationHistory:2`, independent explicit Skill invocation, diagnosed
-invalid `allowed-tools` / malformed hook JSON, observed text-helper stdin
-failures, byte-bounded git-metadata reads, observed
-Run-finalization and process-cleanup rejections, typed disconnect facts,
-structured credential-safe Runtime failure details, and exact-`runId` recovery
-after reconnect
-on top of v0.7.93 failed-exit fast settlement, previous-boot ACL recovery, and
-isolated Anthropic/OpenAI abort classification, plus recorded-release owners,
-managed Session-before-completion ordering, and canonical-first resume
-reconstruction from v0.7.92. v0.7.91 still supplies bounded owner-scoped
-interactions, stale prepared-Session recovery, effective live output
-segments, and standalone lazy provider dependency bundling. v0.7.97 removes
-the durable event journal/replay surface, the generic operation
-envelope/receipts, the exit-settlement protocol, and the Worker-hosted
-embedded runtime; see [Migrating to v0.7.97](#migrating-to-v0797).
+- [Product integration](#product-client-integration): connection and lifecycle.
+- [Migration guide](../../docs/SDK_MIGRATION.md): old-to-new calls, ownership,
+  errors, history, cancellation and acceptance checklist (Chinese).
+- [Complete Client contract](../../docs/CLIENT_CONTRACT.md): normative behavior
+  and method inventory; [types](../../packages/coding/src/client-contract.ts).
+- [Removed surfaces](#migrating-to-v0797): breaking changes and replacements.
+- Numbered sections below retain low-level library/Host guidance and historical
+  release context. They are not instructions for a product UI to create its own
+  execution owner or write the shared Host's files.
 
+## Product Client integration
+
+### Choose the connection entry
+
+| Need | Entry | Ownership |
+| --- | --- | --- |
+| Start or attach a local compatible Host | `ensureKodaXClient(options)` | Uses the shared launcher; updates only an eligible idle Host |
+| Attach without starting or replacing a Host | `connectKodaXClient(options)` | Passive Node connection |
+| Browser/UI contract types | `import type` from `/client` or `@kodax-ai/coding/client-contract` | No running Host or browser transport is provided by types |
+| Trusted Host bootstrap, scoped credentials, Host Tools, explicit embedding | `/runtime` | Separate low-level authority; never a fallback after product connection failure |
+| Independent Agent/LLM/coding library | `/agent`, `/llm`, `/coding` | Independently usable; not a shared-Session product client |
+
+Both product constructors return `Promise<KodaXProductClient>`. The `/client`
+subpath is ESM; CommonJS hosts use `await import('@kodax-ai/kodax/client')`.
+It is not a root-entry re-export. `endpoint` is a local named pipe/Unix socket,
+not an HTTP/WebSocket address. A browser application needs its own supported
+bridge; do not import the Node connector into browser code.
+
+`homeDir` is the base directory containing `.kodax`, not `.kodax` itself.
+`connect` additionally accepts `endpoint` and `token`; `ensure` accepts
+`daemonStartupTimeoutMs`. Both accept `profile` and `clientInfo`. Presentation
+metadata such as `clientInfo.name` grants no authority. Configure provider
+credentials at the Host, rather than passing API keys in input submissions.
+
+### Observe, submit, and settle
+
+The following helper uses an existing Client and Session. The application owns
+connection/session selection and supplies renderers that replace the displayed
+view and answer `view.interactions` through `client.interactions.respond`.
+Without an interaction UI, a Run can legitimately wait for an answer. This
+example neither auto-approves requests nor infers completion from rendering.
+
+```ts
+import type {
+  KodaXProductClient, ClientSessionView, ClientObservationStatus,
+} from '@kodax-ai/kodax/client';
+
+export async function submitImmediate(
+  client: KodaXProductClient,
+  sessionId: string,
+  inputId: string,
+  text: string,
+  render: (view: ClientSessionView) => void,
+  showConnection: (status: ClientObservationStatus) => void,
+) {
+  const observation = await client.sessions.observe(sessionId, render, {
+    onStatus: showConnection,
+  });
+  try {
+    const accepted = await client.inputs.submit({
+      sessionId, inputId, text, delivery: 'immediate',
+    });
+    if (accepted.state !== 'submitted' || !accepted.runId) {
+      throw new Error(`Input ${inputId} is ${accepted.state}; inspect its receipt before continuing.`);
+    }
+    return await client.runs.await(accepted.runId);
+  } finally {
+    observation.close(); // Detaches this observer; does not stop the Run.
+  }
+}
+```
+
+Keep `inputId`, original text and artifacts before calling this helper. After a
+lost response query `inputs.read(sessionId, inputId)` on the same Host; never
+silently create a new ID and resubmit. This helper handles only immediate
+submission; queued, steer and redirect flows must follow their acceptance state.
+
+Create/select sessions using `client.sessions.create({projectPath})` or
+`list/read`. Use `client.sessions.updateSettings` for execution choices, then
+submit input. On application disposal call `client.disconnect()`; use
+`runs.stop` or `sessions.cancel` for explicit Stop, and `host.shutdown()` only
+for an explicit request to close an idle Host. `phase: 'unknown'` from
+`runs.await` is an uncertain outcome, not success, even on a healthy connection.
+
+### Replace the consumption model
+
+| Concern | Product surface | Consumer responsibility |
+| --- | --- | --- |
+| Current UI | `sessions.observe` | Replace each view; bounded items are not a complete transcript |
+| Full display item | `sessions.readItem` | Keep the observed ID; validate paginated original text/input |
+| History/search | `readHistory`, `readHistoryEntry`, `searchHistory` | Keep page revision and distinct history IDs; no cross-revision splicing |
+| Settings and discovery | `sessions.*Settings`, `config.*`, `catalog.*` | Distinguish saved overrides/defaults from effective settings |
+| User questions and permissions | `interactions.list/respond`, `view.interactions` | Reply to the exact request; use only Host-provided grant suggestions |
+| Commands/Skills/review | `commands.*`, `inputs.submit`, `review.start` | Host prepares trusted execution; returned Run IDs are followed, not resubmitted |
+| Command feedback | `sessions.appendNotice` | Durable client-only notices; report failures without re-running commands |
+| MCP/Agents/Memory/Learning/Workflow | `mcp`, `registrations`, `agents`, `memory`, `learning`, `workflows` | Use domain operations; keep executable modules and local owners out of UI code |
+
+Observation connection errors, pending interactions and Run terminal outcomes
+are separate facts. Workflow/Learning subscription `ready` confirms registration,
+not snapshot synchronization; rebuild a failed subscription and read its current
+snapshot. Reconnect does not authorize replaying mutations. See the complete
+Client contract for nullable reads, revision conflicts, lifecycle error handling,
+and feature-specific Host compatibility checks.
+
+## Low-level reference and release history
+
+The sections below describe independent libraries, trusted Host capabilities and
+past release decisions. Their examples are scoped to those layers. Product UI
+migrations follow the entry and lifecycle above; retained low-level exports do
+not mean every low-level capability has a Product Client equivalent. Historical
+capability versions and removed APIs must be read with the migration table.
 This guide documents the SDK surfaces a host integrator needs that
 are NOT obvious from inspecting the type definitions alone:
 
@@ -95,6 +174,9 @@ under FEATURE_186 (see [ADR-032](../../docs/ADR.md#adr-032-sdk-embedder-surface-
 ---
 
 ## 1. MCP server management — `McpManager` runtime API
+
+> Independent MCP library reference. Product clients use `client.mcp` and
+> `client.catalog`; they do not instantiate a manager or edit the Host's JSON.
 
 ### Why this exists
 
@@ -723,6 +805,9 @@ subpaths in a follow-up release.
 ---
 
 ## 6. Session persistence — wiring `runKodaX` to disk
+
+> Independent in-process library ownership only. Product clients use
+> `client.sessions` and never attach a `SessionStorage` to a shared Host.
 
 ### The trap
 
@@ -1562,6 +1647,9 @@ and your Node / OS / SDK version.
 
 ## 10. Model capabilities — context window, reasoning, descriptors
 
+> Product consumers query `client.catalog` and effective Host settings. Direct
+> provider construction and credential access below belong to library/Host code.
+
 ### Why this exists
 
 A popout-style UI typically wants to list every provider/model KodaX
@@ -1809,6 +1897,9 @@ metadata, we can promote the snapshot to derive from it.
 ---
 
 ## 11. Workflow process events and lifecycle controls (FEATURE_229, v0.7.50)
+
+> Product consumers use `client.workflows` with declarative inputs. The lower
+> level runner/module interfaces below remain Host integration mechanisms.
 
 FEATURE_229 makes dynamic workflow progress a reusable SDK process surface
 instead of terminal-only text. Hosts can observe and control workflows without
@@ -2690,12 +2781,16 @@ events, config, MCP, catalogs, artifacts, or diagnostics.
 
 ### Which shape to use
 
+Product UI and shared-Session automation should use `/client` as described at
+the top of this guide. This table also identifies explicit low-level ownership.
+
 | Host scenario | Recommended shape | Why |
 |---|---|---|
 | Unit tests, one-off scripts, short-lived SDK tools | `createKodaXRuntime()` | No daemon lifecycle; easiest cleanup. |
 | A single app owns all KodaX state in one process | `createKodaXRuntime({ mode: 'embedded' })` | Direct in-process calls and no IPC. |
-| REPL + Space + IDE should share sessions/status/permissions | `createKodaXRuntime({ mode: 'daemon' })` | Starts or reuses the local profile daemon. |
-| Attach to an already-started daemon only | `connectKodaXRuntime({ profile, homeDir })` | Attach-only by default; fails if no daemon is ready. |
+| REPL + Space + IDE product clients | `ensureKodaXClient({ profile, homeDir })` | Starts or reuses the Host and returns the Product contract. |
+| Product attach-only client | `connectKodaXClient({ profile, homeDir })` | Passive; fails if no compatible Host is ready. |
+| Trusted low-level daemon integration | `ensureKodaXRuntime` / `connectKodaXRuntime` | Runtime services rather than Product business methods. |
 | Test/CI isolated daemon namespace | pass `homeDir` and `profile` | Keeps state/config/sessions out of the user's home daemon. |
 
 ### Public construction contract
@@ -2794,10 +2889,11 @@ try {
 }
 ```
 
-`createKodaXRuntime({ mode: 'daemon' })` is the high-level convenience API: when
+This is a low-level Runtime example, not the default product integration.
+`createKodaXRuntime({ mode: 'daemon' })` is a retained convenience API: when
 no explicit `daemonEndpoint` or `daemonTransport` is supplied it starts or reuses
-the local profile daemon. `connectKodaXRuntime()` is attach-only unless
-`autoStart: true` is passed.
+the local profile daemon. `connectKodaXRuntime()` is passive and rejects
+`autoStart: true`; use `ensureKodaXRuntime()` for low-level startup/update.
 
 Trusted `execPolicy` and `autoReview` options are owner bootstrap inputs, not
 client connection settings. For a new daemon, KodaX transfers them through a
@@ -4589,6 +4685,10 @@ The normative baseline is A2A repository commit
 
 ## 23. Shared Coder daemon for Space and IDE hosts (FEATURE_269, v0.7.69)
 
+> Trusted Electron Main/Host integration reference, including capabilities not
+> exposed by Product Client. UI business operations use `/client`; do not port
+> this entire Runtime facade into the renderer. See the migration guide above.
+
 FEATURE_269 makes one local daemon the source of truth for a Coder profile.
 CLI, Space, IDE, and SDK clients can observe and control the same sessions and
 runs. The transport remains local to the current OS user; it is not a remote
@@ -4605,12 +4705,13 @@ data root.
 Space should own the daemon SDK client in Electron Main. Persist a random,
 stable `instanceId` and a separate 32+ character `instanceSecret` per Space
 installation. Store the secret in the OS keychain; never accept either value
-from renderer or model output. `connectKodaXRuntime()` is attach-only unless `autoStart: true`.
+from renderer or model output. `connectKodaXRuntime()` is passive;
+use `ensureKodaXRuntime()` for low-level startup/update.
 An explicit inline rollback policy blocks auto-start until the owner policy is
 explicitly changed back to daemon.
 
 For Electron, `homeDir` is still the CLI-style base directory, not
-`process.env.KODAX_HOME`. Packaged/asar applications may use `autoStart: true`
+`process.env.KODAX_HOME`. Packaged/asar applications may use `ensureKodaXRuntime()`
 directly; the SDK launches only the daemon child in Electron's Node execution
 mode and does not mutate the application's environment or start a second GUI
 instance. `ELECTRON_RUN_AS_NODE` exists only at the child exec boundary and is
@@ -4621,7 +4722,7 @@ Packaged auto-start requires Electron's `RunAsNode` fuse, which Electron enables
 by default. If an embedder deliberately disables that fuse, the packaged
 executable cannot serve as a detached Node host: start the daemon with an
 ordinary Node/CLI process and use attach-only mode instead. A packaged
-`autoStart: true` timeout includes this fuse requirement in its diagnostic; the
+startup timeout includes this fuse requirement in its diagnostic; the
 SDK does not relaunch the GUI or silently fall back to an inline Runtime.
 
 ### Packaged Electron native artifact layout
@@ -4657,11 +4758,10 @@ evidence schema while a new build is prepared. A new process with a new embedded
 hash publishes its own immutable generation atomically.
 
 ```ts
-import { connectKodaXRuntime } from '@kodax-ai/kodax/runtime';
+import { ensureKodaXRuntime } from '@kodax-ai/kodax/runtime';
 
-const runtime = await connectKodaXRuntime({
+const runtime = await ensureKodaXRuntime({
   profile: 'coder',
-  autoStart: true,
   // Opt in only when this product remains the visible owner of the daemon.
   // If the product crashes, the daemon stops after its final client is gone
   // and governed work becomes idle.
@@ -4715,7 +4815,7 @@ Coder. Products that depend on same-Run delivery should require
 silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
 The SDK requires `runtimeAutoModeGuardrail:6` and
-`sharedSessionSettings:2` automatically for ordinary `autoStart: true`.
+`sharedSessionSettings:2` automatically for ordinary launcher startup.
 The capability gate prevents an alpha.6 client from attaching to an alpha.3
 daemon that advertises the older permission-before-sandbox contract. Supplying
 `daemonOrphanExitMs` additionally requires the
@@ -5607,6 +5707,10 @@ tool arguments.
 
 ## 24. Runtime-owned permission routing and plan bridges (v0.7.96)
 
+> The product equivalent is `view.interactions` plus `interactions.respond`.
+> The Runtime helpers below are for trusted Host adapters, not client-created
+> permission requests or alternate authorization owners.
+
 The Runtime owns permission routing in inline and daemon deployments.
 Clients select one of four profiles and must not add a second preflight gate:
 
@@ -5779,6 +5883,10 @@ for the current permission contract.
 ---
 
 ## 25. Always-on context compaction and bounded transcript recovery (v0.7.74)
+
+> Product clients use `sessions.compact`, `observe`, `readItem`, `readHistory`,
+> `readHistoryEntry` and `searchHistory`. Low-level transcript/event examples
+> below do not imply an additional Product event replay surface.
 
 Automatic large compaction is always enabled. `enabled` remains accepted for
 v0.7.x source compatibility, but `false` is normalized to `true`.
@@ -6140,6 +6248,9 @@ for cross-project, cache, cancellation, credential, and Windows argv checks.
 ---
 
 ## 29. Evidence-gated background Skill learning (FEATURE_263, v0.7.78)
+
+> Product clients consume the Host-owned `client.learning` service. Bootstrap
+> options below configure the trusted owner, not a separate UI learning engine.
 
 F263 completes the existing Learning Center rather than introducing a second
 queue or client-owned Skill store. Episode review runs after durable foreground
@@ -6662,6 +6773,10 @@ unsupported options fail before the Runtime mutation.
 
 ## Migrating to v0.7.97
 
+For the complete product-facing mapping, use the [SDK migration guide](../../docs/SDK_MIGRATION.md).
+The table below covers removals in this development tree; it does not claim a
+published `v0.7.97` package. Retained Runtime APIs are not automatically Product APIs.
+
 v0.7.97 is a breaking SDK release for embedders. It removes the durable event
 journal/replay surface, the generic operation envelope/receipts, the
 crash-resumable exit-settlement protocol, and the Worker-hosted embedded
@@ -6682,8 +6797,9 @@ replacement:
 
 Product UIs connect through `connectKodaXClient` from `@kodax-ai/kodax/client`.
 The Host owns execution and saved history; `sessions.observe` delivers the
-current display, while `readHistory` and chunked `readItem` provide complete
-content for browsing, search and copying. A display preview is not the full
+current display; `readItem` expands display references, while `readHistory`,
+`readHistoryEntry` and `searchHistory` provide canonical history and its own
+readable references. A display preview is not the full
 message. The Runtime-to-product adapter is internal and is not an SDK export.
 
 Keep an input's original text, artifacts and `inputId` until its outcome is

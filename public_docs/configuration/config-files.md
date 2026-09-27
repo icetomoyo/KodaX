@@ -21,8 +21,7 @@ every supported core setting.
 ```json
 {
   "provider": "zhipu-coding",
-  "effort": "auto",
-  "runtimeMode": "daemon"
+  "effort": "auto"
 }
 ```
 
@@ -44,27 +43,22 @@ overrides:
 |---|---|---|
 | `provider` | `KODAX_PROVIDER` | — (prompted on first run) |
 | `effort` | `KODAX_EFFORT` | `auto` |
-| `runtimeMode` | `KODAX_RUNTIME_MODE` | `embedded` |
 | (home dir) | `KODAX_HOME` | `<OS user home>/.kodax` |
 
 JSON names stay camelCase while environment names use `KODAX_UPPER_SNAKE_CASE`.
 
-## Runtime mode
+## Shared Host ownership
 
-Two Runtime hosting modes are available:
-
-- **`embedded`** (default) — inline, lowest latency, private
-- **`daemon`** — process-isolated, shared across multiple clients
-
-Worker isolation is an SDK/host option inside embedded mode, expressed as
-`{ mode: 'embedded', isolation: 'worker' }`; `worker` is not a valid
-`runtimeMode` configuration value.
+The product CLI uses a shared daemon Host. `runtimeMode`, `KODAX_RUNTIME_MODE`
+and `--runtime-mode` are removed; do not use them to select an execution owner.
+Product SDK applications use `ensureKodaXClient` or passive `connectKodaXClient`.
+Explicit low-level `/runtime` embedding remains separate, and Worker-hosted
+embedded Runtime is removed. See the [SDK migration guide](../../docs/SDK_MIGRATION.md).
 
 ```bash
 kodax daemon start
+kodax -p "Review this repository"
 kodax daemon stop --profile default
-kodax --runtime-mode daemon
-kodax -p "Review this repository" --runtime-mode daemon
 ```
 
 By default, daemon state, config, and runtime session storage use the exact

@@ -2,6 +2,8 @@
 
 本文面向 CLI、SDK 和未来 Web 客户端。产品客户端通过 `KodaXProductClient` 读取 Host 事实、提交意图；Host 执行并保存工作。显示层不读取或写入 Session 文件，不另建运行状态权威。
 
+从旧 `KodaXClient`、Runtime 或文件 API 接入迁移，先读 [SDK 迁移指南](SDK_MIGRATION.md)；最小生命周期示例见[产品 Client 接入](../public_docs/sdk/embedder-guide.md#product-client-integration)。本文描述当前开发树，不表示 npm 已发布，也不宣告所有底层库入口已删除。
+
 类型与行为以 [client-contract.ts](../packages/coding/src/client-contract.ts)、[SDK 入口](../src/sdk-client.ts)、[运行时适配器](../src/client-runtime-adapter.ts) 为准；产品决策见 [FEATURE_298 D01/T02](features/v0.7.97.md)。本文覆盖公开产品接口，不把 `/runtime` 的全部底层管理、执行和诊断 API 提升为产品承诺。
 
 ## 连接、启动与所有权
@@ -74,7 +76,7 @@
 | `permissions` | `listGrants`, `revokeGrant` | 读取显式授权和 revision；按 grantId + expectedRevision 撤销 |
 | `registrations` | `list`, `upsert`, `setEnabled`, `remove` | 管理外部 Agent 注册；保留领域配置 revision 和管理归属约束 |
 | `agents` | `tree`, `detail`, `spawn`, `send`, `followup`, `interrupt`, `output`, `wait` | 查询和控制 Session Actor；`wait` 按 sequence 等待一个事件或超时，支持调用侧 AbortSignal |
-| `config` | `read`, `patch`, `reload` | 读取、修改及重载用户默认配置；独立于 Session 覆盖 |
+| `config` | `read`, `readEffective`, `patch`, `reload` | 读取已保存默认值或有效执行配置、修改及重载用户默认配置；独立于 Session 覆盖 |
 | `catalog` | `extensions`, `providers`, `models`, `reasoningEfforts`, `probeReasoningEfforts`, `forgetCapabilities`, `commands`, `skills` | Host 已加载扩展的诊断及发现的 Provider/模型/推理档位/命令/技能；probe 明确发起 Provider 请求，连接与普通发现不隐式探测 |
 | `mcp` | `status`, `listServers`, `getServer`, `validateServer`, `upsertServer`, `deleteServer`, `reloadServers`, `listTools` | 管理纯 MCP 配置、读取 Host 当前连接状态和查询工具；可执行连接留在 Host |
 | 连接 | `disconnect` | 释放本连接及其资源，保留共享 Host 和工作 |

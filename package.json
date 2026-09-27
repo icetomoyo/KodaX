@@ -231,6 +231,8 @@
     "README_CN.md",
     "public_docs/README.md",
     "public_docs/sdk/embedder-guide.md",
+    "docs/CLIENT_CONTRACT.md",
+    "docs/SDK_MIGRATION.md",
     "public_docs/configuration",
     "public_docs/getting-started",
     "LICENSE",

@@ -424,18 +424,29 @@ const result = await runKodaX(
 
 ## Runtime SDK and daemon
 
-For the shared CLI/SDK/future Web product surface, see the [Client contract](docs/CLIENT_CONTRACT.md): passive connect, local ensure/update, all public methods, streaming views, full history, and disconnect boundaries.
-
-SDK hosts can use `@kodax-ai/kodax/runtime` in two forms: inline embedded for
-lowest latency, or a local daemon shared by REPL, Space, IDE adapters, and
-custom SDK clients. Both expose the same `KodaXRuntime` services. (The
-v0.7.96 Worker-hosted embedded form was removed in v0.7.97.)
+For shared Sessions, use `KodaXProductClient` from `@kodax-ai/kodax/client`.
+The Host owns execution, settings and persistence; the UI submits inputs,
+answers Host interactions and replaces its display from `sessions.observe`.
+See the [Client contract](docs/CLIENT_CONTRACT.md), [SDK migration guide](docs/SDK_MIGRATION.md),
+and [integration example](public_docs/sdk/embedder-guide.md#product-client-integration).
 
 ```ts
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';
+import { ensureKodaXClient } from '@kodax-ai/kodax/client';
 
-const runtime = await createKodaXRuntime({ mode: 'embedded' });
+const client = await ensureKodaXClient();
+try {
+  const sessions = await client.sessions.list();
+  process.stdout.write(`Sessions: ${sessions.length}\n`);
+} finally {
+  await client.disconnect(); // Shared Host and Runs remain alive.
+}
 ```
+
+`connectKodaXClient` attaches without starting or replacing a Host. The Node
+connector does not provide browser HTTP/WebSocket transport. The retained
+`/runtime` inline/daemon APIs are for explicit low-level Host integration;
+Worker-hosted embedded Runtime is removed. The following structured-failure
+reference is scoped to that low-level API, not fields promised by Product Client.
 
 ### Structured Runtime failures
 
@@ -468,47 +479,21 @@ collections, URLs, full local paths, stacks, or raw `Error` objects into
 See [Structured Runtime failures](public_docs/sdk/embedder-guide.md#structured-credential-safe-runtime-failures)
 for the field contract, taxonomy, migration guidance, and security boundary.
 
-Inline is private and lowest-overhead; Worker is private and hard-disposable;
-daemon is process-isolated and shared. `runtime.close()` closes private
-inline/Worker ownership, but only detaches one daemon client. Contradictory
-isolation options fail instead of silently selecting a weaker mode. Worker
-isolation is a V8 fault boundary, not a security sandbox.
-
-Because a daemon is intentionally persistent, tests that auto-start one must
-also run `kodax daemon stop --home <dir> --profile <name>` (or send authenticated
-`runtime.shutdown`) before deleting their temporary home. A remaining Node
-process is not safe to kill by name alone; verify its command line and owner.
+The product CLI uses the shared Host; `--runtime-mode`, `KODAX_RUNTIME_MODE`
+and the `runtimeMode` config key are removed. Explicit low-level inline
+embedding retains private ownership, while daemon clients detach independently.
+Worker-hosted embedded Runtime is no longer an option.
 
 ```bash
 kodax daemon start
+kodax -p "Review this repository"
 kodax daemon stop --profile default
-kodax --runtime-mode daemon
-kodax -p "Review this repository" --runtime-mode daemon
 ```
 
-All CLI task forms now use the same Runtime path: interactive REPL, positional
-prompts, slash-command prompts, and `kodax -p`. Select the persistent default in
-`~/.kodax/config.json`:
-
-```json
-{
-  "runtimeMode": "daemon"
-}
-```
-
-Resolution order is explicit CLI/SDK option > environment variable >
-`config.json` > built-in default (`embedded`). `KODAX_RUNTIME_MODE=daemon` is a
-temporary environment override. The same rule applies to other paired settings,
-for example `provider` ↔ `KODAX_PROVIDER` and `effort` ↔ `KODAX_EFFORT`.
-JSON names stay camelCase while environment names use `KODAX_UPPER_SNAKE_CASE`.
-
-By default, daemon state, config, and runtime session storage use the exact
-resolved `KODAX_HOME` (normally `<OS user home>/.kodax`), so CLI and SDK clients
-converge on the same local daemon even when `KODAX_HOME` is an arbitrary custom
-directory. The high-level `createKodaXRuntime({ mode: 'daemon' })` API starts or
-reuses that daemon unless you pass an explicit endpoint/transport or
-`autoStartDaemon: false`. An explicit `--home <dir>` or `homeDir` selects the
-isolated `<dir>/.kodax` namespace for tests, CI, or project-local experiments.
+Tests that start an isolated Host must close that exact Host after its work has
+settled, before removing its temporary home. Never stop arbitrary Node processes.
+With no explicit home, CLI and SDK use the resolved `KODAX_HOME`; explicit
+`homeDir` / `--home` selects a base directory containing `.kodax`.
 
 **v0.7.71 packaged Electron patch:** packaged/asar Electron hosts can use daemon
 auto-start without relaunching the GUI. `ELECTRON_RUN_AS_NODE` is limited to a
@@ -1240,10 +1225,10 @@ effective draft after streaming and reconnect while raw journals retain the
 complete audit trail. They must not replay provider recovery checkpoints or
 deduplicate text heuristically.
 
-For the full host-integration contract, including inline/Worker/daemon selection,
+For the full host-integration contract, including Product Client and explicit inline/daemon ownership,
 multi-client permission handling, config/catalog/MCP admin APIs, artifacts,
 context diagnostics, and daemon protocol schemas, see
-[public_docs/sdk/embedder-guide.md §17](public_docs/sdk/embedder-guide.md#17-runtime-sdk-worker-isolation-and-local-daemon-feature_253-feature_257).
+[public_docs/sdk/embedder-guide.md §17](public_docs/sdk/embedder-guide.md#17-runtime-sdk-and-local-daemon-feature_253-feature_257).
 
 The Space/IDE shared-daemon contract is documented in
 [SDK Embedder Guide section 23](public_docs/sdk/embedder-guide.md#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769).
@@ -1274,7 +1259,7 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces. Source layout currently has 4 workspace packages; published as a single bundled npm package `@kodax-ai/kodax` with 12 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation):
+KodaX uses a **monorepo architecture** with npm workspaces. Source layout currently has 4 workspace packages; the current source packages them as a single bundled npm package `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation):
 
 ```
 KodaX/
@@ -1349,9 +1334,9 @@ Source-side workspace package names (`@kodax-ai/*`). npm consumers install the s
 KodaX has two layers that consumers should understand separately:
 
 - **Source-side**: 4 workspace packages above (what developers see when reading the repo).
-- **npm-published**: a single bundled package `@kodax-ai/kodax` with 12 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
+- **Current packaged exports** (not a claim of npm availability): a single bundled package `@kodax-ai/kodax` with 13 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
   - **Full-package subpaths** (`/agent`, `/llm`, `/coding`, `/repl`) — each one maps 1:1 to a source workspace and exposes its complete public API.
-  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
+  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
 
 | Source package | npm subpath | Type | What you get | Example consumer |
 |---|---|---|---|---|
@@ -1364,7 +1349,8 @@ KodaX has two layers that consumers should understand separately:
 | `packages/coding` | `@kodax-ai/kodax/coding`  | Full package | Coding agent + 50+ tools + repo-intelligence (505 exports) | Build a Claude Code-shape product |
 | `packages/repl`   | `@kodax-ai/kodax/repl`    | Full package | Ink TUI + permission modes + commands (217 exports) | Terminal-UI consumers |
 | `packages/repl`   | `@kodax-ai/kodax/session` | **Narrow subset** | Session management only — `listSessions` / `loadFullTranscript` / `appendClientNotice` / `forkSession` / `compactSession` / `watchSessions` / ... (17 exports) | IDE plugins and desktop hosts reading session history |
-| `src`             | `@kodax-ai/kodax/runtime` | Host API | Embedded/Worker/daemon runtime facade, sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/external agents, daemon protocol schema (10 exports) | SDK hosts, Space/IDE clients, daemon clients |
+| `src`             | `@kodax-ai/kodax/client` | Product API | Shared Host connection and `KodaXProductClient` contract | TUI, desktop/IDE and automation applications |
+| `src`             | `@kodax-ai/kodax/runtime` | Host API | Explicit inline/daemon runtime facade, sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/external agents, daemon protocol schema (10 exports) | Trusted Host integration |
 | `src`             | `@kodax-ai/kodax/sandbox` | Host API | Explicit ASRT capability/doctor/setup and host-owned contained command execution; unavailability never means silent ordinary execution | SDK hosts that need standalone process containment |
 | `src`             | `@kodax-ai/kodax/a2a` | Integration edge | A2A 1.0 Agent Card discovery, JSON-RPC/SSE F258 executor, safe fetch policy, and authenticated Runtime-backed Agent server | Agent orchestrators and KodaX hosts |
 
@@ -1590,6 +1576,10 @@ See [docs/release.md](docs/release.md) for full details on build flags, archive 
 
 ### As Library
 
+For shared-Session applications, use the [Product Client integration](public_docs/sdk/embedder-guide.md#product-client-integration)
+and [migration guide](docs/SDK_MIGRATION.md). The example below is independent
+in-process coding library usage; it is not the product UI contract.
+
 ```bash
 npm install @kodax-ai/kodax
 ```
@@ -1617,6 +1607,7 @@ For smaller surface and tree-shake-friendly imports, the SDK is also exposed via
 
 ```typescript
 import { Runner } from '@kodax-ai/kodax/agent';                // agent runtime
+import { ensureKodaXClient } from '@kodax-ai/kodax/client';     // shared product Client
 import { getProvider } from '@kodax-ai/kodax/llm';              // LLM abstraction (16 aliases)
 import { runKodaX } from '@kodax-ai/kodax/coding';              // coding tools + prompts
 import { createImageArtifactFromPath } from '@kodax-ai/kodax/media'; // input artifacts
@@ -1630,9 +1621,9 @@ import { createKodaXA2AServer } from '@kodax-ai/kodax/a2a';    // A2A 1.0 client
 import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-in memory SDK
 ```
 
-All 13 SDK entries (root + 12 subpaths) share internal code via ESM chunk splitting — importing from `/agent` does not pull in `/repl`'s Ink + React surface.
+All 14 SDK entries (root + 13 subpaths, including `/client`) share internal code via ESM chunk splitting — importing from `/agent` does not pull in `/repl`'s Ink + React surface.
 
-For the complete host-facing contract — including embedded/Worker/daemon ownership,
+For the product contract and separate low-level inline/daemon ownership,
 external-agent registration and task control, session cursor pagination, workflow
 model-tier routing, and efficiency telemetry — see the
 [SDK Embedder Integration Guide](public_docs/sdk/embedder-guide.md).
@@ -1881,6 +1872,10 @@ stays silent.
 
 ## Advanced Library Usage
 
+These examples describe independent coding-library ownership. Shared product
+clients use `/client`; see the [migration guide](docs/SDK_MIGRATION.md) before
+adapting these callbacks or storage examples into a UI.
+
 #### Simple Mode (runKodaX)
 
 ```typescript
@@ -1964,7 +1959,11 @@ await runKodaX({
 
 ## SDK Usage
 
-KodaX ships as a single npm package `@kodax-ai/kodax` with 12 SDK subpath exports (ADR-024 v0.7.39 + ADR-032 v0.7.42 + ADR-038 v0.7.49 + v0.7.56 `/media` + v0.7.64 `/runtime` + v0.7.68 `/experimental-memory` + v0.7.69 `/a2a` + v0.7.78 `/sandbox`). Each subpath is tree-shake-friendly so consumers pull only what they need:
+This development tree exposes 13 SDK subpaths plus the root. Shared product
+applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
+APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
+and [SDK migration guide](docs/SDK_MIGRATION.md). The package version is still
+`0.7.96-rc.11`; npm publication is separate from the `v0.7.97` design target.
 
 ```bash
 npm install @kodax-ai/kodax
@@ -1972,6 +1971,7 @@ npm install @kodax-ai/kodax
 
 ```typescript
 import { runKodaX } from '@kodax-ai/kodax';                       // root: CLI helpers + runKodaX
+import { ensureKodaXClient, connectKodaXClient } from '@kodax-ai/kodax/client'; // shared product contract
 import { Runner, runFanOut } from '@kodax-ai/kodax/agent';        // generic Agent framework
 import { getProvider } from '@kodax-ai/kodax/llm';                // 16-alias LLM abstraction
 import { KODAX_TOOLS } from '@kodax-ai/kodax/coding';             // tools + prompts + agent loop
@@ -2141,7 +2141,8 @@ await runInkInteractiveMode({ provider: 'zhipu-coding', effort: 'auto' });
 | Building custom agent | `@kodax-ai/kodax/agent` | Runner + fan-out + idle-yield + session-lineage + capabilities |
 | Coding tasks | `@kodax-ai/kodax/coding` | Complete coding agent + tools |
 | Terminal app | `@kodax-ai/kodax/repl` | Full interactive experience |
-| Runtime host / daemon client | `@kodax-ai/kodax/runtime` | Sessions, runs, events, permissions, catalog, MCP, artifacts, diagnostics |
+| Shared Session application | `@kodax-ai/kodax/client` | Unified product intent, observation, interactions and history |
+| Trusted Runtime host | `@kodax-ai/kodax/runtime` | Explicit embedding, credentials/Host Tools and diagnostics |
 | Experimental governed memory | `@kodax-ai/kodax/experimental-memory` | Governed `MemoryAgent` list/remember/forget and scoped `MemorySession` recall/outcome contracts |
 
 ---

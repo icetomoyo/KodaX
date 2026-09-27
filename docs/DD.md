@@ -1,17 +1,12 @@
 # KodaX Detailed Design
 
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+Last updated: 2026-09-27. Current development tree: FEATURE_298/299 on package
+`0.7.96-rc.11`; `v0.7.97` is the design target, not a publication claim.
 
-> Last updated: 2026-09-03
->
-> Current release: `v0.7.96-rc.11`
-> (`@kodax-ai/kodax@0.7.96-rc.10`; Windows `sandboxRuntime:11`,
-> `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
-> `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
->
-> This DD describes current implementation structure. Retired V1 chain details
-> were deleted from this active document; use git history and historical feature
-> docs when archaeology is needed.
+The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
+define current product integration. Version-labelled release context below does
+not restore removed APIs. Low-level Runtime mechanisms remain distinct from
+the `KodaXProductClient` business surface.
 
 ## 1. Scope
 
@@ -24,7 +19,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The package release is `@kodax-ai/kodax@0.7.96-rc.10`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.96-rc.11`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -333,7 +328,7 @@ inferred from directory names. If the create evidence is unavailable, the
 background process must be stopped and the worktree removed/recreated through
 KodaX once; an unregistered pre-correction root remains removable.
 
-The same release implements Session-scoped event journals and cursor-bound
+That historical release implemented Session-scoped event journals and cursor-bound
 replay, the F289/F290 Memory review and lesson pipelines, and F292's
 conversation-first Memory management. Terminal startup restores terminal Runs
 from authoritative status records without replaying their complete event
@@ -355,6 +350,7 @@ fail closed.
 | `./skills` | `dist/sdk-skills.js` | Focused skills subset. |
 | `./mcp` | `dist/sdk-mcp.js` | Focused MCP subset. |
 | `./session` | `dist/sdk-session.js` | Public session-management subset. |
+| `./client` | `dist/sdk-client.js` | Product Client connect/ensure and data contract types; default for shared product integrations. |
 | `./runtime` | `dist/sdk-runtime.js` | Stable host Runtime facade and daemon protocol/schema exports. |
 | `./sandbox` | `dist/sdk-sandbox.js` | Explicit ASRT capability, setup/doctor, and host-owned contained execution. |
 | `./a2a` | `dist/sdk-a2a.js` | Bidirectional A2A 1.0 client/server integration edge. |
@@ -382,6 +378,9 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 | Area | Current file(s) | Notes |
 |---|---|---|
 | CLI bootstrap | `src/kodax_bootstrap.ts`, `src/kodax_resume.ts`, `src/kodax_cli.ts` | The bootstrap handles bare `-r` with a lightweight picker, then loads the full CLI only after selection. |
+| Product SDK | `src/sdk-client.ts`, `src/client-runtime-adapter.ts` | Node connect/ensure return `KodaXProductClient`; adapter maps intent into the Host. |
+| Product data contract | `packages/coding/src/client-contract.ts`, `client-domains.ts` | Data-only business methods and view/history/interaction types; no Host instances. |
+| Session display | `src/session-view.ts`, `src/client-history.ts` | Host-owned bounded views, complete canonical reads, identity and history projection. |
 | Coding SDK | `packages/coding/src/agent.ts` | `runKodaX(options, prompt)` delegates through `Runner.run`. |
 | Coding preset | `packages/coding/src/coding-preset.ts` | Declares the default coding agent and substrate executor. |
 | Continuous SDK | `packages/coding/src/client.ts`, `running-session.ts` | `KodaXClient` and non-blocking session handle. |
@@ -396,6 +395,13 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 | LLM providers | `packages/llm/src/providers/registry.ts` | Built-in aliases and custom provider registration. |
 
 ### 3.1 Runtime Host Facade
+
+This is the low-level Host layer. Product callers use `src/sdk-client.ts`:
+`ensureKodaXClient` shares the Runtime launcher; `connectKodaXClient` is passive.
+The internal adapter translates product operations into the same owner rather
+than creating a second execution/storage engine. `SessionViewOwner` supplies
+replacement views; complete history/item reads remain separate from display
+limits. Product methods do not expose Runtime events, storage or execution callbacks.
 
 `createKodaXRuntime()` defaults to an inline embedded runtime in the caller's
 process (the v0.7.96 Worker-hosted isolation form was removed in v0.7.97).
@@ -515,40 +521,39 @@ Live provider output is not reconstructed from Run-wide cumulative text.
 before the corresponding text or reasoning deltas. The shared reducer keeps
 completed append segments, replaces only the active segment of the same
 logical response, resets on a new `responseId`, and ignores stale deltas whose
-`providerRequestId` is no longer active. Runtime replay remains an unfiltered
-audit journal; `RuntimeSessionLiveProjection.outputSegmentsByRun` is the
+`providerRequestId` is no longer active. Runtime events are live, with no durable
+replay surface; `RuntimeSessionLiveProjection.outputSegmentsByRun` is the
 effective reconnect/snapshot authority. New clients require
 `liveOutputSegments:1`, so hosts do not need a checkpoint replay state machine.
 
-Complete Runtime exit is similarly a durable SDK transaction rather than a
-host-side sequence of stop, close, and cleanup guesses. The settlement ticket
-records exact owner/process-start and boot identities before stop; Windows may
-repair only verified empty Job/ACL residue, while same-boot POSIX uncertainty
-returns `blocked` and retains the ticket. The public API exposes bounded
-`clean`, `recovered`, and `blocked` outcomes without exposing raw kill or ACL
-mutation primitives.
+The former exit-settlement ticket/rollback protocol is removed. Product clients
+request explicit idle `host.shutdown()` and disconnect independently. Acceptance
+is not proof of process exit; the local launcher performs existing exit and
+ownership verification before replacement. It does not force-stop a busy owner.
 
 #### 3.1.1 Shared Coder daemon consistency (FEATURE_269)
 
-`sessions.observe(sessionId, listener)` installs a server subscription first,
+Low-level Runtime `sessions.observe(sessionId, listener)` installs a server subscription first,
 takes a stable snapshot, and returns its `runtimeId` plus cursor. The daemon
 client buffers at most 256 handshake notifications; overflow returns
 `resync_required`. Consumers replace their derived projection on reconnect or
 Runtime change instead of merging two authority epochs.
 
-Daemon mutations require the authenticated client's operation capability and
-an `{ journalEpoch, operationId }` envelope. The append/fsync control journal
-records accepted/dispatched/applied/rejected facts and binds reuse to principal,
-method, resource, and canonical request digest. Accepted work becomes
-`interrupted` after restart; dispatched work becomes `unknown`; neither is
-automatically executed again. Corrupt control history quarantines all
-mutations while read/status operations remain available. Run status and
-versioned settings/grants use atomic temp-file + fsync + rename writes.
+Product `sessions.observe` wraps this ownership boundary with replacement
+`ClientSessionView` values and `onStatus`; it exposes no runtimeId/event cursor
+and requires no client event reducer or replay log.
+
+The former generic operation envelope/control journal is removed. Mutations
+use their domain identities and concurrency guards: inputId, runId, Session
+order, requestId and settings/grant revisions. A lost response does not permit
+transparent mutation replay; clients query known facts and preserve uncertain
+outcomes. Product input acceptance is Host-local, not a cross-restart global
+exactly-once receipt. Existing atomic persistence remains owned by each domain.
 
 The packaged daemon has one random token per `homeDir + profile`, protected by
 the local OS-user filesystem boundary. Its host grants the advertised scope
 set to token-authenticated connections. `clientInfo.instanceId` is stable
-attribution used by operation receipts; it is not a per-application secret.
+attribution; it is not an operation receipt or a per-application secret.
 Renderer/model surfaces must therefore remain behind a trusted host such as
 Electron Main and never receive the profile token.
 

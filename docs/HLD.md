@@ -1,17 +1,13 @@
 # KodaX High-Level Design
 
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+Last updated: 2026-09-27. Current development tree: FEATURE_298/299 on package
+`0.7.96-rc.11`, with `v0.7.97` as the design target; publication is separate.
 
-> Last updated: 2026-09-03
->
-> Current release: `v0.7.96-rc.11`
-> (`@kodax-ai/kodax@0.7.96-rc.10`; Windows `sandboxRuntime:11`,
-> `runtimeAutoModeGuardrail:5`, `sharedSessionSettings:2`,
-> `runtimeExitSettlement:2`, `crashOutcomeModel:2`; npm publication remains manual)
->
-> This HLD is intentionally current-state only. The old pre-v0.7.43
-> chain/harness model has been removed from this active design document because
-> it no longer describes the runtime.
+Product integrations use `KodaXProductClient` through `/client`. Read the
+[Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
+for current guarantees. Version-labelled release paragraphs below are historical
+context, not promises that retired Runtime surfaces still exist. Historical
+ADRs remain records of their original decisions.
 
 ## 1. System Overview
 
@@ -29,9 +25,9 @@ clients/    optional external clients and protocol adapters
 benchmark/  eval harness, datasets, and prompt-change rules
 ```
 
-The published package is `@kodax-ai/kodax`. It exposes the root API plus twelve
+The package is `@kodax-ai/kodax`. This tree exposes the root API plus thirteen
 SDK subpaths: `/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`,
-`/mcp`, `/session`, `/runtime`, `/sandbox`, `/a2a`, and
+`/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, and
 `/experimental-memory`.
 
 The v0.7.89 coding plane keeps built-in web search local and bounded: the
@@ -50,14 +46,16 @@ diagnostics preserve Error causes. Lineage/archive maintenance retains direct
 clone predecessors, while the coding materializer supplies provider-valid object
 schemas for run-scoped tools.
 
-The v0.7.91 Runtime adds a durable exit-settlement transaction at the SDK
+Historically, v0.7.91 added a durable exit-settlement transaction at the SDK
 boundary. It records the exact daemon owner and boot identity before stop,
 reuses the existing owner-policy fence, and only repairs identity-scoped
 process/Job/ACL residue after containment and shutdown evidence pass. A
 same-boot POSIX ambiguity is retained as a blocked ticket rather than guessed
 or force-signalled. The live output projection similarly separates logical
 responses from physical provider requests, so Runtime snapshots and raw
-journals serve different, explicit authorities.
+journals served different authorities. That exit-settlement protocol and the
+durable Runtime event journal are removed in the current development tree;
+use the current Client/launcher lifecycle below.
 
 The same Runtime owner also bounds user interaction. AskUser and permission
 callbacks receive an AbortSignal tied to the authoritative request; separate
@@ -347,7 +345,8 @@ session when lease cleanup fails.
 CLI / REPL / Space / IDE / SDK / binary
           |
           v
-src/sdk-runtime  - optional stable host facade (inline / Worker / daemon)
+src/sdk-client   - Product Client connection and common launcher
+src/sdk-runtime  - low-level Host facade (inline / daemon)
           |
           v
 packages/coding  - KodaX coding preset and tool loop
@@ -372,34 +371,34 @@ Layer rules:
 
 ## 3. Runtime Shape
 
-KodaX separates the stable Runtime service contract from deployment ownership:
-
 ```text
-                         same KodaXRuntime facade
-                                  |
-             +--------------------+--------------------+
-             |                    |                    |
-      embedded / inline    embedded / Worker      local daemon
-      caller JS process      MessagePort IPC      pipe / Unix socket
-      private ownership      private ownership    shared profile owner
-             |                    |                    |
-             +--------------------+--------------------+
-                                  |
-                          packages/coding engine
+TUI / desktop / IDE / automation product consumers
+  -> KodaXProductClient (pure data and business methods)
+  -> @kodax-ai/kodax/client (Node connect / ensure)
+  -> client-runtime-adapter -> shared daemon Host
+  -> coding -> agent -> llm
+
+Trusted Host / independent library
+  -> explicit low-level /runtime inline or daemon services
 ```
 
-Inline is the compatibility and lowest-latency default. Worker isolation keeps
-one private Runtime in a disposable V8 Worker and reuses the daemon protocol
-dispatcher/client over `MessagePort`. Daemon mode owns the same embedded Runtime
-in a detached OS process and allows multiple REPL, Space, IDE, or SDK clients to
-share sessions, runs, permissions, events, config, MCP, and catalogs.
+`ensureKodaXClient` uses the common local launcher; `connectKodaXClient` is
+passive. Both return the same product contract. The Host owns Session storage,
+input admission, Run outcomes, interactions, config and integrations. Clients
+replace current views and explicitly page canonical history, rather than
+building an authority from raw event deltas or writing Session files.
 
-Daemon uniqueness is scoped by `homeDir + profile`. An atomic owner lock,
-persisted PID/endpoint/token/runtime identity, and health handshake make
-concurrent starters converge. Client `close()` detaches; explicit daemon stop
-ends the shared owner. Restart marks persisted non-terminal runs interrupted;
-clients reconnect explicitly and KodaX does not pretend to resume an unknown
-in-flight provider/tool operation.
+Inline embedding remains a low-level option for independent callers. The
+Worker-hosted embedded Runtime has been removed; retained handler/semantic
+workers and the AMA Worker role are separate concepts. Products do not select
+inline ownership or silently fall back to it after a failed connection.
+
+A shared Host is located through home/profile identity, while storage ownership
+also prevents two independent writers to the same actual Session root.
+`disconnect()` releases one Client; `observation.close()` releases one observer.
+Neither stops a Run. Session/Run Stop and explicit idle Host shutdown have
+separate receipts and completion boundaries. Recovery of unknown external work
+never means automatically executing it again.
 
 CLI and SDK auto-start use the same candidate lifecycle: the spawned process
 remains referenced until its own PID is healthy, and only that candidate process
@@ -413,12 +412,12 @@ before daemon application code loads, so ordinary children do not inherit it.
 This requires Electron's default-enabled `RunAsNode` fuse; fuse-disabled hosts
 must start an ordinary Node/CLI daemon and attach to it.
 
-The published Runtime Worker also owns the Windows visibility boundary for
+The Host's subprocess helpers own the Windows visibility boundary for
 background subprocesses. Non-interactive memory/Git, provider CLI/ACP, LSP,
 clipboard, worktree, review, extension-command, checkpoint, and sandbox child
 processes request hidden consoles. Explicit editor, terminal, and PTY paths stay
-interactive. The bundle build audits this boundary from the Runtime Worker
-metafile.
+interactive. Bundle validation audits the retained runtime subprocess paths;
+there is no published `runtime-worker.js` sidecar in this tree.
 
 Windows descendant cleanup is identity-checked and exposes observable
 uncertainty instead of bare-PID success. Its current Toolhelp/CIM snapshot model
@@ -428,7 +427,7 @@ v0.7.87; this provider release assigns no replacement target for the remaining
 host-issued Worker owner lease. The v0.7.86 daemon/per-effect Job and sandbox owner
 attestation slices narrow the risk but do not close that Worker-owned boundary.
 
-The same published worker preserves Sidecar terminal meaning end to end:
+The coding runtime preserves Sidecar terminal meaning end to end:
 optional post-completion offers remain successful, required clarification can
 produce a structured blocked terminal, and only an eligible revision can
 publish budget-approval state. Embedded and daemon clients observe the same
@@ -437,11 +436,11 @@ blocked code and reason.
 Shared Coder daemon control is fact-based rather than connection-owned. One
 atomic `sessions.observe` call returns the authoritative transcript/settings/
 run/interaction projection and installs the post-snapshot event stream without
-a gap. Mutations carry daemon-epoch operation identities, same-session runs
-receive stable order, and settings/persistent grants use revision CAS. The
-durable control journal never replays an operation whose external effect may
-already have started. Runtime restart changes `runtimeId`; queued work becomes
-interrupted with no effect, while active external work is explicitly unknown.
+a gap at the low-level Runtime boundary. Product `sessions.observe` publishes
+complete current views without an event cursor. Mutations use domain identities;
+same-session runs receive stable order and settings/grants use revision CAS.
+There is no generic control receipt/journal. Unknown external effects are not
+automatically replayed after a failed response or Runtime restart.
 The packaged transport authenticates a single local OS-user/profile trust
 domain with a random profile token and user-only pipe/socket access. Host-
 granted scopes gate RPC families; stable client instance IDs provide
@@ -462,7 +461,7 @@ the SDK coordination fence: it may remove only a parseable inline owner whose
 process identity is proven gone. Live, unreadable, legacy-kind, daemon-kind,
 and unverifiable owners remain fail-closed; embedders never delete owner files.
 
-Worker and daemon calls cross a typed DTO boundary. Process-local callbacks,
+Daemon calls cross a typed DTO boundary. Process-local callbacks,
 class instances, `AbortSignal`, cyclic values, and extension runtime objects do
 not silently cross or execute in the client. Runtime methods bridge abort,
 events, permissions, artifacts, config, and owner-loaded extensions instead.
@@ -508,21 +507,21 @@ negotiation treats requirements as minimums. Side-query diagnostics report
 only coarse, observed timing/retry facts, while guardrail spans start before
 and end after the awaited callback.
 
-Runtime text and reasoning deltas are coalesced before sequence allocation,
-durable event persistence, and subscriber delivery. The source owner preserves
+Runtime text and reasoning deltas are coalesced before sequence allocation
+and live subscriber delivery. The source owner preserves
 flush boundaries and an 8 KiB accumulated-merge limit. Clients that depend on
 this behavior require `runtimeEventCoalescing:1`; daemon auto-start may replace
 only an idle older owner and fails closed when preflight is unsafe.
 
 Provider output is additionally projected by logical response and physical
 request identity. Each request emits `responseId`, `providerRequestId`, and an
-explicit append/replace mode. The raw Session journal retains abandoned request
-facts, while the observation snapshot exposes only the effective segments.
+explicit append/replace mode. The observation snapshot exposes only effective
+segments; the removed Runtime journal provides no replay of abandoned requests.
 `liveOutputSegments:1` is mandatory for new SDK clients; an auto-start client
 gates it from the authenticated read-only probe before attaching the embedder's
 stable identity. It may replace an incompatible daemon only after the existing
-management, client/work-idle, owner/process-start identity, durable settlement,
-process-exit, and verified-shutdown fences pass.
+management, client/work-idle, owner/process-start identity, process-exit, and
+verified-shutdown fences pass.
 
 Session read APIs expose three intentionally separate planes: active model
 context, raw append-order transcript audit, and ordinary conversation. The
@@ -826,7 +825,7 @@ there remains a model invocation and must pass the model-tool gate.
 Queued explicit Skill text is host-owned: runtime mid-turn and idle-resume
 drains cannot expose it to the model before trusted expansion. The expanded
 active Skill is then present exactly once in either the SA or AMA system
-context. Worker/daemon transports rehydrate tool and hook policy from their
+context. Daemon transports rehydrate tool and hook policy from their
 local trusted registry and wait for PostToolUse completion rather than trusting
 serialized client policy.
 The F263 learning owner reuses the governed episode-review inbox and Learning

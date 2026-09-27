@@ -82,20 +82,23 @@ macOS/Linux 会报告 Seatbelt/bubblewrap 所需依赖。拒绝 UAC 或缺少依
 
 ## Runtime SDK 与共享 daemon
 
-CLI、SDK 与未来 Web 共用的产品面见 [Client 接口契约](docs/CLIENT_CONTRACT.md)：涵盖被动连接、本机启动更新、全部公开方法、流式视图、完整历史与断连边界。
+产品接入统一使用 `@kodax-ai/kodax/client` 的 `KodaXProductClient`。Host 负责执行、设置和存储，TUI、SDK 应用及其他 UI 提交意图并观察同一事实。详见[迁移指南](docs/SDK_MIGRATION.md)、[Client 契约](docs/CLIENT_CONTRACT.md)和[接入示例](public_docs/sdk/embedder-guide.md#product-client-integration)。
 
-`@kodax-ai/kodax/runtime` 支持 inline、Worker 和本机共享 daemon。FEATURE_269
-让 CLI、Space、IDE 与其他本地 SDK 客户端可以原子加入同一个 Coder
-session/run，共享 transcript、Todo、tool、AskUser、permission、队列与唯一终态。
-daemon mutation 使用持久 operation identity 和 revision CAS；崩溃后不会盲目重放
-可能已有副作用的 provider、run 或 Host Tool 调用。
+```ts
+import { ensureKodaXClient } from '@kodax-ai/kodax/client';
 
-Space 的 provider credential 仍由 OS keychain 持有，只通过 run/provider-scoped
-broker 使用；Space Artifact/Office/Control 只通过显式绑定到该 run 的 Host Tool
-lease 暴露。CLI run 不会因为 Space 后来加入而继承这些能力。Partner 继续使用独立
-data/session root 下的 inline Runtime，不参与 Coder owner fence。capability 缺失时必须
-fail closed，不能静默退回 inline Coder。完整接入说明见
-[SDK Embedder Guide §23](public_docs/sdk/embedder-guide.md#23-shared-coder-daemon-for-space-and-ide-hosts-feature_269-v0769)。
+const client = await ensureKodaXClient();
+try {
+  const sessions = await client.sessions.list();
+  process.stdout.write(`Sessions: ${sessions.length}\n`);
+} finally {
+  await client.disconnect(); // 只断开当前连接，共享 Host 和 Run 继续存在。
+}
+```
+
+`connectKodaXClient` 只连接已有兼容 Host；`ensureKodaXClient` 通过统一启动器启动或正常更新空闲 Host。Node 连接器不提供浏览器 HTTP/WebSocket transport。
+
+底层 `/runtime` 仍支持显式 inline embedded 与 daemon，供受信任宿主处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
 
 ### 结构化且凭据安全的 Runtime 错误
 
@@ -846,6 +849,8 @@ kodax "Review this repository and summarize the architecture"
 
 ### 4. 作为库使用
 
+共享 Session 的 TUI、桌面/IDE 和自动化应用应使用 `@kodax-ai/kodax/client`，见[迁移指南](docs/SDK_MIGRATION.md)和[完整 Client 契约](docs/CLIENT_CONTRACT.md)。以下 `runKodaX` 示例属于独立 coding 库，不是产品客户端入口。
+
 ```bash
 npm install @kodax-ai/kodax
 ```
@@ -875,15 +880,15 @@ import { SkillRegistry } from '@kodax-ai/kodax/skills';         // 零依赖 ski
 import { loadConfig } from '@kodax-ai/kodax/repl';              // REPL 配置 / session 工具
 import { createMcpManager } from '@kodax-ai/kodax/mcp';         // MCP popout manager（v0.7.42 起）
 import { listSessions } from '@kodax-ai/kodax/session';         // session 历史工具
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';   // embedded/Worker/daemon 宿主 API
+import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';   // inline/daemon 宿主 API
 import { runKodaXSandboxed } from '@kodax-ai/kodax/sandbox';    // 独立 ASRT 受控执行
 import { createKodaXA2AServer } from '@kodax-ai/kodax/a2a';    // A2A 1.0 双向接入
 import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-in 实验性记忆 SDK
 ```
 
-13 个 SDK 入口（root + 12 subpath）通过 ESM 共享 chunk 复用底层代码 —— 只 import `/agent` 不会把 `/repl` 的 Ink + React 一起拉进来。
+14 个 SDK 入口（root + 13 subpath，包含产品 `/client`）通过 ESM 共享 chunk 复用底层代码 —— 只 import `/agent` 不会把 `/repl` 的 Ink + React 一起拉进来。
 
-完整的宿主集成契约——包括 embedded/Worker/daemon 所有权、外部 Agent 注册与任务控制、session cursor 分页、workflow 模型分层和效率遥测——见 [SDK Embedder Integration Guide](public_docs/sdk/embedder-guide.md)。
+完整的宿主集成契约——包括 inline/daemon 所有权、外部 Agent 注册与任务控制、session cursor 分页、workflow 模型分层和效率遥测——见 [SDK Embedder Integration Guide](public_docs/sdk/embedder-guide.md)。
 
 > **SDK 是 ESM-only**。在 CommonJS 上下文（Electron main 进程、传统 Webpack CJS bundle、`require()` 调用方）必须用 `await import('@kodax-ai/kodax/...')` 代替 `require()`。详见 [public_docs/sdk/embedder-guide.md §5](public_docs/sdk/embedder-guide.md#5-consuming-from-a-commonjs-context-electron-main-cjs-bundles)，含 Electron main 完整 recipe + 为什么大多数 subpath 物理上无法做 dual ESM/CJS bundle。
 
@@ -1026,51 +1031,19 @@ registerCustomProviders([
 await runKodaX({ provider: 'my-openai-compatible' }, '解释这个仓库');
 ```
 
-### 6. Runtime 与本机 daemon
+### 6. 统一 Client 与本机 Host
 
-交互 REPL、位置参数、slash-command 生成的任务和 `kodax -p` 现在都走统一的
-`KodaXRuntime` 入口。默认使用最低延迟的进程内 `embedded`；单一 SDK 宿主需要
-独立 V8 与硬销毁时，可选择 Worker-hosted embedded；需要后台持续运行、断线后
-查询或多个本机客户端共享时，可切到 `daemon`：
-
-```ts
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';
-
-const runtime = await createKodaXRuntime({ mode: 'embedded' });
-```
-
-inline 形态由调用方私有且开销最低；Worker 形态仍然私有，但可硬销毁；
-daemon 形态使用独立进程并允许多个客户端共享。`runtime.close()` 会关闭
-私有 inline/Worker Runtime，但对 daemon 只断开当前客户端。矛盾的隔离参数
-会直接报错，不会静默降级。Worker 是 V8 故障隔离边界，不是安全沙箱。
-
-daemon 按设计会持续驻留。测试若自动启动 daemon，删除临时 home 前还必须执行
-`kodax daemon stop --home <目录> --profile <名称>`（或发送已认证的
-`runtime.shutdown`）。不要按进程名批量结束 Node；应先核验命令行和父进程归属。
+当前产品入口采用共享 daemon Host，TUI 和 SDK 产品客户端都通过统一契约提交输入、读取状态、回答交互。`--runtime-mode`、`KODAX_RUNTIME_MODE` 和 config 的 `runtimeMode` 已从产品面移除。
 
 ```bash
 kodax daemon start
+kodax -p "检查这个仓库"
 kodax daemon stop --profile default
-kodax --runtime-mode daemon
-kodax -p "检查这个仓库" --runtime-mode daemon
 ```
 
-持久设置写入 `~/.kodax/config.json`：
+daemon 可承载多个 Session；不同 Session 可以并发，同一 Session 的交付由 Host 串行协调。`after_turn` 可在当前 Run 的安全点交付，不必等整个长任务结束。客户端关闭观察或断开连接不会停止 Run。停止任务使用 `runs.stop` 或 `sessions.cancel`；关闭空闲 Host 才使用 `host.shutdown`/daemon stop。
 
-```json
-{
-  "runtimeMode": "daemon"
-}
-```
-
-统一优先级是：显式 CLI/SDK 参数 > 环境变量 > `config.json` > 内置默认值。
-`KODAX_RUNTIME_MODE=daemon` 适合临时覆盖。其他成对配置也遵循相同规则，例如
-`provider` ↔ `KODAX_PROVIDER`、`effort` ↔ `KODAX_EFFORT`。JSON 保持 camelCase，
-环境变量保持 `KODAX_UPPER_SNAKE_CASE`，两者按语义一一对应。
-
-一个 daemon 可以承载多个 session。不同 session 可以并发运行；同一个 session
-内部仍保持一次只运行一个任务，后续任务按队列执行。多个 `kodax` 进程可以连接
-同一个 daemon，并分别打开或观察不同 session。
+显式独立库嵌入仍可使用 `/runtime` 的 `createKodaXRuntime({mode:'embedded'})`，其 owner 和退出责任属于调用者。这不是 CLI 的可选运行模式，也不是产品客户端的连接失败回退。当前包版本与发布状态见[SDK 迁移指南](docs/SDK_MIGRATION.md)。
 
 ### 7. 打包成单文件二进制（无需 Node）
 
@@ -1208,7 +1181,7 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## 仓库结构
 
-KodaX 是基于 npm workspaces 的 TypeScript monorepo，**源码层 4 个 workspace 包**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 12 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`；ADR-024 + ADR-032 + ADR-038）。核心包：
+KodaX 是基于 npm workspaces 的 TypeScript monorepo，**源码层 4 个 workspace 包**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 13 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`；ADR-024 + ADR-032 + ADR-038）。核心包：
 
 | Workspace 包 | 作用 | 主要依赖 |
 |----|------|---------|
@@ -1224,9 +1197,9 @@ KodaX 是基于 npm workspaces 的 TypeScript monorepo，**源码层 4 个 works
 KodaX 有两层结构，SDK 用户需要分开理解：
 
 - **源码层**：上面 4 个 workspace 包（开发者读代码时看到的物理结构）。
-- **npm 发布层**：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 12 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
+- **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 13 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
   - **完整包 subpath**（`/agent`、`/llm`、`/coding`、`/repl`）—— 每个 1:1 对应一个源码包，暴露完整公开 API。
-  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
+  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
 
 | 源码包 | npm subpath | 类型 | 内容 | 典型消费者 |
 |---|---|---|---|---|
@@ -1239,7 +1212,8 @@ KodaX 有两层结构，SDK 用户需要分开理解：
 | `packages/coding` | `@kodax-ai/kodax/coding`  | 完整包 | Coding agent + 50+ 工具 + repo-intelligence (505 exports) | 构建 Claude Code 形态产品 |
 | `packages/repl`   | `@kodax-ai/kodax/repl`    | 完整包 | Ink TUI + 权限模式 + 命令系统 (217 exports) | 终端 UI 消费者 |
 | `packages/repl`   | `@kodax-ai/kodax/session` | **窄子集** | 仅会话管理 —— `listSessions` / `loadFullTranscript` / `appendClientNotice` / `forkSession` / `compactSession` / `watchSessions` 等 (17 exports) | 读取 session 历史的 IDE 插件和桌面宿主 |
-| `src`             | `@kodax-ai/kodax/runtime` | 宿主 API | Embedded/Worker/daemon facade，含 sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/外部 Agent 和 daemon schema (10 exports) | SDK 宿主、Space/IDE、daemon client |
+| `src`             | `@kodax-ai/kodax/client` | 产品 API | 共享 Host 连接与 `KodaXProductClient` 统一契约 | TUI、桌面/IDE 和自动化应用 |
+| `src`             | `@kodax-ai/kodax/runtime` | 宿主 API | Explicit inline/daemon facade，含 sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/外部 Agent 和 daemon schema (10 exports) | 受信任宿主集成 |
 | `src`             | `@kodax-ai/kodax/sandbox` | 宿主 API | 显式 ASRT capability/doctor/setup 与宿主自有受控命令执行；不可用时绝不静默普通执行 | 需要独立进程 containment 的 SDK 宿主 |
 | `src`             | `@kodax-ai/kodax/a2a` | 集成边界 | A2A 1.0 Agent Card 发现、JSON-RPC/SSE F258 executor、安全 fetch 与鉴权 Runtime Agent server | Agent 编排器和 KodaX 宿主 |
 
@@ -1395,7 +1369,7 @@ KodaX/                       # 4 workspace packages(FEATURE_194 v0.7.43)
 │   ├── kodax_cli.ts         # CLI 主入口（bin: `kodax`）
 │   └── sdk-*.ts             # SDK subpath 入口 → @kodax-ai/kodax/{agent,llm,coding,media,repl,skills,mcp,session,runtime,sandbox,a2a,experimental-memory}
 ├── scripts/
-│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 12 SDK subpath + chunks）
+│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 13 SDK subpath + chunks）
 │   ├── build-binary.mjs     # Bun --compile 单文件二进制打包
 │   └── release.mjs          # 发布 CI 构建的通用 tarball；本地 --pack-only 保持 private:true
 └── .github/workflows/
