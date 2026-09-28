@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-rc.11 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-rc.12 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,11 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-rc.11 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-rc.12 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The rc.12 release makes uncertain Shell cleanup nonblocking');
+    expect(sdk).toContain("`stop.state: 'unknown'` and `terminal.effectOutcome: 'unknown'`");
+    expect(sdk).toContain('never claims verified');
+    expect(sdk).toContain('terminationReason: iteration_limit');
     expect(sdk).toContain('The rc.11 release preflights the macOS system Git shim before SDK-owned Git calls');
     expect(sdk).toContain('(exit code 2, `DEVELOPER_DIR`-aware), TTL-caches probes,');
     expect(sdk).toContain('recovers after installation with no');

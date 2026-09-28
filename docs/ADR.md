@@ -2,7 +2,24 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-23
+> Last updated: 2026-09-28
+>
+> **v0.7.96-rc.12 release addendum:** Uncertain Shell cleanup is nonblocking.
+> A cleanup probe failure or timeout no longer fences the conversation: the
+> tool returns diagnostics and partial output to the model, unresolved
+> process identities persist as deferred cleanup records (`deferred: true`)
+> with the native registry and exact identity checks intact, and successors,
+> Session admission, Run completion, and Runtime close proceed. An exhausted
+> terminal Run settles with `stop.state: 'unknown'` and
+> `terminal.effectOutcome: 'unknown'` — it never claims verified process
+> termination — while verified cleanup removes the record and Runtime close
+> retries deferred references without blocking on them. Root Runner
+> iteration progress is exposed in Runtime live snapshots and structured
+> Actor iteration progress lands in durable turn summaries/output; exhausted
+> native Actor children settle as failed with
+> `terminationReason: iteration_limit`, preserving partial output, artifacts,
+> and structured results, with no structured-output repair or workflow digest
+> after exhaustion and a fresh iteration count on follow-up.
 >
 > **v0.7.96-rc.11 release addendum:** SDK-owned Git call sites preflight the
 > macOS system Git shim through a shared platform guard

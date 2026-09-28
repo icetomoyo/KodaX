@@ -786,6 +786,18 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.12 release:** Twelfth release candidate of the v0.7.96 line.
+Uncertain Shell cleanup no longer blocks conversations: exhausted cleanup
+retries return diagnostics and partial output to the model, unresolved
+process identities become deferred cleanup records, successors and close
+proceed, and an exhausted terminal Run settles honestly with
+`effectOutcome: unknown` instead of claiming verified termination. Root
+Runner iteration progress is exposed in Runtime live snapshots and durable
+Actor turns, and exhausted native Actor children settle as failed with
+`terminationReason: iteration_limit` while preserving partial output,
+artifacts, and structured results. The test toolchain upgrades to Vitest
+4.1.11 with fflate 0.8.3 (ZIP64 scan fix). Every rc.11 contract is retained.
+
 **v0.7.96-rc.11 release:** Eleventh release candidate of the v0.7.96 line.
 SDK-owned background Git calls on macOS preflight the system Git shim: a
 shared `DEVELOPER_DIR`-aware platform guard (`@kodax-ai/agent/runtime/macos-git`)

@@ -137,6 +137,69 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.12 release preparation
+
+Release state: `v0.7.96-rc.12` is the GitHub pre-release for the exact
+tagged commit — the twelfth release candidate of the v0.7.96 line, making
+uncertain Shell cleanup nonblocking for conversations, exposing Runner
+iteration progress, and settling exhausted Actor children with honest
+structured results. The tag-triggered Release workflow builds every platform
+archive and the universal npm tarball, publishes checksums, and creates the
+GitHub pre-release. npm registry publication remains a separate manual
+maintainer action.
+
+On top of rc.11 it includes:
+
+- Exhausted Shell cleanup retries return diagnostics and partial output to
+  the model without cancelling the Run; unresolved process identities persist
+  as deferred cleanup records, and successors, Session admission, Run
+  completion, and Runtime close proceed. An exhausted terminal Run settles
+  with `stop.state: 'unknown'` and `terminal.effectOutcome: 'unknown'`.
+  Regression guide:
+  `docs/test-guides/ISSUE_SHELL_CLEANUP_v0.7.96-rc.11_REGRESSION_GUIDE.md`.
+- Root Runner iteration progress is exposed in Runtime live snapshots and
+  structured Actor iteration progress in durable turn summaries/output;
+  exhausted native Actor children settle as failed with
+  `terminationReason: iteration_limit`, preserving partial output, artifacts,
+  and structured results. Regression guide:
+  `docs/test-guides/ISSUE_RUNNER_ITERATION_v0.7.96-rc.11_REGRESSION_GUIDE.md`.
+- The test toolchain upgrades to Vitest 4.1.11 (`@vitest/coverage-v8`
+  4.1.11, pinned vite 7.3.3/vite-node) and fflate ^0.8.3, which fixes a ZIP64
+  directory scan that never terminated without the required `0x0001` extra
+  field (covered by `skill-archive-security.test.ts`).
+- The embedder guide documents the Electron `safeStorage` `Local State`
+  credential storage lifecycle on Windows.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.12`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, nonblocking Shell cleanup regressions
+   (`src/sdk-runtime.shell-cleanup.test.ts`,
+   `src/sdk-runtime.shell-timeout.test.ts`,
+   `src/sdk-runtime.shell-recovery.test.ts`, bash/child-executor cleanup
+   suites), Runner iteration regressions
+   (`src/sdk-runtime.test.ts`,
+   `packages/coding/src/child-executor.test.ts`), skill archive security
+   (`packages/agent/src/capabilities/skills/skill-archive-security.test.ts`),
+   and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.12`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.11 release preparation
 
 Release state: `v0.7.96-rc.11` is the GitHub pre-release for the exact

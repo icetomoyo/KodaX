@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.12] - 2026-09-28
+
+Twelfth release candidate of the v0.7.96 line: uncertain Shell cleanup no
+longer blocks conversations, Runner iteration progress becomes observable,
+exhausted Actor children settle with honest structured results, and the test
+toolchain upgrades to Vitest 4. Every rc.11 contract is retained. npm
+publication remains a manual maintainer action.
+
 ### Fixed
 
 - Return exhausted Shell cleanup diagnostics and partial output to the model
@@ -20,6 +30,22 @@ All notable changes to this project will be documented in this file.
   Parent completion notifications include the reason. Exhaustion no longer runs
   a structured-output repair or workflow digest, and follow-up starts a fresh
   iteration count. Completion on the final permitted iteration remains successful.
+
+### Changed
+
+- Upgrade the test toolchain to Vitest 4.1.11 (with `@vitest/coverage-v8`
+  4.1.11 and pinned vite 7.3.3/vite-node) and fflate ^0.8.3, which fixes a
+  ZIP64 directory scan that never terminated when a compressed-size sentinel
+  was present without the required `0x0001` extra field; skill archive
+  regression coverage locks the fix in.
+
+### Documentation
+
+- Document the embedder-owned Electron `safeStorage` credential storage
+  lifecycle: on Windows, the `Local State` encryption state must be preserved
+  together with the ciphertext across cleanup, uninstall, reinstall, and
+  profile migration, and an undecryptable existing client secret surfaces a
+  terminal credential recovery error instead of a silent replacement.
 
 ---
 
