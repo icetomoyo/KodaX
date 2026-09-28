@@ -7,7 +7,7 @@ Spend time on thinking. DO NOT send optional commentary.
 **⚠️ CORE PHILOSOPHY: Minimalist & Intelligent**
 
 > **Add code cautiously** — Before adding: Is it necessary? Is it minimal? Is it LLM-friendly?
-> **Avoid over-engineering** — Never design for hypothetical needs. Abstract only after 3+ real cases.
+> **Avoid over-engineering** — Requirements are the measure: fully meet functional & performance needs, add nothing beyond them.
 > **Leverage LLM intelligence** — Design for LLM comprehension. Use LLM for generation, review, and testing.
 
 **KodaX 极致轻量化** — every package is independently usable.
@@ -28,13 +28,7 @@ If the user did not give a concrete task, read `README.md`, then check `docs/` f
 3. Is it **LLM-friendly**? Can an LLM understand and extend it?
 
 **Rules**:
-- ✅ Composition over inheritance
-- ✅ Small focused functions (< 50 lines, single responsibility)
-- ✅ Clear, self-documenting names
-- ✅ Data-driven over complex control flow
-- ✅ Explicit over implicit; structured types as context
 - ❌ NEVER add "flexibility" for hypothetical futures (YAGNI)
-- ❌ NEVER abstract until 3+ concrete use cases
 - ❌ NEVER add config options unless required
 - ❌ NEVER deep inheritance / nested factories / sprawling state machines
 
@@ -74,33 +68,11 @@ Each workspace package must remain independently usable — never break layer in
 
 ## Documentation Layout
 
-Only the files in the tables below are allowed. Any other `.md` must go under `docs/`.
+Allowed `.md` files — anything else goes under `docs/`:
 
-**Project docs (`docs/`)**
-
-| File | Purpose | Required |
-|---|---|---|
-| `PRD.md` | Product Requirements | ✅ |
-| `ADR.md` | Architecture Decision Records | ✅ |
-| `HLD.md` | High-Level Design | ✅ |
-| `DD.md` | Detailed Design | ✅ |
-| `FEATURE_LIST.md` | Feature tracking | ✅ |
-| `KNOWN_ISSUES.md` | Known issues / workarounds | ⚠️ Optional |
-| `features/v{VERSION}.md` | Per-version feature design | ✅ |
-| `test-guides/*.md` | Human test guides | ✅ |
-
-**Root docs**
-
-| File | Purpose | Required |
-|---|---|---|
-| `README.md` | Project overview / quick start | ✅ |
-| `README_CN.md` | Chinese README | ✅ |
-| `AGENTS.md` | Agent development rules (this file) | ✅ |
-| `CLAUDE.md` | Claude Code project rules | ⚠️ Optional |
-| `CHANGELOG.md` | Release notes | ✅ |
-| `CONTRIBUTING.md` | Contribution guidelines | ⚠️ Optional |
-
-**Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
+- **Root (required)**: `README.md`, `README_CN.md`, `AGENTS.md`, `CHANGELOG.md` — optional: `CLAUDE.md`, `CONTRIBUTING.md`
+- **`docs/` (required)**: `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md`, `features/v{VERSION}.md`, `test-guides/*.md` — optional: `KNOWN_ISSUES.md`
+- **Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
 
 ## Test Requirements
 
@@ -122,7 +94,6 @@ Before any benchmark/eval work (datasets, eval design, runs, analysis), **MUST**
 - ❌ NEVER silently swallow errors
 
 **Architecture**
-- ❌ NEVER add abstractions without 3+ use cases
 - ❌ NEVER add configuration for hypothetical needs
 - ❌ NEVER break layer independence
 
