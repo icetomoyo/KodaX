@@ -2356,9 +2356,6 @@ export function buildChildEvents(
     ...(parentEvents?.registerShellCleanup
       ? { registerShellCleanup: parentEvents.registerShellCleanup }
       : {}),
-    ...(parentEvents?.onShellCleanupUnconfirmed
-      ? { onShellCleanupUnconfirmed: parentEvents.onShellCleanupUnconfirmed }
-      : {}),
     onOutputSegmentStart: (segment, meta) => {
       parentEvents?.onOutputSegmentStart?.(
         segment,

@@ -6384,6 +6384,15 @@ its own dispatch fence. Stop receipts distinguish durable acceptance from
 confirmed execution/child/tool cleanup; terminal completion/failure remains true.
 CLI/ACP use this operation while `runs.abort` retains single-Run scope.
 
+Shell cleanup probe exhaustion is distinct from ongoing model/tool execution.
+A timed-out tool returns diagnostic output to the model instead of cancelling
+the Run. Once that tool returns, unresolved OS process identities are retained
+as deferred cleanup; they no longer own the Session execution slot. Explicit
+Stop still cancels model execution. A terminal Run with deferred cleanup reports
+unknown effects and does not claim verified process termination. After-turn
+input remains admissible while Stop settles, and dead-owner recovery preserves
+valid deferred references without recreating a Session-wide admission lock.
+
 Extension managed tools, commands and capability calls receive one host-created
 execution scope. Nested tools re-enter normal policy and scope effects drain
 before settlement. Async Run contexts isolate state/events/defaults. Tool

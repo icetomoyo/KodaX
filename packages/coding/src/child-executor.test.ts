@@ -132,17 +132,6 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     vi.clearAllMocks();
   });
 
-  it('forwards unconfirmed Shell cleanup to the parent Run owner', async () => {
-    mockRunKodaX.mockResolvedValue(okResult('inspected'));
-    const onShellCleanupUnconfirmed = vi.fn();
-    await executeChildAgents([createBundle()], createCtx(), createOptions({
-      parentOptions: { provider: 'anthropic', events: { onShellCleanupUnconfirmed } },
-    }));
-    const child = mockRunKodaX.mock.calls[0]?.[0] as KodaXOptions;
-    child.events?.onShellCleanupUnconfirmed?.();
-    expect(onShellCleanupUnconfirmed).toHaveBeenCalledOnce();
-  });
-
   it.each([['read', true], ['write', false]] as const)(
     'keeps each %s child Shell bound to the Run context that launched it',
     async (_kind, readOnly) => {

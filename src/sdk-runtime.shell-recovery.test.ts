@@ -85,7 +85,7 @@ it('keeps executor completion pending and makes owner close retry Shell cleanup'
   }
 });
 
-it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell references before recovery (%s)', async (outcome) => {
+it.each(['unknown', 'verified', 'invalid', 'error'])('recovers a dead owner without blocking the session on valid unresolved Shell references (%s)', async (outcome) => {
   const verified = outcome === 'verified';
   control.pending = false;
   const f = await fixture();
@@ -96,7 +96,7 @@ it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell 
   value.stop = { requestedAt: new Date().toISOString(), state: 'unknown', outcome: 'unknown', reason: 'stop' };
   value._runtime.shellCleanups = [outcome === 'invalid' ? { ...reference, runtimeRunId: 'another-run' } : reference];
   await writeFile(f.file, JSON.stringify(value));
-  // A terminal event must not bypass pending process cleanup during restart.
+  // A dead executor cannot keep owning a Session solely because OS cleanup is unknown.
   control.recover.mockReset();
   const released = vi.fn(() => expect(JSON.parse(readFileSync(f.file, 'utf8'))._runtime.shellCleanups).toEqual([]));
   if (outcome === 'error') control.recover.mockRejectedValue(new Error('cleanup unavailable'));
@@ -107,7 +107,19 @@ it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell 
     else expect(control.recover).toHaveBeenCalledWith(reference);
     const status = await recovered.runs.get(f.run.runId);
     if (verified) { expect(status?.phase).not.toBe('unknown'); expect(released).toHaveBeenCalledOnce(); }
-    else { expect(status).toMatchObject({ phase: 'unknown', stop: { state: 'unknown' } }); expect(released).not.toHaveBeenCalled(); }
+    else if (outcome === 'invalid') {
+      expect(status).toMatchObject({ phase: 'unknown', stop: { state: 'unknown' } });
+    } else {
+      expect(status).toMatchObject({ phase: 'interrupted', terminal: { effectOutcome: 'unknown' } });
+      expect(released).not.toHaveBeenCalled();
+      expect(JSON.parse(await readFile(f.file, 'utf8'))._runtime.shellCleanups).toEqual([
+        expect.objectContaining({ deferred: true, registrationId: reference.registrationId }),
+      ]);
+      const next = await recovered.runs.start({ sessionId: f.session.id, prompt: 'continue', options: {
+        lsp: false, toolInvocation: { name: 'bash', input: { command: 'fixture' } },
+      } });
+      await expect(next.result).resolves.toMatchObject({ phase: 'completed' });
+    }
   } finally {
     await recovered.close(); vi.unstubAllEnvs(); await rm(f.root, { recursive: true, force: true });
   }

@@ -549,8 +549,22 @@ async function executeToolBash(
   let sandboxCleanupError: unknown;
   let sandboxPreStartUnavailable = false;
   let sandboxPreStartDiagnostic: string | undefined;
-  let releaseRunCleanup: (() => void) | undefined;
+  let releaseRunCleanup: ((outcome?: 'deferred') => void) | undefined;
   let retryRunCleanup: () => Promise<void> = async () => undefined;
+  let deferredCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  const deferRunCleanup = (): void => {
+    if (deferredCleanupTimer) clearTimeout(deferredCleanupTimer);
+    try {
+      releaseRunCleanup?.('deferred');
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: 'coding:bash', level: 'error',
+        message: 'Failed to persist deferred Shell cleanup; retrying the status write.', detail: error,
+      });
+      deferredCleanupTimer = setTimeout(deferRunCleanup, 1_000);
+      deferredCleanupTimer.unref();
+    }
+  };
   let foregroundStopRequested = false;
   let nativeTerminationVerified = false;
   const cleanupSandbox = async (
@@ -912,7 +926,10 @@ async function executeToolBash(
       if (ctx.registerShellCleanup !== undefined) {
         try { await cleanupStartedCommand(proc, unregister); }
         catch (cleanupError: unknown) {
-          throw new AggregateError([inputFailure, cleanupError], sandboxLifecycleErrorDetail(inputFailure));
+          deferRunCleanup();
+          throw new AggregateError([inputFailure, cleanupError],
+            `${sandboxLifecycleErrorDetail(inputFailure)} [Unknown] Shell PID: ${proc.pid}; `
+              + `cwd: ${cwd}. Cleanup could not be confirmed; descendants may still be running.`);
         }
       } else {
         unregister();
@@ -964,6 +981,7 @@ async function executeToolBash(
       throw sandboxCleanupError;
     }
     releaseRunCleanup?.();
+    if (deferredCleanupTimer) clearTimeout(deferredCleanupTimer);
     releaseRunCleanup = undefined;
     unregister();
   };
@@ -1155,7 +1173,6 @@ async function executeToolBash(
     let cleanupRetryCount = 0;
     let resolveForegroundCleanup: (() => void) | undefined;
     let rejectForegroundCleanup: ((error: unknown) => void) | undefined;
-    let cleanupFailureReported = false;
     const attemptForegroundCleanup = (): Promise<void> => {
       if (cleanupAttempt) return cleanupAttempt;
       if (!foregroundCommandRegistered) return Promise.resolve();
@@ -1167,7 +1184,7 @@ async function executeToolBash(
         } catch (error: unknown) {
           emitKodaXDiagnostic({
             source: 'coding:bash', level: 'warn',
-            message: 'Shell cleanup is unconfirmed; retaining the Run and child registration for retry.',
+            message: 'Shell cleanup is unconfirmed; retaining the child registration for retry.',
             detail: error,
           });
           if (cleanupRetryCount < 3) {
@@ -1176,22 +1193,10 @@ async function executeToolBash(
             }, 1_000 * 2 ** cleanupRetryCount++);
             cleanupRetryTimer.unref();
           } else {
-            // Retain the durable cleanup fence, but never leave the tool awaiting
-            // a Promise with no remaining producer. Runtime aborts this Run before
-            // the result can allow another model/tool iteration.
+            // Return diagnostics to the model without discarding OS cleanup
+            // evidence or turning a failed cleanup probe into a Run lock.
             rejectForegroundCleanup?.(error);
-            if (!cleanupFailureReported) {
-              cleanupFailureReported = true;
-              try {
-                ctx.onShellCleanupUnconfirmed?.();
-              } catch (notificationError: unknown) {
-                emitKodaXDiagnostic({
-                  source: 'coding:bash', level: 'error',
-                  message: 'Failed to notify the Run owner of unconfirmed Shell cleanup.',
-                  detail: notificationError,
-                });
-              }
-            }
+            deferRunCleanup();
           }
         } finally {
           cleanupAttempt = undefined;
@@ -1354,10 +1359,22 @@ async function executeToolBash(
       void settleStoppedCommand(reason).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         if (foregroundCommandRegistered) {
-          disposeCollectors();
-          settle(
-            `${buildStoppedResult(reason, '', [])}\n[Unknown] Shell cleanup could not be verified: ${message}`,
-          );
+          const warnings = [
+            `[Unknown] Shell cleanup could not be verified: ${message}`,
+            `Shell PID: ${proc.pid}; working directory: ${cwd}. Descendants may still be running. Inspect processes and partial output before repeating side effects.`,
+            `Root exit code: ${proc.exitCode ?? 'not observed'}; signal: ${proc.signalCode ?? 'none'}; cleanup attempts: ${cleanupRetryCount + 1}.`,
+          ];
+          if (!closeObserved) {
+            stoppedOutputRecovery = startForegroundOutputRecovery(stdout, stderr);
+            settle(buildRecoveryResult(reason, stoppedOutputRecovery, warnings));
+          } else {
+            let partial: string;
+            try { partial = decodePartialOutput(); }
+            catch (captureError: unknown) {
+              partial = `[warn] Partial output unavailable: ${sandboxLifecycleErrorDetail(captureError)}`;
+            } finally { disposeCollectors(); }
+            settle(buildStoppedResult(reason, partial, warnings));
+          }
           return;
         }
         if (!closeObserved) {
@@ -1555,6 +1572,7 @@ async function executeToolBash(
           ctx.reportShellExecutionOutcome?.({ success: code === 0 });
           settle(out);
         } catch (error) {
+          if (stopReason) return; // The stop result owns partial output and recovery artifacts.
           const message = error instanceof Error ? error.message : String(error);
           if (foregroundCommandRegistered) {
             disposeCollectors();

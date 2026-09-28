@@ -1,47 +1,46 @@
-# Shell cleanup exhaustion regression
+# Nonblocking Shell cleanup regression
 
-## Incident and accepted scope
+## Corrected user requirement
 
-Session `20260928_160252_occb6cfe737bfa`, Run `run_mukzfa6u_14f4337c`:
-the foreground Shell timed out, Windows process-tree verification could not
-confirm quiescence, and the cleanup retries exhausted without settling the
-foreground Promise. The Run continued to look active and queued input never
-reached a safe delivery point. Stop correctly retained the cleanup fence, but
-Space misrepresented its unknown outcome.
+Incident: Session `20260928_160252_occb6cfe737bfa`, Run `run_mukzfa6u_14f4337c`.
+Windows process-tree verification failed after timeout; exhausted cleanup retries
+left the tool Promise pending forever. The initial fix aborted the whole Run and
+blocked successors. The user rejected this because it prevented model recovery.
 
-Required behavior:
+- Timeout is not user Stop: return the command, timeout, PID, cwd, observed exit,
+  cleanup error and partial output (or recovery artifact paths) to the model.
+  Do not automatically abort the Run; let the model choose its next action.
+- Deliver queued interrupt input at the next normal safe point.
+- Explicit Stop cancels model execution. After the tool returns, settle the Run
+  and admit successors even if cleanup remains unknown. Accept after-turn input
+  while Stop is settling instead of rejecting unknown as stale_run.
+- Persist unresolved process identities with `deferred: true`. Keep the native
+  registry and exact identity checks. Deferred cleanup must not block Session
+  admission, Run completion or Runtime close.
+- A terminal Run with unresolved cleanup has `effectOutcome: unknown`; do not
+  claim verified process termination. Verified cleanup can remove the record.
+- Recover valid unresolved references from dead owners as deferred cleanup,
+  allowing the Session to reopen. Invalid records retain integrity checks.
 
-- Exhausted cleanup retries settle the tool with an unknown result and notify
-  the Run owner. Root and child execution propagate the same notification.
-- The owner aborts further execution and publishes `unknown` with
-  `failureKind: runtime_cleanup`, rather than claiming the user cancelled it.
-- Retain durable Shell ownership and block successor execution until cleanup
-  is verified. Never manufacture a successful stop or erase the registry.
-- Retrying the same Stop request verifies cleanup and releases the original
-  fence without cancelling successors submitted after that request.
+This change does not make OS queries infallible. It prevents cleanup probe failure
+from becoming a conversation lock. Never delete ambiguous process evidence or
+blindly repeat a potentially unfinished command.
 
-This fix does not replace Windows process launching with Job-object containment.
-Legacy registrations with incomplete descendant identity may remain unknown;
-deploying new code alone cannot prove those old processes have exited.
-
-## Automated checks
-
-Run from the SDK root:
+## Automated regression
 
 ```powershell
 npm run build:packages
 npm run typecheck
-node node_modules/vitest/vitest.mjs run src/sdk-runtime.shell-timeout.test.ts src/sdk-runtime.shell-recovery.test.ts src/sdk-runtime.child-shell-cleanup.test.ts packages/coding/src/tools/bash-cleanup-liveness.test.ts packages/coding/src/tools/bash-registration-cleanup.test.ts packages/coding/src/tools/bash-cleanup.test.ts packages/coding/src/child-executor.test.ts --maxWorkers=1
+node node_modules/vitest/vitest.mjs run src/sdk-runtime.shell-timeout.test.ts src/sdk-runtime.shell-recovery.test.ts src/sdk-runtime.child-shell-cleanup.test.ts packages/coding/src/tools/bash-cleanup-liveness.test.ts packages/coding/src/tools/bash-registration-cleanup.test.ts packages/coding/src/tools/bash-cleanup.test.ts packages/coding/src/child-executor.shell-cleanup.test.ts packages/coding/src/child-executor.test.ts --maxWorkers=1
 ```
 
-The new tests use isolated temporary runtime homes, offline providers, short
-real child processes and injected unknown/verified cleanup outcomes. They cover
-retry exhaustion, notification failure, direct and managed Run interruption,
-no additional provider iteration, durable ownership, successor fencing and
-same-request recovery. Existing tests cover Shell registration and child Stop.
+Tests use isolated homes, offline providers and injected unknown cleanup outcomes.
+Verify provider continuation with diagnostics, queued interrupt delivery, no model
+continuation after Stop, successor execution, honest terminal effects, retained
+cleanup metadata, nonblocking close and dead-owner recovery.
+Also inject one failed cleanup-status write followed by recovery, and native
+stdin/start-attestation failures with unconfirmed termination. Both must retain
+diagnostics and process identities without leaving a permanent cleanup fence.
 
-## Desktop integration
-
-Build and package the SDK fix, then consume that build in Space using its local
-SDK test-build workflow. A normal build using a previously published SDK does
-not include this fix. Verify the Space regression guide together with this one.
+SDK and Space must both be rebuilt and deployed; source commits do not update
+an already running old daemon or installed application.

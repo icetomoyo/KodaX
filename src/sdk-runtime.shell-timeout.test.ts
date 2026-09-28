@@ -5,9 +5,21 @@ import path from 'node:path';
 import type { ManagedChildProcessMetadata, ManagedChildRegistrationOptions } from '@kodax-ai/agent';
 import { expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider } from '@kodax-ai/llm';
-import type { KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
+import type { KodaXMessage, KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
 
-const cleanup = vi.hoisted(() => ({ verified: false, children: [] as ChildProcess[] }));
+const cleanup = vi.hoisted(() => ({ verified: false, children: [] as ChildProcess[],
+  failStatusWrite: false, writeFailed: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, renameSync: (source: import('node:fs').PathLike, target: import('node:fs').PathLike) => {
+    if (cleanup.failStatusWrite && !cleanup.writeFailed && String(target).endsWith('status.json')
+      && actual.readFileSync(source, 'utf8').includes('"deferred": true')) {
+      cleanup.writeFailed = true;
+      throw new Error('temporary cleanup status write failure');
+    }
+    return actual.renameSync(source, target);
+  } };
+});
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kodax-ai/agent')>(),
   isCurrentProcessWindowsJobContained: () => true,
@@ -22,8 +34,10 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => ({
 }));
 import { createKodaXRuntime } from './sdk-runtime.js';
 
-const command = 'node -e "setTimeout(() => {}, 150)"';
+const command = 'node -e "process.stdout.write(\'partial-diagnostic\');setTimeout(() => {}, 150)"';
 let providerCalls = 0;
+let receivedToolResult = '';
+let explicitStop = false;
 class TimeoutProvider extends KodaXBaseProvider {
   readonly name = 'shell-timeout-test';
   readonly supportsThinking = false;
@@ -31,64 +45,101 @@ class TimeoutProvider extends KodaXBaseProvider {
     apiKeyEnv: 'SHELL_TIMEOUT_TEST_KEY', model: 'offline', supportsThinking: false,
     contextWindow: 64_000, maxOutputTokens: 2_048,
   };
-  async stream(): Promise<KodaXStreamResult> {
+  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
     providerCalls++;
+    if (providerCalls > 1) {
+      receivedToolResult += JSON.stringify(messages);
+      return { textBlocks: [{ type: 'text', text: 'The command timed out. I can inspect its partial output and continue.' }],
+        thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
     return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
       toolBlocks: [{ type: 'tool_use', id: `bash-${providerCalls}`, name: 'bash',
-        input: { command, timeout: 0.02 } }] };
+        input: { command, timeout: explicitStop ? 30 : 0.02 } }] };
   }
 }
 
-it.each(['direct', 'managed'] as const)('publishes %s Shell cleanup as unknown, fences successors, and recovers via Stop', async (mode) => {
+it.each(['direct', 'managed', 'managed-retry', 'stopped'] as const)('keeps the session usable after %s Shell cleanup remains unknown', async (mode) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-timeout-'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
   vi.stubEnv('SHELL_TIMEOUT_TEST_KEY', 'offline-test');
   registerModelProvider('shell-timeout-test', () => new TimeoutProvider());
   providerCalls = 0;
+  receivedToolResult = '';
+  explicitStop = mode === 'stopped';
   cleanup.verified = false;
+  cleanup.children = [];
+  cleanup.failStatusWrite = mode === 'managed-retry';
+  cleanup.writeFailed = false;
   const runtime = await createKodaXRuntime({ homeDir: root, sessionsDir: path.join(root, 'sessions'),
     sharedDaemonHost: true, defaultProvider: 'shell-timeout-test' });
   let runId: string | undefined;
+  let runResult: Promise<unknown> | undefined;
+  let closing = false;
   try {
     const session = await runtime.sessions.create({ projectPath: root });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const run = await runtime.runs.start({ sessionId: session.id, prompt: 'timeout', options: {
-      lsp: false, ...(mode === 'managed' ? { agentMode: 'ama' as const } : {
+      lsp: false, ...(mode !== 'direct' ? { agentMode: 'ama' as const } : {
         toolInvocation: { name: 'bash', input: { command, timeout: 0.02 } },
       }),
     } });
     runId = run.runId;
-    await vi.waitFor(async () => expect(await runtime.runs.get(run.runId)).toMatchObject({
-      phase: 'unknown', stop: { state: 'unknown' }, failureDetail: { failureKind: 'runtime_cleanup' },
-    }), { timeout: 15_000 });
-    // Allow the aborted model loop to unwind; cleanup must keep its identity.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(await runtime.runs.get(run.runId)).toMatchObject({
-      phase: 'unknown', failureDetail: { failureKind: 'runtime_cleanup' },
-    });
-    expect(providerCalls).toBe(mode === 'managed' ? 1 : 0);
+    runResult = run.result;
+    await writeFile(path.join(root, 'later.txt'), 'successor');
+    let queuedRunId: string | undefined;
+    if (explicitStop) {
+      await vi.waitFor(() => expect(cleanup.children.length).toBeGreaterThan(0), { timeout: 5_000 });
+      await runtime.sessions.cancel({ sessionId: session.id, expectedRunId: run.runId, requestId: 'stop' });
+      const input = { sessionId: session.id, afterRunId: run.runId, delivery: 'after_turn' as const,
+        input: [{ type: 'text' as const, text: 'continue after Stop' }], options: {
+          lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'later.txt') } },
+        } };
+      const queued = await runtime.runs.submitInput(input);
+      expect(queued.accepted).toBe(true);
+      if (queued.accepted) queuedRunId = queued.runId;
+    } else if (mode.startsWith('managed')) {
+      await vi.waitFor(() => expect(cleanup.children.length).toBeGreaterThan(0), { timeout: 5_000 });
+      const interrupt = await runtime.runs.submitInput({ sessionId: session.id,
+        afterRunId: run.runId, delivery: 'interrupt', input: [{ type: 'text', text: 'report cleanup diagnosis' }] });
+      expect(interrupt.accepted).toBe(true);
+    }
+    let finished = false;
+    void run.result.then(() => { finished = true; });
+    await vi.waitFor(() => expect(finished).toBe(true), { timeout: 15_000 });
+    const result = await run.result;
+    expect(result.phase).toBe(mode === 'stopped' ? 'interrupted' : mode === 'direct' ? 'failed' : 'completed');
+    expect(result.terminal?.effectOutcome).toBe('unknown');
+    if (mode.startsWith('managed')) {
+      expect(providerCalls).toBeGreaterThanOrEqual(2);
+      expect(receivedToolResult).toContain('partial-diagnostic');
+      expect(receivedToolResult).toContain('Shell PID:');
+      expect(receivedToolResult).toContain('[Unknown]');
+      expect(receivedToolResult).toContain('report cleanup diagnosis');
+      expect(result.stop).toBeUndefined();
+      if (mode === 'managed-retry') expect(cleanup.writeFailed).toBe(true);
+    } else expect(providerCalls).toBe(mode === 'stopped' ? 1 : 0);
     const file = path.join(root, '.kodax', 'runtime', 'profiles', 'default', 'runs', run.runId, 'status.json');
-    expect(JSON.parse(await readFile(file, 'utf8'))._runtime.shellCleanups).toHaveLength(1);
-    const stop = { sessionId: session.id, expectedRunId: run.runId, requestId: 'retry-cleanup' };
-    await runtime.sessions.cancel(stop);
+    expect(JSON.parse(await readFile(file, 'utf8'))._runtime.shellCleanups).toEqual([
+      expect.objectContaining({ deferred: true }),
+    ]);
     await writeFile(path.join(root, 'later.txt'), 'successor');
     const later = await runtime.runs.start({ sessionId: session.id, prompt: 'later', options: {
       lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'later.txt') } },
     } });
-    expect(await runtime.runs.get(later.runId)).toMatchObject({ phase: 'queued' });
-    cleanup.verified = true;
-    await runtime.sessions.cancel(stop);
-    await expect(run.result).resolves.toMatchObject({ phase: 'interrupted' });
     await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
-    expect(JSON.parse(await readFile(file, 'utf8'))._runtime.shellCleanups).toEqual([]);
+    if (queuedRunId) await expect(runtime.runs.await(queuedRunId)).resolves.toMatchObject({ phase: 'completed' });
+    // Even close must not turn this deferred OS cleanup into a session lock.
+    closing = true;
+    await runtime.close();
   } finally {
     cleanup.verified = true;
-    if (runId) await runtime.runs.abort(runId);
+    if (runId && !closing) await runtime.runs.abort(runId);
+    await runResult;
     await runtime.close();
     for (const child of cleanup.children) if (child.exitCode === null) child.kill();
     cleanup.children = [];
     clearRuntimeModelProviders();
     vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }, 30_000);

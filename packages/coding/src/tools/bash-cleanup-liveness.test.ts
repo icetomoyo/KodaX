@@ -24,22 +24,21 @@ it.each([false, true])('settles cleanup after exhausted retries even with a thro
   probe.verified = false; probe.calls = 0;
   let retry: (() => Promise<void>) | undefined;
   let settled = false;
-  const release = vi.fn();
-  const unconfirmed = vi.fn(() => { if (throws) throw new Error('owner notification failed'); });
+  const release = vi.fn((outcome?: 'deferred') => {
+    if (throws && outcome === 'deferred') throw new Error('deferred cleanup persistence failed');
+  });
   const result = toolBash({ command: 'node -e "setTimeout(() => {}, 150)"', timeout: 0.02 }, {
     backups: new Map(), executionCwd: process.cwd(), runtimeRunId: 'run-cleanup-liveness',
     registerShellCleanup: (_reference, callback) => { retry = callback; return release; },
-    onShellCleanupUnconfirmed: unconfirmed,
   }).then((value) => { settled = true; return value; });
   try {
     await vi.waitFor(() => expect(probe.calls).toBeGreaterThanOrEqual(4), { timeout: 12_000 });
     await vi.waitFor(() => expect(settled).toBe(true), { timeout: 500 });
     expect(await result).toContain('[Unknown]');
-    expect(unconfirmed).toHaveBeenCalledOnce();
-    expect(release).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledExactlyOnceWith('deferred');
     probe.verified = true;
     await retry!();
-    expect(release).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenLastCalledWith();
   } finally {
     probe.verified = true;
     await retry?.();
@@ -47,3 +46,41 @@ it.each([false, true])('settles cleanup after exhausted retries even with a thro
     if (probe.child?.exitCode === null) probe.child.kill();
   }
 }, 15_000);
+
+it.each(['closeInput', 'attestStart'] as const)('defers unknown cleanup after %s fails during startup', async (failure) => {
+  probe.verified = false;
+  let retry: (() => Promise<void>) | undefined;
+  const release = vi.fn();
+  const terminate = vi.fn(async (): Promise<void> => { throw new Error('termination unconfirmed'); });
+  try {
+    await expect(toolBash({ command: 'bootstrap-failure' }, {
+      backups: new Map(), executionCwd: process.cwd(), runtimeRunId: 'run-bootstrap-failure',
+      registerShellCleanup: (_reference, callback) => { retry = callback; return release; },
+      shellSandbox: { prepare: async () => ({
+        executable: process.execPath, args: ['-e', 'setTimeout(() => {}, 150)'], env: process.env,
+        processControl: {
+          closeInput: async (child) => {
+            child.stdin?.end();
+            if (failure === 'closeInput') throw new Error('bootstrap input failed');
+          },
+          attestStart: async () => {
+            if (failure === 'attestStart') throw new Error('bootstrap attestation failed');
+            return { state: 'started' as const };
+          },
+          terminate,
+        },
+        cleanup: async () => undefined,
+      }) },
+    })).rejects.toThrow('[Unknown] Shell PID:');
+    expect(release).toHaveBeenCalledExactlyOnceWith('deferred');
+    probe.verified = true;
+    terminate.mockResolvedValue(undefined);
+    await retry!();
+    expect(release).toHaveBeenLastCalledWith();
+  } finally {
+    probe.verified = true;
+    terminate.mockResolvedValue(undefined);
+    await retry?.();
+    if (probe.child?.exitCode === null) probe.child.kill();
+  }
+});

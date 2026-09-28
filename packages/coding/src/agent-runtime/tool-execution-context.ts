@@ -134,7 +134,6 @@ export function buildToolExecutionContext(
   const context: KodaXToolExecutionContext = {
     runtimeRunId: options.context?.runtimeRunId,
     registerShellCleanup: options.events?.registerShellCleanup,
-    onShellCleanupUnconfirmed: options.events?.onShellCleanupUnconfirmed,
     backups: new Map(),
     actorControl: options.context?.actorControl,
     actorQueueAgentId: options.context?.actorQueueAgentId,

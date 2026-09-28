@@ -8,9 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Settle exhausted foreground Shell cleanup retries and stop the owning Run
-  with an explicit cleanup-unknown status; retain ownership and successor
-  fencing until a Stop retry verifies cleanup.
+- Return exhausted Shell cleanup diagnostics and partial output to the model
+  without cancelling its Run. Keep unresolved process identities as deferred
+  cleanup, allow successors and close, and accept queued input during Stop.
 
 ---
 
