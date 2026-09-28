@@ -2606,6 +2606,7 @@ async function runManagedTaskViaRunnerInner(
   // structurally OK).
   const runOnce = (agent: Agent, input: readonly KodaXMessage[]) => {
     iterationStateRef.current = 0;
+    const initialMessages = new Set(input);
     return Runner.run(agent, input, {
       llm,
       abortSignal: options.abortSignal,
@@ -2614,7 +2615,14 @@ async function runManagedTaskViaRunnerInner(
       compactionHook,
       toolResultBatchTransform,
       toolObserver: runnerToolObserver,
-      onMessageCommitted: (message) => commitActorNotificationReceipts(baseCtx, [message]),
+      onMessageCommitted: options.session?.persistedByHost === false
+        ? async (message, transcript) => {
+            // Save Runner's actual transcript, including compaction and injected turn identities,
+            // before tools or another generation can hang or the owner process can exit.
+            if (!initialMessages.has(message)) await persistManagedBoundary(transcript);
+            await commitActorNotificationReceipts(baseCtx, [message]);
+          }
+        : (message) => commitActorNotificationReceipts(baseCtx, [message]),
       // FEATURE_164 (v0.7.41) — mid-turn user-prompt injection.
       // FEATURE_192 v0.7.44 Phase F — wrapped with `withGoalBeforeNextTurn`
       // when an active `/goal` binding is present (no-op otherwise).

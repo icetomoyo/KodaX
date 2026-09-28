@@ -103,7 +103,10 @@ export interface RunOptions {
    * this boundary for delivery receipts that must remain replayable on a
    * persistence failure.
    */
-  readonly onMessageCommitted?: (message: AgentMessage) => void | Promise<void>;
+  readonly onMessageCommitted?: (
+    message: AgentMessage,
+    transcript: readonly AgentMessage[],
+  ) => void | Promise<void>;
   /**
    * Abort signal forwarded to preset dispatchers that honor it.
    */
@@ -646,11 +649,13 @@ async function appendMessageEntry(session: Session, message: AgentMessage): Prom
   });
 }
 
-async function commitMessage(opts: RunOptions, message: AgentMessage): Promise<void> {
+async function commitMessage(
+  opts: RunOptions, message: AgentMessage, transcript: readonly AgentMessage[],
+): Promise<void> {
   const preparation = prepareHistoryImages([message]);
   if (preparation) await preparation;
   if (opts.session) await appendMessageEntry(opts.session, message);
-  await opts.onMessageCommitted?.(message);
+  await opts.onMessageCommitted?.(message, transcript);
 }
 
 /**
@@ -827,7 +832,7 @@ async function genericRun<TData>(
   // iterations operate on; --resume / Scout replay / audit consumers
   // must see the same shape on both ends.
   for (const message of transcript) {
-    if (message.role === 'user') await commitMessage(opts, message);
+    if (message.role === 'user') await commitMessage(opts, message, transcript);
   }
 
   // FEATURE_101 v0.7.31.2: when the entry agent is admitted and its
@@ -904,7 +909,7 @@ async function genericRun<TData>(
     if (!reserveContinuationIteration(ctx.iteration)) return false;
     for (const message of extraMessages) {
       transcript.push(message);
-      await commitMessage(opts, message);
+      await commitMessage(opts, message, transcript);
     }
     if (canAdmitInputDuringNextIteration(ctx.iteration)) {
       continuation.reopenInputWindow();
@@ -971,7 +976,7 @@ async function genericRun<TData>(
     throwIfAborted();
     for (const injectedInputMessage of turn.injectedInputMessages ?? []) {
       transcript.push(injectedInputMessage);
-      await commitMessage(opts, injectedInputMessage);
+      await commitMessage(opts, injectedInputMessage, transcript);
     }
     const toolCalls = turn.toolCalls ?? [];
     if (
@@ -1017,7 +1022,7 @@ async function genericRun<TData>(
         timestamp: assistantMessage.timestamp ?? new Date().toISOString(),
       };
       transcript.push(assistantMessage);
-      await commitMessage(opts, assistantMessage);
+      await commitMessage(opts, assistantMessage, transcript);
       const finalText =
         typeof assistantMessage.content === 'string'
           ? assistantMessage.content
@@ -1124,7 +1129,7 @@ async function genericRun<TData>(
             timestamp: new Date().toISOString(),
           };
           transcript.push(syntheticUserMessage);
-          await commitMessage(opts, syntheticUserMessage);
+          await commitMessage(opts, syntheticUserMessage, transcript);
           agentSpan?.addChild('stop-hook', {
             kind: 'stop-hook',
             outcome: 'reanimate',
@@ -1266,7 +1271,7 @@ async function genericRun<TData>(
       timestamp: assistantMessage.timestamp,
     };
     transcript.push(assistantMessage);
-    await commitMessage(opts, assistantMessage);
+    await commitMessage(opts, assistantMessage, transcript);
 
     // v0.7.26 parity (C2): execute tool calls with the legacy concurrency
     // model — non-bash tools run in parallel (Promise.all), bash tools
@@ -1428,7 +1433,7 @@ async function genericRun<TData>(
     }
     const toolResultMessage = buildToolResultMessage(finalCalls, results);
     transcript.push(toolResultMessage);
-    await commitMessage(opts, toolResultMessage);
+    await commitMessage(opts, toolResultMessage, transcript);
 
     // FEATURE_179: compaction hook moved to TOP of the for-loop (above).
     // See compactionHook doc-comment for motivation. This site previously
@@ -1549,7 +1554,7 @@ async function genericRun<TData>(
       if (extraMessages.length > 0) {
         for (const message of extraMessages) {
           transcript.push(message);
-          await commitMessage(opts, message);
+          await commitMessage(opts, message, transcript);
         }
         if (
           opts.terminalContinuation

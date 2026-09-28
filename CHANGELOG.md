@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Runtime-owned managed runs persist generated assistant messages and tool results
+  at Runner commit boundaries, before tools or subsequent provider calls can hang.
+  Persist the current compacted transcript and queued-input identities; do not
+  repeatedly save old input messages or change host-owned persistence timing.
+
 ---
 
 ## [0.7.96-rc.12] - 2026-09-28

@@ -181,6 +181,28 @@ describe('managed runner queue routing', () => {
     expect(resolveActiveRootQueueRoute()).toBeUndefined();
   });
 
+  it('persists completed assistant and tool work before the next provider call', async () => {
+    let stored: KodaXSessionData | null = null;
+    let calls = 0;
+    const crash = new Error('crash during next generation');
+    await expect(runManagedTaskViaRunner({
+      ...makeOptions(),
+      session: { id: 'incremental-durability', persistedByHost: false, storage: {
+        load: async () => stored,
+        save: async (_id, data) => { stored = structuredClone(data); },
+      } },
+    }, 'Inspect a file', async () => {
+      if (calls++ === 0) return {
+        textBlocks: [{ type: 'text' as const, text: 'DURABLE_PROGRESS' }],
+        toolBlocks: [{ type: 'tool_use' as const, id: 'durable-read', name: 'read',
+          input: { path: path.join(testWorkspaceRoot, 'absent-durability.txt') } }],
+      };
+      expect(JSON.stringify(stored?.messages)).toContain('DURABLE_PROGRESS');
+      expect(JSON.stringify(stored?.messages)).toContain('tool_result');
+      throw crash;
+    })).rejects.toBe(crash);
+  });
+
   it('durably records the initial Runtime prompt before provider execution', async () => {
     const sessionId = 'runtime-initial-durable-boundary';
     let stored: KodaXSessionData | null = null;
@@ -449,7 +471,6 @@ describe('managed runner queue routing', () => {
     const queueAgentId = `actor:${sessionId}:/root`;
     const failure = new Error('queued canonical boundary unavailable');
     let stored: KodaXSessionData | null = null;
-    let saveCount = 0;
     const started = vi.fn();
     const completed = vi.fn();
     const delivered = vi.fn();
@@ -480,8 +501,7 @@ describe('managed runner queue routing', () => {
             storage: {
               load: vi.fn(async () => stored),
               save: vi.fn(async (_id: string, data: KodaXSessionData) => {
-                saveCount += 1;
-                if (saveCount === 3) throw failure;
+                if (data.messages.some(message => message.content === 'QUEUED_PROMPT_WITH_FAILED_SAVE')) throw failure;
                 stored = structuredClone(data);
               }),
             },
