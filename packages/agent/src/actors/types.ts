@@ -55,7 +55,15 @@ export interface AgentArtifactDescriptor {
   readonly remoteTaskId?: string;
 }
 
+/** One executor invocation; max=0 means no finite iteration limit. */
+export interface AgentIterationProgress {
+  readonly current: number;
+  readonly max: number;
+}
+
 export interface AgentTurn {
+  readonly iteration?: AgentIterationProgress;
+  readonly terminationReason?: 'iteration_limit';
   readonly turnId: string;
   readonly actorPath: string;
   readonly sequence: number;
@@ -77,6 +85,7 @@ export interface AgentTurn {
 }
 
 export interface AgentProgressUpdate {
+  readonly iteration?: AgentIterationProgress;
   readonly kind: AgentProgressKind;
   readonly summary: string;
 }
@@ -152,6 +161,8 @@ export interface AgentTreeSnapshot {
 }
 
 export interface AgentTurnSummary {
+  readonly iteration?: AgentIterationProgress;
+  readonly terminationReason?: 'iteration_limit';
   readonly turnId: string;
   readonly state: AgentTurnState;
   readonly summary: string;
@@ -170,6 +181,8 @@ export interface AgentDetail {
 }
 
 export interface AgentOutput {
+  readonly iteration?: AgentIterationProgress;
+  readonly terminationReason?: 'iteration_limit';
   readonly actorPath: string;
   readonly turnId: string;
   readonly state: AgentTurnState;
@@ -224,6 +237,8 @@ export interface AgentExecutionInput {
 }
 
 export interface AgentExecutionResult {
+  readonly iteration?: AgentIterationProgress;
+  readonly terminationReason?: 'iteration_limit';
   readonly output: string;
   readonly artifacts?: readonly string[];
   readonly artifactDetails?: readonly AgentArtifactDescriptor[];

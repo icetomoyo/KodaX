@@ -4685,3 +4685,20 @@ describe('F270 actor tree and scheduler', () => {
     await expect(root.wait(0, 30_000)).resolves.toEqual(existing);
   });
 });
+
+it('retains iteration outside the bounded progress batch and persists exhausted partial output', async () => {
+  const executor = new DeferredExecutor();
+  const state = revisionedActorStore();
+  const controller = await createAgentActorController({ executor, store: state.store });
+  const child = await controller.spawn('/root', { taskName: 'capped', objective: 'Inspect.' });
+  const execution = executor.pending[0]!;
+  const reports = [execution.input.reportProgress({ kind: 'status', summary: 'Iteration 2/2', iteration: { current: 2, max: 2 } })];
+  for (let i = 0; i < 12; i++) reports.push(execution.input.reportProgress({ kind: 'tool', summary: 'tool ' + i }));
+  await Promise.all(reports);
+  expect(controller.output('/root', child.actorPath, child.turnId).iteration).toEqual({ current: 2, max: 2 });
+  execution.resolve({ output: 'partial output', artifacts: ['partial.txt'], terminationReason: 'iteration_limit' });
+  await settle();
+  const restored = await createAgentActorController({ store: state.store });
+  expect(restored.output('/root', child.actorPath, child.turnId)).toMatchObject({ state: 'failed', terminationReason: 'iteration_limit', iteration: { current: 2, max: 2 }, output: 'partial output', artifacts: ['partial.txt'] });
+  expect(restored.list('/root').actors.find(a => a.path === child.actorPath)?.latestTurn).toMatchObject({ state: 'failed', terminationReason: 'iteration_limit', iteration: { current: 2, max: 2 } });
+});

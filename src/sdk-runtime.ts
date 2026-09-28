@@ -1700,6 +1700,7 @@ export interface RuntimeManagedTaskProjection {
 }
 
 export interface RuntimeSessionLiveProjection {
+  readonly iterationsByRun?: Readonly<Record<string, { readonly current: number; readonly max: number }>>;
   readonly assistantTextByRun: Readonly<Record<string, string>>;
   readonly thinkingTextByRun: Readonly<Record<string, string>>;
   readonly outputSegmentsByRun: Readonly<
@@ -14115,6 +14116,7 @@ function createRuntimeEventBus(persistence: RuntimePersistence) {
 }
 
 interface RuntimeSessionLiveProjectionState {
+  readonly iterationsByRun: Record<string, { readonly current: number; readonly max: number }>;
   readonly assistantTextByRun: Record<string, string>;
   readonly thinkingTextByRun: Record<string, string>;
   readonly outputSegmentsByRun: Record<string, KodaXOutputSegmentProjection>;
@@ -14126,6 +14128,7 @@ interface RuntimeSessionLiveProjectionState {
 
 function createRuntimeSessionLiveProjectionState(): RuntimeSessionLiveProjectionState {
   return {
+    iterationsByRun: {},
     assistantTextByRun: {},
     thinkingTextByRun: {},
     outputSegmentsByRun: {},
@@ -14143,6 +14146,7 @@ function applyRuntimeSessionEvent(
   const payload = isRecord(event.payload) ? event.payload : undefined;
   if (isChildOwnedPrimaryLiveEvent(event.type, payload)) return;
   if (event.type === "turn.started") {
+    delete live.iterationsByRun[event.runId];
     delete live.assistantTextByRun[event.runId];
     delete live.thinkingTextByRun[event.runId];
     delete live.outputSegmentsByRun[event.runId];
@@ -14219,6 +14223,14 @@ function applyRuntimeSessionEvent(
         if (tool.runId === event.runId) live.activeTools.delete(candidate);
       }
     }
+  } else if (event.type === "run.progress" && (payload?.kind === "iteration_start" || payload?.kind === "iteration_end")) {
+    const info = payload.kind === "iteration_start" ? payload : isRecord(payload.info) ? payload.info : undefined;
+    const meta = payload.kind === "iteration_start" ? payload.meta : info;
+    if (!isChildActivityMeta(meta) && info
+      && Number.isInteger(info.iter) && typeof info.iter === "number" && info.iter >= 0
+      && Number.isInteger(info.maxIter) && typeof info.maxIter === "number" && info.maxIter >= 0) {
+      live.iterationsByRun[event.runId] = { current: info.iter, max: info.maxIter };
+    }
   } else if (event.type === "todo.updated") {
     live.todo = event.payload;
   } else if (
@@ -14253,6 +14265,7 @@ function applyRuntimeSessionEvent(
   ) {
     live.pendingUserInputs.delete(payload.requestId);
   } else if (isTerminalRuntimeEvent(event.type)) {
+    delete live.iterationsByRun[event.runId];
     delete live.assistantTextByRun[event.runId];
     delete live.thinkingTextByRun[event.runId];
     delete live.outputSegmentsByRun[event.runId];
@@ -14283,7 +14296,11 @@ function isChildOwnedPrimaryLiveEvent(
   payload: Readonly<Record<string, unknown>> | undefined,
 ): boolean {
   if (!PRIMARY_LIVE_ACTIVITY_EVENT_TYPES.has(type)) return false;
-  const meta = isRecord(payload?.meta) ? payload.meta : undefined;
+  return isChildActivityMeta(payload?.meta);
+}
+
+function isChildActivityMeta(value: unknown): boolean {
+  const meta = isRecord(value) ? value : undefined;
   if (!meta) return false;
   if (meta.contextKind === "child") return true;
   if (typeof meta.childAgentId === "string" && meta.childAgentId.length > 0)
@@ -14303,6 +14320,7 @@ function snapshotRuntimeSessionLiveProjection(
   live: RuntimeSessionLiveProjectionState,
 ): RuntimeSessionLiveProjection {
   return {
+    ...(Object.keys(live.iterationsByRun).length > 0 ? { iterationsByRun: structuredClone(live.iterationsByRun) } : {}),
     assistantTextByRun: { ...live.assistantTextByRun },
     thinkingTextByRun: { ...live.thinkingTextByRun },
     outputSegmentsByRun: structuredClone(live.outputSegmentsByRun),

@@ -5169,6 +5169,28 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("projects root iterations independently of child telemetry and resets on a fresh invocation", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, "sessions"), defaultProvider: "mock-provider" });
+    const session = await runtime.sessions.create({ title: "Iterations" });
+    let events: KodaXEvents | undefined;
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      events = options.events;
+      options.events?.onIterationStart?.(17, 500);
+      options.events?.onIterationEnd?.({ iter: 4, maxIter: 200, tokenCount: 1, tokenSource: "api", scope: "worker", contextKind: "child" });
+      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+    });
+    const run = await runtime.runs.start({ sessionId: session.id, prompt: "work" });
+    const observation = await runtime.sessions.observe(session.id, () => undefined);
+    expect(observation.snapshot.live.iterationsByRun?.[run.runId]).toEqual({ current: 17, max: 500 });
+    observation.close();
+    events?.onIterationStart?.(1, 500);
+    const resumed = await runtime.sessions.observe(session.id, () => undefined);
+    expect(resumed.snapshot.live.iterationsByRun?.[run.runId]).toEqual({ current: 1, max: 500 });
+    resumed.close();
+    await runtime.close();
+  });
+
   it("keeps active live projection complete after durable event history is trimmed", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({

@@ -199,6 +199,7 @@ export interface WorkflowChildDigestUpdate {
 }
 
 export interface ChildExecutorOptions {
+  readonly onIteration?: (iteration: NonNullable<KodaXChildAgentResult['iteration']>) => void;
   readonly maxParallel: number;
   readonly maxIterationsPerChild: number;
   readonly abortSignal?: AbortSignal;
@@ -699,6 +700,7 @@ function shouldCreateWorkflowChildDigest(
   return options.workflowChild === true &&
     options.abortSignal?.aborted !== true &&
     result.success === true &&
+    result.limitReached !== true &&
     result.interrupted !== true &&
     result.lastText.trim().length > 0 &&
     (bundle === undefined || reusableWorkflowSummary(bundle, structured, result.lastText) === undefined);
@@ -1039,6 +1041,7 @@ async function resolveChildStructuredOutput(input: {
   if (
     input.options.abortSignal?.aborted === true ||
     input.result.success !== true ||
+    input.result.limitReached === true ||
     input.result.interrupted === true
   ) {
     return first.value;
@@ -1278,6 +1281,7 @@ async function runReadChildBody(
   scope: ChildIsolationScope,
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
+  let iteration: KodaXChildAgentResult['iteration'];
   const childEvents = buildChildEvents(
     bundle.id,
     options.onProgress,
@@ -1288,6 +1292,7 @@ async function runReadChildBody(
     options.childActivityName,
     options.maxIterationsPerChild,
     true,
+    (current) => { iteration = current; options.onIteration?.(current); },
   );
 
   // FEATURE_191 — specialist override switch (no-op when bundle.specialistName
@@ -1453,7 +1458,7 @@ async function runReadChildBody(
       },
     );
 
-    const iterations = result.messages.filter((m) => m.role === 'assistant').length;
+    const iterations = iteration?.current ?? 0;
     const totalTokensUsed = readChildTokenUsage(result);
     const digestInput = {
       runFn,
@@ -1495,9 +1500,10 @@ async function runReadChildBody(
     childResult = extractChildResult(
       bundle,
       annotateWorktreeSummary(result.lastText, scope),
-      result.success ? 'completed' : 'failed',
+      result.success && !result.limitReached ? 'completed' : 'failed',
       {
         actualIterations: iterations,
+        ...(iteration ? { iteration } : {}),
         interrupted: result.interrupted === true,
         limitReached: result.limitReached === true,
         totalTokensUsed: totalTokensUsed + digest.totalTokensUsed,
@@ -1563,6 +1569,7 @@ async function runWriteChildBody(
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
   const childCtx = scope.ctx;
+  let iteration: KodaXChildAgentResult['iteration'];
   const childEvents = buildChildEvents(
     bundle.id,
     options.onProgress,
@@ -1573,6 +1580,7 @@ async function runWriteChildBody(
     options.childActivityName,
     options.maxIterationsPerChild,
     false,
+    (current) => { iteration = current; options.onIteration?.(current); },
   );
   // FEATURE_117 v2 (v0.7.38): write children inherit AGENTS.md mutation
   // policy. Read-only children stay on the bare `CHILD_AGENT_SYSTEM_PROMPT`
@@ -1754,7 +1762,7 @@ async function runWriteChildBody(
       },
     );
 
-    const iterations = result.messages.filter((m) => m.role === 'assistant').length;
+    const iterations = iteration?.current ?? 0;
     const totalTokensUsed = readChildTokenUsage(result);
     const digestInput = {
       runFn,
@@ -1796,9 +1804,10 @@ async function runWriteChildBody(
     childResult = extractChildResult(
       bundle,
       annotateWorktreeSummary(result.lastText, scope),
-      result.success ? 'completed' : 'failed',
+      result.success && !result.limitReached ? 'completed' : 'failed',
       {
         actualIterations: iterations,
+        ...(iteration ? { iteration } : {}),
         interrupted: result.interrupted === true,
         limitReached: result.limitReached === true,
         totalTokensUsed: totalTokensUsed + digest.totalTokensUsed,
@@ -2296,6 +2305,7 @@ export function buildChildEvents(
   // a stale default surfacing if a caller ever passes a non-200 cap.
   initialMaxIterations = 200,
   readOnly = false,
+  onIteration?: ChildExecutorOptions['onIteration'],
 ): KodaXEvents | undefined {
   let iterationCount = 0;
   let maxIterations = initialMaxIterations;
@@ -2464,6 +2474,7 @@ export function buildChildEvents(
     onIterationStart: (iter: number, maxIter: number) => {
       iterationCount = iter;
       maxIterations = maxIter;
+      onIteration?.({ current: iter, max: maxIter });
       // FEATURE_177: feed iteration into snapshot. Not throttled — one
       // event per iteration is at most a few times per second and we
       // want the snapshot iteration count to be exact, not approximate.
@@ -2488,7 +2499,7 @@ export function buildChildEvents(
         : '';
       const hintStr = typeof inputHint === 'string' ? inputHint.slice(0, 60) : '';
       const hint = hintStr ? ` ${hintStr}` : '';
-      throttledProgress(`${childId} [${iterationCount}/${maxIterations}] → ${tool.name}${hint}`);
+      throttledProgress(`${childId} [${iterationCount}${maxIterations > 0 ? `/${maxIterations}` : ''}] → ${tool.name}${hint}`);
       // FEATURE_177: feed tool-call breadcrumb into snapshot. Independent
       // of the REPL throttle — breadcrumbs are bounded by the
       // ring-buffer cap, so emitting one per tool call cannot grow the
@@ -2537,6 +2548,7 @@ export function buildChildEvents(
 /* ---------- Result extraction ---------- */
 
 interface ExtractChildResultMeta {
+  readonly iteration?: KodaXChildAgentResult['iteration'];
   readonly actualIterations?: number;
   readonly interrupted?: boolean;
   readonly limitReached?: boolean;
@@ -2582,6 +2594,7 @@ function extractChildResult(
     evidenceRefs: bundle.evidenceRefs,
     contradictions: [],
     actualIterations: meta.actualIterations,
+    ...(meta.iteration ? { iteration: meta.iteration } : {}),
     ...(meta.totalTokensUsed !== undefined && meta.totalTokensUsed > 0
       ? { totalTokensUsed: meta.totalTokensUsed }
       : {}),

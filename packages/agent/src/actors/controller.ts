@@ -118,6 +118,7 @@ interface EventWaiter {
 }
 
 interface PendingProgress {
+  readonly iteration?: AgentTurn['iteration'];
   readonly updates: readonly AgentProgressUpdate[];
   readonly completion: Promise<void>;
   readonly resolve: () => void;
@@ -125,6 +126,8 @@ interface PendingProgress {
 }
 
 interface AgentTurnSettlementResult {
+  readonly iteration?: AgentTurn['iteration'];
+  readonly terminationReason?: AgentTurn['terminationReason'];
   readonly output?: string;
   readonly artifacts?: readonly string[];
   readonly artifactDetails?: readonly AgentArtifactDescriptor[];
@@ -875,6 +878,8 @@ export class AgentActorController {
       actorPath: actor.path,
       turnId: turn.turnId,
       state: turn.state,
+      ...(turn.iteration ? { iteration: turn.iteration } : {}),
+      ...(turn.terminationReason ? { terminationReason: turn.terminationReason } : {}),
       ...(output === undefined ? {} : {
         output: output.text,
         ...(output.truncated ? { outputTruncated: true } : {}),
@@ -1088,8 +1093,13 @@ export class AgentActorController {
   ): Promise<void> {
     await this.commitExecutionSettlement({
       turnId,
-      state: 'completed',
+      state: result.terminationReason === 'iteration_limit' ? 'failed' : 'completed',
       result: {
+        ...(result.iteration ? { iteration: result.iteration } : {}),
+        ...(result.terminationReason ? {
+          terminationReason: result.terminationReason,
+          error: `iteration_limit: Reached the execution iteration limit${result.iteration ? ` (${result.iteration.current}/${result.iteration.max})` : ''}; partial work is preserved.`,
+        } : {}),
         output: result.output,
         artifacts: result.artifacts ?? [],
         ...(result.artifactDetails === undefined
@@ -1355,6 +1365,8 @@ export class AgentActorController {
     turnId: string,
     state: 'completed' | 'failed' | 'interrupted',
     result: {
+      readonly iteration?: AgentTurn['iteration'];
+      readonly terminationReason?: AgentTurn['terminationReason'];
       readonly output?: string;
       readonly artifacts?: readonly string[];
       readonly artifactDetails?: readonly AgentArtifactDescriptor[];
@@ -1399,9 +1411,12 @@ export class AgentActorController {
     actor: AgentActor,
     turnId: string,
     state: 'completed' | 'failed' | 'interrupted',
-    result: { readonly output?: string; readonly error?: string },
+    result: { readonly output?: string; readonly error?: string; readonly terminationReason?: AgentTurn['terminationReason'] },
   ): void {
-    const rawSummary = nonEmptyText(result.output) ?? nonEmptyText(result.error) ?? state;
+    const rawSummary = [
+      result.terminationReason ? result.error : undefined,
+      nonEmptyText(result.output) ?? (result.terminationReason ? undefined : nonEmptyText(result.error)) ?? state,
+    ].filter(Boolean).join('\n');
     const summary = rawSummary.length > MAX_MESSAGE_LENGTH
       ? `${rawSummary.slice(0, MAX_MESSAGE_LENGTH - 3).trimEnd()}...`
       : rawSummary;
@@ -1454,13 +1469,20 @@ export class AgentActorController {
     if (summary.length === 0) {
       throw new AgentControlError('invalid_message', 'progress summary is required');
     }
+    if (update.iteration && (
+      !Number.isInteger(update.iteration.current) || update.iteration.current < 0
+      || !Number.isInteger(update.iteration.max) || update.iteration.max < 0
+    )) {
+      throw new AgentControlError('invalid_message', 'iteration values must be nonnegative integers');
+    }
     const current = this.pendingProgress.get(turnId);
     if (current) {
       this.pendingProgress.set(turnId, {
         ...current,
+        ...(update.iteration ? { iteration: { ...update.iteration } } : {}),
         updates: [
           ...current.updates,
-          { kind: update.kind, summary },
+          { kind: update.kind, summary, ...(update.iteration ? { iteration: { ...update.iteration } } : {}) },
         ].slice(-MAX_PROGRESS_ITEMS),
       });
       this.scheduleProgressDrain();
@@ -1473,7 +1495,8 @@ export class AgentActorController {
       rejectCompletion = reject;
     });
     this.pendingProgress.set(turnId, {
-      updates: [{ kind: update.kind, summary }],
+      ...(update.iteration ? { iteration: { ...update.iteration } } : {}),
+      updates: [{ kind: update.kind, summary, ...(update.iteration ? { iteration: { ...update.iteration } } : {}) }],
       completion,
       resolve: resolveCompletion,
       reject: rejectCompletion,
@@ -1544,18 +1567,20 @@ export class AgentActorController {
         const progress: AgentProgressItem = {
           sequence: (previous.at(-1)?.sequence ?? 0) + 1,
           kind: update.kind,
+          ...(update.iteration ? { iteration: update.iteration } : {}),
           summary: update.summary,
           createdAt: this.now(),
         };
         turn = {
           ...turn,
           progress: [...previous, progress].slice(-MAX_PROGRESS_ITEMS),
+          ...(update.iteration ? { iteration: update.iteration } : {}),
           revision: turn.revision + 1,
         };
         this.appendEvent('turn_progress', turn.actorPath, turnId, undefined, progress);
         changed = true;
       }
-      this.turns.set(turnId, turn);
+      this.turns.set(turnId, pending.iteration ? { ...turn, iteration: pending.iteration } : turn);
     }
     return changed;
   }
@@ -1696,6 +1721,8 @@ export class AgentActorController {
       latestTurn: {
         turnId,
         state: turn.state,
+        ...(turn.iteration ? { iteration: turn.iteration } : {}),
+        ...(turn.terminationReason ? { terminationReason: turn.terminationReason } : {}),
         summary: summary.text,
         summaryTruncated: summary.truncated,
         recentActivity: turn.progress ?? [],
@@ -2873,6 +2900,8 @@ function turnMatchesSettlementIntent(
   if (
     turn.output !== result.output
     || turn.error !== result.error
+    || turn.terminationReason !== result.terminationReason
+    || (result.iteration !== undefined && JSON.stringify(turn.iteration) !== JSON.stringify(result.iteration))
     || JSON.stringify(turn.artifacts) !== JSON.stringify(result.artifacts)
     || JSON.stringify(turn.artifactDetails) !== JSON.stringify(result.artifactDetails)
     || JSON.stringify(turn.structured) !== JSON.stringify(result.structured)

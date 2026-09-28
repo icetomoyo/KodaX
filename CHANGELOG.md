@@ -11,6 +11,15 @@ All notable changes to this project will be documented in this file.
 - Return exhausted Shell cleanup diagnostics and partial output to the model
   without cancelling its Run. Keep unresolved process identities as deferred
   cleanup, allow successors and close, and accept queued input during Stop.
+- Expose Root Runner iteration progress in Runtime live snapshots and structured
+  Actor iteration progress in durable turn summaries/output. Values come from
+  the executing Runner; the default managed Root (500) and native Actor child
+  (200) thresholds are unchanged.
+- Settle exhausted native Actor children as failed with terminationReason
+  iteration_limit, preserving partial output, artifacts and structured results.
+  Parent completion notifications include the reason. Exhaustion no longer runs
+  a structured-output repair or workflow digest, and follow-up starts a fresh
+  iteration count. Completion on the final permitted iteration remains successful.
 
 ---
 

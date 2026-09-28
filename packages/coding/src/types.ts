@@ -1271,6 +1271,7 @@ export interface KodaXExecutionFailure {
 }
 
 export interface KodaXChildAgentResult {
+  readonly iteration?: { readonly current: number; readonly max: number };
   childId: string;
   fanoutClass: KodaXChildFanoutClass;
   status: 'completed' | 'blocked' | 'failed';
