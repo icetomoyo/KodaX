@@ -9430,7 +9430,9 @@ function createRuntimeRunService(deps: {
       && error instanceof Error
       && error.name === "AbortError";
     if (trustedManagedAbort) {
-      const failureDetail = runtimeCancellationFailureDetail();
+      const failureDetail = stop.reason === "shell_cleanup_unconfirmed" && record.failureDetail
+        ? record.failureDetail
+        : runtimeCancellationFailureDetail();
       return {
         phase: "interrupted",
         failureDetail,
@@ -9569,6 +9571,7 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     reason: string,
     drain: boolean,
+    cancellationDetail: RuntimeFailureDetail = runtimeCancellationFailureDetail(),
   ): RuntimeRunResult => {
     if (
       actorDurabilityFailureApplies(record)
@@ -9631,7 +9634,6 @@ function createRuntimeRunService(deps: {
     }
     delete record.actorHealthBaseState;
     const requestedAt = new Date().toISOString();
-    const cancellationDetail = runtimeCancellationFailureDetail();
     record.failureDetail = cancellationDetail;
     record.stop ??= {
       requestedAt,
@@ -9911,6 +9913,15 @@ function createRuntimeRunService(deps: {
     });
     events.scheduleManagedTaskMaintenance = deps.scheduleManagedTaskMaintenance;
     events.runMemoryWork = deps.runMemoryWork;
+    events.onShellCleanupUnconfirmed = () => {
+      if (record.terminalEmitted || (record.shellCleanups?.size ?? 0) === 0) return;
+      cancelRun(record, "shell_cleanup_unconfirmed", false, {
+        failureKind: "runtime_cleanup",
+        stage: "runtime_settlement",
+        providerErrorCode: "runtime_settlement_failed",
+        safeMessage: "Shell cleanup could not be verified. Execution is blocked until cleanup is confirmed; retry Stop to check again.",
+      });
+    };
     events.registerShellCleanup = (reference, retry) => {
       if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
         throw new Error("Invalid Runtime Shell cleanup binding");

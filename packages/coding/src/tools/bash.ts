@@ -1154,6 +1154,8 @@ async function executeToolBash(
     let cleanupRetryTimer: ReturnType<typeof setTimeout> | undefined;
     let cleanupRetryCount = 0;
     let resolveForegroundCleanup: (() => void) | undefined;
+    let rejectForegroundCleanup: ((error: unknown) => void) | undefined;
+    let cleanupFailureReported = false;
     const attemptForegroundCleanup = (): Promise<void> => {
       if (cleanupAttempt) return cleanupAttempt;
       if (!foregroundCommandRegistered) return Promise.resolve();
@@ -1173,6 +1175,23 @@ async function executeToolBash(
               void attemptForegroundCleanup();
             }, 1_000 * 2 ** cleanupRetryCount++);
             cleanupRetryTimer.unref();
+          } else {
+            // Retain the durable cleanup fence, but never leave the tool awaiting
+            // a Promise with no remaining producer. Runtime aborts this Run before
+            // the result can allow another model/tool iteration.
+            rejectForegroundCleanup?.(error);
+            if (!cleanupFailureReported) {
+              cleanupFailureReported = true;
+              try {
+                ctx.onShellCleanupUnconfirmed?.();
+              } catch (notificationError: unknown) {
+                emitKodaXDiagnostic({
+                  source: 'coding:bash', level: 'error',
+                  message: 'Failed to notify the Run owner of unconfirmed Shell cleanup.',
+                  detail: notificationError,
+                });
+              }
+            }
           }
         } finally {
           cleanupAttempt = undefined;
@@ -1190,8 +1209,9 @@ async function executeToolBash(
         finishForegroundRequest ??= cleanupStartedCommand(proc, unregisterForegroundCommand);
         return finishForegroundRequest;
       }
-      finishForegroundRequest ??= new Promise<void>((resolveCleanup) => {
+      finishForegroundRequest ??= new Promise<void>((resolveCleanup, rejectCleanup) => {
         resolveForegroundCleanup = resolveCleanup;
+        rejectForegroundCleanup = rejectCleanup;
       });
       void attemptForegroundCleanup();
       return finishForegroundRequest;

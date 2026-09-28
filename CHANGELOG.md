@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Settle exhausted foreground Shell cleanup retries and stop the owning Run
+  with an explicit cleanup-unknown status; retain ownership and successor
+  fencing until a Stop retry verifies cleanup.
+
 ---
 
 ## [0.7.96-rc.11] - 2026-09-23

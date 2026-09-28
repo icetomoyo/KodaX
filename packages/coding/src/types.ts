@@ -561,6 +561,8 @@ export interface KodaXEvents {
     reference: ManagedRunChildProcessReference,
     retry: () => Promise<void>,
   ) => () => void;
+  /** Stop the owning Run when bounded Shell cleanup retries cannot verify quiescence. */
+  onShellCleanupUnconfirmed?: () => void;
   /** Internal host ownership: optional terminal projections must drain on Runtime close. */
   scheduleManagedTaskMaintenance?: (maintenance: () => Promise<void>) => void;
   /** Internal host ownership: settle memory IO and cancel background review before close. */
@@ -2850,6 +2852,7 @@ export interface KodaXToolExecutionContext {
   /** Structured Shell outcome for explicit host invocations; output text is not authority. */
   reportShellExecutionOutcome?: (outcome: { success: boolean }) => void;
   registerShellCleanup?: KodaXEvents['registerShellCleanup'];
+  onShellCleanupUnconfirmed?: KodaXEvents['onShellCleanupUnconfirmed'];
   /** Fail-closed host policy applied to every concrete file a read tool opens. */
   assertReadablePath?: (candidate: string) => void;
   /** Host tool visibility ceiling inherited by child agents. */
